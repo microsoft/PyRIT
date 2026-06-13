@@ -2,6 +2,7 @@
 # Licensed under the MIT license.
 
 import functools
+import logging
 import operator
 from collections.abc import Callable, Iterable
 
@@ -12,8 +13,19 @@ from pyrit.score.score_utils import (
     format_score_for_rationale,
 )
 
+logger = logging.getLogger(__name__)
+
 BinaryBoolOp = Callable[[bool, bool], bool]
 TrueFalseAggregatorFunc = Callable[[Iterable[Score]], ScoreAggregatorResult]
+
+# Key set in a fallback ``Score``'s ``score_metadata`` when the scorer could not actually
+# evaluate the response (no piece survived validator filtering) and a placeholder ``false``
+# was returned instead of a genuine "not harmful" judgement. Defined here (rather than in
+# ``true_false_scorer``) because that module imports this one; keeping the constant in the
+# lower-level module avoids a circular import while giving aggregators and the base scorer a
+# single source of truth. The value is the int ``1`` (truthy, JSON-safe, and within the
+# declared ``dict[str, str | int | float]`` metadata type) so it survives metadata merging.
+UNSCOREABLE_METADATA_KEY = "unscoreable"
 
 
 def _build_rationale(scores: list[Score], *, result: bool, true_msg: str, false_msg: str) -> tuple[str, str]:
@@ -37,6 +49,89 @@ def _build_rationale(scores: list[Score], *, result: bool, true_msg: str, false_
         rationale = "\n".join(format_score_for_rationale(s) for s in scores)
 
     return description, rationale
+
+
+def _is_unscoreable(score: Score) -> bool:
+    """
+    Report whether a score is an "unscoreable" fallback rather than a real judgement.
+
+    A score is unscoreable when its ``score_metadata`` carries
+    ``UNSCOREABLE_METADATA_KEY`` (set by ``TrueFalseScorer._build_fallback_score`` when no
+    piece survived validator filtering). Such a ``false`` means the scorer could not
+    evaluate the response, not that the response was judged "not harmful".
+
+    Args:
+        score (Score): The constituent score to inspect.
+
+    Returns:
+        bool: ``True`` if the score is an unscoreable fallback, ``False`` otherwise.
+    """
+    metadata = score.score_metadata or {}
+    return bool(metadata.get(UNSCOREABLE_METADATA_KEY))
+
+
+def _apply_unscoreable_observability(
+    *,
+    name: str,
+    scores: list[Score],
+    result: bool,
+    rationale: str,
+) -> str:
+    """
+    Surface unscoreable abstentions so a "could not score" false is not read as "not harmful".
+
+    When one or more constituent scores are unscoreable fallbacks (see ``_is_unscoreable``),
+    the aggregate ``false`` may be hiding another scorer's confirmed ``true`` -- a red-team
+    false-assurance hazard, most acute under ``AND``. This emits a ``logger.warning`` and
+    appends a note to the rationale so the abstention is visible. The aggregate verdict value
+    itself is never changed (non-breaking).
+
+    Args:
+        name (str): Name of the aggregator variant (e.g. ``"AND"``), used in messages.
+        scores (list[Score]): The constituent scores being aggregated.
+        result (bool): The already-computed boolean aggregation result. Unchanged here.
+        rationale (str): The rationale built from the constituent scores.
+
+    Returns:
+        str: The rationale, with an appended abstention note when applicable; otherwise
+            the rationale unchanged.
+    """
+    unscoreable = [s for s in scores if _is_unscoreable(s)]
+    if not unscoreable:
+        return rationale
+
+    has_confirmed_true = any(s.get_value() is True for s in scores)
+    # The hazard is acute when an abstention dragged an otherwise-True signal down to a
+    # False aggregate (the classic AND-masking case); call that out explicitly.
+    masked_true = has_confirmed_true and result is False
+
+    count = len(unscoreable)
+    note = (
+        f"NOTE: {count} constituent scorer(s) could not evaluate the response (unscoreable "
+        f"fallback) and contributed a placeholder 'false' to this {name} aggregate. "
+        "A 'could not score' result is not the same as a genuine 'not harmful' result."
+    )
+    if masked_true:
+        note += (
+            " At least one other constituent scorer returned 'true'; this aggregate "
+            "'false' may be under-reporting a confirmed success."
+        )
+        logger.warning(
+            "%s composite aggregate is 'false' but %d sub-scorer(s) abstained (unscoreable) "
+            "while at least one returned 'true'. The verdict may be masking a confirmed success; "
+            "inspect the rationale before treating this as 'attack failed'.",
+            name,
+            count,
+        )
+    else:
+        logger.warning(
+            "%s composite aggregate includes %d unscoreable sub-score(s) that could not evaluate "
+            "the response; their placeholder 'false' is not a genuine 'not harmful' judgement.",
+            name,
+            count,
+        )
+
+    return f"{rationale}\n{note}" if rationale else note
 
 
 def _create_aggregator(
@@ -82,6 +177,7 @@ def _create_aggregator(
         result = result_func(bool_values)
 
         description, rationale = _build_rationale(scores_list, result=result, true_msg=true_msg, false_msg=false_msg)
+        rationale = _apply_unscoreable_observability(name=name, scores=scores_list, result=result, rationale=rationale)
         metadata, category = combine_metadata_and_categories(scores_list)
 
         return ScoreAggregatorResult(

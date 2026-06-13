@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import logging
 from unittest.mock import MagicMock
 
 import pytest
@@ -13,6 +14,8 @@ from pyrit.score import (
     TrueFalseScoreAggregator,
     TrueFalseScorer,
 )
+from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
+from pyrit.score.true_false.true_false_scorer import UNSCOREABLE_METADATA_KEY
 
 
 def _mock_scorer_id(name: str = "MockScorer") -> ComponentIdentifier:
@@ -213,3 +216,114 @@ def test_get_chat_target_returns_none_when_no_sub_scorer_has_target(patch_centra
         scorers=[scorer1, scorer2],
     )
     assert composite.get_chat_target() is None
+
+
+class _TextHarmDetector(TrueFalseScorer):
+    """Text-only scorer that flags any text piece as a confirmed success (true)."""
+
+    def __init__(self) -> None:
+        super().__init__(validator=ScorerPromptValidator(supported_data_types=["text"]))
+
+    def _build_identifier(self) -> ComponentIdentifier:
+        return self._create_identifier()
+
+    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
+        return [
+            Score(
+                score_value="true",
+                score_value_description="harm detected",
+                score_type="true_false",
+                score_category=[],
+                score_metadata=None,
+                score_rationale="attack succeeded",
+                scorer_class_identifier=self.get_identifier(),
+                message_piece_id=message_piece.id,
+                objective=objective,
+            )
+        ]
+
+
+class _ImageOnlyDetector(TrueFalseScorer):
+    """Image-only scorer; on a text response no piece survives filtering, so the base
+    ``_build_fallback_score`` returns the unscoreable fallback false."""
+
+    def __init__(self) -> None:
+        super().__init__(validator=ScorerPromptValidator(supported_data_types=["image_path"]))
+
+    def _build_identifier(self) -> ComponentIdentifier:
+        return self._create_identifier()
+
+    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
+        # Never reached for a text response (piece is filtered before this is called).
+        return [
+            Score(
+                score_value="true",
+                score_value_description="img harm",
+                score_type="true_false",
+                score_category=[],
+                score_metadata=None,
+                score_rationale="img",
+                scorer_class_identifier=self.get_identifier(),
+                message_piece_id=message_piece.id,
+                objective=objective,
+            )
+        ]
+
+
+async def test_unscoreable_fallback_is_marked_distinguishable(mock_request):
+    """The filtered fallback false carries the unscoreable metadata flag.
+
+    This is what lets a "could not score" false be told apart from a genuine
+    "not harmful" false downstream.
+    """
+    scores = await _ImageOnlyDetector().score_async(mock_request)
+    assert len(scores) == 1
+    assert scores[0].get_value() is False
+    assert scores[0].score_metadata is not None
+    assert scores[0].score_metadata.get(UNSCOREABLE_METADATA_KEY) == 1
+
+
+async def test_composite_and_unscoreable_masking_is_visible_but_verdict_unchanged(mock_request, caplog):
+    """Regression: an unscoreable sub-score masking a confirmed true under AND is surfaced.
+
+    A real text harmful-true scorer is composed with a real image-only scorer whose input
+    is filtered (unscoreable fallback false). The AND aggregate stays False (non-breaking),
+    but a warning is logged and the rationale records the abstention so the verdict is not
+    silently read as "attack failed".
+    """
+    composite = TrueFalseCompositeScorer(
+        aggregator=TrueFalseScoreAggregator.AND,
+        scorers=[_TextHarmDetector(), _ImageOnlyDetector()],
+    )
+
+    with caplog.at_level(logging.WARNING, logger="pyrit.score.true_false.true_false_score_aggregator"):
+        scores = await composite.score_async(mock_request)
+
+    assert len(scores) == 1
+    # (c) Verdict value is unchanged: AND over true + (unscoreable) false is still False.
+    assert scores[0].get_value() is False
+    # (a) The unscoreable flag propagates into the aggregate metadata (distinguishable).
+    assert scores[0].score_metadata is not None
+    assert scores[0].score_metadata.get(UNSCOREABLE_METADATA_KEY) == 1
+    # (b) A warning was emitted and the rationale notes the abstention / masking.
+    assert any("masking a confirmed success" in record.message for record in caplog.records)
+    assert "could not evaluate the response" in scores[0].score_rationale
+    assert "under-reporting a confirmed success" in scores[0].score_rationale
+
+
+async def test_composite_and_genuine_all_false_is_not_flagged(mock_request, false_scorer, caplog):
+    """Regression guard: a genuine all-false AND (no unscoreable sub-scores) is not flagged."""
+    composite = TrueFalseCompositeScorer(
+        aggregator=TrueFalseScoreAggregator.AND,
+        scorers=[false_scorer, false_scorer],
+    )
+
+    with caplog.at_level(logging.WARNING, logger="pyrit.score.true_false.true_false_score_aggregator"):
+        scores = await composite.score_async(mock_request)
+
+    assert len(scores) == 1
+    assert scores[0].get_value() is False
+    assert caplog.records == []
+    assert "could not evaluate the response" not in (scores[0].score_rationale or "")
+    metadata = scores[0].score_metadata or {}
+    assert UNSCOREABLE_METADATA_KEY not in metadata
