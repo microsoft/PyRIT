@@ -21,8 +21,10 @@ import {
   applyAppendChild,
   applyInsertBetween,
   applyWrapWithFan,
+  applySetUserTurnConverterPipeline,
+  applySetFanPromotedChild,
 } from './treeStateReducer'
-import { mkRoot, mkSend, mkTree, mkUserTurn, nodeId } from './testHelpers'
+import { mkFan, mkRoot, mkSend, mkTree, mkUserTurn, nodeId } from './testHelpers'
 import type {
   ConversationTree,
   ExecutionRecord,
@@ -290,6 +292,22 @@ describe('applyEditUserTurnText', () => {
 
     expect(after.nodes.find((n) => n.id === nodeId('u2'))?.state).toBe('edited')
   })
+
+  it('setting a converter pipeline marks the UserTurn edited and stales descendants', () => {
+    const before = mkTree('root', [
+      mkRoot('root'),
+      mkUserTurn('u1', 'root'),
+      mkSend('s1', 'u1'),
+    ])
+
+    const after = applySetUserTurnConverterPipeline(before, nodeId('u1'), [{ converterId: 'base64' }])
+
+    const user = after.nodes.find((node) => node.id === nodeId('u1'))
+    const send = after.nodes.find((node) => node.id === nodeId('s1'))
+    expect(user?.state).toBe('edited')
+    expect(user?.kind === 'user_turn' ? user.params.converterPipeline : undefined).toEqual([{ converterId: 'base64' }])
+    expect(send?.state).toBe('stale')
+  })
 })
 
 describe('applyEditRootPromptParams', () => {
@@ -384,5 +402,22 @@ describe('structural insert reducers', () => {
     expect(user?.parentId).toBe(nodeId('new-user'))
     expect(send?.kind).toBe('send')
     expect(send?.parentId).toBe(nodeId('new-send'))
+  })
+})
+
+describe('applySetFanPromotedChild', () => {
+  it('persists promotedChildSlotIndex without marking the fan dirty', () => {
+    const before = mkTree('root', [
+      mkRoot('root'),
+      mkFan('fan', 'root', { axis: 'attempt', variants: [{ axis: 'attempt', payload: {} }, { axis: 'attempt', payload: {} }] }),
+      mkSend('s0', 'fan'),
+      mkSend('s1', 'fan'),
+    ])
+
+    const after = applySetFanPromotedChild(before, nodeId('fan'), 1)
+    const fan = after.nodes.find((node) => node.id === nodeId('fan'))
+
+    expect(fan?.state).toBe('clean')
+    expect(fan?.kind === 'fan' ? fan.params.promotedChildSlotIndex : null).toBe(1)
   })
 })

@@ -7,6 +7,7 @@ import Home from './components/Home/Home'
 import TargetConfig from './components/Config/TargetConfig'
 import AttackHistory from './components/History/AttackHistory'
 import { TreeRunnerHost } from './components/Tree/TreeRunnerHost'
+import type { AvailableConvertersValue } from './components/Tree/availableConvertersContext'
 import { guardedNavigate } from './components/Tree/navigationGuard'
 import { useDirtyEditModal } from './components/Tree/useDirtyEditModal'
 import { parseTreeIdFromUrlFragment } from './runner/workspacePersistence'
@@ -21,7 +22,7 @@ import { createRunWaveStarter } from './runner/runWaveStarter'
 import type { ConversationTree } from './runner/treeTypes'
 import type { ViewName } from './components/Sidebar/Navigation'
 import type { TargetInstance, TargetInfo } from './types'
-import { attacksApi, versionApi } from './services/api'
+import { attacksApi, convertersApi, versionApi } from './services/api'
 
 const AUTO_DISMISS_MS = 5_000
 
@@ -247,6 +248,28 @@ function App() {
 
   /** AR id to auto-reverse into the tree view (spec §5.12 "Open as tree"). */
   const [openTreeFromArId, setOpenTreeFromArId] = useState<string | null>(null)
+  const [availableTreeConverters, setAvailableTreeConverters] = useState<AvailableConvertersValue>(null)
+  useEffect(() => {
+    if (!treeUiEnabled) return
+    let cancelled = false
+    ;(async () => {
+      try {
+        const response = await convertersApi.listConverters()
+        if (cancelled) return
+        setAvailableTreeConverters(
+          response.items.map((converter) => ({
+            id: converter.converter_id,
+            label: converter.display_name ?? converter.converter_type ?? converter.converter_id,
+          })),
+        )
+      } catch {
+        if (!cancelled) setAvailableTreeConverters(null)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [treeUiEnabled])
   const handleOpenAttackAsTree = useCallback(
     (arId: string) => {
       guardedOpenTreeSwap(currentTree, () => {
@@ -326,6 +349,7 @@ function App() {
                   operator={globalLabels.operator ?? null}
                   runWaveStarter={treeRunWaveStarter}
                   openFromAttackResultId={openTreeFromArId}
+                  availableConverters={availableTreeConverters}
                   onTreeChange={(next) => {
                     setTreeReloadDegraded(null)
                     setCurrentTree(next)

@@ -28,6 +28,7 @@ import type {
   ConversationTreeEdge,
   FanNode,
   FanAxis,
+  ConverterRef,
   UserTurnNode,
 } from './treeTypes'
 
@@ -197,6 +198,17 @@ export function applyEditUserTurnText(
     if (node.kind !== 'user_turn') return null
     if (node.params.text === text) return undefined
     return { ...node, params: { ...node.params, text } } satisfies UserTurnNode
+  })
+}
+
+export function applySetUserTurnConverterPipeline(
+  tree: ConversationTree,
+  nodeId: ConversationTreeNodeId,
+  pipeline: ConverterRef[],
+): ConversationTree {
+  return applyEditParams(tree, nodeId, (node) => {
+    if (node.kind !== 'user_turn') return null
+    return { ...node, params: { ...node.params, converterPipeline: pipeline } } satisfies UserTurnNode
   })
 }
 
@@ -414,4 +426,19 @@ function id(raw: string): ConversationTreeNodeId {
 
 function edge(parentId: ConversationTreeNodeId, childId: ConversationTreeNodeId, slotIndex: number): ConversationTreeEdge {
   return { id: `${parentId}->${childId}`, parentId, childId, slotIndex }
+}
+
+export function applySetFanPromotedChild(
+  tree: ConversationTree,
+  fanNodeId: ConversationTreeNodeId,
+  slotIndex: number | null,
+): ConversationTree {
+  return replaceNode(tree, fanNodeId, (node) => {
+    if (node.kind !== 'fan') return null
+    if (node.params.promotedChildSlotIndex === slotIndex) return null
+    return {
+      ...bumpBase(node),
+      params: { ...node.params, promotedChildSlotIndex: slotIndex },
+    } satisfies FanNode
+  })
 }

@@ -20,7 +20,7 @@ import type { ConversationTree } from '../../runner/treeTypes'
 import type { RunnerShim, RunWaveStarter, RunWaveStarterArgs } from '../../runner/shim'
 import type { WorkspacePersistenceDeps } from './useWorkspacePersistence'
 import type { WaveSummary } from '../../runner/wave'
-import { mkRoot, mkSend, mkTree, mkUserTurn, nodeId, treeId } from '../../runner/testHelpers'
+import { mkFan, mkRoot, mkSend, mkTree, mkUserTurn, nodeId, treeId } from '../../runner/testHelpers'
 import { STORAGE_KEYS } from '../../runner/workspacePersistence'
 
 // ============================================================================
@@ -649,13 +649,27 @@ describe('TreeRunnerHost — cost-guardrail modal', () => {
       />,
     )
 
-    const button = container.querySelector('[data-tree-node-id="s1"] button[aria-label="Refresh"]')
+    const button = container.querySelector('[data-tree-node-id="s1"] button[aria-label^="Refresh"]')
     if (button === null) throw new Error('refresh button missing')
 
     await act(async () => {
       fireEvent.click(button)
       await waitFor(() => expect(starter).toHaveBeenCalled())
     })
+  })
+
+  it('Refresh aria-label includes subtree cost preview', () => {
+    const tree = mkTree('root', [
+      mkRoot('root'),
+      mkUserTurn('u1', 'root'),
+      mkSend('s1', 'u1', undefined, { state: 'stale' }),
+    ], { id: 't-cost-preview' })
+
+    const { container } = render(<TreeRunnerHost tree={tree} operator="alice" />)
+
+    const button = container.querySelector('[data-tree-node-id="s1"] button[aria-label*="Refresh"]')
+    expect(button?.getAttribute('aria-label')).toMatch(/2 calls/i)
+    expect(button?.getAttribute('aria-label')).toMatch(/1 leaf/i)
   })
 
   it('clicking Cancel in the cost-guardrail dialog aborts the wave', async () => {
@@ -965,6 +979,57 @@ describe('TreeRunnerHost — integrated editing', () => {
     expect(byId.get(nodeId('u1'))?.state).toBe('edited')
     expect(byId.get(nodeId('u1'))?.params).toMatchObject({ text: 'new text' })
     expect(byId.get(nodeId('s1'))?.state).toBe('stale')
+  })
+
+  it('persists converter palette changes and stales downstream response', async () => {
+    const tree = mkTree('root', [
+      mkRoot('root'),
+      mkUserTurn('u1', 'root', { text: 'old text' }),
+      mkSend('s1', 'u1'),
+    ], { id: 't-converter-edit' })
+    const onTreeChange = jest.fn()
+
+    render(
+      <TreeRunnerHost
+        tree={tree}
+        onTreeChange={onTreeChange}
+        availableConverters={[{ id: 'base64', label: 'Base64 encoder' }]}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: /converter palette/i }))
+    const item = Array.from(document.querySelectorAll('[role="menuitem"]')).find((el) =>
+      el.textContent?.includes('Base64 encoder'),
+    ) as HTMLElement | undefined
+    expect(item).toBeDefined()
+    fireEvent.click(item!)
+
+    await waitFor(() => expect(onTreeChange).toHaveBeenCalled())
+    const next = onTreeChange.mock.calls.at(-1)?.[0] as ConversationTree
+    const byId = new Map(next.nodes.map((node) => [node.id, node]))
+    const user = byId.get(nodeId('u1'))
+    expect(user?.state).toBe('edited')
+    expect(user?.kind === 'user_turn' ? user.params.converterPipeline : undefined).toEqual([{ converterId: 'base64' }])
+    expect(byId.get(nodeId('s1'))?.state).toBe('stale')
+  })
+
+  it('persists fan child Pick/Unpick visual state', async () => {
+    const tree = mkTree('root', [
+      mkRoot('root'),
+      mkFan('fan', 'root', { axis: 'attempt', variants: [{ axis: 'attempt', payload: {} }, { axis: 'attempt', payload: {} }] }),
+      mkSend('s0', 'fan'),
+      mkSend('s1', 'fan'),
+    ], { id: 't-pick-fan' })
+    const onTreeChange = jest.fn()
+
+    render(<TreeRunnerHost tree={tree} onTreeChange={onTreeChange} />)
+
+    fireEvent.click(screen.getAllByRole('button', { name: /pick this attempt/i })[1])
+
+    await waitFor(() => expect(onTreeChange).toHaveBeenCalled())
+    const next = onTreeChange.mock.calls.at(-1)?.[0] as ConversationTree
+    const fan = next.nodes.find((node) => node.id === nodeId('fan'))
+    expect(fan?.kind === 'fan' ? fan.params.promotedChildSlotIndex : null).toBe(1)
   })
 
   it('adds a follow-up prompt under a response card', async () => {

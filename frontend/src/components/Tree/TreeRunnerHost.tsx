@@ -53,12 +53,16 @@ import {
   applyInsertBetween,
   applyWrapWithFan,
   applyRecordExecution,
+  applySetFanPromotedChild,
   applySetNodeState,
   applySetReflogPinned,
+  applySetUserTurnConverterPipeline,
 } from '../../runner/treeStateReducer'
 import {
   createBroadcastChannelLockManager,
 } from '../../runner/crossTabLock'
+import { estimateRefreshCost } from '../../runner/estimateRefreshCost'
+import { buildSForSubtree } from '../../runner/readiness'
 import { createRunnerShim, type RunWaveStarter, type RunnerShim } from '../../runner/shim'
 import type {
   ConversationTree,
@@ -422,6 +426,11 @@ export function TreeRunnerHost({
       onRefresh: (nodeIdArg: ConversationTreeNodeId) => {
         void shim.refreshSubtree(treeIdForCallbacks, nodeIdArg)
       },
+      getRefreshCost: (nodeIdArg) => {
+        const current = treeRef.current
+        if (current === null) return { calls: 0, leaves: 0 }
+        return estimateRefreshCost(current, buildSForSubtree(current, nodeIdArg))
+      },
       onEditUserTurnText: (nodeIdArg, newText) => {
         const current = treeRef.current
         if (current === null) return
@@ -463,6 +472,24 @@ export function TreeRunnerHost({
         const current = treeRef.current
         if (current === null) return
         const next = applyEdgeInsert(current, parentIdArg, childIdArg, kind, () => crypto.randomUUID())
+        if (next !== current) {
+          treeRef.current = next
+          onTreeChangeRef.current?.(next)
+        }
+      },
+      onSetUserTurnConverterPipeline: (nodeIdArg, pipeline) => {
+        const current = treeRef.current
+        if (current === null) return
+        const next = applySetUserTurnConverterPipeline(current, nodeIdArg, pipeline)
+        if (next !== current) {
+          treeRef.current = next
+          onTreeChangeRef.current?.(next)
+        }
+      },
+      onPickFanChild: (fanNodeId, slotIndex) => {
+        const current = treeRef.current
+        if (current === null) return
+        const next = applySetFanPromotedChild(current, fanNodeId, slotIndex)
         if (next !== current) {
           treeRef.current = next
           onTreeChangeRef.current?.(next)

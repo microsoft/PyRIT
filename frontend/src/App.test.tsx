@@ -21,6 +21,9 @@ jest.mock("./services/api", () => ({
     createAttack: jest.fn(),
     deleteAttack: jest.fn(),
   },
+  convertersApi: {
+    listConverters: jest.fn().mockResolvedValue({ items: [] }),
+  },
   versionApi: {
     getVersion: jest.fn().mockResolvedValue({ version: "1.0.0" }),
   },
