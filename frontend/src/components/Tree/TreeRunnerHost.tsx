@@ -43,12 +43,15 @@ import {
 } from './useReloadReconstruction'
 import { useAutoReverse, type UseAutoReverseApi } from './useAutoReverse'
 import { useTreeRunnerHostStyles } from './TreeRunnerHost.styles'
-import type { ActionCallbacks } from './actionRail'
+import type { ActionCallbacks, AppendChildKind, EdgeInsertKind } from './actionRail'
 import type { AvailableConvertersValue } from './availableConvertersContext'
 import {
   applyClearExecution,
+  applyAppendChild,
   applyEditRootPromptParams,
   applyEditUserTurnText,
+  applyInsertBetween,
+  applyWrapWithFan,
   applyRecordExecution,
   applySetNodeState,
   applySetReflogPinned,
@@ -437,6 +440,34 @@ export function TreeRunnerHost({
           onTreeChangeRef.current?.(next)
         }
       },
+      onAppendChild: (parentIdArg, kind) => {
+        const current = treeRef.current
+        if (current === null) return
+        const next = applyAppendChild(current, parentIdArg, kind, () => crypto.randomUUID())
+        if (next !== current) {
+          treeRef.current = next
+          onTreeChangeRef.current?.(next)
+        }
+      },
+      onCreateFanFromNode: (nodeIdArg, axis) => {
+        const current = treeRef.current
+        const node = current?.nodes.find((candidate) => candidate.id === nodeIdArg)
+        if (current === null || node === undefined || node.parentId === null) return
+        const next = applyWrapWithFan(current, node.parentId, nodeIdArg, axis, () => crypto.randomUUID())
+        if (next !== current) {
+          treeRef.current = next
+          onTreeChangeRef.current?.(next)
+        }
+      },
+      onEdgeInsert: (parentIdArg, childIdArg, kind) => {
+        const current = treeRef.current
+        if (current === null) return
+        const next = applyEdgeInsert(current, parentIdArg, childIdArg, kind, () => crypto.randomUUID())
+        if (next !== current) {
+          treeRef.current = next
+          onTreeChangeRef.current?.(next)
+        }
+      },
     }
     if (actionCallbacks === undefined) return defaults
     return { ...defaults, ...actionCallbacks }
@@ -493,5 +524,19 @@ export function TreeRunnerHost({
       </div>
     </div>
   )
+}
+
+function applyEdgeInsert(
+  tree: ConversationTree,
+  parentId: ConversationTreeNodeId,
+  childId: ConversationTreeNodeId,
+  kind: EdgeInsertKind,
+  uuid: () => string,
+): ConversationTree {
+  if (kind === 'fan_attempt') return applyWrapWithFan(tree, parentId, childId, 'attempt', uuid)
+  if (kind === 'fan_converter' || kind === 'append_converter') {
+    return applyWrapWithFan(tree, parentId, childId, 'converter', uuid)
+  }
+  return applyInsertBetween(tree, parentId, childId, kind as AppendChildKind, uuid)
 }
 

@@ -56,6 +56,8 @@ export type EdgeInsertKind =
   | 'fan_attempt'
   | 'fan_converter'
 
+export type AppendChildKind = 'follow_up_user_turn' | 'inject_assistant_text' | 'send' | 'score'
+
 /**
  * Callback bag the host wires through TreeCanvas. Each callback is
  * optional — an undefined entry hides its button so PR5c can ship the
@@ -82,6 +84,10 @@ export interface ActionCallbacks {
     childId: ConversationTreeNodeId,
     kind: EdgeInsertKind,
   ) => void
+  /** Add a new child below a leaf or branch point. Used by node-level “add follow-up” affordances. */
+  onAppendChild?: (parentId: ConversationTreeNodeId, kind: AppendChildKind) => void
+  /** Wrap this node's incoming edge with a fan. Used by response-level attempt/converter fan affordances. */
+  onCreateFanFromNode?: (nodeId: ConversationTreeNodeId, axis: 'attempt' | 'converter') => void
   /**
    * Pick / Unpick a fan child (PR5f). `slotIndex` of the chosen child
    * (or `null` to unpick — clears the fan's promotedChildSlotIndex).

@@ -52,6 +52,8 @@ export function useMemoizedActionCallbacks(
       callbacks?.onDelete,
       callbacks?.onOpenLinear,
       callbacks?.onEdgeInsert,
+      callbacks?.onAppendChild,
+      callbacks?.onCreateFanFromNode,
       callbacks?.onPickFanChild,
       callbacks?.onEditUserTurnText,
       callbacks?.onEditRootPromptParams,

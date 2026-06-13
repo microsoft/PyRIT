@@ -18,6 +18,9 @@ import {
   applySetReflogPinned,
   applyEditRootPromptParams,
   applyEditUserTurnText,
+  applyAppendChild,
+  applyInsertBetween,
+  applyWrapWithFan,
 } from './treeStateReducer'
 import { mkRoot, mkSend, mkTree, mkUserTurn, nodeId } from './testHelpers'
 import type {
@@ -309,5 +312,77 @@ describe('applyEditRootPromptParams', () => {
     expect(root?.params.systemPrompt).toBeUndefined()
     expect(after.nodes.find((n) => n.id === nodeId('u1'))?.state).toBe('stale')
     expect(after.nodes.find((n) => n.id === nodeId('s1'))?.state).toBe('stale')
+  })
+})
+
+// ============================================================================
+// Structural edits
+// ============================================================================
+
+describe('structural insert reducers', () => {
+  const ids = ['new-user', 'new-send', 'new-fan', 'fan-send', 'fan-user', 'fan-user-send']
+  const uuid = jest.fn(() => ids.shift() ?? 'fallback-id')
+
+  beforeEach(() => {
+    ids.splice(0, ids.length, 'new-user', 'new-send', 'new-fan', 'fan-send', 'fan-user', 'fan-user-send')
+    uuid.mockClear()
+  })
+
+  it('appends a follow-up user turn under a leaf response', () => {
+    const before = mkTree('root', [mkRoot('root'), mkSend('s1', 'root')])
+
+    const after = applyAppendChild(before, nodeId('s1'), 'follow_up_user_turn', uuid)
+
+    const added = after.nodes.find((node) => node.id === nodeId('new-user'))
+    expect(added?.kind).toBe('user_turn')
+    expect(added?.parentId).toBe(nodeId('s1'))
+    expect(added?.state).toBe('edited')
+    expect(after.edges.some((edge) => edge.parentId === nodeId('s1') && edge.childId === nodeId('new-user'))).toBe(true)
+  })
+
+  it('inserts a node between an existing parent and child edge', () => {
+    const before = mkTree('root', [mkRoot('root'), mkSend('s1', 'root')])
+
+    const after = applyInsertBetween(before, nodeId('root'), nodeId('s1'), 'follow_up_user_turn', uuid)
+
+    const inserted = after.nodes.find((node) => node.id === nodeId('new-user'))
+    const child = after.nodes.find((node) => node.id === nodeId('s1'))
+    expect(inserted?.parentId).toBe(nodeId('root'))
+    expect(child?.parentId).toBe(nodeId('new-user'))
+    expect(after.edges.some((edge) => edge.parentId === nodeId('root') && edge.childId === nodeId('new-user'))).toBe(true)
+    expect(after.edges.some((edge) => edge.parentId === nodeId('new-user') && edge.childId === nodeId('s1'))).toBe(true)
+  })
+
+  it('wraps an existing response edge in an attempt fan and adds a fresh response slot', () => {
+    const before = mkTree('root', [mkRoot('root'), mkSend('s1', 'root')])
+
+    const after = applyWrapWithFan(before, nodeId('root'), nodeId('s1'), 'attempt', uuid)
+
+    const fan = after.nodes.find((node) => node.id === nodeId('new-user'))
+    const originalSend = after.nodes.find((node) => node.id === nodeId('s1'))
+    const siblingSend = after.nodes.find((node) => node.id === nodeId('new-send'))
+    expect(fan?.kind).toBe('fan')
+    expect(fan?.kind === 'fan' ? fan.params.axis : null).toBe('attempt')
+    expect(originalSend?.parentId).toBe(nodeId('new-user'))
+    expect(siblingSend?.kind).toBe('send')
+    expect(siblingSend?.parentId).toBe(nodeId('new-user'))
+    expect(after.edges.find((edge) => edge.parentId === nodeId('new-user') && edge.childId === nodeId('s1'))?.slotIndex).toBe(0)
+    expect(after.edges.find((edge) => edge.parentId === nodeId('new-user') && edge.childId === nodeId('new-send'))?.slotIndex).toBe(1)
+  })
+
+  it('wraps an existing response edge in a converter fan and adds a fresh converter branch', () => {
+    const before = mkTree('root', [mkRoot('root'), mkSend('s1', 'root')])
+
+    const after = applyWrapWithFan(before, nodeId('root'), nodeId('s1'), 'converter', uuid)
+
+    const fan = after.nodes.find((node) => node.id === nodeId('new-user'))
+    const user = after.nodes.find((node) => node.id === nodeId('new-send'))
+    const send = after.nodes.find((node) => node.id === nodeId('new-fan'))
+    expect(fan?.kind).toBe('fan')
+    expect(fan?.kind === 'fan' ? fan.params.axis : null).toBe('converter')
+    expect(user?.kind).toBe('user_turn')
+    expect(user?.parentId).toBe(nodeId('new-user'))
+    expect(send?.kind).toBe('send')
+    expect(send?.parentId).toBe(nodeId('new-send'))
   })
 })

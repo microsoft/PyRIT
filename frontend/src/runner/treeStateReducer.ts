@@ -25,10 +25,14 @@ import type {
   NodeState,
   ReflogEntry,
   RootPromptNode,
+  ConversationTreeEdge,
+  FanNode,
+  FanAxis,
   UserTurnNode,
 } from './treeTypes'
 
 const DEFAULT_REFLOG_CAP = 50
+const NOW_FALLBACK_TEXT = 'New prompt'
 
 function nowIso(): string {
   return new Date().toISOString()
@@ -262,4 +266,152 @@ function descendantIds(
     queue.push(...(childrenByParent.get(id) ?? []))
   }
   return out
+}
+
+// ============================================================================
+// Structural edits — insert/append/fan wrappers
+// ============================================================================
+
+export type InsertNodeKind = 'follow_up_user_turn' | 'inject_assistant_text' | 'send' | 'score'
+
+export function applyAppendChild(
+  tree: ConversationTree,
+  parentId: ConversationTreeNodeId,
+  kind: InsertNodeKind,
+  uuid: () => string,
+): ConversationTree {
+  const parent = tree.nodes.find((node) => node.id === parentId)
+  if (parent === undefined) return tree
+  const newNode = createInsertedNode(kind, parentId, uuid)
+  return {
+    ...tree,
+    nodes: [...tree.nodes, newNode],
+    edges: [...tree.edges, edge(parentId, newNode.id, 0)],
+  }
+}
+
+export function applyInsertBetween(
+  tree: ConversationTree,
+  parentId: ConversationTreeNodeId,
+  childId: ConversationTreeNodeId,
+  kind: InsertNodeKind,
+  uuid: () => string,
+): ConversationTree {
+  const edgeIndex = tree.edges.findIndex((candidate) => candidate.parentId === parentId && candidate.childId === childId)
+  if (edgeIndex === -1) return tree
+  const childIndex = tree.nodes.findIndex((node) => node.id === childId)
+  if (childIndex === -1) return tree
+  const newNode = createInsertedNode(kind, parentId, uuid)
+  const originalEdge = tree.edges[edgeIndex]
+  const nodes = tree.nodes.slice()
+  nodes[childIndex] = { ...bumpBase(nodes[childIndex]), parentId: newNode.id }
+  nodes.push(newNode)
+  const edges = tree.edges.slice()
+  edges.splice(
+    edgeIndex,
+    1,
+    edge(parentId, newNode.id, originalEdge.slotIndex),
+    edge(newNode.id, childId, 0),
+  )
+  return { ...tree, nodes, edges }
+}
+
+export function applyWrapWithFan(
+  tree: ConversationTree,
+  parentId: ConversationTreeNodeId,
+  childId: ConversationTreeNodeId,
+  axis: Extract<FanAxis, 'attempt' | 'converter'>,
+  uuid: () => string,
+): ConversationTree {
+  const edgeIndex = tree.edges.findIndex((candidate) => candidate.parentId === parentId && candidate.childId === childId)
+  if (edgeIndex === -1) return tree
+  const childIndex = tree.nodes.findIndex((node) => node.id === childId)
+  if (childIndex === -1) return tree
+
+  const originalEdge = tree.edges[edgeIndex]
+  const fanId = id(uuid())
+  const fan: FanNode = {
+    ...baseNode(fanId, parentId),
+    kind: 'fan',
+    params: {
+      axis,
+      variants: axis === 'attempt'
+        ? [{ axis: 'attempt', payload: {} }, { axis: 'attempt', payload: {} }]
+        : [{ axis: 'converter', payload: { converters: [] } }, { axis: 'converter', payload: { converters: [] } }],
+      promotedChildSlotIndex: null,
+      deletedSlotIndices: [],
+    },
+  }
+
+  const nodes = tree.nodes.slice()
+  nodes[childIndex] = { ...bumpBase(nodes[childIndex]), parentId: fanId }
+  nodes.push(fan)
+  const edges = tree.edges.slice()
+  edges.splice(edgeIndex, 1, edge(parentId, fanId, originalEdge.slotIndex), edge(fanId, childId, 0))
+
+  if (axis === 'attempt') {
+    const sibling = createInsertedNode('send', fanId, uuid)
+    nodes.push(sibling)
+    edges.push(edge(fanId, sibling.id, 1))
+  } else {
+    const user = createInsertedNode('follow_up_user_turn', fanId, uuid)
+    const send = createInsertedNode('send', user.id, uuid)
+    nodes.push(user, send)
+    edges.push(edge(fanId, user.id, 1), edge(user.id, send.id, 0))
+  }
+
+  return { ...tree, nodes, edges }
+}
+
+function createInsertedNode(
+  kind: InsertNodeKind,
+  parentId: ConversationTreeNodeId,
+  uuid: () => string,
+): ConversationTreeNode {
+  const nodeId = id(uuid())
+  switch (kind) {
+    case 'follow_up_user_turn':
+      return {
+        ...baseNode(nodeId, parentId),
+        kind: 'user_turn',
+        state: 'edited',
+        params: { role: 'user', text: NOW_FALLBACK_TEXT, attachments: [] },
+      }
+    case 'inject_assistant_text':
+      return {
+        ...baseNode(nodeId, parentId),
+        kind: 'user_turn',
+        state: 'edited',
+        params: { role: 'simulated_assistant', text: NOW_FALLBACK_TEXT, attachments: [] },
+      }
+    case 'send':
+      return { ...baseNode(nodeId, parentId), kind: 'send', state: 'stale', params: {} }
+    case 'score':
+      return { ...baseNode(nodeId, parentId), kind: 'score', params: { scorerType: 'manual' } }
+  }
+}
+
+function baseNode(nodeId: ConversationTreeNodeId, parentId: ConversationTreeNodeId): Omit<ConversationTreeNode, 'kind' | 'params'> {
+  const now = nowIso()
+  return {
+    id: nodeId,
+    parentId,
+    resolvedInputHash: '',
+    state: 'clean',
+    execution: null,
+    executionHistory: [],
+    lastError: null,
+    labels: {},
+    createdAt: now,
+    updatedAt: now,
+    version: 1,
+  }
+}
+
+function id(raw: string): ConversationTreeNodeId {
+  return raw as ConversationTreeNodeId
+}
+
+function edge(parentId: ConversationTreeNodeId, childId: ConversationTreeNodeId, slotIndex: number): ConversationTreeEdge {
+  return { id: `${parentId}->${childId}`, parentId, childId, slotIndex }
 }

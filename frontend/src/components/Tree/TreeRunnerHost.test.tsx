@@ -966,6 +966,54 @@ describe('TreeRunnerHost — integrated editing', () => {
     expect(byId.get(nodeId('u1'))?.params).toMatchObject({ text: 'new text' })
     expect(byId.get(nodeId('s1'))?.state).toBe('stale')
   })
+
+  it('adds a follow-up prompt under a response card', async () => {
+    const tree = mkTree('root', [mkRoot('root'), mkSend('s1', 'root')], { id: 't-add-follow-up' })
+    const onTreeChange = jest.fn()
+
+    render(<TreeRunnerHost tree={tree} onTreeChange={onTreeChange} />)
+
+    fireEvent.click(screen.getByRole('button', { name: /add follow-up prompt/i }))
+
+    await waitFor(() => expect(onTreeChange).toHaveBeenCalled())
+    const next = onTreeChange.mock.calls.at(-1)?.[0] as ConversationTree
+    const added = next.nodes.find((node) => node.parentId === nodeId('s1'))
+    expect(added?.kind).toBe('user_turn')
+    expect(added?.state).toBe('edited')
+  })
+
+  it('fans out an existing response into attempt variants', async () => {
+    const tree = mkTree('root', [mkRoot('root'), mkSend('s1', 'root')], { id: 't-fan-attempt' })
+    const onTreeChange = jest.fn()
+
+    render(<TreeRunnerHost tree={tree} onTreeChange={onTreeChange} />)
+
+    fireEvent.click(screen.getByRole('button', { name: /fan out response attempts/i }))
+
+    await waitFor(() => expect(onTreeChange).toHaveBeenCalled())
+    const next = onTreeChange.mock.calls.at(-1)?.[0] as ConversationTree
+    const fan = next.nodes.find((node) => node.kind === 'fan')
+    const sends = next.nodes.filter((node) => node.kind === 'send')
+    expect(fan?.kind).toBe('fan')
+    expect(fan?.kind === 'fan' ? fan.params.axis : null).toBe('attempt')
+    expect(sends).toHaveLength(2)
+  })
+
+  it('fans out an existing response into converter variants', async () => {
+    const tree = mkTree('root', [mkRoot('root'), mkSend('s1', 'root')], { id: 't-fan-converter' })
+    const onTreeChange = jest.fn()
+
+    render(<TreeRunnerHost tree={tree} onTreeChange={onTreeChange} />)
+
+    fireEvent.click(screen.getByRole('button', { name: /fan out converters/i }))
+
+    await waitFor(() => expect(onTreeChange).toHaveBeenCalled())
+    const next = onTreeChange.mock.calls.at(-1)?.[0] as ConversationTree
+    const fan = next.nodes.find((node) => node.kind === 'fan')
+    expect(fan?.kind).toBe('fan')
+    expect(fan?.kind === 'fan' ? fan.params.axis : null).toBe('converter')
+    expect(next.nodes.some((node) => node.kind === 'user_turn' && node.parentId === fan?.id)).toBe(true)
+  })
 })
 
 // ============================================================================
