@@ -27,7 +27,7 @@ from pyrit.prompt_converter import (
     SuffixAppendConverter,
 )
 from pyrit.prompt_converter.prompt_converter import get_converter_modalities
-from pyrit.registry.object_registries import ConverterRegistry
+from pyrit.registry.components import ConverterRegistry
 
 
 @pytest.fixture(autouse=True)
@@ -53,8 +53,7 @@ class TestListConverters:
         """Test that list_converters returns converters from registry with full params."""
         service = ConverterService()
 
-        mock_converter = MagicMock()
-        mock_converter.__class__.__name__ = "MockConverter"
+        mock_converter = MagicMock(spec=prompt_converter.PromptConverter)
         mock_identifier = ComponentIdentifier(
             class_name="MockConverter",
             class_module="tests.unit.backend.test_converter_service",
@@ -66,7 +65,7 @@ class TestListConverters:
             },
         )
         mock_converter.get_identifier.return_value = mock_identifier
-        service._registry.register_instance(mock_converter, name="conv-1")
+        service._registry.instances.register(mock_converter, name="conv-1")
 
         result = await service.list_converters_async()
 
@@ -171,8 +170,7 @@ class TestGetConverter:
         """Test that get_converter returns converter built from registry object."""
         service = ConverterService()
 
-        mock_converter = MagicMock()
-        mock_converter.__class__.__name__ = "MockConverter"
+        mock_converter = MagicMock(spec=prompt_converter.PromptConverter)
         mock_identifier = ComponentIdentifier(
             class_name="MockConverter",
             class_module="tests.unit.backend.test_converter_service",
@@ -183,7 +181,7 @@ class TestGetConverter:
             },
         )
         mock_converter.get_identifier.return_value = mock_identifier
-        service._registry.register_instance(mock_converter, name="conv-1")
+        service._registry.instances.register(mock_converter, name="conv-1")
 
         result = await service.get_converter_async(converter_id="conv-1")
 
@@ -206,8 +204,8 @@ class TestGetConverterObject:
     def test_get_converter_object_returns_object_from_registry(self) -> None:
         """Test that get_converter_object returns the actual converter object."""
         service = ConverterService()
-        mock_converter = MagicMock()
-        service._registry.register_instance(mock_converter, name="conv-1")
+        mock_converter = MagicMock(spec=prompt_converter.PromptConverter)
+        service._registry.instances.register(mock_converter, name="conv-1")
 
         result = service.get_converter_object(converter_id="conv-1")
 
@@ -278,8 +276,8 @@ class TestResolveConverterParams:
         service = ConverterService()
 
         # Register a mock converter
-        mock_converter = MagicMock()
-        service._registry.register_instance(mock_converter, name="inner-conv")
+        mock_converter = MagicMock(spec=prompt_converter.PromptConverter)
+        service._registry.instances.register(mock_converter, name="inner-conv")
 
         params = {"converter": {"converter_id": "inner-conv"}}
 
@@ -326,13 +324,12 @@ class TestPreviewConversion:
         """Test preview with converter IDs."""
         service = ConverterService()
 
-        mock_converter = MagicMock()
-        mock_converter.__class__.__name__ = "MockConverter"
+        mock_converter = MagicMock(spec=prompt_converter.PromptConverter)
         mock_result = MagicMock()
         mock_result.output_text = "encoded_value"
         mock_result.output_type = "text"
         mock_converter.convert_async = AsyncMock(return_value=mock_result)
-        service._registry.register_instance(mock_converter, name="conv-1")
+        service._registry.instances.register(mock_converter, name="conv-1")
 
         request = ConverterPreviewRequest(
             original_value="test",
@@ -351,22 +348,20 @@ class TestPreviewConversion:
         """Test that preview chains multiple converters."""
         service = ConverterService()
 
-        mock_converter1 = MagicMock()
-        mock_converter1.__class__.__name__ = "MockConverter1"
+        mock_converter1 = MagicMock(spec=prompt_converter.PromptConverter)
         mock_result1 = MagicMock()
         mock_result1.output_text = "step1_output"
         mock_result1.output_type = "text"
         mock_converter1.convert_async = AsyncMock(return_value=mock_result1)
 
-        mock_converter2 = MagicMock()
-        mock_converter2.__class__.__name__ = "MockConverter2"
+        mock_converter2 = MagicMock(spec=prompt_converter.PromptConverter)
         mock_result2 = MagicMock()
         mock_result2.output_text = "step2_output"
         mock_result2.output_type = "text"
         mock_converter2.convert_async = AsyncMock(return_value=mock_result2)
 
-        service._registry.register_instance(mock_converter1, name="conv-1")
-        service._registry.register_instance(mock_converter2, name="conv-2")
+        service._registry.instances.register(mock_converter1, name="conv-1")
+        service._registry.instances.register(mock_converter2, name="conv-2")
 
         request = ConverterPreviewRequest(
             original_value="input",
@@ -395,10 +390,10 @@ class TestGetConverterObjectsForIds:
         """Test that method returns converter objects in order."""
         service = ConverterService()
 
-        mock1 = MagicMock()
-        mock2 = MagicMock()
-        service._registry.register_instance(mock1, name="conv-1")
-        service._registry.register_instance(mock2, name="conv-2")
+        mock1 = MagicMock(spec=prompt_converter.PromptConverter)
+        mock2 = MagicMock(spec=prompt_converter.PromptConverter)
+        service._registry.instances.register(mock1, name="conv-1")
+        service._registry.instances.register(mock2, name="conv-2")
 
         result = service.get_converter_objects_for_ids(converter_ids=["conv-1", "conv-2"])
 

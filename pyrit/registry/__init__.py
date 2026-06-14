@@ -14,18 +14,24 @@ from pyrit.registry.class_registries import (
     ScenarioParameterMetadata,
     ScenarioRegistry,
 )
-from pyrit.registry.container_registry import ContainerRegistry
+from pyrit.registry.components import (
+    ConverterMetadata,
+    ConverterParameterMetadata,
+    ConverterRegistry,
+)
 from pyrit.registry.discovery import (
     discover_in_directory,
     discover_in_package,
     discover_subclasses_in_loaded_modules,
 )
+from pyrit.registry.instance_registry import (
+    DefaultInstanceRegistry,
+    InstanceRegistry,
+    SupportsInstances,
+)
 from pyrit.registry.object_registries import (
     AttackTechniqueRegistry,
     BaseInstanceRegistry,
-    ConverterMetadata,
-    ConverterParameterMetadata,
-    ConverterRegistry,
     RegistryEntry,
     RetrievableInstanceRegistry,
     ScorerRegistry,
@@ -38,11 +44,13 @@ __all__ = [
     "BaseClassRegistry",
     "BaseInstanceRegistry",
     "BuildableRegistry",
-    "ContainerRegistry",
     "ConverterMetadata",
     "ConverterParameterMetadata",
     "ConverterRegistry",
+    "DefaultInstanceRegistry",
+    "InstanceRegistry",
     "RetrievableInstanceRegistry",
+    "SupportsInstances",
     "ClassEntry",
     "discover_in_directory",
     "discover_in_package",

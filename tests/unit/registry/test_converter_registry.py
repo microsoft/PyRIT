@@ -25,14 +25,16 @@ from pyrit.prompt_converter import (
     VariationConverter,
 )
 from pyrit.prompt_target import PromptTarget, TargetCapabilities, TargetConfiguration
-from pyrit.registry.object_registries import (
+from pyrit.registry.components import (
     ConverterMetadata,
     ConverterRegistry,
-    TargetRegistry,
 )
-from pyrit.registry.object_registries.converter_registry import (
+from pyrit.registry.components.converter_registry import (
     _extract_parameters,
     _requires_llm_target,
+)
+from pyrit.registry.object_registries import (
+    TargetRegistry,
 )
 
 
@@ -113,7 +115,7 @@ def registry():
 
 
 # ---------------------------------------------------------------------------
-# Instance container (the registry's primary surface)
+# Instance container (reached via the ``instances`` property)
 # ---------------------------------------------------------------------------
 
 
@@ -139,96 +141,105 @@ class TestConverterRegistrySingleton:
 
 
 class TestConverterRegistryRegisterInstance:
-    """Tests for register_instance functionality in ConverterRegistry."""
+    """Tests for instance registration via the ``instances`` property."""
 
     def test_register_instance_with_custom_name(self, registry: ConverterRegistry):
         converter = MockTextConverter()
-        registry.register_instance(converter, name="custom_converter")
+        registry.instances.register(converter, name="custom_converter")
 
-        assert "custom_converter" in registry
-        assert registry.get_instance_by_name("custom_converter") is converter
+        assert "custom_converter" in registry.instances
+        assert registry.instances.get("custom_converter") is converter
 
     def test_register_instance_generates_name_from_class(self, registry: ConverterRegistry):
         converter = MockTextConverter()
-        registry.register_instance(converter)
+        registry.instances.register(converter)
 
-        names = registry.get_names()
+        names = registry.instances.get_names()
         assert len(names) == 1
         assert names[0].startswith("MockTextConverter::")
 
     def test_register_instance_multiple_converters_unique_names(self, registry: ConverterRegistry):
-        registry.register_instance(MockTextConverter())
-        registry.register_instance(MockImageConverter())
+        registry.instances.register(MockTextConverter())
+        registry.instances.register(MockImageConverter())
 
-        assert len(registry) == 2
+        assert len(registry.instances) == 2
 
     def test_register_instance_duplicate_name_overwrites(self, registry: ConverterRegistry):
         converter1 = MockTextConverter()
         converter2 = MockImageConverter()
 
-        registry.register_instance(converter1, name="shared_name")
-        registry.register_instance(converter2, name="shared_name")
+        registry.instances.register(converter1, name="shared_name")
+        registry.instances.register(converter2, name="shared_name")
 
-        assert len(registry) == 1
-        assert registry.get_instance_by_name("shared_name") is converter2
+        assert len(registry.instances) == 1
+        assert registry.instances.get("shared_name") is converter2
+
+    def test_register_instance_rejects_non_converter(self, registry: ConverterRegistry):
+        class NotAConverter:
+            pass
+
+        with pytest.raises(TypeError, match="PromptConverter"):
+            registry.instances.register(NotAConverter())  # type: ignore[arg-type]
+
+        assert len(registry.instances) == 0
 
 
 class TestConverterRegistryGetInstanceByName:
-    """Tests for get_instance_by_name functionality in ConverterRegistry."""
+    """Tests for instance lookup via ``instances.get``."""
 
     def test_get_instance_by_name_returns_converter(self, registry: ConverterRegistry):
         converter = MockTextConverter()
-        registry.register_instance(converter, name="test_converter")
-        assert registry.get_instance_by_name("test_converter") is converter
+        registry.instances.register(converter, name="test_converter")
+        assert registry.instances.get("test_converter") is converter
 
     def test_get_instance_by_name_nonexistent_returns_none(self, registry: ConverterRegistry):
-        assert registry.get_instance_by_name("nonexistent") is None
+        assert registry.instances.get("nonexistent") is None
 
 
 class TestConverterRegistryInstanceMetadata:
-    """Tests for instance-level metadata (list_metadata is the container surface)."""
+    """Tests for instance-level metadata (``instances.list_metadata``)."""
 
     def test_instance_metadata_is_component_identifier(self, registry: ConverterRegistry):
         converter = MockTextConverter()
-        registry.register_instance(converter, name="text_converter")
+        registry.instances.register(converter, name="text_converter")
 
-        metadata = registry.list_metadata()
+        metadata = registry.instances.list_metadata()
         assert len(metadata) == 1
         assert isinstance(metadata[0], ComponentIdentifier)
         assert metadata[0] == converter.get_identifier()
 
     def test_instance_metadata_filter_by_class_name(self, registry: ConverterRegistry):
-        registry.register_instance(MockTextConverter(), name="t1")
-        registry.register_instance(MockTextConverter(), name="t2")
-        registry.register_instance(MockImageConverter(), name="i1")
+        registry.instances.register(MockTextConverter(), name="t1")
+        registry.instances.register(MockTextConverter(), name="t2")
+        registry.instances.register(MockImageConverter(), name="i1")
 
-        metadata = registry.list_metadata(include_filters={"class_name": "MockTextConverter"})
+        metadata = registry.instances.list_metadata(include_filters={"class_name": "MockTextConverter"})
         assert len(metadata) == 2
         assert all(m.class_name == "MockTextConverter" for m in metadata)
 
 
 class TestConverterRegistryContainerProtocol:
-    """Tests for the instance-primary protocol surface."""
+    """Tests for the ``instances`` container protocol surface."""
 
     def test_contains_and_len_and_iter(self, registry: ConverterRegistry):
-        registry.register_instance(MockTextConverter(), name="test_converter")
-        assert "test_converter" in registry
-        assert "unknown_converter" not in registry
-        assert len(registry) == 1
-        assert "test_converter" in list(registry)
+        registry.instances.register(MockTextConverter(), name="test_converter")
+        assert "test_converter" in registry.instances
+        assert "unknown_converter" not in registry.instances
+        assert len(registry.instances) == 1
+        assert "test_converter" in list(registry.instances)
 
     def test_get_names_returns_sorted_list(self, registry: ConverterRegistry):
-        registry.register_instance(MockImageConverter(), name="zeta_converter")
-        registry.register_instance(MockImageConverter(), name="alpha_converter")
-        assert registry.get_names() == ["alpha_converter", "zeta_converter"]
+        registry.instances.register(MockImageConverter(), name="zeta_converter")
+        registry.instances.register(MockImageConverter(), name="alpha_converter")
+        assert registry.instances.get_names() == ["alpha_converter", "zeta_converter"]
 
     def test_get_all_instances_returns_all(self, registry: ConverterRegistry):
         text = MockTextConverter()
         image = MockImageConverter()
-        registry.register_instance(text, name="text_converter")
-        registry.register_instance(image, name="image_converter")
+        registry.instances.register(text, name="text_converter")
+        registry.instances.register(image, name="image_converter")
 
-        entry_map = {e.name: e for e in registry.get_all_instances()}
+        entry_map = {e.name: e for e in registry.instances.get_all_instances()}
         assert entry_map["text_converter"].instance is text
         assert entry_map["image_converter"].instance is image
 
@@ -295,7 +306,7 @@ class TestCreateInstance:
 
     def test_build_does_not_register_instance(self, registry: ConverterRegistry):
         registry.create_instance("Base64Converter")
-        assert len(registry) == 0
+        assert len(registry.instances) == 0
 
     def test_honors_registered_default_kwargs(self, registry: ConverterRegistry):
         registry.register(CaesarConverter, name="CaesarDefault", default_kwargs={"caesar_offset": 5})
@@ -443,7 +454,7 @@ class TestNoBackendDependency:
         import ast
         import inspect
 
-        import pyrit.registry.object_registries.converter_registry as module
+        import pyrit.registry.components.converter_registry as module
 
         tree = ast.parse(inspect.getsource(module))
         imported_modules: list[str] = []

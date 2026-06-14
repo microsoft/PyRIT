@@ -37,7 +37,7 @@ _SIMPLE_TYPES: set[type] = {str, int, float, bool}
 class _NamedInstanceRegistry(Protocol):
     """Structural type for a registry that resolves stored instances by name."""
 
-    def get_instance_by_name(self, name: str) -> Any | None:
+    def get(self, name: str) -> Any | None:
         """Return the instance registered under ``name``, or None."""
         ...
 
@@ -101,8 +101,8 @@ def _resolvable_registries() -> list[tuple[type, Callable[[], _NamedInstanceRegi
     """
     from pyrit.prompt_converter import PromptConverter
     from pyrit.prompt_target import PromptTarget
+    from pyrit.registry.components import ConverterRegistry
     from pyrit.registry.object_registries import (
-        ConverterRegistry,
         ScorerRegistry,
         TargetRegistry,
     )
@@ -110,7 +110,7 @@ def _resolvable_registries() -> list[tuple[type, Callable[[], _NamedInstanceRegi
 
     return [
         (PromptTarget, TargetRegistry.get_registry_singleton),
-        (PromptConverter, ConverterRegistry.get_registry_singleton),
+        (PromptConverter, lambda: ConverterRegistry.get_registry_singleton().instances),
         (Scorer, ScorerRegistry.get_registry_singleton),
     ]
 
@@ -232,7 +232,7 @@ def _resolve_registry_reference(
         return value
 
     registry = getter()
-    instance = registry.get_instance_by_name(value)
+    instance = registry.get(value)
     if instance is not None:
         return instance
 

@@ -12,8 +12,8 @@ registry-reference parameters (e.g. a ``PromptTarget``) are resolved by name —
 the same mechanism for every domain.
 
 Every PyRIT registry is buildable. Registries that additionally hold named
-instances extend ``ContainerRegistry`` (which adds the instance container on top
-of this layer).
+instances expose an ``instances`` property (an ``InstanceRegistry``); the
+buildable layer itself only concerns the class catalog.
 """
 
 from __future__ import annotations
@@ -47,8 +47,9 @@ class BuildableRegistry(BaseClassRegistry[T, MetadataT]):
         """
         Get a sorted list of all registered class names.
 
-        Always reflects the class catalog, even on container registries where the
-        protocol surface (``get_names``) refers to instances.
+        Always reflects the class catalog, even on registries that also hold
+        instances (where the protocol surface ``get_names`` refers to instances on
+        the ``instances`` property, not here).
 
         Returns:
             list[str]: The sorted class-catalog names.
@@ -61,8 +62,8 @@ class BuildableRegistry(BaseClassRegistry[T, MetadataT]):
         Get a registered class by its catalog name.
 
         Overrides the base lookup so the "not found" error lists the class catalog
-        (``get_class_names``) rather than the instance container that a
-        ``ContainerRegistry`` exposes through ``get_names``.
+        (``get_class_names``) rather than the instances held under a registry's
+        ``instances`` property.
 
         Args:
             name (str): The class-catalog name to resolve.

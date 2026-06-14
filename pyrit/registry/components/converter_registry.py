@@ -13,11 +13,11 @@ A single registry for ``PromptConverter`` that both:
 - **holds** pre-configured converter instances registered via initializers or the
   backend.
 
-It extends ``ContainerRegistry``: the class catalog is reached through the
-buildable methods (``get_class``, ``list_class_metadata``,
-``create_instance``) while the instance container is the primary surface
-(``register_instance``, ``get_instance_by_name``, ``get_all_instances``,
-``get_names``).
+It is a ``BuildableRegistry``: the registry's own surface (``get_class``,
+``get_class_names``, ``list_class_metadata``, ``create_instance``) is the buildable
+class catalog. Pre-configured instances live under the ``instances`` property
+(``register``, ``get``, ``get_all_instances``, ``get_names``), a
+``DefaultInstanceRegistry``.
 """
 
 from __future__ import annotations
@@ -29,14 +29,31 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal, NamedTuple, get_args, get_origin
 
 from pyrit.registry.base import ClassRegistryEntry
+from pyrit.registry.buildable_registry import BuildableRegistry
 from pyrit.registry.class_registries.base_class_registry import ClassEntry
-from pyrit.registry.container_registry import ContainerRegistry
+from pyrit.registry.instance_registry import DefaultInstanceRegistry, InstanceRegistry
 from pyrit.registry.resolution import get_union_non_none_args, is_coercible_from_string
 
 if TYPE_CHECKING:
     from pyrit.prompt_converter import PromptConverter
 
 logger = logging.getLogger(__name__)
+
+
+def _prompt_converter_type() -> type[PromptConverter]:
+    """
+    Return the ``PromptConverter`` base class, importing it lazily.
+
+    Used as the ``instance_type`` for the registry's ``instances`` container so
+    a non-converter cannot be registered, without importing the converter
+    package at module load (which would defeat lazy discovery).
+
+    Returns:
+        type[PromptConverter]: The ``PromptConverter`` base class.
+    """
+    from pyrit.prompt_converter import PromptConverter
+
+    return PromptConverter
 
 
 class ConverterParameterMetadata(NamedTuple):
@@ -194,19 +211,33 @@ def _extract_parameters(converter_class: type) -> tuple[ConverterParameterMetada
     return tuple(params)
 
 
-class ConverterRegistry(ContainerRegistry["PromptConverter", ConverterMetadata]):
+class ConverterRegistry(BuildableRegistry["PromptConverter", ConverterMetadata]):
     """
     Registry that discovers, builds, and holds ``PromptConverter`` instances.
 
     Discovers all concrete ``PromptConverter`` subclasses exported from
     ``pyrit.prompt_converter`` (keyed by their exact class name, e.g.
-    ``"Base64Converter"``) for the buildable catalog, and holds pre-configured
-    instances registered via initializers or the backend.
+    ``"Base64Converter"``) for the buildable catalog. Pre-configured instances
+    registered via initializers or the backend are held under the ``instances``
+    property.
 
     Building a converter resolves its arguments through the shared resolver, so
     LLM converters can be constructed by passing a ``converter_target`` that names
     a target in the ``TargetRegistry``.
     """
+
+    def __init__(self, *, lazy_discovery: bool = True) -> None:
+        """
+        Initialize the registry.
+
+        Args:
+            lazy_discovery (bool): If True, class discovery is deferred until first
+                access. If False, discovery runs immediately.
+        """
+        super().__init__(lazy_discovery=lazy_discovery)
+        self.instances: InstanceRegistry[PromptConverter] = DefaultInstanceRegistry(
+            instance_type=_prompt_converter_type
+        )
 
     def _get_registry_name(self, cls: type) -> str:
         """

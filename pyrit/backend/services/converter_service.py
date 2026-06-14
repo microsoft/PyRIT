@@ -40,7 +40,7 @@ from pyrit.models import PromptDataType
 # ``get_union_non_none_args`` is a general type-introspection utility used here to
 # render parameter types for the catalog (a presentation concern owned by this
 # service).
-from pyrit.registry.object_registries import ConverterParameterMetadata, ConverterRegistry
+from pyrit.registry.components import ConverterParameterMetadata, ConverterRegistry
 from pyrit.registry.resolution import get_union_non_none_args
 
 _DATA_TYPE_EXTENSION: dict[str, str] = {
@@ -112,7 +112,7 @@ class ConverterService:
         """
         items = [
             self._build_instance_from_object(converter_id=entry.name, converter_obj=entry.instance)
-            for entry in self._registry.get_all_instances()
+            for entry in self._registry.instances.get_all_instances()
         ]
         return ConverterInstanceListResponse(items=items)
 
@@ -168,7 +168,7 @@ class ConverterService:
         Returns:
             ConverterInstance if found, None otherwise.
         """
-        obj = self._registry.get_instance_by_name(converter_id)
+        obj = self._registry.instances.get(converter_id)
         if obj is None:
             return None
         return self._build_instance_from_object(converter_id=converter_id, converter_obj=obj)
@@ -180,7 +180,7 @@ class ConverterService:
         Returns:
             The PromptConverter object if found, None otherwise.
         """
-        return self._registry.get_instance_by_name(converter_id)
+        return self._registry.instances.get(converter_id)
 
     async def create_converter_async(self, *, request: CreateConverterRequest) -> CreateConverterResponse:
         """
@@ -210,7 +210,7 @@ class ConverterService:
             raise ValueError(f"Converter type '{request.type}' not found") from e
         params = await self._persist_data_uri_params_async(converter_class=converter_class, params=params)
         converter_obj = self._registry.create_instance(request.type, **params)
-        self._registry.register_instance(converter_obj, name=converter_id)
+        self._registry.instances.register(converter_obj, name=converter_id)
 
         return CreateConverterResponse(
             converter_id=converter_id,
