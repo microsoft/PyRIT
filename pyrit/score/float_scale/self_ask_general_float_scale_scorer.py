@@ -107,9 +107,7 @@ class SelfAskGeneralFloatScaleScorer(FloatScaleScorer):
                 "min_value": self._min_value,
                 "max_value": self._max_value,
             },
-            children={
-                "prompt_target": self._prompt_target.get_identifier(),
-            },
+            prompt_target=self._prompt_target.get_identifier(),
         )
 
     async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:

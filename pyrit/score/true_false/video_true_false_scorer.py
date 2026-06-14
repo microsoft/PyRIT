@@ -88,9 +88,7 @@ class VideoTrueFalseScorer(TrueFalseScorer):
                 "image_objective_template": self._video_helper.image_objective_template,
                 "audio_objective_template": self._video_helper.audio_objective_template,
             },
-            children={
-                "sub_scorers": sub_scorer_ids,
-            },
+            sub_scorers=sub_scorer_ids,
         )
 
     async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:

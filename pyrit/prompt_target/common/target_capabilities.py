@@ -7,24 +7,16 @@ from enum import Enum
 from types import MappingProxyType
 from typing import NoReturn, cast
 
-from pyrit.models import PromptDataType
+from pyrit.models.literals import PromptDataType
+from pyrit.models.target_capabilities import CapabilityName, TargetCapabilities
 
-
-class CapabilityName(str, Enum):
-    """
-    Canonical identifiers for target capabilities.
-
-    This keeps capability identity in one place so policy, requirements, and
-    normalization code do not duplicate string field names.
-    """
-
-    MULTI_TURN = "supports_multi_turn"
-    MULTI_MESSAGE_PIECES = "supports_multi_message_pieces"
-    JSON_SCHEMA = "supports_json_schema"
-    JSON_OUTPUT = "supports_json_output"
-    EDITABLE_HISTORY = "supports_editable_history"
-    SYSTEM_PROMPT = "supports_system_prompt"
-    STREAMING_AUDIO = "supports_streaming_audio"
+__all__ = [
+    "CapabilityHandlingPolicy",
+    "CapabilityName",
+    "TargetCapabilities",
+    "UnsupportedCapabilityBehavior",
+    "get_known_capabilities",
+]
 
 
 class UnsupportedCapabilityBehavior(str, Enum):
@@ -106,80 +98,6 @@ class CapabilityHandlingPolicy:
         object.__setattr__(self, "behaviors", MappingProxyType(dict(self.behaviors)))
 
 
-@dataclass(frozen=True)
-class TargetCapabilities:
-    """
-    Describes the capabilities of a PromptTarget so that attacks
-    and other components can adapt their behavior accordingly.
-
-    Each target class defines default capabilities via the _DEFAULT_CONFIGURATION
-    class attribute. Users can override individual capabilities per instance
-    through constructor parameters, which is useful for targets whose
-    capabilities depend on deployment configuration (e.g., Playwright, HTTP).
-    """
-
-    # Whether the target natively supports multi-turn conversations
-    # (i.e., it accepts and uses conversation history or maintains state
-    # across turns via external mechanisms like WebSocket connections).
-    supports_multi_turn: bool = False
-
-    # Whether the target natively supports multiple message pieces in a single request.
-    supports_multi_message_pieces: bool = False
-
-    # Whether the target natively supports constraining output to a provided JSON schema.
-    supports_json_schema: bool = False
-
-    # Whether the target natively supports JSON output (e.g., via a "json" response format), which ensures the output
-    # is valid JSON.
-    supports_json_output: bool = False
-
-    # Whether the target allows the attack history to be modified. Implies that the target supports
-    # multi-turn interactions and that the attack history is not immutable once set.
-    supports_editable_history: bool = False
-
-    # Whether the target natively supports system prompts.
-    supports_system_prompt: bool = False
-
-    # Whether the target supports the streaming audio API: opening a long-lived
-    # streaming session via ``open_streaming_session`` that pushes user audio chunks,
-    # delivers VAD-committed audio to the attack for converter work, swaps committed
-    # items in place, and drives manual ``response.create`` turns. Required by
-    # ``BargeInAttack``.
-    supports_streaming_audio: bool = False
-
-    # The input modalities supported by the target (e.g., "text", "image").
-    input_modalities: frozenset[frozenset[PromptDataType]] = frozenset({frozenset(["text"])})
-
-    # The output modalities supported by the target (e.g., "text", "image").
-    output_modalities: frozenset[frozenset[PromptDataType]] = frozenset({frozenset(["text"])})
-
-    def includes(self, *, capability: CapabilityName) -> bool:
-        """
-        Return whether this target supports the given capability.
-
-        Args:
-            capability: The capability to check.
-
-        Returns:
-            bool: True if supported, otherwise False.
-        """
-        return bool(getattr(self, capability.value))
-
-    @staticmethod
-    def get_known_capabilities(underlying_model: str) -> "TargetCapabilities | None":
-        """
-        Return the known capabilities for a specific underlying model, or None if unrecognized.
-
-        Args:
-            underlying_model (str): The underlying model name (e.g., "gpt-4o").
-
-        Returns:
-            TargetCapabilities | None: The known capabilities for the model, or None if the model
-            is not recognized.
-        """
-        return _KNOWN_CAPABILITIES.get(underlying_model)
-
-
 # ---------------------------------------------------------------------------
 # Known capability profiles — add new models here.
 # Shared profiles are defined once and referenced by multiple model names.
@@ -259,3 +177,17 @@ _KNOWN_CAPABILITIES: dict[str, TargetCapabilities] = {
     "tts": _TTS,
     "sora-2": _SORA_2,
 }
+
+
+def get_known_capabilities(underlying_model: str) -> TargetCapabilities | None:
+    """
+    Return the known capabilities for a specific underlying model, or None if unrecognized.
+
+    Args:
+        underlying_model (str): The underlying model name (e.g., "gpt-4o").
+
+    Returns:
+        TargetCapabilities | None: The known capabilities for the model, or None if the model
+        is not recognized.
+    """
+    return _KNOWN_CAPABILITIES.get(underlying_model)

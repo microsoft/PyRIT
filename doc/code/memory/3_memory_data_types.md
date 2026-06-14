@@ -150,7 +150,7 @@ Identifiers are content-addressed: the same configuration always produces the sa
 
 ### Composite Identifiers
 
-For atomic attacks, `build_atomic_attack_identifier` composes a tree of identifiers:
+For atomic attacks, `AtomicAttackIdentifier.build` composes a tree of identifiers:
 
 - **`attack_technique`** — the attack strategy and its children (target, converters, scorer, technique seeds)
 - **`seed_identifiers`** — all seeds from the seed group, for traceability
