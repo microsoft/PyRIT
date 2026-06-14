@@ -12,6 +12,8 @@ Route structure:
     /api/scenarios/runs          — scenario execution lifecycle
 """
 
+from typing import Any
+
 from fastapi import APIRouter, HTTPException, Query, status
 
 from pyrit.backend.models.common import ProblemDetail
@@ -199,7 +201,7 @@ async def cancel_scenario_run(scenario_result_id: str) -> ScenarioRunSummary:  #
         409: {"model": ProblemDetail, "description": "Run not yet completed"},
     },
 )
-async def get_scenario_run_results(scenario_result_id: str) -> dict:  # pyrit-async-suffix-exempt
+async def get_scenario_run_results(scenario_result_id: str) -> dict[str, Any]:  # pyrit-async-suffix-exempt
     """
     Get detailed results for a completed scenario run.
 
@@ -209,7 +211,7 @@ async def get_scenario_run_results(scenario_result_id: str) -> dict:  # pyrit-as
         scenario_result_id: The scenario_result_id.
 
     Returns:
-        dict: ScenarioResult.to_dict() payload.
+        dict: ``ScenarioResult.model_dump(mode="json", by_alias=True)`` payload.
     """
     service = get_scenario_run_service()
     try:
@@ -222,4 +224,4 @@ async def get_scenario_run_results(scenario_result_id: str) -> dict:  # pyrit-as
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Scenario run '{scenario_result_id}' not found",
         )
-    return result.to_dict()
+    return result.model_dump(mode="json", by_alias=True)

@@ -232,7 +232,7 @@ class TestGetScenarioRunResultsRoute:
     def test_get_results_returns_200(self, client: TestClient) -> None:
         """Test that getting results of a completed run returns 200."""
         mock_scenario_result = MagicMock()
-        mock_scenario_result.to_dict.return_value = {
+        mock_scenario_result.model_dump.return_value = {
             "id": "result-uuid",
             "scenario_identifier": {"name": "foundry.red_team_agent", "version": 1},
             "scenario_run_state": "COMPLETED",
