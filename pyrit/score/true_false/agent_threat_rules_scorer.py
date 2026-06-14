@@ -127,12 +127,15 @@ class AgentThreatRulesScorer(TrueFalseScorer):
             tags = getattr(top, "tags", None) or {}
             category = tags.get("category", "")
             rule_ids = ",".join(m.rule_id for m in hits)
-            description = f"Matched {len(hits)} ATR rule(s); highest severity {top.severity}."
+            # Normalize casing so the stored max_severity matches the lowercased
+            # value the severity filter/sort compares against.
+            top_severity = (top.severity or "").lower()
+            description = f"Matched {len(hits)} ATR rule(s); highest severity {top_severity}."
             rationale = f"ATR rules [{rule_ids}] matched at or above severity '{self._min_severity}'."
             metadata: dict | None = {
                 "matched_rule_ids": rule_ids,
                 "match_count": len(hits),
-                "max_severity": top.severity,
+                "max_severity": top_severity,
                 "atr_category": category,
             }
             score_categories = [category] if category else self._score_categories
