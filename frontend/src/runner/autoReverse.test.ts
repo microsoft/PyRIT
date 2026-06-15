@@ -24,6 +24,7 @@
 import {
   parseTreePath,
   linearChainFromMessages,
+  mergedTreeFromConversations,
   detectFansV10Plus,
   reconstructVariantPayloads,
   reconstructTreeWithFans,
@@ -154,6 +155,23 @@ describe('linearChainFromMessages', () => {
     expect(sends[0].params.responsePreview).toBe('Hi there')
   })
 
+  it('hydrates the root target registry name when provided by the caller', () => {
+    const tree = linearChainFromMessages(
+      [
+        mkMessage({
+          turnNumber: 1,
+          role: 'user',
+          pieces: [mkPiece({ pieceId: 'p1', value: 'Hello' })],
+        }),
+        mkMessage({ turnNumber: 2, role: 'assistant', pieces: [mkPiece({ pieceId: 'p2', value: 'Hi' })] }),
+      ],
+      { targetRegistryName: 'OpenAIChatTarget::abcd1234' },
+    )
+    const root = tree.nodes.find((n) => n.id === tree.rootId)
+    if (root?.kind !== 'root_prompt') throw new Error('root missing')
+    expect(root.params.targetRegistryName).toBe('OpenAIChatTarget::abcd1234')
+  })
+
   it('produces alternating UserTurn → Send → UserTurn → Send for multi-turn', () => {
     const tree = linearChainFromMessages([
       mkMessage({ turnNumber: 1, role: 'user', pieces: [mkPiece({ pieceId: 'p1', value: 'U1' })] }),
@@ -255,6 +273,74 @@ describe('linearChainFromMessages', () => {
       }),
     ])
     expect(tree.nodes).toEqual([])
+  })
+})
+
+// ============================================================================
+// mergedTreeFromConversations
+// ============================================================================
+
+describe('mergedTreeFromConversations', () => {
+  it('merges identical prefixes and branches at the first divergent turn', () => {
+    const result = mergedTreeFromConversations([
+      {
+        conversation_id: 'conv-a',
+        messages: [
+          mkMessage({ turnNumber: 1, role: 'user', pieces: [mkPiece({ pieceId: 'a-p1', value: 'Root' })] }),
+          mkMessage({ turnNumber: 2, role: 'assistant', pieces: [mkPiece({ pieceId: 'a-p2', value: 'A1' })] }),
+          mkMessage({ turnNumber: 3, role: 'user', pieces: [mkPiece({ pieceId: 'a-p3', value: 'Follow A' })] }),
+          mkMessage({ turnNumber: 4, role: 'assistant', pieces: [mkPiece({ pieceId: 'a-p4', value: 'Answer A' })] }),
+        ],
+      },
+      {
+        conversation_id: 'conv-b',
+        messages: [
+          mkMessage({ turnNumber: 1, role: 'user', pieces: [mkPiece({ pieceId: 'b-p1', value: 'Root' })] }),
+          mkMessage({ turnNumber: 2, role: 'assistant', pieces: [mkPiece({ pieceId: 'b-p2', value: 'A1' })] }),
+          mkMessage({ turnNumber: 3, role: 'user', pieces: [mkPiece({ pieceId: 'b-p3', value: 'Follow B' })] }),
+          mkMessage({ turnNumber: 4, role: 'assistant', pieces: [mkPiece({ pieceId: 'b-p4', value: 'Answer B' })] }),
+        ],
+      },
+    ])
+
+    expect(result.includedConversationIds).toEqual(['conv-a', 'conv-b'])
+    expect(result.omittedConversationIds).toEqual([])
+    expect(result.tree.nodes.filter((node) => node.kind === 'send')).toHaveLength(3)
+    const sharedSend = result.tree.nodes.find(
+      (node) => node.kind === 'send' && node.params.responsePreview === 'A1',
+    )
+    expect(sharedSend).toBeDefined()
+    const branchUserTurns = result.tree.nodes.filter(
+      (node) => node.kind === 'user_turn' && node.parentId === sharedSend?.id,
+    )
+    expect(branchUserTurns.map((node) => node.kind === 'user_turn' ? node.params.text : '').sort()).toEqual([
+      'Follow A',
+      'Follow B',
+    ])
+  })
+
+  it('omits conversations whose root prompt cannot be reconciled with the base root', () => {
+    const result = mergedTreeFromConversations([
+      {
+        conversation_id: 'conv-a',
+        messages: [
+          mkMessage({ turnNumber: 1, role: 'user', pieces: [mkPiece({ pieceId: 'a-p1', value: 'Root A' })] }),
+          mkMessage({ turnNumber: 2, role: 'assistant', pieces: [mkPiece({ pieceId: 'a-p2', value: 'A1' })] }),
+        ],
+      },
+      {
+        conversation_id: 'conv-b',
+        messages: [
+          mkMessage({ turnNumber: 1, role: 'user', pieces: [mkPiece({ pieceId: 'b-p1', value: 'Root B' })] }),
+          mkMessage({ turnNumber: 2, role: 'assistant', pieces: [mkPiece({ pieceId: 'b-p2', value: 'B1' })] }),
+        ],
+      },
+    ])
+
+    expect(result.includedConversationIds).toEqual(['conv-a'])
+    expect(result.omittedConversationIds).toEqual(['conv-b'])
+    const root = result.tree.nodes.find((node) => node.id === result.tree.rootId)
+    expect(root?.kind === 'root_prompt' ? root.params.text : null).toBe('Root A')
   })
 })
 

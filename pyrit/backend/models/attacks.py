@@ -34,6 +34,25 @@ class TargetInfo(BaseModel):
     model_name: str | None = Field(None, description="Model or deployment name")
 
 
+def _recover_target_registry_name(target_id: Any) -> str:
+    """
+    Recover the registered target key for a stored target identifier when possible.
+
+    Returns:
+        The registered target key, or the identifier's unique name when no registry match is found.
+    """
+    try:
+        from pyrit.registry.object_registries import TargetRegistry
+
+        registry = TargetRegistry.get_registry_singleton()
+        for entry in registry.get_all_instances():
+            if entry.instance.get_identifier().hash == target_id.hash:
+                return entry.name
+    except Exception:
+        pass
+    return target_id.unique_name
+
+
 class ScoreView(Score):
     """
     API view of a ``pyrit.models.Score``.
@@ -263,7 +282,7 @@ class AttackSummary(AttackResult):
         if not target_id:
             return None
         return TargetInfo(
-            target_registry_name=target_id.unique_name,
+            target_registry_name=_recover_target_registry_name(target_id),
             target_type=target_id.class_name,
             endpoint=target_id.params.get("endpoint") or None,
             model_name=target_id.params.get("model_name") or None,

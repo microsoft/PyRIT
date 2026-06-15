@@ -17,7 +17,6 @@
 
 import {
   ArrowSyncRegular,
-  BranchForkRegular,
   BranchRegular,
   CheckmarkCircleFilled,
   CheckmarkCircleRegular,
@@ -87,7 +86,11 @@ export interface ActionCallbacks {
   /** Add a new child below a leaf or branch point. Used by node-level “add follow-up” affordances. */
   onAppendChild?: (parentId: ConversationTreeNodeId, kind: AppendChildKind) => void
   /** Wrap this node's incoming edge with a fan. Used by response-level attempt/converter fan affordances. */
-  onCreateFanFromNode?: (nodeId: ConversationTreeNodeId, axis: 'attempt' | 'converter') => void
+  onCreateFanFromNode?: (
+    nodeId: ConversationTreeNodeId,
+    axis: 'attempt' | 'converter',
+    opts?: { attemptCount?: number },
+  ) => void
   /**
    * Pick / Unpick a fan child (PR5f). `slotIndex` of the chosen child
    * (or `null` to unpick — clears the fan's promotedChildSlotIndex).
@@ -102,6 +105,11 @@ export interface ActionCallbacks {
   onPickFanChild?: (
     fanNodeId: ConversationTreeNodeId,
     slotIndex: number | null,
+  ) => void
+  /** Prune a FanNode to one selected slot, removing sibling variants from the client tree. */
+  onPruneFanToPickedPath?: (
+    fanNodeId: ConversationTreeNodeId,
+    slotIndex: number,
   ) => void
   /**
    * Inline edit of a UserTurn's text (PR5h.5; spec §2.2 UserTurn ✏).
@@ -135,6 +143,11 @@ export interface ActionCallbacks {
    * converters are wired, the ⚡ button does not render.
    */
   onSetUserTurnConverterPipeline?: (
+    nodeId: ConversationTreeNodeId,
+    pipeline: ConverterRef[],
+  ) => void
+  /** Replace a visible ConverterNode's pipeline. */
+  onSetConverterNodePipeline?: (
     nodeId: ConversationTreeNodeId,
     pipeline: ConverterRef[],
   ) => void
@@ -222,20 +235,6 @@ export function ActionRail({ nodeId, callbacks, branchLabel, canDelete = true, f
           />
         </Tooltip>
       )}
-      {/*
-        Branch-as-subtree is a V1.1 placeholder. Render disabled so the
-        slot is reserved (operators don't get a new button surface
-        appearing in V1.1 — only the disabled state flips). title-attr
-        carries the tooltip per the disabled-button convention.
-      */}
-      <Button
-        size="small"
-        appearance="subtle"
-        icon={<BranchForkRegular />}
-        aria-label="Branch as subtree"
-        title="Branch as subtree (coming in a future release)"
-        disabled
-      />
       {showPick && (
         <Tooltip
           content={fanChildInfo.promoted ? 'Unpick this attempt' : 'Pick this attempt'}
@@ -264,12 +263,12 @@ export function ActionRail({ nodeId, callbacks, branchLabel, canDelete = true, f
         </Tooltip>
       )}
       {onOpenLinear !== undefined && (
-        <Tooltip content="Open in linear view" relationship="description">
+        <Tooltip content="Focus in path chat" relationship="description">
           <Button
             size="small"
             appearance="subtle"
             icon={<OpenRegular />}
-            aria-label="Open in linear view"
+            aria-label="Focus in path chat"
             onClick={() => onOpenLinear(nodeId)}
           />
         </Tooltip>

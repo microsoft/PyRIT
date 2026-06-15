@@ -69,8 +69,6 @@ interface InsertMenu {
   fanAxes: ReadonlyArray<InsertMenuOption> // submenu items
 }
 
-const V1_1_DISABLED_REASON = 'Available in a future release'
-
 /**
  * Per-parent menu. The legal next-node types depend on the upstream
  * node's kind — surfacing only the legal options is cheaper than
@@ -83,7 +81,7 @@ function menuForParent(parentKind: ConversationTreeNodeKind): InsertMenu | null 
         basic: [
           { disabled: false, kind: 'follow_up_user_turn', label: 'Follow-up user message' },
           { disabled: false, kind: 'inject_assistant_text', label: 'Inject assistant text' },
-          { disabled: false, kind: 'send', label: 'Send to target' },
+          { disabled: false, kind: 'send', label: 'Add response' },
         ],
         fanAxes: V1_0_FAN_AXES,
       }
@@ -92,25 +90,26 @@ function menuForParent(parentKind: ConversationTreeNodeKind): InsertMenu | null 
         basic: [
           { disabled: false, kind: 'follow_up_user_turn', label: 'Follow-up user message' },
           { disabled: false, kind: 'inject_assistant_text', label: 'Inject assistant text' },
-          { disabled: false, kind: 'send', label: 'Send to target' },
+          { disabled: false, kind: 'send', label: 'Add response' },
         ],
         fanAxes: V1_0_FAN_AXES,
       }
     case 'user_turn':
       return {
         basic: [
-          { disabled: false, kind: 'send', label: 'Send to target' },
+          { disabled: false, kind: 'send', label: 'Add response' },
           { disabled: false, kind: 'append_converter', label: 'Append converter' },
         ],
         fanAxes: [
           { disabled: false, kind: 'fan_converter', label: 'Fan out: converter' },
-          // Fan-attempt requires a Send to fan; prompt is V1.1.
-          {
-            disabled: true,
-            label: 'Fan out: prompt (coming later)',
-            disabledReason: V1_1_DISABLED_REASON,
-          },
         ],
+      }
+    case 'converter':
+      return {
+        basic: [
+          { disabled: false, kind: 'send', label: 'Add response' },
+        ],
+        fanAxes: [],
       }
     case 'send':
       return {
@@ -130,18 +129,6 @@ function menuForParent(parentKind: ConversationTreeNodeKind): InsertMenu | null 
 const V1_0_FAN_AXES: ReadonlyArray<InsertMenuOption> = [
   { disabled: false, kind: 'fan_attempt', label: 'Fan out: attempt' },
   { disabled: false, kind: 'fan_converter', label: 'Fan out: converter' },
-  // V1.1 axes — reserved slots, always disabled. Disabled items
-  // intentionally do not carry a `kind`; enabling requires picking one.
-  {
-    disabled: true,
-    label: 'Fan out: prompt (coming later)',
-    disabledReason: V1_1_DISABLED_REASON,
-  },
-  {
-    disabled: true,
-    label: 'Fan out: target (coming later)',
-    disabledReason: V1_1_DISABLED_REASON,
-  },
 ]
 
 export function InsertEdge({
@@ -276,8 +263,10 @@ function parentLabel(kind: ConversationTreeNodeKind): string {
       return 'imported message'
     case 'user_turn':
       return 'user turn'
+    case 'converter':
+      return 'converter'
     case 'send':
-      return 'send'
+      return 'response'
     case 'fan':
       return 'fan'
     case 'score':

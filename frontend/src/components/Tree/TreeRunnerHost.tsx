@@ -36,6 +36,7 @@ import {
   DialogContent,
   DialogSurface,
   DialogTitle,
+  Textarea,
 } from '@fluentui/react-components'
 
 import { TreeCanvas } from './TreeCanvas'
@@ -57,23 +58,29 @@ import type { AvailableConvertersValue } from './availableConvertersContext'
 import {
   applyClearExecution,
   applyAppendChild,
+  applyAppendPromptWithResponse,
+  applyBranchFromNode,
   applyCloneTree,
   applyEditRootPromptParams,
   applyEditUserTurnText,
   applyDeleteSubtree,
+  applyInsertConverterBetween,
   applyInsertBetween,
   applyWrapWithFan,
   applyRecordExecution,
   applySetFanPromotedChild,
+  applyPruneFanToPickedPath,
   applySetNodeState,
   applySetReflogPinned,
+  applySetConverterNodePipeline,
   applySetUserTurnConverterPipeline,
 } from '../../runner/treeStateReducer'
 import {
   createBroadcastChannelLockManager,
 } from '../../runner/crossTabLock'
 import { estimateRefreshCost } from '../../runner/estimateRefreshCost'
-import { buildSForSubtree } from '../../runner/readiness'
+import { buildSForSubtree, computeReady } from '../../runner/readiness'
+import { resolvePathPartition } from '../../runner/partition'
 import { createRunnerShim, type RunWaveStarter, type RunnerShim } from '../../runner/shim'
 import type {
   ConversationTree,
@@ -200,7 +207,36 @@ export function TreeRunnerHost({
   const styles = useTreeRunnerHostStyles()
   const [waveEvents, setWaveEvents] = useState<WaveEvent[]>([])
   const [linearNodeId, setLinearNodeId] = useState<ConversationTreeNodeId | null>(null)
+  const [selectedNodeId, setSelectedNodeId] = useState<ConversationTreeNodeId | null>(tree?.rootId ?? null)
+  const [selectedTreeId, setSelectedTreeId] = useState<ConversationTreeId | null>(tree?.id ?? null)
+  const [pathChatWidth, setPathChatWidth] = useState(380)
+  const [isResizingPathChat, setIsResizingPathChat] = useState(false)
   const [pendingDeleteNodeId, setPendingDeleteNodeId] = useState<ConversationTreeNodeId | null>(null)
+  const [pendingPrune, setPendingPrune] = useState<{ fanNodeId: ConversationTreeNodeId; slotIndex: number } | null>(null)
+  const [missingTargetRefreshNodeId, setMissingTargetRefreshNodeId] = useState<ConversationTreeNodeId | null>(null)
+
+  if ((tree?.id ?? null) !== selectedTreeId) {
+    setSelectedTreeId(tree?.id ?? null)
+    setSelectedNodeId(tree?.rootId ?? null)
+    setLinearNodeId(null)
+  }
+  const effectiveSelectedNodeId = tree !== null && tree.nodes.some((node) => node.id === selectedNodeId)
+    ? selectedNodeId
+    : tree?.rootId ?? null
+
+  useEffect(() => {
+    if (!isResizingPathChat) return
+    const onPointerMove = (event: PointerEvent) => {
+      setPathChatWidth(clampPathChatWidth(window.innerWidth - event.clientX))
+    }
+    const onPointerUp = () => setIsResizingPathChat(false)
+    window.addEventListener('pointermove', onPointerMove)
+    window.addEventListener('pointerup', onPointerUp)
+    return () => {
+      window.removeEventListener('pointermove', onPointerMove)
+      window.removeEventListener('pointerup', onPointerUp)
+    }
+  }, [isResizingPathChat])
 
   // Host-owned live WorkspaceSettings (spec §13.1): seeds the cost-modal
   // suppression + the reflog cap, and is persisted to sessionStorage by
@@ -437,6 +473,11 @@ export function TreeRunnerHost({
     const treeIdForCallbacks: ConversationTreeId = tree.id
     const defaults: ActionCallbacks = {
       onRefresh: (nodeIdArg: ConversationTreeNodeId) => {
+        const current = treeRef.current
+        if (current !== null && hasMissingTargetForRefresh(current, nodeIdArg)) {
+          setMissingTargetRefreshNodeId(nodeIdArg)
+          return
+        }
         void shim.refreshSubtree(treeIdForCallbacks, nodeIdArg)
       },
       getRefreshCost: (nodeIdArg) => {
@@ -465,17 +506,20 @@ export function TreeRunnerHost({
       onAppendChild: (parentIdArg, kind) => {
         const current = treeRef.current
         if (current === null) return
-        const next = applyAppendChild(current, parentIdArg, kind, () => crypto.randomUUID())
+        const parent = current.nodes.find((node) => node.id === parentIdArg)
+        const next = parent?.kind === 'send' && kind === 'follow_up_user_turn'
+          ? applyAppendPromptWithResponse(current, parentIdArg, () => crypto.randomUUID())
+          : applyAppendChild(current, parentIdArg, kind, () => crypto.randomUUID())
         if (next !== current) {
           treeRef.current = next
           onTreeChangeRef.current?.(next)
         }
       },
-      onCreateFanFromNode: (nodeIdArg, axis) => {
+      onCreateFanFromNode: (nodeIdArg, axis, opts) => {
         const current = treeRef.current
         const node = current?.nodes.find((candidate) => candidate.id === nodeIdArg)
         if (current === null || node === undefined || node.parentId === null) return
-        const next = applyWrapWithFan(current, node.parentId, nodeIdArg, axis, () => crypto.randomUUID())
+        const next = applyWrapWithFan(current, node.parentId, nodeIdArg, axis, () => crypto.randomUUID(), opts)
         if (next !== current) {
           treeRef.current = next
           onTreeChangeRef.current?.(next)
@@ -499,6 +543,15 @@ export function TreeRunnerHost({
           onTreeChangeRef.current?.(next)
         }
       },
+      onSetConverterNodePipeline: (nodeIdArg, pipeline) => {
+        const current = treeRef.current
+        if (current === null) return
+        const next = applySetConverterNodePipeline(current, nodeIdArg, pipeline)
+        if (next !== current) {
+          treeRef.current = next
+          onTreeChangeRef.current?.(next)
+        }
+      },
       onPickFanChild: (fanNodeId, slotIndex) => {
         const current = treeRef.current
         if (current === null) return
@@ -508,10 +561,15 @@ export function TreeRunnerHost({
           onTreeChangeRef.current?.(next)
         }
       },
-      onBranch: () => {
+      onPruneFanToPickedPath: (fanNodeId, slotIndex) => {
+        setPendingPrune({ fanNodeId, slotIndex })
+      },
+      onBranch: (nodeIdArg) => {
         const current = treeRef.current
         if (current === null) return
-        const next = applyCloneTree(current, () => crypto.randomUUID())
+        const next = nodeIdArg === current.rootId
+          ? applyCloneTree(current, () => crypto.randomUUID())
+          : applyBranchFromNode(current, nodeIdArg, () => crypto.randomUUID())
         treeRef.current = next
         setLinearNodeId(null)
         onTreeChangeRef.current?.(next)
@@ -523,12 +581,33 @@ export function TreeRunnerHost({
         setPendingDeleteNodeId(nodeIdArg)
       },
       onOpenLinear: (nodeIdArg) => {
-        setLinearNodeId(nodeIdArg)
+        setSelectedNodeId(nodeIdArg)
       },
     }
     if (actionCallbacks === undefined) return defaults
     return { ...defaults, ...actionCallbacks }
   }, [actionCallbacks, tree, shim])
+
+  const submitPathChatPrompt = (text: string) => {
+    const current = treeRef.current
+    const selected = effectiveSelectedNodeId
+    if (current === null || selected === null) return
+    const parentId = promptAppendParentForPath(current, selected)
+    if (parentId === null) return
+    const promptId = crypto.randomUUID()
+    const responseId = crypto.randomUUID() as ConversationTreeNodeId
+    const ids = [promptId, responseId]
+    const next = applyAppendPromptWithResponse(current, parentId, () => ids.shift() ?? crypto.randomUUID(), text)
+    if (next === current) return
+    treeRef.current = next
+    setSelectedNodeId(responseId)
+    onTreeChangeRef.current?.(next)
+    if (hasMissingTargetForRefresh(next, responseId)) {
+      setMissingTargetRefreshNodeId(responseId)
+      return
+    }
+    void shim.refreshSubtree(next.id, responseId)
+  }
 
   const confirmDelete = () => {
     const current = treeRef.current
@@ -544,6 +623,21 @@ export function TreeRunnerHost({
       onTreeChangeRef.current?.(next)
     }
     setPendingDeleteNodeId(null)
+  }
+
+  const confirmPrune = () => {
+    const current = treeRef.current
+    const pending = pendingPrune
+    if (current === null || pending === null) {
+      setPendingPrune(null)
+      return
+    }
+    const next = applyPruneFanToPickedPath(current, pending.fanNodeId, pending.slotIndex)
+    if (next !== current) {
+      treeRef.current = next
+      onTreeChangeRef.current?.(next)
+    }
+    setPendingPrune(null)
   }
 
   const deleteModalElement = pendingDeleteNodeId !== null ? (
@@ -572,6 +666,60 @@ export function TreeRunnerHost({
     </Dialog>
   ) : null
 
+  const pruneSummary = pendingPrune !== null ? summarizePrune(tree, pendingPrune.fanNodeId) : null
+  const pruneModalElement = pendingPrune !== null ? (
+    <Dialog
+      open
+      onOpenChange={(_event, data) => {
+        if (!data.open) setPendingPrune(null)
+      }}
+    >
+      <DialogSurface>
+        <DialogBody>
+          <DialogTitle>Prune fan?</DialogTitle>
+          <DialogContent>
+            <p>
+              Keep slot {pendingPrune.slotIndex} and remove {pruneSummary?.removedVariantCount ?? 0}{' '}
+              other variant{(pruneSummary?.removedVariantCount ?? 0) === 1 ? '' : 's'} from this tree.
+              Backend history is not deleted.
+            </p>
+          </DialogContent>
+          <DialogActions>
+            <Button appearance="secondary" onClick={() => setPendingPrune(null)}>
+              Cancel
+            </Button>
+            <Button appearance="primary" onClick={confirmPrune}>
+              Prune
+            </Button>
+          </DialogActions>
+        </DialogBody>
+      </DialogSurface>
+    </Dialog>
+  ) : null
+
+  const missingTargetModalElement = missingTargetRefreshNodeId !== null ? (
+    <Dialog
+      open
+      onOpenChange={(_event, data) => {
+        if (!data.open) setMissingTargetRefreshNodeId(null)
+      }}
+    >
+      <DialogSurface>
+        <DialogBody>
+          <DialogTitle>No target selected</DialogTitle>
+          <DialogContent>
+            <p>Set a target registry name on the root prompt before refreshing this tree.</p>
+          </DialogContent>
+          <DialogActions>
+            <Button appearance="primary" onClick={() => setMissingTargetRefreshNodeId(null)}>
+              OK
+            </Button>
+          </DialogActions>
+        </DialogBody>
+      </DialogSurface>
+    </Dialog>
+  ) : null
+
   const ribbonState = useMemo(() => summarizeWaveEvents(waveEvents), [waveEvents])
 
   const onCancelWave = useMemo(() => {
@@ -590,8 +738,15 @@ export function TreeRunnerHost({
     }
   }, [tree, shim])
 
+  const rootStyle = tree !== null
+    ? {
+        gridTemplateColumns: `minmax(0, 1fr) 8px ${pathChatWidth}px`,
+        gridTemplateAreas: `"ribbon ribbon ribbon" "canvas splitter pathChat"`,
+      }
+    : undefined
+
   return (
-    <div data-tree-runner-host className={styles.root}>
+    <div data-tree-runner-host className={styles.root} style={rootStyle}>
       <div data-slot="ribbon" className={styles.ribbon}>
         <WaveStatusRibbon
           state={ribbonState}
@@ -609,65 +764,199 @@ export function TreeRunnerHost({
             tree={tree}
             actionCallbacks={composedActionCallbacks}
             availableConverters={availableConverters}
+            selectedNodeId={effectiveSelectedNodeId}
+            onSelectNode={setSelectedNodeId}
           />
         ) : (
           <div data-tree-greenfield className={styles.greenfield}>
-            <p>No tree loaded. Open one from history or start a new attack.</p>
+            <p>No tree loaded. Open one from Chat or History, or start a new attack.</p>
           </div>
         )}
       </div>
-      <div data-slot="drawer" className={linearNodeId !== null ? styles.drawerOpen : styles.drawer}>
-        {tree !== null && linearNodeId !== null && (
-          <LinearPathDrawer
+      {tree !== null && (
+        <div
+          data-tree-path-chat-splitter
+          data-slot="splitter"
+          className={styles.splitter}
+          role="separator"
+          aria-label="Resize tree and path chat panes"
+          aria-orientation="vertical"
+          tabIndex={0}
+          onPointerDown={() => setIsResizingPathChat(true)}
+          onKeyDown={(event) => {
+            if (event.key === 'ArrowLeft') setPathChatWidth((width) => clampPathChatWidth(width + 24))
+            if (event.key === 'ArrowRight') setPathChatWidth((width) => clampPathChatWidth(width - 24))
+          }}
+        />
+      )}
+      {tree !== null && effectiveSelectedNodeId !== null && (
+        <div data-slot="pathChat" className={styles.pathChat} data-tree-path-chat-pane>
+          <PathChatPane
             tree={tree}
-            nodeId={linearNodeId}
-            onClose={() => setLinearNodeId(null)}
+            nodeId={effectiveSelectedNodeId}
+            onSelectNode={setSelectedNodeId}
+            onSubmitPrompt={submitPathChatPrompt}
             styles={styles}
           />
-        )}
-      </div>
+        </div>
+      )}
       <div data-slot="toast" className={styles.toast} />
       <div data-slot="modal" className={styles.modal}>
-        {modalElement ?? dirtyEditModalElement ?? deleteModalElement}
+        {modalElement ?? dirtyEditModalElement ?? missingTargetModalElement ?? deleteModalElement ?? pruneModalElement}
       </div>
     </div>
   )
 }
 
-function LinearPathDrawer({
+function hasMissingTargetForRefresh(
+  tree: ConversationTree,
+  nodeId: ConversationTreeNodeId,
+): boolean {
+  const S = buildSForSubtree(tree, nodeId)
+  for (const leaf of computeReady(tree, S)) {
+    try {
+      if (resolvePathPartition(tree, leaf.id).target.trim() === '') return true
+    } catch {
+      return true
+    }
+  }
+  return false
+}
+
+function summarizePrune(
+  tree: ConversationTree | null,
+  fanNodeId: ConversationTreeNodeId,
+): { removedVariantCount: number } {
+  const fan = tree?.nodes.find((node) => node.id === fanNodeId)
+  if (fan?.kind !== 'fan') return { removedVariantCount: 0 }
+  return { removedVariantCount: Math.max(0, fan.params.variants.length - 1) }
+}
+
+function lastResponseOnPath(
+  tree: ConversationTree,
+  nodeId: ConversationTreeNodeId,
+): ConversationTreeNodeId | null {
+  const path = pathToNode(tree, nodeId)
+  for (let i = path.length - 1; i >= 0; i -= 1) {
+    const node = tree.nodes.find((candidate) => candidate.id === path[i])
+    if (node?.kind === 'send') return node.id
+  }
+  return null
+}
+
+function promptAppendParentForPath(
+  tree: ConversationTree,
+  nodeId: ConversationTreeNodeId,
+): ConversationTreeNodeId | null {
+  const responseId = lastResponseOnPath(tree, nodeId)
+  if (responseId !== null) return responseId
+  const node = tree.nodes.find((candidate) => candidate.id === nodeId)
+  return node?.kind === 'root_prompt' ? node.id : null
+}
+
+function clampPathChatWidth(width: number): number {
+  return Math.max(280, Math.min(720, width))
+}
+
+function PathChatPane({
   tree,
   nodeId,
-  onClose,
+  onSelectNode,
+  onSubmitPrompt,
   styles,
 }: {
   tree: ConversationTree
   nodeId: ConversationTreeNodeId
-  onClose: () => void
+  onSelectNode: (nodeId: ConversationTreeNodeId) => void
+  onSubmitPrompt: (text: string) => void
   styles: ReturnType<typeof useTreeRunnerHostStyles>
 }) {
   const byId = new Map(tree.nodes.map((node) => [node.id, node]))
   const path = pathToNode(tree, nodeId)
+  const canAppendPrompt = promptAppendParentForPath(tree, nodeId) !== null
+  const [draft, setDraft] = useState('')
+  const submit = () => {
+    const trimmed = draft.trim()
+    if (!trimmed || !canAppendPrompt) return
+    setDraft('')
+    onSubmitPrompt(trimmed)
+  }
   return (
-    <aside data-tree-linear-drawer>
-      <div className={styles.drawerHeader}>
-        <strong>Path</strong>
-        <Button size="small" appearance="subtle" onClick={onClose}>Close</Button>
+    <aside data-tree-path-chat>
+      <div className={styles.pathChatHeader}>
+        <div className={styles.pathChatTitle}>Selected path</div>
+        <div>{path.length} step{path.length === 1 ? '' : 's'}</div>
       </div>
-      {path.map((id) => {
-        const node = byId.get(id)
-        if (node === undefined) return null
-        return (
-          <section key={id} data-tree-linear-node className={styles.drawerNode}>
-            <div className={styles.drawerNodeKind}>{node.kind.replace('_', ' ')}</div>
-            <div className={styles.drawerNodeState}>{node.state}</div>
-            <pre className={styles.drawerNodeText}>
-              {nodeText(node)}
-            </pre>
-          </section>
-        )
-      })}
+      <div className={styles.pathChatList}>
+        {path.map((id) => {
+          const node = byId.get(id)
+          if (node === undefined) return null
+          const selected = id === nodeId
+          return (
+            <button
+              key={id}
+              type="button"
+              data-tree-path-chat-node={id}
+              data-selected={selected ? 'true' : 'false'}
+              className={`${styles.pathChatBubble} ${selected ? styles.pathChatBubbleSelected : ''}`}
+              onClick={() => onSelectNode(id)}
+            >
+              <div className={styles.pathChatRole}>{pathChatRole(node)}</div>
+              <pre className={styles.pathChatText}>{pathChatText(node)}</pre>
+            </button>
+          )
+        })}
+      </div>
+      <form
+        className={styles.pathChatComposer}
+        onSubmit={(event) => {
+          event.preventDefault()
+          submit()
+        }}
+      >
+        <Textarea
+          aria-label="Follow-up prompt"
+          placeholder={canAppendPrompt ? 'Type a follow-up prompt' : 'Select a response to continue this path'}
+          value={draft}
+          disabled={!canAppendPrompt}
+          resize="vertical"
+          onChange={(_event, data) => setDraft(data.value)}
+          onKeyDown={(event) => {
+            if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') submit()
+          }}
+        />
+        <Button appearance="primary" type="submit" disabled={!canAppendPrompt || draft.trim().length === 0}>
+          Run
+        </Button>
+      </form>
     </aside>
   )
+}
+
+function pathChatRole(node: ConversationTree['nodes'][number]): string {
+  switch (node.kind) {
+    case 'root_prompt':
+      return 'User prompt'
+    case 'user_turn':
+      return node.params.role === 'user' ? 'User' : node.params.role.replace('_', ' ')
+    case 'converter':
+      return 'Converter'
+    case 'send':
+      return node.params.responsePreview ? 'Assistant' : 'Pending response'
+    case 'fan':
+      return `Fan: ${node.params.axis}`
+    case 'score':
+      return 'Score'
+    case 'import_message':
+      return 'Imported context'
+  }
+}
+
+function pathChatText(node: ConversationTree['nodes'][number]): string {
+  const text = nodeText(node)
+  if (text.length > 0) return text
+  if (node.kind === 'send') return 'Refresh to generate a response.'
+  return ''
 }
 
 function pathToNode(tree: ConversationTree, nodeId: ConversationTreeNodeId): ConversationTreeNodeId[] {
@@ -687,6 +976,8 @@ function nodeText(node: ConversationTree['nodes'][number]): string {
       return node.params.text
     case 'user_turn':
       return node.params.text
+    case 'converter':
+      return formatConverters(node.params.pipeline) ?? node.params.label ?? 'Choose converter'
     case 'send':
       return node.params.responsePreview ?? ''
     case 'fan':
@@ -698,6 +989,11 @@ function nodeText(node: ConversationTree['nodes'][number]): string {
   }
 }
 
+function formatConverters(pipeline: { converterId?: string; inline?: { type: string } }[] | undefined): string | null {
+  if (pipeline === undefined || pipeline.length === 0) return null
+  return pipeline.map((converter) => converter.converterId ?? converter.inline?.type ?? 'inline converter').join(' -> ')
+}
+
 function applyEdgeInsert(
   tree: ConversationTree,
   parentId: ConversationTreeNodeId,
@@ -706,7 +1002,8 @@ function applyEdgeInsert(
   uuid: () => string,
 ): ConversationTree {
   if (kind === 'fan_attempt') return applyWrapWithFan(tree, parentId, childId, 'attempt', uuid)
-  if (kind === 'fan_converter' || kind === 'append_converter') {
+  if (kind === 'append_converter') return applyInsertConverterBetween(tree, parentId, childId, uuid)
+  if (kind === 'fan_converter') {
     return applyWrapWithFan(tree, parentId, childId, 'converter', uuid)
   }
   return applyInsertBetween(tree, parentId, childId, kind as AppendChildKind, uuid)

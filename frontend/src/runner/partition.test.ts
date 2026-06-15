@@ -23,6 +23,7 @@ import {
 import type { ConversationTreeNodeId } from './treeTypes'
 import {
   mkEdge,
+  mkConverterNode,
   mkExecution,
   mkFan,
   mkRoot,
@@ -351,6 +352,22 @@ describe('resolvePathPartition', () => {
     }
   })
 
+  it('ConverterNode on the path contributes converterPipeline to the downstream Send', () => {
+    const tree = mkTree('r', [
+      mkRoot('r'),
+      mkUserTurn('u', 'r', { text: 'q' }),
+      mkConverterNode('c', 'u', { pipeline: [{ converterId: 'base64' }] }),
+      mkSend('s', 'c', undefined, { state: 'edited' }),
+    ])
+
+    const { freshSuffix, treePathSegments } = resolvePathPartition(tree, nodeId('s'))
+
+    expect(freshSuffix).toHaveLength(1)
+    expect(freshSuffix[0].userTurn.id).toBe(nodeId('u'))
+    expect(freshSuffix[0].converterPipeline).toEqual([{ converterId: 'base64' }])
+    expect(treePathSegments).toEqual([])
+  })
+
   it('Score ancestor on the path is transparent (does not consume pending UserTurn or break variant)', () => {
     // r → u → sc → s
     // The Score node passes through; the Send's input is u with no variant.
@@ -365,6 +382,23 @@ describe('resolvePathPartition', () => {
     expect(freshSuffix[0].userTurn.id).toBe(nodeId('u'))
     expect(freshSuffix[0].fanVariant).toBeNull()
     expect(treePathSegments).toEqual([])
+  })
+
+  it('uses clean parent Sends as prepended context instead of fresh suffix when refreshing a leaf', () => {
+    const tree = mkTree('r', [
+      mkRoot('r'),
+      mkUserTurn('u1', 'r', { text: 'turn 1' }),
+      mkSend('s1', 'u1', { responsePreview: 'response 1' }, { state: 'clean', execution: mkExecution('e1') }),
+      mkUserTurn('u2', 's1', { text: 'turn 2' }),
+      mkSend('s2', 'u2', undefined, { state: 'stale' }),
+    ])
+
+    const { prepended, freshSuffix } = resolvePathPartition(tree, nodeId('s2'))
+
+    expect(prepended.map((message) => message.role)).toEqual(['user', 'assistant'])
+    expect(prepended[0].pieces[0].original_value).toBe('turn 1')
+    expect(prepended[1].pieces[0].original_value).toBe('response 1')
+    expect(freshSuffix.map((entry) => entry.sendNode.id)).toEqual([nodeId('s2')])
   })
 
   it('nested fans accumulate tree_path segments in topo order', () => {

@@ -158,6 +158,7 @@ export type ConversationTreeNodeKind =
   | 'root_prompt'
   | 'import_message'
   | 'user_turn'
+  | 'converter'
   | 'send'
   | 'fan'
   | 'score'
@@ -231,6 +232,21 @@ export interface UserTurnNode extends ConversationTreeNodeBase {
     attachments: PieceSpec[]
     /** Sequential converter pipeline; matches `AddMessageRequest.converter_ids`. */
     converterPipeline?: ConverterRef[]
+  }
+}
+
+export interface ConverterNode extends ConversationTreeNodeBase {
+  kind: 'converter'
+  params: {
+    /** Ordered converter pipeline applied before the downstream response dispatch. */
+    pipeline: ConverterRef[]
+    /** Optional operator label for unconfigured / comparison nodes. */
+    label?: string
+    /** Preview is inspection-only; refresh still sends converter_ids to the backend. */
+    preview?: {
+      value: string
+      dataType: PromptDataType
+    }
   }
 }
 
@@ -308,6 +324,7 @@ export type ConversationTreeNode =
   | RootPromptNode
   | ImportMessageNode
   | UserTurnNode
+  | ConverterNode
   | SendNode
   | FanNode
   | ScoreNode

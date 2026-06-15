@@ -6,14 +6,14 @@
  * TreeCanvas → cards.
  *
  * Scope (PR5c): the common-to-every-node rail (Refresh / Branch /
- * Branch-subtree-stub / Delete / Open-in-linear). Kind-specific
+ * Delete / Focus-in-path-chat). Kind-specific
  * actions (✏ edit, ⚡ converter, ≡ role, ↻×N re-run, etc.) defer to
  * later sub-PRs — each needs its own state machine + dialog.
  *
  * Pinned contracts:
  *   - rail renders one button per visible action
  *   - clicking a button invokes the matching callback with the node id
- *   - V1.1 actions (Branch-subtree) render disabled with a tooltip
+ *   - future-only actions (Branch-subtree) do not render in normal V1.0
  *   - rail visibility ties to `[data-selected="true"]` OR `:hover`
  *     (CSS-level; tested via the data attributes the cards already
  *     emit, not via simulated hover events — jsdom's hover doesn't
@@ -42,7 +42,7 @@ import {
 // ============================================================================
 
 describe('ActionRail — isolated render', () => {
-  it('renders Refresh / Branch / Branch-subtree / Delete / Open buttons when callbacks supplied', () => {
+  it('renders Refresh / Branch / Delete / Open buttons when callbacks supplied', () => {
     const callbacks: ActionCallbacks = {
       onRefresh: jest.fn(),
       onBranch: jest.fn(),
@@ -52,9 +52,9 @@ describe('ActionRail — isolated render', () => {
     render(<ActionRail nodeId={nodeId('r')} callbacks={callbacks} branchLabel="Branch from here" />)
     expect(screen.getByRole('button', { name: /refresh/i })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /branch from here/i })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /branch as subtree/i })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /branch as subtree/i })).toBeNull()
     expect(screen.getByRole('button', { name: /delete/i })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /open in linear/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /focus in path chat/i })).toBeInTheDocument()
   })
 
   it('uses the supplied branchLabel ("Clone tree" on root, "Branch from here" elsewhere)', () => {
@@ -72,11 +72,10 @@ describe('ActionRail — isolated render', () => {
     expect(screen.getByRole('button', { name: /branch from here/i })).toBeInTheDocument()
   })
 
-  it('Branch-subtree button is disabled (V1.1 placeholder)', () => {
+  it('Branch-subtree future action is hidden in normal V1.0', () => {
     const callbacks: ActionCallbacks = { onRefresh: jest.fn(), onBranch: jest.fn() }
     render(<ActionRail nodeId={nodeId('r')} callbacks={callbacks} branchLabel="Clone tree" />)
-    const subtreeBtn = screen.getByRole('button', { name: /branch as subtree/i })
-    expect(subtreeBtn).toBeDisabled()
+    expect(screen.queryByRole('button', { name: /branch as subtree/i })).toBeNull()
   })
 
   it('clicking Refresh invokes onRefresh(nodeId)', async () => {
@@ -111,7 +110,7 @@ describe('ActionRail — isolated render', () => {
     expect(onDelete).toHaveBeenCalledWith(nodeId('r'))
   })
 
-  it('clicking Open-in-linear invokes onOpenLinear(nodeId)', async () => {
+  it('clicking Focus-in-path-chat invokes onOpenLinear(nodeId)', async () => {
     const onOpenLinear = jest.fn()
     const callbacks: ActionCallbacks = {
       onRefresh: jest.fn(),
@@ -120,7 +119,7 @@ describe('ActionRail — isolated render', () => {
     }
     render(<ActionRail nodeId={nodeId('r')} callbacks={callbacks} branchLabel="x" />)
     const user = userEvent.setup()
-    await user.click(screen.getByRole('button', { name: /open in linear/i }))
+    await user.click(screen.getByRole('button', { name: /focus in path chat/i }))
     expect(onOpenLinear).toHaveBeenCalledWith(nodeId('r'))
   })
 
@@ -133,13 +132,13 @@ describe('ActionRail — isolated render', () => {
     expect(screen.queryByRole('button', { name: /delete/i })).toBeNull()
   })
 
-  it('omits Open-in-linear button when onOpenLinear is undefined', () => {
+  it('omits Focus-in-path-chat button when onOpenLinear is undefined', () => {
     const callbacks: ActionCallbacks = {
       onRefresh: jest.fn(),
       onBranch: jest.fn(),
     }
     render(<ActionRail nodeId={nodeId('r')} callbacks={callbacks} branchLabel="x" />)
-    expect(screen.queryByRole('button', { name: /open in linear/i })).toBeNull()
+    expect(screen.queryByRole('button', { name: /focus in path chat/i })).toBeNull()
   })
 
   it('hides Branch button when onBranch is undefined (no clone affordance)', () => {
@@ -162,7 +161,7 @@ describe('ActionRail — isolated render', () => {
     // Branch-subtree is the only always-rendered (disabled) slot. Verify
     // the rail wrapper itself still renders so PR5d's edge `+` chip has
     // anchor positioning; but no functional buttons are present.
-    expect(screen.queryByRole('button', { name: /refresh|clone|branch from here|delete|open in linear/i })).toBeNull()
+    expect(screen.queryByRole('button', { name: /refresh|clone|branch from here|delete|focus in path chat/i })).toBeNull()
     expect(container.querySelector('[data-tree-action-rail]')).not.toBeNull()
   })
 })
@@ -277,14 +276,11 @@ describe('ActionRail — accessibility', () => {
     }
   })
 
-  it('disabled Branch-subtree button has a tooltip explaining the deferral', () => {
-    // Per 02 §2.2: V1.1 placeholders carry a tooltip pointing operators
-    // at the V1.0 fallback. The button itself is disabled; the tooltip
-    // is on the button's title attribute.
+  it('does not expose future-only Branch-subtree copy in normal V1.0', () => {
     const callbacks: ActionCallbacks = { onRefresh: jest.fn(), onBranch: jest.fn() }
     render(<ActionRail nodeId={nodeId('r')} callbacks={callbacks} branchLabel="x" />)
-    const subtreeBtn = screen.getByRole('button', { name: /branch as subtree/i })
-    expect(subtreeBtn.getAttribute('title')).toMatch(/coming|future|available/i)
+    expect(screen.queryByRole('button', { name: /branch as subtree/i })).toBeNull()
+    expect(screen.queryByTitle(/coming|future|available/i)).toBeNull()
   })
 
   it('rail carries data-tree-action-rail and data-tree-node-id for DOM scoping', () => {

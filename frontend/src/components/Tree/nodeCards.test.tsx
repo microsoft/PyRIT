@@ -26,7 +26,7 @@
  * registry entry would surface as a default react-flow node render.
  */
 
-import { render } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import { ReactFlowProvider } from '@xyflow/react'
 
 import {
@@ -109,6 +109,12 @@ describe('RootPromptCard', () => {
     const node = mkRoot('r', { text: 'x', targetRegistryName: 'gpt-4o' })
     const { getByText } = renderCard(<RootPromptCard {...rootPromptProps(node)} />)
     expect(getByText('gpt-4o')).toBeInTheDocument()
+  })
+
+  it('renders an explicit No target chip when the root target is blank', () => {
+    const node = mkRoot('r', { text: 'x', targetRegistryName: '' })
+    const { getByText } = renderCard(<RootPromptCard {...rootPromptProps(node)} />)
+    expect(getByText('No target')).toBeInTheDocument()
   })
 
   it('renders the kind label "Root prompt"', () => {
@@ -229,21 +235,38 @@ describe('UserTurnCard', () => {
 // ============================================================================
 
 describe('SendCard', () => {
-  it('renders draft/edited sends as "Send"', () => {
+  it('renders empty response nodes as pending responses', () => {
     const node = mkSend('s', 'u', undefined, { state: 'edited' })
-    const { getByText } = renderCard(<SendCard {...sendProps(node)} />)
-    expect(getByText('Send')).toBeInTheDocument()
+    const { getByText, queryByText } = renderCard(<SendCard {...sendProps(node)} />)
+    expect(getByText('Pending response')).toBeInTheDocument()
+    expect(queryByText('Send')).not.toBeInTheDocument()
   })
 
-  it('renders clean sends as assistant responses', () => {
-    const node = mkSend('s', 'u')
+  it('renders response nodes with preview text as assistant responses', () => {
+    const node = mkSend('s', 'u', { responsePreview: 'hello' })
     const { getByText, queryByText } = renderCard(<SendCard {...sendProps(node)} />)
 
     expect(getByText('Assistant response')).toBeInTheDocument()
     expect(queryByText('Send')).not.toBeInTheDocument()
   })
 
-  it('also renders sends with execution records as assistant responses', () => {
+  it('opens an attempt-count dialog and passes the selected count to onCreateFanFromNode', () => {
+    const onCreateFanFromNode = jest.fn()
+    const tree = mkTree('r', [mkRoot('r'), mkSend('s', 'r', { responsePreview: 'hello' })])
+    const { container } = render(
+      <TreeCanvas tree={tree} actionCallbacks={{ onCreateFanFromNode }} />,
+    )
+    const button = container.querySelector('button[aria-label="Fan out response attempts"]')
+    expect(button).not.toBeNull()
+    fireEvent.click(button!)
+    const input = screen.getByRole('spinbutton', { name: /attempt count/i }) as HTMLInputElement
+    expect(input.value).toBe('5')
+    fireEvent.change(input, { target: { value: '3' } })
+    fireEvent.click(screen.getByRole('button', { name: /^create$/i }))
+    expect(onCreateFanFromNode).toHaveBeenCalledWith(nodeId('s'), 'attempt', { attemptCount: 3 })
+  })
+
+  it('also renders executed response nodes with preview text as assistant responses', () => {
     const node = mkSend('s', 'u', undefined, {
       execution: {
         executionId: 'exec-1',
@@ -260,6 +283,7 @@ describe('SendCard', () => {
         completedAt: null,
       },
     })
+    node.params.responsePreview = 'response text'
     const { getByText, queryByText } = renderCard(<SendCard {...sendProps(node)} />)
 
     expect(getByText('Assistant response')).toBeInTheDocument()
@@ -421,7 +445,7 @@ describe('ScoreCard', () => {
 describe('treeNodeTypes registry', () => {
   it('registers a component for every ConversationTreeNodeKind', () => {
     const keys = Object.keys(treeNodeTypes).sort()
-    expect(keys).toEqual(['fan', 'import_message', 'root_prompt', 'score', 'send', 'user_turn'])
+    expect(keys).toEqual(['converter', 'fan', 'import_message', 'root_prompt', 'score', 'send', 'user_turn'])
   })
 
   it('TreeCanvas renders the per-kind card content (proving the registry is wired)', () => {
@@ -432,7 +456,7 @@ describe('treeNodeTypes registry', () => {
     const tree = mkTree('r', [
       mkRoot('r', { text: 'pinned content' }),
       mkUserTurn('u', 'r', { text: 'tree-canvas integration' }),
-      mkSend('s', 'u'),
+      mkSend('s', 'u', { responsePreview: 'assistant preview' }),
     ])
     const { getByText } = render(<TreeCanvas tree={tree} />)
     expect(getByText('Root prompt')).toBeInTheDocument()

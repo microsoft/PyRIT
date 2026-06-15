@@ -24,8 +24,9 @@
 
 import { useEffect, useState } from 'react'
 
-import { linearChainFromMessages } from '../../runner/autoReverse'
+import { linearChainFromMessages, mergedTreeFromConversations } from '../../runner/autoReverse'
 import type {
+  AttackConversationsResponse,
   AttackSummary,
   ConversationMessagesResponse,
 } from '../../types'
@@ -34,6 +35,7 @@ import type { ConversationTree } from '../../runner/treeTypes'
 export interface UseAutoReverseApi {
   getAttack(attackResultId: string): Promise<AttackSummary>
   getMessages(attackResultId: string, conversationId: string): Promise<ConversationMessagesResponse>
+  getConversations?(attackResultId: string): Promise<AttackConversationsResponse>
 }
 
 export interface UseAutoReverseDeps {
@@ -72,9 +74,23 @@ export function useAutoReverse(
       try {
         const ar = await deps.attacksApi.getAttack(attackResultId)
         if (cancelled) return
-        const msgs = await deps.attacksApi.getMessages(attackResultId, ar.conversation_id)
+        const conversationIds = await activeConversationIdsForAttack(attackResultId, ar, deps.attacksApi)
         if (cancelled) return
-        const built = linearChainFromMessages(msgs.messages)
+        const messageResponses = await Promise.all(
+          conversationIds.map((conversationId) => deps.attacksApi.getMessages(attackResultId, conversationId)),
+        )
+        if (cancelled) return
+        const built = messageResponses.length > 1
+          ? mergedTreeFromConversations(
+              messageResponses.map((resp) => ({
+                conversation_id: resp.conversation_id,
+                messages: resp.messages,
+              })),
+              { targetRegistryName: ar.target?.target_registry_name },
+            ).tree
+          : linearChainFromMessages(messageResponses[0]?.messages ?? [], {
+              targetRegistryName: ar.target?.target_registry_name,
+            })
         // Per spec §13.1: a V1.0+ AR carries `conversation_tree_id`; the
         // opened tree must keep that id so reload/refresh stay consistent.
         // A pre-V1.0 AR (no label) keeps the freshly-minted id.
@@ -113,4 +129,19 @@ export function useAutoReverse(
     loading: !inSync,
     error: inSync ? fetched.error : null,
   }
+}
+
+async function activeConversationIdsForAttack(
+  attackResultId: string,
+  ar: AttackSummary,
+  api: UseAutoReverseApi,
+): Promise<string[]> {
+  if (api.getConversations === undefined) return [ar.conversation_id]
+  const response = await api.getConversations(attackResultId)
+  const ids = [
+    response.main_conversation_id || ar.conversation_id,
+    ...response.conversations.map((conversation) => conversation.conversation_id),
+    ar.conversation_id,
+  ]
+  return Array.from(new Set(ids.filter((id) => id !== undefined && id !== '')))
 }

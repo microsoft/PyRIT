@@ -21,6 +21,7 @@
 
 import { conversationTreeToReactFlow } from './conversationTreeToReactFlow'
 import {
+  mkConverterNode,
   mkEdge,
   mkFan,
   mkImport,
@@ -53,7 +54,8 @@ describe('conversationTreeToReactFlow — node mapping', () => {
     const tree = mkTree('r', [
       mkRoot('r'),
       mkUserTurn('u', 'r'),
-      mkSend('s', 'u'),
+      mkConverterNode('c', 'u'),
+      mkSend('s', 'c'),
       mkFan('f', 's'),
       mkScore('sc', 'f'),
     ])
@@ -61,6 +63,7 @@ describe('conversationTreeToReactFlow — node mapping', () => {
     const byId = new Map(nodes.map((n) => [n.id, n]))
     expect(byId.get('r')?.type).toBe('root_prompt')
     expect(byId.get('u')?.type).toBe('user_turn')
+    expect(byId.get('c')?.type).toBe('converter')
     expect(byId.get('s')?.type).toBe('send')
     expect(byId.get('f')?.type).toBe('fan')
     expect(byId.get('sc')?.type).toBe('score')
@@ -79,12 +82,14 @@ describe('conversationTreeToReactFlow — node mapping', () => {
     // ConversationTreeNode reference to allow downstream useMemo memoization.
     const root = mkRoot('r', { text: 'hello' })
     const turn = mkUserTurn('u', 'r', { text: 'follow-up' })
-    const send = mkSend('s', 'u', undefined, { state: 'edited' })
-    const tree = mkTree('r', [root, turn, send])
+    const converter = mkConverterNode('c', 'u')
+    const send = mkSend('s', 'c', undefined, { state: 'edited' })
+    const tree = mkTree('r', [root, turn, converter, send])
     const { nodes } = conversationTreeToReactFlow(tree)
     const byId = new Map(nodes.map((n) => [n.id, n]))
     expect(byId.get('r')?.data.node).toBe(root)
     expect(byId.get('u')?.data.node).toBe(turn)
+    expect(byId.get('c')?.data.node).toBe(converter)
     expect(byId.get('s')?.data.node).toBe(send)
   })
 

@@ -12,6 +12,7 @@ import os
 import tempfile
 import uuid
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -155,7 +156,25 @@ class TestAttackResultToSummary:
         # Attack metadata should be extracted into explicit fields
         assert summary.attack_type == "My Attack"
         assert summary.target is not None
+        assert summary.target.target_registry_name == ar.get_attack_strategy_identifier().get_child("objective_target").unique_name
         assert summary.target.target_type == "TextTarget"
+
+    async def test_target_registry_name_prefers_registered_human_name(self) -> None:
+        """TargetInfo should recover the registry key rather than exposing the internal identifier name."""
+        ar = _make_attack_result(name="My Attack")
+        target_identifier = ar.get_attack_strategy_identifier().get_child("objective_target")
+        target_instance = MagicMock()
+        target_instance.get_identifier.return_value = target_identifier
+        registry = MagicMock()
+        registry.get_all_instances.return_value = [
+            SimpleNamespace(name="OpenAIChatTarget_gpt-4o-unsafe_rr", instance=target_instance)
+        ]
+        stats = ConversationStats(message_count=2)
+
+        with patch("pyrit.registry.object_registries.TargetRegistry.get_registry_singleton", return_value=registry):
+            summary = await attack_result_to_summary_async(ar, stats=stats)
+            assert summary.target is not None
+            assert summary.target.target_registry_name == "OpenAIChatTarget_gpt-4o-unsafe_rr"
 
     async def test_empty_pieces_gives_zero_messages(self) -> None:
         """Test mapping with no message pieces."""

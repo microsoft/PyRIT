@@ -139,6 +139,7 @@ export interface ConverterCatalogResponse {
 // --- Attacks ---
 
 export interface TargetInfo {
+  target_registry_name?: string | null
   target_type: string
   endpoint?: string | null
   model_name?: string | null

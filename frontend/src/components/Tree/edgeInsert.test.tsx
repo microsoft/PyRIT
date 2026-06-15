@@ -22,7 +22,7 @@
  *   - chip is suppressed when callback is undefined (backwards-compat)
  *   - menu options vary by parent kind (root vs user_turn vs send, etc.)
  *   - selecting an option invokes onEdgeInsert with the right discriminant
- *   - V1.1 fan axes render disabled
+ *   - future-only fan axes are hidden in the normal V1.0 menu
  *   - score / fan parents render the edge WITHOUT a chip
  */
 
@@ -158,42 +158,37 @@ describe('InsertEdge — menu options per parent kind', () => {
     expect(labels).toMatch(/fan.*converter/)
   })
 
-  it('after a UserTurn: Send + Append converter + Fan converter (no Score, no attempt-fan)', () => {
+  it('after a UserTurn: Add response + Append converter + Fan converter (no Score, no attempt-fan)', () => {
     const items = openMenu('user_turn')
     const labels = items.map((i) => i.textContent ?? '').join('|').toLowerCase()
-    expect(labels).toMatch(/send/)
+    expect(labels).toMatch(/add response/)
     expect(labels).toMatch(/append converter/)
     // No Score / Inject assistant text under UserTurn — only legal after a Send.
     expect(labels).not.toMatch(/score/)
     expect(labels).not.toMatch(/inject/)
   })
 
-  it('after a RootPrompt: Follow-up + Inject + Send', () => {
+  it('after a RootPrompt: Follow-up + Inject + Add response', () => {
     const items = openMenu('root_prompt')
     const labels = items.map((i) => i.textContent ?? '').join('|').toLowerCase()
     expect(labels).toMatch(/follow-up/)
-    expect(labels).toMatch(/send/)
+    expect(labels).toMatch(/add response/)
     expect(labels).toMatch(/inject/)
   })
 
-  it('after an ImportMessage: Follow-up + Inject + Send (same as RootPrompt)', () => {
+  it('after an ImportMessage: Follow-up + Inject + Add response (same as RootPrompt)', () => {
     const items = openMenu('import_message')
     const labels = items.map((i) => i.textContent ?? '').join('|').toLowerCase()
     expect(labels).toMatch(/follow-up/)
-    expect(labels).toMatch(/send/)
+    expect(labels).toMatch(/add response/)
   })
 
-  it('V1.1 axes (Fan prompt, Fan target) render disabled', () => {
+  it('future-only axes (Fan prompt, Fan target) are hidden in the normal V1.0 menu', () => {
     const items = openMenu('send')
-    const v11Items = items.filter((item) =>
-      (item.textContent ?? '').toLowerCase().match(/fan.*prompt|fan.*target/),
-    )
-    // Pin that the disabled stubs actually render — without this guard the
-    // for-loop below passes vacuously if a regression removes the V1.1 items.
-    expect(v11Items.length).toBeGreaterThanOrEqual(2)
-    for (const item of v11Items) {
-      expect(item.getAttribute('aria-disabled')).toBe('true')
-    }
+    const labels = items.map((i) => i.textContent ?? '').join('|').toLowerCase()
+    expect(labels).not.toMatch(/fan.*prompt/)
+    expect(labels).not.toMatch(/fan.*target/)
+    expect(labels).not.toMatch(/coming later|future release/)
   })
 })
 
@@ -227,11 +222,11 @@ describe('InsertEdge — onEdgeInsert callback', () => {
     expect(kind).toBe('follow_up_user_turn')
   })
 
-  it('selecting "Send to target" invokes onEdgeInsert with kind="send"', () => {
+  it('selecting "Add response" invokes onEdgeInsert with kind="send"', () => {
     const onEdgeInsert = jest.fn()
     renderEdge(mkEdgeProps('user_turn', 'u', 's'), { onEdgeInsert })
     fireEvent.click(document.querySelector('[data-tree-edge-insert] button')!)
-    clickFirstEnabledItemMatching(/send to target/i)
+    clickFirstEnabledItemMatching(/add response/i)
     expect(onEdgeInsert).toHaveBeenCalledWith(nodeId('u'), nodeId('s'), 'send')
   })
 
@@ -275,18 +270,12 @@ describe('InsertEdge — onEdgeInsert callback', () => {
     expect(onEdgeInsert).toHaveBeenCalledWith(nodeId('s'), nodeId('u2'), 'fan_converter')
   })
 
-  it('disabled V1.1 fan-axis items do NOT invoke onEdgeInsert when clicked', () => {
+  it('future-only fan-axis items are absent from the normal V1.0 callback menu', () => {
     const onEdgeInsert = jest.fn()
     renderEdge(mkEdgeProps('send'), { onEdgeInsert })
     fireEvent.click(document.querySelector('[data-tree-edge-insert] button')!)
     const items = Array.from(document.querySelectorAll('[role="menuitem"]'))
-    const disabledFan = items.find((i) =>
-      i.textContent?.match(/fan.*prompt|fan.*target/i),
-    ) as HTMLElement | undefined
-    // Pin that the disabled item exists before clicking it — a removed stub
-    // would make the assertion below vacuous-pass without this guard.
-    expect(disabledFan).toBeDefined()
-    fireEvent.click(disabledFan!)
+    expect(items.some((item) => item.textContent?.match(/fan.*prompt|fan.*target/i))).toBe(false)
     expect(onEdgeInsert).not.toHaveBeenCalled()
   })
 })

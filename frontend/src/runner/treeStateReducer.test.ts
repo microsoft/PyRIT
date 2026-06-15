@@ -19,14 +19,19 @@ import {
   applyEditRootPromptParams,
   applyEditUserTurnText,
   applyAppendChild,
+  applyAppendPromptWithResponse,
+  applyInsertConverterBetween,
   applyInsertBetween,
   applyWrapWithFan,
+  applySetConverterNodePipeline,
   applySetUserTurnConverterPipeline,
   applySetFanPromotedChild,
+  applyPruneFanToPickedPath,
   applyDeleteSubtree,
   applyCloneTree,
+  applyBranchFromNode,
 } from './treeStateReducer'
-import { mkFan, mkRoot, mkSend, mkTree, mkUserTurn, nodeId, treeId } from './testHelpers'
+import { mkConverterNode, mkFan, mkRoot, mkSend, mkTree, mkUserTurn, nodeId, treeId } from './testHelpers'
 import type {
   ConversationTree,
   ExecutionRecord,
@@ -310,6 +315,22 @@ describe('applyEditUserTurnText', () => {
     expect(user?.kind === 'user_turn' ? user.params.converterPipeline : undefined).toEqual([{ converterId: 'base64' }])
     expect(send?.state).toBe('stale')
   })
+
+  it('setting a visible converter node pipeline marks it edited and stales descendants', () => {
+    const before = mkTree('root', [
+      mkRoot('root'),
+      mkUserTurn('u1', 'root'),
+      mkConverterNode('c1', 'u1'),
+      mkSend('s1', 'c1'),
+    ])
+
+    const after = applySetConverterNodePipeline(before, nodeId('c1'), [{ converterId: 'base64' }])
+
+    const converter = after.nodes.find((node) => node.id === nodeId('c1'))
+    expect(converter?.kind === 'converter' ? converter.params.pipeline : []).toEqual([{ converterId: 'base64' }])
+    expect(converter?.state).toBe('edited')
+    expect(after.nodes.find((node) => node.id === nodeId('s1'))?.state).toBe('stale')
+  })
 })
 
 describe('applyEditRootPromptParams', () => {
@@ -360,6 +381,37 @@ describe('structural insert reducers', () => {
     expect(after.edges.some((edge) => edge.parentId === nodeId('s1') && edge.childId === nodeId('new-user'))).toBe(true)
   })
 
+  it('appends a follow-up prompt with a linked pending response under a leaf response', () => {
+    const before = mkTree('root', [mkRoot('root'), mkSend('s1', 'root')])
+
+    const after = applyAppendPromptWithResponse(before, nodeId('s1'), uuid)
+
+    const prompt = after.nodes.find((node) => node.id === nodeId('new-user'))
+    const response = after.nodes.find((node) => node.id === nodeId('new-send'))
+    expect(prompt?.kind).toBe('user_turn')
+    expect(prompt?.parentId).toBe(nodeId('s1'))
+    expect(prompt?.state).toBe('edited')
+    expect(response?.kind).toBe('send')
+    expect(response?.parentId).toBe(nodeId('new-user'))
+    expect(response?.state).toBe('stale')
+    expect(after.edges.some((edge) => edge.parentId === nodeId('s1') && edge.childId === nodeId('new-user'))).toBe(true)
+    expect(after.edges.some((edge) => edge.parentId === nodeId('new-user') && edge.childId === nodeId('new-send'))).toBe(true)
+  })
+
+  it('appends a prompt with linked pending response under a root prompt', () => {
+    const before = mkTree('root', [mkRoot('root')])
+
+    const after = applyAppendPromptWithResponse(before, nodeId('root'), uuid, 'first path-chat prompt')
+
+    const prompt = after.nodes.find((node) => node.id === nodeId('new-user'))
+    const response = after.nodes.find((node) => node.id === nodeId('new-send'))
+    expect(prompt?.kind).toBe('user_turn')
+    expect(prompt?.parentId).toBe(nodeId('root'))
+    expect(prompt?.kind === 'user_turn' ? prompt.params.text : '').toBe('first path-chat prompt')
+    expect(response?.kind).toBe('send')
+    expect(response?.parentId).toBe(nodeId('new-user'))
+  })
+
   it('inserts a node between an existing parent and child edge', () => {
     const before = mkTree('root', [mkRoot('root'), mkSend('s1', 'root')])
 
@@ -371,6 +423,26 @@ describe('structural insert reducers', () => {
     expect(child?.parentId).toBe(nodeId('new-user'))
     expect(after.edges.some((edge) => edge.parentId === nodeId('root') && edge.childId === nodeId('new-user'))).toBe(true)
     expect(after.edges.some((edge) => edge.parentId === nodeId('new-user') && edge.childId === nodeId('s1'))).toBe(true)
+  })
+
+  it('adds a visible converter sibling path while preserving the direct response baseline', () => {
+    const before = mkTree('root', [mkRoot('root'), mkUserTurn('u1', 'root'), mkSend('s1', 'u1')])
+
+    const after = applyInsertConverterBetween(before, nodeId('u1'), nodeId('s1'), uuid)
+
+    const converter = after.nodes.find((node) => node.id === nodeId('new-user'))
+    const convertedResponse = after.nodes.find((node) => node.id === nodeId('new-send'))
+    const directResponse = after.nodes.find((node) => node.id === nodeId('s1'))
+    expect(converter?.kind).toBe('converter')
+    expect(converter?.parentId).toBe(nodeId('u1'))
+    expect(converter?.state).toBe('edited')
+    expect(directResponse?.parentId).toBe(nodeId('u1'))
+    expect(convertedResponse?.kind).toBe('send')
+    expect(convertedResponse?.parentId).toBe(nodeId('new-user'))
+    expect(convertedResponse?.state).toBe('stale')
+    expect(after.edges.some((edge) => edge.parentId === nodeId('u1') && edge.childId === nodeId('s1'))).toBe(true)
+    expect(after.edges.some((edge) => edge.parentId === nodeId('u1') && edge.childId === nodeId('new-user'))).toBe(true)
+    expect(after.edges.some((edge) => edge.parentId === nodeId('new-user') && edge.childId === nodeId('new-send'))).toBe(true)
   })
 
   it('wraps an existing response edge in an attempt fan and adds a fresh response slot', () => {
@@ -388,6 +460,23 @@ describe('structural insert reducers', () => {
     expect(siblingSend?.parentId).toBe(nodeId('new-user'))
     expect(after.edges.find((edge) => edge.parentId === nodeId('new-user') && edge.childId === nodeId('s1'))?.slotIndex).toBe(0)
     expect(after.edges.find((edge) => edge.parentId === nodeId('new-user') && edge.childId === nodeId('new-send'))?.slotIndex).toBe(1)
+  })
+
+  it('wraps an existing response edge in an N-attempt fan with stable slot ids', () => {
+    const before = mkTree('root', [mkRoot('root'), mkSend('s1', 'root')])
+    const manyIds = ['fan-5', 'send-1', 'send-2', 'send-3', 'send-4']
+    const manyUuid = jest.fn(() => manyIds.shift() ?? 'fallback-id')
+
+    const after = applyWrapWithFan(before, nodeId('root'), nodeId('s1'), 'attempt', manyUuid, { attemptCount: 5 })
+
+    const fan = after.nodes.find((node) => node.id === nodeId('fan-5'))
+    expect(fan?.kind === 'fan' ? fan.params.variants : []).toHaveLength(5)
+    const childEdges = after.edges
+      .filter((edge) => edge.parentId === nodeId('fan-5'))
+      .sort((a, b) => a.slotIndex - b.slotIndex)
+    expect(childEdges.map((edge) => edge.slotIndex)).toEqual([0, 1, 2, 3, 4])
+    expect(new Set(childEdges.map((edge) => edge.id)).size).toBe(5)
+    expect(after.nodes.filter((node) => node.kind === 'send' && node.parentId === nodeId('fan-5'))).toHaveLength(5)
   })
 
   it('wraps an existing response edge in a converter fan and adds a fresh converter branch', () => {
@@ -421,6 +510,50 @@ describe('applySetFanPromotedChild', () => {
 
     expect(fan?.state).toBe('clean')
     expect(fan?.kind === 'fan' ? fan.params.promotedChildSlotIndex : null).toBe(1)
+  })
+})
+
+describe('applyPruneFanToPickedPath', () => {
+  it('removes the fan and non-picked variants while preserving the picked subtree', () => {
+    const before = mkTree('root', [
+      mkRoot('root'),
+      mkFan('fan', 'root', { axis: 'attempt', variants: [{ axis: 'attempt', payload: {} }, { axis: 'attempt', payload: {} }] }),
+      mkSend('s0', 'fan'),
+      mkUserTurn('u0', 's0', { text: 'keep me' }),
+      mkSend('s0b', 'u0'),
+      mkSend('s1', 'fan'),
+      mkUserTurn('u1', 's1', { text: 'delete me' }),
+    ], {
+      edges: [
+        { id: 'root->fan', parentId: nodeId('root'), childId: nodeId('fan'), slotIndex: 0 },
+        { id: 'fan->s0', parentId: nodeId('fan'), childId: nodeId('s0'), slotIndex: 0 },
+        { id: 's0->u0', parentId: nodeId('s0'), childId: nodeId('u0'), slotIndex: 0 },
+        { id: 'u0->s0b', parentId: nodeId('u0'), childId: nodeId('s0b'), slotIndex: 0 },
+        { id: 'fan->s1', parentId: nodeId('fan'), childId: nodeId('s1'), slotIndex: 1 },
+        { id: 's1->u1', parentId: nodeId('s1'), childId: nodeId('u1'), slotIndex: 0 },
+      ],
+    })
+
+    const after = applyPruneFanToPickedPath(before, nodeId('fan'), 0)
+
+    expect(after.nodes.some((node) => node.id === nodeId('fan'))).toBe(false)
+    expect(after.nodes.some((node) => node.id === nodeId('s1'))).toBe(false)
+    expect(after.nodes.some((node) => node.id === nodeId('u1'))).toBe(false)
+    expect(after.nodes.find((node) => node.id === nodeId('s0'))?.parentId).toBe(nodeId('root'))
+    expect(after.nodes.some((node) => node.id === nodeId('u0'))).toBe(true)
+    expect(after.nodes.some((node) => node.id === nodeId('s0b'))).toBe(true)
+    expect(after.edges.some((edge) => edge.parentId === nodeId('root') && edge.childId === nodeId('s0'))).toBe(true)
+  })
+
+  it('returns the original tree when the requested fan slot does not exist', () => {
+    const before = mkTree('root', [mkRoot('root'), mkFan('fan', 'root'), mkSend('s0', 'fan')], {
+      edges: [
+        { id: 'root->fan', parentId: nodeId('root'), childId: nodeId('fan'), slotIndex: 0 },
+        { id: 'fan->s0', parentId: nodeId('fan'), childId: nodeId('s0'), slotIndex: 0 },
+      ],
+    })
+
+    expect(applyPruneFanToPickedPath(before, nodeId('fan'), 99)).toBe(before)
   })
 })
 
@@ -460,5 +593,46 @@ describe('applyCloneTree', () => {
     expect(after.nodes.map((node) => node.id)).toEqual(before.nodes.map((node) => node.id))
     expect(after.edges).toEqual(before.edges)
     expect(after.nodes).not.toBe(before.nodes)
+  })
+})
+
+describe('applyBranchFromNode', () => {
+  it('delegates root branching to whole-tree clone semantics', () => {
+    const before = mkTree('root', [mkRoot('root'), mkSend('s1', 'root')], { id: 'source-tree' })
+
+    const after = applyBranchFromNode(before, nodeId('root'), () => 'branch-root')
+
+    expect(after.id).toBe(treeId('branch-root'))
+    expect(after.parentConversationTreeId).toBe(treeId('source-tree'))
+    expect(after.nodes.map((node) => node.id)).toEqual(before.nodes.map((node) => node.id))
+  })
+
+  it('branches from a non-root node with only the root path plus selected subtree', () => {
+    const before = mkTree('root', [
+      mkRoot('root'),
+      mkUserTurn('u1', 'root'),
+      mkSend('s1', 'u1'),
+      mkUserTurn('selected', 's1'),
+      mkSend('selected-send', 'selected'),
+      mkUserTurn('sibling', 's1'),
+      mkSend('sibling-send', 'sibling'),
+    ], { id: 'source-tree' })
+
+    const after = applyBranchFromNode(before, nodeId('selected'), () => 'branch-tree')
+
+    expect(after.id).toBe(treeId('branch-tree'))
+    expect(after.parentConversationTreeId).toBe(treeId('source-tree'))
+    expect(after.nodes.map((node) => node.id)).toEqual([
+      nodeId('root'),
+      nodeId('u1'),
+      nodeId('s1'),
+      nodeId('selected'),
+      nodeId('selected-send'),
+    ])
+    expect(after.nodes.some((node) => node.id === nodeId('sibling'))).toBe(false)
+    expect(after.edges.every((edge) =>
+      after.nodes.some((node) => node.id === edge.parentId) &&
+      after.nodes.some((node) => node.id === edge.childId),
+    )).toBe(true)
   })
 })

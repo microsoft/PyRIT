@@ -146,16 +146,18 @@ async function mountAndCaptureShim(props: Parameters<typeof TreeRunnerHost>[0]) 
 }
 
 // ============================================================================
-// Layout — 5 named slots (PR7b)
+// Layout slots
 // ============================================================================
 
 describe('TreeRunnerHost — layout slots', () => {
-  it('renders all 5 named slots (ribbon, canvas, drawer, toast, modal)', () => {
-    const { container } = render(<TreeRunnerHost tree={null} />)
+  it('renders ribbon, canvas, splitter, path chat, toast, and modal slots when a tree is loaded', () => {
+    const tree = mkTree('root', [mkRoot('root'), mkSend('send-1', 'root')], { id: 't-slots' })
+    const { container } = render(<TreeRunnerHost tree={tree} />)
     expect(container.querySelector('[data-tree-runner-host]')).not.toBeNull()
     expect(container.querySelector('[data-slot="ribbon"]')).not.toBeNull()
     expect(container.querySelector('[data-slot="canvas"]')).not.toBeNull()
-    expect(container.querySelector('[data-slot="drawer"]')).not.toBeNull()
+    expect(container.querySelector('[data-slot="splitter"]')).not.toBeNull()
+    expect(container.querySelector('[data-slot="pathChat"]')).not.toBeNull()
     expect(container.querySelector('[data-slot="toast"]')).not.toBeNull()
     expect(container.querySelector('[data-slot="modal"]')).not.toBeNull()
   })
@@ -574,6 +576,135 @@ describe('TreeRunnerHost — shim wiring', () => {
     })
 
     expect(starter).toHaveBeenCalled()
+  })
+
+  it('intercepts refresh with a no-target dialog before starting a wave', async () => {
+    const tree = mkTree('root', [
+      mkRoot('root', { targetRegistryName: '' }),
+      mkSend('send-1', 'root', undefined, { state: 'edited' }),
+    ], { id: 't-no-target' })
+    const starter = jest.fn(noopStarter)
+    const { container } = render(
+      <TreeRunnerHost
+        tree={tree}
+        operator="alice"
+        runWaveStarter={starter as unknown as RunWaveStarter}
+      />,
+    )
+    const refresh = container.querySelector('button[aria-label^="Refresh"]')
+    expect(refresh).not.toBeNull()
+
+    fireEvent.click(refresh!)
+
+    await waitFor(() => expect(screen.getByRole('dialog')).toBeInTheDocument())
+    expect(screen.getByText(/No target selected/i)).toBeInTheDocument()
+    expect(starter).not.toHaveBeenCalled()
+  })
+})
+
+describe('TreeRunnerHost — selected path chat', () => {
+  it('shows full selected-path text beside the canvas and focuses a selected response', () => {
+    const longResponse = 'full response '.repeat(40)
+    const tree = mkTree('root', [
+      mkRoot('root', { text: 'root prompt', targetRegistryName: 'target-1' }),
+      mkSend('send-1', 'root', { responsePreview: longResponse }, {
+        state: 'failed',
+        lastError: { message: 'latest refresh failed', failure_class: 'permanent' },
+        execution: {
+          executionId: 'exec-detail-1',
+          attemptedAt: '2026-06-11T00:00:00Z',
+          attackResultId: 'ar-detail-1',
+          conversationId: 'conv-detail-1',
+          pieceIds: ['piece-1'],
+          responsePreview: longResponse,
+          outcome: 'success',
+          resolvedInputHashAtExecution: 'hash-detail',
+          waveId: 'wave-detail-1',
+          waveTriggerKind: 'refresh_tree',
+          dispatchedAt: '2026-06-11T00:00:00Z',
+          targetFirstByteAt: '2026-06-11T00:00:00Z',
+          completedAt: '2026-06-11T00:00:00Z',
+        },
+      }),
+    ], { id: 't-detail' })
+    const { container } = render(<TreeRunnerHost tree={tree} operator="alice" />)
+    expect(container.querySelector('[data-tree-path-chat-pane]')).not.toBeNull()
+
+    const sendCard = container.querySelector('[data-tree-node-id="send-1"]')
+    const focus = Array.from(sendCard?.querySelectorAll('button') ?? []).find((button) =>
+      button.getAttribute('aria-label') === 'Focus in path chat',
+    )
+    expect(focus).toBeDefined()
+
+    fireEvent.click(focus!)
+
+    const pathChat = container.querySelector('[data-tree-path-chat]')
+    expect(pathChat?.textContent).toContain('root prompt')
+    expect(pathChat?.textContent).toContain(longResponse)
+    expect(container.querySelector('[data-tree-path-chat-node="send-1"]')?.getAttribute('data-selected')).toBe('true')
+  })
+
+  it('path chat composer appends a prompt with pending response and starts refresh', async () => {
+    const tree = mkTree('root', [
+      mkRoot('root'),
+      mkSend('s1', 'root', { responsePreview: 'hello' }),
+    ], { id: 't-path-chat-compose' })
+    const onTreeChange = jest.fn()
+    const starter = jest.fn(noopStarter)
+
+    render(
+      <TreeRunnerHost
+        tree={tree}
+        operator="alice"
+        onTreeChange={onTreeChange}
+        runWaveStarter={starter as unknown as RunWaveStarter}
+      />,
+    )
+
+    const responseCard = screen.getByText('hello').closest('[data-tree-node-id]') as HTMLElement
+    fireEvent.click(within(responseCard).getByRole('button', { name: /focus in path chat/i }))
+
+    fireEvent.change(screen.getByRole('textbox', { name: /follow-up prompt/i }), {
+      target: { value: 'new path chat prompt' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: /^run$/i }))
+
+    await waitFor(() => expect(onTreeChange).toHaveBeenCalled())
+    const next = onTreeChange.mock.calls.at(-1)?.[0] as ConversationTree
+    const prompt = next.nodes.find((node) => node.kind === 'user_turn' && node.params.text === 'new path chat prompt')
+    const response = next.nodes.find((node) => node.kind === 'send' && node.parentId === prompt?.id)
+    expect(prompt?.parentId).toBe(nodeId('s1'))
+    expect(prompt?.state).toBe('edited')
+    expect(response?.state).toBe('stale')
+    await waitFor(() => expect(starter).toHaveBeenCalled())
+  })
+
+  it('path chat composer can start from a root-only selected path', async () => {
+    const tree = mkTree('root', [mkRoot('root', { text: 'root only' })], { id: 't-path-chat-root-compose' })
+    const onTreeChange = jest.fn()
+    const starter = jest.fn(noopStarter)
+
+    render(
+      <TreeRunnerHost
+        tree={tree}
+        operator="alice"
+        onTreeChange={onTreeChange}
+        runWaveStarter={starter as unknown as RunWaveStarter}
+      />,
+    )
+
+    fireEvent.change(screen.getByRole('textbox', { name: /follow-up prompt/i }), {
+      target: { value: 'first prompt from root path' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: /^run$/i }))
+
+    await waitFor(() => expect(onTreeChange).toHaveBeenCalled())
+    const next = onTreeChange.mock.calls.at(-1)?.[0] as ConversationTree
+    const prompt = next.nodes.find((node) => node.kind === 'user_turn' && node.params.text === 'first prompt from root path')
+    const response = next.nodes.find((node) => node.kind === 'send' && node.parentId === prompt?.id)
+    expect(prompt?.parentId).toBe(nodeId('root'))
+    expect(response?.state).toBe('stale')
+    await waitFor(() => expect(starter).toHaveBeenCalled())
   })
 })
 
@@ -1078,7 +1209,7 @@ describe('TreeRunnerHost — integrated editing', () => {
     expect(within(rootCard as HTMLElement).queryByRole('button', { name: /^delete$/i })).toBeNull()
   })
 
-  it('opens a linear path drawer for the selected node', () => {
+  it('focuses the selected node in the path chat', () => {
     const tree = mkTree('root', [
       mkRoot('root', { text: 'root text' }),
       mkUserTurn('u1', 'root', { text: 'turn text' }),
@@ -1088,15 +1219,16 @@ describe('TreeRunnerHost — integrated editing', () => {
     const { container } = render(<TreeRunnerHost tree={tree} />)
 
     const sendCard = container.querySelector('[data-tree-node-id="s1"]')!
-    fireEvent.click(within(sendCard as HTMLElement).getByRole('button', { name: /open in linear view/i }))
+    fireEvent.click(within(sendCard as HTMLElement).getByRole('button', { name: /focus in path chat/i }))
 
-    expect(screen.getByText('Path')).toBeInTheDocument()
-    expect(screen.getAllByText('root text').length).toBeGreaterThanOrEqual(1)
-    expect(screen.getAllByText('turn text').length).toBeGreaterThanOrEqual(1)
-    expect(screen.getAllByText('response text').length).toBeGreaterThanOrEqual(1)
+    const pathChat = container.querySelector('[data-tree-path-chat]')
+    expect(pathChat?.textContent).toContain('root text')
+    expect(pathChat?.textContent).toContain('turn text')
+    expect(pathChat?.textContent).toContain('response text')
+    expect(container.querySelector('[data-tree-path-chat-node="s1"]')?.getAttribute('data-selected')).toBe('true')
   })
 
-  it('adds a follow-up prompt under a response card', async () => {
+  it('adds a follow-up prompt and pending response under a response card', async () => {
     const tree = mkTree('root', [mkRoot('root'), mkSend('s1', 'root')], { id: 't-add-follow-up' })
     const onTreeChange = jest.fn()
 
@@ -1107,8 +1239,26 @@ describe('TreeRunnerHost — integrated editing', () => {
     await waitFor(() => expect(onTreeChange).toHaveBeenCalled())
     const next = onTreeChange.mock.calls.at(-1)?.[0] as ConversationTree
     const added = next.nodes.find((node) => node.parentId === nodeId('s1'))
+    const pendingResponse = next.nodes.find((node) => node.parentId === added?.id)
     expect(added?.kind).toBe('user_turn')
     expect(added?.state).toBe('edited')
+    expect(pendingResponse?.kind).toBe('send')
+    expect(pendingResponse?.state).toBe('stale')
+  })
+
+  it('adds a response under a leaf user turn so deleted-response dead ends can recover', async () => {
+    const tree = mkTree('root', [mkRoot('root'), mkUserTurn('u1', 'root', { text: 'dead-end prompt' })], { id: 't-add-response' })
+    const onTreeChange = jest.fn()
+
+    render(<TreeRunnerHost tree={tree} onTreeChange={onTreeChange} />)
+
+    const userCard = screen.getByText('dead-end prompt').closest('[data-tree-node-id]') as HTMLElement
+    fireEvent.click(within(userCard).getByRole('button', { name: /add response/i }))
+
+    await waitFor(() => expect(onTreeChange).toHaveBeenCalled())
+    const next = onTreeChange.mock.calls.at(-1)?.[0] as ConversationTree
+    const response = next.nodes.find((node) => node.kind === 'send' && node.parentId === nodeId('u1'))
+    expect(response?.state).toBe('stale')
   })
 
   it('fans out an existing response into attempt variants', async () => {
@@ -1118,6 +1268,10 @@ describe('TreeRunnerHost — integrated editing', () => {
     render(<TreeRunnerHost tree={tree} onTreeChange={onTreeChange} />)
 
     fireEvent.click(screen.getByRole('button', { name: /fan out response attempts/i }))
+    fireEvent.change(screen.getByRole('spinbutton', { name: /attempt count/i }), {
+      target: { value: '5' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: /^create$/i }))
 
     await waitFor(() => expect(onTreeChange).toHaveBeenCalled())
     const next = onTreeChange.mock.calls.at(-1)?.[0] as ConversationTree
@@ -1125,7 +1279,34 @@ describe('TreeRunnerHost — integrated editing', () => {
     const sends = next.nodes.filter((node) => node.kind === 'send')
     expect(fan?.kind).toBe('fan')
     expect(fan?.kind === 'fan' ? fan.params.axis : null).toBe('attempt')
-    expect(sends).toHaveLength(2)
+    expect(sends).toHaveLength(5)
+    expect(fan?.kind === 'fan' ? fan.params.variants : []).toHaveLength(5)
+  })
+
+  it('prunes an attempt fan to the picked path without deleting the picked response', async () => {
+    const tree = mkTree('root', [
+      mkRoot('root'),
+      mkFan('fan', 'root', {
+        axis: 'attempt',
+        variants: [{ axis: 'attempt', payload: {} }, { axis: 'attempt', payload: {} }],
+        promotedChildSlotIndex: 1,
+      }),
+      mkSend('s0', 'fan'),
+      mkSend('s1', 'fan'),
+    ], { id: 't-prune-fan' })
+    const onTreeChange = jest.fn()
+
+    render(<TreeRunnerHost tree={tree} onTreeChange={onTreeChange} />)
+
+    fireEvent.click(screen.getByRole('button', { name: /prune to picked slot 1/i }))
+    expect(screen.getByRole('dialog', { name: /prune fan/i })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /^prune$/i }))
+
+    await waitFor(() => expect(onTreeChange).toHaveBeenCalled())
+    const next = onTreeChange.mock.calls.at(-1)?.[0] as ConversationTree
+    expect(next.nodes.some((node) => node.id === nodeId('fan'))).toBe(false)
+    expect(next.nodes.some((node) => node.id === nodeId('s0'))).toBe(false)
+    expect(next.nodes.find((node) => node.id === nodeId('s1'))?.parentId).toBe(nodeId('root'))
   })
 
   it('fans out an existing response into converter variants', async () => {
@@ -1134,7 +1315,7 @@ describe('TreeRunnerHost — integrated editing', () => {
 
     render(<TreeRunnerHost tree={tree} onTreeChange={onTreeChange} />)
 
-    fireEvent.click(screen.getByRole('button', { name: /fan out converters/i }))
+    fireEvent.click(screen.getByRole('button', { name: /compare converters/i }))
 
     await waitFor(() => expect(onTreeChange).toHaveBeenCalled())
     const next = onTreeChange.mock.calls.at(-1)?.[0] as ConversationTree

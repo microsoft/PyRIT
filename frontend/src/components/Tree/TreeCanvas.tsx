@@ -67,9 +67,13 @@ export interface TreeCanvasProps {
    * `convertersApi.listConverters` and re-passes here.
    */
   availableConverters?: AvailableConvertersValue
+  /** Currently focused/selected tree node, mirrored into React Flow selection. */
+  selectedNodeId?: ConversationTreeNodeId | null
+  /** Fired when the operator selects a node on the canvas. */
+  onSelectNode?: (nodeId: ConversationTreeNodeId) => void
 }
 
-export function TreeCanvas({ tree, actionCallbacks, availableConverters }: TreeCanvasProps) {
+export function TreeCanvas({ tree, actionCallbacks, availableConverters, selectedNodeId, onSelectNode }: TreeCanvasProps) {
   const styles = useTreeCanvasStyles()
   // PR5h.11: stabilize the actionCallbacks bag reference across renders.
   // Without this, a host passing a fresh object literal each render forces
@@ -133,11 +137,13 @@ export function TreeCanvas({ tree, actionCallbacks, availableConverters }: TreeC
     () =>
       decorated.nodes.map((n) => {
         const manual = manualPositions.get(n.id)
-        if (manual !== undefined) return { ...n, position: manual }
+        if (manual !== undefined) return { ...n, position: manual, selected: selectedNodeId === n.id }
         const p = positions.get(n.id)
-        return p === undefined ? n : { ...n, position: { x: p.x, y: p.y } }
+        return p === undefined
+          ? { ...n, selected: selectedNodeId === n.id }
+          : { ...n, position: { x: p.x, y: p.y }, selected: selectedNodeId === n.id }
       }),
-    [decorated.nodes, manualPositions, positions],
+    [decorated.nodes, manualPositions, positions, selectedNodeId],
   )
 
   const onNodesChange = useCallback<OnNodesChange<TreeFlowNode>>((changes) => {
@@ -170,6 +176,7 @@ export function TreeCanvas({ tree, actionCallbacks, availableConverters }: TreeC
                 fitView
                 nodesDraggable
                 onNodesChange={onNodesChange}
+                onNodeClick={(_event, node) => onSelectNode?.(node.id as ConversationTreeNodeId)}
                 nodesConnectable={false}
                 edgesFocusable={false}
               >

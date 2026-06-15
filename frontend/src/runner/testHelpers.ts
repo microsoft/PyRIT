@@ -20,6 +20,7 @@ import type {
   ConversationTreeId,
   ConversationTreeNode,
   ConversationTreeNodeId,
+  ConverterNode,
   ExecutionRecord,
   FanNode,
   ImportMessageNode,
@@ -133,6 +134,23 @@ export function mkSend(
       targetRegistryName: params?.targetRegistryName,
       converterPipeline: params?.converterPipeline,
       responsePreview: params?.responsePreview,
+    },
+  }
+}
+
+export function mkConverterNode(
+  id: string,
+  parentId: string,
+  params?: Partial<ConverterNode['params']>,
+  overrides: BaseOverrides = {},
+): ConverterNode {
+  return {
+    ...base(id, parentId, overrides),
+    kind: 'converter',
+    params: {
+      pipeline: params?.pipeline ?? [],
+      label: params?.label,
+      preview: params?.preview,
     },
   }
 }

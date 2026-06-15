@@ -38,6 +38,7 @@ import { dispatchLeaf } from './dispatch'
 import type { LeafDispatchOutcome, RunnerAttacksApi } from './dispatch'
 import {
   mkExecution,
+  mkConverterNode,
   mkFan,
   mkMockSink,
   mkRoot,
@@ -223,6 +224,59 @@ describe('dispatchLeaf — happy path (single-Send chain)', () => {
     expect(execCalls[0].execution.outcome).toBe('success')
     expect(execCalls[0].execution.waveId).toBe('wave-uuid-1')
     expect(execCalls[0].execution.waveTriggerKind).toBe('refresh_node')
+  })
+
+  it('sends converter_ids accumulated from visible converter nodes', async () => {
+    const tree = mkTree('r', [
+      mkRoot('r', { text: 'hello', targetRegistryName: 'gpt-4o' }),
+      mkUserTurn('u', 'r', { text: 'hi' }),
+      mkConverterNode('c', 'u', { pipeline: [{ converterId: 'base64' }] }),
+      mkSend('s', 'c', undefined, { state: 'edited' }),
+    ])
+    const { sink } = mkMockSink()
+    const { api, addMessageCalls } = mkApiMock()
+
+    const outcome = await dispatchLeaf({
+      treeId: treeId('t-1'),
+      tree,
+      leafId: nodeId('s'),
+      sink,
+      api,
+      ...STANDARD_CTX,
+      parentConversationTreeId: null,
+    })
+
+    expect(outcome.kind).toBe('success')
+    expect(addMessageCalls[0].request.converter_ids).toEqual(['base64'])
+  })
+
+  it('does not re-dispatch or re-record clean parent Sends when refreshing a stale leaf', async () => {
+    const tree = mkTree('r', [
+      mkRoot('r', { text: 'root', targetRegistryName: 'gpt-4o' }),
+      mkUserTurn('u1', 'r', { text: 'turn 1' }),
+      mkSend('s1', 'u1', { responsePreview: 'response 1' }, { state: 'clean', execution: mkExecution('e1') }),
+      mkUserTurn('u2', 's1', { text: 'turn 2' }),
+      mkSend('s2', 'u2', undefined, { state: 'stale' }),
+    ])
+    const { sink, callsOf } = mkMockSink()
+    const { api, createCalls, addMessageCalls } = mkApiMock()
+
+    const outcome = await dispatchLeaf({
+      treeId: treeId('t-1'),
+      tree,
+      leafId: nodeId('s2'),
+      sink,
+      api,
+      ...STANDARD_CTX,
+      parentConversationTreeId: null,
+    })
+
+    expect(outcome.kind).toBe('success')
+    expect(createCalls[0].prepended_conversation?.map((message) => message.role)).toEqual(['user', 'assistant'])
+    expect(addMessageCalls).toHaveLength(1)
+    expect(addMessageCalls[0].request.pieces[0].original_value).toBe('turn 2')
+    expect(callsOf('recordExecution').some((call) => call.nodeId === nodeId('s1'))).toBe(false)
+    expect(callsOf('recordExecution').some((call) => call.nodeId === nodeId('s2'))).toBe(true)
   })
 
   it('cleans an edited UserTurn once its downstream Send succeeds', async () => {

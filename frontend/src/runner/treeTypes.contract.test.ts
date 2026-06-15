@@ -50,6 +50,7 @@ describe('treeTypes — type-level contracts', () => {
       mkRoot(),
       mkImport(),
       mkUserTurn(),
+      mkConverter(),
       mkSend(),
       mkFan(),
       mkScore(),
@@ -62,6 +63,8 @@ describe('treeTypes — type-level contracts', () => {
           return n.params.sourceConversationId
         case 'user_turn':
           return n.params.role
+        case 'converter':
+          return n.params.pipeline.length
         case 'send':
           return n.params.targetRegistryName ?? '<inherited>'
         case 'fan':
@@ -70,7 +73,7 @@ describe('treeTypes — type-level contracts', () => {
           return n.params.scorerType
       }
     })
-    expect(params).toEqual(['hi', 'src', 'user', '<inherited>', 'attempt', 'truthfulness'])
+    expect(params).toEqual(['hi', 'src', 'user', 1, '<inherited>', 'attempt', 'truthfulness'])
   })
 
   it('FanVariant axis discriminator narrows to per-axis payload', () => {
@@ -425,6 +428,14 @@ function mkSend(
     ...base(),
     kind: 'send',
     params: { ...overrides?.params },
+  }
+}
+
+function mkConverter(): Extract<ConversationTreeNode, { kind: 'converter' }> {
+  return {
+    ...base(),
+    kind: 'converter',
+    params: { pipeline: [{ converterId: 'base64' }] },
   }
 }
 

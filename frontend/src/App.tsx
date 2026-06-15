@@ -312,6 +312,7 @@ function App() {
                 labels={globalLabels}
                 onLabelsChange={setGlobalLabels}
                 onNavigate={setCurrentView}
+                onOpenAttackAsTree={treeUiEnabled ? handleOpenAttackAsTree : undefined}
                 attackLabels={attackLabels}
                 attackTarget={attackTarget}
                 isLoadingAttack={isLoadingAttack}

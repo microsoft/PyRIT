@@ -21,6 +21,7 @@
 import { useEffect } from 'react'
 
 import {
+  backendMessagePieces,
   detectFansV10Plus,
   reconstructTreeWithFans,
   type ConverterResolver,
@@ -148,6 +149,7 @@ export function useReloadReconstruction({
       // to a linear chain with `fullyReconstructed: false` (degraded banner).
       const recon = reconstructTreeWithFans({
         baseMessages: msgs.messages,
+        targetRegistryName: base.target?.target_registry_name,
         leaves,
         converterResolver,
         onConverterDivergence,
@@ -244,7 +246,7 @@ async function buildConverterResolver(args: {
         .sort((a, b) => a.turn_number - b.turn_number)
         .find((msg) => msg.role === 'user')
       if (firstUser === undefined) converterResolutionFailed = true
-      convertersByArId.set(leaf.attack_result_id, firstUser?.pieces[0]?.converter_identifiers ?? [])
+      convertersByArId.set(leaf.attack_result_id, firstUser ? backendMessagePieces(firstUser)[0]?.converter_identifiers ?? [] : [])
     }),
   )
   results.forEach((result, index) => {

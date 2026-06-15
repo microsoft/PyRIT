@@ -23,6 +23,7 @@ import type {
   ConversationTreeNode,
   ConversationTreeNodeId,
   ConversationTreeNodeKind,
+  ConverterNode,
   FanNode,
   ImportMessageNode,
   RootPromptNode,
@@ -54,6 +55,7 @@ export type TreeFlowNode =
   | Node<{ node: RootPromptNode; fanChildInfo?: FanChildInfo }, 'root_prompt'>
   | Node<{ node: ImportMessageNode; fanChildInfo?: FanChildInfo }, 'import_message'>
   | Node<{ node: UserTurnNode; fanChildInfo?: FanChildInfo }, 'user_turn'>
+  | Node<{ node: ConverterNode; fanChildInfo?: FanChildInfo }, 'converter'>
   | Node<{ node: SendNode; fanChildInfo?: FanChildInfo }, 'send'>
   | Node<
       { node: FanNode; fanChildInfo?: FanChildInfo; stackedSummary?: StackAggregate },
@@ -166,6 +168,12 @@ function toFlowNode(
         ...common,
         type: 'user_turn',
         data: { node: node as UserTurnNode, fanChildInfo },
+      }
+    case 'converter':
+      return {
+        ...common,
+        type: 'converter',
+        data: { node: node as ConverterNode, fanChildInfo },
       }
     case 'send':
       return {

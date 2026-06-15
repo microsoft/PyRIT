@@ -33,7 +33,7 @@ import type {
   SendNode,
   UserTurnNode,
 } from './treeTypes'
-import type { BackendMessage, ComponentIdentifier } from '../types'
+import type { BackendMessage, BackendMessagePiece, ComponentIdentifier } from '../types'
 
 // ============================================================================
 // parseTreePath
@@ -86,6 +86,17 @@ function buildConverterPipeline(
   }))
 }
 
+type LegacyBackendMessage = BackendMessage & { pieces?: BackendMessagePiece[] }
+type LegacyBackendMessagePiece = BackendMessagePiece & { piece_id?: string }
+
+export function backendMessagePieces(message: BackendMessage): BackendMessagePiece[] {
+  return message.message_pieces ?? (message as LegacyBackendMessage).pieces ?? []
+}
+
+export function backendPieceId(piece: BackendMessagePiece): string {
+  return piece.id ?? (piece as LegacyBackendMessagePiece).piece_id ?? ''
+}
+
 function emptyTree(): ConversationTree {
   return {
     id: mintTreeId(),
@@ -100,8 +111,13 @@ function emptyTree(): ConversationTree {
   }
 }
 
+export interface LinearChainOptions {
+  targetRegistryName?: string | null
+}
+
 export function linearChainFromMessages(
   messages: BackendMessage[],
+  options: LinearChainOptions = {},
 ): ConversationTree {
   if (messages.length === 0) return emptyTree()
 
@@ -112,7 +128,7 @@ export function linearChainFromMessages(
   const systemTexts: string[] = []
   let i = 0
   while (i < sorted.length && sorted[i].role === 'system') {
-    const firstPiece = sorted[i].pieces[0]
+    const firstPiece = backendMessagePieces(sorted[i])[0]
     if (firstPiece !== undefined) {
       systemTexts.push(firstPiece.converted_value ?? firstPiece.original_value ?? '')
     }
@@ -129,7 +145,7 @@ export function linearChainFromMessages(
 
   const treeId = mintTreeId()
   const rootId = mintNodeId()
-  const firstUserPiece = firstNonSystem.pieces[0]
+  const firstUserPiece = backendMessagePieces(firstNonSystem)[0]
   const firstUserText = firstUserPiece?.converted_value ?? firstUserPiece?.original_value ?? ''
 
   const root: RootPromptNode = {
@@ -149,7 +165,7 @@ export function linearChainFromMessages(
       text: firstUserText,
       attachments: [],
       ...(systemTexts.length > 0 ? { systemPrompt: systemTexts.join('\n\n') } : {}),
-      targetRegistryName: '',
+      targetRegistryName: options.targetRegistryName ?? '',
     },
   }
 
@@ -160,7 +176,7 @@ export function linearChainFromMessages(
 
   for (; i < sorted.length; i += 1) {
     const msg = sorted[i]
-    const piece = msg.pieces[0]
+    const piece = backendMessagePieces(msg)[0]
     const text = piece?.converted_value ?? piece?.original_value ?? ''
     if (msg.role === 'assistant') {
       const sendId = mintNodeId()
@@ -226,6 +242,219 @@ export function linearChainFromMessages(
     parentSourceConversationId: null,
     undoStack: [],
   }
+}
+
+// ============================================================================
+// mergedTreeFromConversations
+// ============================================================================
+
+export interface ConversationMessagesForMerge {
+  conversation_id: string
+  messages: BackendMessage[]
+}
+
+export interface MergedTreeFromConversationsResult {
+  tree: ConversationTree
+  includedConversationIds: string[]
+  omittedConversationIds: string[]
+}
+
+type MergeStep =
+  | {
+      kind: 'send'
+      text: string
+    }
+  | {
+      kind: 'user_turn'
+      role: 'user' | 'simulated_assistant' | 'system'
+      text: string
+      converters: ConverterRef[]
+    }
+
+interface ParsedConversationForMerge {
+  conversationId: string
+  rootText: string
+  systemPrompt?: string
+  steps: MergeStep[]
+}
+
+/**
+ * Build one tree from every active conversation under an attack. Shared turn
+ * prefixes are represented once; the first divergent turn branches under the
+ * shared parent. Conversations whose root prompt/system prompt cannot be
+ * reconciled with the base root are omitted rather than guessed into the tree.
+ */
+export function mergedTreeFromConversations(
+  conversations: ReadonlyArray<ConversationMessagesForMerge>,
+  options: LinearChainOptions = {},
+): MergedTreeFromConversationsResult {
+  const parsed = conversations
+    .map(parseConversationForMerge)
+    .filter((conversation): conversation is ParsedConversationForMerge => conversation !== null)
+
+  const base = parsed[0]
+  if (base === undefined) {
+    return { tree: emptyTree(), includedConversationIds: [], omittedConversationIds: conversations.map((c) => c.conversation_id) }
+  }
+
+  const rootId = mintNodeId()
+  const root: RootPromptNode = {
+    id: rootId,
+    kind: 'root_prompt',
+    parentId: null,
+    resolvedInputHash: emptyHash(),
+    state: 'clean',
+    execution: null,
+    executionHistory: [],
+    lastError: null,
+    labels: {},
+    createdAt: NOW,
+    updatedAt: NOW,
+    version: 1,
+    params: {
+      text: base.rootText,
+      attachments: [],
+      ...(base.systemPrompt !== undefined ? { systemPrompt: base.systemPrompt } : {}),
+      targetRegistryName: options.targetRegistryName ?? '',
+    },
+  }
+
+  const tree: ConversationTree = {
+    id: mintTreeId(),
+    nodes: [root],
+    edges: [],
+    rootId,
+    displayName: base.rootText.slice(0, 40),
+    createdAt: NOW,
+    parentConversationTreeId: null,
+    parentSourceConversationId: null,
+    undoStack: [],
+  }
+
+  const childByParentAndKey = new Map<string, ConversationTreeNodeId>()
+  const includedConversationIds: string[] = []
+  const omittedConversationIds: string[] = []
+
+  for (const conversation of parsed) {
+    if (conversation.rootText !== base.rootText || (conversation.systemPrompt ?? '') !== (base.systemPrompt ?? '')) {
+      omittedConversationIds.push(conversation.conversationId)
+      continue
+    }
+    includedConversationIds.push(conversation.conversationId)
+
+    let parentId = rootId
+    for (const step of conversation.steps) {
+      const key = `${parentId}\u0000${stepKey(step)}`
+      const existing = childByParentAndKey.get(key)
+      if (existing !== undefined) {
+        parentId = existing
+        continue
+      }
+
+      const child = createNodeFromMergeStep(step, parentId)
+      tree.nodes.push(child)
+      tree.edges.push({ id: `${parentId}->${child.id}`, parentId, childId: child.id, slotIndex: 0 })
+      childByParentAndKey.set(key, child.id)
+      parentId = child.id
+    }
+  }
+
+  const parsedIds = new Set(parsed.map((conversation) => conversation.conversationId))
+  for (const conversation of conversations) {
+    if (!parsedIds.has(conversation.conversation_id)) omittedConversationIds.push(conversation.conversation_id)
+  }
+
+  return { tree, includedConversationIds, omittedConversationIds }
+}
+
+function parseConversationForMerge(
+  conversation: ConversationMessagesForMerge,
+): ParsedConversationForMerge | null {
+  const sorted = [...conversation.messages].sort((a, b) => a.turn_number - b.turn_number)
+  const systemTexts: string[] = []
+  let i = 0
+  while (i < sorted.length && sorted[i].role === 'system') {
+    const piece = backendMessagePieces(sorted[i])[0]
+    if (piece !== undefined) systemTexts.push(piece.converted_value ?? piece.original_value ?? '')
+    i += 1
+  }
+
+  const firstNonSystem = sorted[i]
+  if (firstNonSystem === undefined || firstNonSystem.role !== 'user') return null
+
+  const firstPiece = backendMessagePieces(firstNonSystem)[0]
+  const rootText = firstPiece?.converted_value ?? firstPiece?.original_value ?? ''
+  const steps: MergeStep[] = []
+  i += 1
+
+  for (; i < sorted.length; i += 1) {
+    const msg = sorted[i]
+    const piece = backendMessagePieces(msg)[0]
+    const text = piece?.converted_value ?? piece?.original_value ?? ''
+    if (msg.role === 'assistant') {
+      steps.push({ kind: 'send', text })
+    } else if (msg.role === 'user' || msg.role === 'simulated_assistant' || msg.role === 'system') {
+      steps.push({
+        kind: 'user_turn',
+        role: msg.role,
+        text,
+        converters: piece !== undefined ? buildConverterPipeline(piece.converter_identifiers) : [],
+      })
+    }
+  }
+
+  return {
+    conversationId: conversation.conversation_id,
+    rootText,
+    ...(systemTexts.length > 0 ? { systemPrompt: systemTexts.join('\n\n') } : {}),
+    steps,
+  }
+}
+
+function createNodeFromMergeStep(step: MergeStep, parentId: ConversationTreeNodeId): ConversationTreeNode {
+  const nodeId = mintNodeId()
+  if (step.kind === 'send') {
+    return {
+      id: nodeId,
+      kind: 'send',
+      parentId,
+      resolvedInputHash: emptyHash(),
+      state: 'clean',
+      execution: null,
+      executionHistory: [],
+      lastError: null,
+      labels: {},
+      createdAt: NOW,
+      updatedAt: NOW,
+      version: 1,
+      params: { responsePreview: step.text },
+    }
+  }
+  return {
+    id: nodeId,
+    kind: 'user_turn',
+    parentId,
+    resolvedInputHash: emptyHash(),
+    state: 'clean',
+    execution: null,
+    executionHistory: [],
+    lastError: null,
+    labels: {},
+    createdAt: NOW,
+    updatedAt: NOW,
+    version: 1,
+    params: {
+      role: step.role,
+      text: step.text,
+      attachments: [],
+      ...(step.converters.length > 0 ? { converterPipeline: step.converters } : {}),
+    },
+  }
+}
+
+function stepKey(step: MergeStep): string {
+  if (step.kind === 'send') return JSON.stringify(['send', step.text])
+  return JSON.stringify(['user_turn', step.role, step.text, step.converters])
 }
 
 // ============================================================================
@@ -413,6 +642,8 @@ function mostFrequent<T>(candidates: T[][]): { winner: T[]; divergent: boolean }
 export interface ReconstructTreeWithFansArgs {
   /** The base leaf's full conversation; seeds the linear spine. */
   baseMessages: BackendMessage[]
+  /** Resolved target_registry_name for the reconstructed root prompt. */
+  targetRegistryName?: string | null
   /** All leaf ARs of the tree (carry `labels.tree_path` for fan detection). */
   leaves: ReadonlyArray<LeafForFanDetection>
   /**
@@ -454,7 +685,9 @@ export function reconstructTreeWithFans(
   args: ReconstructTreeWithFansArgs,
 ): ReconstructTreeWithFansResult {
   const fans = detectFansV10Plus(args.leaves)
-  const linear = linearChainFromMessages(args.baseMessages)
+  const linear = linearChainFromMessages(args.baseMessages, {
+    targetRegistryName: args.targetRegistryName,
+  })
 
   if (fans.length === 0) {
     return { tree: linear, fullyReconstructed: true, fanCount: 0 }
@@ -462,7 +695,7 @@ export function reconstructTreeWithFans(
 
   const single = fans.length === 1 ? fans[0] : null
   if (single !== null && single.parent_path.length === 0 && single.axis === 'attempt') {
-    const assembled = assembleRootAttemptFan(args.baseMessages, single)
+    const assembled = assembleRootAttemptFan(args.baseMessages, single, args.targetRegistryName)
     if (assembled !== null) {
       return { tree: assembled, fullyReconstructed: true, fanCount: 1 }
     }
@@ -478,6 +711,7 @@ export function reconstructTreeWithFans(
       single,
       args.converterResolver,
       args.onConverterDivergence,
+      args.targetRegistryName,
     )
     if (assembled !== null) {
       return { tree: assembled, fullyReconstructed: true, fanCount: 1 }
@@ -490,6 +724,7 @@ export function reconstructTreeWithFans(
 function assembleRootAttemptFan(
   baseMessages: BackendMessage[],
   fan: ImplicitFan,
+  targetRegistryName: string | null | undefined,
 ): ConversationTree | null {
   const sorted = [...baseMessages].sort((a, b) => a.turn_number - b.turn_number)
   // The fanned divergence is the final assistant turn; the spine is every
@@ -497,7 +732,7 @@ function assembleRootAttemptFan(
   const last = sorted[sorted.length - 1]
   if (last === undefined || last.role !== 'assistant') return null
 
-  const spine = linearChainFromMessages(sorted.slice(0, -1))
+  const spine = linearChainFromMessages(sorted.slice(0, -1), { targetRegistryName })
   if (spine.nodes.length === 0) return null // no root seeded → bail
   const tipId = spine.nodes[spine.nodes.length - 1].id
 
@@ -571,11 +806,12 @@ function assembleRootConverterFan(
   fan: ImplicitFan,
   resolver: ConverterResolver,
   onDivergence: ((slotIndex: number) => void) | undefined,
+  targetRegistryName: string | null | undefined,
 ): ConversationTree | null {
   const sorted = [...baseMessages].sort((a, b) => a.turn_number - b.turn_number)
   const first = sorted[0]
   if (first === undefined || first.role !== 'user') return null
-  const firstPiece = first.pieces[0]
+  const firstPiece = backendMessagePieces(first)[0]
   // The authored prompt is the ORIGINAL value (the converter produces the
   // converted gibberish; the tree shows what the operator typed).
   const sharedText = firstPiece?.original_value ?? firstPiece?.converted_value ?? ''
@@ -601,7 +837,7 @@ function assembleRootConverterFan(
     createdAt: NOW,
     updatedAt: NOW,
     version: 1,
-    params: { text: sharedText, attachments: [], targetRegistryName: '' },
+    params: { text: sharedText, attachments: [], targetRegistryName: targetRegistryName ?? '' },
   }
 
   const fanId = mintNodeId()

@@ -4,7 +4,7 @@ interface MockAttackSummary {
   attack_result_id: string;
   conversation_id: string;
   attack_type: string;
-  target?: { target_type: string; endpoint?: string | null; model_name?: string | null } | null;
+  target?: { target_registry_name?: string | null; target_type: string; endpoint?: string | null; model_name?: string | null } | null;
   converters: string[];
   outcome?: "success" | "failure" | "undetermined" | null;
   last_message_preview?: string | null;
@@ -23,7 +23,7 @@ const ATTACK: MockAttackSummary = {
   attack_result_id: ATTACK_ID,
   conversation_id: CONVERSATION_ID,
   attack_type: "ManualAttack",
-  target: { target_type: "OpenAIChatTarget", model_name: "gpt-4o" },
+  target: { target_registry_name: "OpenAIChatTarget::target1234", target_type: "OpenAIChatTarget", model_name: "gpt-4o" },
   converters: [],
   outcome: "undetermined",
   last_message_preview: "Seed assistant follow-up response",
@@ -33,6 +33,13 @@ const ATTACK: MockAttackSummary = {
   created_at: "2026-06-12T00:00:00Z",
   updated_at: "2026-06-12T00:01:00Z",
 };
+
+const ATTACK_WITHOUT_TARGET: MockAttackSummary = {
+  ...ATTACK,
+  target: null,
+};
+
+let activeAttack: MockAttackSummary = ATTACK;
 
 const MESSAGES_RESPONSE = {
   conversation_id: CONVERSATION_ID,
@@ -100,7 +107,20 @@ async function mockTreeApis(page: Page) {
     });
   });
   await page.route(new RegExp(`/api/attacks/${ATTACK_ID}$`), async (route) => {
-    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(ATTACK) });
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(activeAttack) });
+  });
+  await page.route(new RegExp(`/api/attacks/${ATTACK_ID}/conversations$`), async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        attack_result_id: ATTACK_ID,
+        main_conversation_id: CONVERSATION_ID,
+        conversations: [
+          { conversation_id: CONVERSATION_ID, message_count: 4, last_message_preview: "Seed assistant follow-up response" },
+        ],
+      }),
+    });
   });
   await page.route(new RegExp(`/api/attacks/${ATTACK_ID}/messages`), async (route) => {
     await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(MESSAGES_RESPONSE) });
@@ -117,7 +137,7 @@ async function mockTreeApis(page: Page) {
       status: 200,
       contentType: "application/json",
       body: JSON.stringify({
-        items: wantsTree || labels.length === 0 ? [ATTACK] : [],
+        items: wantsTree || labels.length === 0 ? [activeAttack] : [],
         pagination: { limit: Number(url.searchParams.get("limit") ?? 25), has_more: false, next_cursor: null, prev_cursor: null },
       }),
     });
@@ -133,17 +153,18 @@ async function openSeedTree(page: Page) {
   }
   const row = page.getByTestId(`attack-row-${ATTACK_ID}`);
   await expect(row).toBeVisible({ timeout: 10_000 });
-  await row.locator("button").nth(1).click();
+  await page.getByTestId(`open-attack-as-tree-${ATTACK_ID}`).click();
   if (await discard.isVisible().catch(() => false)) {
     await discard.click();
     await expect(row).toBeVisible({ timeout: 10_000 });
-    await row.locator("button").nth(1).click();
+    await page.getByTestId(`open-attack-as-tree-${ATTACK_ID}`).click();
   }
   await expect(page.getByText("Seed assistant response")).toBeVisible({ timeout: 10_000 });
 }
 
 test.describe("Tree UI", () => {
   test.beforeEach(async ({ page }) => {
+    activeAttack = ATTACK;
     await mockTreeApis(page);
   });
 
@@ -154,10 +175,11 @@ test.describe("Tree UI", () => {
 
     await page.getByTitle("Attack History").click();
     await expect(page.getByTestId(`attack-row-${ATTACK_ID}`)).toBeVisible({ timeout: 10_000 });
-    await page.getByTestId(`attack-row-${ATTACK_ID}`).locator("button").nth(1).click();
+    await page.getByTestId(`open-attack-as-tree-${ATTACK_ID}`).click();
 
     await expect(page).toHaveURL(new RegExp(`conversation_tree_id=${TREE_ID}`));
-    await expect(page.getByText("Seed root prompt")).toBeVisible();
+    await expect(page.getByText("Seed root prompt").first()).toBeVisible();
+    await expect(page.getByText("OpenAIChatTarget::target1234")).toBeVisible();
     await expect(page.getByText("Seed assistant response")).toBeVisible();
     await expect(page.getByText("Seed follow-up prompt")).toBeVisible();
     await expect(page.getByText("Seed assistant follow-up response")).toBeVisible();
@@ -176,16 +198,32 @@ test.describe("Tree UI", () => {
     await openSeedTree(page);
 
     await page.getByRole("button", { name: "Fan out response attempts" }).first().click();
+    await expect(page.getByRole("dialog", { name: "Fan out response attempts" })).toBeVisible();
+    await page.getByRole("spinbutton", { name: "Attempt count" }).fill("5");
+    await page.getByRole("button", { name: "Create" }).click();
     await expect(page.locator("main")).toContainText(/axis:\s*attempt/);
-    await expect(page.locator("main")).toContainText(/2 variants/i);
+    await expect(page.locator("main")).toContainText(/5 variants/i);
   });
 
   test("creates a converter fan from a response", async ({ page }) => {
     await page.goto("/");
     await openSeedTree(page);
 
-    await page.getByRole("button", { name: "Fan out converters" }).first().click();
+    await page.getByRole("button", { name: "Compare converters" }).first().click();
     await expect(page.locator("main")).toContainText(/axis:\s*converter/);
     await expect(page.locator("main")).toContainText("New prompt");
+  });
+
+  test("shows no-target preflight before refreshing a recovered tree without a target", async ({ page }) => {
+    activeAttack = ATTACK_WITHOUT_TARGET;
+    await page.goto("/");
+    await openSeedTree(page);
+
+    await expect(page.getByText("No target")).toBeVisible();
+    await page.getByRole("button", { name: "Edit root prompt" }).click();
+    await page.getByRole("textbox", { name: "Prompt text" }).fill("Edited seed root prompt");
+    await page.getByRole("button", { name: "Save" }).click();
+    await page.getByRole("button", { name: /Refresh/ }).first().click();
+    await expect(page.getByRole("dialog", { name: "No target selected" })).toBeVisible();
   });
 });

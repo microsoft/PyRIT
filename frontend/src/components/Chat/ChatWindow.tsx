@@ -4,7 +4,7 @@ import {
   Text,
   Tooltip,
 } from '@fluentui/react-components'
-import { AddRegular, PanelRightRegular } from '@fluentui/react-icons'
+import { AddRegular, BranchForkRegular, PanelRightRegular } from '@fluentui/react-icons'
 import MessageList from './MessageList'
 import ChatInputArea from './ChatInputArea'
 import ConversationPanel from './ConversationPanel'
@@ -32,6 +32,7 @@ interface ChatWindowProps {
   labels?: Record<string, string>
   onLabelsChange?: (labels: Record<string, string>) => void
   onNavigate?: (view: ViewName) => void
+  onOpenAttackAsTree?: (attackResultId: string) => void
   /** Labels from the loaded attack (for operator locking). Null for new attacks. */
   attackLabels?: Record<string, string> | null
   /** Target info that the current attack was started with (for cross-target guard). */
@@ -53,6 +54,7 @@ export default function ChatWindow({
   labels,
   onLabelsChange,
   onNavigate,
+  onOpenAttackAsTree,
   attackLabels,
   attackTarget,
   isLoadingAttack,
@@ -577,6 +579,20 @@ export default function ChatWindow({
             )}
           </div>
           <div className={styles.ribbonActions}>
+            {onOpenAttackAsTree && (
+              <Tooltip content="Open this attack as a tree" relationship="label">
+                <Button
+                  appearance="subtle"
+                  icon={<BranchForkRegular />}
+                  onClick={() => {
+                    if (attackResultId) onOpenAttackAsTree(attackResultId)
+                  }}
+                  disabled={!attackResultId || isLoadingAttack}
+                  data-testid="open-chat-attack-as-tree-btn"
+                  aria-label="Open this attack as a tree"
+                />
+              </Tooltip>
+            )}
             <Tooltip content="Toggle conversations panel" relationship="label">
               <Button
                 appearance="subtle"

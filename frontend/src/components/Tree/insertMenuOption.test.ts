@@ -5,9 +5,9 @@
  * Type-level test for `InsertMenuOption`. Pins the discriminated-union
  * shape so a V1.1 disabled item cannot silently carry a stale `kind`
  * (the failure mode the PR5 reviewer flagged in Finding H#1: a disabled
- * "Fan out: prompt (coming later)" item that mints `kind: 'fan_attempt'`
- * would silently dispatch the wrong axis once a flag-flip swaps the
- * `disabled` flag without removing the wrong `kind`).
+ * disabled item that mints `kind: 'fan_attempt'` would silently dispatch
+ * the wrong axis once a state flip enables it without removing the wrong
+ * `kind`).
  *
  * Runtime cases use real values; the discriminant-narrowing cases use
  * `@ts-expect-error` to assert the type system rejects the wrong shape.
@@ -19,8 +19,8 @@ describe('InsertMenuOption — discriminated-union shape', () => {
   it('allows a disabled item without a kind field', () => {
     const opt: InsertMenuOption = {
       disabled: true,
-      label: 'Fan out: prompt (coming later)',
-      disabledReason: 'Available in a future release',
+      label: 'Blocked by current state',
+      disabledReason: 'Set a target before refreshing',
     }
     expect(opt.disabled).toBe(true)
   })
@@ -29,7 +29,7 @@ describe('InsertMenuOption — discriminated-union shape', () => {
     const opt: InsertMenuOption = {
       disabled: false,
       kind: 'send',
-      label: 'Send to target',
+      label: 'Add response',
     }
     expect(opt.disabled).toBe(false)
     if (opt.disabled === false) {

@@ -22,6 +22,7 @@ type RootPromptProps = NodeProps<Extract<TreeFlowNode, { type: 'root_prompt' }>>
 
 export function RootPromptCard({ data, selected }: RootPromptProps) {
   const node: RootPromptNode = data.node
+  const styles = useNodeCardStyles()
   const callbacks = useActionCallbacks()
   const onEditParams = callbacks?.onEditRootPromptParams
   const [isEditing, setIsEditing] = useState(false)
@@ -63,7 +64,13 @@ export function RootPromptCard({ data, selected }: RootPromptProps) {
       ) : (
         <>
           <CardBody text={node.params.text} />
-          <MetaRow label="target" value={node.params.targetRegistryName} />
+          {node.params.targetRegistryName.trim() === '' ? (
+            <div className={styles.warningChip} title="Set a target registry name before refreshing this tree.">
+              No target
+            </div>
+          ) : (
+            <MetaRow label="target" value={node.params.targetRegistryName} />
+          )}
         </>
       )}
     </CardFrame>

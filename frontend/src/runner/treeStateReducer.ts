@@ -26,6 +26,7 @@ import type {
   ReflogEntry,
   RootPromptNode,
   ConversationTreeEdge,
+  ConverterNode,
   FanNode,
   FanAxis,
   ConverterRef,
@@ -212,6 +213,17 @@ export function applySetUserTurnConverterPipeline(
   })
 }
 
+export function applySetConverterNodePipeline(
+  tree: ConversationTree,
+  nodeId: ConversationTreeNodeId,
+  pipeline: ConverterRef[],
+): ConversationTree {
+  return applyEditParams(tree, nodeId, (node) => {
+    if (node.kind !== 'converter') return null
+    return { ...node, params: { ...node.params, pipeline, label: undefined } } satisfies ConverterNode
+  })
+}
+
 export function applyEditRootPromptParams(
   tree: ConversationTree,
   nodeId: ConversationTreeNodeId,
@@ -302,6 +314,30 @@ export function applyAppendChild(
   }
 }
 
+export function applyAppendPromptWithResponse(
+  tree: ConversationTree,
+  parentId: ConversationTreeNodeId,
+  uuid: () => string,
+  promptText = NOW_FALLBACK_TEXT,
+): ConversationTree {
+  const parent = tree.nodes.find((node) => node.id === parentId)
+  if (parent === undefined || (parent.kind !== 'send' && parent.kind !== 'root_prompt')) return tree
+  const prompt = createInsertedNode('follow_up_user_turn', parentId, uuid)
+  const promptWithText = prompt.kind === 'user_turn'
+    ? { ...prompt, params: { ...prompt.params, text: promptText } }
+    : prompt
+  const response = createInsertedNode('send', prompt.id, uuid)
+  return {
+    ...tree,
+    nodes: [...tree.nodes, promptWithText, response],
+    edges: [
+      ...tree.edges,
+      edge(parentId, prompt.id, 0),
+      edge(prompt.id, response.id, 0),
+    ],
+  }
+}
+
 export function applyInsertBetween(
   tree: ConversationTree,
   parentId: ConversationTreeNodeId,
@@ -328,17 +364,47 @@ export function applyInsertBetween(
   return { ...tree, nodes, edges }
 }
 
+export function applyInsertConverterBetween(
+  tree: ConversationTree,
+  parentId: ConversationTreeNodeId,
+  childId: ConversationTreeNodeId,
+  uuid: () => string,
+): ConversationTree {
+  const edgeIndex = tree.edges.findIndex((candidate) => candidate.parentId === parentId && candidate.childId === childId)
+  if (edgeIndex === -1) return tree
+  const converterId = id(uuid())
+  const response = createInsertedNode('send', converterId, uuid)
+  const converter: ConverterNode = {
+    ...baseNode(converterId, parentId),
+    kind: 'converter',
+    state: 'edited',
+    params: { pipeline: [], label: 'Choose converter' },
+  }
+  return {
+    ...tree,
+    nodes: [...tree.nodes, converter, response],
+    edges: [
+      ...tree.edges,
+      edge(parentId, converterId, 1),
+      edge(converterId, response.id, 0),
+    ],
+  }
+}
+
 export function applyWrapWithFan(
   tree: ConversationTree,
   parentId: ConversationTreeNodeId,
   childId: ConversationTreeNodeId,
   axis: Extract<FanAxis, 'attempt' | 'converter'>,
   uuid: () => string,
+  opts: { attemptCount?: number } = {},
 ): ConversationTree {
   const edgeIndex = tree.edges.findIndex((candidate) => candidate.parentId === parentId && candidate.childId === childId)
   if (edgeIndex === -1) return tree
   const childIndex = tree.nodes.findIndex((node) => node.id === childId)
   if (childIndex === -1) return tree
+  const attemptCount = opts.attemptCount ?? 2
+  if (axis === 'attempt' && !isValidAttemptCount(attemptCount)) return tree
 
   const originalEdge = tree.edges[edgeIndex]
   const fanId = id(uuid())
@@ -348,7 +414,7 @@ export function applyWrapWithFan(
     params: {
       axis,
       variants: axis === 'attempt'
-        ? [{ axis: 'attempt', payload: {} }, { axis: 'attempt', payload: {} }]
+        ? Array.from({ length: attemptCount }, () => ({ axis: 'attempt', payload: {} as Record<string, never> }))
         : [{ axis: 'converter', payload: { converters: [] } }, { axis: 'converter', payload: { converters: [] } }],
       promotedChildSlotIndex: null,
       deletedSlotIndices: [],
@@ -362,9 +428,11 @@ export function applyWrapWithFan(
   edges.splice(edgeIndex, 1, edge(parentId, fanId, originalEdge.slotIndex), edge(fanId, childId, 0))
 
   if (axis === 'attempt') {
-    const sibling = createInsertedNode('send', fanId, uuid)
-    nodes.push(sibling)
-    edges.push(edge(fanId, sibling.id, 1))
+    for (let slot = 1; slot < attemptCount; slot += 1) {
+      const sibling = createInsertedNode('send', fanId, uuid)
+      nodes.push(sibling)
+      edges.push(edge(fanId, sibling.id, slot))
+    }
   } else {
     const user = createInsertedNode('follow_up_user_turn', fanId, uuid)
     const send = createInsertedNode('send', user.id, uuid)
@@ -373,6 +441,10 @@ export function applyWrapWithFan(
   }
 
   return { ...tree, nodes, edges }
+}
+
+function isValidAttemptCount(count: number): boolean {
+  return Number.isInteger(count) && count >= 2 && count <= 50
 }
 
 function createInsertedNode(
@@ -443,6 +515,47 @@ export function applySetFanPromotedChild(
   })
 }
 
+export function applyPruneFanToPickedPath(
+  tree: ConversationTree,
+  fanNodeId: ConversationTreeNodeId,
+  slotIndex: number,
+): ConversationTree {
+  const fan = tree.nodes.find((node): node is FanNode => node.id === fanNodeId && node.kind === 'fan')
+  if (fan === undefined || fan.parentId === null) return tree
+  const keptEdge = tree.edges.find((candidate) => candidate.parentId === fanNodeId && candidate.slotIndex === slotIndex)
+  if (keptEdge === undefined) return tree
+  const keptChild = tree.nodes.find((node) => node.id === keptEdge.childId)
+  if (keptChild === undefined) return tree
+  const incomingEdge = tree.edges.find((candidate) => candidate.parentId === fan.parentId && candidate.childId === fanNodeId)
+  const parentSlotIndex = incomingEdge?.slotIndex ?? 0
+
+  const toDelete = new Set<ConversationTreeNodeId>([fanNodeId])
+  for (const edgeCandidate of tree.edges.filter((candidate) => candidate.parentId === fanNodeId)) {
+    if (edgeCandidate.childId === keptChild.id) continue
+    toDelete.add(edgeCandidate.childId)
+    for (const descendant of descendantIds(tree, edgeCandidate.childId)) toDelete.add(descendant)
+  }
+
+  const nodes = tree.nodes
+    .filter((node) => !toDelete.has(node.id))
+    .map((node) => (
+      node.id === keptChild.id
+        ? { ...bumpBase(node), parentId: fan.parentId }
+        : node
+    ))
+
+  const edges = tree.edges.filter(
+    (candidate) =>
+      !toDelete.has(candidate.parentId) &&
+      !toDelete.has(candidate.childId) &&
+      candidate.parentId !== fanNodeId &&
+      candidate.childId !== fanNodeId,
+  )
+  edges.push(edge(fan.parentId, keptChild.id, parentSlotIndex))
+
+  return { ...tree, nodes, edges }
+}
+
 export function applyDeleteSubtree(
   tree: ConversationTree,
   nodeId: ConversationTreeNodeId,
@@ -471,4 +584,57 @@ export function applyCloneTree(
     edges: tree.edges.map((candidate) => ({ ...candidate })),
     undoStack: [...tree.undoStack],
   }
+}
+
+export function applyBranchFromNode(
+  tree: ConversationTree,
+  nodeId: ConversationTreeNodeId,
+  uuid: () => string,
+): ConversationTree {
+  if (nodeId === tree.rootId) return applyCloneTree(tree, uuid)
+  if (!tree.nodes.some((node) => node.id === nodeId)) return tree
+
+  const keep = new Set<ConversationTreeNodeId>(pathToRootIds(tree, nodeId))
+  keep.add(nodeId)
+  for (const descendant of descendantIds(tree, nodeId)) keep.add(descendant)
+
+  return {
+    ...tree,
+    id: uuid() as ConversationTree['id'],
+    displayName: `${tree.displayName || 'Tree'} (branch)`,
+    parentConversationTreeId: tree.id,
+    parentSourceConversationId: nearestConversationId(tree, nodeId) ?? tree.parentSourceConversationId,
+    nodes: tree.nodes.filter((node) => keep.has(node.id)).map((node) => ({ ...node })),
+    edges: tree.edges
+      .filter((candidate) => keep.has(candidate.parentId) && keep.has(candidate.childId))
+      .map((candidate) => ({ ...candidate })),
+    undoStack: [...tree.undoStack],
+  }
+}
+
+function pathToRootIds(
+  tree: ConversationTree,
+  nodeId: ConversationTreeNodeId,
+): ConversationTreeNodeId[] {
+  const byId = new Map(tree.nodes.map((node) => [node.id, node]))
+  const out: ConversationTreeNodeId[] = []
+  let cursor = byId.get(nodeId)
+  while (cursor !== undefined) {
+    out.push(cursor.id)
+    cursor = cursor.parentId === null ? undefined : byId.get(cursor.parentId)
+  }
+  return out.reverse()
+}
+
+function nearestConversationId(
+  tree: ConversationTree,
+  nodeId: ConversationTreeNodeId,
+): string | null {
+  const byId = new Map(tree.nodes.map((node) => [node.id, node]))
+  let cursor = byId.get(nodeId)
+  while (cursor !== undefined) {
+    if (cursor.execution?.conversationId) return cursor.execution.conversationId
+    cursor = cursor.parentId === null ? undefined : byId.get(cursor.parentId)
+  }
+  return null
 }

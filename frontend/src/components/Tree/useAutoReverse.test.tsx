@@ -79,10 +79,16 @@ const fakeMessagesResponse: ConversationMessagesResponse = {
 function mkMockApi(opts: {
   getAttack?: (id: string) => Promise<AttackSummary>
   getMessages?: (arId: string, convId: string) => Promise<ConversationMessagesResponse>
-} = {}): { getAttack: jest.Mock; getMessages: jest.Mock } {
+  getConversations?: (arId: string) => Promise<{
+    attack_result_id: string
+    main_conversation_id: string
+    conversations: Array<{ conversation_id: string; message_count: number; last_message_preview?: string | null }>
+  }>
+} = {}): { getAttack: jest.Mock; getMessages: jest.Mock; getConversations?: jest.Mock } {
   return {
     getAttack: jest.fn(opts.getAttack ?? (async () => fakeAr)),
     getMessages: jest.fn(opts.getMessages ?? (async () => fakeMessagesResponse)),
+    ...(opts.getConversations !== undefined ? { getConversations: jest.fn(opts.getConversations) } : {}),
   }
 }
 
@@ -130,6 +136,19 @@ describe('useAutoReverse — happy path', () => {
     expect(result.current.error).toBeNull()
   })
 
+  it('copies the recovered target registry name onto the reconstructed root prompt', async () => {
+    const api = mkMockApi({
+      getAttack: jest.fn(async () => ({
+        ...fakeAr,
+        target: { target_registry_name: 'OpenAIChatTarget::abcd1234', target_type: 'OpenAIChatTarget' },
+      })),
+    })
+    const { result } = renderHook(() => useAutoReverse('ar-1', { attacksApi: api }))
+    await waitFor(() => expect(result.current.tree).not.toBeNull())
+    const root = result.current.tree?.nodes.find((n) => n.id === result.current.tree?.rootId)
+    expect(root?.kind === 'root_prompt' ? root.params.targetRegistryName : null).toBe('OpenAIChatTarget::abcd1234')
+  })
+
   it('preserves the AR\u2019s conversation_tree_id as the reconstructed tree id (V1.0+ AR)', async () => {
     // Per spec §13.1: opening a V1.0+ AR (one carrying conversation_tree_id)
     // as a tree must keep that id so subsequent reload/refresh stay
@@ -175,6 +194,48 @@ describe('useAutoReverse — happy path', () => {
     await waitFor(() => expect(result.current.loading).toBe(false))
     expect(api.getAttack).toHaveBeenCalledWith('ar-2')
     expect(api.getMessages).toHaveBeenLastCalledWith('ar-2', 'conv-ar-2')
+  })
+
+  it('fetches every active conversation and reconstructs one merged tree when getConversations is available', async () => {
+    const api = mkMockApi({
+      getAttack: jest.fn(async () => ({
+        ...fakeAr,
+        related_conversation_ids: ['conv-b'],
+      })),
+      getConversations: jest.fn(async () => ({
+        attack_result_id: 'ar-1',
+        main_conversation_id: 'conv-1',
+        conversations: [
+          { conversation_id: 'conv-1', message_count: 4 },
+          { conversation_id: 'conv-b', message_count: 4 },
+        ],
+      })),
+      getMessages: jest.fn(async (_arId: string, convId: string) => ({
+        conversation_id: convId,
+        messages: convId === 'conv-1'
+          ? [
+              mkMessage(1, 'user', 'Root', 'a-p1'),
+              mkMessage(2, 'assistant', 'A1', 'a-p2'),
+              mkMessage(3, 'user', 'Follow A', 'a-p3'),
+              mkMessage(4, 'assistant', 'Answer A', 'a-p4'),
+            ]
+          : [
+              mkMessage(1, 'user', 'Root', 'b-p1'),
+              mkMessage(2, 'assistant', 'A1', 'b-p2'),
+              mkMessage(3, 'user', 'Follow B', 'b-p3'),
+              mkMessage(4, 'assistant', 'Answer B', 'b-p4'),
+            ],
+      })),
+    })
+    const { result } = renderHook(() => useAutoReverse('ar-1', { attacksApi: api }))
+
+    await waitFor(() => expect(result.current.loading).toBe(false))
+
+    expect(api.getConversations).toHaveBeenCalledWith('ar-1')
+    expect(api.getMessages).toHaveBeenCalledWith('ar-1', 'conv-1')
+    expect(api.getMessages).toHaveBeenCalledWith('ar-1', 'conv-b')
+    expect(result.current.tree?.nodes.filter((node) => node.kind === 'send')).toHaveLength(3)
+    expect(result.current.tree?.nodes.some((node) => node.kind === 'user_turn' && node.params.text === 'Follow B')).toBe(true)
   })
 
   it('clears tree to null when id changes from string to null', async () => {

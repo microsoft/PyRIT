@@ -8,16 +8,9 @@
  * root-to-leaf path and produces a dispatch plan the wave loop turns into
  * one `create_attack` + N `add_message` calls.
  *
- * V1.0 implementation note: every Send on the path enters `freshSuffix`.
- * The design's clean-prefix-into-`prepended_conversation` optimization
- * (loading prior assistant pieces as historical context) needs a per-wave
- * piece cache the runner does not yet build; without that cache, the
- * resolver has no honest way to populate the prepended assistant turns
- * (placeholder strings would feed fabricated history to the target). The
- * V1.0 ship is dumb-but-correct: re-fire the full chain every wave. V1.x
- * will add the piece cache and restore the clean-prefix branch. The cost
- * regression is bounded by the cost-guardrail modal and documented in the
- * V1.0 known-limitations.
+ * Clean Sends above the first stale/edited/failed/cancelled Send are loaded
+ * into `prepended_conversation` as context. The stale suffix is re-dispatched;
+ * clean parent responses are not re-recorded when refreshing a leaf.
  *
  * Pure: no I/O, no React. Builds and discards an index per call; callers in
  * the hot dispatch path will memoize at their own layer.
@@ -28,6 +21,7 @@ import type {
   ConversationTree,
   ConversationTreeNode,
   ConversationTreeNodeId,
+  ConverterRef,
   FanAxis,
   RootPromptNode,
   SendNode,
@@ -64,6 +58,8 @@ export interface FreshSuffixEntry {
   userTurn: UserTurnNode | SyntheticUserTurnFromRoot
   /** The variant from the nearest Fan ancestor since the last UserTurn. Null when none. */
   fanVariant: FanVariantOnPath | null
+  /** Converter transform nodes encountered between the user turn and this Send. */
+  converterPipeline: ConverterRef[]
   sendNode: SendNode
 }
 
@@ -84,11 +80,8 @@ export interface PathPartition {
  * Predicate retained from the V1 design's resolver model: a Send is "stale"
  * when its state demands re-dispatch OR it has no execution to reuse.
  *
- * In V1.0 the resolver pushes every Send into `freshSuffix` regardless
- * (see file header), so this predicate is not on the resolver's hot path.
- * Kept for defensive callers that want to ask "would the eventual
- * clean-prefix optimization treat this Send as stale?" — useful in UI
- * surfaces that preview cost or in the V1.x cache layer.
+ * A Send is stale when its state demands re-dispatch OR it has no execution
+ * to reuse.
  */
 export function isStaleForResolver(send: SendNode): boolean {
   if (send.execution === null) return true
@@ -170,6 +163,8 @@ export function resolvePathPartition(
   const treePathSegments: Array<[FanAxis, number]> = []
   let pendingUserTurn: UserTurnNode | SyntheticUserTurnFromRoot | null = null
   let pendingFanVariant: FanVariantOnPath | null = null
+  let pendingConverterPipeline: ConverterRef[] = []
+  let freshSuffixStarted = false
   let target: string | null = null
   // `target` resolves to the leaf's own override if present; otherwise the root prompt's.
 
@@ -182,6 +177,7 @@ export function resolvePathPartition(
         }
         pendingUserTurn = promoteRootToUserTurn(node)
         pendingFanVariant = null
+        pendingConverterPipeline = []
         break
       }
       case 'import_message': {
@@ -195,6 +191,11 @@ export function resolvePathPartition(
       case 'user_turn': {
         pendingUserTurn = node
         pendingFanVariant = null
+        pendingConverterPipeline = []
+        break
+      }
+      case 'converter': {
+        pendingConverterPipeline = [...pendingConverterPipeline, ...node.params.pipeline]
         break
       }
       case 'fan': {
@@ -218,23 +219,26 @@ export function resolvePathPartition(
             `resolvePathPartition: Send '${node.id}' has no input UserTurn on its path`,
           )
         }
-        // V1.0: every Send on the path enters freshSuffix. The clean-prefix
-        // optimization would require a piece cache the runner does not yet
-        // build (see the partition module's file-header note); shipping that
-        // optimization without the cache means sending fabricated assistant
-        // history to the target. Fresh-dispatch is correct; cost regression is
-        // documented and bounded by the cost-guardrail modal.
-        freshSuffix.push({
+        const entry: FreshSuffixEntry = {
           userTurn: pendingUserTurn,
           fanVariant: pendingFanVariant,
+          converterPipeline: pendingConverterPipeline,
           sendNode: node,
-        })
+        }
+        if (!freshSuffixStarted && canReuseAsPrepended(node)) {
+          prepended.push(messageOfUserTurn(pendingUserTurn))
+          prepended.push(assistantMessageOf(node.params.responsePreview!))
+        } else {
+          freshSuffixStarted = true
+          freshSuffix.push(entry)
+        }
         // Per-Send target override takes precedence; root's value is the fallback already in `target`.
         if (node.params.targetRegistryName !== undefined) {
           target = node.params.targetRegistryName
         }
         pendingUserTurn = null
         pendingFanVariant = null
+        pendingConverterPipeline = []
         break
       }
       case 'score': {
@@ -306,5 +310,34 @@ function systemMessageOf(systemPrompt: string): PrependedMessageRequest {
         converted_value: systemPrompt,
       },
     ],
+  }
+}
+
+function canReuseAsPrepended(send: SendNode): boolean {
+  return !isStaleForResolver(send) && send.params.responsePreview !== undefined && send.params.responsePreview.length > 0
+}
+
+function messageOfUserTurn(userTurn: UserTurnNode | SyntheticUserTurnFromRoot): PrependedMessageRequest {
+  const text = userTurn.kind === 'synthetic_user_turn_from_root' ? userTurn.text : userTurn.params.text
+  const attachments = userTurn.kind === 'synthetic_user_turn_from_root' ? userTurn.attachments : userTurn.params.attachments
+  const role = userTurn.kind === 'synthetic_user_turn_from_root' ? userTurn.role : userTurn.params.role
+  return {
+    role,
+    pieces: [
+      ...attachments.map((attachment) => ({
+        data_type: attachment.dataType,
+        original_value: attachment.value,
+        mime_type: attachment.mimeType,
+        original_prompt_id: attachment.originalPromptId,
+      })),
+      { data_type: 'text' as const, original_value: text },
+    ],
+  }
+}
+
+function assistantMessageOf(response: string): PrependedMessageRequest {
+  return {
+    role: 'assistant',
+    pieces: [{ data_type: 'text', original_value: response, converted_value: response }],
   }
 }

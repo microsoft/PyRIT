@@ -8,11 +8,11 @@ export const useTreeRunnerHostStyles = makeStyles({
     display: 'grid',
     width: '100%',
     height: '100%',
-    gridTemplateColumns: '1fr auto',
+    gridTemplateColumns: '1fr',
     gridTemplateRows: 'auto 1fr',
     gridTemplateAreas: `
-      "ribbon ribbon"
-      "canvas drawer"
+      "ribbon"
+      "canvas"
     `,
     position: 'relative',
   },
@@ -41,11 +41,90 @@ export const useTreeRunnerHostStyles = makeStyles({
     overflow: 'auto',
     padding: tokens.spacingHorizontalM,
   },
+  splitter: {
+    gridArea: 'splitter',
+    cursor: 'col-resize',
+    backgroundColor: tokens.colorNeutralBackground3,
+    borderLeft: `1px solid ${tokens.colorNeutralStroke2}`,
+    borderRight: `1px solid ${tokens.colorNeutralStroke2}`,
+    minWidth: '8px',
+    selectors: {
+      '&:focus-visible': {
+        outline: `2px solid ${tokens.colorStrokeFocus2}`,
+        outlineOffset: '-2px',
+      },
+    },
+  },
+  pathChat: {
+    gridArea: 'pathChat',
+    minWidth: 0,
+    minHeight: 0,
+    overflow: 'auto',
+    backgroundColor: tokens.colorNeutralBackground1,
+    color: tokens.colorNeutralForeground1,
+    borderLeft: `1px solid ${tokens.colorNeutralStroke2}`,
+    padding: tokens.spacingHorizontalM,
+  },
+  pathChatHeader: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: tokens.spacingVerticalM,
+  },
+  pathChatTitle: {
+    fontWeight: tokens.fontWeightSemibold,
+  },
+  pathChatList: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: tokens.spacingVerticalS,
+  },
+  pathChatBubble: {
+    border: `1px solid ${tokens.colorNeutralStroke2}`,
+    borderRadius: tokens.borderRadiusMedium,
+    padding: tokens.spacingVerticalS,
+    backgroundColor: tokens.colorNeutralBackground2,
+    color: tokens.colorNeutralForeground1,
+    textAlign: 'left',
+    cursor: 'pointer',
+  },
+  pathChatBubbleSelected: {
+    border: `1px solid ${tokens.colorBrandStroke1}`,
+    boxShadow: `0 0 0 1px ${tokens.colorBrandStroke1}`,
+  },
+  pathChatRole: {
+    fontSize: tokens.fontSizeBase100,
+    color: tokens.colorNeutralForeground3,
+    marginBottom: tokens.spacingVerticalXXS,
+  },
+  pathChatText: {
+    whiteSpace: 'pre-wrap',
+    margin: 0,
+    fontFamily: tokens.fontFamilyBase,
+    fontSize: tokens.fontSizeBase200,
+    color: tokens.colorNeutralForeground1,
+  },
+  pathChatComposer: {
+    display: 'grid',
+    gap: tokens.spacingVerticalS,
+    marginTop: tokens.spacingVerticalL,
+    paddingTop: tokens.spacingVerticalM,
+    borderTop: `1px solid ${tokens.colorNeutralStroke2}`,
+  },
   drawerHeader: {
     display: 'flex',
     justifyContent: 'space-between',
     alignItems: 'center',
     gap: tokens.spacingHorizontalS,
+  },
+  drawerSelectedNode: {
+    marginTop: tokens.spacingVerticalM,
+    paddingBottom: tokens.spacingVerticalM,
+    borderBottom: `1px solid ${tokens.colorNeutralStroke2}`,
+  },
+  drawerSectionTitle: {
+    marginTop: tokens.spacingVerticalM,
+    fontWeight: tokens.fontWeightSemibold,
   },
   drawerNode: {
     marginTop: tokens.spacingVerticalM,
@@ -66,6 +145,32 @@ export const useTreeRunnerHostStyles = makeStyles({
     marginTop: tokens.spacingVerticalXS,
     fontFamily: tokens.fontFamilyBase,
     fontSize: tokens.fontSizeBase200,
+    maxHeight: '40vh',
+    overflow: 'auto',
+  },
+  drawerMetaList: {
+    display: 'grid',
+    gridTemplateColumns: 'max-content minmax(0, 1fr)',
+    gap: `${tokens.spacingVerticalXXS} ${tokens.spacingHorizontalS}`,
+    marginTop: tokens.spacingVerticalS,
+    fontSize: tokens.fontSizeBase100,
+  },
+  drawerMetaLabel: {
+    color: tokens.colorNeutralForeground3,
+  },
+  drawerMetaValue: {
+    minWidth: 0,
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+    fontFamily: tokens.fontFamilyMonospace,
+  },
+  drawerError: {
+    marginTop: tokens.spacingVerticalS,
+    padding: tokens.spacingVerticalS,
+    backgroundColor: tokens.colorPaletteRedBackground2,
+    color: tokens.colorPaletteRedForeground2,
+    borderRadius: tokens.borderRadiusSmall,
   },
   toast: {
     position: 'absolute',

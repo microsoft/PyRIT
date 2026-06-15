@@ -190,7 +190,7 @@ function hasAcceptableSendAncestors(leaf: ConversationTreeNode, idx: TreeIndex):
 export function buildSForTree(tree: ConversationTree): Set<ConversationTreeNodeId> {
   const S = new Set<ConversationTreeNodeId>()
   for (const n of tree.nodes) {
-    if (DISPATCHABLE_STATES.has(n.state)) S.add(n.id)
+    if (isDispatchableNode(n)) S.add(n.id)
   }
   return S
 }
@@ -210,7 +210,7 @@ export function buildSForSubtree(
   const queue: ConversationTreeNode[] = [root]
   while (queue.length > 0) {
     const n = queue.shift()!
-    if (DISPATCHABLE_STATES.has(n.state)) S.add(n.id)
+    if (isDispatchableNode(n)) S.add(n.id)
     const children = idx.childrenOf.get(n.id)
     if (children !== undefined) {
       for (const c of children) queue.push(c)
@@ -229,8 +229,13 @@ export function buildSForNode(
 ): Set<ConversationTreeNodeId> {
   const S = new Set<ConversationTreeNodeId>()
   const n = tree.nodes.find((x) => x.id === nodeIdToCheck)
-  if (n !== undefined && DISPATCHABLE_STATES.has(n.state)) S.add(n.id)
+  if (n !== undefined && isDispatchableNode(n)) S.add(n.id)
   return S
+}
+
+function isDispatchableNode(node: ConversationTreeNode): boolean {
+  if (DISPATCHABLE_STATES.has(node.state)) return true
+  return node.kind === 'send' && node.state === 'clean' && node.execution === null && !node.params.responsePreview
 }
 
 /**

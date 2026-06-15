@@ -27,6 +27,7 @@ import type {
 } from '../types'
 import { toApiError } from '../services/errors'
 import { buildLabels, formatApiError } from './dispatchHelpers'
+import { backendMessagePieces, backendPieceId } from './autoReverse'
 import { resolvePathPartition } from './partition'
 import type { FreshSuffixEntry, PathPartition } from './partition'
 import type {
@@ -258,9 +259,10 @@ function resolvedConverterIds(entry: FreshSuffixEntry): string[] {
   const ut = entry.userTurn
   // Synthetic root-as-user-turn has no converter pipeline (root prompt's
   // params don't carry one in V1.0). Real UserTurnNodes read their pipeline.
-  if (ut.kind === 'synthetic_user_turn_from_root') return []
-  const pipeline = ut.params.converterPipeline
-  if (!pipeline) return []
+  const pipeline = [
+    ...(ut.kind === 'synthetic_user_turn_from_root' ? [] : (ut.params.converterPipeline ?? [])),
+    ...entry.converterPipeline,
+  ]
   const ids: string[] = []
   for (const ref of pipeline) {
     if (ref.converterId !== undefined) ids.push(ref.converterId)
@@ -276,7 +278,7 @@ function extractNewAssistantPieces(
   let newMax = priorMax
   for (const msg of resp.messages.messages as BackendMessage[]) {
     if (msg.turn_number > priorMax && msg.role === 'assistant') {
-      newPieces.push(...msg.pieces)
+      newPieces.push(...backendMessagePieces(msg))
       if (msg.turn_number > newMax) newMax = msg.turn_number
     }
   }
@@ -298,7 +300,7 @@ function buildExecutionRecord(args: {
     attemptedAt: now,
     attackResultId: args.attackResultId,
     conversationId: args.conversationId,
-    pieceIds: args.newPieces.map((p) => p.piece_id),
+    pieceIds: args.newPieces.map((p) => backendPieceId(p)),
     ...(args.responsePreview !== undefined ? { responsePreview: args.responsePreview } : {}),
     outcome: 'success',
     resolvedInputHashAtExecution: args.hashAtExecution,

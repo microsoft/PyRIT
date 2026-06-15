@@ -146,6 +146,35 @@ describe('useReloadReconstruction', () => {
     expect(tree.nodes.length).toBeGreaterThan(0)
   })
 
+  it('hydrates the reconstructed root target from the base attack summary', async () => {
+    const onTreeChange = jest.fn()
+    const api = {
+      listAttacks: jest.fn(async () =>
+        mkList([
+          mkAttack({
+            labels: { conversation_tree_id: 't-frag' },
+            target: { target_registry_name: 'RecoveredTarget::12345678', target_type: 'RecoveredTarget' },
+          }),
+        ]),
+      ),
+      getMessages: jest.fn(async () => mkMessages('conv-1')),
+    }
+
+    renderHook(() =>
+      useReloadReconstruction({
+        fragmentTreeId: 't-frag',
+        currentTree: null,
+        onTreeChange,
+        reloadApi: api,
+      }),
+    )
+
+    await waitFor(() => expect(onTreeChange).toHaveBeenCalled())
+    const tree = onTreeChange.mock.calls[0][0] as ConversationTree
+    const root = tree.nodes.find((n) => n.id === tree.rootId)
+    expect(root?.kind === 'root_prompt' ? root.params.targetRegistryName : null).toBe('RecoveredTarget::12345678')
+  })
+
   it('hoists labels.parent_conversation_tree_id into tree.parentConversationTreeId', async () => {
     const onTreeChange = jest.fn()
     const api = {

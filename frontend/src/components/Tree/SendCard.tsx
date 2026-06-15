@@ -2,8 +2,19 @@
 // Licensed under the MIT license.
 
 import type { NodeProps } from '@xyflow/react'
-import { Button, Tooltip } from '@fluentui/react-components'
+import {
+  Button,
+  Dialog,
+  DialogActions,
+  DialogBody,
+  DialogContent,
+  DialogSurface,
+  DialogTitle,
+  Input,
+  Tooltip,
+} from '@fluentui/react-components'
 import { AddRegular, BranchForkRegular, FlashRegular } from '@fluentui/react-icons'
+import { useState } from 'react'
 
 import type { SendNode } from '../../runner/treeTypes'
 import type { TreeFlowNode } from './conversationTreeToReactFlow'
@@ -17,7 +28,17 @@ export function SendCard({ data, selected }: SendProps) {
   const node: SendNode = data.node
   const styles = useNodeCardStyles()
   const callbacks = useActionCallbacks()
-  const kindLabel = node.state === 'draft' || node.state === 'edited' ? 'Send' : 'Assistant response'
+  const [attemptDialogOpen, setAttemptDialogOpen] = useState(false)
+  const [attemptCountDraft, setAttemptCountDraft] = useState('5')
+  const hasResponsePreview = node.params.responsePreview !== undefined && node.params.responsePreview.length > 0
+  const kindLabel = hasResponsePreview ? 'Assistant response' : 'Pending response'
+  const parsedAttemptCount = Number(attemptCountDraft)
+  const attemptCountValid = Number.isInteger(parsedAttemptCount) && parsedAttemptCount >= 2 && parsedAttemptCount <= 50
+  const createAttemptFan = () => {
+    if (!attemptCountValid) return
+    callbacks?.onCreateFanFromNode?.(node.id, 'attempt', { attemptCount: parsedAttemptCount })
+    setAttemptDialogOpen(false)
+  }
   const kindActions = callbacks !== null ? (
     <>
       {callbacks.onAppendChild !== undefined && (
@@ -39,15 +60,15 @@ export function SendCard({ data, selected }: SendProps) {
               appearance="subtle"
               icon={<BranchForkRegular />}
               aria-label="Fan out response attempts"
-              onClick={() => callbacks.onCreateFanFromNode?.(node.id, 'attempt')}
+              onClick={() => setAttemptDialogOpen(true)}
             />
           </Tooltip>
-          <Tooltip content="Fan out converters" relationship="description">
+          <Tooltip content="Compare converters" relationship="description">
             <Button
               size="small"
               appearance="subtle"
               icon={<FlashRegular />}
-              aria-label="Fan out converters"
+              aria-label="Compare converters"
               onClick={() => callbacks.onCreateFanFromNode?.(node.id, 'converter')}
             />
           </Tooltip>
@@ -65,8 +86,8 @@ export function SendCard({ data, selected }: SendProps) {
       fanChildInfo={data.fanChildInfo}
       kindActions={kindActions}
     >
-      {node.params.responsePreview !== undefined && node.params.responsePreview.length > 0 && (
-        <CardBody text={node.params.responsePreview} />
+      {hasResponsePreview && (
+        <CardBody text={node.params.responsePreview ?? ''} />
       )}
       {node.params.targetRegistryName !== undefined && (
         <MetaRow label="target" value={node.params.targetRegistryName} />
@@ -74,6 +95,36 @@ export function SendCard({ data, selected }: SendProps) {
       {node.state === 'failed' && node.lastError !== null && (
         <div className={styles.errorPanel}>{node.lastError.message}</div>
       )}
+      <Dialog open={attemptDialogOpen} onOpenChange={(_e, d) => setAttemptDialogOpen(d.open)}>
+        <DialogSurface>
+          <DialogBody>
+            <DialogTitle>Fan out response attempts</DialogTitle>
+            <DialogContent>
+              <Input
+                type="number"
+                min={2}
+                max={50}
+                value={attemptCountDraft}
+                aria-label="Attempt count"
+                onChange={(_e, d) => setAttemptCountDraft(d.value)}
+              />
+              <div className={styles.mutedFooter}>
+                {attemptCountValid
+                  ? `${parsedAttemptCount} response leaves`
+                  : 'Choose 2 to 50 response leaves'}
+              </div>
+            </DialogContent>
+            <DialogActions>
+              <Button appearance="secondary" onClick={() => setAttemptDialogOpen(false)}>
+                Cancel
+              </Button>
+              <Button appearance="primary" disabled={!attemptCountValid} onClick={createAttemptFan}>
+                Create
+              </Button>
+            </DialogActions>
+          </DialogBody>
+        </DialogSurface>
+      </Dialog>
     </CardFrame>
   )
 }

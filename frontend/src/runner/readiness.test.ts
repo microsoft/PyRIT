@@ -321,9 +321,18 @@ describe('buildSForTree', () => {
     const tree = mkTree('r', [
       mkRoot('r', undefined, { state: 'clean' }),
       mkUserTurn('u', 'r', undefined, { state: 'clean' }),
-      mkSend('s', 'u', undefined, { state: 'clean' }),
+      mkSend('s', 'u', { responsePreview: 'already has response' }, { state: 'clean' }),
     ])
     expect(buildSForTree(tree).size).toBe(0)
+  })
+
+  it('includes clean empty Send leaves with no execution so unrun reconstructed fans can run', () => {
+    const tree = mkTree('r', [
+      mkRoot('r', undefined, { state: 'clean' }),
+      mkUserTurn('u', 'r', undefined, { state: 'clean' }),
+      mkSend('s', 'u', undefined, { state: 'clean' }),
+    ])
+    expect([...buildSForTree(tree)]).toEqual([nodeId('s')])
   })
 })
 
@@ -347,9 +356,18 @@ describe('buildSForSubtree', () => {
     const tree = mkTree('r', [
       mkRoot('r', undefined, { state: 'clean' }),
       mkUserTurn('u', 'r', undefined, { state: 'clean' }),
-      mkSend('s', 'u', undefined, { state: 'clean' }),
+      mkSend('s', 'u', { responsePreview: 'already has response' }, { state: 'clean' }),
     ])
     expect(buildSForSubtree(tree, nodeId('u')).size).toBe(0)
+  })
+
+  it('includes clean empty Send leaves within the refreshed subtree', () => {
+    const tree = mkTree('r', [
+      mkRoot('r', undefined, { state: 'clean' }),
+      mkUserTurn('u', 'r', undefined, { state: 'clean' }),
+      mkSend('s', 'u', undefined, { state: 'clean' }),
+    ])
+    expect([...buildSForSubtree(tree, nodeId('u'))]).toEqual([nodeId('s')])
   })
 })
 
@@ -367,9 +385,18 @@ describe('buildSForNode', () => {
     const tree = mkTree('r', [
       mkRoot('r'),
       mkUserTurn('u', 'r'),
-      mkSend('s', 'u', undefined, { state: 'clean' }),
+      mkSend('s', 'u', { responsePreview: 'already has response' }, { state: 'clean' }),
     ])
     expect(buildSForNode(tree, nodeId('s')).size).toBe(0)
+  })
+
+  it('returns {nodeId} for clean empty Send nodes with no execution', () => {
+    const tree = mkTree('r', [
+      mkRoot('r'),
+      mkUserTurn('u', 'r'),
+      mkSend('s', 'u', undefined, { state: 'clean' }),
+    ])
+    expect([...buildSForNode(tree, nodeId('s'))]).toEqual([nodeId('s')])
   })
 })
 

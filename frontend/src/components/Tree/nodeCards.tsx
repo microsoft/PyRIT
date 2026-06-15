@@ -11,6 +11,7 @@
 export { RootPromptCard } from './RootPromptCard'
 export { ImportMessageCard } from './ImportMessageCard'
 export { UserTurnCard } from './UserTurnCard'
+export { ConverterCard } from './ConverterCard'
 export { SendCard } from './SendCard'
 export { FanCard } from './FanCard'
 export { ScoreCard } from './ScoreCard'

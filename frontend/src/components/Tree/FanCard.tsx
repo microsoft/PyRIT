@@ -38,6 +38,7 @@ export function FanCard({ data, selected }: FanProps) {
   const collapseCtx = useStackCollapse()
   const callbacks = useActionCallbacks()
   const onPickFanChild = callbacks?.onPickFanChild
+  const onPruneFanToPickedPath = callbacks?.onPruneFanToPickedPath
   return (
     <CardFrame
       kindLabel="Fan"
@@ -65,6 +66,14 @@ export function FanCard({ data, selected }: FanProps) {
           onPickFanChild={onPickFanChild}
         />
       )}
+      {onPruneFanToPickedPath !== undefined && (
+        <PruneFanButton
+          fanNodeId={node.id}
+          variants={node.params.variants.length}
+          promotedSlot={node.params.promotedChildSlotIndex}
+          onPruneFanToPickedPath={onPruneFanToPickedPath}
+        />
+      )}
       {collapseCtx !== null && (
         <StackToggleButton
           collapsed={stack !== undefined}
@@ -72,6 +81,58 @@ export function FanCard({ data, selected }: FanProps) {
         />
       )}
     </CardFrame>
+  )
+}
+
+function PruneFanButton({
+  fanNodeId,
+  variants,
+  promotedSlot,
+  onPruneFanToPickedPath,
+}: {
+  fanNodeId: ConversationTreeNodeId
+  variants: number
+  promotedSlot: number | null
+  onPruneFanToPickedPath: (id: ConversationTreeNodeId, slotIndex: number) => void
+}) {
+  if (promotedSlot !== null) {
+    return (
+      <div data-tree-fan-prune>
+        <Tooltip content={`Prune to picked slot ${promotedSlot}`} relationship="description">
+          <Button
+            size="small"
+            appearance="subtle"
+            aria-label={`Prune to picked slot ${promotedSlot}`}
+            onClick={() => onPruneFanToPickedPath(fanNodeId, promotedSlot)}
+          >
+            Prune
+          </Button>
+        </Tooltip>
+      </div>
+    )
+  }
+
+  return (
+    <div data-tree-fan-prune>
+      <Menu positioning="below">
+        <MenuTrigger disableButtonEnhancement>
+          <Tooltip content="Prune to a slot" relationship="description">
+            <Button size="small" appearance="subtle" aria-label="Prune to a slot">
+              Prune
+            </Button>
+          </Tooltip>
+        </MenuTrigger>
+        <MenuPopover>
+          <MenuList>
+            {Array.from({ length: variants }, (_unused, slot) => (
+              <MenuItem key={slot} onClick={() => onPruneFanToPickedPath(fanNodeId, slot)}>
+                Keep slot {slot}
+              </MenuItem>
+            ))}
+          </MenuList>
+        </MenuPopover>
+      </Menu>
+    </div>
   )
 }
 

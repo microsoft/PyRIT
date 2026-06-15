@@ -125,6 +125,18 @@ export const useNodeCardStyles = makeStyles({
   metaValue: {
     fontFamily: tokens.fontFamilyMonospace,
   },
+  warningChip: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    width: 'fit-content',
+    marginTop: tokens.spacingVerticalXXS,
+    padding: `1px ${tokens.spacingHorizontalXS}`,
+    backgroundColor: tokens.colorPaletteRedBackground2,
+    color: tokens.colorPaletteRedForeground2,
+    borderRadius: tokens.borderRadiusSmall,
+    fontSize: tokens.fontSizeBase100,
+    fontWeight: tokens.fontWeightSemibold,
+  },
   errorPanel: {
     marginTop: tokens.spacingVerticalXS,
     padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalXS}`,

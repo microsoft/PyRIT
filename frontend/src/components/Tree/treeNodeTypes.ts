@@ -19,6 +19,7 @@ import type { ComponentType } from 'react'
 import type { ConversationTreeNodeKind } from '../../runner/treeTypes'
 import {
   FanCard,
+  ConverterCard,
   ImportMessageCard,
   RootPromptCard,
   ScoreCard,
@@ -30,6 +31,7 @@ export const treeNodeTypes = {
   root_prompt: RootPromptCard,
   import_message: ImportMessageCard,
   user_turn: UserTurnCard,
+  converter: ConverterCard,
   send: SendCard,
   fan: FanCard,
   score: ScoreCard,

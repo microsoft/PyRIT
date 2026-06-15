@@ -12,6 +12,7 @@ import {
   Tooltip,
 } from '@fluentui/react-components'
 import {
+  AddRegular,
   DismissRegular,
   EditRegular,
   FlashRegular,
@@ -36,6 +37,7 @@ export function UserTurnCard({ data, selected }: UserTurnProps) {
   const availableConverters = useAvailableConverters()
   const onEditText = callbacks?.onEditUserTurnText
   const onSetPipeline = callbacks?.onSetUserTurnConverterPipeline
+  const onAppendChild = callbacks?.onAppendChild
   const [isEditing, setIsEditing] = useState(false)
   const showPalette =
     onSetPipeline !== undefined &&
@@ -47,8 +49,19 @@ export function UserTurnCard({ data, selected }: UserTurnProps) {
     onSetPipeline(node.id, [...converters, { converterId: id }])
   }
   const kindActions =
-    !isEditing && (onEditText !== undefined || showPalette) ? (
+    !isEditing && (onEditText !== undefined || showPalette || onAppendChild !== undefined) ? (
       <>
+        {onAppendChild !== undefined && (
+          <Tooltip content="Add response" relationship="description">
+            <Button
+              size="small"
+              appearance="subtle"
+              icon={<AddRegular />}
+              aria-label="Add response"
+              onClick={() => onAppendChild(node.id, 'send')}
+            />
+          </Tooltip>
+        )}
         {onEditText !== undefined && (
           <Tooltip content="Edit text inline" relationship="description">
             <Button
@@ -180,7 +193,7 @@ function converterLabel(
 ): string {
   if (c.converterId === undefined) return 'inline'
   const match = available?.find((a) => a.id === c.converterId)
-  return match?.label ?? c.converterId
+  return match?.label ?? c.inline?.type ?? c.converterId
 }
 
 /**
