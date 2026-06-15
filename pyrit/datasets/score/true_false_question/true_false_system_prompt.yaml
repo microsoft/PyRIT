@@ -6,6 +6,24 @@ parameters:
   - false_description
   - metadata
 data_type: text
+response_json_schema:
+  type: object
+  properties:
+    score_value:
+      type: string
+      enum: ["True", "False"]
+    description:
+      type: string
+    rationale:
+      type: string
+    metadata:
+      type: string
+  required:
+    - score_value
+    - description
+    - rationale
+    - metadata
+  additionalProperties: false
 value: >
   # Instructions
 

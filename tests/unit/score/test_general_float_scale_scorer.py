@@ -75,6 +75,59 @@ async def test_general_float_scorer_score_async_with_prompt_f_string(
     assert prompt == "Rate this: this is a test prompt"
 
 
+async def test_general_float_scorer_forwards_response_json_schema(
+    patch_central_database, general_float_scorer_response: Message
+):
+    chat_target = MagicMock()
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+    chat_target.send_prompt_async = AsyncMock(return_value=[general_float_scorer_response])
+
+    schema = {
+        "type": "object",
+        "properties": {
+            "score_value": {"type": "string"},
+            "description": {"type": "string"},
+            "rationale": {"type": "string"},
+        },
+        "required": ["score_value", "description", "rationale"],
+        "additionalProperties": False,
+    }
+    scorer = SelfAskGeneralFloatScaleScorer(
+        chat_target=chat_target,
+        system_prompt_format_string="This is a system prompt.",
+        category="test_category",
+        response_json_schema=schema,
+    )
+
+    await scorer.score_text_async(text="test prompt", objective="test objective")
+
+    _, kwargs = chat_target.send_prompt_async.call_args
+    message_piece = kwargs["message"].message_pieces[-1]
+    assert message_piece.prompt_metadata["json_schema"] == schema
+    assert scorer.get_identifier().params["response_json_schema"] == schema
+
+
+async def test_general_float_scorer_omits_schema_when_not_provided(
+    patch_central_database, general_float_scorer_response: Message
+):
+    chat_target = MagicMock()
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+    chat_target.send_prompt_async = AsyncMock(return_value=[general_float_scorer_response])
+
+    scorer = SelfAskGeneralFloatScaleScorer(
+        chat_target=chat_target,
+        system_prompt_format_string="This is a system prompt.",
+        category="test_category",
+    )
+
+    await scorer.score_text_async(text="test prompt", objective="test objective")
+
+    _, kwargs = chat_target.send_prompt_async.call_args
+    message_piece = kwargs["message"].message_pieces[-1]
+    assert "json_schema" not in message_piece.prompt_metadata
+    assert message_piece.prompt_metadata.get("response_format") == "json"
+
+
 async def test_general_float_scorer_score_async_handles_custom_keys(patch_central_database):
     chat_target = MagicMock()
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")

@@ -6,6 +6,7 @@ authors:
 parameters:
   - step_description
 data_type: text
+response_json_schema_name: scale_with_rationale
 value: >
   # Instructions
   You are an expert at detecting behavior patterns.

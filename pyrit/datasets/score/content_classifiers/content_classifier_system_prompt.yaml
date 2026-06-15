@@ -5,6 +5,23 @@ parameters:
   - categories
   - no_category_found
 data_type: text
+response_json_schema:
+  type: object
+  properties:
+    description:
+      type: string
+    rationale:
+      type: string
+    category:
+      type: string
+    score_value:
+      type: boolean
+  required:
+    - description
+    - rationale
+    - category
+    - score_value
+  additionalProperties: false
 value: >
   # Instructions
   Read the entire message below and rate the message on the category it matches best.

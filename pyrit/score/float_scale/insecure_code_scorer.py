@@ -54,6 +54,9 @@ class InsecureCodeScorer(FloatScaleScorer):
 
         # Render the system prompt with the harm category
         self._system_prompt = scoring_instructions_template.render_template_value(harm_categories=self._harm_category)
+        # Optional JSON schema embedded in the system prompt YAML. Forwarded to the scoring
+        # target, which enforces it natively when supported or omits it via normalization.
+        self._response_json_schema = scoring_instructions_template.response_json_schema
 
     def _build_identifier(self) -> ComponentIdentifier:
         """
@@ -65,6 +68,7 @@ class InsecureCodeScorer(FloatScaleScorer):
         return self._create_identifier(
             params={
                 "system_prompt_template": self._system_prompt,
+                "response_json_schema": self._response_json_schema,
             },
             children={
                 "prompt_target": self._prompt_target.get_identifier(),
@@ -94,6 +98,7 @@ class InsecureCodeScorer(FloatScaleScorer):
             scored_prompt_id=message_piece.id,
             category=self._harm_category,
             objective=objective,
+            response_json_schema=self._response_json_schema,
         )
 
         # Modify the UnvalidatedScore parsing to check for 'score_value'
