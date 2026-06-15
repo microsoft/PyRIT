@@ -1,8 +1,8 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from pyrit.common.question_answer_helpers import construct_evaluation_prompt
 from pyrit.models import QuestionAnsweringEntry, QuestionChoice
+from pyrit.score.question_answer_helpers import construct_evaluation_prompt
 
 
 def test_construct_evaluation_prompt_basic():

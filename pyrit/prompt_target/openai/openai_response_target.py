@@ -13,12 +13,12 @@ from typing import (
 
 from openai.types.shared import ReasoningEffort
 
-from pyrit.common.data_url_converter import convert_local_image_to_data_url_async
 from pyrit.exceptions import (
     EmptyResponseException,
     PyritException,
     pyrit_target_retry,
 )
+from pyrit.memory.storage import convert_local_image_to_data_url_async
 from pyrit.models import (
     ComponentIdentifier,
     Message,
@@ -29,7 +29,11 @@ from pyrit.models import (
 from pyrit.prompt_target.common.json_response_config import _JsonResponseConfig
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
-from pyrit.prompt_target.common.utils import limit_requests_per_minute, validate_temperature, validate_top_p
+from pyrit.prompt_target.common.utils import (
+    limit_requests_per_minute,
+    validate_temperature,
+    validate_top_p,
+)
 from pyrit.prompt_target.openai.openai_error_handling import _is_content_filter_error
 from pyrit.prompt_target.openai.openai_target import OpenAITarget
 
