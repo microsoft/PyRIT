@@ -40,7 +40,8 @@ from pyrit.models import PromptDataType
 # ``get_union_non_none_args`` is a general type-introspection utility used here to
 # render parameter types for the catalog (a presentation concern owned by this
 # service).
-from pyrit.registry.components import ConverterParameterMetadata, ConverterRegistry
+from pyrit.registry.components import ConverterRegistry
+from pyrit.registry.components.converter_registry import _ConverterParameterMetadata
 from pyrit.registry.resolution import get_union_non_none_args
 
 _DATA_TYPE_EXTENSION: dict[str, str] = {
@@ -142,7 +143,7 @@ class ConverterService:
         return ConverterCatalogResponse(items=items)
 
     @staticmethod
-    def _build_parameter_schema(parameter: ConverterParameterMetadata) -> ConverterParameterSchema:
+    def _build_parameter_schema(parameter: _ConverterParameterMetadata) -> ConverterParameterSchema:
         """
         Map registry parameter metadata to the catalog DTO.
 

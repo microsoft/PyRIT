@@ -16,7 +16,6 @@ from pyrit.registry.class_registries import (
 )
 from pyrit.registry.components import (
     ConverterMetadata,
-    ConverterParameterMetadata,
     ConverterRegistry,
 )
 from pyrit.registry.discovery import (
@@ -45,7 +44,6 @@ __all__ = [
     "BaseInstanceRegistry",
     "BuildableRegistry",
     "ConverterMetadata",
-    "ConverterParameterMetadata",
     "ConverterRegistry",
     "DefaultInstanceRegistry",
     "InstanceRegistry",

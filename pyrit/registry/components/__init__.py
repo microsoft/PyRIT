@@ -16,12 +16,10 @@ Shared capabilities and base classes (``BuildableRegistry``, ``InstanceRegistry`
 
 from pyrit.registry.components.converter_registry import (
     ConverterMetadata,
-    ConverterParameterMetadata,
     ConverterRegistry,
 )
 
 __all__ = [
     "ConverterRegistry",
     "ConverterMetadata",
-    "ConverterParameterMetadata",
 ]

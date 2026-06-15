@@ -56,9 +56,16 @@ def _prompt_converter_type() -> type[PromptConverter]:
     return PromptConverter
 
 
-class ConverterParameterMetadata(NamedTuple):
+class _ConverterParameterMetadata(NamedTuple):
     """
     A converter constructor parameter described for dynamic construction.
+
+    .. note::
+        Transitional / internal. This bespoke shape is replaced by the unified
+        ``pyrit.common.parameter.Parameter`` contract on ``ClassRegistryEntry`` in
+        Phase 3 of the registry refactor and will be deleted then. Read the values
+        if you must, but do not build new APIs around this type or import it as a
+        stable public symbol.
 
     Carries raw introspection data so callers can build converters on the fly.
     ``annotation`` is the parameter's raw type annotation; rendering it to a
@@ -97,7 +104,8 @@ class ConverterMetadata(ClassRegistryEntry):
     supported_output_types: tuple[str, ...] = field(kw_only=True, default=())
 
     # Simple constructor parameters suitable for dynamic form generation.
-    parameters: tuple[ConverterParameterMetadata, ...] = field(kw_only=True, default=())
+    # Transitional element type — replaced by ``Parameter`` in Phase 3.
+    parameters: tuple[_ConverterParameterMetadata, ...] = field(kw_only=True, default=())
 
     # Whether the converter requires an LLM target.
     is_llm_based: bool = field(kw_only=True, default=False)
@@ -153,7 +161,7 @@ def _parse_arg_descriptions(converter_class: type) -> dict[str, str]:
     return descriptions
 
 
-def _extract_parameters(converter_class: type) -> tuple[ConverterParameterMetadata, ...]:
+def _extract_parameters(converter_class: type) -> tuple[_ConverterParameterMetadata, ...]:
     """
     Extract constructor parameters from a converter class.
 
@@ -163,7 +171,7 @@ def _extract_parameters(converter_class: type) -> tuple[ConverterParameterMetada
     indicating whether a string value can be coerced to its type.
 
     Returns:
-        tuple[ConverterParameterMetadata, ...]: The constructor parameters.
+        tuple[_ConverterParameterMetadata, ...]: The constructor parameters.
     """
     try:
         sig = inspect.signature(converter_class.__init__)
@@ -172,7 +180,7 @@ def _extract_parameters(converter_class: type) -> tuple[ConverterParameterMetada
 
     arg_descriptions = _parse_arg_descriptions(converter_class)
 
-    params: list[ConverterParameterMetadata] = []
+    params: list[_ConverterParameterMetadata] = []
     for name, p in sig.parameters.items():
         if name in ("self", "args", "kwargs"):
             continue
@@ -196,7 +204,7 @@ def _extract_parameters(converter_class: type) -> tuple[ConverterParameterMetada
             choices = tuple(str(a) for a in get_args(choice_annotation))
 
         params.append(
-            ConverterParameterMetadata(
+            _ConverterParameterMetadata(
                 name=name,
                 annotation=p.annotation,
                 required=required,
