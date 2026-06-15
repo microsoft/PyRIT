@@ -127,20 +127,20 @@ def _build_hash_dict(
     return hash_dict
 
 
-def _coerce_promoted_child(value: Any) -> Any:
+def _dump_child_identifiers_to_dict(value: Any) -> Any:
     """
-    Normalize a promoted child value into a form Pydantic can validate.
+    Replace ``ComponentIdentifier`` instances in a child value with their flat dict form.
 
     A promoted child field is typed as a specific ``ComponentIdentifier``
     subclass (e.g. ``TargetIdentifier``). Build sites and DB loads may supply a
     base ``ComponentIdentifier`` (or a different subclass) for that slot, which
-    Pydantic's strict model validation would reject. Converting such instances
-    to their flat ``model_dump()`` dict lets validation promote them into the
+    Pydantic's strict model validation would reject. Dumping such instances to
+    their flat ``model_dump()`` dict lets validation re-parse them into the
     declared subclass; the stored ``hash`` rides along, so identity is preserved.
 
     Args:
-        value (Any): The raw promoted child value (an identifier instance, a
-            dict, a list of either, or ``None``).
+        value (Any): The raw child value (an identifier instance, a dict, a list
+            of either, or ``None``).
 
     Returns:
         Any: The value with any ``ComponentIdentifier`` instances replaced by
@@ -149,7 +149,7 @@ def _coerce_promoted_child(value: Any) -> Any:
     if isinstance(value, ComponentIdentifier):
         return value.model_dump()
     if isinstance(value, list):
-        return [_coerce_promoted_child(item) for item in value]
+        return [_dump_child_identifiers_to_dict(item) for item in value]
     return value
 
 
@@ -379,14 +379,14 @@ class ComponentIdentifier(BaseModel):
                 elif name in children_bucket:
                     data[name] = children_bucket[name]
 
-            # Coerce promoted child values that arrived as ComponentIdentifier
-            # instances (possibly a base ComponentIdentifier or a different
-            # subclass than the typed field declares) into their flat dict form,
-            # so Pydantic validates them into the declared identifier subclass.
+            # Promoted child values may arrive as ComponentIdentifier instances
+            # (possibly a base ComponentIdentifier or a different subclass than
+            # the typed field declares). Dump them to their flat dict form so
+            # Pydantic re-parses them into the declared identifier subclass.
             # Round-tripping through model_dump preserves the stored hash.
             for name in cls._promoted_child_fields():
                 if name in data:
-                    data[name] = _coerce_promoted_child(data[name])
+                    data[name] = _dump_child_identifiers_to_dict(data[name])
 
         return data
 
