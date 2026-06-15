@@ -29,7 +29,7 @@ from pyrit.backend.mappers.attack_mappers import (
 from pyrit.backend.mappers.converter_mappers import converter_object_to_instance
 from pyrit.backend.mappers.target_mappers import target_object_to_instance
 from pyrit.backend.models._media import build_filename, infer_mime_type
-from pyrit.backend.models.attacks import ScoreView
+from pyrit.backend.models.attacks import MessagePieceView, ScoreView
 from pyrit.models import (
     AttackOutcome,
     AttackResult,
@@ -739,15 +739,14 @@ class TestPyritMessagesToDto:
 
     async def test_exposes_original_prompt_id(self) -> None:
         """Mapper exposes domain piece's original_prompt_id as a stringified UUID."""
-        piece = _make_mock_piece(original_value="hi", converted_value="hi")
+        piece = _make_piece(original_value="hi", converted_value="hi")
         lineage_root = uuid.uuid4()
         piece.original_prompt_id = lineage_root
-        msg = MagicMock()
-        msg.message_pieces = [piece]
+        msg = Message(message_pieces=[piece])
 
         result = await pyrit_messages_to_dto_async([msg])
 
-        assert result[0].pieces[0].original_prompt_id == str(lineage_root)
+        assert str(result[0].message_pieces[0].original_prompt_id) == str(lineage_root)
 
     async def test_original_prompt_id_none_serializes_as_none(self) -> None:
         """Defensive: a domain piece whose original_prompt_id is None maps to None on the DTO.
@@ -757,14 +756,13 @@ class TestPyritMessagesToDto:
         the mapper must not crash on a defensive-test piece that explicitly
         sets it to None.
         """
-        piece = _make_mock_piece(original_value="hi", converted_value="hi")
-        piece.original_prompt_id = None
-        msg = MagicMock()
-        msg.message_pieces = [piece]
+        piece = _make_piece(original_value="hi", converted_value="hi")
+        msg = Message(message_pieces=[piece])
+        msg.message_pieces[0].original_prompt_id = None
 
         result = await pyrit_messages_to_dto_async([msg])
 
-        assert result[0].pieces[0].original_prompt_id is None
+        assert result[0].message_pieces[0].original_prompt_id is None
 
     async def test_exposes_converter_identifiers(self) -> None:
         """Mapper exposes domain piece's converter_identifiers as DTO list.
@@ -784,15 +782,14 @@ class TestPyritMessagesToDto:
             class_module="pyrit.prompt_converter",
             params={"supported_input_types": ("text",), "supported_output_types": ("text",)},
         )
-        piece = _make_mock_piece(original_value="hi", converted_value="aGk=")
+        piece = _make_piece(original_value="hi", converted_value="aGk=")
         piece.original_prompt_id = uuid.uuid4()
         piece.converter_identifiers = [rot13, base64]
-        msg = MagicMock()
-        msg.message_pieces = [piece]
+        msg = Message(message_pieces=[piece])
 
         result = await pyrit_messages_to_dto_async([msg])
 
-        converters = result[0].pieces[0].converter_identifiers
+        converters = result[0].message_pieces[0].converter_identifiers
         assert len(converters) == 2
         assert converters[0].class_name == "ROT13Converter"
         assert converters[0].class_module == "pyrit.prompt_converter"
@@ -810,15 +807,14 @@ class TestPyritMessagesToDto:
         applied' is distinguishable from 'DTO missing the field' (which would
         fail at the TypeScript boundary on the frontend).
         """
-        piece = _make_mock_piece(original_value="hi", converted_value="hi")
+        piece = _make_piece(original_value="hi", converted_value="hi")
         piece.original_prompt_id = uuid.uuid4()
         piece.converter_identifiers = []
-        msg = MagicMock()
-        msg.message_pieces = [piece]
+        msg = Message(message_pieces=[piece])
 
         result = await pyrit_messages_to_dto_async([msg])
 
-        assert result[0].pieces[0].converter_identifiers == []
+        assert result[0].message_pieces[0].converter_identifiers == []
 
 
 class TestMessagePieceDtoDefaults:
@@ -829,34 +825,28 @@ class TestMessagePieceDtoDefaults:
     """
 
     def test_defaults_for_new_fields(self) -> None:
-        """A minimally-constructed MessagePiece has the V1.0 fields with their declared defaults."""
-        from pyrit.backend.models.attacks import MessagePiece as MessagePieceDto
-
-        dto = MessagePieceDto(piece_id="p1", converted_value="hello")
+        """A minimally-constructed MessagePieceView exposes the V1.0 fields."""
+        piece = _make_piece(converted_value="hello", original_value="hello")
+        dto = MessagePieceView.from_domain(piece)
 
         # PR2 contract: list[ComponentIdentifierField] defaulting to [].
         assert dto.converter_identifiers == []
-        # PR2 contract: str | None defaulting to None.
-        assert dto.original_prompt_id is None
+        assert dto.original_prompt_id == piece.original_prompt_id
 
     def test_serializes_converter_identifiers_to_flat_dict_shape(self) -> None:
         """ComponentIdentifierField round-trips through JSON as the flat shape the frontend reads."""
-        from pyrit.backend.models.attacks import MessagePiece as MessagePieceDto
-
         ci = ComponentIdentifier(
             class_name="Base64Converter",
             class_module="pyrit.prompt_converter",
             params={"supported_input_types": ("text",), "supported_output_types": ("text",)},
         )
-        dto = MessagePieceDto(
-            piece_id="p1",
-            converted_value="hi",
-            converter_identifiers=[ci],
-            original_prompt_id="0c1b9c7d-0000-0000-0000-000000000000",
-        )
+        piece = _make_piece(original_value="hi", converted_value="hi")
+        piece.converter_identifiers = [ci]
+        piece.original_prompt_id = uuid.UUID("0c1b9c7d-0000-0000-0000-000000000000")
+        dto = MessagePieceView.from_domain(piece)
 
         # The frontend reads JSON; model_dump() is what FastAPI calls under the hood.
-        dumped = dto.model_dump()
+        dumped = dto.model_dump(mode="json")
         assert dumped["original_prompt_id"] == "0c1b9c7d-0000-0000-0000-000000000000"
         assert isinstance(dumped["converter_identifiers"], list)
         assert dumped["converter_identifiers"][0]["class_name"] == "Base64Converter"

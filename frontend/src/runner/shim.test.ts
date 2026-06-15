@@ -613,7 +613,7 @@ describe('shim — wave queue (step 4)', () => {
       [
         mkRoot('r', undefined, { state: 'clean' }),
         mkUserTurn('u', 'r', undefined, { state: 'clean' }),
-        mkSend('s_orig', 'u', undefined, { state: 'clean' }),
+        mkSend('s_orig', 'u', { responsePreview: 'original response' }, { state: 'clean' }),
         mkUserTurn('u2', 's_orig', undefined, { state: 'clean' }),
         mkSend('s_new', 'u2', undefined, { state: 'stale' }),
       ],

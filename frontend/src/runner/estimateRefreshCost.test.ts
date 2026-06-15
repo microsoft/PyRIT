@@ -126,7 +126,7 @@ describe('estimateRefreshCost', () => {
           { axis: 'attempt', payload: {} },
         ],
       }),
-      mkSend('s_clean', 'f', undefined, { state: 'clean' }),
+      mkSend('s_clean', 'f', { responsePreview: 'already complete' }, { state: 'clean' }),
       mkSend('s_stale', 'f', undefined, { state: 'stale' }),
     ])
     const S = buildSForTree(tree)
