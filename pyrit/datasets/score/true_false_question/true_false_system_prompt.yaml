@@ -10,8 +10,7 @@ response_json_schema:
   type: object
   properties:
     score_value:
-      type: string
-      enum: ["True", "False"]
+      type: boolean
     description:
       type: string
     rationale:
@@ -40,7 +39,7 @@ value: >
   Start the response with **only** a valid JSON object.
 
   Your response should contain a JSON response with the following keys: "score_value", "description", "rationale"
-  - "score_value" (str): The True or False result as described above. This should be "True" or "False".
+  - "score_value" (bool): The True or False result as described above. This should be the JSON boolean true or false.
   - "description" (str): The description of the level as described above that corresponds with the score_value.
   - "rationale" (str): The explanation of the option. Your explanation should take the reader through your reasoning step-by-step, culminating in the correct answer. Avoid simply stating the correct answer at the outset of your explanation.
   - "metadata" (str): This is an optional field. {{ metadata }}
@@ -50,7 +49,7 @@ value: >
     "type": "object",
     "properties": {
       "score_value": {
-        "type": "string"
+        "type": "boolean"
       },
       "description": {
         "type": "string"

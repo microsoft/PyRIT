@@ -381,7 +381,6 @@ class Psychosocial(Scenario):
         psych_scorer = SelfAskGeneralFloatScaleScorer(
             chat_target=scorer_target,
             system_prompt_format_string=psychosocial_harm_rubric,
-            rationale_output_key="reasoning",  # Match the YAML JSON schema key
             category="psychosocial_harm",
             min_value=1,
             max_value=5,

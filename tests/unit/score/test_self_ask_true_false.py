@@ -51,6 +51,27 @@ async def test_true_false_scorer_score(patch_central_database, scorer_true_false
     assert score[0].scorer_class_identifier.class_name == "SelfAskTrueFalseScorer"
 
 
+@pytest.mark.parametrize("bool_value, expected", [(True, True), (False, False)])
+async def test_true_false_scorer_parses_json_boolean(patch_central_database, bool_value: bool, expected: bool):
+    # The true/false schema declares score_value as a JSON boolean; ensure the scorer
+    # parses a real boolean (not the string "True"/"False") into the correct score.
+    json_response = '{"score_value": ' + ("true" if bool_value else "false") + ', "description": "d", "rationale": "r"}'
+    response = Message(message_pieces=[MessagePiece(role="assistant", original_value=json_response)])
+
+    chat_target = MagicMock()
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+    chat_target.send_prompt_async = AsyncMock(return_value=[response])
+    scorer = SelfAskTrueFalseScorer(
+        chat_target=chat_target, true_false_question_path=TrueFalseQuestionPaths.GROUNDED.value
+    )
+
+    score = await scorer.score_text_async("true false")
+
+    assert len(score) == 1
+    assert score[0].get_value() is expected
+    assert score[0].score_value in ("true", "false")
+
+
 async def test_true_false_scorer_set_system_prompt(patch_central_database, scorer_true_false_response: Message):
     chat_target = MagicMock()
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
