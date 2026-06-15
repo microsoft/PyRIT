@@ -25,7 +25,7 @@ class AgentThreatRulesScorer(TrueFalseScorer):
     ATR is an MIT-licensed community ruleset
     (https://github.com/Agent-Threat-Rule/agent-threat-rules). The optional
     ``pyatr`` package (>= 0.2.6, which bundles the ruleset) is required; install
-    it with ``pip install pyatr``.
+    it with ``pip install pyrit[atr]``.
 
     This pairs with the ``_AgentThreatRulesDataset`` seed-prompt loader: the
     dataset supplies ATR-derived adversarial prompts, and this scorer detects
@@ -67,10 +67,10 @@ class AgentThreatRulesScorer(TrueFalseScorer):
 
         try:
             from pyatr.engine import ATREngine
-        except ImportError as exc:  # pragma: no cover - optional dependency
+        except ModuleNotFoundError as exc:  # pragma: no cover - optional dependency
             raise ImportError(
                 "AgentThreatRulesScorer requires the optional 'pyatr' package (>= 0.2.6). "
-                "Install it with `pip install pyatr`."
+                "Install it with `pip install pyrit[atr]`."
             ) from exc
 
         self._min_severity = min_severity
