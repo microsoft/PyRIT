@@ -165,34 +165,26 @@ class ComponentIdentifier(BaseModel):
     params, and children produce the same hash. This enables deterministic metrics
     lookup, DB deduplication, and registry keying.
 
-    Typed projections
-    -----------------
-    Subclasses (``TargetIdentifier``, ``ConverterIdentifier``, …) may **promote**
-    well-known params and children to ordinary typed fields. Promotion is
-    automatic and keyed off the field's annotation: a scalar field maps to a
-    ``params`` entry; a field annotated as a ``ComponentIdentifier`` subclass (or
-    a ``list`` thereof) maps to a ``children`` slot of the same name. The promoted
-    value is mirrored back into ``params`` / ``children`` before hashing, so a
-    typed subclass serializes and hashes **identically** to a plain
-    ``ComponentIdentifier`` built with the same params/children. Non-promoted
-    members simply stay in ``params`` / ``children``.
+    Typed projections: subclasses (``TargetIdentifier``, ``ConverterIdentifier``, …)
+    may promote well-known params and children to ordinary typed fields. Promotion is
+    automatic and keyed off the field's annotation: a scalar field maps to a ``params``
+    entry; a field annotated as a ``ComponentIdentifier`` subclass (or a ``list``
+    thereof) maps to a ``children`` slot of the same name. The promoted value is
+    mirrored back into ``params`` / ``children`` before hashing, so a typed subclass
+    serializes and hashes identically to a plain ``ComponentIdentifier`` built with the
+    same params/children. Non-promoted members simply stay in ``params`` / ``children``.
 
-    Serialization
-    -------------
-    ``model_dump()`` returns a **flat** dict where reserved keys
-    (``class_name``, ``class_module``, ``hash``, ``pyrit_version``,
-    ``eval_hash``, ``children``) sit at the top level alongside the inlined
-    param values. This shape is also the storage / REST format. Pass
-    ``context={"max_value_length": N}`` to truncate long string param values.
-    ``model_validate()`` accepts the same flat shape (plus a structured form
-    with an explicit ``params`` dict).
+    Serialization: ``model_dump()`` returns a flat dict where reserved keys
+    (``class_name``, ``class_module``, ``hash``, ``pyrit_version``, ``eval_hash``,
+    ``children``) sit at the top level alongside the inlined param values. This shape is
+    also the storage / REST format. Pass ``context={"max_value_length": N}`` to truncate
+    long string param values. ``model_validate()`` accepts the same flat shape (plus a
+    structured form with an explicit ``params`` dict).
 
-    Mutability
-    ----------
-    The model is frozen, but ``params`` and ``children`` are dicts whose
+    Mutability: the model is frozen, but ``params`` and ``children`` are dicts whose
     contents are not deep-frozen — mutating them after construction creates an
-    identifier whose stored ``hash`` no longer matches its content. Treat
-    every identifier as a fully immutable value.
+    identifier whose stored ``hash`` no longer matches its content. Treat every
+    identifier as a fully immutable value.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
