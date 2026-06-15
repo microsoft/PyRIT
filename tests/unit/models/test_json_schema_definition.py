@@ -86,7 +86,7 @@ def test_bundled_true_false_with_rationale_loads_from_yaml():
     schema = COMMON_JSON_SCHEMAS["true_false_with_rationale"]
     assert schema["type"] == "object"
     assert set(schema["required"]) == {"score_value", "rationale"}
-    assert schema["properties"]["score_value"]["enum"] == ["True", "False"]
+    assert schema["properties"]["score_value"]["type"] == "boolean"
     assert schema["additionalProperties"] is False
 
 
@@ -103,15 +103,15 @@ def test_common_json_schemas_is_read_only_mapping():
 def test_get_common_json_schema_returns_deep_copy():
     """Mutating the returned schema must not affect the registry or future callers."""
     first = get_common_json_schema("true_false_with_rationale")
-    first["properties"]["score_value"]["enum"].append("Maybe")
+    first["properties"]["score_value"]["type"] = "string"
     first["new_top_level_key"] = "tampered"
 
     second = get_common_json_schema("true_false_with_rationale")
-    assert second["properties"]["score_value"]["enum"] == ["True", "False"]
+    assert second["properties"]["score_value"]["type"] == "boolean"
     assert "new_top_level_key" not in second
 
     registry_schema = COMMON_JSON_SCHEMAS["true_false_with_rationale"]
-    assert registry_schema["properties"]["score_value"]["enum"] == ["True", "False"]
+    assert registry_schema["properties"]["score_value"]["type"] == "boolean"
     assert "new_top_level_key" not in registry_schema
 
 
