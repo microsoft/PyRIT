@@ -77,6 +77,7 @@ from pyrit.models.messages.chat_message import (
     ALLOWED_CHAT_MESSAGE_ROLES,
     ChatMessage,
     ChatMessagesDataset,
+    ToolCall,
 )
 from pyrit.models.messages.conversation_reference import ConversationReference, ConversationType
 from pyrit.models.question_answering import QuestionAnsweringDataset, QuestionAnsweringEntry, QuestionChoice
@@ -192,6 +193,7 @@ __all__ = [
     "TARGET_EVAL_PARAM_FALLBACKS",
     "TARGET_EVAL_PARAMS",
     "TextDataTypeSerializer",
+    "ToolCall",
     "UnvalidatedScore",
     "validate_registry_name",
     "VideoPathDataTypeSerializer",

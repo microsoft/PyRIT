@@ -18,9 +18,9 @@ from pyrit.models.messages.chat_message import (
     ChatMessagesDataset,
     ToolCall,
 )
-from pyrit.models.messages.conversation import Conversation
 from pyrit.models.messages.conversation_reference import ConversationReference, ConversationType
 from pyrit.models.messages.conversations import (
+    Conversation,
     construct_response_from_request,
     flatten_to_message_pieces,
     get_all_values,
