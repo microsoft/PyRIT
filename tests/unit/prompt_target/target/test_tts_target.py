@@ -90,7 +90,7 @@ async def test_tts_validate_previous_conversations(
     prior_message = Message(message_pieces=[message_piece])
 
     mock_memory = MagicMock()
-    mock_memory.get_conversation.return_value = [prior_message]
+    mock_memory.get_conversation_messages.return_value = [prior_message]
     mock_memory.add_message_to_memory = AsyncMock()
 
     tts_target._memory = mock_memory
@@ -149,7 +149,7 @@ async def test_tts_send_prompt_async_exception_adds_to_memory(
     exception_class: type[BaseException],
 ):
     mock_memory = MagicMock()
-    mock_memory.get_conversation.return_value = []
+    mock_memory.get_conversation_messages.return_value = []
     mock_memory.add_message_to_memory = AsyncMock()
 
     tts_target._memory = mock_memory

@@ -51,6 +51,15 @@ from pyrit.models.identifiers import (
     snake_case_to_class_name,
     validate_registry_name,
 )
+from pyrit.models.json_schema_definition import (
+    COMMON_JSON_SCHEMAS,
+    JSON_SCHEMA_METADATA_KEY,
+    SEED_RESPONSE_JSON_SCHEMA_METADATA_KEY,
+    JsonSchemaDefinition,
+    get_common_json_schema,
+    register_common_json_schema,
+    unregister_common_json_schema,
+)
 from pyrit.models.literals import (
     MEDIA_PATH_DATA_TYPES,
     ChatMessageRole,
@@ -60,6 +69,7 @@ from pyrit.models.literals import (
     SeedType,
 )
 from pyrit.models.messages import (
+    Conversation,
     Message,
     MessagePiece,
     construct_response_from_request,
@@ -73,7 +83,7 @@ from pyrit.models.question_answering import QuestionAnsweringDataset, QuestionAn
 from pyrit.models.results.attack_result import AttackOutcome, AttackResult, AttackResultT
 from pyrit.models.results.strategy_result import StrategyResult, StrategyResultT
 from pyrit.models.retry_event import RetryEvent
-from pyrit.models.scenario_result import ScenarioIdentifier, ScenarioResult
+from pyrit.models.scenario_result import ScenarioIdentifier, ScenarioResult, ScenarioRunState
 from pyrit.models.score import Score, ScoreType, UnvalidatedScore
 
 # Seeds - import from new seeds submodule for forward compatibility
@@ -112,6 +122,7 @@ __all__ = [
     "ComponentIdentifier",
     "compute_eval_hash",
     "config_hash",
+    "Conversation",
     "ConversationReference",
     "ConversationStats",
     "ConversationType",
@@ -135,6 +146,13 @@ __all__ = [
     "IdentifierFilter",
     "IdentifierType",
     "ImagePathDataTypeSerializer",
+    "COMMON_JSON_SCHEMAS",
+    "get_common_json_schema",
+    "register_common_json_schema",
+    "unregister_common_json_schema",
+    "JSON_SCHEMA_METADATA_KEY",
+    "SEED_RESPONSE_JSON_SCHEMA_METADATA_KEY",
+    "JsonSchemaDefinition",
     "MEDIA_PATH_DATA_TYPES",
     "Message",
     "MessagePiece",
@@ -154,6 +172,7 @@ __all__ = [
     "ScorerIdentifier",
     "ScenarioIdentifier",
     "ScenarioResult",
+    "ScenarioRunState",
     "Seed",
     "SeedAttackGroup",
     "SeedAttackTechniqueGroup",

@@ -5,7 +5,7 @@
 Tests for backend converter service.
 """
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -328,6 +328,73 @@ class TestPreviewConversion:
         assert result.converted_value == "step2_output"
         assert len(result.steps) == 2
         mock_converter2.convert_async.assert_called_with(prompt="step1_output", input_type="text")
+
+    async def test_preview_conversion_persists_data_uri_for_image_path(self) -> None:
+        """Data URIs on *_path types are decoded via the _DATA_TYPE_EXTENSION map and persisted."""
+        service = ConverterService()
+
+        mock_converter = MagicMock()
+        mock_result = MagicMock()
+        mock_result.output_text = "/tmp/persisted.png"
+        mock_result.output_type = "image_path"
+        mock_converter.convert_async = AsyncMock(return_value=mock_result)
+        service._registry.register_instance(mock_converter, name="conv-1")
+
+        mock_serializer = MagicMock()
+        mock_serializer.value = "/tmp/persisted.png"
+        mock_serializer.save_b64_image_async = AsyncMock()
+
+        request = ConverterPreviewRequest(
+            original_value="data:image/png;base64,iVBORw0KGgo=",
+            original_value_data_type="image_path",
+            converter_ids=["conv-1"],
+        )
+
+        with patch(
+            "pyrit.backend.services.converter_service.data_serializer_factory",
+            return_value=mock_serializer,
+        ) as mock_factory:
+            await service.preview_conversion_async(request=request)
+
+        mock_factory.assert_called_once()
+        # ext is the image_path mapping from _DATA_TYPE_EXTENSION
+        assert mock_factory.call_args.kwargs["extension"] == ".png"
+        assert mock_factory.call_args.kwargs["data_type"] == "image_path"
+        mock_serializer.save_b64_image_async.assert_awaited_once_with(data="iVBORw0KGgo=")
+
+    async def test_preview_conversion_persists_raw_base64_for_audio_path(self) -> None:
+        """Values that aren't URLs/data URIs/existing files are treated as raw base64 and persisted."""
+        service = ConverterService()
+
+        mock_converter = MagicMock()
+        mock_result = MagicMock()
+        mock_result.output_text = "/tmp/persisted.wav"
+        mock_result.output_type = "audio_path"
+        mock_converter.convert_async = AsyncMock(return_value=mock_result)
+        service._registry.register_instance(mock_converter, name="conv-1")
+
+        mock_serializer = MagicMock()
+        mock_serializer.value = "/tmp/persisted.wav"
+        mock_serializer.save_b64_image_async = AsyncMock()
+
+        raw_b64 = "UklGRiQAAABXQVZF"
+        request = ConverterPreviewRequest(
+            original_value=raw_b64,
+            original_value_data_type="audio_path",
+            converter_ids=["conv-1"],
+        )
+
+        with patch(
+            "pyrit.backend.services.converter_service.data_serializer_factory",
+            return_value=mock_serializer,
+        ) as mock_factory:
+            await service.preview_conversion_async(request=request)
+
+        mock_factory.assert_called_once()
+        # ext is the audio_path mapping from _DATA_TYPE_EXTENSION
+        assert mock_factory.call_args.kwargs["extension"] == ".wav"
+        assert mock_factory.call_args.kwargs["data_type"] == "audio_path"
+        mock_serializer.save_b64_image_async.assert_awaited_once_with(data=raw_b64)
 
 
 class TestGetConverterObjectsForIds:

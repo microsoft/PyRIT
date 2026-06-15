@@ -292,18 +292,15 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
         combined = joiner.join(conditions)
         return text(f"({combined})").bindparams(**bindparams_dict)
 
-    def add_message_pieces_to_memory(self, *, message_pieces: Sequence[MessagePiece]) -> None:
+    def _add_message_pieces_to_memory(self, *, message_pieces: Sequence[MessagePiece]) -> None:
         """
-        Insert a list of message pieces into the memory storage.
+        Persist already-validated message pieces to the SQLite store.
 
-        Pieces flagged via ``MessagePiece.not_in_memory = True`` are
-        silently filtered out so callers don't need to track persistence policy
-        themselves.
+        Args:
+            message_pieces (Sequence[MessagePiece]): Persistable pieces (filtered and
+                validated by ``add_message_pieces_to_memory``).
         """
-        pieces_to_insert = [piece for piece in message_pieces if not piece.not_in_memory]
-        if not pieces_to_insert:
-            return
-        self._insert_entries(entries=[PromptMemoryEntry(entry=piece) for piece in pieces_to_insert])
+        self._insert_entries(entries=[PromptMemoryEntry(entry=piece) for piece in message_pieces])
 
     def _add_embeddings_to_memory(self, *, embedding_data: Sequence[EmbeddingDataEntry]) -> None:
         """
@@ -352,7 +349,9 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
             try:
                 query = session.query(model_class)
                 if join_scores and model_class == PromptMemoryEntry:
-                    query = query.options(joinedload(PromptMemoryEntry.scores))
+                    query = query.options(
+                        joinedload(PromptMemoryEntry.scores),
+                    )
                 elif model_class == AttackResultEntry:
                     query = query.options(
                         joinedload(AttackResultEntry.last_response).joinedload(PromptMemoryEntry.scores),

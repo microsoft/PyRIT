@@ -121,7 +121,7 @@ def patch_convert_local_image_to_data_url():
 @pytest.fixture
 def mock_memory():
     memory = MagicMock()
-    memory.get_conversation.return_value = []
+    memory.get_conversation_messages.return_value = []
     memory.add_message_to_memory = AsyncMock()
     return memory
 
@@ -751,21 +751,21 @@ class TestIsStartOfSession:
         target = WebSocketCopilotTarget(authenticator=mock_authenticator)
 
         mock_memory = MagicMock()
-        mock_memory.get_conversation.return_value = []
+        mock_memory.get_conversation_messages.return_value = []
         target._memory = mock_memory
 
         conversation_id = "test_conv_123"
         result = target._is_start_of_session(conversation_id=conversation_id)
 
         assert result is True
-        mock_memory.get_conversation.assert_called_once_with(conversation_id=conversation_id)
+        mock_memory.get_conversation_messages.assert_called_once_with(conversation_id=conversation_id)
 
     def test_is_start_of_session_with_existing_history(self, mock_authenticator):
         target = WebSocketCopilotTarget(authenticator=mock_authenticator)
 
         mock_memory = MagicMock()
         mock_message = MagicMock()
-        mock_memory.get_conversation.return_value = [mock_message]
+        mock_memory.get_conversation_messages.return_value = [mock_message]
         target._memory = mock_memory
 
         conversation_id = "test_conv_123"
@@ -826,6 +826,16 @@ class TestSendPromptAsync:
         assert len(responses) == 1
         assert responses[0].message_pieces[0].converted_value == "Response from Copilot"
         assert responses[0].message_pieces[0].api_role == "assistant"
+
+    async def test_send_prompt_to_target_raises_without_conversation_id(
+        self, mock_authenticator, make_message_piece, mock_memory
+    ):
+        target = WebSocketCopilotTarget(authenticator=mock_authenticator)
+        target._memory = mock_memory
+        message = Message(message_pieces=[make_message_piece("Hello", conversation_id=None)])
+
+        with pytest.raises(ValueError, match="requires a conversation_id"):
+            await target._send_prompt_to_target_async(normalized_conversation=[message])
 
     async def test_send_prompt_async_with_exceptions(self, mock_authenticator, make_message_piece, mock_memory):
         from pyrit.exceptions import EmptyResponseException

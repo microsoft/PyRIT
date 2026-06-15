@@ -69,6 +69,14 @@ export default function AttackTable({ attacks, onOpenAttack, formatDate }: Attac
             key={attack.attack_result_id}
             className={styles.clickableRow}
             onClick={() => onOpenAttack(attack.attack_result_id)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault()
+                onOpenAttack(attack.attack_result_id)
+              }
+            }}
+            tabIndex={0}
+            aria-label={`Open ${attack.attack_type} attack`}
             data-testid={`attack-row-${attack.attack_result_id}`}
           >
             <TableCell>

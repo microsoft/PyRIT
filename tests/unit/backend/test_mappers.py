@@ -17,20 +17,27 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from pyrit.backend.mappers.attack_mappers import (
-    _build_filename,
-    _infer_mime_type,
     _is_azure_blob_url,
     _resolve_media_url,
     _sign_blob_url_async,
-    attack_result_to_summary,
+    attack_result_to_summary_async,
     pyrit_messages_to_dto_async,
-    pyrit_scores_to_dto,
     request_piece_to_pyrit_message_piece,
     request_to_pyrit_message,
 )
 from pyrit.backend.mappers.converter_mappers import converter_object_to_instance
 from pyrit.backend.mappers.target_mappers import target_object_to_instance
-from pyrit.models import AttackOutcome, AttackResult, ComponentIdentifier, build_atomic_attack_identifier
+from pyrit.backend.models._media import build_filename, infer_mime_type
+from pyrit.backend.models.attacks import ScoreView
+from pyrit.models import (
+    AttackOutcome,
+    AttackResult,
+    ComponentIdentifier,
+    Message,
+    MessagePiece,
+    Score,
+    build_atomic_attack_identifier,
+)
 from pyrit.models.conversation_stats import ConversationStats
 from pyrit.prompt_target import PromptTarget, TargetCapabilities
 
@@ -85,42 +92,46 @@ def _make_attack_result(
     )
 
 
-def _make_mock_piece(
+def _make_piece(
     *,
     sequence: int = 0,
     converted_value: str = "hello",
     original_value: str = "hello",
-):
-    """Create a mock message piece for mapper tests."""
-    p = MagicMock()
-    p.id = "piece-1"
-    p.sequence = sequence
-    p.converted_value = converted_value
-    p.original_value = original_value
-    p.converted_value_data_type = "text"
-    p.original_value_data_type = "text"
-    p.response_error = "none"
-    p.role = "user"
-    p.timestamp = datetime.now(timezone.utc)
-    p.scores = []
-    return p
-
-
-def _make_mock_score():
-    """Create a mock score for mapper tests."""
-    s = MagicMock()
-    s.id = "score-1"
-    s.scorer_class_identifier = ComponentIdentifier(
-        class_name="TrueFalseScorer",
-        class_module="pyrit.score",
-        params={"scorer_type": "true_false"},
+    original_value_data_type: str = "text",
+    converted_value_data_type: str = "text",
+    role: str = "user",
+) -> MessagePiece:
+    """Create a real domain message piece for mapper tests."""
+    return MessagePiece(
+        role=role,
+        original_value=original_value,
+        converted_value=converted_value,
+        original_value_data_type=original_value_data_type,
+        converted_value_data_type=converted_value_data_type,
+        conversation_id="conv-1",
+        sequence=sequence,
     )
-    s.score_value = "1.0"
-    s.score_type = "float_scale"
-    s.score_category = None
-    s.score_rationale = "Looks correct"
-    s.timestamp = datetime.now(timezone.utc)
-    return s
+
+
+def _make_score(
+    *,
+    score_value: str = "1.0",
+    score_type: str = "float_scale",
+    score_category: list[str] | None = None,
+    scorer_name: str = "TrueFalseScorer",
+) -> Score:
+    """Create a real domain score for mapper tests."""
+    return Score(
+        score_value=score_value,
+        score_type=score_type,
+        score_category=score_category,
+        score_rationale="Looks correct",
+        message_piece_id=str(uuid.uuid4()),
+        scorer_class_identifier=ComponentIdentifier(
+            class_name=scorer_name,
+            class_module="pyrit.score",
+        ),
+    )
 
 
 # ============================================================================
@@ -129,14 +140,14 @@ def _make_mock_score():
 
 
 class TestAttackResultToSummary:
-    """Tests for attack_result_to_summary function."""
+    """Tests for attack_result_to_summary_async function."""
 
-    def test_basic_mapping(self) -> None:
+    async def test_basic_mapping(self) -> None:
         """Test that all fields are mapped correctly."""
         ar = _make_attack_result(name="My Attack")
         stats = ConversationStats(message_count=2)
 
-        summary = attack_result_to_summary(ar, stats=stats)
+        summary = await attack_result_to_summary_async(ar, stats=stats)
 
         assert summary.conversation_id == ar.conversation_id
         assert summary.outcome == "undetermined"
@@ -146,23 +157,23 @@ class TestAttackResultToSummary:
         assert summary.target is not None
         assert summary.target.target_type == "TextTarget"
 
-    def test_empty_pieces_gives_zero_messages(self) -> None:
+    async def test_empty_pieces_gives_zero_messages(self) -> None:
         """Test mapping with no message pieces."""
         ar = _make_attack_result()
         stats = ConversationStats(message_count=0)
 
-        summary = attack_result_to_summary(ar, stats=stats)
+        summary = await attack_result_to_summary_async(ar, stats=stats)
 
         assert summary.message_count == 0
         assert summary.last_message_preview is None
 
-    def test_last_message_preview_truncates_long_raw_text(self) -> None:
+    async def test_last_message_preview_truncates_long_raw_text(self) -> None:
         """The mapper applies the preview formatter, which truncates long raw text."""
         ar = _make_attack_result()
         long_text = "x" * 200
         stats = ConversationStats(message_count=1, last_message_preview=long_text, last_message_data_type="text")
 
-        summary = attack_result_to_summary(ar, stats=stats)
+        summary = await attack_result_to_summary_async(ar, stats=stats)
 
         assert summary.last_message_preview is not None
         assert len(summary.last_message_preview) == 103  # 100 + "..."
@@ -177,7 +188,7 @@ class TestAttackResultToSummary:
             ("binary_path", "[File: 1780010098266691.png]"),
         ],
     )
-    def test_media_last_message_preview_hides_absolute_path(self, data_type: str, expected: str) -> None:
+    async def test_media_last_message_preview_hides_absolute_path(self, data_type: str, expected: str) -> None:
         """The mapper renders media-type previews as friendly labels rather
         than leaking the raw on-disk path it receives from memory."""
         ar = _make_attack_result()
@@ -188,21 +199,21 @@ class TestAttackResultToSummary:
             last_message_data_type=data_type,
         )
 
-        summary = attack_result_to_summary(ar, stats=stats)
+        summary = await attack_result_to_summary_async(ar, stats=stats)
 
         assert summary.last_message_preview == expected
         assert "C:\\" not in (summary.last_message_preview or "")
 
-    def test_labels_are_mapped(self) -> None:
+    async def test_labels_are_mapped(self) -> None:
         """Test that labels are derived from stats."""
         ar = _make_attack_result()
         stats = ConversationStats(message_count=1, labels={"env": "prod", "team": "red"})
 
-        summary = attack_result_to_summary(ar, stats=stats)
+        summary = await attack_result_to_summary_async(ar, stats=stats)
 
         assert summary.labels == {"env": "prod", "team": "red", "test_ar_label": "test_ar_value"}
 
-    def test_labels_passed_through_without_normalization(self) -> None:
+    async def test_labels_passed_through_without_normalization(self) -> None:
         """Test that labels are passed through as-is (DB stores canonical keys after migration)."""
         ar = _make_attack_result()
         stats = ConversationStats(
@@ -210,7 +221,7 @@ class TestAttackResultToSummary:
             labels={"operator": "alice", "operation": "op_red", "env": "prod"},
         )
 
-        summary = attack_result_to_summary(ar, stats=stats)
+        summary = await attack_result_to_summary_async(ar, stats=stats)
 
         assert summary.labels == {
             "operator": "alice",
@@ -219,7 +230,7 @@ class TestAttackResultToSummary:
             "test_ar_label": "test_ar_value",
         }
 
-    def test_conversation_labels_take_precedence_on_collision(self) -> None:
+    async def test_conversation_labels_take_precedence_on_collision(self) -> None:
         """Test that conversation-level labels override attack-result labels on key collision."""
         ar = _make_attack_result()
         stats = ConversationStats(
@@ -227,38 +238,38 @@ class TestAttackResultToSummary:
             labels={"test_ar_label": "conversation_wins"},
         )
 
-        summary = attack_result_to_summary(ar, stats=stats)
+        summary = await attack_result_to_summary_async(ar, stats=stats)
 
         assert summary.labels["test_ar_label"] == "conversation_wins"
 
-    def test_outcome_success(self) -> None:
+    async def test_outcome_success(self) -> None:
         """Test that success outcome is mapped."""
         ar = _make_attack_result(outcome=AttackOutcome.SUCCESS)
         stats = ConversationStats(message_count=0)
 
-        summary = attack_result_to_summary(ar, stats=stats)
+        summary = await attack_result_to_summary_async(ar, stats=stats)
 
         assert summary.outcome == "success"
 
-    def test_no_target_returns_none_fields(self) -> None:
+    async def test_no_target_returns_none_fields(self) -> None:
         """Test that target fields are None when no target identifier exists."""
         ar = _make_attack_result(has_target=False)
         stats = ConversationStats(message_count=0)
 
-        summary = attack_result_to_summary(ar, stats=stats)
+        summary = await attack_result_to_summary_async(ar, stats=stats)
 
         assert summary.target is None
 
-    def test_attack_specific_params_passed_through(self) -> None:
+    async def test_attack_specific_params_passed_through(self) -> None:
         """Test that attack_specific_params are extracted from identifier."""
         ar = _make_attack_result()
         stats = ConversationStats(message_count=0)
 
-        summary = attack_result_to_summary(ar, stats=stats)
+        summary = await attack_result_to_summary_async(ar, stats=stats)
 
         assert summary.attack_specific_params == {"source": "gui"}
 
-    def test_converters_extracted_from_identifier(self) -> None:
+    async def test_converters_extracted_from_identifier(self) -> None:
         """Test that converter class names are extracted into converters list."""
         now = datetime.now(timezone.utc)
         ar = AttackResult(
@@ -296,20 +307,20 @@ class TestAttackResultToSummary:
             labels={"test_label": "test_value"},
         )
 
-        summary = attack_result_to_summary(ar, stats=ConversationStats(message_count=0))
+        summary = await attack_result_to_summary_async(ar, stats=ConversationStats(message_count=0))
 
         assert summary.converters == ["Base64Converter", "ROT13Converter"]
 
-    def test_no_converters_returns_empty_list(self) -> None:
+    async def test_no_converters_returns_empty_list(self) -> None:
         """Test that converters is empty list when no converters in identifier."""
         ar = _make_attack_result()
         stats = ConversationStats(message_count=0)
 
-        summary = attack_result_to_summary(ar, stats=stats)
+        summary = await attack_result_to_summary_async(ar, stats=stats)
 
         assert summary.converters == []
 
-    def test_related_conversation_ids_from_related_conversations(self) -> None:
+    async def test_related_conversation_ids_from_related_conversations(self) -> None:
         """Test that related_conversation_ids includes all related conversation IDs."""
         from pyrit.models.conversation_reference import ConversationReference, ConversationType
 
@@ -325,29 +336,29 @@ class TestAttackResultToSummary:
             ),
         }
 
-        summary = attack_result_to_summary(ar, stats=ConversationStats(message_count=0))
+        summary = await attack_result_to_summary_async(ar, stats=ConversationStats(message_count=0))
 
         assert sorted(summary.related_conversation_ids) == ["branch-1", "pruned-1"]
 
-    def test_related_conversation_ids_empty_when_no_related(self) -> None:
+    async def test_related_conversation_ids_empty_when_no_related(self) -> None:
         """Test that related_conversation_ids is empty when no related conversations exist."""
         ar = _make_attack_result()
         stats = ConversationStats(message_count=0)
 
-        summary = attack_result_to_summary(ar, stats=stats)
+        summary = await attack_result_to_summary_async(ar, stats=stats)
 
         assert summary.related_conversation_ids == []
 
-    def test_message_count_from_stats(self) -> None:
+    async def test_message_count_from_stats(self) -> None:
         """Test that message_count comes from stats."""
         ar = _make_attack_result()
         stats = ConversationStats(message_count=5)
 
-        summary = attack_result_to_summary(ar, stats=stats)
+        summary = await attack_result_to_summary_async(ar, stats=stats)
 
         assert summary.message_count == 5
 
-    def test_created_at_prefers_ar_timestamp_when_metadata_absent(self) -> None:
+    async def test_created_at_prefers_ar_timestamp_when_metadata_absent(self) -> None:
         """When metadata['created_at'] is absent but ar.timestamp is set, use ar.timestamp."""
         persisted_ts = datetime(2026, 4, 17, 12, 0, 0, tzinfo=timezone.utc)
         ar = AttackResult(
@@ -356,12 +367,12 @@ class TestAttackResultToSummary:
             outcome=AttackOutcome.SUCCESS,
             timestamp=persisted_ts,
         )
-        summary = attack_result_to_summary(ar, stats=ConversationStats(message_count=0))
+        summary = await attack_result_to_summary_async(ar, stats=ConversationStats(message_count=0))
 
         assert summary.created_at == persisted_ts
         assert summary.updated_at == persisted_ts
 
-    def test_created_at_metadata_still_wins_over_ar_timestamp(self) -> None:
+    async def test_created_at_metadata_still_wins_over_ar_timestamp(self) -> None:
         """When both metadata['created_at'] and ar.timestamp are set, metadata wins (backward compat)."""
         metadata_ts = datetime(2026, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
         ar_ts = datetime(2026, 4, 17, 12, 0, 0, tzinfo=timezone.utc)
@@ -372,11 +383,11 @@ class TestAttackResultToSummary:
             timestamp=ar_ts,
             metadata={"created_at": metadata_ts.isoformat()},
         )
-        summary = attack_result_to_summary(ar, stats=ConversationStats(message_count=0))
+        summary = await attack_result_to_summary_async(ar, stats=ConversationStats(message_count=0))
 
         assert summary.created_at == metadata_ts
 
-    def test_created_at_falls_back_to_now_when_both_absent(self) -> None:
+    async def test_created_at_falls_back_to_now_when_both_absent(self) -> None:
         """When neither metadata nor ar.timestamp is set, fall back to datetime.now()."""
         ar = AttackResult(
             conversation_id="attack-1",
@@ -386,13 +397,13 @@ class TestAttackResultToSummary:
         ar.timestamp = None  # type: ignore[assignment]
 
         before = datetime.now(timezone.utc)
-        summary = attack_result_to_summary(ar, stats=ConversationStats(message_count=0))
+        summary = await attack_result_to_summary_async(ar, stats=ConversationStats(message_count=0))
         after = datetime.now(timezone.utc)
 
         assert before <= summary.created_at <= after
 
-    def test_retry_events_mapped_to_response(self) -> None:
-        """Test that retry events on an AttackResult are mapped to RetryEventResponse DTOs."""
+    async def test_retry_events_mapped_to_response(self) -> None:
+        """Test that retry events on an AttackResult are inherited by the AttackSummary."""
         from pyrit.models.retry_event import RetryEvent
 
         now = datetime.now(timezone.utc)
@@ -413,7 +424,7 @@ class TestAttackResultToSummary:
         ar.total_retries = 1
 
         stats = ConversationStats(message_count=0)
-        summary = attack_result_to_summary(ar, stats=stats)
+        summary = await attack_result_to_summary_async(ar, stats=stats)
 
         assert summary.retry_events is not None
         assert len(summary.retry_events) == 1
@@ -425,36 +436,34 @@ class TestAttackResultToSummary:
         assert evt.elapsed_seconds == 1.5
         assert summary.total_retries == 1
 
-    """Tests for pyrit_scores_to_dto function."""
+    """Tests for retry-event passthrough on AttackSummary."""
 
     def test_maps_scores(self) -> None:
-        """Test that scores are correctly translated."""
-        mock_score = _make_mock_score()
+        """Test that a domain score is exposed as a ScoreView with a flattened scorer_type."""
+        score = _make_score()
 
-        result = pyrit_scores_to_dto([mock_score])
+        view = ScoreView.from_domain(score)
 
-        assert len(result) == 1
-        assert result[0].score_id == "score-1"
-        assert result[0].scorer_type == "TrueFalseScorer"
-        assert result[0].score_value == "1.0"
-        assert result[0].score_type == "float_scale"
-        assert result[0].score_rationale == "Looks correct"
+        assert view.id == score.id
+        assert view.scorer_type == "TrueFalseScorer"
+        assert view.score_value == "1.0"
+        assert view.score_type == "float_scale"
+        assert view.score_rationale == "Looks correct"
 
-    def test_empty_scores(self) -> None:
-        """Test mapping empty scores list."""
-        result = pyrit_scores_to_dto([])
-        assert result == []
+    def test_scorer_type_unknown_without_identifier(self) -> None:
+        """Test that scorer_type falls back to 'Unknown' when no identifier is set."""
+        score = Score(score_value="0.5", score_type="float_scale", message_piece_id=str(uuid.uuid4()))
+
+        view = ScoreView.from_domain(score)
+
+        assert view.scorer_type == "Unknown"
 
     def test_true_false_scores_are_included(self) -> None:
-        """Test that true_false score values are mapped correctly."""
-        float_score = _make_mock_score()
-        bool_score = _make_mock_score()
-        bool_score.id = "score-bool"
-        bool_score.score_value = "false"
-        bool_score.score_type = "true_false"
-        bool_score.score_category = ["hate"]
+        """Test that true_false score values and categories are preserved."""
+        float_score = _make_score()
+        bool_score = _make_score(score_value="false", score_type="true_false", score_category=["hate"])
 
-        result = pyrit_scores_to_dto([float_score, bool_score])
+        result = [ScoreView.from_domain(float_score), ScoreView.from_domain(bool_score)]
 
         assert len(result) == 2
         assert result[0].score_value == "1.0"
@@ -466,32 +475,43 @@ class TestAttackResultToSummary:
 class TestPyritMessagesToDto:
     """Tests for pyrit_messages_to_dto_async function."""
 
+    @pytest.fixture(autouse=True)
+    def _stub_central_memory(self):
+        """Stub CentralMemory so the mapper's score lookup is a no-op for mock-based tests."""
+        from pyrit.memory import CentralMemory
+
+        stub = MagicMock()
+        stub.get_prompt_scores = MagicMock(return_value=[])
+        with patch.object(CentralMemory, "get_memory_instance", return_value=stub):
+            yield stub
+
     async def test_maps_single_message(self) -> None:
         """Test mapping a single message with one piece."""
-        piece = _make_mock_piece(original_value="hi", converted_value="hi")
-        msg = MagicMock()
-        msg.message_pieces = [piece]
+        piece = _make_piece(original_value="hi", converted_value="hi")
+        msg = Message(message_pieces=[piece])
 
         result = await pyrit_messages_to_dto_async([msg])
 
         assert len(result) == 1
         assert result[0].role == "user"
-        assert len(result[0].pieces) == 1
-        assert result[0].pieces[0].original_value == "hi"
-        assert result[0].pieces[0].converted_value == "hi"
+        assert len(result[0].message_pieces) == 1
+        assert result[0].message_pieces[0].original_value == "hi"
+        assert result[0].message_pieces[0].converted_value == "hi"
 
     async def test_maps_data_types_separately(self) -> None:
         """Test that original and converted data types are mapped independently."""
-        piece = _make_mock_piece(original_value="describe this", converted_value="base64data")
-        piece.original_value_data_type = "text"
-        piece.converted_value_data_type = "image"
-        msg = MagicMock()
-        msg.message_pieces = [piece]
+        piece = _make_piece(
+            original_value="describe this",
+            converted_value="base64data",
+            original_value_data_type="text",
+            converted_value_data_type="image_path",
+        )
+        msg = Message(message_pieces=[piece])
 
         result = await pyrit_messages_to_dto_async([msg])
 
-        assert result[0].pieces[0].original_value_data_type == "text"
-        assert result[0].pieces[0].converted_value_data_type == "image"
+        assert result[0].message_pieces[0].original_value_data_type == "text"
+        assert result[0].message_pieces[0].converted_value_data_type == "image_path"
 
     async def test_maps_empty_list(self) -> None:
         """Test mapping an empty messages list."""
@@ -500,107 +520,121 @@ class TestPyritMessagesToDto:
 
     async def test_populates_mime_type_for_image(self) -> None:
         """Test that MIME types are inferred for image pieces."""
-        piece = _make_mock_piece(original_value="/path/to/photo.png", converted_value="/path/to/photo.jpg")
-        piece.original_value_data_type = "image"
-        piece.converted_value_data_type = "image"
-        msg = MagicMock()
-        msg.message_pieces = [piece]
+        piece = _make_piece(
+            original_value="/path/to/photo.png",
+            converted_value="/path/to/photo.jpg",
+            original_value_data_type="image_path",
+            converted_value_data_type="image_path",
+        )
+        msg = Message(message_pieces=[piece])
 
         result = await pyrit_messages_to_dto_async([msg])
 
-        assert result[0].pieces[0].original_value_mime_type == "image/png"
-        assert result[0].pieces[0].converted_value_mime_type == "image/jpeg"
+        assert result[0].message_pieces[0].original_value_mime_type == "image/png"
+        assert result[0].message_pieces[0].converted_value_mime_type == "image/jpeg"
 
     async def test_mime_type_none_for_text(self) -> None:
         """Test that MIME type is None for text pieces."""
-        piece = _make_mock_piece(original_value="hello", converted_value="hello")
-        msg = MagicMock()
-        msg.message_pieces = [piece]
+        piece = _make_piece(original_value="hello", converted_value="hello")
+        msg = Message(message_pieces=[piece])
 
         result = await pyrit_messages_to_dto_async([msg])
 
-        assert result[0].pieces[0].original_value_mime_type is None
-        assert result[0].pieces[0].converted_value_mime_type is None
+        assert result[0].message_pieces[0].original_value_mime_type is None
+        assert result[0].message_pieces[0].converted_value_mime_type is None
 
     async def test_mime_type_for_audio(self) -> None:
         """Test that MIME types are inferred for audio pieces."""
-        piece = _make_mock_piece(original_value="/tmp/speech.wav", converted_value="/tmp/speech.mp3")
-        piece.original_value_data_type = "audio"
-        piece.converted_value_data_type = "audio"
-        msg = MagicMock()
-        msg.message_pieces = [piece]
+        piece = _make_piece(
+            original_value="/tmp/speech.wav",
+            converted_value="/tmp/speech.mp3",
+            original_value_data_type="audio_path",
+            converted_value_data_type="audio_path",
+        )
+        msg = Message(message_pieces=[piece])
 
         result = await pyrit_messages_to_dto_async([msg])
 
         # Python 3.10 returns "audio/wav", 3.11+ returns "audio/x-wav"
-        assert result[0].pieces[0].original_value_mime_type in ("audio/wav", "audio/x-wav")
-        assert result[0].pieces[0].converted_value_mime_type == "audio/mpeg"
+        assert result[0].message_pieces[0].original_value_mime_type in ("audio/wav", "audio/x-wav")
+        assert result[0].message_pieces[0].converted_value_mime_type == "audio/mpeg"
 
     async def test_local_media_file_returns_media_url(self) -> None:
-        """Test that local media files are converted to /api/media URLs."""
+        """Local media files surface a /api/media URL via *_value_url; raw value stays unchanged."""
         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
             tmp.write(b"PNGDATA")
             tmp_path = tmp.name
 
         try:
-            piece = _make_mock_piece(original_value=tmp_path, converted_value=tmp_path)
-            piece.original_value_data_type = "image_path"
-            piece.converted_value_data_type = "image_path"
-            msg = MagicMock()
-            msg.message_pieces = [piece]
+            piece = _make_piece(
+                original_value=tmp_path,
+                converted_value=tmp_path,
+                original_value_data_type="image_path",
+                converted_value_data_type="image_path",
+            )
+            msg = Message(message_pieces=[piece])
 
             result = await pyrit_messages_to_dto_async([msg])
 
-            assert result[0].pieces[0].original_value is not None
-            assert result[0].pieces[0].original_value.startswith("/api/media?path=")
-            assert result[0].pieces[0].converted_value.startswith("/api/media?path=")
+            view = result[0].message_pieces[0]
+            # Raw stored value (inherited from MessagePiece) — unchanged
+            assert view.original_value == tmp_path
+            assert view.converted_value == tmp_path
+            # Client-fetchable URL — populated by the mapper
+            assert view.original_value_url is not None
+            assert view.original_value_url.startswith("/api/media?path=")
+            assert view.converted_value_url is not None
+            assert view.converted_value_url.startswith("/api/media?path=")
         finally:
             os.unlink(tmp_path)
 
     async def test_data_uri_passthrough(self) -> None:
-        """Test that pre-encoded data URIs are not re-encoded."""
-        piece = _make_mock_piece(
+        """Pre-encoded data URIs surface as both the raw value and the URL."""
+        piece = _make_piece(
             original_value="data:image/png;base64,AAAA",
             converted_value="data:image/jpeg;base64,BBBB",
+            original_value_data_type="image_path",
+            converted_value_data_type="image_path",
         )
-        piece.original_value_data_type = "image_path"
-        piece.converted_value_data_type = "image_path"
-        msg = MagicMock()
-        msg.message_pieces = [piece]
+        msg = Message(message_pieces=[piece])
 
         result = await pyrit_messages_to_dto_async([msg])
 
-        assert result[0].pieces[0].original_value == "data:image/png;base64,AAAA"
-        assert result[0].pieces[0].converted_value == "data:image/jpeg;base64,BBBB"
+        view = result[0].message_pieces[0]
+        assert view.original_value == "data:image/png;base64,AAAA"
+        assert view.converted_value == "data:image/jpeg;base64,BBBB"
+        assert view.original_value_url == "data:image/png;base64,AAAA"
+        assert view.converted_value_url == "data:image/jpeg;base64,BBBB"
 
     async def test_non_blob_http_url_passthrough(self) -> None:
-        """Test that non-Azure-Blob HTTP URLs are passed through as-is."""
-        piece = _make_mock_piece(
+        """Non-Azure-Blob HTTP URLs surface as both the raw value and the URL."""
+        piece = _make_piece(
             original_value="http://example.com/image.png",
             converted_value="http://example.com/image.png",
+            original_value_data_type="image_path",
+            converted_value_data_type="image_path",
         )
-        piece.original_value_data_type = "image_path"
-        piece.converted_value_data_type = "image_path"
-        msg = MagicMock()
-        msg.message_pieces = [piece]
+        msg = Message(message_pieces=[piece])
 
         result = await pyrit_messages_to_dto_async([msg])
 
-        assert result[0].pieces[0].original_value == "http://example.com/image.png"
-        assert result[0].pieces[0].converted_value == "http://example.com/image.png"
+        view = result[0].message_pieces[0]
+        assert view.original_value == "http://example.com/image.png"
+        assert view.converted_value == "http://example.com/image.png"
+        assert view.original_value_url == "http://example.com/image.png"
+        assert view.converted_value_url == "http://example.com/image.png"
 
     async def test_azure_blob_url_is_signed(self) -> None:
-        """Test that Azure Blob Storage URLs are signed with SAS tokens."""
+        """Azure Blob URLs are signed into *_value_url; raw value keeps the unsigned URL."""
         blob_url = "https://myaccount.blob.core.windows.net/dbdata/prompt-memory-entries/images/test.png"
         signed_url = blob_url + "?sig=abc123"
-        piece = _make_mock_piece(
+        piece = _make_piece(
             original_value=blob_url,
             converted_value=blob_url,
+            original_value_data_type="image_path",
+            converted_value_data_type="image_path",
         )
-        piece.original_value_data_type = "image_path"
-        piece.converted_value_data_type = "image_path"
-        msg = MagicMock()
-        msg.message_pieces = [piece]
+        msg = Message(message_pieces=[piece])
 
         with patch(
             "pyrit.backend.mappers.attack_mappers._sign_blob_url_async",
@@ -609,20 +643,24 @@ class TestPyritMessagesToDto:
         ):
             result = await pyrit_messages_to_dto_async([msg])
 
-        assert result[0].pieces[0].original_value == signed_url
-        assert result[0].pieces[0].converted_value == signed_url
+        view = result[0].message_pieces[0]
+        # Raw blob URL — unsigned, as stored
+        assert view.original_value == blob_url
+        assert view.converted_value == blob_url
+        # Signed URL — what the client should fetch
+        assert view.original_value_url == signed_url
+        assert view.converted_value_url == signed_url
 
     async def test_azure_blob_url_sign_failure_returns_raw_url(self) -> None:
-        """Test that blob sign failure falls back to the raw blob URL."""
+        """Sign failure falls back to the unsigned blob URL on both raw and *_value_url."""
         blob_url = "https://myaccount.blob.core.windows.net/dbdata/images/test.png"
-        piece = _make_mock_piece(
+        piece = _make_piece(
             original_value=blob_url,
             converted_value=blob_url,
+            original_value_data_type="image_path",
+            converted_value_data_type="image_path",
         )
-        piece.original_value_data_type = "image_path"
-        piece.converted_value_data_type = "image_path"
-        msg = MagicMock()
-        msg.message_pieces = [piece]
+        msg = Message(message_pieces=[piece])
 
         with patch(
             "pyrit.backend.mappers.attack_mappers._sign_blob_url_async",
@@ -631,21 +669,137 @@ class TestPyritMessagesToDto:
         ):
             result = await pyrit_messages_to_dto_async([msg])
 
-        assert result[0].pieces[0].original_value == blob_url
-        assert result[0].pieces[0].converted_value == blob_url
+        view = result[0].message_pieces[0]
+        assert view.original_value == blob_url
+        assert view.converted_value == blob_url
+        assert view.original_value_url == blob_url
+        assert view.converted_value_url == blob_url
 
     async def test_nonexistent_media_file_returns_raw_path(self) -> None:
-        """Test that non-existent local media files fall back to raw path values."""
-        piece = _make_mock_piece(original_value="/tmp/nonexistent.png", converted_value="/tmp/nonexistent.png")
-        piece.original_value_data_type = "image_path"
-        piece.converted_value_data_type = "image_path"
-        msg = MagicMock()
-        msg.message_pieces = [piece]
+        """Non-existent local media paths fall back to the raw path on both fields."""
+        piece = _make_piece(
+            original_value="/tmp/nonexistent.png",
+            converted_value="/tmp/nonexistent.png",
+            original_value_data_type="image_path",
+            converted_value_data_type="image_path",
+        )
+        msg = Message(message_pieces=[piece])
 
         result = await pyrit_messages_to_dto_async([msg])
 
-        assert result[0].pieces[0].original_value == "/tmp/nonexistent.png"
-        assert result[0].pieces[0].converted_value == "/tmp/nonexistent.png"
+        view = result[0].message_pieces[0]
+        assert view.original_value == "/tmp/nonexistent.png"
+        assert view.converted_value == "/tmp/nonexistent.png"
+        assert view.original_value_url == "/tmp/nonexistent.png"
+        assert view.converted_value_url == "/tmp/nonexistent.png"
+
+    async def test_text_piece_url_fields_are_none(self) -> None:
+        """Text pieces don't have a fetchable URL — *_value_url is None."""
+        piece = _make_piece(original_value="hello world", converted_value="hello world")
+        msg = Message(message_pieces=[piece])
+
+        result = await pyrit_messages_to_dto_async([msg])
+
+        view = result[0].message_pieces[0]
+        assert view.original_value == "hello world"
+        assert view.converted_value == "hello world"
+        assert view.original_value_url is None
+        assert view.converted_value_url is None
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestPyritMessagesToDtoRealObjects:
+    """Regression tests for pyrit_messages_to_dto_async using real domain objects.
+
+    The mock-based ``TestPyritMessagesToDto`` suite above sets ``p.scores = []``
+    directly on a ``MagicMock``, which masks the fact that ``MessagePiece`` no
+    longer carries a ``scores`` attribute. These tests round-trip real
+    ``MessagePiece`` / ``Score`` instances through a real ``SQLiteMemory`` so
+    that any regression to ``p.scores``-style access on the piece (or other
+    drift between the Pydantic model and the mapper) is caught.
+    """
+
+    async def test_scores_are_fetched_from_memory_and_attached(self, sqlite_instance) -> None:
+        """A real MessagePiece + Score round-trips through the mapper with scores attached."""
+        from pyrit.models import Message as RealPyritMessage
+        from pyrit.models import MessagePiece as RealPyritMessagePiece
+        from pyrit.models import Score as RealPyritScore
+
+        piece = RealPyritMessagePiece(role="user", original_value="hi", conversation_id="real-conv-scores")
+        sqlite_instance.add_message_to_memory(request=RealPyritMessage(message_pieces=[piece]))
+
+        score = RealPyritScore(
+            score_value="0.75",
+            score_type="float_scale",
+            score_category=["bias"],
+            score_rationale="example rationale",
+            message_piece_id=piece.id,
+        )
+        sqlite_instance.add_scores_to_memory(scores=[score])
+
+        reloaded = sqlite_instance.get_conversation_messages(conversation_id=piece.conversation_id)
+        result = await pyrit_messages_to_dto_async(list(reloaded))
+
+        assert len(result) == 1
+        dto_pieces = result[0].message_pieces
+        assert len(dto_pieces) == 1
+        attached = dto_pieces[0].scores
+        assert len(attached) == 1
+        assert attached[0].score_value == "0.75"
+        assert attached[0].score_type == "float_scale"
+        assert attached[0].score_category == ["bias"]
+        assert attached[0].score_rationale == "example rationale"
+
+    async def test_empty_scores_when_none_recorded(self, sqlite_instance) -> None:
+        """A real piece with no scores in memory maps to an empty scores list."""
+        from pyrit.models import Message as RealPyritMessage
+        from pyrit.models import MessagePiece as RealPyritMessagePiece
+
+        piece = RealPyritMessagePiece(role="user", original_value="hi", conversation_id="real-conv-empty")
+        sqlite_instance.add_message_to_memory(request=RealPyritMessage(message_pieces=[piece]))
+
+        reloaded = sqlite_instance.get_conversation_messages(conversation_id=piece.conversation_id)
+        result = await pyrit_messages_to_dto_async(list(reloaded))
+
+        assert result[0].message_pieces[0].scores == []
+
+    async def test_scores_are_grouped_per_piece_across_multiple_pieces(self, sqlite_instance) -> None:
+        """Scores from a batched fetch are routed to the correct originating piece."""
+        from pyrit.models import Message as RealPyritMessage
+        from pyrit.models import MessagePiece as RealPyritMessagePiece
+        from pyrit.models import Score as RealPyritScore
+
+        conv_id = "real-conv-1"
+        user_piece = RealPyritMessagePiece(role="user", original_value="ask", conversation_id=conv_id)
+        sqlite_instance.add_message_to_memory(request=RealPyritMessage(message_pieces=[user_piece]))
+        assistant_piece = RealPyritMessagePiece(role="assistant", original_value="reply", conversation_id=conv_id)
+        sqlite_instance.add_message_to_memory(request=RealPyritMessage(message_pieces=[assistant_piece]))
+
+        sqlite_instance.add_scores_to_memory(
+            scores=[
+                RealPyritScore(
+                    score_value="true",
+                    score_type="true_false",
+                    score_rationale="refusal detected",
+                    message_piece_id=assistant_piece.id,
+                ),
+                RealPyritScore(
+                    score_value="0.1",
+                    score_type="float_scale",
+                    score_rationale="low severity",
+                    message_piece_id=assistant_piece.id,
+                ),
+            ]
+        )
+
+        reloaded = sqlite_instance.get_conversation_messages(conversation_id=conv_id)
+        result = await pyrit_messages_to_dto_async(list(reloaded))
+
+        by_role = {msg.role: msg for msg in result}
+        assert by_role["user"].message_pieces[0].scores == []
+        assistant_scores = by_role["assistant"].message_pieces[0].scores
+        assert len(assistant_scores) == 2
+        assert {s.score_value for s in assistant_scores} == {"true", "0.1"}
 
 
 class TestIsAzureBlobUrl:
@@ -722,9 +876,13 @@ class TestSignBlobUrlAsync:
 class TestResolveMediaUrl:
     """Tests for _resolve_media_url helper."""
 
-    def test_text_value_passes_through(self) -> None:
-        """Non-media types are returned as-is."""
-        assert _resolve_media_url(value="hello world", data_type="text") == "hello world"
+    def test_text_value_returns_none(self) -> None:
+        """Non-media types have no fetchable URL — return None."""
+        assert _resolve_media_url(value="hello world", data_type="text") is None
+
+    def test_text_empty_value_returns_none(self) -> None:
+        """Empty values return None even for media data types."""
+        assert _resolve_media_url(value="", data_type="image_path") is None
 
     def test_data_uri_passes_through(self) -> None:
         """Pre-encoded data URIs are returned as-is."""
@@ -819,6 +977,29 @@ class TestRequestToPyritMessage:
             )
 
         assert mock_deprecation.call_count == 2
+
+    def test_empty_labels_no_deprecation_warning(self) -> None:
+        """An explicit empty ``labels={}`` (forwarded on the happy path) must not warn."""
+        request = MagicMock()
+        request.role = "user"
+        piece = MagicMock()
+        piece.data_type = "text"
+        piece.original_value = "hello"
+        piece.converted_value = None
+        piece.prompt_metadata = None
+        piece.mime_type = None
+        piece.original_prompt_id = None
+        request.pieces = [piece]
+
+        with patch("pyrit.backend.mappers.attack_mappers.print_deprecation_message") as mock_deprecation:
+            request_to_pyrit_message(
+                request=request,
+                conversation_id="conv-1",
+                sequence=0,
+                labels={},
+            )
+
+        mock_deprecation.assert_not_called()
 
 
 class TestRequestPieceToPyritMessagePiece:
@@ -961,6 +1142,27 @@ class TestRequestPieceToPyritMessagePiece:
 
         mock_deprecation.assert_called_once()
 
+    def test_empty_labels_no_deprecation_warning(self) -> None:
+        """An explicit empty ``labels={}`` (forwarded on the happy path) must not warn."""
+        piece = MagicMock()
+        piece.data_type = "text"
+        piece.original_value = "hello"
+        piece.converted_value = None
+        piece.mime_type = None
+        piece.prompt_metadata = None
+        piece.original_prompt_id = None
+
+        with patch("pyrit.backend.mappers.attack_mappers.print_deprecation_message") as mock_deprecation:
+            request_piece_to_pyrit_message_piece(
+                piece=piece,
+                role="user",
+                conversation_id="conv-1",
+                sequence=0,
+                labels={},
+            )
+
+        mock_deprecation.assert_not_called()
+
     def test_labels_default_to_empty_dict(self) -> None:
         """Test that labels default to empty dict when not provided."""
         piece = MagicMock()
@@ -1020,79 +1222,79 @@ class TestRequestPieceToPyritMessagePiece:
 
 
 class TestInferMimeType:
-    """Tests for _infer_mime_type helper function."""
+    """Tests for infer_mime_type helper function."""
 
     def test_returns_none_for_text(self) -> None:
         """Text data type should always return None."""
-        assert _infer_mime_type(value="/path/to/file.png", data_type="text") is None
+        assert infer_mime_type(value="/path/to/file.png", data_type="text") is None
 
     def test_returns_none_for_empty_value(self) -> None:
         """Empty or None value should return None."""
-        assert _infer_mime_type(value=None, data_type="image") is None
-        assert _infer_mime_type(value="", data_type="image") is None
+        assert infer_mime_type(value=None, data_type="image_path") is None
+        assert infer_mime_type(value="", data_type="image_path") is None
 
     def test_infers_png(self) -> None:
         """Test MIME type inference for PNG files."""
-        assert _infer_mime_type(value="/tmp/photo.png", data_type="image") == "image/png"
+        assert infer_mime_type(value="/tmp/photo.png", data_type="image_path") == "image/png"
 
     def test_infers_jpeg(self) -> None:
         """Test MIME type inference for JPEG files."""
-        assert _infer_mime_type(value="/tmp/photo.jpg", data_type="image") == "image/jpeg"
+        assert infer_mime_type(value="/tmp/photo.jpg", data_type="image_path") == "image/jpeg"
 
     def test_infers_wav(self) -> None:
         """Test MIME type inference for WAV files."""
-        result = _infer_mime_type(value="/tmp/audio.wav", data_type="audio")
+        result = infer_mime_type(value="/tmp/audio.wav", data_type="audio_path")
         assert result is not None
         assert "wav" in result
 
     def test_infers_mp3(self) -> None:
         """Test MIME type inference for MP3 files."""
-        assert _infer_mime_type(value="/tmp/audio.mp3", data_type="audio") == "audio/mpeg"
+        assert infer_mime_type(value="/tmp/audio.mp3", data_type="audio_path") == "audio/mpeg"
 
     def test_returns_none_for_unknown_extension(self) -> None:
         """Test that unrecognized extensions return None."""
-        assert _infer_mime_type(value="/tmp/data.xyz123", data_type="image") is None
+        assert infer_mime_type(value="/tmp/data.xyz123", data_type="image_path") is None
 
     def test_infers_mp4(self) -> None:
         """Test MIME type inference for MP4 video files."""
-        assert _infer_mime_type(value="/tmp/video.mp4", data_type="video") == "video/mp4"
+        assert infer_mime_type(value="/tmp/video.mp4", data_type="video_path") == "video/mp4"
 
 
 class TestBuildFilename:
-    """Tests for _build_filename helper function."""
+    """Tests for build_filename helper function."""
 
     def test_image_path_with_hash(self) -> None:
-        result = _build_filename(data_type="image_path", sha256="abcdef1234567890", value="/tmp/photo.png")
+        result = build_filename(data_type="image_path", sha256="abcdef1234567890", value="/tmp/photo.png")
         assert result == "image_abcdef123456.png"
 
     def test_audio_path_with_hash(self) -> None:
-        result = _build_filename(data_type="audio_path", sha256="1234abcd5678efgh", value="/tmp/speech.wav")
+        result = build_filename(data_type="audio_path", sha256="1234abcd5678efgh", value="/tmp/speech.wav")
         assert result == "audio_1234abcd5678.wav"
 
     def test_video_path_with_hash(self) -> None:
-        result = _build_filename(data_type="video_path", sha256="deadbeef00000000", value="/tmp/clip.mp4")
+        result = build_filename(data_type="video_path", sha256="deadbeef00000000", value="/tmp/clip.mp4")
         assert result == "video_deadbeef0000.mp4"
 
     def test_binary_path_with_hash(self) -> None:
-        result = _build_filename(data_type="binary_path", sha256="cafe0123babe4567", value="/tmp/doc.pdf")
+        result = build_filename(data_type="binary_path", sha256="cafe0123babe4567", value="/tmp/doc.pdf")
         assert result == "file_cafe0123babe.pdf"
 
     def test_returns_none_for_text(self) -> None:
-        assert _build_filename(data_type="text", sha256="abc123", value="hello") is None
+        assert build_filename(data_type="text", sha256="abc123", value="hello") is None
 
     def test_returns_none_for_reasoning(self) -> None:
-        assert _build_filename(data_type="reasoning", sha256="abc123", value="thinking") is None
+        assert build_filename(data_type="reasoning", sha256="abc123", value="thinking") is None
 
     def test_fallback_ext_when_no_value(self) -> None:
-        result = _build_filename(data_type="image_path", sha256="abcdef1234567890", value=None)
+        result = build_filename(data_type="image_path", sha256="abcdef1234567890", value=None)
         assert result == "image_abcdef123456.png"
 
     def test_fallback_ext_for_data_uri(self) -> None:
-        result = _build_filename(data_type="audio_path", sha256="abcdef1234567890", value="data:audio/wav;base64,AAA=")
+        result = build_filename(data_type="audio_path", sha256="abcdef1234567890", value="data:audio/wav;base64,AAA=")
         assert result == "audio_abcdef123456.wav"
 
     def test_random_hash_when_no_sha256(self) -> None:
-        result = _build_filename(data_type="image_path", sha256=None, value="/tmp/photo.png")
+        result = build_filename(data_type="image_path", sha256=None, value="/tmp/photo.png")
         assert result is not None
         assert result.startswith("image_")
         assert result.endswith(".png")
@@ -1100,7 +1302,7 @@ class TestBuildFilename:
 
     def test_blob_url_extension(self) -> None:
         url = "https://account.blob.core.windows.net/container/images/photo.jpg"
-        result = _build_filename(data_type="image_path", sha256="abcdef1234567890", value=url)
+        result = build_filename(data_type="image_path", sha256="abcdef1234567890", value=url)
         assert result == "image_abcdef123456.jpg"
 
 

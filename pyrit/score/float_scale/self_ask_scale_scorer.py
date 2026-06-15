@@ -138,7 +138,6 @@ class SelfAskScaleScorer(FloatScaleScorer):
             prepended_text_message_piece=prepended_text,
             category=self._category,
             objective=objective,
-            attack_identifier=message_piece.attack_identifier,
         )
 
         score = unvalidated_score.to_score(
