@@ -11,8 +11,8 @@ Identity vs. presentation:
 binding, ``display_name``, and ``sub_converter_ids``).
 """
 
-from pyrit.backend.models.converters import ConverterInstance
-from pyrit.models.identifiers import ConverterIdentifier
+from pyrit.backend.models import ConverterInstance
+from pyrit.models import ConverterIdentifier
 from pyrit.prompt_converter import PromptConverter
 
 

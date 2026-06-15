@@ -12,8 +12,8 @@ composite ``inner_targets`` for the frontend. These mappers read typed fields of
 ``TargetIdentifier`` instead of poking ``identifier.params`` by string key.
 """
 
-from pyrit.backend.models.targets import TargetCapabilitiesInfo, TargetInstance
-from pyrit.models.identifiers import TargetIdentifier
+from pyrit.backend.models import TargetCapabilitiesInfo, TargetInstance
+from pyrit.models import TargetIdentifier
 from pyrit.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_capabilities import CapabilityName, TargetCapabilities
 from pyrit.prompt_target.round_robin_target import RoundRobinTarget
