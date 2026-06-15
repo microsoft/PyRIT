@@ -156,6 +156,31 @@ def test_general_float_scorer_init_invalid_min_max():
         )
 
 
+async def test_general_float_scorer_renders_min_max_placeholders(patch_central_database):
+    """The default GUI system prompt references {min_value} / {max_value}. They must format."""
+    chat_target = MagicMock()
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+    json_response = '{"score_value": 3, "rationale": "r", "description": "d"}'
+    response = Message(message_pieces=[MessagePiece(role="assistant", original_value=json_response)])
+    chat_target.send_prompt_async = AsyncMock(return_value=[response])
+    chat_target.set_system_prompt = MagicMock()
+
+    scorer = SelfAskGeneralFloatScaleScorer(
+        chat_target=chat_target,
+        system_prompt_format_string="Score from {min_value} to {max_value}: {prompt}",
+        prompt_format_string="Rate {prompt} on a {min_value}-{max_value} scale.",
+        min_value=1,
+        max_value=5,
+    )
+
+    scores = await scorer.score_text_async(text="hi", objective="obj")
+    assert len(scores) == 1
+    rendered_system = chat_target.set_system_prompt.call_args.kwargs["system_prompt"]
+    assert rendered_system == "Score from 1 to 5: hi"
+    rendered_user = chat_target.send_prompt_async.call_args.kwargs["message"].message_pieces[0].converted_value
+    assert rendered_user == "Rate hi on a 1-5 scale."
+
+
 def test_get_scorer_metrics_returns_none_when_eval_hash_is_none(patch_central_database):
     """Test that get_scorer_metrics returns None when eval_hash is None."""
     from unittest.mock import patch as _patch

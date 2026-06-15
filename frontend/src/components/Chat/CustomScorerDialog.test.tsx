@@ -296,4 +296,51 @@ describe("CustomScorerDialog", () => {
       await screen.findByTestId("custom-scorer-submit-error")
     ).toHaveTextContent("duplicate name");
   });
+
+  it("requires_objective toggle defaults to off and is sent to createCustomScorer when enabled", async () => {
+    mockedScorersApi.createCustomScorer.mockResolvedValue({
+      summary: {
+        scorer_registry_name: "rubric_scorer",
+        scorer_type: "SelfAskGeneralFloatScaleScorer",
+        score_type: "float_scale",
+        tags: [],
+        description: null,
+        uses_objective: true,
+        editable: true,
+        custom_config: null,
+      },
+    });
+
+    render(
+      <TestWrapper>
+        <CustomScorerDialog
+          open
+          editing={null}
+          availableScorers={[]}
+          onClose={jest.fn()}
+          onSaved={jest.fn()}
+        />
+      </TestWrapper>
+    );
+
+    fireEvent.change(screen.getByTestId("custom-scorer-name-input"), {
+      target: { value: "rubric_scorer" },
+    });
+
+    // Toggle starts off (input.checked === false).
+    const toggle = screen.getByTestId("custom-scorer-requires-objective") as HTMLInputElement;
+    expect(toggle.checked).toBe(false);
+
+    fireEvent.click(toggle);
+    expect(toggle.checked).toBe(true);
+
+    fireEvent.click(screen.getByTestId("custom-scorer-submit-btn"));
+
+    await waitFor(() => expect(mockedScorersApi.createCustomScorer).toHaveBeenCalled());
+    const call = mockedScorersApi.createCustomScorer.mock.calls[0][0];
+    expect(call.config.kind).toBe("general_float_scale");
+    if (call.config.kind === "general_float_scale") {
+      expect(call.config.requires_objective).toBe(true);
+    }
+  });
 });

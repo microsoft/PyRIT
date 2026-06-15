@@ -47,9 +47,9 @@ class GeneralFloatScaleConfig(BaseModel):
         ...,
         min_length=1,
         description=(
-            "System prompt template. Placeholders: {objective}, {prompt}, {message_piece}. "
-            "Must instruct the LLM to reply with JSON containing 'score_value' (numeric in "
-            "[min_value, max_value]) and 'rationale'."
+            "System prompt template. Placeholders: {objective}, {prompt}, {message_piece}, "
+            "{min_value}, {max_value}. Must instruct the LLM to reply with JSON containing "
+            "'score_value' (numeric in [min_value, max_value]) and 'rationale'."
         ),
     )
     prompt_format_string: str | None = Field(
@@ -61,6 +61,15 @@ class GeneralFloatScaleConfig(BaseModel):
     )
     min_value: int = Field(0, description="Minimum of the LLM's native scale.")
     max_value: int = Field(100, description="Maximum of the LLM's native scale; must be > min_value.")
+    requires_objective: bool = Field(
+        False,
+        description=(
+            "If True, the GUI requires the caller to supply an objective when invoking this scorer "
+            "and the backend rejects scoring requests with no objective. Enable this only when your "
+            "prompt template references {objective}; leaving it False makes the objective field hidden "
+            "in the scoring dialog."
+        ),
+    )
 
 
 class GeneralTrueFalseConfig(BaseModel):
@@ -71,9 +80,9 @@ class GeneralTrueFalseConfig(BaseModel):
         ...,
         min_length=1,
         description=(
-            "System prompt template. Placeholders: {objective}, {task}, {prompt}, {message_piece}. "
-            "Must instruct the LLM to reply with JSON containing 'score_value' ('true'/'false') "
-            "and 'rationale'."
+            "System prompt template. Placeholders: {objective}, {task} (alias of {objective}), "
+            "{prompt}, {message_piece}. Must instruct the LLM to reply with JSON containing "
+            "'score_value' ('true'/'false') and 'rationale'."
         ),
     )
     prompt_format_string: str | None = Field(
@@ -85,6 +94,15 @@ class GeneralTrueFalseConfig(BaseModel):
     score_aggregator: TrueFalseAggregator = Field(
         "OR",
         description="How to combine multiple bool scores when the scorer runs more than one trial.",
+    )
+    requires_objective: bool = Field(
+        False,
+        description=(
+            "If True, the GUI requires the caller to supply an objective when invoking this scorer "
+            "and the backend rejects scoring requests with no objective. Enable this only when your "
+            "prompt template references {objective} or {task}; leaving it False makes the objective "
+            "field hidden in the scoring dialog."
+        ),
     )
 
 

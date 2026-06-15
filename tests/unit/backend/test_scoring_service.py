@@ -437,7 +437,7 @@ class TestCreateCustomScorer:
         ):
             built = MagicMock(spec=FloatScaleScorer)
             built.scorer_type = "float_scale"
-            built.uses_objective = False
+            built.uses_objective = True  # set by class default; service should override to False
             mock_cls.return_value = built
 
             response = await scoring_service.create_custom_scorer_async(
@@ -455,6 +455,40 @@ class TestCreateCustomScorer:
         assert call_kwargs["min_value"] == 0
         assert call_kwargs["max_value"] == 10
         assert call_kwargs["category"] == "harm"
+        # requires_objective=False (default) → validator opts out and uses_objective is overridden to False
+        validator = call_kwargs["validator"]
+        assert validator._is_objective_required is False
+        assert built.uses_objective is False
+        assert response.summary.uses_objective is False
+
+    async def test_general_float_scale_with_requires_objective(
+        self, scoring_service, custom_registry, clear_custom_scorers
+    ) -> None:
+        cfg = GeneralFloatScaleConfig(
+            system_prompt_format_string="Objective: {objective}. Score {prompt}.",
+            min_value=0,
+            max_value=10,
+            requires_objective=True,
+        )
+        with (
+            _patch_default_target(),
+            patch(
+                "pyrit.score.float_scale.self_ask_general_float_scale_scorer.SelfAskGeneralFloatScaleScorer"
+            ) as mock_cls,
+        ):
+            built = MagicMock(spec=FloatScaleScorer)
+            built.scorer_type = "float_scale"
+            built.uses_objective = False
+            mock_cls.return_value = built
+
+            response = await scoring_service.create_custom_scorer_async(
+                request=CreateCustomScorerRequest(name="needs_obj", config=cfg),
+            )
+
+        validator = mock_cls.call_args.kwargs["validator"]
+        assert validator._is_objective_required is True
+        assert built.uses_objective is True
+        assert response.summary.uses_objective is True
 
     async def test_general_true_false_registers_scorer(
         self, scoring_service, custom_registry, clear_custom_scorers
@@ -473,7 +507,7 @@ class TestCreateCustomScorer:
             mock_aggregator_ns.AND = "AND_FUNC"
             built = MagicMock(spec=TrueFalseScorer)
             built.scorer_type = "true_false"
-            built.uses_objective = False
+            built.uses_objective = True
             mock_cls.return_value = built
 
             response = await scoring_service.create_custom_scorer_async(
@@ -482,7 +516,12 @@ class TestCreateCustomScorer:
 
         assert response.summary.scorer_registry_name == "my_tf"
         assert response.summary.editable is True
-        assert mock_cls.call_args.kwargs["score_aggregator"] == "AND_FUNC"
+        call_kwargs = mock_cls.call_args.kwargs
+        assert call_kwargs["score_aggregator"] == "AND_FUNC"
+        validator = call_kwargs["validator"]
+        assert validator._is_objective_required is False
+        assert built.uses_objective is False
+        assert response.summary.uses_objective is False
 
     async def test_threshold_wrapper_registers_scorer(
         self, scoring_service, custom_registry, clear_custom_scorers

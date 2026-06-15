@@ -165,3 +165,26 @@ def test_true_false_get_scorer_metrics_returns_metrics_when_eval_hash_is_set(pat
 
     assert result is mock_metrics
     mock_find.assert_called_once()
+
+
+async def test_general_true_false_scorer_renders_task_placeholder(patch_central_database):
+    """The {task} placeholder is documented as an alias of {objective}; both must format."""
+    chat_target = MagicMock()
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+    json_response = '{"score_value": "True", "rationale": "r", "description": "d"}'
+    response = Message(message_pieces=[MessagePiece(role="assistant", original_value=json_response)])
+    chat_target.send_prompt_async = AsyncMock(return_value=[response])
+    chat_target.set_system_prompt = MagicMock()
+
+    scorer = SelfAskGeneralTrueFalseScorer(
+        chat_target=chat_target,
+        system_prompt_format_string="Goal: {task}. Response: {prompt}",
+        prompt_format_string="Task: {task} | {prompt}",
+    )
+
+    scores = await scorer.score_text_async(text="hi", objective="be helpful")
+    assert len(scores) == 1
+    rendered_system = chat_target.set_system_prompt.call_args.kwargs["system_prompt"]
+    assert rendered_system == "Goal: be helpful. Response: hi"
+    rendered_user = chat_target.send_prompt_async.call_args.kwargs["message"].message_pieces[0].converted_value
+    assert rendered_user == "Task: be helpful | hi"

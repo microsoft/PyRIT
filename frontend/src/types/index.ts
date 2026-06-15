@@ -334,6 +334,7 @@ export interface GeneralFloatScaleConfig {
   category?: string | null
   min_value: number
   max_value: number
+  requires_objective?: boolean
 }
 
 export interface GeneralTrueFalseConfig {
@@ -342,6 +343,7 @@ export interface GeneralTrueFalseConfig {
   prompt_format_string?: string | null
   category?: string | null
   score_aggregator: TrueFalseAggregator
+  requires_objective?: boolean
 }
 
 export interface ThresholdWrapperConfig {

@@ -58,7 +58,7 @@ class SelfAskGeneralFloatScaleScorer(FloatScaleScorer):
                 CHAT_TARGET_REQUIREMENTS (multi-turn + editable history capabilities,
                 possibly via normalization-pipeline adaptation).
             system_prompt_format_string (str): System prompt template with placeholders for
-                objective, prompt, and message_piece.
+                objective, prompt, message_piece, min_value, and max_value.
             prompt_format_string (str | None): User prompt template with the same placeholders.
             category (str | None): Category for the score.
             min_value (int): Minimum of the model's native scale. Defaults to 0.
@@ -131,6 +131,8 @@ class SelfAskGeneralFloatScaleScorer(FloatScaleScorer):
             objective=objective,
             prompt=original_prompt,
             message_piece=message_piece,
+            min_value=self._min_value,
+            max_value=self._max_value,
         )
 
         user_prompt = original_prompt
@@ -139,6 +141,8 @@ class SelfAskGeneralFloatScaleScorer(FloatScaleScorer):
                 objective=objective,
                 prompt=original_prompt,
                 message_piece=message_piece,
+                min_value=self._min_value,
+                max_value=self._max_value,
             )
 
         unvalidated: UnvalidatedScore = await self._score_value_with_llm_async(

@@ -351,6 +351,11 @@ class ScoringService:
         Self-ask scorers receive a fixed default chat target resolved via
         ``_get_default_chat_target`` — users cannot pick the judge model from the GUI.
 
+        For self-ask configs the ``requires_objective`` flag drives two things: the
+        ``ScorerPromptValidator`` enforces that the caller supplies an objective at
+        scoring time, and the instance's ``uses_objective`` attribute is overridden
+        so the GUI hides the objective input when False.
+
         Returns:
             Scorer: The constructed scorer instance ready to register.
 
@@ -364,6 +369,7 @@ class ScoringService:
         from pyrit.score.float_scale.self_ask_general_float_scale_scorer import (
             SelfAskGeneralFloatScaleScorer,
         )
+        from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
         from pyrit.score.true_false.float_scale_threshold_scorer import FloatScaleThresholdScorer
         from pyrit.score.true_false.self_ask_general_true_false_scorer import (
             SelfAskGeneralTrueFalseScorer,
@@ -373,24 +379,38 @@ class ScoringService:
         if isinstance(config, GeneralFloatScaleConfig):
             if config.max_value <= config.min_value:
                 raise ValueError("max_value must be strictly greater than min_value")
-            return SelfAskGeneralFloatScaleScorer(
+            validator = ScorerPromptValidator(
+                supported_data_types=["text"],
+                is_objective_required=config.requires_objective,
+            )
+            scorer = SelfAskGeneralFloatScaleScorer(
                 chat_target=self._get_default_chat_target(),
                 system_prompt_format_string=config.system_prompt_format_string,
                 prompt_format_string=config.prompt_format_string,
                 category=config.category,
                 min_value=config.min_value,
                 max_value=config.max_value,
+                validator=validator,
             )
+            scorer.uses_objective = config.requires_objective
+            return scorer
 
         if isinstance(config, GeneralTrueFalseConfig):
             aggregator = getattr(TrueFalseScoreAggregator, config.score_aggregator)
-            return SelfAskGeneralTrueFalseScorer(
+            validator = ScorerPromptValidator(
+                supported_data_types=["text"],
+                is_objective_required=config.requires_objective,
+            )
+            scorer = SelfAskGeneralTrueFalseScorer(
                 chat_target=self._get_default_chat_target(),
                 system_prompt_format_string=config.system_prompt_format_string,
                 prompt_format_string=config.prompt_format_string,
                 category=config.category,
                 score_aggregator=aggregator,
+                validator=validator,
             )
+            scorer.uses_objective = config.requires_objective
+            return scorer
 
         if isinstance(config, ThresholdWrapperConfig):
             wrapped = self._registry.get(config.wrapped_scorer_registry_name)

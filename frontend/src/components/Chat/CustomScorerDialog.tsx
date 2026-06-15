@@ -16,6 +16,7 @@ import {
   RadioGroup,
   SpinButton,
   Spinner,
+  Switch,
   MessageBar,
   MessageBarBody,
   Text,
@@ -85,6 +86,7 @@ function makeDefaultConfig(kind: CustomScorerKind): CustomScorerConfig {
         category: null,
         min_value: 0,
         max_value: 10,
+        requires_objective: false,
       }
     case 'general_true_false':
       return {
@@ -93,6 +95,7 @@ function makeDefaultConfig(kind: CustomScorerKind): CustomScorerConfig {
         prompt_format_string: null,
         category: null,
         score_aggregator: 'OR',
+        requires_objective: false,
       }
     case 'threshold_wrapper':
       return {
@@ -196,6 +199,7 @@ export default function CustomScorerDialog({
   return (
     <Dialog
       open={open}
+      modalType="alert"
       onOpenChange={(_, data) => {
         if (!data.open && !submitting) onClose()
       }}
@@ -331,7 +335,10 @@ function FloatScaleFields({
           data-testid="custom-scorer-system-prompt"
         />
       </Field>
-      <Field label="User prompt template (optional)">
+      <Field
+        label="User prompt template (optional)"
+        hint="Leave empty to send the response being scored as the user message. Same placeholders as the system prompt."
+      >
         <Textarea
           value={config.prompt_format_string ?? ''}
           onChange={(_, data) =>
@@ -378,6 +385,14 @@ function FloatScaleFields({
           />
         </Field>
       </div>
+      <Field hint="Enable only if your prompt template references {objective}. When off, the scoring dialog hides the Objective field.">
+        <Switch
+          checked={config.requires_objective ?? false}
+          onChange={(_, data) => onChange({ ...config, requires_objective: data.checked })}
+          label="Requires objective"
+          data-testid="custom-scorer-requires-objective"
+        />
+      </Field>
     </>
   )
 }
@@ -394,7 +409,7 @@ function TrueFalseFields({
       <Field
         label="System prompt template"
         required
-        hint="Placeholders: {objective}, {prompt}, {task}. Must instruct the LLM to reply with JSON containing score_value ('true'/'false') and rationale."
+        hint="Placeholders: {objective}, {task} (alias of {objective}), {prompt}. Must instruct the LLM to reply with JSON containing score_value ('true'/'false') and rationale."
       >
         <Textarea
           value={config.system_prompt_format_string}
@@ -405,7 +420,10 @@ function TrueFalseFields({
           data-testid="custom-scorer-system-prompt"
         />
       </Field>
-      <Field label="User prompt template (optional)">
+      <Field
+        label="User prompt template (optional)"
+        hint="Leave empty to send the response being scored as the user message. Same placeholders as the system prompt."
+      >
         <Textarea
           value={config.prompt_format_string ?? ''}
           onChange={(_, data) =>
@@ -440,6 +458,14 @@ function TrueFalseFields({
           <Radio value="AND" label="AND (all must be true)" />
           <Radio value="MAJORITY" label="MAJORITY (>50% true)" />
         </RadioGroup>
+      </Field>
+      <Field hint="Enable only if your prompt template references {objective} or {task}. When off, the scoring dialog hides the Objective field.">
+        <Switch
+          checked={config.requires_objective ?? false}
+          onChange={(_, data) => onChange({ ...config, requires_objective: data.checked })}
+          label="Requires objective"
+          data-testid="custom-scorer-requires-objective"
+        />
       </Field>
     </>
   )
