@@ -1008,4 +1008,3 @@ function applyEdgeInsert(
   }
   return applyInsertBetween(tree, parentId, childId, kind as AppendChildKind, uuid)
 }
-

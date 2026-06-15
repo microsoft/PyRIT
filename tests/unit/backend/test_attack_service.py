@@ -2726,9 +2726,7 @@ class TestValidateOperatorMatch:
 
     # ---- Backward-compat fallback to piece labels ----
 
-    def test_operator_mismatch_from_piece_labels_raises_when_ar_has_none(
-        self, attack_service, mock_memory
-    ) -> None:
+    def test_operator_mismatch_from_piece_labels_raises_when_ar_has_none(self, attack_service, mock_memory) -> None:
         """Legacy AR with no operator label → fall back to piece labels, enforce mismatch.
 
         Backward-compat clause per §9.4.5: 'existing-piece-label behavior preserved
@@ -2746,9 +2744,7 @@ class TestValidateOperatorMatch:
         with pytest.raises(ValueError, match=r"Operator mismatch.*alice.*bob"):
             attack_service._validate_operator_match(ar=ar, request=request)
 
-    def test_operator_match_from_piece_labels_passes_when_ar_has_none(
-        self, attack_service, mock_memory
-    ) -> None:
+    def test_operator_match_from_piece_labels_passes_when_ar_has_none(self, attack_service, mock_memory) -> None:
         """Legacy AR + matching piece operator → no raise."""
         ar = make_attack_result(conversation_id="conv-1")
         ar.labels = {}
@@ -2762,9 +2758,7 @@ class TestValidateOperatorMatch:
 
     # ---- AR-first precedence (the rule when both sources disagree) ----
 
-    def test_ar_label_wins_over_piece_label_when_both_present(
-        self, attack_service, mock_memory
-    ) -> None:
+    def test_ar_label_wins_over_piece_label_when_both_present(self, attack_service, mock_memory) -> None:
         """When AR.labels and piece.labels disagree, AR wins (no fallback consulted).
 
         This is the precedence rule: the AR is the canonical owner. A legacy AR
@@ -2818,9 +2812,7 @@ class TestAddMessageOperatorIntegration:
     smoke test that exercises the real call-site wiring from add_message_async.
     """
 
-    async def test_add_message_raises_on_operator_mismatch_via_ar_labels(
-        self, attack_service, mock_memory
-    ) -> None:
+    async def test_add_message_raises_on_operator_mismatch_via_ar_labels(self, attack_service, mock_memory) -> None:
         """add_message_async should reject a mismatched operator via AR labels.
 
         Proves the relocated `_validate_operator_match` is wired into the

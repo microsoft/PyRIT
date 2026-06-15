@@ -313,4 +313,3 @@ describe('conversationTreeToReactFlow — malformed edge contract', () => {
     expect(() => conversationTreeToReactFlow(tree)).toThrow(/ghost/)
   })
 })
-

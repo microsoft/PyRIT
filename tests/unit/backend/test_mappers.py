@@ -156,7 +156,10 @@ class TestAttackResultToSummary:
         # Attack metadata should be extracted into explicit fields
         assert summary.attack_type == "My Attack"
         assert summary.target is not None
-        assert summary.target.target_registry_name == ar.get_attack_strategy_identifier().get_child("objective_target").unique_name
+        assert (
+            summary.target.target_registry_name
+            == ar.get_attack_strategy_identifier().get_child("objective_target").unique_name
+        )
         assert summary.target.target_type == "TextTarget"
 
     async def test_target_registry_name_prefers_registered_human_name(self) -> None:
