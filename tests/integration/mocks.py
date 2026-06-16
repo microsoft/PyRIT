@@ -67,8 +67,6 @@ class MockPromptTarget(PromptTarget):
                     original_value=system_prompt,
                     converted_value=system_prompt,
                     conversation_id=conversation_id,
-                    attack_identifier=attack_identifier,
-                    labels=labels or {},
                 ).to_message()
             )
 
@@ -82,8 +80,6 @@ class MockPromptTarget(PromptTarget):
                 role="assistant",
                 original_value="default",
                 conversation_id=message.message_pieces[0].conversation_id,
-                attack_identifier=message.message_pieces[0].attack_identifier,
-                labels=message.message_pieces[0].labels,
             ).to_message()
         ]
 
