@@ -94,6 +94,7 @@ class TestComputeTechniqueStats:
         call_kwargs = _patch_memory.get_attack_results.call_args[1]
         assert call_kwargs["atomic_attack_eval_hashes"] == ["x", "y"]
         assert call_kwargs["scenario_result_id"] is None
+        assert call_kwargs["targeted_harm_categories"] is None
 
     def test_passes_scenario_result_id_to_memory_query(self, _patch_memory):
         compute_technique_stats(technique_eval_hashes=["x"], scenario_result_id="run-123")
@@ -122,6 +123,15 @@ class TestComputeTechniqueStats:
         stats = compute_technique_stats(technique_eval_hashes=["a"])
 
         assert stats["a"].success_rate == pytest.approx(0.5)
+
+    def test_passes_harm_categories_to_memory_query(self, _patch_memory):
+        compute_technique_stats(
+            technique_eval_hashes=["x"],
+            targeted_harm_categories=["misinformation", "hate"],
+        )
+
+        call_kwargs = _patch_memory.get_attack_results.call_args[1]
+        assert call_kwargs["targeted_harm_categories"] == ["misinformation", "hate"]
 
     def test_injected_memory_bypasses_central_memory(self, _patch_memory):
         injected = MagicMock()

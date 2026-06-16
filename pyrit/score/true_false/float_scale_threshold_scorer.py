@@ -66,13 +66,11 @@ class FloatScaleThresholdScorer(TrueFalseScorer):
         """
         return self._create_identifier(
             params={
-                "score_aggregator": self._score_aggregator.__name__,  # type: ignore[ty:unresolved-attribute]
                 "threshold": self._threshold,
                 "float_scale_aggregator": self._float_scale_aggregator.__name__,  # type: ignore[ty:unresolved-attribute]
             },
-            children={
-                "sub_scorers": [self._scorer.get_identifier()],
-            },
+            score_aggregator=self._score_aggregator.__name__,  # type: ignore[ty:unresolved-attribute]
+            sub_scorers=[self._scorer.get_identifier()],
         )
 
     def get_chat_target(self) -> Optional["PromptTarget"]:

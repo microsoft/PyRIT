@@ -21,11 +21,11 @@ from pyrit.executor.attack.multi_turn.multi_turn_attack_strategy import (
     MultiTurnAttackStrategy,
 )
 from pyrit.models import (
+    AtomicAttackIdentifier,
     AttackOutcome,
     AttackResult,
     Message,
     Score,
-    build_atomic_attack_identifier,
 )
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import PromptTarget
@@ -172,7 +172,6 @@ class ChunkedRequestAttack(MultiTurnAttackStrategy[ChunkedRequestAttackContext, 
         # Initialize prompt normalizer and conversation manager
         self._prompt_normalizer = prompt_normalizer or PromptNormalizer()
         self._conversation_manager = ConversationManager(
-            attack_identifier=self.get_identifier(),
             prompt_normalizer=self._prompt_normalizer,
         )
 
@@ -279,7 +278,6 @@ class ChunkedRequestAttack(MultiTurnAttackStrategy[ChunkedRequestAttackContext, 
             with execution_context(
                 component_role=ComponentRole.OBJECTIVE_TARGET,
                 attack_strategy_name=self.__class__.__name__,
-                attack_identifier=self.get_identifier(),
                 component_identifier=self._objective_target.get_identifier(),
                 objective_target_conversation_id=context.session.conversation_id,
                 objective=context.objective,
@@ -291,7 +289,6 @@ class ChunkedRequestAttack(MultiTurnAttackStrategy[ChunkedRequestAttackContext, 
                     request_converter_configurations=self._request_converters,
                     response_converter_configurations=self._response_converters,
                     labels=context.memory_labels,
-                    attack_identifier=self.get_identifier(),
                 )
 
             # Store the response
@@ -319,7 +316,7 @@ class ChunkedRequestAttack(MultiTurnAttackStrategy[ChunkedRequestAttackContext, 
         return AttackResult(
             conversation_id=context.session.conversation_id,
             objective=context.objective,
-            atomic_attack_identifier=build_atomic_attack_identifier(attack_identifier=self.get_identifier()),
+            atomic_attack_identifier=AtomicAttackIdentifier.build(attack_identifier=self.get_identifier()),
             last_response=response.get_piece() if response else None,
             last_score=score,
             related_conversations=context.related_conversations,
@@ -377,7 +374,6 @@ class ChunkedRequestAttack(MultiTurnAttackStrategy[ChunkedRequestAttackContext, 
         with execution_context(
             component_role=ComponentRole.OBJECTIVE_SCORER,
             attack_strategy_name=self.__class__.__name__,
-            attack_identifier=self.get_identifier(),
             component_identifier=self._objective_scorer.get_identifier(),
             objective=objective,
         ):

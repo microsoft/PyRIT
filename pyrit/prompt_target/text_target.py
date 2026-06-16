@@ -10,6 +10,7 @@ from typing import IO, Any, cast
 from pyrit.common.deprecation import print_deprecation_message
 from pyrit.models import (
     ChatMessageRole,
+    Conversation,
     Message,
     MessagePiece,
     PromptDataType,
@@ -73,6 +74,9 @@ class TextTarget(PromptTarget):
 
         Returns:
             list[MessagePiece]: A list of message pieces imported from the CSV.
+
+        Raises:
+            ValueError: If a row is missing a ``conversation_id``.
         """
         print_deprecation_message(
             old_item="pyrit.prompt_target.TextTarget.import_scores_from_csv",
@@ -85,20 +89,25 @@ class TextTarget(PromptTarget):
         with open(csv_file_path, newline="") as csvfile:
             csvreader = csv.DictReader(csvfile)
 
-            for row in csvreader:
+            for row_number, row in enumerate(csvreader, start=1):
                 sequence_str = row.get("sequence")
                 labels_str = row.get("labels")
+
+                conversation_id = row.get("conversation_id")
+                if not conversation_id or not conversation_id.strip():
+                    raise ValueError(
+                        f"Row {row_number} of '{csv_file_path}' is missing a 'conversation_id'. "
+                        "Every imported row must specify the conversation it belongs to."
+                    )
 
                 piece_kwargs: dict[str, Any] = {
                     "role": cast("ChatMessageRole", row["role"]),
                     "original_value": row["value"],
                     "sequence": int(sequence_str) if sequence_str else 0,
-                    "prompt_target_identifier": self.get_identifier(),
+                    "conversation_id": conversation_id,
                 }
                 if row.get("data_type"):
                     piece_kwargs["original_value_data_type"] = cast("PromptDataType", row["data_type"])
-                if row.get("conversation_id"):
-                    piece_kwargs["conversation_id"] = row["conversation_id"]
                 if labels_str:
                     piece_kwargs["labels"] = json.loads(labels_str)  # deprecated
                 if row.get("response_error"):
@@ -107,6 +116,10 @@ class TextTarget(PromptTarget):
                 message_pieces.append(MessagePiece(**piece_kwargs))
 
         # This is post validation, so the message_pieces should be okay and normalized
+        for conversation_id in {piece.conversation_id for piece in message_pieces if piece.conversation_id}:
+            self._memory.add_conversation_to_memory(
+                conversation=Conversation(conversation_id=conversation_id, target_identifier=self.get_identifier())
+            )
         self._memory.add_message_pieces_to_memory(message_pieces=message_pieces)
         return message_pieces
 

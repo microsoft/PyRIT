@@ -139,9 +139,14 @@ class TestLoadDefaultDatasets:
 
         # Patch OpenAIChatTarget at the fallback construction site so registry
         # introspection does not depend on OPENAI_CHAT_MODEL or other env vars.
+        from pyrit.models.identifiers import ComponentIdentifier
         from pyrit.score import TrueFalseScorer
 
         fallback_target = MagicMock()
+        fallback_target.get_identifier.return_value = ComponentIdentifier(
+            class_name="OpenAIChatTarget",
+            class_module="pyrit.prompt_target.openai.openai_chat_target",
+        )
         fallback_scorer = MagicMock(spec=TrueFalseScorer)
         with (
             patch("pyrit.scenario.core.scenario_target_defaults.OpenAIChatTarget", return_value=fallback_target),

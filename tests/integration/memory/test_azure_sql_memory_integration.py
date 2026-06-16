@@ -16,6 +16,7 @@ from pyrit.memory.memory_models import (
     ScenarioResultEntry,
 )
 from pyrit.models import (
+    AtomicAttackIdentifier,
     AttackOutcome,
     AttackResult,
     ComponentIdentifier,
@@ -23,7 +24,6 @@ from pyrit.models import (
     ScenarioIdentifier,
     ScenarioResult,
     SeedPrompt,
-    build_atomic_attack_identifier,
 )
 
 
@@ -48,7 +48,7 @@ def get_test_atomic_attack_identifier() -> ComponentIdentifier:
         class_name="TestAttack",
         class_module="tests.integration.memory.test_azure_sql_memory_integration",
     )
-    return build_atomic_attack_identifier(attack_identifier=attack_strategy)
+    return AtomicAttackIdentifier.build(attack_identifier=attack_strategy)
 
 
 def get_test_scorer_identifier(**kwargs) -> ComponentIdentifier:

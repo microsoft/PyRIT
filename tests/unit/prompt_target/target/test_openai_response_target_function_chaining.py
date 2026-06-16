@@ -245,7 +245,7 @@ async def test_function_call_memory_persistence(response_target, patch_central_d
         # Verify memory does NOT contain intermediate messages
         # (targets no longer persist intermediate messages - normalizer handles that)
         memory = CentralMemory.get_memory_instance()
-        conversation = memory.get_conversation(conversation_id=conversation_id)
+        conversation = memory.get_conversation_messages(conversation_id=conversation_id)
 
         # Target doesn't persist messages anymore - all returned messages will be persisted by normalizer
         assert len(conversation) == 0

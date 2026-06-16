@@ -15,9 +15,9 @@ function buildSuccessMessageMock(userText: string) {
           turn_number: 1,
           role: "user",
           created_at: new Date().toISOString(),
-          pieces: [
+          message_pieces: [
             {
-              piece_id: "p-u",
+              id: "p-u",
               original_value_data_type: "text",
               converted_value_data_type: "text",
               original_value: userText,
@@ -31,9 +31,9 @@ function buildSuccessMessageMock(userText: string) {
           turn_number: 1,
           role: "assistant",
           created_at: new Date().toISOString(),
-          pieces: [
+          message_pieces: [
             {
-              piece_id: "p-a",
+              id: "p-a",
               original_value_data_type: "text",
               converted_value_data_type: "text",
               original_value: `Reply to: ${userText}`,

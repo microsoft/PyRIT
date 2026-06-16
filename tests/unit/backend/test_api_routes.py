@@ -22,8 +22,8 @@ from pyrit.backend.models.attacks import (
     AttackSummary,
     ConversationMessagesResponse,
     CreateAttackResponse,
-    Message,
-    MessagePiece,
+    MessagePieceView,
+    MessageView,
 )
 from pyrit.backend.models.common import PaginationInfo
 from pyrit.backend.models.converters import (
@@ -40,6 +40,22 @@ from pyrit.backend.models.targets import (
     TargetListResponse,
 )
 from pyrit.backend.routes.labels import get_label_options
+from pyrit.models import MessagePiece
+
+
+def _make_message_view(*, role: str = "user", value: str = "hello", sequence: int = 1) -> MessageView:
+    """Build a ``MessageView`` from a single text piece for route tests."""
+    piece = MessagePiece(
+        role=role,
+        original_value=value,
+        converted_value=value,
+        original_value_data_type="text",
+        converted_value_data_type="text",
+        conversation_id="attack-1",
+        sequence=sequence,
+    )
+    piece_view = MessagePieceView.from_domain(piece)
+    return MessageView.model_construct(message_pieces=[piece_view])
 
 
 @pytest.fixture
@@ -210,8 +226,7 @@ class TestAttackRoutes:
                 return_value=AttackSummary(
                     attack_result_id="ar-attack-1",
                     conversation_id="attack-1",
-                    attack_type="TestAttack",
-                    outcome=None,
+                    objective="test objective",
                     last_message_preview=None,
                     message_count=0,
                     created_at=now,
@@ -247,7 +262,7 @@ class TestAttackRoutes:
                 return_value=AttackSummary(
                     attack_result_id="ar-attack-1",
                     conversation_id="attack-1",
-                    attack_type="TestAttack",
+                    objective="test objective",
                     outcome="success",
                     last_message_preview=None,
                     message_count=0,
@@ -273,8 +288,7 @@ class TestAttackRoutes:
         attack_summary = AttackSummary(
             attack_result_id="ar-attack-1",
             conversation_id="attack-1",
-            attack_type="TestAttack",
-            outcome=None,
+            objective="test objective",
             last_message_preview=None,
             message_count=2,
             created_at=now,
@@ -284,28 +298,8 @@ class TestAttackRoutes:
         attack_messages = ConversationMessagesResponse(
             conversation_id="attack-1",
             messages=[
-                Message(
-                    turn_number=1,
-                    role="user",
-                    pieces=[
-                        MessagePiece(
-                            piece_id="piece-1",
-                            converted_value="Hello",
-                        )
-                    ],
-                    created_at=now,
-                ),
-                Message(
-                    turn_number=2,
-                    role="assistant",
-                    pieces=[
-                        MessagePiece(
-                            piece_id="piece-2",
-                            converted_value="Hi there!",
-                        )
-                    ],
-                    created_at=now,
-                ),
+                _make_message_view(role="user", value="Hello", sequence=1),
+                _make_message_view(role="assistant", value="Hi there!", sequence=2),
             ],
         )
 
@@ -400,20 +394,13 @@ class TestAttackRoutes:
 
     def test_get_conversation_messages_success(self, client: TestClient) -> None:
         """Test getting attack messages."""
-        now = datetime.now(timezone.utc)
-
         with patch("pyrit.backend.routes.attacks.get_attack_service") as mock_get_service:
             mock_service = MagicMock()
             mock_service.get_conversation_messages_async = AsyncMock(
                 return_value=ConversationMessagesResponse(
                     conversation_id="attack-1",
                     messages=[
-                        Message(
-                            turn_number=1,
-                            role="user",
-                            pieces=[MessagePiece(piece_id="p1", converted_value="Hello")],
-                            created_at=now,
-                        )
+                        _make_message_view(role="user", value="Hello", sequence=1),
                     ],
                 )
             )
@@ -462,8 +449,7 @@ class TestAttackRoutes:
                         AttackSummary(
                             attack_result_id="ar-attack-1",
                             conversation_id="attack-1",
-                            attack_type="TestAttack",
-                            outcome=None,
+                            objective="test objective",
                             last_message_preview=None,
                             message_count=0,
                             labels={"env": "prod"},

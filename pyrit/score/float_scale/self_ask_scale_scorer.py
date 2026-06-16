@@ -96,9 +96,7 @@ class SelfAskScaleScorer(FloatScaleScorer):
                 "system_prompt_template": self._system_prompt,
                 "user_prompt_template": "objective: {objective}\nresponse: {response}",
             },
-            children={
-                "prompt_target": self._prompt_target.get_identifier(),
-            },
+            prompt_target=self._prompt_target.get_identifier(),
         )
 
     async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
@@ -138,7 +136,6 @@ class SelfAskScaleScorer(FloatScaleScorer):
             prepended_text_message_piece=prepended_text,
             category=self._category,
             objective=objective,
-            attack_identifier=message_piece.attack_identifier,
         )
 
         score = unvalidated_score.to_score(

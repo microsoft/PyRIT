@@ -216,7 +216,7 @@ def test_add_image_text_converter_bounding_box_identifier(large_sample_image):
     )
     identifier = converter.get_identifier()
     params = identifier.params
-    assert params["bounding_box"] == (100, 100, 400, 300)
+    assert params["bounding_box"] == [100, 100, 400, 300]
     assert params["rotation"] == 10.0
     assert params["center_text"] is True
     assert params["font_size_min"] == 8

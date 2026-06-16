@@ -1,4 +1,5 @@
 import { render, screen, fireEvent } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { FluentProvider, webLightTheme } from '@fluentui/react-components'
 import AttackTable from './AttackTable'
 import type { AttackSummary } from '../../types'
@@ -143,6 +144,34 @@ describe('AttackTable', () => {
 
     fireEvent.click(screen.getByTestId('attack-row-ar-1'))
     expect(onOpenAttack).toHaveBeenCalledWith('ar-1')
+  })
+
+  it('should call onOpenAttack when Enter or Space is pressed on a row', async () => {
+    const user = userEvent.setup()
+    const onOpenAttack = jest.fn()
+
+    render(
+      <TestWrapper>
+        <AttackTable {...defaultProps} onOpenAttack={onOpenAttack} />
+      </TestWrapper>
+    )
+
+    const row = screen.getByTestId('attack-row-ar-1')
+    expect(row).toHaveAttribute('tabindex', '0')
+
+    row.focus()
+    await user.keyboard('{Enter}')
+    expect(onOpenAttack).toHaveBeenCalledWith('ar-1')
+
+    onOpenAttack.mockClear()
+    row.focus()
+    await user.keyboard(' ')
+    expect(onOpenAttack).toHaveBeenCalledWith('ar-1')
+
+    onOpenAttack.mockClear()
+    row.focus()
+    await user.keyboard('a')
+    expect(onOpenAttack).not.toHaveBeenCalled()
   })
 
   it('should call onOpenAttack when open button is clicked', () => {

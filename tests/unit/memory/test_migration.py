@@ -273,6 +273,23 @@ def _seed_pre_migration_attack_result(connection, *, attack_id, conversation_id)
     )
 
 
+def _seed_post_drop_attack_result(connection, *, attack_id, conversation_id):
+    """Insert an AttackResultEntry row at the Conversations pre-migration revision.
+
+    By this revision the deprecated ``AttackResultEntries.attack_identifier`` column
+    has already been dropped, so it is omitted from the insert.
+    """
+    connection.execute(
+        text(
+            'INSERT INTO "AttackResultEntries" '
+            "(id, conversation_id, objective, objective_sha256, executed_turns, "
+            "execution_time_ms, outcome, timestamp) "
+            "VALUES (:id, :conv, 'obj', 'sha', 1, 0, 'success', '2026-05-18')"
+        ),
+        {"id": attack_id, "conv": conversation_id},
+    )
+
+
 def _config_for(connection):
     pyrit_root = Path(__file__).resolve().parent.parent.parent.parent / "pyrit"
     script_location = pyrit_root / "memory" / "alembic"
@@ -583,5 +600,141 @@ def test_check_schema_migrations_not_silent_prints_output(capsys):
 
             captured = capsys.readouterr()
             assert f"{ALEMBIC_OUTPUT_PREFIX}No new upgrade operations detected." in captured.out
+        finally:
+            engine.dispose()
+
+
+# =============================================================================
+# Backfill tests for the Conversations table migration (b2f4c6a8d1e3)
+# =============================================================================
+
+
+_CONVERSATIONS_REV = "b2f4c6a8d1e3"
+_CONVERSATIONS_PREV_REV = "f1a2b3c4d5e6"
+
+_TARGET_A = '{"name": "target-a"}'
+_TARGET_B = '{"name": "target-b"}'
+
+
+def _seed_pre_conversations_prompt_piece(connection, *, piece_id, conversation_id, sequence, target_identifier):
+    """Insert a PromptMemoryEntry row at the pre-Conversations revision."""
+    connection.execute(
+        text(
+            'INSERT INTO "PromptMemoryEntries" '
+            "(id, role, conversation_id, sequence, timestamp, labels, prompt_metadata, "
+            "prompt_target_identifier, attack_identifier, original_value_data_type, "
+            "original_value, converted_value_data_type, original_prompt_id) "
+            "VALUES (:id, 'user', :conv, :seq, '2026-05-20', '{}', '{}', "
+            ":target, '{}', 'text', 'hello', 'text', :id)"
+        ),
+        {"id": piece_id, "conv": conversation_id, "seq": sequence, "target": target_identifier},
+    )
+
+
+def test_conversations_migration_script_metadata():
+    """The Conversations migration declares the expected revision chain."""
+    from pyrit.memory.alembic.versions import b2f4c6a8d1e3_add_conversations_table as mig
+
+    assert mig.revision == _CONVERSATIONS_REV
+    assert mig.down_revision == _CONVERSATIONS_PREV_REV
+    assert mig.branch_labels is None
+    assert mig.depends_on is None
+
+
+def test_conversations_backfill_populates_targets_and_handles_conflicts(caplog):
+    """Upgrading to the Conversations revision backfills one row per conversation_id:
+    the target comes from PromptMemoryEntries (first non-null wins on conflict),
+    attack-only conversations get a null placeholder, and the per-row identifier
+    columns are dropped."""
+    import logging
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        db_path = os.path.join(temp_dir, "conversations-backfill.db")
+        engine = create_engine(f"sqlite:///{db_path}")
+        try:
+            with engine.begin() as connection:
+                config = _config_for(connection)
+                command.upgrade(config, _CONVERSATIONS_PREV_REV)
+
+                # A conversation whose two pieces share one target.
+                _seed_pre_conversations_prompt_piece(
+                    connection,
+                    piece_id=str(uuid.uuid4()),
+                    conversation_id="conv-keep",
+                    sequence=0,
+                    target_identifier=_TARGET_A,
+                )
+                _seed_pre_conversations_prompt_piece(
+                    connection,
+                    piece_id=str(uuid.uuid4()),
+                    conversation_id="conv-keep",
+                    sequence=1,
+                    target_identifier=_TARGET_A,
+                )
+                # A conversation with two distinct non-null targets -> first wins + warning.
+                _seed_pre_conversations_prompt_piece(
+                    connection,
+                    piece_id=str(uuid.uuid4()),
+                    conversation_id="conv-conflict",
+                    sequence=0,
+                    target_identifier=_TARGET_A,
+                )
+                _seed_pre_conversations_prompt_piece(
+                    connection,
+                    piece_id=str(uuid.uuid4()),
+                    conversation_id="conv-conflict",
+                    sequence=1,
+                    target_identifier=_TARGET_B,
+                )
+                # A conversation referenced only by an AttackResultEntry (no prompt rows).
+                _seed_post_drop_attack_result(
+                    connection, attack_id=str(uuid.uuid4()), conversation_id="conv-attack-only"
+                )
+
+                with caplog.at_level(logging.WARNING):
+                    command.upgrade(config, _CONVERSATIONS_REV)
+
+                rows = connection.execute(
+                    text('SELECT conversation_id, target_identifier FROM "Conversations" ORDER BY conversation_id')
+                ).fetchall()
+                prompt_cols = {c["name"] for c in inspect(connection).get_columns("PromptMemoryEntries")}
+
+            targets_by_conv = {r[0]: r[1] for r in rows}
+
+            assert set(targets_by_conv) == {"conv-keep", "conv-conflict", "conv-attack-only"}
+            assert targets_by_conv["conv-keep"] == _TARGET_A
+            assert targets_by_conv["conv-conflict"] == _TARGET_A  # first non-null wins
+            assert targets_by_conv["conv-attack-only"] is None  # placeholder for attack-only conversation
+
+            # The conflicting targets produced a warning.
+            assert any("multiple distinct" in r.message for r in caplog.records)
+
+            # The per-row identifier columns are gone.
+            assert "prompt_target_identifier" not in prompt_cols
+            assert "attack_identifier" not in prompt_cols
+        finally:
+            engine.dispose()
+
+
+def test_conversations_migration_downgrade_restores_columns():
+    """Downgrading drops the Conversations table and re-adds the per-row identifier columns."""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        db_path = os.path.join(temp_dir, "conversations-downgrade.db")
+        engine = create_engine(f"sqlite:///{db_path}")
+        try:
+            with engine.begin() as connection:
+                config = _config_for(connection)
+                command.upgrade(config, _CONVERSATIONS_REV)
+
+                assert "Conversations" in set(inspect(connection).get_table_names())
+                cols_up = {c["name"] for c in inspect(connection).get_columns("PromptMemoryEntries")}
+                assert "prompt_target_identifier" not in cols_up
+
+                command.downgrade(config, _CONVERSATIONS_PREV_REV)
+
+                assert "Conversations" not in set(inspect(connection).get_table_names())
+                cols_down = {c["name"] for c in inspect(connection).get_columns("PromptMemoryEntries")}
+                assert "prompt_target_identifier" in cols_down
+                assert "attack_identifier" in cols_down
         finally:
             engine.dispose()

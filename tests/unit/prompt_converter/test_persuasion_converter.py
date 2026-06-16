@@ -7,7 +7,7 @@ import pytest
 from unit.mocks import MockPromptTarget
 
 from pyrit.exceptions.exception_classes import InvalidJsonException
-from pyrit.models import ComponentIdentifier, Message, MessagePiece
+from pyrit.models import Message, MessagePiece
 from pyrit.prompt_converter import PersuasionConverter
 
 
@@ -72,8 +72,6 @@ async def test_persuasion_converter_send_prompt_async_bad_json_exception_retries
                     converted_value=converted_value,
                     original_value_data_type="text",
                     converted_value_data_type="text",
-                    prompt_target_identifier=ComponentIdentifier(class_name="target-identifier", class_module="test"),
-                    attack_identifier=ComponentIdentifier(class_name="test", class_module="test"),
                     labels={"test": "test"},
                 )
             ]
@@ -101,7 +99,6 @@ async def test_persuasion_converter_extracts_mutated_text(sqlite_instance):
                 conversation_id="test-id",
                 original_value='{"mutated_text": "rephrased prompt"}',
                 original_value_data_type="text",
-                prompt_target_identifier=ComponentIdentifier(class_name="test", class_module="test"),
                 sequence=1,
             )
         ]
@@ -123,7 +120,6 @@ async def test_persuasion_converter_missing_mutated_text_raises_invalid_json(sql
                 conversation_id="test-id",
                 original_value='{"other_key": "value"}',
                 original_value_data_type="text",
-                prompt_target_identifier=ComponentIdentifier(class_name="test", class_module="test"),
                 sequence=1,
             )
         ]
@@ -164,7 +160,6 @@ async def test_send_persuasion_prompt_async_emits_deprecation_warning_and_delega
                 conversation_id="conv-1",
                 original_value="test input",
                 original_value_data_type="text",
-                prompt_target_identifier=ComponentIdentifier(class_name="test", class_module="test"),
             )
         ]
     )
