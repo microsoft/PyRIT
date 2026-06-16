@@ -203,6 +203,8 @@ class _MMSafetyBenchDataset(_RemoteDatasetLoader):
         """
         self._validate_enum(variant, MMSafetyBenchVariant, "variant")
         if categories is not None:
+            if not categories:
+                raise ValueError("`categories` must be a non-empty list (pass None to include all categories)")
             self._validate_enums(categories, MMSafetyBenchCategory, "category")
 
         self.variant = variant

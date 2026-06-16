@@ -168,6 +168,10 @@ class _MossBenchDataset(_RemoteDatasetLoader):
         self.oversensitivity_types = oversensitivity_types
 
         if oversensitivity_types is not None:
+            if not oversensitivity_types:
+                raise ValueError(
+                    "`oversensitivity_types` must be a non-empty list (pass None to include all oversensitivity types)"
+                )
             self._validate_enums(
                 oversensitivity_types,
                 MossBenchOversensitivityType,

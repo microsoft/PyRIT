@@ -106,6 +106,8 @@ class _CoCoNotBaseDataset(_RemoteDatasetLoader):
             ValueError: If any value in ``categories`` is not a CoCoNotCategory.
         """
         if categories is not None:
+            if not categories:
+                raise ValueError("`categories` must be a non-empty list (pass None to include all categories)")
             self._validate_enums(values=categories, enum_cls=CoCoNotCategory, label="categories")
         self._categories = categories
 
@@ -256,6 +258,8 @@ class _CoCoNotRefusalDataset(_CoCoNotBaseDataset):
         """
         super().__init__(categories=categories)
         if splits is not None:
+            if not splits:
+                raise ValueError("`splits` must be a non-empty list (pass None to include all splits)")
             self._validate_enums(values=splits, enum_cls=CoCoNotSplit, label="splits")
         self._splits = splits
 

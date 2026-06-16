@@ -140,6 +140,8 @@ class _VLGuardDataset(_RemoteDatasetLoader):
         self.source = f"https://huggingface.co/datasets/{self._HF_REPO_ID}"
 
         if categories is not None:
+            if not categories:
+                raise ValueError("`categories` must be a non-empty list (pass None to include all categories)")
             valid_categories = {cat.value for cat in VLGuardCategory}
             invalid_categories = {
                 cat.value if isinstance(cat, VLGuardCategory) else cat for cat in categories

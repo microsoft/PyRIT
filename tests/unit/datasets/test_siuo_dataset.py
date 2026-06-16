@@ -56,6 +56,10 @@ class TestSIUODataset:
         with pytest.raises(ValueError, match="Expected SIUOCategory"):
             _SIUODataset(categories=["self-harm"])
 
+    def test_init_with_empty_categories_raises(self):
+        with pytest.raises(ValueError, match="`categories` must be a non-empty list"):
+            _SIUODataset(categories=[])
+
     def test_init_custom_source(self):
         loader = _SIUODataset(source="/path/to/local.json", source_type="file")
         assert loader.source == "/path/to/local.json"
