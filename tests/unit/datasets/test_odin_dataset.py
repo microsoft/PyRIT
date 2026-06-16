@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import json
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -18,6 +19,14 @@ from pyrit.models import SeedDataset, SeedPrompt
 def api_key():
     """A fake API key for testing."""
     return "odin_test_key_000000000000000000000000000000000000000000000000"
+
+
+@pytest.fixture(autouse=True)
+def isolate_cache(tmp_path):
+    """Point the loader's on-disk cache at a per-test temp file so tests never touch real cache."""
+    cache_file = tmp_path / "0din_threatfeed.json"
+    with patch.object(_ODINDataset, "_cache_path", return_value=cache_file):
+        yield cache_file
 
 
 def _report(
@@ -403,3 +412,89 @@ class TestODINDatasetAPIErrors:
 
         assert mock_get.call_count == 2
         assert len(dataset.seeds) == 3
+
+
+class TestODINDatasetCaching:
+    """Test the incremental on-disk cache."""
+
+    async def test_first_fetch_writes_cache(self, api_key, isolate_cache):
+        loader = _ODINDataset(api_key=api_key)
+        report = _report(uuid="cache-0000-0000-0000-000000000001", prompts=("p1",))
+        mock_resp = _make_mock_response(json_data=_page([report]))
+
+        assert not isolate_cache.exists()
+        with patch("requests.get", return_value=mock_resp):
+            await loader.fetch_dataset_async()
+
+        assert isolate_cache.exists()
+        cached = json.loads(isolate_cache.read_text(encoding="utf-8"))
+        assert [r["uuid"] for r in cached] == ["cache-0000-0000-0000-000000000001"]
+
+    async def test_no_new_reports_single_request(self, api_key):
+        loader = _ODINDataset(api_key=api_key)
+        report = _report(uuid="cache-0000-0000-0000-000000000001", prompts=("p1",))
+
+        # First fetch populates the cache.
+        with patch("requests.get", return_value=_make_mock_response(json_data=_page([report]))):
+            await loader.fetch_dataset_async()
+
+        # Second fetch: page 1's first UUID is already cached -> stop after one request.
+        with patch("requests.get", return_value=_make_mock_response(json_data=_page([report]))) as mock_get:
+            dataset = await loader.fetch_dataset_async()
+
+        assert mock_get.call_count == 1
+        assert {s.value for s in dataset.seeds} == {"p1"}
+
+    async def test_incremental_fetch_only_pulls_new_reports(self, api_key, isolate_cache):
+        loader = _ODINDataset(api_key=api_key)
+        old = _report(uuid="cache-0000-0000-0000-00000000000A", prompts=("old",))
+        with patch("requests.get", return_value=_make_mock_response(json_data=_page([old]))):
+            await loader.fetch_dataset_async()
+
+        # Feed now returns a new report on top of the known one (newest-first).
+        new = _report(uuid="cache-0000-0000-0000-00000000000B", prompts=("new",))
+        feed = _page([new, old])
+        with patch("requests.get", return_value=_make_mock_response(json_data=feed)) as mock_get:
+            dataset = await loader.fetch_dataset_async()
+
+        assert mock_get.call_count == 1
+        # Both old and new prompts are present, new merged on top.
+        assert {s.value for s in dataset.seeds} == {"new", "old"}
+        cached = json.loads(isolate_cache.read_text(encoding="utf-8"))
+        assert [r["uuid"] for r in cached] == [
+            "cache-0000-0000-0000-00000000000B",
+            "cache-0000-0000-0000-00000000000A",
+        ]
+
+    async def test_cache_false_bypasses_cache(self, api_key, isolate_cache):
+        loader = _ODINDataset(api_key=api_key)
+        report = _report(uuid="cache-0000-0000-0000-000000000001", prompts=("p1",))
+
+        with patch("requests.get", return_value=_make_mock_response(json_data=_page([report]))):
+            await loader.fetch_dataset_async(cache=True)
+        cached_mtime = isolate_cache.stat().st_mtime_ns
+
+        # cache=False must not read or write the cache, and must fully paginate.
+        page1 = _page([report], page=1, total_pages=2, total_count=2)
+        other = _report(uuid="cache-0000-0000-0000-000000000002", prompts=("p2",))
+        page2 = _page([other], page=2, total_pages=2, total_count=2)
+        responses = [_make_mock_response(json_data=page1), _make_mock_response(json_data=page2)]
+        with patch("requests.get", side_effect=responses) as mock_get:
+            dataset = await loader.fetch_dataset_async(cache=False)
+
+        assert mock_get.call_count == 2  # full pagination, cache ignored
+        assert {s.value for s in dataset.seeds} == {"p1", "p2"}
+        assert isolate_cache.stat().st_mtime_ns == cached_mtime  # cache untouched
+
+    async def test_corrupt_cache_is_ignored(self, api_key, isolate_cache):
+        isolate_cache.parent.mkdir(parents=True, exist_ok=True)
+        isolate_cache.write_text("{ not json", encoding="utf-8")
+
+        loader = _ODINDataset(api_key=api_key)
+        report = _report(uuid="cache-0000-0000-0000-000000000001", prompts=("p1",))
+        with patch("requests.get", return_value=_make_mock_response(json_data=_page([report]))):
+            dataset = await loader.fetch_dataset_async()
+
+        assert {s.value for s in dataset.seeds} == {"p1"}
+        cached = json.loads(isolate_cache.read_text(encoding="utf-8"))
+        assert [r["uuid"] for r in cached] == ["cache-0000-0000-0000-000000000001"]

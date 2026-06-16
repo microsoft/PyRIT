@@ -2,16 +2,19 @@
 # Licensed under the MIT license.
 
 import asyncio
+import json
 import logging
 import os
 import time
 from datetime import datetime
 from enum import Enum
+from pathlib import Path
 from typing import Any
 
 import requests
 from typing_extensions import override
 
+from pyrit.common.path import DB_DATA_PATH
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
@@ -66,6 +69,11 @@ class _ODINDataset(_RemoteDatasetLoader):
 
     Note: 0DIN does not expose separate objective data, so no SeedObjective objects are created.
 
+    The 0DIN feed is live and grows over time. The raw feed is cached on disk (under
+    ``DB_DATA_PATH``); because reports are returned newest-first, subsequent fetches sync
+    incrementally — fetching only newly disclosed reports and merging them onto the cache.
+    Pass ``cache=False`` to ``fetch_dataset_async`` to force a full refresh.
+
     Reference: [@odin2024]
     API Docs: https://0din.ai/docs/jailbreak-feed/api
 
@@ -86,6 +94,8 @@ class _ODINDataset(_RemoteDatasetLoader):
     API_BASE_URL = "https://0din.ai/api/v1/threatfeed/"
     REPORT_WEB_URL = "https://0din.ai/threatfeed"
     PAGE_SIZE = 100
+    # On-disk cache of the raw (unfiltered) feed, shared across filter configurations.
+    CACHE_FILENAME = "0din_threatfeed.json"
     # 0DIN enforces a 25 req/min rate limit and returns transient 5xx (or 429/406 from its
     # anti-abuse layer) under load; retry those with backoff.
     MAX_RETRIES = 4
@@ -206,12 +216,65 @@ class _ODINDataset(_RemoteDatasetLoader):
 
         raise ConnectionError(f"0DIN API request failed with status {last_status}: {last_text}")
 
-    def _fetch_all_reports(self) -> list[dict[str, Any]]:
+    def _cache_path(self) -> Path:
         """
-        Fetch all threat-feed reports from the 0DIN API, handling pagination.
+        Return the on-disk path of the cached raw threat feed.
 
         Returns:
-            list[dict[str, Any]]: All fetched report records.
+            Path: The JSON cache file path under ``DB_DATA_PATH``.
+        """
+        return DB_DATA_PATH / "seed-prompt-entries" / self.CACHE_FILENAME
+
+    def _load_cached_reports(self) -> list[dict[str, Any]]:
+        """
+        Load previously cached threat-feed reports from disk.
+
+        Returns:
+            list[dict[str, Any]]: The cached reports, or an empty list if no usable cache exists.
+        """
+        path = self._cache_path()
+        if not path.exists():
+            return []
+        try:
+            with path.open("r", encoding="utf-8") as file:
+                data = json.load(file)
+        except (OSError, json.JSONDecodeError) as exc:
+            logger.warning(f"Ignoring unreadable 0DIN cache at {path}: {exc}")
+            return []
+        return data if isinstance(data, list) else []
+
+    def _write_cached_reports(self, reports: list[dict[str, Any]]) -> None:
+        """
+        Persist the full set of threat-feed reports to disk.
+
+        Args:
+            reports: The complete (unfiltered) list of reports to cache.
+        """
+        path = self._cache_path()
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open("w", encoding="utf-8") as file:
+                json.dump(reports, file, ensure_ascii=False)
+        except OSError as exc:
+            logger.warning(f"Failed to write 0DIN cache at {path}: {exc}")
+
+    def _fetch_all_reports(self, *, cache: bool = True) -> list[dict[str, Any]]:
+        """
+        Fetch all threat-feed reports, incrementally syncing against the on-disk cache.
+
+        The feed is returned newest-first, so when a cache exists this paginates from the
+        first page and stops as soon as it encounters a report UUID already present in the
+        cache — fetching only newly disclosed reports and merging them on top. When no cache
+        exists (or ``cache`` is False) the full feed is fetched.
+
+        Note: edits to already-cached reports (``updated_at`` changes) are not picked up by
+        the incremental sync; pass ``cache=False`` to force a full refresh.
+
+        Args:
+            cache: Whether to read from and write to the on-disk cache. Defaults to True.
+
+        Returns:
+            list[dict[str, Any]]: All report records (newest-first).
 
         Raises:
             ValueError: If no API key is provided and ``0DIN_API_KEY`` is not set.
@@ -220,19 +283,45 @@ class _ODINDataset(_RemoteDatasetLoader):
         api_key = self._resolve_api_key()
         headers = {"Authorization": api_key}
 
-        all_reports: list[dict[str, Any]] = []
+        cached_reports = self._load_cached_reports() if cache else []
+        cached_uuids = {r.get("uuid") for r in cached_reports if r.get("uuid")}
+
+        new_reports: list[dict[str, Any]] = []
+        reached_cache = False
         page = 1
 
-        while True:
+        while not reached_cache:
             body = self._fetch_page(page=page, headers=headers)
-            all_reports.extend(body.get("threat_feeds", []))
+            for report in body.get("threat_feeds", []):
+                if report.get("uuid") in cached_uuids:
+                    reached_cache = True
+                    break
+                new_reports.append(report)
 
             total_pages = body.get("total_pages", 1)
             if page >= total_pages:
                 break
             page += 1
 
-        return all_reports
+        if not cache:
+            return new_reports
+
+        if not new_reports:
+            return cached_reports
+
+        # Merge newest-first, de-duplicating by UUID (newly fetched reports win).
+        merged: list[dict[str, Any]] = []
+        seen: set[Any] = set()
+        for report in (*new_reports, *cached_reports):
+            uuid = report.get("uuid")
+            if uuid and uuid in seen:
+                continue
+            if uuid:
+                seen.add(uuid)
+            merged.append(report)
+
+        self._write_cached_reports(merged)
+        return merged
 
     def _matches_filters(self, report: dict[str, Any]) -> bool:
         """
@@ -405,8 +494,10 @@ class _ODINDataset(_RemoteDatasetLoader):
         Fetch reports from the 0DIN API and return them as a SeedDataset.
 
         Args:
-            cache: Whether to cache the fetched dataset. Defaults to True. (Currently unused;
-                reserved for future caching support.)
+            cache: Whether to use the on-disk cache. Defaults to True. When True, the raw feed
+                is cached and subsequent calls only fetch newly disclosed reports (see
+                ``_fetch_all_reports``). When False, the full feed is fetched fresh and the
+                cache is neither read nor written.
 
         Returns:
             SeedDataset: A SeedDataset containing the fetched prompts.
@@ -417,7 +508,7 @@ class _ODINDataset(_RemoteDatasetLoader):
         """
         logger.info("Fetching reports from 0DIN threat feed API")
 
-        reports = await asyncio.to_thread(self._fetch_all_reports)
+        reports = await asyncio.to_thread(self._fetch_all_reports, cache=cache)
 
         all_seeds: list[SeedUnion] = []
         for report in reports:
