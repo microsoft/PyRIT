@@ -34,6 +34,7 @@ from pyrit.models import (
     PromptDataType,
     Score,
     ScorerEvaluationIdentifier,
+    ScorerIdentifier,
     ScoreType,
     UnvalidatedScore,
 )
@@ -166,34 +167,43 @@ class Scorer(Identifiable, abc.ABC):
         self,
         *,
         params: dict[str, Any] | None = None,
-        children: dict[str, ComponentIdentifier | list[ComponentIdentifier]] | None = None,
+        score_aggregator: str | None = None,
+        prompt_target: ComponentIdentifier | None = None,
+        sub_scorers: list[ComponentIdentifier] | None = None,
     ) -> ComponentIdentifier:
         """
         Construct the scorer identifier.
 
-        Builds a ComponentIdentifier with the base scorer parameters (scorer_type)
-        and merges in any additional params or children provided by subclasses.
+        Builds a ``ScorerIdentifier`` with the base scorer ``scorer_type`` and
+        the scorer's promoted params/child slots. The promoted fields are exposed
+        as explicit named parameters (mirroring ``ScorerIdentifier``'s fields) so
+        they cannot drift into untyped ``params`` / ``children`` dicts.
 
         Subclasses should call this method in their _build_identifier() implementation
         to set the identifier with their specific parameters.
 
         Args:
             params (dict[str, Any] | None): Additional behavioral parameters from
-                the subclass (e.g., system_prompt_template, score_aggregator). Merged
-                into the base params.
-            children (dict[str, ComponentIdentifier | list[ComponentIdentifier]] | None):
-                Named child component identifiers (e.g., prompt_target, sub_scorers).
+                the subclass (e.g., system_prompt_template, threshold). Merged into
+                the base params.
+            score_aggregator (str | None): Name of the aggregator function that
+                combines sub-scores, promoted to ``ScorerIdentifier.score_aggregator``.
+            prompt_target (ComponentIdentifier | None): The target an LLM-backed
+                scorer calls, promoted to ``ScorerIdentifier.prompt_target``.
+            sub_scorers (list[ComponentIdentifier] | None): Nested scorers a
+                composite wraps, promoted to ``ScorerIdentifier.sub_scorers``.
 
         Returns:
             ComponentIdentifier: The identifier for this scorer.
         """
-        all_params: dict[str, Any] = {
-            "scorer_type": self.scorer_type,
-        }
-        if params:
-            all_params.update(params)
-
-        return ComponentIdentifier.of(self, params=all_params, children=children)
+        return ScorerIdentifier.of(
+            self,
+            params=params,
+            scorer_type=self.scorer_type,
+            score_aggregator=score_aggregator,
+            prompt_target=prompt_target,
+            sub_scorers=sub_scorers,
+        )
 
     async def score_async(
         self,

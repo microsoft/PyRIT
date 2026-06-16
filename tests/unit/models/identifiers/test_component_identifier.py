@@ -1427,6 +1427,42 @@ class TestComponentIdentifierReservedKeyCollision:
             )
 
 
+class TestComponentIdentifierParamsTyping:
+    """Params must be JSON-serializable scalars / nested list / dict containers."""
+
+    def test_accepts_json_scalars_and_nested_containers(self):
+        identifier = ComponentIdentifier(
+            class_name="Foo",
+            class_module="m",
+            params={
+                "s": "text",
+                "i": 3,
+                "f": 1.5,
+                "b": True,
+                "n": None,
+                "lst": [1, "two", [3, 4]],
+                "nested": {"a": {"b": [1, 2]}},
+            },
+        )
+        assert identifier.params["nested"] == {"a": {"b": [1, 2]}}
+
+    def test_tuple_param_coerced_to_list(self):
+        """Tuples coerce to lists (JSON has no tuple), keeping the hash stable."""
+        identifier = ComponentIdentifier(class_name="Foo", class_module="m", params={"t": (1, 2, 3)})
+        assert identifier.params["t"] == [1, 2, 3]
+        assert isinstance(identifier.params["t"], list)
+        list_form = ComponentIdentifier(class_name="Foo", class_module="m", params={"t": [1, 2, 3]})
+        assert identifier.hash == list_form.hash
+
+    def test_non_json_object_value_rejected(self):
+        with pytest.raises(ValidationError):
+            ComponentIdentifier(class_name="Foo", class_module="m", params={"bad": object()})
+
+    def test_non_json_nested_value_rejected(self):
+        with pytest.raises(ValidationError):
+            ComponentIdentifier(class_name="Foo", class_module="m", params={"bad": [1, object()]})
+
+
 class TestComponentIdentifierDeprecationWarnings:
     def test_to_dict_warns(self):
         ident = ComponentIdentifier(class_name="Foo", class_module="m", params={"a": 1})

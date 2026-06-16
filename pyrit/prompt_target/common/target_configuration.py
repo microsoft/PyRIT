@@ -3,7 +3,6 @@
 
 import logging
 from collections.abc import Mapping
-from dataclasses import fields
 from typing import Any
 
 from pyrit.message_normalizer import MessageListNormalizer
@@ -177,7 +176,7 @@ class TargetConfiguration:
         Project a ``TargetCapabilities`` instance into a deterministic dict
         suitable for inclusion in a ``ComponentIdentifier``.
 
-        Fields are discovered dynamically via ``dataclasses.fields`` so new
+        Fields are discovered dynamically via the pydantic model fields so new
         capability fields are picked up automatically. Set-valued fields (e.g.,
         the modality frozensets) are detected by type and normalized to sorted
         lists of sorted lists; all other fields are passed through as-is.
@@ -189,15 +188,15 @@ class TargetConfiguration:
             dict[str, Any]: Field-name to serialized-value mapping.
         """
         params: dict[str, Any] = {}
-        for dataclass_field in fields(capabilities):
-            value = getattr(capabilities, dataclass_field.name)
+        for field_name in type(capabilities).model_fields:
+            value = getattr(capabilities, field_name)
             # Normalize set-valued fields (e.g., modality frozensets) to a
             # deterministic representation. Handles both frozenset[frozenset[...]]
             # (modality combinations) and plain frozensets.
             if isinstance(value, (frozenset, set)):
-                params[dataclass_field.name] = sorted(
+                params[field_name] = sorted(
                     sorted(item) if isinstance(item, (frozenset, set)) else item for item in value
                 )
             else:
-                params[dataclass_field.name] = value
+                params[field_name] = value
         return params

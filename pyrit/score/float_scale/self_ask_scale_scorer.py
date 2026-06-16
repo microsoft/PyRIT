@@ -100,9 +100,7 @@ class SelfAskScaleScorer(FloatScaleScorer):
                 "user_prompt_template": "objective: {objective}\nresponse: {response}",
                 "response_json_schema": self._response_json_schema,
             },
-            children={
-                "prompt_target": self._prompt_target.get_identifier(),
-            },
+            prompt_target=self._prompt_target.get_identifier(),
         )
 
     async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:

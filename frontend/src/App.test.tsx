@@ -9,6 +9,40 @@ import { attacksApi } from "./services/api";
 
 const mockGetActiveAccount = jest.fn();
 
+// Mock react-joyride to prevent the guided tour from interfering with App tests.
+// The Joyride component is rendered as a no-op div, avoiding uncontrolled state
+// updates from the tour's auto-start logic.
+jest.mock("react-joyride", () => ({
+  __esModule: true,
+  default: () => <div data-testid="joyride-mock" />,
+  Joyride: () => <div data-testid="joyride-mock" />,
+  ACTIONS: { NEXT: "next", PREV: "prev", CLOSE: "close" },
+  LIFECYCLE: { COMPLETE: "complete", READY: "ready" },
+  STATUS: { RUNNING: "running", FINISHED: "finished", SKIPPED: "skipped" },
+}));
+
+// Mock useTour to prevent the auto-start tour from triggering state updates
+// that race with async label initialization.
+jest.mock("./hooks/useTour", () => ({
+  useTour: () => ({
+    startTour: jest.fn(),
+    hasCompletedTour: true,
+    tourProps: {
+      steps: [],
+      run: false,
+      stepIndex: 0,
+      onEvent: jest.fn(),
+      continuous: true,
+      showSkipButton: true,
+      spotlightClicks: false,
+      tooltipComponent: () => null,
+      floatingOptions: { hideArrow: true },
+      options: { closeButtonAction: "skip", overlayClickAction: false },
+      locale: { back: "Back", close: "Close", last: "Let's go!", next: "Next", skip: "Skip tour" },
+    },
+  }),
+}));
+
 // Mock MSAL — App uses useMsal() to wire the instance into the API client
 jest.mock("@azure/msal-react", () => ({
   useMsal: () => ({ instance: { getActiveAccount: mockGetActiveAccount, getAllAccounts: () => [] } }),

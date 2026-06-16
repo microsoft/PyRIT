@@ -131,7 +131,11 @@ def _register_mock_factory(*, name: str, tags: list[str] | None = None, seed_tec
     factory.uses_adversarial = True
     factory.strategy_tags = tags if tags is not None else ["core", "light"]
     factory.seed_technique = seed_technique
-    factory.create.return_value = MagicMock(name="AttackTechnique")
+    technique_instance = MagicMock(name="AttackTechnique")
+    technique_instance.get_identifier.return_value = ComponentIdentifier(
+        class_name="MockTechnique", class_module="pyrit.test"
+    )
+    factory.create.return_value = technique_instance
     factory.attack_class = MagicMock(__name__=name)
     AttackTechniqueRegistry.get_registry_singleton().register_from_factories([factory])
     return factory
