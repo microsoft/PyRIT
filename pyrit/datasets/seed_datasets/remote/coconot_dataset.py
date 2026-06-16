@@ -3,7 +3,7 @@
 
 import logging
 from enum import Enum
-from typing import TYPE_CHECKING, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from typing_extensions import override
 
@@ -177,7 +177,7 @@ class _CoCoNotBaseDataset(_RemoteDatasetLoader):
         logger.info(f"Successfully loaded {len(seeds)} objectives from CoCoNot ({self.dataset_name})")
         return SeedDataset(seeds=seeds, dataset_name=self.dataset_name)
 
-    def _row_to_seed(self, *, row: dict, split: str, source_url: str) -> SeedObjective:
+    def _row_to_seed(self, *, row: dict[str, Any], split: str, source_url: str) -> SeedObjective:
         """
         Convert one HF row into a SeedObjective with full per-row metadata.
 

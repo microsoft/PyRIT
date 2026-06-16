@@ -7,7 +7,7 @@ from enum import Enum
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import SeedDataset, SeedObjective
+from pyrit.models import SeedDataset, SeedObjective, SeedUnion
 
 logger = logging.getLogger(__name__)
 
@@ -135,7 +135,7 @@ class _JailbreakVRedteam2KDataset(_RemoteDatasetLoader):
                 else [self._normalize_policy(cat.value) for cat in self.filter_categories]
             )
 
-            seeds: list[SeedObjective] = []
+            seeds: list[SeedUnion] = []
 
             for item in data:
                 raw_policy = item.get("policy", "")

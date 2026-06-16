@@ -8,7 +8,7 @@ from typing import Any
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import Modality, SeedDataset, SeedPrompt
+from pyrit.models import Modality, SeedDataset, SeedPrompt, SeedUnion
 
 logger = logging.getLogger(__name__)
 
@@ -125,7 +125,7 @@ class _ToxicChatDataset(_RemoteDatasetLoader):
         source_url = f"https://huggingface.co/datasets/{self.HF_DATASET_NAME}"
         groups = ["UC San Diego"]
 
-        seed_prompts: list[SeedPrompt] = []
+        seed_prompts: list[SeedUnion] = []
         for item in data:
             user_input = item["user_input"]
             harm_categories = self._extract_harm_categories(item)

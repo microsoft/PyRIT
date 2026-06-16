@@ -8,7 +8,7 @@ from typing import Any, cast
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import SeedDataset, SeedPrompt
+from pyrit.models import SeedDataset, SeedPrompt, SeedUnion
 
 logger = logging.getLogger(__name__)
 
@@ -224,7 +224,7 @@ class _DecodingTrustToxicityDataset(_RemoteDatasetLoader):
         logger.info(f"Loaded {len(seed_prompts)} prompts from DecodingTrust Toxicity")
         return SeedDataset(seeds=seed_prompts, dataset_name=self.dataset_name)
 
-    def _records_to_seed_prompts(self, *, records: list[tuple[str, dict[str, Any]]]) -> list[SeedPrompt]:
+    def _records_to_seed_prompts(self, *, records: list[tuple[str, dict[str, Any]]]) -> list[SeedUnion]:
         """
         Convert raw JSONL records into SeedPrompt instances.
 
@@ -239,7 +239,7 @@ class _DecodingTrustToxicityDataset(_RemoteDatasetLoader):
         Raises:
             ValueError: If any record is not a dict (i.e. the source is malformed).
         """
-        seed_prompts: list[SeedPrompt] = []
+        seed_prompts: list[SeedUnion] = []
         for source_url, item in records:
             if not isinstance(item, dict):
                 raise ValueError(

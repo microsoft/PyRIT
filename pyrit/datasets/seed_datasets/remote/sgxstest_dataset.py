@@ -9,7 +9,7 @@ from enum import Enum
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import Modality, SeedDataset, SeedObjective
+from pyrit.models import Modality, SeedDataset, SeedObjective, SeedUnion
 
 logger = logging.getLogger(__name__)
 
@@ -158,7 +158,7 @@ class _SGXSTestDataset(_RemoteDatasetLoader):
         source_url = f"https://huggingface.co/datasets/{self.HF_DATASET_NAME}"
         groups = ["Walled AI", "DeCLaRe Lab, Singapore University of Technology and Design"]
 
-        seed_objectives = [
+        seed_objectives: list[SeedUnion] = [
             SeedObjective(
                 value=item["prompt"],
                 dataset_name=self.dataset_name,
