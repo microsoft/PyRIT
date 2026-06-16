@@ -11,6 +11,7 @@ from pyrit.common.utils import to_sha256
 from pyrit.memory import MemoryInterface
 from pyrit.memory.memory_models import AttackResultEntry
 from pyrit.models import (
+    AtomicAttackIdentifier,
     AttackOutcome,
     AttackResult,
     ComponentIdentifier,
@@ -20,7 +21,6 @@ from pyrit.models import (
     IdentifierType,
     MessagePiece,
     Score,
-    build_atomic_attack_identifier,
 )
 
 if TYPE_CHECKING:
@@ -478,7 +478,7 @@ def test_attack_result_all_outcomes(sqlite_instance: MemoryInterface):
         attack_result = AttackResult(
             conversation_id=f"conv_{i}",
             objective=f"Test objective {i}",
-            atomic_attack_identifier=build_atomic_attack_identifier(
+            atomic_attack_identifier=AtomicAttackIdentifier.build(
                 attack_identifier=ComponentIdentifier(class_name=f"TestAttack{i}", class_module="test.module"),
             ),
             executed_turns=i + 1,
@@ -1236,7 +1236,7 @@ def _make_attack_result_with_identifier(
     return AttackResult(
         conversation_id=conversation_id,
         objective=f"Objective for {conversation_id}",
-        atomic_attack_identifier=build_atomic_attack_identifier(
+        atomic_attack_identifier=AtomicAttackIdentifier.build(
             attack_identifier=ComponentIdentifier(
                 class_name=class_name,
                 class_module="pyrit.attacks",
@@ -1314,7 +1314,7 @@ def _eval_hash_for(class_name: str) -> str:
     from pyrit.models.identifiers.evaluation_identifier import AtomicAttackEvaluationIdentifier
 
     return AtomicAttackEvaluationIdentifier(
-        build_atomic_attack_identifier(
+        AtomicAttackIdentifier.build(
             attack_identifier=ComponentIdentifier(
                 class_name=class_name,
                 class_module="pyrit.attacks",

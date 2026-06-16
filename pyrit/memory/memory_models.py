@@ -384,7 +384,7 @@ class ConversationEntry(Base):
     __tablename__ = "Conversations"
     __table_args__ = {"extend_existing": True}
 
-    conversation_id = mapped_column(String, primary_key=True, nullable=False)
+    conversation_id = mapped_column(String(36), primary_key=True, nullable=False)
     target_identifier: Mapped[dict[str, str] | None] = mapped_column(JSON, nullable=True)
 
     # Version of PyRIT used when this entry was created. Nullable for backwards

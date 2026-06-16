@@ -3,16 +3,17 @@
 
 """
 Converter mappers – domain → DTO translation for converter-related models.
+
+Identity vs. presentation:
+``ConverterIdentifier`` is the typed, lossless
+*identity* projection of a converter's ``ComponentIdentifier``;
+``ConverterInstance`` is the backend *presentation* view (adds ``converter_id``
+binding, ``display_name``, and ``sub_converter_ids``).
 """
 
-from pyrit.backend.models.converters import ConverterInstance
+from pyrit.backend.models import ConverterInstance
+from pyrit.models import ConverterIdentifier
 from pyrit.prompt_converter import PromptConverter
-
-# Base keys from PromptConverter._create_identifier that are NOT converter-specific
-_BASE_CONVERTER_PARAM_KEYS = {
-    "supported_input_types",
-    "supported_output_types",
-}
 
 
 def converter_object_to_instance(
@@ -35,17 +36,19 @@ def converter_object_to_instance(
     Returns:
         ConverterInstance DTO with metadata derived from the object.
     """
-    identifier = converter_obj.get_identifier()
+    converter_identifier = ConverterIdentifier.from_component_identifier(converter_obj.get_identifier())
 
-    supported_input = identifier.params.get("supported_input_types")
-    supported_output = identifier.params.get("supported_output_types")
+    supported_input = converter_identifier.supported_input_types
+    supported_output = converter_identifier.supported_output_types
 
-    # Extract converter-specific params by filtering out base keys
-    converter_specific = {k: v for k, v in identifier.params.items() if k not in _BASE_CONVERTER_PARAM_KEYS} or None
+    # supported_input/output_types are promoted to typed fields and mirrored into
+    # params; strip them so only converter-specific params remain.
+    promoted_param_names = set(ConverterIdentifier._promoted_param_fields())
+    converter_specific = {k: v for k, v in converter_identifier.params.items() if k not in promoted_param_names} or None
 
     return ConverterInstance(
         converter_id=converter_id,
-        converter_type=identifier.class_name,
+        converter_type=converter_identifier.class_name,
         display_name=None,
         supported_input_types=list(supported_input) if supported_input else [],
         supported_output_types=list(supported_output) if supported_output else [],

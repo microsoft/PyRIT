@@ -557,7 +557,7 @@ async def test_no_warning_when_message_count_unchanged():
 
 
 # ---------------------------------------------------------------------------
-# _create_identifier — target configuration in the identifier
+# _create_identifier — capabilities are NOT part of the identifier
 # ---------------------------------------------------------------------------
 
 
@@ -581,7 +581,7 @@ def _make_identifier_target(
 
 
 @pytest.mark.usefixtures("patch_central_database")
-def test_identifier_includes_capability_params():
+def test_identifier_excludes_capability_params():
     target = _make_identifier_target(
         capabilities=TargetCapabilities(
             supports_multi_turn=True,
@@ -594,36 +594,25 @@ def test_identifier_includes_capability_params():
     )
 
     params = target.get_identifier().params
-    target_config = params["target_configuration"]
-    capabilities = target_config["capabilities"]
 
-    # Config-derived fields are nested under ``target_configuration``, not
-    # spread at the top level — guards against accidental re-flattening.
+    # Capabilities can change with deployment configuration, so they are
+    # deliberately not part of a target's identity.
+    assert "target_configuration" not in params
     assert "supports_multi_turn" not in params
-    assert set(target_config.keys()) == {"capabilities", "capability_policy", "normalization_pipeline"}
-
-    assert capabilities["supports_multi_turn"] is True
-    assert capabilities["supports_multi_message_pieces"] is True
-    assert capabilities["supports_json_schema"] is True
-    assert capabilities["supports_json_output"] is True
-    assert capabilities["supports_editable_history"] is False
-    assert capabilities["supports_system_prompt"] is True
-    assert capabilities["input_modalities"] == [["text"]]
-    assert capabilities["output_modalities"] == [["text"]]
-    assert isinstance(target_config["capability_policy"], dict)
-    assert isinstance(target_config["normalization_pipeline"], list)
 
 
 @pytest.mark.usefixtures("patch_central_database")
-def test_identifier_differs_when_capabilities_differ():
+def test_identifier_same_when_capabilities_differ():
     a = _make_identifier_target(capabilities=TargetCapabilities(supports_json_schema=False))
     b = _make_identifier_target(capabilities=TargetCapabilities(supports_json_schema=True))
 
-    assert a.get_identifier().hash != b.get_identifier().hash
+    # Capabilities are not part of identity, so differing capabilities alone
+    # must not change the identifier hash.
+    assert a.get_identifier().hash == b.get_identifier().hash
 
 
 @pytest.mark.usefixtures("patch_central_database")
-def test_identifier_differs_when_policy_differs():
+def test_identifier_same_when_policy_differs():
     capabilities = TargetCapabilities(supports_multi_turn=False, supports_system_prompt=False)
     a = _make_identifier_target(
         capabilities=capabilities,
@@ -644,7 +633,8 @@ def test_identifier_differs_when_policy_differs():
         ),
     )
 
-    assert a.get_identifier().hash != b.get_identifier().hash
+    # Handling policy is part of the (non-identity) configuration, not identity.
+    assert a.get_identifier().hash == b.get_identifier().hash
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -663,7 +653,7 @@ def test_identifier_is_deterministic_across_instances():
 
 
 @pytest.mark.usefixtures("patch_central_database")
-def test_identifier_differs_when_normalizer_overrides_differ():
+def test_identifier_same_when_normalizer_overrides_differ():
     from pyrit.message_normalizer import GenericSystemSquashNormalizer, MessageListNormalizer
     from pyrit.models import Message
     from pyrit.prompt_target.common.target_capabilities import CapabilityName
@@ -699,7 +689,8 @@ def test_identifier_differs_when_normalizer_overrides_differ():
         custom_configuration=custom_cfg,
     )
 
-    assert a.get_identifier().hash != b.get_identifier().hash
+    # The resolved normalization pipeline is configuration, not identity.
+    assert a.get_identifier().hash == b.get_identifier().hash
 
 
 def test_apply_capabilities_replaces_capabilities_and_preserves_policy(patch_central_database):

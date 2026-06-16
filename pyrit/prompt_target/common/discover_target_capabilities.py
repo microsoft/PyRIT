@@ -41,7 +41,6 @@ import logging
 import uuid
 from collections.abc import Awaitable, Callable, Iterable, Iterator
 from contextlib import contextmanager
-from dataclasses import replace
 from pathlib import Path
 
 from pyrit.common.path import DATASETS_PATH
@@ -147,8 +146,7 @@ def _permissive_configuration(
     merged_modalities = original.capabilities.input_modalities | _TEXT_MODALITY
     if extra_input_modalities is not None:
         merged_modalities = frozenset(merged_modalities | frozenset(extra_input_modalities))
-    permissive_caps = replace(
-        original.capabilities,
+    permissive_caps = TargetCapabilities(
         supports_multi_turn=True,
         supports_multi_message_pieces=True,
         supports_json_schema=True,
@@ -157,6 +155,7 @@ def _permissive_configuration(
         supports_system_prompt=True,
         supports_streaming_audio=True,
         input_modalities=merged_modalities,
+        output_modalities=original.capabilities.output_modalities,
     )
     # Rebuild a fresh configuration from the instance's native capabilities so
     # probes bypass preflight validation without inheriting ADAPT policy or
