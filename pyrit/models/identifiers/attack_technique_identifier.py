@@ -5,12 +5,15 @@
 
 from __future__ import annotations
 
+from typing import Annotated
+
 from pydantic import Field
 
 from pyrit.models.identifiers.attack_identifier import (  # noqa: TC001
     AttackIdentifier,  # runtime-required by Pydantic field annotations
 )
 from pyrit.models.identifiers.component_identifier import ComponentIdentifier
+from pyrit.models.identifiers.evaluation_markers import Evaluate
 from pyrit.models.identifiers.seed_identifier import (  # noqa: TC001
     SeedIdentifier,  # runtime-required by Pydantic field annotations
 )
@@ -25,6 +28,6 @@ class AttackTechniqueIdentifier(ComponentIdentifier):
     """
 
     #: The attack strategy that defines the technique.
-    attack: AttackIdentifier | None = None
+    attack: Annotated[AttackIdentifier | None, Evaluate.Include()] = None
     #: Optional seeds that specialize the technique.
-    technique_seeds: list[SeedIdentifier] = Field(default_factory=list)
+    technique_seeds: Annotated[list[SeedIdentifier], Evaluate.Include()] = Field(default_factory=list)

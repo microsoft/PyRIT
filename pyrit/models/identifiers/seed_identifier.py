@@ -5,9 +5,10 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Annotated
 
 from pyrit.models.identifiers.component_identifier import ComponentIdentifier
+from pyrit.models.identifiers.evaluation_markers import Evaluate
 from pyrit.models.literals import PromptDataType  # noqa: TC001  (runtime-required by Pydantic field annotations)
 
 if TYPE_CHECKING:
@@ -24,15 +25,15 @@ class SeedIdentifier(ComponentIdentifier):
     """
 
     #: The seed's raw value.
-    value: str | None = None
+    value: Annotated[str | None, Evaluate.Include()] = None
     #: SHA256 of the seed value.
-    value_sha256: str | None = None
+    value_sha256: Annotated[str | None, Evaluate.Include()] = None
     #: The seed's data type (e.g. ``"text"``, ``"image_path"``).
-    data_type: PromptDataType | None = None
+    data_type: Annotated[PromptDataType | None, Evaluate.Include()] = None
     #: Name of the dataset the seed came from.
-    dataset_name: str | None = None
+    dataset_name: Annotated[str | None, Evaluate.Include()] = None
     #: Whether the seed represents a general (non-objective-specific) technique.
-    is_general_technique: bool | None = None
+    is_general_technique: Annotated[bool | None, Evaluate.Include()] = None
 
     @classmethod
     def from_seed(cls, seed: Seed) -> SeedIdentifier:

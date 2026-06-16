@@ -186,10 +186,11 @@ class TestEvaluationIdentifier:
         # "endpoint" is operational, so eval hash should differ from full component hash
         assert identity.eval_hash != cid.hash
 
-    def test_cannot_instantiate_abc_directly(self):
-        """Test that EvaluationIdentifier cannot be instantiated without ClassVars."""
-        with pytest.raises(AttributeError):
-            EvaluationIdentifier(ComponentIdentifier(class_name="X", class_module="m"))  # type: ignore[abstract]
+    def test_base_with_no_config_is_neutral_passthrough(self):
+        """With no rules/own_rule/unwrap configured, the eval hash equals the identity hash."""
+        cid = ComponentIdentifier(class_name="X", class_module="m", params={"endpoint": "https://a.com"})
+        identity = EvaluationIdentifier(cid)
+        assert identity.eval_hash == cid.hash
 
     def test_custom_classvars_produce_expected_hash(self):
         """Test that a concrete subclass with custom ClassVars produces the correct eval hash."""
@@ -866,3 +867,124 @@ class TestObjectiveTargetEvaluationIdentifier:
         ).with_eval_hash(stored)
 
         assert ObjectiveTargetEvaluationIdentifier(cid).eval_hash == stored
+
+
+# ---------------------------------------------------------------------------
+# Eval-config derivation from field markers
+# ---------------------------------------------------------------------------
+
+
+class TestDeriveEvalConfig:
+    """Tests that the engine rules are correctly derived from the typed identifier markers."""
+
+    def test_target_root_projection_and_unwrap(self):
+        """TargetIdentifier root yields the behavioral own_rule and a root unwrap slot."""
+        from pyrit.models.identifiers import TargetIdentifier, derive_eval_config
+
+        child_rules, own_rule, root_unwrap = derive_eval_config(TargetIdentifier)
+
+        assert root_unwrap == "targets"
+        assert own_rule is not None
+        assert own_rule.included_params == frozenset({"underlying_model_name", "temperature", "top_p"})
+        assert own_rule.param_fallbacks == {"underlying_model_name": "model_name"}
+        # The wrapper passthrough slot is also surfaced as a child rule.
+        assert child_rules["targets"].inner_child_name == "targets"
+
+    def test_scorer_root_has_no_own_rule(self):
+        """ScorerIdentifier has no excluded params, so its root needs no own_rule."""
+        from pyrit.models.identifiers import ScorerIdentifier, derive_eval_config
+
+        child_rules, own_rule, root_unwrap = derive_eval_config(ScorerIdentifier)
+
+        assert own_rule is None
+        assert root_unwrap is None
+        assert child_rules["prompt_target"].included_params == frozenset(
+            {"underlying_model_name", "temperature", "top_p"}
+        )
+
+    def test_objective_target_slot_restricted_to_temperature(self):
+        """AttackIdentifier.objective_target restricts the target subtree to temperature."""
+        from pyrit.models.identifiers import AtomicAttackIdentifier, derive_eval_config
+
+        child_rules, _, _ = derive_eval_config(AtomicAttackIdentifier)
+
+        assert child_rules["objective_target"].included_params == frozenset({"temperature"})
+        assert child_rules["objective_target"].inner_child_name == "targets"
+
+    def test_excluded_children_not_listed_with_subtree(self):
+        """Excluded slots get an exclude rule; neutral (default-include) slots are omitted."""
+        from pyrit.models.identifiers import AtomicAttackIdentifier, derive_eval_config
+
+        child_rules, _, _ = derive_eval_config(AtomicAttackIdentifier)
+
+        assert child_rules["objective_scorer"].exclude is True
+        assert child_rules["seed_identifiers"].exclude is True
+        # attack_technique / technique_seeds / request_converters are plain includes → omitted.
+        assert "attack_technique" not in child_rules
+        assert "request_converters" not in child_rules
+
+
+class TestConverterTargetRestriction:
+    """Intended change #1: a converter's LLM target is projected to behavioral params only."""
+
+    def test_converter_target_endpoint_does_not_affect_attack_eval_hash(self):
+        """Two attacks whose converter targets differ only by endpoint share an eval hash."""
+        from pyrit.models.identifiers import AtomicAttackIdentifier
+        from pyrit.models.identifiers.evaluation_identifier import AtomicAttackEvaluationIdentifier
+
+        def _attack_with_converter_endpoint(endpoint: str) -> ComponentIdentifier:
+            converter_target = ComponentIdentifier(
+                class_name="OpenAIChatTarget",
+                class_module="m",
+                params={"underlying_model_name": "gpt-4o", "endpoint": endpoint},
+            )
+            converter = ComponentIdentifier(
+                class_name="LLMGenericTextConverter",
+                class_module="m",
+                children={"converter_target": converter_target},
+            )
+            attack = ComponentIdentifier(
+                class_name="PromptSendingAttack",
+                class_module="m",
+                children={"request_converters": [converter]},
+            )
+            return AtomicAttackIdentifier.build(attack_identifier=attack)
+
+        a = _attack_with_converter_endpoint("https://a.com")
+        b = _attack_with_converter_endpoint("https://b.com")
+
+        assert AtomicAttackEvaluationIdentifier(a).eval_hash == AtomicAttackEvaluationIdentifier(b).eval_hash
+        # Identity hash stays distinct — markers affect only the eval hash.
+        assert a.hash != b.hash
+
+
+class TestObjectiveTargetRootUnwrap:
+    """Intended change #2: the standalone ObjectiveTarget root unwraps wrapper targets."""
+
+    def test_wrapper_root_eval_hash_matches_bare_inner(self):
+        """RoundRobinTarget(gpt-4o) eval-hashes the same as bare gpt-4o as an objective target."""
+        from pyrit.models.identifiers.evaluation_identifier import ObjectiveTargetEvaluationIdentifier
+
+        bare = ComponentIdentifier(
+            class_name="OpenAIChatTarget",
+            class_module="pyrit.prompt_target.openai.openai_chat_target",
+            params={"underlying_model_name": "gpt-4o", "temperature": 0.7, "endpoint": "https://a.com"},
+        )
+        inner = ComponentIdentifier(
+            class_name="OpenAIChatTarget",
+            class_module="pyrit.prompt_target.openai.openai_chat_target",
+            params={"underlying_model_name": "gpt-4o", "temperature": 0.7, "endpoint": "https://a.com"},
+        )
+        wrapper = ComponentIdentifier(
+            class_name="RoundRobinTarget",
+            class_module="pyrit.prompt_target.round_robin_target",
+            params={"weights": [1]},
+            children={"targets": [inner]},
+        )
+
+        eval_bare = ObjectiveTargetEvaluationIdentifier(bare).eval_hash
+        eval_wrapper = ObjectiveTargetEvaluationIdentifier(wrapper).eval_hash
+
+        assert eval_bare == eval_wrapper
+        # Identity hash stays distinct — the wrapper is not the same component.
+        assert bare.hash != wrapper.hash
