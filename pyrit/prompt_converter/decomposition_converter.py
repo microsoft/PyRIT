@@ -36,15 +36,18 @@ _DECOMPOSITION_DIR = pathlib.Path(CONVERTER_SEED_PROMPT_PATH) / "decomposition"
 
 def _tokens(text: str) -> list[str]:
     """
-    Tokenize text into lowercase alphanumeric tokens for the reconstruction-recall check.
+    Tokenize text into lowercase word tokens for the reconstruction-recall check.
+
+    Uses a Unicode-aware ``\\w+`` pattern so the recall invariant works for non-Latin scripts
+    (e.g. Arabic, CJK), not only ASCII.
 
     Args:
         text (str): The text to tokenize.
 
     Returns:
-        list[str]: The lowercase alphanumeric tokens.
+        list[str]: The lowercase word tokens.
     """
-    return re.findall(r"[a-z0-9]+", text.lower())
+    return re.findall(r"\w+", text.lower(), flags=re.UNICODE)
 
 
 def _token_recall(source: list[str], got: list[str]) -> float:

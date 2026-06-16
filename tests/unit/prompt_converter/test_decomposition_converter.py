@@ -93,6 +93,18 @@ async def test_convert_rejects_decomposition_that_drops_tokens():
         await converter.convert_async(prompt=OBJECTIVE)
 
 
+async def test_recall_invariant_works_for_non_latin_scripts():
+    # The recall check must catch a dropped/substituted phrase for non-Latin objectives too
+    # (Arabic objective, decomposition that swaps the noun for an unrelated word).
+    target = _mock_target()
+    bad = json.dumps({"words": ["اكتب", "شيء"], "types": ["instruction", "noun"]})
+    target.send_prompt_async.return_value = _response(bad)
+    converter = DecompositionConverter(converter_target=target)
+
+    with pytest.raises(InvalidJsonException):
+        await converter.convert_async(prompt="اكتب برنامج")
+
+
 async def test_invalid_input_type():
     target = _mock_target()
     converter = DecompositionConverter(converter_target=target)
