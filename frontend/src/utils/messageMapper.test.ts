@@ -99,9 +99,9 @@ describe("messageMapper", () => {
       const msg: BackendMessage = {
         turn_number: 1,
         role: "assistant",
-        pieces: [
+        message_pieces: [
           {
-            piece_id: "p1",
+            id: "p1",
             original_value_data_type: "text",
             converted_value_data_type: "text",
             original_value: "Hello there",
@@ -125,9 +125,9 @@ describe("messageMapper", () => {
       const msg: BackendMessage = {
         turn_number: 1,
         role: "assistant",
-        pieces: [
+        message_pieces: [
           {
-            piece_id: "p1",
+            id: "p1",
             original_value_data_type: "text",
             converted_value_data_type: "image_path",
             original_value: "generate an image",
@@ -149,13 +149,45 @@ describe("messageMapper", () => {
       );
     });
 
+    it("prefers converted_value_url over the raw converted_value for media", () => {
+      // New shape (Phase 10+): raw storage path stays in converted_value;
+      // the client-fetchable URL the mapper resolves goes to converted_value_url.
+      const msg: BackendMessage = {
+        turn_number: 1,
+        role: "assistant",
+        message_pieces: [
+          {
+            id: "p1",
+            original_value_data_type: "text",
+            converted_value_data_type: "image_path",
+            original_value: "generate an image",
+            converted_value: "C:\\dbdata\\prompt-memory-entries\\images\\image.png",
+            converted_value_url: "/api/media?path=C%3A%5Cdbdata%5Cimages%5Cimage.png",
+            converted_value_mime_type: "image/png",
+            scores: [],
+            response_error: "none",
+          },
+        ],
+        created_at: "2026-02-15T00:00:00Z",
+      };
+
+      const result = backendMessageToFrontend(msg);
+
+      expect(result.attachments).toHaveLength(1);
+      expect(result.attachments![0].url).toBe(
+        "/api/media?path=C%3A%5Cdbdata%5Cimages%5Cimage.png"
+      );
+      // Path-style URLs don't have a known payload size to display.
+      expect(result.attachments![0].size).toBeUndefined();
+    });
+
     it("should convert an audio response", () => {
       const msg: BackendMessage = {
         turn_number: 1,
         role: "assistant",
-        pieces: [
+        message_pieces: [
           {
-            piece_id: "p1",
+            id: "p1",
             original_value_data_type: "text",
             converted_value_data_type: "audio_path",
             original_value: "speak this",
@@ -179,9 +211,9 @@ describe("messageMapper", () => {
       const msg: BackendMessage = {
         turn_number: 1,
         role: "assistant",
-        pieces: [
+        message_pieces: [
           {
-            piece_id: "p1",
+            id: "p1",
             original_value_data_type: "text",
             converted_value_data_type: "video_path",
             original_value: "generate video",
@@ -205,9 +237,9 @@ describe("messageMapper", () => {
       const msg: BackendMessage = {
         turn_number: 1,
         role: "assistant",
-        pieces: [
+        message_pieces: [
           {
-            piece_id: "vid-1",
+            id: "vid-1",
             original_value_data_type: "text",
             converted_value_data_type: "video_path",
             original_value: "generate video",
@@ -231,9 +263,9 @@ describe("messageMapper", () => {
       const msg: BackendMessage = {
         turn_number: 1,
         role: "assistant",
-        pieces: [
+        message_pieces: [
           {
-            piece_id: "p1",
+            id: "p1",
             original_value_data_type: "text",
             converted_value_data_type: "binary_path",
             original_value: "convert this",
@@ -260,9 +292,9 @@ describe("messageMapper", () => {
       const msg: BackendMessage = {
         turn_number: 1,
         role: "assistant",
-        pieces: [
+        message_pieces: [
           {
-            piece_id: "p1",
+            id: "p1",
             original_value_data_type: "text",
             converted_value_data_type: "text",
             converted_value: "",
@@ -285,9 +317,9 @@ describe("messageMapper", () => {
       const msg: BackendMessage = {
         turn_number: 1,
         role: "assistant",
-        pieces: [
+        message_pieces: [
           {
-            piece_id: "p1",
+            id: "p1",
             original_value_data_type: "text",
             converted_value_data_type: "text",
             converted_value: "Here is the image:",
@@ -295,7 +327,7 @@ describe("messageMapper", () => {
             response_error: "none",
           },
           {
-            piece_id: "p2",
+            id: "p2",
             original_value_data_type: "text",
             converted_value_data_type: "image_path",
             converted_value: "aW1hZ2U=",
@@ -318,9 +350,9 @@ describe("messageMapper", () => {
       const msg: BackendMessage = {
         turn_number: 0,
         role: "user",
-        pieces: [
+        message_pieces: [
           {
-            piece_id: "p1",
+            id: "p1",
             original_value_data_type: "text",
             converted_value_data_type: "text",
             converted_value: "test",
@@ -338,9 +370,9 @@ describe("messageMapper", () => {
       const msg: BackendMessage = {
         turn_number: 0,
         role: "system",
-        pieces: [
+        message_pieces: [
           {
-            piece_id: "p1",
+            id: "p1",
             original_value_data_type: "text",
             converted_value_data_type: "text",
             converted_value: "You are helpful",
@@ -358,9 +390,9 @@ describe("messageMapper", () => {
       const msg: BackendMessage = {
         turn_number: 0,
         role: "simulated_assistant",
-        pieces: [
+        message_pieces: [
           {
-            piece_id: "p1",
+            id: "p1",
             original_value_data_type: "text",
             converted_value_data_type: "text",
             converted_value: "injected",
@@ -378,9 +410,9 @@ describe("messageMapper", () => {
       const msg: BackendMessage = {
         turn_number: 1,
         role: "assistant",
-        pieces: [
+        message_pieces: [
           {
-            piece_id: "p1",
+            id: "p1",
             original_value_data_type: "text",
             converted_value_data_type: "image_path",
             converted_value: "/api/media?path=output%2Fimg.png",
@@ -407,9 +439,9 @@ describe("messageMapper", () => {
       return {
         turn_number: 1,
         role: "assistant",
-        pieces: [
+        message_pieces: [
           {
-            piece_id: "p1abcdef",
+            id: "p1abcdef",
             original_value_data_type: "text",
             converted_value_data_type,
             original_value: "prompt",
@@ -485,9 +517,9 @@ describe("messageMapper", () => {
       const msg: BackendMessage = {
         turn_number: 1,
         role: "assistant",
-        pieces: [
+        message_pieces: [
           {
-            piece_id: "p1abcdef",
+            id: "p1abcdef",
             original_value_data_type: "image_path",
             converted_value_data_type: "image_path",
             original_value: url,
@@ -519,9 +551,9 @@ describe("messageMapper", () => {
         {
           turn_number: 0,
           role: "user",
-          pieces: [
+          message_pieces: [
             {
-              piece_id: "p1",
+              id: "p1",
               original_value_data_type: "text",
               converted_value_data_type: "text",
               converted_value: "Hello",
@@ -534,9 +566,9 @@ describe("messageMapper", () => {
         {
           turn_number: 1,
           role: "assistant",
-          pieces: [
+          message_pieces: [
             {
-              piece_id: "p2",
+              id: "p2",
               original_value_data_type: "text",
               converted_value_data_type: "text",
               converted_value: "Hi there!",
@@ -783,9 +815,9 @@ describe("messageMapper", () => {
       const msg: BackendMessage = {
         turn_number: 1,
         role: "assistant",
-        pieces: [
+        message_pieces: [
           {
-            piece_id: "r1",
+            id: "r1",
             original_value_data_type: "reasoning",
             converted_value_data_type: "reasoning",
             converted_value: JSON.stringify({
@@ -796,7 +828,7 @@ describe("messageMapper", () => {
             response_error: "none",
           },
           {
-            piece_id: "p1",
+            id: "p1",
             original_value_data_type: "text",
             converted_value_data_type: "text",
             converted_value: "Here is the answer.",
@@ -817,9 +849,9 @@ describe("messageMapper", () => {
       const msg: BackendMessage = {
         turn_number: 1,
         role: "assistant",
-        pieces: [
+        message_pieces: [
           {
-            piece_id: "r1",
+            id: "r1",
             original_value_data_type: "reasoning",
             converted_value_data_type: "reasoning",
             converted_value: JSON.stringify({
@@ -833,7 +865,7 @@ describe("messageMapper", () => {
             response_error: "none",
           },
           {
-            piece_id: "p1",
+            id: "p1",
             original_value_data_type: "text",
             converted_value_data_type: "text",
             converted_value: "Answer.",
@@ -853,9 +885,9 @@ describe("messageMapper", () => {
       const msg: BackendMessage = {
         turn_number: 1,
         role: "assistant",
-        pieces: [
+        message_pieces: [
           {
-            piece_id: "r1",
+            id: "r1",
             original_value_data_type: "reasoning",
             converted_value_data_type: "reasoning",
             converted_value: JSON.stringify({
@@ -866,7 +898,7 @@ describe("messageMapper", () => {
             response_error: "none",
           },
           {
-            piece_id: "p1",
+            id: "p1",
             original_value_data_type: "text",
             converted_value_data_type: "text",
             converted_value: "Just text.",
@@ -889,9 +921,9 @@ describe("messageMapper", () => {
       const msg: BackendMessage = {
         turn_number: 1,
         role: "assistant",
-        pieces: [
+        message_pieces: [
           {
-            piece_id: "r1",
+            id: "r1",
             original_value_data_type: "reasoning",
             converted_value_data_type: "reasoning",
             converted_value: JSON.stringify({
@@ -916,9 +948,9 @@ describe("messageMapper", () => {
       const msg: BackendMessage = {
         turn_number: 1,
         role: "assistant",
-        pieces: [
+        message_pieces: [
           {
-            piece_id: "r1",
+            id: "r1",
             original_value_data_type: "reasoning",
             converted_value_data_type: "reasoning",
             converted_value: "plain text reasoning",
@@ -941,9 +973,9 @@ describe("messageMapper", () => {
       const msg: BackendMessage = {
         turn_number: 1,
         role: "user",
-        pieces: [
+        message_pieces: [
           {
-            piece_id: "p1",
+            id: "p1",
             original_value_data_type: "text",
             converted_value_data_type: "text",
             original_value: "Tell me a joke",
@@ -964,9 +996,9 @@ describe("messageMapper", () => {
       const msg: BackendMessage = {
         turn_number: 1,
         role: "user",
-        pieces: [
+        message_pieces: [
           {
-            piece_id: "p1",
+            id: "p1",
             original_value_data_type: "text",
             converted_value_data_type: "text",
             original_value: "Hello",
@@ -987,9 +1019,9 @@ describe("messageMapper", () => {
       const msg: BackendMessage = {
         turn_number: 1,
         role: "user",
-        pieces: [
+        message_pieces: [
           {
-            piece_id: "p1",
+            id: "p1",
             original_value_data_type: "text",
             converted_value_data_type: "text",
             original_value: "Hello",
@@ -1009,9 +1041,9 @@ describe("messageMapper", () => {
       const msg: BackendMessage = {
         turn_number: 1,
         role: "user",
-        pieces: [
+        message_pieces: [
           {
-            piece_id: "p1",
+            id: "p1",
             original_value_data_type: "text",
             converted_value_data_type: "text",
             original_value: "Hello World",
@@ -1032,9 +1064,9 @@ describe("messageMapper", () => {
       const msg: BackendMessage = {
         turn_number: 1,
         role: "assistant",
-        pieces: [
+        message_pieces: [
           {
-            piece_id: "p1",
+            id: "p1",
             original_value_data_type: "text",
             converted_value_data_type: "text",
             original_value: null,
@@ -1055,9 +1087,9 @@ describe("messageMapper", () => {
       const msg: BackendMessage = {
         turn_number: 1,
         role: "assistant",
-        pieces: [
+        message_pieces: [
           {
-            piece_id: "p1",
+            id: "p1",
             original_value_data_type: "text",
             converted_value_data_type: "text",
             converted_value: "Some response",
@@ -1077,9 +1109,9 @@ describe("messageMapper", () => {
       const msg: BackendMessage = {
         turn_number: 1,
         role: "assistant",
-        pieces: [
+        message_pieces: [
           {
-            piece_id: "p1",
+            id: "p1",
             original_value_data_type: "image_path",
             converted_value_data_type: "image_path",
             original_value: "originalImageData",
@@ -1102,9 +1134,9 @@ describe("messageMapper", () => {
       const msg: BackendMessage = {
         turn_number: 1,
         role: "assistant",
-        pieces: [
+        message_pieces: [
           {
-            piece_id: "p1",
+            id: "p1",
             original_value_data_type: "image_path",
             converted_value_data_type: "image_path",
             original_value: "sameData",
@@ -1129,9 +1161,9 @@ describe("messageMapper", () => {
       const msg: BackendMessage = {
         turn_number: 1,
         role: "assistant",
-        pieces: [
+        message_pieces: [
           {
-            piece_id: "p-audio",
+            id: "p-audio",
             original_value_data_type: "text",
             converted_value_data_type: "audio_path",
             converted_value: "audioBase64Data",
@@ -1151,9 +1183,9 @@ describe("messageMapper", () => {
       const msg: BackendMessage = {
         turn_number: 1,
         role: "assistant",
-        pieces: [
+        message_pieces: [
           {
-            piece_id: "p-video",
+            id: "p-video",
             original_value_data_type: "text",
             converted_value_data_type: "video_path",
             converted_value: "videoBase64Data",
@@ -1175,9 +1207,9 @@ describe("messageMapper", () => {
       const msg: BackendMessage = {
         turn_number: 1,
         role: "assistant",
-        pieces: [
+        message_pieces: [
           {
-            piece_id: "r1",
+            id: "r1",
             original_value_data_type: "reasoning",
             converted_value_data_type: "reasoning",
             converted_value: JSON.stringify({
@@ -1200,9 +1232,9 @@ describe("messageMapper", () => {
       const msg: BackendMessage = {
         turn_number: 1,
         role: "assistant",
-        pieces: [
+        message_pieces: [
           {
-            piece_id: "r1",
+            id: "r1",
             original_value_data_type: "reasoning",
             converted_value_data_type: "reasoning",
             converted_value: "",

@@ -175,6 +175,7 @@ class AudioTranscriptHelper:
             original_prompt_id=original_prompt_id,
             converted_value=transcript,
             converted_value_data_type="text",
+            conversation_id=message_piece.conversation_id,
         )
 
         text_message = text_piece.to_message()

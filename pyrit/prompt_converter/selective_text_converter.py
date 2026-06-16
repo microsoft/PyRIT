@@ -103,9 +103,7 @@ class SelectiveTextConverter(PromptConverter):
                 "start_token": self._start_token,
                 "end_token": self._end_token,
             },
-            children={
-                "sub_converters": [self._converter.get_identifier()],
-            },
+            sub_converters=[self._converter.get_identifier()],
         )
 
     def _validate_converter(

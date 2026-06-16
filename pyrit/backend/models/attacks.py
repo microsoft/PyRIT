@@ -8,141 +8,278 @@ All interactions in the UI are modeled as "attacks" - including manual conversat
 This is the attack-centric API design where every user interaction targets a model.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, computed_field, field_serializer
 
+from pyrit.backend.models._media import build_filename, infer_mime_type
 from pyrit.backend.models.common import PaginationInfo
-from pyrit.models import ChatMessageRole, PromptResponseError
-
-
-class Score(BaseModel):
-    """A score associated with a message piece."""
-
-    score_id: str = Field(..., description="Unique score identifier")
-    scorer_type: str = Field(..., description="Type of scorer (e.g., 'bias', 'toxicity')")
-    score_type: str = Field(..., description="Score type: 'true_false', 'float_scale', or 'unknown'")
-    score_value: str = Field(
-        ..., description="Score value ('true'/'false' for true_false, '0.0'-'1.0' for float_scale)"
-    )
-    score_category: list[str] | None = Field(None, description="Harm categories (e.g., ['hate', 'violence'])")
-    score_rationale: str | None = Field(None, description="Explanation for the score")
-    scored_at: datetime = Field(..., description="When the score was generated")
-
-
-class MessagePiece(BaseModel):
-    """
-    A piece of a message (text, image, audio, etc.).
-
-    Supports multimodal content with original/converted values and embedded scores.
-    Media content is base64-encoded since frontend can't access server file paths.
-    """
-
-    piece_id: str = Field(..., description="Unique piece identifier")
-    original_value_data_type: str = Field(
-        default="text", description="Data type of the original value: 'text', 'image', 'audio', etc."
-    )
-    converted_value_data_type: str = Field(
-        default="text", description="Data type of the converted value: 'text', 'image', 'audio', etc."
-    )
-    original_value: str | None = Field(default=None, description="Original value before conversion")
-    original_value_mime_type: str | None = Field(default=None, description="MIME type of original value")
-    converted_value: str = Field(..., description="Converted value (text or base64 for media)")
-    converted_value_mime_type: str | None = Field(default=None, description="MIME type of converted value")
-    scores: list[Score] = Field(default_factory=list, description="Scores embedded in this piece")
-    response_error: PromptResponseError = Field(
-        default="none", description="Error status: none, processing, blocked, empty, unknown"
-    )
-    response_error_description: str | None = Field(
-        default=None, description="Description of the error if response_error is not 'none'"
-    )
-    original_filename: str | None = Field(
-        default=None, description="Original filename extracted from file path or blob URL"
-    )
-    converted_filename: str | None = Field(
-        default=None, description="Converted filename extracted from file path or blob URL"
-    )
-    prompt_metadata: dict[str, Any] | None = Field(
-        default=None, description="Metadata associated with the piece (e.g., video_id for remix mode)"
-    )
-
-
-class Message(BaseModel):
-    """A message within a conversation."""
-
-    turn_number: int = Field(..., description="Turn number in the conversation (1-indexed)")
-    role: ChatMessageRole = Field(..., description="Message role")
-    pieces: list[MessagePiece] = Field(..., description="Message pieces (multimodal support)")
-    created_at: datetime = Field(..., description="Message creation timestamp")
-
-
-# ============================================================================
-# Attack Summary (List View)
-# ============================================================================
+from pyrit.models import (
+    AttackResult,
+    ChatMessageRole,
+    ConversationReference,
+    Message,
+    MessagePiece,
+    Score,
+)
 
 
 class TargetInfo(BaseModel):
-    """Target information extracted from the stored TargetIdentifier."""
+    """Target information extracted from the stored attack-strategy identifier."""
 
     target_type: str = Field(..., description="Target class name (e.g., 'OpenAIChatTarget')")
     endpoint: str | None = Field(None, description="Target endpoint URL")
     model_name: str | None = Field(None, description="Model or deployment name")
 
 
-class RetryEventResponse(BaseModel):
-    """A single retry attempt captured during execution."""
+class ScoreView(Score):
+    """
+    API view of a ``pyrit.models.Score``.
 
-    timestamp: datetime = Field(..., description="When the retry occurred")
-    attempt_number: int = Field(..., ge=1, description="Tenacity attempt number (1-based)")
-    function_name: str = Field(..., description="The retried function name")
-    exception_type: str = Field("", description="Exception class name")
-    exception_message: str = Field("", description="Exception message")
-    component_role: str = Field("", description="Component role from ExecutionContext")
-    component_name: str | None = Field(None, description="Component class name")
-    endpoint: str | None = Field(None, description="Target endpoint URL")
-    elapsed_seconds: float = Field(0.0, ge=0, description="Time since first attempt in seconds")
+    Exposes every canonical score field and adds a flattened ``scorer_type`` so
+    clients don't have to dig into ``scorer_class_identifier``.
+    """
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def scorer_type(self) -> str:
+        """Return the scorer class name, or ``"Unknown"`` when unavailable."""
+        identifier = self.scorer_class_identifier
+        if identifier and identifier.class_name:
+            return identifier.class_name
+        return "Unknown"
+
+    @computed_field(json_schema_extra={"deprecated": True})  # type: ignore[prop-decorator]
+    @property
+    def score_id(self) -> str:
+        """Deprecated alias for ``id``; use ``id`` instead (removed in 0.17.0)."""
+        return str(self.id)
+
+    @computed_field(json_schema_extra={"deprecated": True})  # type: ignore[prop-decorator]
+    @property
+    def scored_at(self) -> datetime | None:
+        """Deprecated alias for ``timestamp``; use ``timestamp`` instead (removed in 0.17.0)."""
+        return self.timestamp
+
+    @classmethod
+    def from_domain(cls, score: Score) -> "ScoreView":
+        """
+        Build a ``ScoreView`` from a domain ``Score`` without re-validating.
+
+        Uses ``model_construct`` to bypass the domain validators (the score is
+        already valid) and copies fields by reference to preserve UUIDs,
+        datetimes, and identifier objects.
+
+        Returns:
+            A ``ScoreView`` mirroring the domain score's fields.
+        """
+        return cls.model_construct(**{name: getattr(score, name) for name in Score.model_fields})
 
 
-class AttackSummary(BaseModel):
-    """Summary view of an attack (for list views, omits full message content)."""
+class MessagePieceView(MessagePiece):
+    """
+    API view of a ``pyrit.models.MessagePiece``.
 
-    attack_result_id: str = Field(..., description="Database-assigned unique ID for this AttackResult")
-    conversation_id: str = Field(..., description="Primary conversation of this attack result")
-    attack_type: str = Field("", description="Attack class name (e.g., 'CrescendoAttack', 'ManualAttack')")
-    attack_specific_params: dict[str, Any] | None = Field(None, description="Additional attack-specific parameters")
-    target: TargetInfo | None = Field(None, description="Target information from the stored identifier")
-    converters: list[str] = Field(
-        default_factory=list, description="Request converter class names applied in this attack"
+    Inherits the canonical piece fields unchanged: ``original_value`` /
+    ``converted_value`` carry the raw stored content the server holds (text, a
+    local file path, a blob URL, or a data URI — whatever the database has).
+
+    Adds presentation-only fields the client needs:
+
+    - ``original_value_url`` / ``converted_value_url`` — client-fetchable URLs
+      populated by the mapper for media pieces (``/api/media?path=...`` for
+      local files; SAS-signed URLs for Azure Blob; pass-through for data URIs
+      and existing http(s) URLs). ``None`` for plain text and empty values.
+    - ``*_mime_type`` / ``*_filename`` — MIME types and download filenames
+      derived from the raw values at map time.
+
+    ``response_error_description`` is an optional error detail that defaults to
+    ``None``; the canonical piece carries no separate description.
+    """
+
+    scores: list[ScoreView] = Field(default_factory=list)
+    original_value_url: str | None = Field(
+        default=None,
+        description=(
+            "Client-fetchable URL for the original media value (e.g. "
+            "/api/media?path=... or a SAS-signed blob URL). None for text pieces."
+        ),
     )
-    objective: str = Field("", description="Natural-language description of the attacker's objective")
-    outcome: Literal["undetermined", "success", "failure", "error"] | None = Field(
-        None, description="Attack outcome (null if not yet determined)"
+    converted_value_url: str | None = Field(
+        default=None,
+        description=(
+            "Client-fetchable URL for the converted media value (e.g. "
+            "/api/media?path=... or a SAS-signed blob URL). None for text pieces."
+        ),
     )
-    outcome_reason: str | None = Field(None, description="Reason for the outcome")
-    last_response: str | None = Field(None, description="Model response from the final turn")
-    last_message_preview: str | None = Field(None, description="Preview of the last message (truncated to ~100 chars)")
-    score_value: str | None = Field(None, description="Score value from the objective scorer")
-    executed_turns: int = Field(0, ge=0, description="Number of turns executed")
-    execution_time_ms: int = Field(0, ge=0, description="Execution time in milliseconds")
-    message_count: int = Field(0, description="Total number of messages in the attack")
-    related_conversation_ids: list[str] = Field(
-        default_factory=list, description="IDs of related conversations within this attack"
+    original_value_mime_type: str | None = Field(default=None, description="MIME type of the original value")
+    converted_value_mime_type: str | None = Field(default=None, description="MIME type of the converted value")
+    original_filename: str | None = Field(default=None, description="Download filename for the original value")
+    converted_filename: str | None = Field(default=None, description="Download filename for the converted value")
+    response_error_description: str | None = Field(
+        default=None, description="Description of the error if response_error is not 'none'"
     )
-    labels: dict[str, str] = Field(default_factory=dict, description="User-defined labels for filtering")
-    created_at: datetime = Field(..., description="Attack creation timestamp")
-    updated_at: datetime = Field(..., description="Last update timestamp")
 
-    # Error information
-    error_message: str | None = Field(None, description="Error message if the attack failed with an exception")
-    error_type: str | None = Field(None, description="Exception class name (e.g., 'RateLimitError')")
-    error_traceback: str | None = Field(None, description="Formatted traceback string")
+    @computed_field(json_schema_extra={"deprecated": True})  # type: ignore[prop-decorator]
+    @property
+    def piece_id(self) -> str:
+        """Deprecated alias for ``id``; use ``id`` instead (removed in 0.17.0)."""
+        return str(self.id)
 
-    # Retry information
-    total_retries: int = Field(0, ge=0, description="Total number of retries during this attack")
-    retry_events: list[RetryEventResponse] | None = Field(
-        None, description="Detailed retry events (omitted in list views unless requested)"
+    @classmethod
+    def from_domain(
+        cls,
+        piece: MessagePiece,
+        *,
+        scores: list[Score] | None = None,
+        original_value_url: str | None = None,
+        converted_value_url: str | None = None,
+    ) -> "MessagePieceView":
+        """
+        Build a ``MessagePieceView`` from a domain piece without re-validating.
+
+        The canonical piece fields (``original_value``, ``converted_value``,
+        sha256s, role, ids, etc.) are copied through unchanged. The optional
+        kwargs are purely additive: ``scores`` is fetched separately from memory
+        (``MessagePiece`` no longer carries scores) and the ``*_value_url`` fields
+        give the client fetchable media URLs.
+
+        Args:
+            piece: The domain message piece.
+            scores: Domain scores attached to this piece, fetched from memory.
+            original_value_url: Client-fetchable URL for ``piece.original_value``
+                when it's media; ``None`` for text.
+            converted_value_url: Client-fetchable URL for ``piece.converted_value``
+                when it's media; ``None`` for text.
+
+        Returns:
+            A ``MessagePieceView`` with derived MIME types, filenames, and views.
+        """
+        data = {name: getattr(piece, name) for name in MessagePiece.model_fields}
+        orig_dtype = piece.original_value_data_type or "text"
+        conv_dtype = piece.converted_value_data_type or "text"
+        data.update(
+            scores=[ScoreView.from_domain(score) for score in (scores or [])],
+            original_value_url=original_value_url,
+            converted_value_url=converted_value_url,
+            original_value_mime_type=infer_mime_type(value=piece.original_value, data_type=orig_dtype),
+            converted_value_mime_type=infer_mime_type(value=piece.converted_value, data_type=conv_dtype),
+            original_filename=build_filename(
+                data_type=orig_dtype, sha256=piece.original_value_sha256, value=piece.original_value
+            ),
+            converted_filename=build_filename(
+                data_type=conv_dtype, sha256=piece.converted_value_sha256, value=piece.converted_value
+            ),
+        )
+        return cls.model_construct(**data)
+
+
+class MessageView(Message):
+    """
+    API view of a ``pyrit.models.Message``.
+
+    Adds turn-level metadata (``turn_number``, ``role``, ``created_at``) derived
+    from the first piece, and narrows ``message_pieces`` to ``MessagePieceView``.
+    """
+
+    message_pieces: list[MessagePieceView] = Field(default_factory=list)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def turn_number(self) -> int:
+        """Return the sequence of the first piece (the conversation turn)."""
+        return self.message_pieces[0].sequence if self.message_pieces else 0
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def role(self) -> ChatMessageRole:
+        """Return the role of the first piece."""
+        return self.message_pieces[0].role if self.message_pieces else "user"
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def created_at(self) -> datetime:
+        """Return the timestamp of the first piece."""
+        return self.message_pieces[0].timestamp if self.message_pieces else datetime.now(timezone.utc)
+
+
+class AttackSummary(AttackResult):
+    """
+    API view of a ``pyrit.models.AttackResult``.
+
+    Inherits every canonical attack-result field (including ``last_response``,
+    ``last_score`` and ``retry_events``) and adds presentation data: computed
+    projections of the strategy identifier plus mapper-populated conversation
+    stats. ``last_response`` / ``last_score`` are narrowed to their view types so
+    their presentation fields serialize.
+    """
+
+    last_response: MessagePieceView | None = None
+    last_score: ScoreView | None = None
+
+    # Mapper-populated presentation fields (need external stats / metadata).
+    message_count: int = Field(default=0, description="Total number of messages in the attack")
+    last_message_preview: str | None = Field(default=None, description="Preview of the last message")
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc), description="Attack creation timestamp"
     )
+    updated_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc), description="Last update timestamp"
+    )
+
+    @field_serializer("related_conversations")
+    def _serialize_related_conversations(self, conversations: set[ConversationReference]) -> list[Any]:
+        """
+        Serialize related conversations in a stable (sorted) order for deterministic output.
+
+        Returns:
+            A list of serialized conversation references ordered by ``conversation_id``.
+        """
+        ordered = sorted(conversations, key=lambda ref: ref.conversation_id)
+        return [ref.model_dump() for ref in ordered]
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def attack_type(self) -> str:
+        """Return the attack strategy class name, or ``"Unknown"``."""
+        identifier = self.get_attack_strategy_identifier()
+        return identifier.class_name if identifier else "Unknown"
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def attack_specific_params(self) -> dict[str, Any] | None:
+        """Return the attack strategy params, or ``None``."""
+        identifier = self.get_attack_strategy_identifier()
+        return (identifier.params or None) if identifier else None
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def target(self) -> TargetInfo | None:
+        """Return the objective target info extracted from the identifier."""
+        identifier = self.get_attack_strategy_identifier()
+        target_id = identifier.get_child("objective_target") if identifier else None
+        if not target_id:
+            return None
+        return TargetInfo(
+            target_type=target_id.class_name,
+            endpoint=target_id.params.get("endpoint") or None,
+            model_name=target_id.params.get("model_name") or None,
+        )
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def converters(self) -> list[str]:
+        """Return the request-converter class names applied in this attack."""
+        identifier = self.get_attack_strategy_identifier()
+        converter_ids = identifier.get_child_list("request_converters") if identifier else []
+        return [c.class_name for c in converter_ids]
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def related_conversation_ids(self) -> list[str]:
+        """Return the IDs of related conversations, sorted for stable output."""
+        return sorted(ref.conversation_id for ref in self.related_conversations)
 
 
 # ============================================================================
@@ -154,7 +291,7 @@ class ConversationMessagesResponse(BaseModel):
     """Response containing all messages for a conversation."""
 
     conversation_id: str = Field(..., description="Conversation identifier")
-    messages: list[Message] = Field(default_factory=list, description="All messages in order")
+    messages: list[MessageView] = Field(default_factory=list, description="All messages in order")
 
 
 # ============================================================================

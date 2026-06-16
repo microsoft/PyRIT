@@ -244,9 +244,7 @@ class SelfAskLikertScorer(FloatScaleScorer):
             params={
                 "system_prompt_template": self._system_prompt,
             },
-            children={
-                "prompt_target": self._prompt_target.get_identifier(),
-            },
+            prompt_target=self._prompt_target.get_identifier(),
         )
 
     def _set_likert_scale_system_prompt(self, likert_scale_path: Path) -> None:
@@ -453,7 +451,6 @@ class SelfAskLikertScorer(FloatScaleScorer):
             message_data_type=message_piece.converted_value_data_type,
             scored_prompt_id=message_piece.id,
             category=self._score_category,
-            attack_identifier=message_piece.attack_identifier,
             objective=objective,
         )
 

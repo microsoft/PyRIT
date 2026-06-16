@@ -83,7 +83,7 @@ class TranslationConverter(LLMGenericTextConverter):
             params={
                 "language": self.language,
             },
-            children={"converter_target": self.converter_target.get_identifier()},
+            converter_target=self.converter_target.get_identifier(),
         )
 
     def _process_response(self, response_text: str) -> str:

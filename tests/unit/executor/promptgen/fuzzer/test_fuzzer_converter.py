@@ -14,7 +14,7 @@ from pyrit.executor.promptgen.fuzzer import (
     FuzzerShortenConverter,
     FuzzerSimilarConverter,
 )
-from pyrit.models import ComponentIdentifier, Message, MessagePiece
+from pyrit.models import Message, MessagePiece
 
 
 @pytest.mark.parametrize(
@@ -89,8 +89,6 @@ async def test_converter_send_prompt_async_bad_json_exception_retries(
                     converted_value=converted_value,
                     original_value_data_type="text",
                     converted_value_data_type="text",
-                    prompt_target_identifier=ComponentIdentifier(class_name="target-identifier", class_module="test"),
-                    attack_identifier=ComponentIdentifier(class_name="test", class_module="test"),
                     labels={"test": "test"},
                 )
             ]

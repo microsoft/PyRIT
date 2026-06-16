@@ -9,12 +9,16 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import Field, model_validator
 from tinytag import TinyTag
 
 from pyrit.common.path import PATHS_DICT
+from pyrit.models.json_schema_definition import (  # noqa: TC001  (runtime-required by Pydantic field annotations)
+    JsonSchemaDefinition,
+    get_common_json_schema,
+)
 from pyrit.models.literals import (  # noqa: TC001  (runtime-required by Pydantic field annotations)
     ChatMessageRole,
     PromptDataType,
@@ -39,6 +43,11 @@ class SeedPrompt(Seed):
     # This field overrides the base default to allow per-prompt data types inferred from the value
     data_type: PromptDataType | None = None
 
+    # Optional JSON schema for constraining the scoring response. When set and the
+    # target supports JSON schemas, it is forwarded so the target can enforce the
+    # response shape; otherwise the normalization pipeline omits it.
+    response_json_schema: JsonSchemaDefinition | None = None
+
     # Role of the prompt in a conversation (e.g., "user", "assistant")
     role: ChatMessageRole | None = None
 
@@ -48,6 +57,49 @@ class SeedPrompt(Seed):
 
     # Parameters that can be used in the prompt template
     parameters: list[str] | None = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _resolve_response_json_schema_name(cls, data: Any) -> Any:
+        """
+        Resolve a ``response_json_schema_name`` init kwarg into ``response_json_schema``.
+
+        Runs in ``mode="before"`` so the name key is popped from the input dict
+        before Pydantic's ``extra="forbid"`` rejects it. The base class sets
+        ``extra="forbid"``, so ``response_json_schema_name`` cannot be a real
+        field — this validator is the only place it is accepted.
+
+        Args:
+            data: Raw input passed to the model constructor. Typically a dict
+                from YAML loading or direct kwargs.
+
+        Returns:
+            The (possibly mutated) input, with ``response_json_schema_name``
+            removed and ``response_json_schema`` populated when applicable.
+
+        Raises:
+            ValueError: If both ``response_json_schema`` and
+                ``response_json_schema_name`` are set, or if the name is not
+                registered in ``COMMON_JSON_SCHEMAS``.
+        """
+        if not isinstance(data, dict):
+            return data
+
+        name = data.pop("response_json_schema_name", None)
+        if name is None:
+            return data
+
+        if data.get("response_json_schema") is not None:
+            raise ValueError(
+                "Set only one of response_json_schema or response_json_schema_name on SeedPrompt; "
+                f"both were provided (name={name!r})."
+            )
+
+        try:
+            data["response_json_schema"] = get_common_json_schema(name)
+        except KeyError as exc:
+            raise ValueError(f"response_json_schema_name {name!r} is not registered in COMMON_JSON_SCHEMAS.") from exc
+        return data
 
     @model_validator(mode="after")
     def _render_and_infer_data_type(self) -> SeedPrompt:

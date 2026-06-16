@@ -24,14 +24,17 @@ from pyrit.exceptions import (
 )
 from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import (
+    JSON_SCHEMA_METADATA_KEY,
     ChatMessageRole,
     ComponentIdentifier,
     Identifiable,
+    JsonSchemaDefinition,
     Message,
     MessagePiece,
     PromptDataType,
     Score,
     ScorerEvaluationIdentifier,
+    ScorerIdentifier,
     ScoreType,
     UnvalidatedScore,
 )
@@ -164,34 +167,43 @@ class Scorer(Identifiable, abc.ABC):
         self,
         *,
         params: dict[str, Any] | None = None,
-        children: dict[str, ComponentIdentifier | list[ComponentIdentifier]] | None = None,
+        score_aggregator: str | None = None,
+        prompt_target: ComponentIdentifier | None = None,
+        sub_scorers: list[ComponentIdentifier] | None = None,
     ) -> ComponentIdentifier:
         """
         Construct the scorer identifier.
 
-        Builds a ComponentIdentifier with the base scorer parameters (scorer_type)
-        and merges in any additional params or children provided by subclasses.
+        Builds a ``ScorerIdentifier`` with the base scorer ``scorer_type`` and
+        the scorer's promoted params/child slots. The promoted fields are exposed
+        as explicit named parameters (mirroring ``ScorerIdentifier``'s fields) so
+        they cannot drift into untyped ``params`` / ``children`` dicts.
 
         Subclasses should call this method in their _build_identifier() implementation
         to set the identifier with their specific parameters.
 
         Args:
             params (dict[str, Any] | None): Additional behavioral parameters from
-                the subclass (e.g., system_prompt_template, score_aggregator). Merged
-                into the base params.
-            children (dict[str, ComponentIdentifier | list[ComponentIdentifier]] | None):
-                Named child component identifiers (e.g., prompt_target, sub_scorers).
+                the subclass (e.g., system_prompt_template, threshold). Merged into
+                the base params.
+            score_aggregator (str | None): Name of the aggregator function that
+                combines sub-scores, promoted to ``ScorerIdentifier.score_aggregator``.
+            prompt_target (ComponentIdentifier | None): The target an LLM-backed
+                scorer calls, promoted to ``ScorerIdentifier.prompt_target``.
+            sub_scorers (list[ComponentIdentifier] | None): Nested scorers a
+                composite wraps, promoted to ``ScorerIdentifier.sub_scorers``.
 
         Returns:
             ComponentIdentifier: The identifier for this scorer.
         """
-        all_params: dict[str, Any] = {
-            "scorer_type": self.scorer_type,
-        }
-        if params:
-            all_params.update(params)
-
-        return ComponentIdentifier.of(self, params=all_params, children=children)
+        return ScorerIdentifier.of(
+            self,
+            params=params,
+            scorer_type=self.scorer_type,
+            score_aggregator=score_aggregator,
+            prompt_target=prompt_target,
+            sub_scorers=sub_scorers,
+        )
 
     async def score_async(
         self,
@@ -349,8 +361,6 @@ class Scorer(Identifiable, abc.ABC):
             labels=piece.labels,
             prompt_metadata=piece.prompt_metadata,
             converter_identifiers=list(piece.converter_identifiers),  # type: ignore[arg-type]
-            prompt_target_identifier=piece.prompt_target_identifier,
-            attack_identifier=piece.attack_identifier,
             response_error="none",
             timestamp=piece.timestamp,
         )
@@ -676,7 +686,7 @@ class Scorer(Identifiable, abc.ABC):
         description_output_key: str = "description",
         metadata_output_key: str = "metadata",
         category_output_key: str = "category",
-        attack_identifier: ComponentIdentifier | None = None,
+        response_json_schema: JsonSchemaDefinition | None = None,
     ) -> UnvalidatedScore:
         """
         Send a request to a target, and take care of retries.
@@ -710,8 +720,10 @@ class Scorer(Identifiable, abc.ABC):
                 Defaults to "metadata".
             category_output_key (str): The key in the JSON response that contains the category.
                 Defaults to "category".
-            attack_identifier (ComponentIdentifier | None): The attack identifier.
-                Defaults to None.
+            response_json_schema (JsonSchemaDefinition | None): An optional JSON schema constraining
+                the scoring response. When provided, it is written to the request metadata; targets
+                that natively support JSON schemas enforce it, while others have it omitted by the
+                normalization pipeline. Defaults to None.
 
         Returns:
             UnvalidatedScore: The score object containing the response from the target LLM.
@@ -727,9 +739,12 @@ class Scorer(Identifiable, abc.ABC):
         prompt_target.set_system_prompt(
             system_prompt=system_prompt,
             conversation_id=conversation_id,
-            attack_identifier=attack_identifier,
         )
-        prompt_metadata: dict[str, str | int] = {"response_format": "json"}
+        prompt_metadata: dict[str, Any] = {"response_format": "json"}
+        if response_json_schema is not None:
+            # Always forward the schema; the target's normalization pipeline omits it
+            # when the target cannot natively enforce a JSON schema.
+            prompt_metadata[JSON_SCHEMA_METADATA_KEY] = response_json_schema
 
         # Build message pieces - prepended text context first (if provided), then the main message being scored
         message_pieces: list[MessagePiece] = []
@@ -743,7 +758,6 @@ class Scorer(Identifiable, abc.ABC):
                     original_value_data_type="text",
                     converted_value_data_type="text",
                     conversation_id=conversation_id,
-                    prompt_target_identifier=prompt_target.get_identifier(),
                     prompt_metadata=prompt_metadata,
                 )
             )
@@ -756,7 +770,6 @@ class Scorer(Identifiable, abc.ABC):
                 original_value_data_type=message_data_type,
                 converted_value_data_type=message_data_type,
                 conversation_id=conversation_id,
-                prompt_target_identifier=prompt_target.get_identifier(),
                 prompt_metadata=prompt_metadata,
             )
         )

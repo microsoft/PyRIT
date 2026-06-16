@@ -190,7 +190,7 @@ class RoundRobinTarget(PromptTarget):
         """
         return self._create_identifier(
             params={"weights": self._weights},
-            children={"targets": [t.get_identifier() for t in self._targets]},
+            targets=[t.get_identifier() for t in self._targets],
         )
 
 

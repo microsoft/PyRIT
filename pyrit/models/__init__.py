@@ -18,7 +18,7 @@ a deprecation shim through ``0.16.0``.
 """
 
 import importlib
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from pyrit.common.deprecation import print_deprecation_message
 from pyrit.models.chat_message import (
@@ -35,21 +35,35 @@ from pyrit.models.identifiers import (
     TARGET_EVAL_PARAM_FALLBACKS,
     TARGET_EVAL_PARAMS,
     AtomicAttackEvaluationIdentifier,
+    AtomicAttackIdentifier,
+    AttackIdentifier,
+    AttackTechniqueIdentifier,
     ChildEvalRule,
     ComponentIdentifier,
+    ConverterIdentifier,
     EvaluationIdentifier,
     Identifiable,
     IdentifierFilter,
     IdentifierType,
     ObjectiveTargetEvaluationIdentifier,
     ScorerEvaluationIdentifier,
-    build_atomic_attack_identifier,
-    build_seed_identifier,
+    ScorerIdentifier,
+    SeedIdentifier,
+    TargetIdentifier,
     class_name_to_snake_case,
     compute_eval_hash,
     config_hash,
     snake_case_to_class_name,
     validate_registry_name,
+)
+from pyrit.models.json_schema_definition import (
+    COMMON_JSON_SCHEMAS,
+    JSON_SCHEMA_METADATA_KEY,
+    SEED_RESPONSE_JSON_SCHEMA_METADATA_KEY,
+    JsonSchemaDefinition,
+    get_common_json_schema,
+    register_common_json_schema,
+    unregister_common_json_schema,
 )
 from pyrit.models.literals import (
     MEDIA_PATH_DATA_TYPES,
@@ -60,6 +74,7 @@ from pyrit.models.literals import (
     SeedType,
 )
 from pyrit.models.messages import (
+    Conversation,
     Message,
     MessagePiece,
     construct_response_from_request,
@@ -73,7 +88,7 @@ from pyrit.models.question_answering import QuestionAnsweringDataset, QuestionAn
 from pyrit.models.results.attack_result import AttackOutcome, AttackResult, AttackResultT
 from pyrit.models.results.strategy_result import StrategyResult, StrategyResultT
 from pyrit.models.retry_event import RetryEvent
-from pyrit.models.scenario_result import ScenarioIdentifier, ScenarioResult
+from pyrit.models.scenario_result import ScenarioIdentifier, ScenarioResult, ScenarioRunState
 from pyrit.models.score import Score, ScoreType, UnvalidatedScore
 
 # Seeds - import from new seeds submodule for forward compatibility
@@ -91,27 +106,32 @@ from pyrit.models.seeds import (
     SeedUnion,
     SimulatedTargetSystemPromptPaths,
 )
+from pyrit.models.target_capabilities import CapabilityName, TargetCapabilities
 
 __all__ = [
     "ALLOWED_CHAT_MESSAGE_ROLES",
     "AllowedCategories",
     "AtomicAttackEvaluationIdentifier",
+    "AtomicAttackIdentifier",
+    "AttackIdentifier",
+    "AttackTechniqueIdentifier",
     "AttackResult",
     "AttackResultT",
     "AttackOutcome",
     "AudioPathDataTypeSerializer",
     "AzureBlobStorageIO",
     "BinaryPathDataTypeSerializer",
-    "build_atomic_attack_identifier",
-    "build_seed_identifier",
     "ChatMessage",
     "ChatMessagesDataset",
     "ChatMessageRole",
     "ChildEvalRule",
     "class_name_to_snake_case",
+    "CapabilityName",
     "ComponentIdentifier",
     "compute_eval_hash",
     "config_hash",
+    "ConverterIdentifier",
+    "Conversation",
     "ConversationReference",
     "ConversationStats",
     "ConversationType",
@@ -135,6 +155,13 @@ __all__ = [
     "IdentifierFilter",
     "IdentifierType",
     "ImagePathDataTypeSerializer",
+    "COMMON_JSON_SCHEMAS",
+    "get_common_json_schema",
+    "register_common_json_schema",
+    "unregister_common_json_schema",
+    "JSON_SCHEMA_METADATA_KEY",
+    "SEED_RESPONSE_JSON_SCHEMA_METADATA_KEY",
+    "JsonSchemaDefinition",
     "MEDIA_PATH_DATA_TYPES",
     "Message",
     "MessagePiece",
@@ -154,6 +181,7 @@ __all__ = [
     "ScorerIdentifier",
     "ScenarioIdentifier",
     "ScenarioResult",
+    "ScenarioRunState",
     "Seed",
     "SeedAttackGroup",
     "SeedAttackTechniqueGroup",
@@ -161,6 +189,7 @@ __all__ = [
     "SeedPrompt",
     "SeedDataset",
     "SeedGroup",
+    "SeedIdentifier",
     "SeedSimulatedConversation",
     "SeedType",
     "SeedUnion",
@@ -172,23 +201,14 @@ __all__ = [
     "StrategyResultT",
     "TARGET_EVAL_PARAM_FALLBACKS",
     "TARGET_EVAL_PARAMS",
+    "TargetCapabilities",
+    "TargetIdentifier",
     "TextDataTypeSerializer",
     "UnvalidatedScore",
     "validate_registry_name",
     "VideoPathDataTypeSerializer",
     "RetryEvent",
 ]
-
-if TYPE_CHECKING:
-    # Type-only alias so static checkers can resolve ``from pyrit.models import ScorerIdentifier``.
-    # At runtime the symbol is served by ``__getattr__`` below so accessing it emits a one-shot
-    # DeprecationWarning per process. Will be removed in 0.16.0.
-    ScorerIdentifier = ComponentIdentifier
-
-# Deprecated rename aliases (pre-#1387 names that were collapsed into ComponentIdentifier).
-_DEPRECATED_RENAME_ALIASES: dict[str, Any] = {
-    "ScorerIdentifier": ComponentIdentifier,
-}
 
 # Names that moved to ``pyrit.memory.storage``. Served lazily via importlib so that
 # importing ``pyrit.models`` stays import-boundary clean and fires no warning until a
@@ -212,16 +232,6 @@ _warned: set[str] = set()
 
 
 def __getattr__(name: str) -> Any:
-    if name in _DEPRECATED_RENAME_ALIASES:
-        target = _DEPRECATED_RENAME_ALIASES[name]
-        if name not in _warned:
-            print_deprecation_message(
-                old_item=f"{__name__}.{name}",
-                new_item=target,
-                removed_in="0.16.0",
-            )
-            _warned.add(name)
-        return target
     if name in _MOVED_TO_MEMORY_STORAGE:
         target_module = _MOVED_TO_MEMORY_STORAGE[name]
         if name not in _warned:

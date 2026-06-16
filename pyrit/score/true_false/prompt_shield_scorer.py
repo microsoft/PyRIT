@@ -56,12 +56,8 @@ class PromptShieldScorer(TrueFalseScorer):
             ComponentIdentifier: The identifier for this scorer.
         """
         return self._create_identifier(
-            params={
-                "score_aggregator": self._score_aggregator.__name__,  # type: ignore[ty:unresolved-attribute]
-            },
-            children={
-                "prompt_target": self._prompt_target.get_identifier(),
-            },
+            score_aggregator=self._score_aggregator.__name__,  # type: ignore[ty:unresolved-attribute]
+            prompt_target=self._prompt_target.get_identifier(),
         )
 
     async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
@@ -76,7 +72,6 @@ class PromptShieldScorer(TrueFalseScorer):
                     original_value=body,
                     prompt_metadata=message_piece.prompt_metadata,
                     conversation_id=conversation_id,
-                    prompt_target_identifier=self._prompt_target.get_identifier(),
                 )
             ]
         )
