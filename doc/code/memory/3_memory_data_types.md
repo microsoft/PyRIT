@@ -166,4 +166,3 @@ What feeds the eval hash is declared **on the strongly-typed identifier fields t
 - `Evaluate.Unwrap()` — mark a wrapper passthrough slot (e.g. `TargetIdentifier.targets`). A multi-target like `RoundRobinTarget` is "looked through" to its inner target, so it eval-hashes the same as the bare inner target.
 
 For example, `TargetIdentifier` excludes `endpoint` but includes `temperature`, and the `ObjectiveTargetEvaluationIdentifier` / `ScorerEvaluationIdentifier` / `AtomicAttackEvaluationIdentifier` subclasses derive their engine rules from these markers (via `derive_eval_config`). Markers affect **only** the eval hash — the identity `hash` always keeps distinct components (e.g. a wrapper vs. its inner target) distinct.
-

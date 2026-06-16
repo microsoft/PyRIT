@@ -4,7 +4,7 @@
 """
 Field-level evaluation markers for strongly-typed identifiers.
 
-These markers are attached to identifier fields via :class:`typing.Annotated`
+These markers are attached to identifier fields via ``typing.Annotated``
 metadata and declare — on the identifier itself — what feeds the *eval hash*
 (behavioral equivalence), as opposed to the full identity hash. The
 ``evaluation_identifier`` module derives the eval engine's per-child rules from
