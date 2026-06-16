@@ -254,13 +254,13 @@ import pathlib
 from pyrit.common.path import CONVERTER_SEED_PROMPT_PATH
 from pyrit.models import SeedPrompt
 from pyrit.prompt_converter import (
+    DecompositionConverter,
     DenylistConverter,
     ImagePromptStyleConverter,
     MaliciousQuestionGeneratorConverter,
     MathPromptConverter,
     NoiseConverter,
     PersuasionConverter,
-    PromptDecompositionConverter,
     RandomTranslationConverter,
     ScientificTranslationConverter,
     TenseConverter,
@@ -308,10 +308,10 @@ print("Tense (future):", await tense_converter.convert_async(prompt=prompt))  # 
 persuasion_converter = PersuasionConverter(converter_target=attack_llm, persuasion_technique="logical_appeal")
 print("Persuasion:", await persuasion_converter.convert_async(prompt=prompt))  # type: ignore
 
-# PromptDecomposition [@li2024drattack] splits the objective into phrases and rebuilds it as a
+# Decomposition [@li2024drattack] splits the objective into phrases and rebuilds it as a
 # Question-A/Question-B reconstruction task that the target reassembles itself
-prompt_decomposition_converter = PromptDecompositionConverter(converter_target=attack_llm)
-print("Prompt Decomposition:", await prompt_decomposition_converter.convert_async(prompt=prompt))  # type: ignore
+decomposition_converter = DecompositionConverter(converter_target=attack_llm)
+print("Decomposition:", await decomposition_converter.convert_async(prompt=prompt))  # type: ignore
 
 # Denylist detection
 denylist_converter = DenylistConverter(converter_target=attack_llm)
