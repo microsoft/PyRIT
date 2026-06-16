@@ -131,7 +131,7 @@ class DecompositionConverter(PromptConverter):
                 "decomposition_prompt": self._decomposition_prompt.value,
                 "reconstruction_prompt": self._reconstruction_prompt.value,
             },
-            children={"converter_target": self._converter_target.get_identifier()},
+            converter_target=self._converter_target.get_identifier(),
         )
 
     async def convert_async(self, *, prompt: str, input_type: PromptDataType = "text") -> ConverterResult:
@@ -218,7 +218,8 @@ class DecompositionConverter(PromptConverter):
         """
         try:
             data = json.loads(remove_markdown_json(raw))
-        except Exception as exc:  # noqa: BLE001 - any parse failure is an invalid-JSON retry signal
+        except (ValueError, TypeError) as exc:
+            # ValueError covers json.JSONDecodeError; both are converted to the retry signal.
             raise InvalidJsonException(message=f"could not parse JSON: {exc}") from exc
 
         if not isinstance(data, dict):
