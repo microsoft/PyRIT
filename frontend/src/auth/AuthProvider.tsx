@@ -52,10 +52,11 @@ interface AuthProviderProps {
 
 /**
  * True for root-relative paths ("/history") that are safe to restore after a
- * login redirect. Rejects protocol-relative ("//evil.com", "/\evil.com") and
- * absolute URLs, which would otherwise turn a tampered MSAL state value into an
- * open redirect. Backslashes are treated as slashes because the URL parser
- * normalizes "\" to "/".
+ * login redirect. Rejects protocol-relative ("//evil.com") and backslash
+ * variants ("/\evil.com", which browsers coerce to "//"), since a tampered MSAL
+ * state value could otherwise become an open redirect to an external origin. The
+ * leading "/\" is rejected explicitly here; the path is never run through a URL
+ * parser.
  */
 function isSafeInternalPath(path: string): boolean {
   return path.startsWith('/') && !path.startsWith('//') && !path.startsWith('/\\')

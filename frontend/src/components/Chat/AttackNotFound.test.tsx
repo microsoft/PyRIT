@@ -41,4 +41,13 @@ describe("AttackNotFound", () => {
     fireEvent.click(screen.getByRole("button", { name: "Back to history" }));
     expect(onBackToHistory).toHaveBeenCalledTimes(1);
   });
+
+  it("shows the error variant with transient-failure copy, not the deleted/not-found wording", () => {
+    renderNotFound({ variant: "error" });
+    expect(screen.getByTestId("attack-load-error")).toBeInTheDocument();
+    expect(screen.queryByTestId("attack-not-found")).not.toBeInTheDocument();
+    expect(screen.getByText(/Could not load attack/)).toBeInTheDocument();
+    expect(screen.getByText(/temporary network or server error/)).toBeInTheDocument();
+    expect(screen.queryByText(/may have been/)).not.toBeInTheDocument();
+  });
 });

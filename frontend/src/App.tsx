@@ -17,6 +17,7 @@ import { filtersFromSearchParams, filtersToSearchParams } from './components/His
 import type { ViewName } from './components/Sidebar/Navigation'
 import type { TargetInstance, TargetInfo } from './types'
 import { attacksApi, versionApi } from './services/api'
+import { toApiError } from './services/errors'
 
 const AUTO_DISMISS_MS = 5_000
 
@@ -37,7 +38,7 @@ function viewFromPath(pathname: string): ViewName {
 }
 
 /** Status of the in-flight attack load for an /attacks/:id route. */
-type AttackLoadStatus = 'loading' | 'success' | 'not-found'
+type AttackLoadStatus = 'loading' | 'success' | 'not-found' | 'error'
 
 /** Attack data named by the URL; `id` marks which attack the data belongs to. */
 interface LoadedAttack {
@@ -203,11 +204,15 @@ function App() {
           status: 'success',
         })
       })
-      .catch(() => {
+      .catch(err => {
         if (cancelled) return
+        // A genuine 404 means the id is wrong/deleted; any other failure
+        // (network, timeout, 5xx) is transient and must not be reported as
+        // "not found", which would wrongly imply the attack does not exist.
+        const isMissing = toApiError(err).status === 404
         setLoadedAttack({
           id: routeAttackId,
-          status: 'not-found',
+          status: isMissing ? 'not-found' : 'error',
           mainConversationId: null,
           labels: null,
           target: null,
@@ -224,7 +229,8 @@ function App() {
   const attackForRoute = loadedAttack && loadedAttack.id === routeAttackId ? loadedAttack : null
   const readyAttack = attackForRoute?.status === 'success' ? attackForRoute : null
   const isAttackNotFound = attackForRoute?.status === 'not-found'
-  const isLoadingAttack = routeAttackId !== null && !readyAttack && !isAttackNotFound
+  const isAttackError = attackForRoute?.status === 'error'
+  const isLoadingAttack = routeAttackId !== null && !readyAttack && !isAttackNotFound && !isAttackError
   const activeConversationId = readyAttack
     ? routeConversationId ?? readyAttack.mainConversationId
     : null
@@ -297,9 +303,10 @@ function App() {
     setIsDarkMode(!isDarkMode)
   }
 
-  const chatElement = isAttackNotFound ? (
+  const chatElement = isAttackNotFound || isAttackError ? (
     <AttackNotFound
       attackId={routeAttackId ?? ''}
+      variant={isAttackError ? 'error' : 'not-found'}
       onStartNew={() => navigate(VIEW_PATHS.chat)}
       onBackToHistory={() => navigate(VIEW_PATHS.history)}
     />

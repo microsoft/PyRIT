@@ -15,6 +15,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from pyrit.backend.main import SPAStaticFiles, app, lifespan, setup_frontend
 from pyrit.setup.configuration_loader import ConfigurationLoader
@@ -194,3 +195,20 @@ class TestSPAStaticFiles:
         resp = spa_client.get("/apikeys")
         assert resp.status_code == 200
         assert "spa-index" in resp.text
+
+    async def test_windows_backslash_api_path_still_404(self, tmp_path: Path) -> None:
+        """Test that a backslash-normalized /api path (as Starlette produces on Windows) stays a real 404.
+
+        On Windows ``StaticFiles`` hands ``get_response`` an ``os.sep``-joined path
+        ("api\\bogus"), so the ``/api`` guard must normalize separators before matching.
+        ``os.sep`` is patched so the Windows branch is exercised on any platform.
+        """
+        (tmp_path / "index.html").write_text("<!doctype html><title>spa-index</title>")
+        spa = SPAStaticFiles(directory=str(tmp_path), html=True)
+        scope = {"type": "http", "method": "GET"}
+
+        with patch("pyrit.backend.main.os.sep", "\\"):
+            with pytest.raises(StarletteHTTPException) as exc_info:
+                await spa.get_response("api\\bogus", scope)
+
+        assert exc_info.value.status_code == 404

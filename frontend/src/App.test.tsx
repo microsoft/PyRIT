@@ -469,8 +469,8 @@ describe("App", () => {
     expect(screen.getByTestId("target-config")).toBeInTheDocument();
   });
 
-  it("shows the not-found UX when an attack fails to load", async () => {
-    mockGetAttack.mockRejectedValue(new Error("Not found"));
+  it("shows the not-found UX when an attack returns 404", async () => {
+    mockGetAttack.mockRejectedValue({ isAxiosError: true, response: { status: 404, data: {} } });
     renderApp();
 
     fireEvent.click(screen.getByTestId("nav-history"));
@@ -481,6 +481,20 @@ describe("App", () => {
     await waitFor(() => expect(mockGetAttack).toHaveBeenCalledWith("ar-attack-1"));
     // The chat window is replaced by an inline "attack not found" message
     await waitFor(() => expect(screen.getByTestId("attack-not-found")).toBeInTheDocument());
+    expect(screen.queryByTestId("chat-window")).not.toBeInTheDocument();
+  });
+
+  it("shows the error UX (not not-found) when an attack load fails with a non-404", async () => {
+    // A 500 / network / timeout is transient and must not claim the attack was deleted.
+    mockGetAttack.mockRejectedValue({ isAxiosError: true, response: { status: 500, data: {} } });
+    renderApp();
+
+    fireEvent.click(screen.getByTestId("nav-history"));
+    fireEvent.click(screen.getByTestId("open-attack"));
+
+    await waitFor(() => expect(mockGetAttack).toHaveBeenCalledWith("ar-attack-1"));
+    await waitFor(() => expect(screen.getByTestId("attack-load-error")).toBeInTheDocument());
+    expect(screen.queryByTestId("attack-not-found")).not.toBeInTheDocument();
     expect(screen.queryByTestId("chat-window")).not.toBeInTheDocument();
   });
 
