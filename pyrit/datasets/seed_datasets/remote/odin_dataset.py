@@ -143,7 +143,7 @@ class _ODINDataset(_RemoteDatasetLoader):
     @override
     def dataset_name(self) -> str:
         """Return the dataset name."""
-        return "odin"
+        return "0din"
 
     def _resolve_api_key(self) -> str:
         """
