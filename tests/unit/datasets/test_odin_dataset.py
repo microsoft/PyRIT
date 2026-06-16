@@ -150,6 +150,14 @@ class TestODINDatasetInit:
         with pytest.raises(ValueError, match="Expected ODINTaxonomyCategory"):
             _ODINDataset(api_key=api_key, categories=["stratagems"])
 
+    def test_init_empty_security_boundaries_raises(self, api_key):
+        with pytest.raises(ValueError, match="`security_boundaries` must be a non-empty list"):
+            _ODINDataset(api_key=api_key, security_boundaries=[])
+
+    def test_init_empty_categories_raises(self, api_key):
+        with pytest.raises(ValueError, match="`categories` must be a non-empty list"):
+            _ODINDataset(api_key=api_key, categories=[])
+
     def test_init_accepts_valid_enums(self, api_key):
         loader = _ODINDataset(
             api_key=api_key,

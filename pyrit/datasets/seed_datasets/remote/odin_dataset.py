@@ -130,7 +130,8 @@ class _ODINDataset(_RemoteDatasetLoader):
                 variants greatly increase the dataset size.
 
         Raises:
-            ValueError: If an invalid severity, security boundary, or category is provided.
+            ValueError: If an invalid severity, security boundary, or category is provided, or
+                if a filter list is provided but empty (pass None to include all).
         """
         self._api_key = api_key
 
@@ -138,9 +139,15 @@ class _ODINDataset(_RemoteDatasetLoader):
             self._validate_enum(severity, ODINSeverity, "severity")
 
         if security_boundaries is not None:
+            if not security_boundaries:
+                raise ValueError(
+                    "`security_boundaries` must be a non-empty list (pass None to include all security boundaries)"
+                )
             self._validate_enums(security_boundaries, ODINSecurityBoundary, "security_boundary")
 
         if categories is not None:
+            if not categories:
+                raise ValueError("`categories` must be a non-empty list (pass None to include all categories)")
             self._validate_enums(categories, ODINTaxonomyCategory, "category")
 
         self._severity = severity
