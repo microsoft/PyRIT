@@ -5,11 +5,12 @@ from __future__ import annotations
 
 import dataclasses
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Optional, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from pyrit.models import Message, SeedAttackGroup, SeedGroup
 
 if TYPE_CHECKING:
+    from pyrit.models import SeedUnion
     from pyrit.prompt_target import PromptTarget
     from pyrit.score import TrueFalseScorer
 
@@ -33,13 +34,17 @@ class AttackParameters:
     objective: str
 
     # Optional message to send to the objective target (overrides objective if provided)
-    next_message: Optional[Message] = None
+    next_message: Message | None = None
 
     # Conversation that is automatically prepended to the target model
-    prepended_conversation: Optional[list[Message]] = None
+    prepended_conversation: list[Message] | None = None
 
     # Additional labels that can be applied to the prompts throughout the attack
-    memory_labels: Optional[dict[str, str]] = field(default_factory=dict)
+    memory_labels: dict[str, str] | None = field(default_factory=dict)
+
+    # Harm categories targeted by this attack, derived from the seed group's
+    # seeds. Stamped onto the produced AttackResult.
+    targeted_harm_categories: list[str] = field(default_factory=list)
 
     def __str__(self) -> str:
         """Return a nicely formatted string representation of the attack parameters."""
@@ -78,8 +83,8 @@ class AttackParameters:
         cls: type[AttackParamsT],
         *,
         seed_group: SeedAttackGroup,
-        adversarial_chat: Optional[PromptTarget] = None,
-        objective_scorer: Optional[TrueFalseScorer] = None,
+        adversarial_chat: PromptTarget | None = None,
+        objective_scorer: TrueFalseScorer | None = None,
         **overrides: Any,
     ) -> AttackParamsT:
         """
@@ -138,6 +143,9 @@ class AttackParameters:
         if "memory_labels" in valid_fields:
             params["memory_labels"] = {}
 
+        if "targeted_harm_categories" in valid_fields:
+            params["targeted_harm_categories"] = list(seed_group.harm_categories)
+
         # Determine which group to use for extracting prepended_conversation/next_message
         extraction_group: SeedGroup = seed_group
 
@@ -151,7 +159,7 @@ class AttackParameters:
             if objective_scorer is None:
                 raise ValueError("objective_scorer is required when seed_group has a simulated conversation config")
 
-            # Generate the simulated conversation - returns List[SeedPrompt]
+            # Generate the simulated conversation - returns list[SeedPrompt]
             simulated_prompts = await generate_simulated_conversation_async(
                 objective=seed_group.objective.value,
                 adversarial_chat=adversarial_chat,
@@ -164,7 +172,7 @@ class AttackParameters:
             )
 
             # Merge simulated prompts with existing static prompts from the seed_group
-            all_prompts = list(seed_group.prompts) + simulated_prompts
+            all_prompts: list[SeedUnion] = [*seed_group.prompts, *simulated_prompts]
 
             # Create a temporary prompts-only SeedGroup for extraction
             # This group contains only prompts (no objective, no simulated config)

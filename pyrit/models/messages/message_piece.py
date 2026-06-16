@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, Literal, Optional
+from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from pydantic import (
@@ -17,7 +17,6 @@ from pydantic import (
 )
 
 from pyrit.common.deprecation import print_deprecation_message
-from pyrit.models.data_type_serializer import data_serializer_factory
 from pyrit.models.literals import (  # noqa: TC001  (runtime-required by Pydantic field annotations)
     ChatMessageRole,
     PromptDataType,
@@ -25,7 +24,6 @@ from pyrit.models.literals import (  # noqa: TC001  (runtime-required by Pydanti
 )
 from pyrit.models.score import (  # noqa: TC001  (runtime-required by Pydantic field annotations)
     ComponentIdentifierField,
-    Score,
 )
 
 if TYPE_CHECKING:
@@ -40,44 +38,12 @@ if TYPE_CHECKING:
 # These can be deleted entirely once their ``removed_in`` releases ship — the
 # Pydantic field definitions and ``extra="forbid"`` config will then reject
 # the kwargs naturally.
-_DEPRECATED_KWARGS: tuple[tuple[str, str], ...] = (
-    ("labels", "0.16.0"),
-    ("scorer_identifier", "0.15.0"),
-    ("scores", "0.15.0"),
-    ("targeted_harm_categories", "0.15.0"),
-)
+_DEPRECATED_KWARGS: tuple[tuple[str, str], ...] = (("labels", "0.16.0"),)
 
 
-# ``ComponentIdentifierField`` (and ``Score``) are imported from ``pyrit.models.score``
-# above. Both round-trip through the flat dict storage shape via their own Pydantic
-# serializers, so no local annotated aliases are needed here.
-
-
-def __getattr__(name: str) -> Any:
-    """
-    Lazily resolve deprecated module-level aliases.
-
-    Args:
-        name: The attribute name being accessed.
-
-    Returns:
-        The resolved alias (currently only ``Originator``).
-
-    Raises:
-        AttributeError: If ``name`` is not a known deprecated alias.
-    """
-    if name == "Originator":
-        print_deprecation_message(
-            old_item="pyrit.models.message_piece.Originator",
-            new_item=(
-                "inline Literal['attack', 'converter', 'undefined', 'scorer'] "
-                "(the type alias is being removed; the originator field itself is "
-                "deprecated and will be removed in 0.15.0)"
-            ),
-            removed_in="0.15.0",
-        )
-        return Literal["attack", "converter", "undefined", "scorer"]
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+# ``ComponentIdentifierField`` is imported from ``pyrit.models.score`` above.
+# It round-trips through the flat dict storage shape via its own Pydantic
+# serializer, so no local annotated alias is needed here.
 
 
 class MessagePiece(BaseModel):
@@ -95,28 +61,22 @@ class MessagePiece(BaseModel):
         validate_assignment=False,
     )
 
-    id: uuid.UUID = Field(default_factory=uuid4)  # noqa: A003
+    id: uuid.UUID = Field(default_factory=uuid4)
     role: ChatMessageRole
-    conversation_id: str = Field(default_factory=lambda: str(uuid4()))
+    conversation_id: str | None = None
     sequence: int = -1
     timestamp: AwareDatetime = Field(default_factory=lambda: datetime.now(tz=timezone.utc))
     original_value: str
     original_value_data_type: PromptDataType = "text"
-    original_value_sha256: Optional[str] = None
+    original_value_sha256: str | None = None
     converted_value: str = ""
     converted_value_data_type: PromptDataType = "text"
-    converted_value_sha256: Optional[str] = None
+    converted_value_sha256: str | None = None
     response_error: PromptResponseError = "none"
-    originator: Literal["attack", "converter", "undefined", "scorer"] = "undefined"
-    original_prompt_id: Optional[uuid.UUID] = None
+    original_prompt_id: uuid.UUID | None = None
     labels: dict[str, Any] = Field(default_factory=dict)
-    targeted_harm_categories: list[str] = Field(default_factory=list)
     prompt_metadata: dict[str, Any] = Field(default_factory=dict)
     converter_identifiers: list[ComponentIdentifierField] = Field(default_factory=list)
-    prompt_target_identifier: Optional[ComponentIdentifierField] = None
-    attack_identifier: Optional[ComponentIdentifierField] = None
-    scorer_identifier: Optional[ComponentIdentifierField] = None
-    scores: list[Score] = Field(default_factory=list)
 
     # When True, the memory layer skips persisting this piece. Used for ephemeral
     # pieces a scorer creates to score arbitrary content; ``exclude=True`` keeps
@@ -133,26 +93,24 @@ class MessagePiece(BaseModel):
         """
         Emit DeprecationWarning for each deprecated kwarg explicitly passed.
 
+        Only a truthy value counts as "passed". An empty/falsy value (e.g.
+        ``labels={}``, the field default) is treated as not supplied, so callers
+        that forward ``labels=<source>.labels`` on the happy path do not trip a
+        spurious warning. This matches the post-construction assignment pattern
+        used elsewhere (``piece.labels = labels`` guarded by ``if labels:``).
+
         Returns:
             The (unchanged) input ``data`` so validation can continue.
         """
         if not isinstance(data, dict):
             return data
         for kwarg, removed_in in _DEPRECATED_KWARGS:
-            if data.get(kwarg) is not None:
+            if data.get(kwarg):
                 print_deprecation_message(
                     old_item=f"MessagePiece(..., {kwarg}=...)",
                     new_item="MessagePiece(...)",
                     removed_in=removed_in,
                 )
-        # ``originator`` is special: only warn when the caller explicitly
-        # opts into a non-default value.
-        if data.get("originator", "undefined") != "undefined":
-            print_deprecation_message(
-                old_item="MessagePiece(..., originator=...)",
-                new_item="MessagePiece(...)",
-                removed_in="0.15.0",
-            )
         return data
 
     @model_validator(mode="before")
@@ -220,7 +178,7 @@ class MessagePiece(BaseModel):
         Copy lineage metadata from ``source`` onto this piece.
 
         Lineage fields are the metadata that tie a piece back to its originating
-        conversation, attack, and target. Mutable containers (``labels``,
+        conversation. Mutable containers (``labels``,
         ``prompt_metadata``) are shallow-copied so that mutations on one piece
         do not affect others.
 
@@ -229,8 +187,6 @@ class MessagePiece(BaseModel):
         """
         self.conversation_id = source.conversation_id
         self.labels = dict(source.labels)
-        self.attack_identifier = source.attack_identifier
-        self.prompt_target_identifier = source.prompt_target_identifier
         self.prompt_metadata = dict(source.prompt_metadata)
 
     def has_error(self) -> bool:
@@ -306,22 +262,19 @@ class MessagePiece(BaseModel):
         """
         Compute SHA256 hash values for original and converted payloads.
 
-        Async because blob payloads may need to be fetched. Must be called
-        explicitly after construction.
+        .. deprecated:: 0.15.0
+            Use ``pyrit.memory.storage.serializers.set_message_piece_sha256_async`` instead.
+            This method will be removed in 0.17.0.
         """
-        original_serializer = data_serializer_factory(
-            category="prompt-memory-entries",
-            data_type=self.original_value_data_type,
-            value=self.original_value,
-        )
-        self.original_value_sha256 = await original_serializer.get_sha256_async()
+        import importlib
 
-        converted_serializer = data_serializer_factory(
-            category="prompt-memory-entries",
-            data_type=self.converted_value_data_type,
-            value=self.converted_value,
+        print_deprecation_message(
+            old_item="pyrit.models.messages.message_piece.MessagePiece.set_sha256_values_async",
+            new_item="pyrit.memory.storage.serializers.set_message_piece_sha256_async",
+            removed_in="0.17.0",
         )
-        self.converted_value_sha256 = await converted_serializer.get_sha256_async()
+        serializers = importlib.import_module("pyrit.memory.storage.serializers")
+        await serializers.set_message_piece_sha256_async(self)
 
 
 def sort_message_pieces(message_pieces: list[MessagePiece]) -> list[MessagePiece]:
@@ -341,4 +294,7 @@ def sort_message_pieces(message_pieces: list[MessagePiece]) -> list[MessagePiece
         convo_id: min(x.timestamp for x in message_pieces if x.conversation_id == convo_id)
         for convo_id in {x.conversation_id for x in message_pieces}
     }
-    return sorted(message_pieces, key=lambda x: (earliest_timestamps[x.conversation_id], x.conversation_id, x.sequence))
+    return sorted(
+        message_pieces,
+        key=lambda x: (earliest_timestamps[x.conversation_id], x.conversation_id or "", x.sequence),
+    )

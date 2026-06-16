@@ -6,7 +6,7 @@ from __future__ import annotations
 import copy
 import uuid
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, Optional, Union
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, ConfigDict, model_validator
 
@@ -195,9 +195,9 @@ class Message(BaseModel):
     def get_pieces_by_type(
         self,
         *,
-        data_type: Optional[PromptDataType] = None,
-        original_value_data_type: Optional[PromptDataType] = None,
-        converted_value_data_type: Optional[PromptDataType] = None,
+        data_type: PromptDataType | None = None,
+        original_value_data_type: PromptDataType | None = None,
+        converted_value_data_type: PromptDataType | None = None,
     ) -> list[MessagePiece]:
         """
         Return all message pieces matching the given data type.
@@ -222,10 +222,10 @@ class Message(BaseModel):
     def get_piece_by_type(
         self,
         *,
-        data_type: Optional[PromptDataType] = None,
-        original_value_data_type: Optional[PromptDataType] = None,
-        converted_value_data_type: Optional[PromptDataType] = None,
-    ) -> Optional[MessagePiece]:
+        data_type: PromptDataType | None = None,
+        original_value_data_type: PromptDataType | None = None,
+        converted_value_data_type: PromptDataType | None = None,
+    ) -> MessagePiece | None:
         """
         Return the first message piece matching the given data type, or None.
 
@@ -358,7 +358,7 @@ class Message(BaseModel):
         *,
         prompt: str,
         role: ChatMessageRole,
-        prompt_metadata: Optional[dict[str, Union[str, int]]] = None,
+        prompt_metadata: dict[str, str | int] | None = None,
     ) -> Message:
         """
         Build a single-piece message from prompt text.
@@ -366,7 +366,7 @@ class Message(BaseModel):
         Args:
             prompt (str): Prompt text.
             role (ChatMessageRole): Role assigned to the message piece.
-            prompt_metadata (Optional[Dict[str, Union[str, int]]]): Optional prompt metadata.
+            prompt_metadata (dict[str, str | int] | None): Optional prompt metadata.
 
         Returns:
             Message: Constructed message instance.

@@ -57,11 +57,11 @@ class ConversationAnalytics:
         Retrieve chat messages that are similar to the given embedding based on cosine similarity.
 
         Args:
-            chat_message_embedding (List[float]): The embedding of the chat message to find similar messages for.
+            chat_message_embedding (list[float]): The embedding of the chat message to find similar messages for.
             threshold (float): The similarity threshold for considering messages as similar. Defaults to 0.8.
 
         Returns:
-            List[ConversationMessageWithSimilarity]: A list of ConversationMessageWithSimilarity objects representing
+            list[ConversationMessageWithSimilarity]: A list of ConversationMessageWithSimilarity objects representing
             the similar chat messages based on embedding similarity.
         """
         all_embdedding_memory = self.memory_interface.get_all_embeddings()

@@ -76,9 +76,9 @@ function makeTextResponse(text: string) {
         {
           turn_number: 1,
           role: "assistant",
-          pieces: [
+          message_pieces: [
             {
-              piece_id: "p-resp",
+              id: "p-resp",
               original_value_data_type: "text",
               converted_value_data_type: "text",
               original_value: text,
@@ -101,9 +101,9 @@ function makeImageResponse() {
         {
           turn_number: 1,
           role: "assistant",
-          pieces: [
+          message_pieces: [
             {
-              piece_id: "p-img",
+              id: "p-img",
               original_value_data_type: "text",
               converted_value_data_type: "image_path",
               original_value: "generated image",
@@ -127,9 +127,9 @@ function makeAudioResponse() {
         {
           turn_number: 1,
           role: "assistant",
-          pieces: [
+          message_pieces: [
             {
-              piece_id: "p-aud",
+              id: "p-aud",
               original_value_data_type: "text",
               converted_value_data_type: "audio_path",
               original_value: "spoken text",
@@ -153,9 +153,9 @@ function makeVideoResponse() {
         {
           turn_number: 1,
           role: "assistant",
-          pieces: [
+          message_pieces: [
             {
-              piece_id: "p-vid",
+              id: "p-vid",
               original_value_data_type: "text",
               converted_value_data_type: "video_path",
               original_value: "generated video",
@@ -179,9 +179,9 @@ function makeMultiModalResponse() {
         {
           turn_number: 1,
           role: "assistant",
-          pieces: [
+          message_pieces: [
             {
-              piece_id: "p-text",
+              id: "p-text",
               original_value_data_type: "text",
               converted_value_data_type: "text",
               original_value: "Here is the result:",
@@ -190,7 +190,7 @@ function makeMultiModalResponse() {
               response_error: "none",
             },
             {
-              piece_id: "p-img2",
+              id: "p-img2",
               original_value_data_type: "text",
               converted_value_data_type: "image_path",
               original_value: "image content",
@@ -214,9 +214,9 @@ function makeErrorResponse(errorType: string, description: string) {
         {
           turn_number: 1,
           role: "assistant",
-          pieces: [
+          message_pieces: [
             {
-              piece_id: "p-err",
+              id: "p-err",
               original_value_data_type: "text",
               converted_value_data_type: "text",
               original_value: "",

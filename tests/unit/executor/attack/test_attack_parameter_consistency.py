@@ -10,7 +10,6 @@ and memory_labels consistently according to the established contracts.
 
 import uuid
 from contextlib import suppress
-from typing import Optional
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -621,7 +620,7 @@ class TestPrependedConversationInMemory:
         conversation_id = call_args.kwargs.get("conversation_id")
 
         memory = CentralMemory.get_memory_instance()
-        conversation = list(memory.get_conversation(conversation_id=conversation_id))
+        conversation = list(memory.get_conversation_messages(conversation_id=conversation_id))
 
         # Should have exactly the prepended messages in memory (mock normalizer doesn't add responses)
         assert len(conversation) == 2, f"Expected exactly 2 prepended messages, got {len(conversation)}"
@@ -654,7 +653,7 @@ class TestPrependedConversationInMemory:
         )
 
         memory = CentralMemory.get_memory_instance()
-        conversation = list(memory.get_conversation(conversation_id=result.conversation_id))
+        conversation = list(memory.get_conversation_messages(conversation_id=result.conversation_id))
 
         # Should have exactly the prepended messages in memory (mock normalizer doesn't add responses)
         assert len(conversation) == 2, f"Expected exactly 2 prepended messages, got {len(conversation)}"
@@ -689,7 +688,7 @@ class TestPrependedConversationInMemory:
         )
 
         memory = CentralMemory.get_memory_instance()
-        conversation = list(memory.get_conversation(conversation_id=result.conversation_id))
+        conversation = list(memory.get_conversation_messages(conversation_id=result.conversation_id))
 
         # Should have exactly the prepended messages in memory (mock normalizer doesn't add responses)
         assert len(conversation) == 2, f"Expected exactly 2 prepended messages, got {len(conversation)}"
@@ -754,7 +753,7 @@ class TestPrependedConversationInMemory:
         )
 
         memory = CentralMemory.get_memory_instance()
-        conversation = list(memory.get_conversation(conversation_id=result.conversation_id))
+        conversation = list(memory.get_conversation_messages(conversation_id=result.conversation_id))
 
         # Should have exactly the prepended messages in memory (mock normalizer doesn't add responses)
         assert len(conversation) == 2, f"Expected exactly 2 prepended messages, got {len(conversation)}"
@@ -896,7 +895,7 @@ def _get_adversarial_chat_text_values(*, adversarial_chat_conversation_id: str) 
         List of text values from all text pieces in the adversarial conversation.
     """
     memory = CentralMemory.get_memory_instance()
-    conversation = list(memory.get_conversation(conversation_id=adversarial_chat_conversation_id))
+    conversation = list(memory.get_conversation_messages(conversation_id=adversarial_chat_conversation_id))
 
     text_values = []
     for msg in conversation:
@@ -911,7 +910,7 @@ def _assert_prepended_text_in_adversarial_context(
     *,
     prepended_conversation: list[Message],
     adversarial_chat_conversation_id: str,
-    adversarial_chat_mock: Optional[MagicMock] = None,
+    adversarial_chat_mock: MagicMock | None = None,
 ) -> None:
     """
     Assert that text content from prepended conversation appears in adversarial chat context.

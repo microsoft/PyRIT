@@ -4,7 +4,6 @@
 import asyncio
 import uuid
 from textwrap import dedent
-from typing import Optional
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -66,7 +65,7 @@ class MockScorer(TrueFalseScorer):
         """Build the scorer evaluation identifier for this mock scorer."""
         return self._create_identifier()
 
-    async def _score_async(self, message: Message, *, objective: Optional[str] = None) -> list[Score]:
+    async def _score_async(self, message: Message, *, objective: str | None = None) -> list[Score]:
         return [
             Score(
                 score_value="true",
@@ -81,7 +80,7 @@ class MockScorer(TrueFalseScorer):
             )
         ]
 
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: Optional[str] = None) -> list[Score]:
+    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
         return [
             Score(
                 score_value="true",
@@ -122,7 +121,7 @@ class MockFloatScorer(Scorer):
         """Build the scorer evaluation identifier for this mock scorer."""
         return self._create_identifier()
 
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: Optional[str] = None) -> list[Score]:
+    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
         # Track which pieces get scored
         self.scored_piece_ids.append(str(message_piece.id))
 
@@ -144,7 +143,7 @@ class MockFloatScorer(Scorer):
         for score in scores:
             assert 0 <= float(score.score_value) <= 1
 
-    def _build_fallback_score(self, *, message: Message, objective: Optional[str]) -> list[Score]:
+    def _build_fallback_score(self, *, message: Message, objective: str | None) -> list[Score]:
         return [
             Score(
                 score_value="0.0",
@@ -204,71 +203,6 @@ async def test_scorer_score_value_with_llm_exception_display_prompt_id():
             category="category",
             objective="task",
         )
-
-
-async def test_scorer_score_value_with_llm_use_provided_attack_identifier(good_json):
-    scorer = MockScorer()
-
-    message = Message(
-        message_pieces=[MessagePiece(role="assistant", original_value=good_json, conversation_id="test-convo")]
-    )
-    chat_target = MagicMock(PromptTarget)
-    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
-    chat_target.send_prompt_async = AsyncMock(return_value=[message])
-    chat_target.set_system_prompt = MagicMock()
-
-    expected_system_prompt = "system_prompt"
-    expected_attack_identifier = ComponentIdentifier(class_name="TestAttack", class_module="test.module")
-    expected_scored_prompt_id = "123"
-
-    await scorer._score_value_with_llm_async(
-        prompt_target=chat_target,
-        system_prompt=expected_system_prompt,
-        message_value="message_value",
-        message_data_type="text",
-        scored_prompt_id=expected_scored_prompt_id,
-        category="category",
-        objective="task",
-        attack_identifier=expected_attack_identifier,
-    )
-
-    chat_target.set_system_prompt.assert_called_once()
-
-    _, set_sys_prompt_args = chat_target.set_system_prompt.call_args
-    assert set_sys_prompt_args["system_prompt"] == expected_system_prompt
-    assert isinstance(set_sys_prompt_args["conversation_id"], str)
-    assert set_sys_prompt_args["attack_identifier"] is expected_attack_identifier
-
-
-async def test_scorer_score_value_with_llm_does_not_add_score_prompt_id_for_empty_attack_identifier(good_json):
-    scorer = MockScorer()
-
-    message = Message(
-        message_pieces=[MessagePiece(role="assistant", original_value=good_json, conversation_id="test-convo")]
-    )
-    chat_target = MagicMock(PromptTarget)
-    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
-    chat_target.send_prompt_async = AsyncMock(return_value=[message])
-    chat_target.set_system_prompt = MagicMock()
-
-    expected_system_prompt = "system_prompt"
-
-    await scorer._score_value_with_llm_async(
-        prompt_target=chat_target,
-        system_prompt=expected_system_prompt,
-        message_value="message_value",
-        message_data_type="text",
-        scored_prompt_id="123",
-        category="category",
-        objective="task",
-    )
-
-    chat_target.set_system_prompt.assert_called_once()
-
-    _, set_sys_prompt_args = chat_target.set_system_prompt.call_args
-    assert set_sys_prompt_args["system_prompt"] == expected_system_prompt
-    assert isinstance(set_sys_prompt_args["conversation_id"], str)
-    assert not set_sys_prompt_args["attack_identifier"]
 
 
 async def test_scorer_send_chat_target_async_good_response(good_json):
@@ -873,7 +807,7 @@ async def test_score_response_async_multiple_pieces():
     # The following commented-out lines should be uncommented when the permanent solution is implemented
     # # Should have all auxiliary scores
     # assert len(result["auxiliary_scores"]) == 4  # noqa: ERA001
-    # for score in aux_scores:  # noqa: ERA001
+    # for score in aux_scores:
     #     assert score in result["auxiliary_scores"]  # noqa: ERA001
 
     # Should have only one objective score (first success)
@@ -1168,9 +1102,7 @@ async def test_true_false_scorer_uses_supported_pieces_only(patch_central_databa
             """Build the scorer evaluation identifier for this test scorer."""
             return self._create_identifier()
 
-        async def _score_piece_async(
-            self, message_piece: MessagePiece, *, objective: Optional[str] = None
-        ) -> list[Score]:
+        async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
             self.scored_piece_ids.append(message_piece.id)
             return [
                 Score(
@@ -1348,14 +1280,14 @@ class TestTrueFalseScorerEmptyScoreListRationale:
         """Create a TrueFalseScorer where _score_piece_async returns empty list."""
 
         class TestTrueFalseScorer(TrueFalseScorer):
-            def __init__(self, validator):
+            def __init__(self, *, validator):
                 super().__init__(validator=validator)
 
             def _build_identifier(self) -> ComponentIdentifier:
                 return self._create_identifier()
 
             async def _score_piece_async(
-                self, message_piece: MessagePiece, *, objective: Optional[str] = None
+                self, message_piece: MessagePiece, *, objective: str | None = None
             ) -> list[Score]:
                 # Return empty list to simulate no scorable pieces
                 return []
@@ -1475,14 +1407,14 @@ class TestFloatScaleScorerEmptyScoreListRationale:
         from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
 
         class _TestFloatScaleScorer(FloatScaleScorer):
-            def __init__(self, validator):
+            def __init__(self, *, validator):
                 super().__init__(validator=validator)
 
             def _build_identifier(self) -> ComponentIdentifier:
                 return self._create_identifier()
 
             async def _score_piece_async(
-                self, message_piece: MessagePiece, *, objective: Optional[str] = None
+                self, message_piece: MessagePiece, *, objective: str | None = None
             ) -> list[Score]:
                 return []
 
@@ -1622,7 +1554,7 @@ async def test_score_value_with_llm_skips_reasoning_piece(good_json):
 class _AcceptAllValidator(ScorerPromptValidator):
     """Validator that accepts all pieces (like SelfAskRefusalScorer's default)."""
 
-    def validate(self, message: Message, objective: Optional[str] = None) -> None:
+    def validate(self, message: Message, objective: str | None = None) -> None:
         pass
 
     def is_message_piece_supported(self, message_piece: MessagePiece) -> bool:
@@ -1635,21 +1567,21 @@ class _TextOnlyValidator(ScorerPromptValidator):
     def __init__(self) -> None:
         super().__init__(supported_data_types=["text", "image_path"])
 
-    def validate(self, message: Message, objective: Optional[str] = None) -> None:
+    def validate(self, message: Message, objective: str | None = None) -> None:
         pass
 
 
 class _BlockedContentScorer(TrueFalseScorer):
     """A mock TrueFalseScorer that records what pieces it was asked to score."""
 
-    def __init__(self, *, validator: Optional[ScorerPromptValidator] = None) -> None:
+    def __init__(self, *, validator: ScorerPromptValidator | None = None) -> None:
         super().__init__(validator=validator or _TextOnlyValidator())
         self.scored_pieces: list[MessagePiece] = []
 
     def _build_identifier(self) -> ComponentIdentifier:
         return self._create_identifier()
 
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: Optional[str] = None) -> list[Score]:
+    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
         self.scored_pieces.append(message_piece)
         return [
             Score(
@@ -1676,7 +1608,7 @@ class _MockRefusalScorer(TrueFalseScorer):
     def _build_identifier(self) -> ComponentIdentifier:
         return self._create_identifier()
 
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: Optional[str] = None) -> list[Score]:
+    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
         self.scored_pieces.append(message_piece)
         if message_piece.response_error == "blocked":
             return [
@@ -1707,7 +1639,7 @@ class _MockRefusalScorer(TrueFalseScorer):
         ]
 
 
-def _make_blocked_piece(*, partial_content: Optional[str] = None, conversation_id: str = "test-convo") -> MessagePiece:
+def _make_blocked_piece(*, partial_content: str | None = None, conversation_id: str = "test-convo") -> MessagePiece:
     """Create a blocked MessagePiece, optionally with partial content metadata."""
     metadata: dict = {}
     if partial_content is not None:

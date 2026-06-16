@@ -6,7 +6,7 @@ import base64
 import logging
 import re
 import wave
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, Optional
+from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 from openai import AsyncOpenAI
 
@@ -15,12 +15,8 @@ from pyrit.exceptions import (
     pyrit_target_retry,
 )
 from pyrit.exceptions.exception_classes import ServerErrorException
-from pyrit.models import (
-    ComponentIdentifier,
-    Message,
-    construct_response_from_request,
-    data_serializer_factory,
-)
+from pyrit.memory import data_serializer_factory
+from pyrit.models import ComponentIdentifier, Message, construct_response_from_request
 from pyrit.prompt_target.common.realtime_audio import (
     RealtimeTargetResult,
     ServerVadConfig,
@@ -87,9 +83,9 @@ class RealtimeTarget(OpenAITarget):
     def __init__(
         self,
         *,
-        voice: Optional[RealTimeVoice] = None,
-        existing_convo: Optional[dict[str, Any]] = None,
-        custom_configuration: Optional[TargetConfiguration] = None,
+        voice: RealTimeVoice | None = None,
+        existing_convo: dict[str, Any] | None = None,
+        custom_configuration: TargetConfiguration | None = None,
         **kwargs: Any,
     ) -> None:
         """
@@ -121,7 +117,7 @@ class RealtimeTarget(OpenAITarget):
 
         self.voice = voice
         self._existing_conversation = existing_convo if existing_convo is not None else {}
-        self._realtime_client: Optional[AsyncOpenAI] = None
+        self._realtime_client: AsyncOpenAI | None = None
 
     def open_streaming_session(
         self,
@@ -153,9 +149,8 @@ class RealtimeTarget(OpenAITarget):
             server_vad: Server-side voice activity detection. ``True`` (default) enables
                 VAD with default tuning. Pass a ``ServerVadConfig`` for custom tuning, or
                 ``False`` to disable (sending streaming config will then raise).
-            attack_identifier: Stamped on every persisted user / assistant piece for
-                attribution. Pass the caller's identifier so live messages share the
-                provenance contract of prepended messages.
+            attack_identifier: Deprecated. This parameter is ignored and will be removed in
+                release 0.17.0.
             persist_prepended_conversation: When ``True`` (default), the session writes
                 ``prepended_conversation`` to memory itself. Pass ``False`` when the
                 caller already persisted the prepended conversation (e.g. via
@@ -168,6 +163,12 @@ class RealtimeTarget(OpenAITarget):
             (but not yielded). The session owns its websocket connection + dispatcher
             for the duration of ``run_async``.
         """
+        if attack_identifier is not None:
+            print_deprecation_message(
+                old_item="open_streaming_session(..., attack_identifier=...)",
+                new_item="open_streaming_session(...)",
+                removed_in="0.17.0",
+            )
         return _OpenAIRealtimeStreamingSession(
             target=self,
             audio_chunks=audio_chunks,
@@ -177,7 +178,6 @@ class RealtimeTarget(OpenAITarget):
             response_converter_configurations=response_converter_configurations,
             prepended_conversation=prepended_conversation,
             server_vad=server_vad,
-            attack_identifier=attack_identifier,
             persist_prepended_conversation=persist_prepended_conversation,
         )
 
@@ -362,7 +362,7 @@ class RealtimeTarget(OpenAITarget):
         resolved_conversation = (
             conversation
             if conversation is not None
-            else list(self._memory.get_conversation(conversation_id=conversation_id))
+            else list(self._memory.get_conversation_messages(conversation_id=conversation_id))
         )
         system_prompt = self._get_system_prompt_from_conversation(conversation=resolved_conversation)
         config_variables = self._set_system_prompt_and_config_vars(system_prompt=system_prompt)
@@ -425,6 +425,9 @@ class RealtimeTarget(OpenAITarget):
         message = normalized_conversation[-1]
         conversation_id = message.message_pieces[0].conversation_id
         request = message.message_pieces[0]
+
+        if not conversation_id:
+            raise ValueError("RealtimeTarget requires a conversation_id on the message being sent.")
 
         if conversation_id not in self._existing_conversation:
             connection = await self._connect_async(conversation_id=conversation_id)
@@ -550,7 +553,7 @@ class RealtimeTarget(OpenAITarget):
         num_channels: int = 1,
         sample_width: int = 2,
         sample_rate: int = 16000,
-        output_filename: Optional[str] = None,
+        output_filename: str | None = None,
     ) -> str:
         """
         Save audio bytes to a WAV file.
@@ -583,7 +586,7 @@ class RealtimeTarget(OpenAITarget):
         num_channels: int = 1,
         sample_width: int = 2,
         sample_rate: int = 16000,
-        output_filename: Optional[str] = None,
+        output_filename: str | None = None,
     ) -> str:
         """
         Use ``save_audio_async`` instead; this is a deprecated alias.
@@ -865,7 +868,7 @@ class RealtimeTarget(OpenAITarget):
             conversation_id: conversation ID
 
         Returns:
-            Tuple[str, RealtimeTargetResult]: Path to saved audio file and the RealtimeTargetResult
+            tuple[str, RealtimeTargetResult]: Path to saved audio file and the RealtimeTargetResult
 
         Raises:
             RuntimeError: If no audio is received from the server.
@@ -913,7 +916,7 @@ class RealtimeTarget(OpenAITarget):
             conversation_id (str): Conversation ID
 
         Returns:
-            Tuple[str, RealtimeTargetResult]: Path to saved audio file and the RealtimeTargetResult
+            tuple[str, RealtimeTargetResult]: Path to saved audio file and the RealtimeTargetResult
 
         Raises:
             Exception: If sending audio fails.

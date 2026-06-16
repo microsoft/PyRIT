@@ -98,7 +98,7 @@ async def test_display_image_logs_error_when_storage_io_is_none(mock_ipython, ca
 @patch("pyrit.common.display_response.display", create=True)
 async def test_display_image_azure_fallback_to_disk(mock_display, mock_image, mock_disk_io_cls, mock_ipython):
     """Test that when AzureBlobStorageIO read fails, it falls back to DiskStorageIO."""
-    from pyrit.models import AzureBlobStorageIO
+    from pyrit.memory import AzureBlobStorageIO
 
     mock_memory = MagicMock()
     mock_azure_io = MagicMock(spec=AzureBlobStorageIO)
@@ -126,7 +126,7 @@ async def test_display_image_azure_fallback_to_disk(mock_display, mock_image, mo
 @patch("pyrit.common.display_response.DiskStorageIO")
 async def test_display_image_azure_and_disk_both_fail(mock_disk_io_cls, mock_ipython, caplog):
     """Test that when both AzureBlobStorageIO and DiskStorageIO fail, error is logged and returns."""
-    from pyrit.models import AzureBlobStorageIO
+    from pyrit.memory import AzureBlobStorageIO
 
     mock_memory = MagicMock()
     mock_azure_io = MagicMock(spec=AzureBlobStorageIO)
@@ -147,6 +147,14 @@ async def test_display_image_azure_and_disk_both_fail(mock_disk_io_cls, mock_ipy
             await display_image_response_async(piece)
 
     assert "Failed to read image" in caplog.text
+
+
+async def test_display_image_response_async_emits_warning_and_delegates(_mock_central_memory):
+    piece = MagicMock()
+    piece.response_error = "blocked"
+    piece.converted_value_data_type = "text"
+    with pytest.warns(DeprecationWarning, match="display_image_response_async"):
+        await display_image_response_async(piece)
 
 
 async def test_deprecated_alias_emits_warning_and_delegates(_mock_central_memory):

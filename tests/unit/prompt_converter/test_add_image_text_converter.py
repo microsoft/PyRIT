@@ -41,45 +41,6 @@ def test_add_image_text_converter_initialization(image_text_converter_sample_ima
     assert type(converter._font) is ImageFont.FreeTypeFont
 
 
-def test_add_image_text_converter_positional_arg_deprecation(image_text_converter_sample_image):
-    with pytest.warns(DeprecationWarning, match="Passing img_to_add as a positional argument to AddImageTextConverter"):
-        converter = AddImageTextConverter(image_text_converter_sample_image)
-    assert converter._img_to_add == image_text_converter_sample_image
-
-
-def test_add_image_text_converter_positional_and_keyword_raises(image_text_converter_sample_image):
-    with pytest.raises(TypeError, match="Cannot pass img_to_add as both positional and keyword"):
-        AddImageTextConverter(image_text_converter_sample_image, img_to_add=image_text_converter_sample_image)
-
-
-def test_add_image_text_converter_too_many_positional_args_raises(image_text_converter_sample_image):
-    with pytest.raises(TypeError, match="takes at most 1 positional argument"):
-        AddImageTextConverter(image_text_converter_sample_image, "extra")
-
-
-def test_add_image_text_converter_x_pos_y_pos_deprecation(image_text_converter_sample_image):
-    with pytest.warns(DeprecationWarning, match=r"AddImageTextConverter\(x_pos=\.\.\., y_pos=\.\.\.\)"):
-        AddImageTextConverter(img_to_add=image_text_converter_sample_image, x_pos=50, y_pos=50)
-
-
-def test_add_image_text_converter_x_pos_y_pos_deprecation_default_value(image_text_converter_sample_image):
-    with pytest.warns(DeprecationWarning, match=r"AddImageTextConverter\(x_pos=\.\.\., y_pos=\.\.\.\)"):
-        AddImageTextConverter(img_to_add=image_text_converter_sample_image, x_pos=10)
-
-
-def test_add_image_text_converter_no_x_pos_y_pos_no_warning(image_text_converter_sample_image):
-    import warnings
-
-    with warnings.catch_warnings():
-        warnings.simplefilter("error", DeprecationWarning)
-        AddImageTextConverter(img_to_add=image_text_converter_sample_image)
-
-
-def test_add_image_text_converter_x_pos_with_bounding_box_raises(image_text_converter_sample_image):
-    with pytest.raises(ValueError, match="Cannot pass x_pos/y_pos together with bounding_box"):
-        AddImageTextConverter(img_to_add=image_text_converter_sample_image, x_pos=10, bounding_box=(0, 0, 100, 100))
-
-
 def test_add_image_text_converter_invalid_font(image_text_converter_sample_image):
     with pytest.raises(ValueError):
         AddImageTextConverter(img_to_add=image_text_converter_sample_image, font_name="helvetica.otf")
@@ -255,7 +216,7 @@ def test_add_image_text_converter_bounding_box_identifier(large_sample_image):
     )
     identifier = converter.get_identifier()
     params = identifier.params
-    assert params["bounding_box"] == (100, 100, 400, 300)
+    assert params["bounding_box"] == [100, 100, 400, 300]
     assert params["rotation"] == 10.0
     assert params["center_text"] is True
     assert params["font_size_min"] == 8

@@ -7,19 +7,25 @@ import logging
 import pathlib
 import uuid
 from enum import IntEnum
-from typing import Any, Optional, Union
+from typing import Any
 
 import httpx
 import websockets
 from websockets.exceptions import InvalidStatus
 
 from pyrit.auth import CopilotAuthenticator, ManualCopilotAuthenticator
-from pyrit.common.data_url_converter import convert_local_image_to_data_url_async
 from pyrit.exceptions import (
     EmptyResponseException,
     pyrit_target_retry,
 )
-from pyrit.models import ComponentIdentifier, DataTypeSerializer, Message, MessagePiece, construct_response_from_request
+from pyrit.memory import DataTypeSerializer
+from pyrit.memory.storage import convert_local_image_to_data_url_async
+from pyrit.models import (
+    ComponentIdentifier,
+    Message,
+    MessagePiece,
+    construct_response_from_request,
+)
 from pyrit.prompt_target import PromptTarget, limit_requests_per_minute
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
@@ -90,11 +96,11 @@ class WebSocketCopilotTarget(PromptTarget):
         self,
         *,
         websocket_base_url: str = "wss://substrate.office.com/m365Copilot/Chathub",
-        max_requests_per_minute: Optional[int] = None,
+        max_requests_per_minute: int | None = None,
         model_name: str = "copilot",
         response_timeout_seconds: int = RESPONSE_TIMEOUT_SECONDS,
-        authenticator: Optional[Union[CopilotAuthenticator, ManualCopilotAuthenticator]] = None,
-        custom_configuration: Optional[TargetConfiguration] = None,
+        authenticator: CopilotAuthenticator | ManualCopilotAuthenticator | None = None,
+        custom_configuration: TargetConfiguration | None = None,
     ) -> None:
         """
         Initialize the WebSocketCopilotTarget.
@@ -102,10 +108,10 @@ class WebSocketCopilotTarget(PromptTarget):
         Args:
             websocket_base_url (str): Base URL for the Copilot WebSocket endpoint.
                 Defaults to ``wss://substrate.office.com/m365Copilot/Chathub``.
-            max_requests_per_minute (Optional[int]): Maximum number of requests per minute.
+            max_requests_per_minute (int | None): Maximum number of requests per minute.
             model_name (str): The model name. Defaults to "copilot".
             response_timeout_seconds (int): Timeout for receiving responses in seconds. Defaults to 60s.
-            authenticator (Optional[Union[CopilotAuthenticator, ManualCopilotAuthenticator]]): Authenticator
+            authenticator (CopilotAuthenticator | ManualCopilotAuthenticator | None): Authenticator
                 instance. Supports both ``CopilotAuthenticator`` and ``ManualCopilotAuthenticator``.
                 If None, a new ``CopilotAuthenticator`` instance will be created with default settings.
             custom_configuration (TargetConfiguration, Optional): Override the default configuration for
@@ -615,7 +621,7 @@ class WebSocketCopilotTarget(PromptTarget):
         Returns:
             bool: True if no prior messages exist in this conversation, False otherwise.
         """
-        conversation_history = self._memory.get_conversation(conversation_id=conversation_id)
+        conversation_history = self._memory.get_conversation_messages(conversation_id=conversation_id)
         return len(conversation_history) == 0
 
     def _generate_consistent_copilot_ids(self, *, pyrit_conversation_id: str) -> tuple[str, str]:
@@ -657,6 +663,7 @@ class WebSocketCopilotTarget(PromptTarget):
             list[Message]: A list containing the response from Copilot.
 
         Raises:
+            ValueError: If the message being sent has no conversation_id.
             EmptyResponseException: If the response from Copilot is empty.
             InvalidStatus: If the WebSocket handshake fails with an HTTP status error.
             RuntimeError: If any other error occurs during WebSocket communication.
@@ -664,6 +671,8 @@ class WebSocketCopilotTarget(PromptTarget):
         message = normalized_conversation[-1]
 
         pyrit_conversation_id = message.message_pieces[0].conversation_id
+        if not pyrit_conversation_id:
+            raise ValueError("WebSocketCopilotTarget requires a conversation_id on the message being sent.")
         is_start_of_session = self._is_start_of_session(conversation_id=pyrit_conversation_id)
 
         session_id, copilot_conversation_id = self._generate_consistent_copilot_ids(

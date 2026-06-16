@@ -12,7 +12,9 @@ from pyrit.score.true_false.self_ask_question_answer_scorer import SelfAskQuesti
 
 @pytest.fixture
 def mock_chat_target(patch_central_database):
-    return MagicMock(spec=PromptTarget)
+    target = MagicMock(spec=PromptTarget)
+    target.get_identifier.return_value = ComponentIdentifier(class_name="MockChatTarget", class_module="mock")
+    return target
 
 
 async def test_score_async_returns_score_from_unvalidated(mock_chat_target):

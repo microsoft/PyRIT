@@ -8,11 +8,10 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, TypeVar
 
-from pydantic import AwareDatetime, Field, model_validator
+from pydantic import AwareDatetime, Field
 
 from pyrit.common.deprecation import print_deprecation_message
 from pyrit.models.conversation_reference import ConversationReference, ConversationType
-from pyrit.models.identifiers.atomic_attack_identifier import build_atomic_attack_identifier
 from pyrit.models.identifiers.component_identifier import ComponentIdentifier
 from pyrit.models.messages.message_piece import MessagePiece
 from pyrit.models.results.strategy_result import StrategyResult
@@ -95,6 +94,11 @@ class AttackResult(StrategyResult):
     # labels associated with this attack result
     labels: dict[str, str] = Field(default_factory=dict)
 
+    # Harm categories this attack targeted. Auto-populated from the attack's
+    # SeedGroup (the deduplicated union of its seeds' harm_categories) when the
+    # result is produced by an attack strategy.
+    targeted_harm_categories: list[str] = Field(default_factory=list)
+
     # Error information (populated when attack fails with exception)
     error_message: str | None = None
     error_type: str | None = None
@@ -111,54 +115,6 @@ class AttackResult(StrategyResult):
     # and the corresponding DB columns remain NULL.
     attribution_parent_id: str | None = None
     attribution_data: dict[str, Any] | None = None
-
-    @model_validator(mode="before")
-    @classmethod
-    def _promote_deprecated_attack_identifier(cls, data: Any) -> Any:
-        """
-        Promote the deprecated ``attack_identifier`` kwarg to ``atomic_attack_identifier``.
-
-        Runs ahead of ``extra="forbid"`` so the legacy kwarg is consumed before
-        Pydantic would reject it. Emits a deprecation warning when present.
-
-        Returns:
-            The input ``data`` with ``attack_identifier`` removed and (when it was
-            set and ``atomic_attack_identifier`` was not) promoted.
-        """
-        if not isinstance(data, dict):
-            return data
-        data = dict(data)
-        attack_identifier = data.pop("attack_identifier", None)
-        if attack_identifier is not None:
-            print_deprecation_message(
-                old_item="AttackResult(attack_identifier=...)",
-                new_item="AttackResult(atomic_attack_identifier=...)",
-                removed_in="0.15.0",
-            )
-            if data.get("atomic_attack_identifier") is None:
-                data["atomic_attack_identifier"] = build_atomic_attack_identifier(
-                    attack_identifier=attack_identifier,
-                )
-        return data
-
-    @property
-    def attack_identifier(self) -> ComponentIdentifier | None:
-        """
-        Deprecated: use ``get_attack_strategy_identifier()`` or ``atomic_attack_identifier`` instead.
-
-        Returns the attack strategy ``ComponentIdentifier`` extracted from
-        ``atomic_attack_identifier``, emitting a deprecation warning.
-
-        Returns:
-            ComponentIdentifier | None: The attack strategy identifier, or ``None``.
-
-        """
-        print_deprecation_message(
-            old_item="AttackResult.attack_identifier",
-            new_item="AttackResult.atomic_attack_identifier or get_attack_strategy_identifier()",
-            removed_in="0.15.0",
-        )
-        return self.get_attack_strategy_identifier()
 
     def get_attack_strategy_identifier(self) -> ComponentIdentifier | None:
         """
@@ -293,6 +249,7 @@ class AttackResult(StrategyResult):
             ),
             "metadata": self.metadata,
             "labels": self.labels,
+            "targeted_harm_categories": self.targeted_harm_categories,
             "error_message": self.error_message,
             "error_type": self.error_type,
             "error_traceback": self.error_traceback,
@@ -343,6 +300,7 @@ class AttackResult(StrategyResult):
             },
             metadata=data.get("metadata", {}),
             labels=data.get("labels", {}),
+            targeted_harm_categories=data.get("targeted_harm_categories", []),
             error_message=data.get("error_message"),
             error_type=data.get("error_type"),
             error_traceback=data.get("error_traceback"),

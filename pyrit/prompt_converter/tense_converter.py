@@ -3,7 +3,6 @@
 
 import logging
 import pathlib
-from typing import Optional
 
 from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
 from pyrit.common.path import CONVERTER_SEED_PROMPT_PATH
@@ -27,7 +26,7 @@ class TenseConverter(LLMGenericTextConverter):
         *,
         converter_target: PromptTarget = REQUIRED_VALUE,  # type: ignore[ty:invalid-parameter-default]
         tense: str,
-        prompt_template: Optional[SeedPrompt] = None,
+        prompt_template: SeedPrompt | None = None,
     ) -> None:
         """
         Initialize the converter with the target chat support, tense, and optional prompt template.
@@ -63,5 +62,5 @@ class TenseConverter(LLMGenericTextConverter):
             params={
                 "tense": self._tense,
             },
-            children={"converter_target": self._converter_target.get_identifier()},
+            converter_target=self._converter_target.get_identifier(),
         )

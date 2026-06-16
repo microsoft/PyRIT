@@ -9,7 +9,7 @@ import tempfile
 import traceback
 import wave
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 from uuid import uuid4
 
 from pyrit.common.deprecation import print_deprecation_message
@@ -19,9 +19,10 @@ from pyrit.exceptions import (
     execution_context,
     get_execution_context,
 )
-from pyrit.memory import CentralMemory, MemoryInterface
+from pyrit.memory import CentralMemory, MemoryInterface, set_message_piece_sha256_async
 from pyrit.models import (
     ComponentIdentifier,
+    Conversation,
     Message,
     MessagePiece,
     construct_response_from_request,
@@ -68,11 +69,11 @@ class PromptNormalizer:
         *,
         message: Message,
         target: PromptTarget,
-        conversation_id: Optional[str] = None,
+        conversation_id: str | None = None,
         request_converter_configurations: list[PromptConverterConfiguration] | None = None,
         response_converter_configurations: list[PromptConverterConfiguration] | None = None,
-        labels: Optional[dict[str, str]] = None,
-        attack_identifier: Optional[ComponentIdentifier] = None,
+        labels: dict[str, str] | None = None,
+        attack_identifier: ComponentIdentifier | None = None,
     ) -> Message:
         """
         Send a single request to a target.
@@ -85,10 +86,10 @@ class PromptNormalizer:
                 converting the request. Defaults to an empty list.
             response_converter_configurations (list[PromptConverterConfiguration], optional): Configurations for
                 converting the response. Defaults to an empty list.
-            labels (Optional[dict[str, str]], optional): Labels associated with the request. Defaults to None.
+            labels (dict[str, str] | None, optional): Labels associated with the request. Defaults to None.
                 Deprecated: This parameter will be removed in a release 0.16.0.
-            attack_identifier (Optional[ComponentIdentifier], optional): Identifier for the attack. Defaults to
-                None.
+            attack_identifier (ComponentIdentifier | None, optional): Identifier for the attack. Defaults to
+                None. Deprecated: this parameter is ignored and will be removed in release 0.17.0.
 
         Returns:
             Message: The response received from the target.
@@ -103,6 +104,12 @@ class PromptNormalizer:
                 new_item="send_prompt_async(...)",
                 removed_in="0.16.0",
             )
+        if attack_identifier is not None:
+            print_deprecation_message(
+                old_item="send_prompt_async(..., attack_identifier=...)",
+                new_item="send_prompt_async(...)",
+                removed_in="0.17.0",
+            )
         # Validates that the MessagePieces in the Message are part of the same sequence
         request_converter_configurations = request_converter_configurations or []
         response_converter_configurations = response_converter_configurations or []
@@ -112,14 +119,15 @@ class PromptNormalizer:
         # Prepare the request by updating conversation ID, labels, and attack identifier
         request = copy.deepcopy(message)
         conversation_id = conversation_id if conversation_id else str(uuid4())
+        target_identifier = target.get_identifier()
+        self.memory.add_conversation_to_memory(
+            conversation=Conversation(conversation_id=conversation_id, target_identifier=target_identifier)
+        )
 
         for piece in request.message_pieces:
             piece.conversation_id = conversation_id
             if labels:
                 piece.labels = labels  # deprecated
-            piece.prompt_target_identifier = target.get_identifier()
-            if attack_identifier:
-                piece.attack_identifier = attack_identifier
 
         # Apply request converters
         await self.convert_values_async(converter_configurations=request_converter_configurations, message=request)
@@ -196,8 +204,8 @@ class PromptNormalizer:
         *,
         requests: list[NormalizerRequest],
         target: PromptTarget,
-        labels: Optional[dict[str, str]] = None,
-        attack_identifier: Optional[ComponentIdentifier] = None,
+        labels: dict[str, str] | None = None,
+        attack_identifier: ComponentIdentifier | None = None,
         batch_size: int = 10,
     ) -> list[Message]:
         """
@@ -206,10 +214,10 @@ class PromptNormalizer:
         Args:
             requests (list[NormalizerRequest]): A list of NormalizerRequest objects to be sent.
             target (PromptTarget): The target to which the prompts are sent.
-            labels (Optional[dict[str, str]], optional): A dictionary of labels to be included with the request.
+            labels (dict[str, str] | None, optional): A dictionary of labels to be included with the request.
                 Defaults to None.
-            attack_identifier (Optional[ComponentIdentifier], optional): The attack identifier.
-                Defaults to None.
+            attack_identifier (ComponentIdentifier | None, optional): The attack identifier.
+                Defaults to None. Deprecated: this parameter is ignored and will be removed in release 0.17.0.
             batch_size (int, optional): The number of prompts to include in each batch. Defaults to 10.
 
         Returns:
@@ -377,7 +385,7 @@ class PromptNormalizer:
 
     async def _calc_hash_async(self, request: Message) -> None:
         """Add a request to the memory."""
-        tasks = [asyncio.create_task(piece.set_sha256_values_async()) for piece in request.message_pieces]
+        tasks = [asyncio.create_task(set_message_piece_sha256_async(piece)) for piece in request.message_pieces]
         await asyncio.gather(*tasks)
 
     async def hash_and_persist_message_async(self, *, message: Message) -> None:
@@ -385,7 +393,9 @@ class PromptNormalizer:
         Hash and persist a Message to memory.
 
         Use when a target assembles a Message outside the ``send_prompt_async`` flow
-        (e.g. streaming sessions that yield per-turn Messages directly).
+        (e.g. streaming sessions that yield per-turn Messages directly). Register the
+        conversation once via ``MemoryInterface.add_conversation_to_memory`` before
+        persisting its messages.
 
         Args:
             message (Message): The message to hash and persist.
@@ -397,37 +407,49 @@ class PromptNormalizer:
         self,
         conversation_id: str,
         should_convert: bool = True,
-        converter_configurations: Optional[list[PromptConverterConfiguration]] = None,
-        attack_identifier: Optional[ComponentIdentifier] = None,
-        prepended_conversation: Optional[list[Message]] = None,
-    ) -> Optional[list[Message]]:
+        converter_configurations: list[PromptConverterConfiguration] | None = None,
+        attack_identifier: ComponentIdentifier | None = None,
+        prepended_conversation: list[Message] | None = None,
+        target_identifier: ComponentIdentifier | None = None,
+    ) -> list[Message] | None:
         """
         Process the prepended conversation by converting it if needed and adding it to memory.
 
         Args:
             conversation_id (str): The conversation ID to use for the message pieces
             should_convert (bool): Whether to convert the prepended conversation
-            converter_configurations (Optional[list[PromptConverterConfiguration]]): Configurations for converting the
+            converter_configurations (list[PromptConverterConfiguration] | None): Configurations for converting the
                 request
-            attack_identifier (Optional[ComponentIdentifier]): Identifier for the attack
-            prepended_conversation (Optional[list[Message]]): The conversation to prepend
+            attack_identifier (ComponentIdentifier | None): Identifier for the attack.
+                Deprecated: this parameter is ignored and will be removed in release 0.17.0.
+            prepended_conversation (list[Message] | None): The conversation to prepend
+            target_identifier (ComponentIdentifier | None): The target the conversation is held
+                with, if known. Recorded once per conversation.
 
         Returns:
-            Optional[list[Message]]: The processed prepended conversation
+            list[Message] | None: The processed prepended conversation
         """
         if not prepended_conversation:
             return None
 
+        if attack_identifier is not None:
+            print_deprecation_message(
+                old_item="add_prepended_conversation_to_memory_async(..., attack_identifier=...)",
+                new_item="add_prepended_conversation_to_memory_async(...)",
+                removed_in="0.17.0",
+            )
+
         # Create a deep copy of the prepended conversation to avoid modifying the original
         prepended_conversation = copy.deepcopy(prepended_conversation)
+        self.memory.add_conversation_to_memory(
+            conversation=Conversation(conversation_id=conversation_id, target_identifier=target_identifier)
+        )
 
         for request in prepended_conversation:
             if should_convert and converter_configurations:
                 await self.convert_values_async(message=request, converter_configurations=converter_configurations)
             for piece in request.message_pieces:
                 piece.conversation_id = conversation_id
-                if attack_identifier:
-                    piece.attack_identifier = attack_identifier
 
                 # if the piece is retrieved from somewhere else, it needs to be unique
                 # and if not, this won't hurt anything
@@ -454,15 +476,16 @@ class PromptNormalizer:
         self,
         conversation_id: str,
         should_convert: bool = True,
-        converter_configurations: Optional[list[PromptConverterConfiguration]] = None,
-        attack_identifier: Optional[ComponentIdentifier] = None,
-        prepended_conversation: Optional[list[Message]] = None,
-    ) -> Optional[list[Message]]:
+        converter_configurations: list[PromptConverterConfiguration] | None = None,
+        attack_identifier: ComponentIdentifier | None = None,
+        prepended_conversation: list[Message] | None = None,
+        target_identifier: ComponentIdentifier | None = None,
+    ) -> list[Message] | None:
         """
         Use ``add_prepended_conversation_to_memory_async`` instead; this is a deprecated alias.
 
         Returns:
-            Optional[list[Message]]: Same as ``add_prepended_conversation_to_memory_async``.
+            list[Message] | None: Same as ``add_prepended_conversation_to_memory_async``.
         """
         print_deprecation_message(
             old_item="pyrit.prompt_normalizer.PromptNormalizer.add_prepended_conversation_to_memory",
@@ -475,6 +498,7 @@ class PromptNormalizer:
             converter_configurations=converter_configurations,
             attack_identifier=attack_identifier,
             prepended_conversation=prepended_conversation,
+            target_identifier=target_identifier,
         )
 
 

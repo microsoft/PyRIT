@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 import logging
-from typing import Literal, Optional
+from typing import Literal
 
 from pyrit.models import ComponentIdentifier
 from pyrit.prompt_converter.token_smuggling.base import SmugglerConverter
@@ -29,10 +29,14 @@ class VariationSelectorSmugglerConverter(SmugglerConverter):
     visible and hidden content within a single string.
     """
 
+    # Grandfathered: ``action`` is inherited from SmugglerConverter's public API.
+    # TODO: remove this opt-out and insert ``*,`` after ``self`` in 0.16.0.
+    _brick_legacy_init = True
+
     def __init__(
         self,
         action: Literal["encode", "decode"] = "encode",
-        base_char_utf8: Optional[str] = None,
+        base_char_utf8: str | None = None,
         embed_in_base: bool = True,
     ) -> None:
         """
@@ -40,7 +44,7 @@ class VariationSelectorSmugglerConverter(SmugglerConverter):
 
         Args:
             action (Literal["encode", "decode"]): The action to perform.
-            base_char_utf8 (Optional[str]): Base character for ``variation_selector_smuggler`` mode (default: 😊).
+            base_char_utf8 (str | None): Base character for ``variation_selector_smuggler`` mode (default: 😊).
             embed_in_base (bool): If True, the hidden payload is embedded directly into the base character.
                                     If False, a visible separator (space) is inserted between the base and payload.
                                     Default is True.
@@ -82,7 +86,7 @@ class VariationSelectorSmugglerConverter(SmugglerConverter):
             message (str): The message to encode.
 
         Returns:
-            Tuple[str, str]: A tuple containing a summary of the code points and the encoded string.
+            tuple[str, str]: A tuple containing a summary of the code points and the encoded string.
         """
         payload = ""
         data = message.encode("utf-8")
@@ -150,7 +154,7 @@ class VariationSelectorSmugglerConverter(SmugglerConverter):
             hidden (str): The secret/hidden text to encode.
 
         Returns:
-            Tuple[str, str]: A tuple containing a summary and the combined text.
+            tuple[str, str]: A tuple containing a summary and the combined text.
         """
         summary, encoded_hidden = self.encode_message(hidden)
         combined = visible + encoded_hidden
@@ -168,7 +172,7 @@ class VariationSelectorSmugglerConverter(SmugglerConverter):
             combined (str): The combined text containing visible and hidden parts.
 
         Returns:
-            Tuple[str, str]: A tuple with the visible text and the decoded hidden text.
+            tuple[str, str]: A tuple with the visible text and the decoded hidden text.
         """
         base_char = self.utf8_base_char
         index = combined.find(base_char)

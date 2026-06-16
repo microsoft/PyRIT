@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Optional, Union
+from typing import TYPE_CHECKING
 
 from pyrit.models.messages.message import Message
 from pyrit.models.messages.message_piece import MessagePiece
@@ -158,7 +158,7 @@ def group_message_pieces_into_conversations(
         return []
 
     # Group pieces by conversation ID
-    conversations: dict[str, list[MessagePiece]] = {}
+    conversations: dict[str | None, list[MessagePiece]] = {}
     for piece in message_pieces:
         conv_id = piece.conversation_id
         if conv_id not in conversations:
@@ -178,7 +178,7 @@ def construct_response_from_request(
     request: MessagePiece,
     response_text_pieces: list[str],
     response_type: PromptDataType = "text",
-    prompt_metadata: Optional[dict[str, Union[str, int]]] = None,
+    prompt_metadata: dict[str, str | int] | None = None,
     error: PromptResponseError = "none",
 ) -> Message:
     """
@@ -188,7 +188,7 @@ def construct_response_from_request(
         request (MessagePiece): Source request message piece.
         response_text_pieces (list[str]): Response values to include.
         response_type (PromptDataType): Data type for original and converted response values.
-        prompt_metadata (Optional[Dict[str, Union[str, int]]]): Additional metadata to merge.
+        prompt_metadata (dict[str, str | int] | None): Additional metadata to merge.
         error (PromptResponseError): Error classification for the response.
 
     Returns:
@@ -205,8 +205,6 @@ def construct_response_from_request(
                 original_value=resp_text,
                 conversation_id=request.conversation_id,
                 labels=request.labels,
-                prompt_target_identifier=request.prompt_target_identifier,
-                attack_identifier=request.attack_identifier,
                 original_value_data_type=response_type,
                 converted_value_data_type=response_type,
                 prompt_metadata=prompt_metadata or {},

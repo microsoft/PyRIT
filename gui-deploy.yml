@@ -39,10 +39,43 @@ variables:
 
 stages:
   # ──────────────────────────────────────────────
+  # Stage 0: Validate runtime inputs
+  # ──────────────────────────────────────────────
+  - stage: ValidateInputs
+    displayName: 'Validate Inputs'
+    pool:
+      vmImage: 'ubuntu-latest'
+    jobs:
+      - job: ValidateProdBranchGate
+        displayName: 'Validate production branch gate'
+        steps:
+          - checkout: none
+          - task: Bash@3
+            displayName: 'Fail if prod deploy requested from non-release branch'
+            inputs:
+              targetType: 'inline'
+              script: |
+                set -euo pipefail
+
+                DEPLOY_TO_PROD='${{ parameters.deployToProd }}'
+                DEPLOY_TO_PROD_LOWER=$(echo "$DEPLOY_TO_PROD" | tr '[:upper:]' '[:lower:]')
+
+                echo "Build.SourceBranch=$BUILD_SOURCEBRANCH"
+                echo "deployToProd=$DEPLOY_TO_PROD"
+
+                if [[ "$DEPLOY_TO_PROD_LOWER" == "true" && "$BUILD_SOURCEBRANCH" != refs/heads/releases/* ]]; then
+                  echo "##vso[task.logissue type=error]deployToProd can only be used from refs/heads/releases/* branches. Current branch: $BUILD_SOURCEBRANCH"
+                  exit 1
+                fi
+
+                echo "Validation passed"
+
+  # ──────────────────────────────────────────────
   # Stage 1: Build Docker image and push to ACR
   # ──────────────────────────────────────────────
   - stage: Build
     displayName: 'Build and Push Image'
+    dependsOn: ValidateInputs
     variables:
       - group: copyrit-gui-common
     pool:
@@ -160,70 +193,70 @@ stages:
   # ──────────────────────────────────────────────
   # Stage 3: Deploy to production (manual trigger)
   # ──────────────────────────────────────────────
-  - ${{ if eq(parameters.deployToProd, true) }}:
-    - stage: DeployProd
-      displayName: 'Deploy to Production'
-      dependsOn: DeployTest
-      variables:
-        - group: copyrit-gui-common
-        - group: copyrit-gui-prod
-      pool:
-        vmImage: 'ubuntu-latest'
-      jobs:
-        - deployment: DeployToProd
-          displayName: 'Deploy to production environment'
-          environment: 'copyrit-prod'
-          strategy:
-            runOnce:
-              deploy:
-                steps:
-                  - checkout: self
-                    fetchDepth: 1
+  - stage: DeployProd
+    displayName: 'Deploy to Production'
+    dependsOn: DeployTest
+    condition: and(succeeded('DeployTest'), eq('${{ parameters.deployToProd }}', 'true'), startsWith(variables['Build.SourceBranch'], 'refs/heads/releases/'))
+    variables:
+      - group: copyrit-gui-common
+      - group: copyrit-gui-prod
+    pool:
+      vmImage: 'ubuntu-latest'
+    jobs:
+      - deployment: DeployToProd
+        displayName: 'Deploy to production environment'
+        environment: 'copyrit-prod'
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+                  fetchDepth: 1
 
-                  - task: AzureCLI@2
-                    displayName: 'Deploy Bicep to prod'
-                    inputs:
-                      azureSubscription: '$(azureServiceConnection)'
-                      scriptType: 'bash'
-                      scriptLocation: 'inlineScript'
-                      inlineScript: |
-                        set -euo pipefail
+                - task: AzureCLI@2
+                  displayName: 'Deploy Bicep to prod'
+                  inputs:
+                    azureSubscription: '$(azureServiceConnection)'
+                    scriptType: 'bash'
+                    scriptLocation: 'inlineScript'
+                    inlineScript: |
+                      set -euo pipefail
 
-                        az deployment group create \
-                          --resource-group $(resourceGroup) \
-                          --template-file $(Build.SourcesDirectory)/infra/main.bicep \
-                          --parameters appName=$(appName) \
-                          --parameters containerImage=$(acrLoginServer)/$(imageName):$(Build.SourceVersion) \
-                          --parameters entraTenantId=$(entraTenantId) \
-                          --parameters entraClientId=$(entraClientId) \
-                          --parameters allowedGroupObjectIds="$(allowedGroupObjectIds)" \
-                          --parameters sqlServerFqdn=$(sqlServerFqdn) \
-                          --parameters sqlDatabaseName=$(sqlDatabaseName) \
-                          --parameters keyVaultResourceId=$(keyVaultResourceId) \
-                          --parameters acrResourceId=$(acrResourceId) \
-                          --parameters enablePrivateEndpoint=$(enablePrivateEndpoint) \
-                          --parameters enableOtel=$(enableOtel) \
-                          --parameters envSecretName=$(envSecretName)
+                      az deployment group create \
+                        --resource-group $(resourceGroup) \
+                        --template-file $(Build.SourcesDirectory)/infra/main.bicep \
+                        --parameters appName=$(appName) \
+                        --parameters containerImage=$(acrLoginServer)/$(imageName):$(Build.SourceVersion) \
+                        --parameters entraTenantId=$(entraTenantId) \
+                        --parameters entraClientId=$(entraClientId) \
+                        --parameters allowedGroupObjectIds="$(allowedGroupObjectIds)" \
+                        --parameters sqlServerFqdn=$(sqlServerFqdn) \
+                        --parameters sqlDatabaseName=$(sqlDatabaseName) \
+                        --parameters keyVaultResourceId=$(keyVaultResourceId) \
+                        --parameters acrResourceId=$(acrResourceId) \
+                        --parameters enablePrivateEndpoint=$(enablePrivateEndpoint) \
+                        --parameters enableOtel=$(enableOtel) \
+                        --parameters envSecretName=$(envSecretName)
 
-                  - task: AzureCLI@2
-                    displayName: 'Health check'
-                    inputs:
-                      azureSubscription: '$(azureServiceConnection)'
-                      scriptType: 'bash'
-                      scriptLocation: 'inlineScript'
-                      inlineScript: |
-                        set -euo pipefail
+                - task: AzureCLI@2
+                  displayName: 'Health check'
+                  inputs:
+                    azureSubscription: '$(azureServiceConnection)'
+                    scriptType: 'bash'
+                    scriptLocation: 'inlineScript'
+                    inlineScript: |
+                      set -euo pipefail
 
-                        FQDN=$(az containerapp show \
-                          --name $(appName) \
-                          --resource-group $(resourceGroup) \
-                          --query "properties.configuration.ingress.fqdn" -o tsv)
+                      FQDN=$(az containerapp show \
+                        --name $(appName) \
+                        --resource-group $(resourceGroup) \
+                        --query "properties.configuration.ingress.fqdn" -o tsv)
 
-                        echo "Testing https://$FQDN/api/health"
+                      echo "Testing https://$FQDN/api/health"
 
-                        curl --retry 5 --retry-delay 15 --retry-all-errors \
-                          --fail --max-time 10 \
-                          "https://$FQDN/api/health"
+                      curl --retry 5 --retry-delay 15 --retry-all-errors \
+                        --fail --max-time 10 \
+                        "https://$FQDN/api/health"
 
-                        echo ""
-                        echo "✅ Production health check passed"
+                      echo ""
+                      echo "✅ Production health check passed"

@@ -18,7 +18,7 @@ import logging
 import sys
 import threading
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from pyrit.cli import _banner as banner
 
@@ -173,7 +173,7 @@ class PyRITShell(cmd.Cmd):
         self._start_server = False  # only auto-start once
         return True
 
-    def cmdloop(self, intro: Optional[str] = None) -> None:
+    def cmdloop(self, intro: str | None = None) -> None:
         """Override cmdloop to play animated banner before starting the REPL."""
         if intro is None:
             prev_disable = logging.root.manager.disable
@@ -572,7 +572,7 @@ class PyRITShell(cmd.Cmd):
         """Clear the screen."""
         import os
 
-        os.system("cls" if os.name == "nt" else "clear")
+        os.system("cls" if os.name == "nt" else "clear")  # type: ignore[ty:deprecated]
 
     # Shortcuts and aliases
     do_quit = do_exit

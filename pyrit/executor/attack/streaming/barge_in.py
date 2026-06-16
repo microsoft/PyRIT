@@ -20,7 +20,7 @@ from pyrit.models import (
     AttackResult,
     Message,
 )
-from pyrit.models.identifiers.atomic_attack_identifier import build_atomic_attack_identifier
+from pyrit.models.identifiers.atomic_attack_identifier import AtomicAttackIdentifier
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target.common.target_capabilities import CapabilityName
 from pyrit.prompt_target.common.target_requirements import TargetRequirements
@@ -99,7 +99,6 @@ class BargeInAttack(AttackStrategy["BargeInAttackContext[Any]", AttackResult]):
         self._response_converters = attack_converter_config.response_converters
         self._prompt_normalizer = prompt_normalizer or PromptNormalizer()
         self._conversation_manager = ConversationManager(
-            attack_identifier=self.get_identifier(),
             prompt_normalizer=self._prompt_normalizer,
         )
 
@@ -163,7 +162,6 @@ class BargeInAttack(AttackStrategy["BargeInAttackContext[Any]", AttackResult]):
             request_converter_configurations=self._request_converters,
             response_converter_configurations=self._response_converters,
             prepended_conversation=context.prepended_conversation,
-            attack_identifier=self.get_identifier(),
             persist_prepended_conversation=False,
         )
 
@@ -201,7 +199,7 @@ class BargeInAttack(AttackStrategy["BargeInAttackContext[Any]", AttackResult]):
         return AttackResult(
             conversation_id=context.conversation_id,
             objective=context.objective,
-            atomic_attack_identifier=build_atomic_attack_identifier(attack_identifier=self.get_identifier()),
+            atomic_attack_identifier=AtomicAttackIdentifier.build(attack_identifier=self.get_identifier()),
             last_response=(last_response.message_pieces[0] if last_response else None),
             last_score=None,
             related_conversations=context.related_conversations,

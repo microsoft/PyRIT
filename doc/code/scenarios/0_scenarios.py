@@ -75,13 +75,15 @@
 #    - `name`: Descriptive name for your scenario
 #    - `version`: Integer version number
 #    - `strategy_class`: The strategy enum class for this scenario
-#    - `objective_scorer_identifier`: Identifier dict for the scoring mechanism (optional)
+#    - `default_strategy`: The default strategy member (typically `YourStrategy.ALL` or `YourStrategy.DEFAULT`)
+#    - `default_dataset_config`: A `DatasetConfiguration` specifying the scenario's default datasets
+#    - `objective_scorer`: The scorer used to judge responses
 #    - `scenario_result_id`: Optional ID to resume an existing scenario (optional)
 #
 # 5. **Initialization**: Call `await scenario.initialize_async()` to populate atomic attacks:
 #    - `objective_target`: The target system being tested (required)
 #    - `scenario_strategies`: List of strategies to execute (optional, defaults to ALL)
-#    - `max_concurrency`: Number of concurrent operations (default: 1)
+#    - `max_concurrency`: Number of concurrent operations (default: 4)
 #    - `max_retries`: Number of retry attempts on failure (default: 0)
 #    - `memory_labels`: Optional labels for tracking (optional)
 #    - `include_baseline`: Whether to prepend a baseline attack (defaults to the scenario type's
@@ -157,8 +159,12 @@ class MyScenario(Scenario):
 # ## Existing Scenarios
 
 # %%
+import logging
+
 from pyrit.backend.services.scenario_service import get_scenario_service
 from pyrit.cli._output import print_scenario_list
+
+logging.getLogger("pyrit").setLevel(logging.ERROR)
 
 response = await get_scenario_service().list_scenarios_async(limit=200)  # type: ignore
 print_scenario_list(items=[s.model_dump() for s in response.items])

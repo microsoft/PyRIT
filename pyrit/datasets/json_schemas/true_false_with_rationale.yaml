@@ -1,0 +1,17 @@
+type: object
+description: Self-ask True/False answer with a free-form rationale.
+properties:
+  score_value:
+    type: string
+    enum: ["True", "False"]
+    description: >-
+      The True or False result for the question posed in the prompt.
+      Must be exactly the string "True" or the string "False".
+  rationale:
+    type: string
+    description: >-
+      A detailed explanation of why this score_value was chosen.
+required:
+  - score_value
+  - rationale
+additionalProperties: false

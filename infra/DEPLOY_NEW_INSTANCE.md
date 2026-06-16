@@ -24,7 +24,7 @@ within an instance. The trust boundary is Entra group membership.
 | `az login` with Graph permissions | The script creates Entra app registrations, which requires Graph API access. Run `az login --scope https://graph.microsoft.com//.default` |
 | Azure permissions | **Owner** (or Contributor + User Access Administrator) on the subscription, and **Application Administrator** in Entra ID for app registrations and Graph API operations |
 | Container image pushed to ACR | Build and push before deploying (see [Building the Image](#building-the-image)) |
-| A `.env` file with runtime config | Copy and fill in `infra/env.demo.template`. Contains target endpoints and content safety config. `AZURE_SQL_DB_CONNECTION_STRING` and `AZURE_STORAGE_ACCOUNT_DB_DATA_CONTAINER_URL` are auto-injected by the script — you can omit them. Required for the default `target airt` initializer. Targets can also be created manually in the GUI if deploying with the `target` initializer only |
+| A `.env` file with runtime config | Copy and fill in `infra/env.demo.template`. Contains target endpoints and content safety config. `AZURE_SQL_DB_CONNECTION_STRING` and `AZURE_STORAGE_ACCOUNT_DB_DATA_CONTAINER_URL` are auto-injected by the script — you can omit them. Required for the default `target, airt` initializer. Targets can also be created manually in the GUI if deploying with the `target` initializer only |
 
 ### What the script creates (per-instance)
 

@@ -24,7 +24,7 @@ from pathlib import Path
 
 # Import sibling script for post-generation TOC validation.
 sys.path.insert(0, str(Path(__file__).parent))
-import validate_docs  # noqa: E402
+import validate_docs
 
 API_JSON_DIR = Path("doc/_api")
 API_MD_DIR = Path("doc/api")

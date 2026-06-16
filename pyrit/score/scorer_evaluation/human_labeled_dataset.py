@@ -5,7 +5,8 @@
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional, Union, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Optional, cast
+from uuid import uuid4
 
 import pandas as pd
 
@@ -18,13 +19,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Standard column names for evaluation datasets
-STANDARD_HUMAN_LABEL_COL = "human_score"
-STANDARD_OBJECTIVE_COL = "objective"
-STANDARD_HARM_COL = "harm_category"
-STANDARD_ASSISTANT_RESPONSE_COL = "assistant_response"
-STANDARD_DATA_TYPE_COL = "data_type"
-
 
 @dataclass
 class HumanLabeledEntry:
@@ -35,7 +29,7 @@ class HumanLabeledEntry:
     (representing degree of severity) for harm datasets, and booleans for objective datasets.
 
     Parameters:
-        conversation (List[Message]): A list of Message objects representing the
+        conversation (list[Message]): A list of Message objects representing the
             conversation to be scored. This can contain one Message object if you are just
             scoring individual assistant responses.
         human_scores (List): A list of human-assigned scores for the responses. Each entry in the list corresponds to
@@ -119,6 +113,13 @@ class HumanLabeledDataset:
     HumanLabeledDatasets can be constructed from a CSV file.
     """
 
+    # Standard column names for evaluation datasets
+    STANDARD_HUMAN_LABEL_COL: ClassVar[str] = "human_score"
+    STANDARD_OBJECTIVE_COL: ClassVar[str] = "objective"
+    STANDARD_HARM_COL: ClassVar[str] = "harm_category"
+    STANDARD_ASSISTANT_RESPONSE_COL: ClassVar[str] = "assistant_response"
+    STANDARD_DATA_TYPE_COL: ClassVar[str] = "data_type"
+
     def __init__(
         self,
         *,
@@ -126,8 +127,8 @@ class HumanLabeledDataset:
         entries: list[HumanLabeledEntry],
         metrics_type: MetricsType,
         version: str,
-        harm_definition: Optional[str] = None,
-        harm_definition_version: Optional[str] = None,
+        harm_definition: str | None = None,
+        harm_definition_version: str | None = None,
     ) -> None:
         """
         Initialize the HumanLabeledDataset.
@@ -136,7 +137,7 @@ class HumanLabeledDataset:
             name (str): The name of the human-labeled dataset. For datasets of uniform type, this is often the harm
                 category (e.g. hate_speech) or objective. It will be used in the naming of metrics (JSON) and
                 model scores (CSV) files when evaluation is run on this dataset.
-            entries (List[HumanLabeledEntry]): A list of entries in the dataset.
+            entries (list[HumanLabeledEntry]): A list of entries in the dataset.
             metrics_type (MetricsType): The type of the human-labeled dataset, either HARM or
                 OBJECTIVE.
             version (str): The version of the human-labeled dataset.
@@ -156,7 +157,7 @@ class HumanLabeledDataset:
         self.version = version
         self.harm_definition = harm_definition
         self.harm_definition_version = harm_definition_version
-        self._harm_definition_obj: Optional[HarmDefinition] = None
+        self._harm_definition_obj: HarmDefinition | None = None
 
     def get_harm_definition(self) -> Optional["HarmDefinition"]:
         """
@@ -188,12 +189,12 @@ class HumanLabeledDataset:
     def from_csv(
         cls,
         *,
-        csv_path: Union[str, Path],
+        csv_path: str | Path,
         metrics_type: MetricsType,
-        dataset_name: Optional[str] = None,
-        version: Optional[str] = None,
-        harm_definition: Optional[str] = None,
-        harm_definition_version: Optional[str] = None,
+        dataset_name: str | None = None,
+        version: str | None = None,
+        harm_definition: str | None = None,
+        harm_definition_version: str | None = None,
     ) -> "HumanLabeledDataset":
         """
         Load a human-labeled dataset from a CSV file with standard column names.
@@ -210,7 +211,7 @@ class HumanLabeledDataset:
         - For objective datasets: # dataset_version=x.y
 
         Args:
-            csv_path (Union[str, Path]): The path to the CSV file.
+            csv_path (str | Path): The path to the CSV file.
             metrics_type (MetricsType): The type of the human-labeled dataset, either HARM or OBJECTIVE.
             dataset_name (str, Optional): The name of the dataset. If not provided, it will be inferred
                 from the CSV file name.
@@ -282,24 +283,26 @@ class HumanLabeledDataset:
         cls._validate_csv_columns(eval_df=eval_df, metrics_type=metrics_type)
 
         # Determine human label columns (all columns starting with standard prefix)
-        human_label_col_names = [col for col in eval_df.columns if col.startswith(STANDARD_HUMAN_LABEL_COL)]
+        human_label_col_names = [col for col in eval_df.columns if col.startswith(cls.STANDARD_HUMAN_LABEL_COL)]
         if not human_label_col_names:
             raise ValueError(
-                f"No human score columns found. Expected columns starting with '{STANDARD_HUMAN_LABEL_COL}'."
+                f"No human score columns found. Expected columns starting with '{cls.STANDARD_HUMAN_LABEL_COL}'."
             )
 
         # Get data type column if it exists, otherwise default to 'text'
-        has_data_type_col = STANDARD_DATA_TYPE_COL in eval_df.columns
+        has_data_type_col = cls.STANDARD_DATA_TYPE_COL in eval_df.columns
 
-        responses_to_score = eval_df[STANDARD_ASSISTANT_RESPONSE_COL].tolist()
+        responses_to_score = eval_df[cls.STANDARD_ASSISTANT_RESPONSE_COL].tolist()
         all_human_scores = eval_df[human_label_col_names].values.tolist()
         # Use appropriate column based on metrics type
-        objective_or_harm_col = STANDARD_HARM_COL if metrics_type == MetricsType.HARM else STANDARD_OBJECTIVE_COL
+        objective_or_harm_col = (
+            cls.STANDARD_HARM_COL if metrics_type == MetricsType.HARM else cls.STANDARD_OBJECTIVE_COL
+        )
         objectives_or_harms = eval_df[objective_or_harm_col].tolist()
         if has_data_type_col:
-            data_types = eval_df[STANDARD_DATA_TYPE_COL].tolist()
+            data_types = eval_df[cls.STANDARD_DATA_TYPE_COL].tolist()
         else:
-            data_types = ["text"] * len(eval_df[STANDARD_ASSISTANT_RESPONSE_COL])
+            data_types = ["text"] * len(eval_df[cls.STANDARD_ASSISTANT_RESPONSE_COL])
 
         entries: list[HumanLabeledEntry] = []
         for response_to_score, human_scores, objective_or_harm, data_type in zip(
@@ -318,6 +321,7 @@ class HumanLabeledDataset:
                             role="assistant",
                             original_value=response_to_score,
                             original_value_data_type=cast("PromptDataType", data_type),
+                            conversation_id=str(uuid4()),
                         )
                     ],
                 )
@@ -418,8 +422,10 @@ class HumanLabeledDataset:
             raise ValueError("Column names in the dataset must be unique.")
 
         # Required columns depend on metrics type
-        objective_or_harm_col = STANDARD_HARM_COL if metrics_type == MetricsType.HARM else STANDARD_OBJECTIVE_COL
-        required_columns = [STANDARD_ASSISTANT_RESPONSE_COL, objective_or_harm_col]
+        objective_or_harm_col = (
+            cls.STANDARD_HARM_COL if metrics_type == MetricsType.HARM else cls.STANDARD_OBJECTIVE_COL
+        )
+        required_columns = [cls.STANDARD_ASSISTANT_RESPONSE_COL, objective_or_harm_col]
 
         for column in required_columns:
             if column not in eval_df.columns:
@@ -430,11 +436,11 @@ class HumanLabeledDataset:
                 raise ValueError(f"Column '{column}' contains NaN values.")
 
         # Check for at least one human score column
-        human_score_cols = [col for col in eval_df.columns if col.startswith(STANDARD_HUMAN_LABEL_COL)]
+        human_score_cols = [col for col in eval_df.columns if col.startswith(cls.STANDARD_HUMAN_LABEL_COL)]
         if not human_score_cols:
             raise ValueError(
                 f"No human score columns found. "
-                f"Expected at least one column starting with '{STANDARD_HUMAN_LABEL_COL}'."
+                f"Expected at least one column starting with '{cls.STANDARD_HUMAN_LABEL_COL}'."
             )
 
         # Validate human score columns don't have any NaN values.

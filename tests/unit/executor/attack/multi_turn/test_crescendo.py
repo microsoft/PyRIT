@@ -4,7 +4,6 @@
 import json
 import uuid
 from pathlib import Path
-from typing import Optional
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -33,6 +32,7 @@ from pyrit.models import (
     MessagePiece,
     Score,
     ScoreType,
+    SeedPrompt,
 )
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import PromptTarget
@@ -85,11 +85,11 @@ def create_score(
     *,
     score_type: ScoreType,
     score_value: str,
-    score_category: Optional[list[str]] = None,
+    score_category: list[str] | None = None,
     scorer_class: str,
     score_rationale: str = "Test rationale",
     score_value_description: str = "Test description",
-    score_metadata: Optional[dict] = None,
+    score_metadata: dict | None = None,
 ) -> Score:
     """Create a score with common defaults.
 
@@ -254,10 +254,10 @@ class CrescendoTestHelper:
         *,
         objective_target: MagicMock,
         adversarial_chat: MagicMock,
-        objective_scorer: Optional[MagicMock] = None,
-        refusal_scorer: Optional[MagicMock] = None,
-        prompt_normalizer: Optional[MagicMock] = None,
-        system_prompt_path: Optional[Path] = None,
+        objective_scorer: MagicMock | None = None,
+        refusal_scorer: MagicMock | None = None,
+        prompt_normalizer: MagicMock | None = None,
+        system_prompt_path: Path | None = None,
         **kwargs,
     ) -> CrescendoAttack:
         """Create a CrescendoAttack instance with flexible configuration.
@@ -909,7 +909,7 @@ class TestPromptGeneration:
         mock_objective_target: MagicMock,
         mock_adversarial_chat: MagicMock,
         response_json: str,
-        expected_error: Optional[str],
+        expected_error: str | None,
     ):
         """Test parsing adversarial response with various inputs.
 
@@ -2371,3 +2371,73 @@ class TestCrescendoConversationTracking:
                 and ref.conversation_type == ConversationType.ADVERSARIAL
                 for ref in basic_context.related_conversations
             )
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestCrescendoAdversarialIdentity:
+    """Tests for adversarial config in the Crescendo attack identity and inline system prompt."""
+
+    def test_get_attack_adversarial_config_returns_target_and_system_prompt(
+        self, mock_objective_target, mock_adversarial_chat, mock_objective_scorer
+    ):
+        attack = CrescendoTestHelper.create_attack(
+            objective_target=mock_objective_target,
+            adversarial_chat=mock_adversarial_chat,
+            objective_scorer=mock_objective_scorer,
+        )
+        config = attack.get_attack_adversarial_config()
+        assert config is not None
+        assert config.target is mock_adversarial_chat
+        assert config.system_prompt is attack._adversarial_chat_system_prompt_template
+        assert config.seed_prompt is None
+
+    def test_get_attack_adversarial_config_returns_none_without_target(
+        self, mock_objective_target, mock_adversarial_chat, mock_objective_scorer
+    ):
+        attack = CrescendoTestHelper.create_attack(
+            objective_target=mock_objective_target,
+            adversarial_chat=mock_adversarial_chat,
+            objective_scorer=mock_objective_scorer,
+        )
+        attack._adversarial_chat = None
+        assert attack.get_attack_adversarial_config() is None
+
+    def test_identifier_includes_adversarial_chat_child(
+        self, mock_objective_target, mock_adversarial_chat, mock_objective_scorer
+    ):
+        attack = CrescendoTestHelper.create_attack(
+            objective_target=mock_objective_target,
+            adversarial_chat=mock_adversarial_chat,
+            objective_scorer=mock_objective_scorer,
+        )
+        identifier = attack.get_identifier()
+        assert "adversarial_chat" in identifier.children
+        assert identifier.children["adversarial_chat"] == mock_adversarial_chat.get_identifier.return_value
+
+    def test_inline_system_prompt_string_resolved_and_in_identity(
+        self, mock_objective_target, mock_adversarial_chat, mock_objective_scorer
+    ):
+        attack = CrescendoAttack(
+            objective_target=mock_objective_target,
+            attack_adversarial_config=AttackAdversarialConfig(
+                target=mock_adversarial_chat, system_prompt="custom crescendo persona"
+            ),
+            attack_scoring_config=AttackScoringConfig(objective_scorer=mock_objective_scorer),
+        )
+        assert attack._adversarial_chat_system_prompt_template.value == "custom crescendo persona"
+        assert attack.get_identifier().params["adversarial_system_prompt"] == "custom crescendo persona"
+
+    def test_inline_system_prompt_seedprompt_resolved(
+        self, mock_objective_target, mock_adversarial_chat, mock_objective_scorer
+    ):
+        seed = SeedPrompt(
+            value="persona {{ objective }} {{ max_turns }}",
+            data_type="text",
+            parameters=["objective", "max_turns"],
+        )
+        attack = CrescendoAttack(
+            objective_target=mock_objective_target,
+            attack_adversarial_config=AttackAdversarialConfig(target=mock_adversarial_chat, system_prompt=seed),
+            attack_scoring_config=AttackScoringConfig(objective_scorer=mock_objective_scorer),
+        )
+        assert attack._adversarial_chat_system_prompt_template is seed

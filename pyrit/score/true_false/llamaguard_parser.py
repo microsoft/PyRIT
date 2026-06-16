@@ -14,7 +14,7 @@ or
     S1,S6
 
 This module turns that raw text into the dict shape consumed by
-``Scorer._score_value_with_llm``, so a LlamaGuard endpoint can be plugged into
+``Scorer._score_value_with_llm_async``, so a LlamaGuard endpoint can be plugged into
 ``SelfAskTrueFalseScorer`` via its ``response_parser`` argument.
 
 Example:
@@ -62,7 +62,7 @@ def parse_llamaguard_response(text: str) -> dict[str, Any]:
     Returns:
         A dict with keys ``score_value`` (str: "True" or "False"), ``rationale`` (str),
         ``description`` (str), and ``metadata`` (dict) -- the shape expected by
-        ``Scorer._score_value_with_llm`` when ``response_parser`` is supplied.
+        ``Scorer._score_value_with_llm_async`` when ``response_parser`` is supplied.
 
     Raises:
         InvalidJsonException: If the response does not start with "safe" or "unsafe".

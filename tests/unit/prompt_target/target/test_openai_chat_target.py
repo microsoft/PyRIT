@@ -25,14 +25,14 @@ from pyrit.exceptions.exception_classes import (
     RateLimitException,
 )
 from pyrit.memory.memory_interface import MemoryInterface
-from pyrit.models import ComponentIdentifier, Message, MessagePiece
-from pyrit.models.json_response_config import _JsonResponseConfig
+from pyrit.models import Message, MessagePiece
 from pyrit.prompt_target import (
     OpenAIChatAudioConfig,
     OpenAIChatTarget,
     OpenAIResponseTarget,
     PromptTarget,
 )
+from pyrit.prompt_target.common.json_response_config import _JsonResponseConfig
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 
@@ -122,7 +122,7 @@ async def test_build_chat_messages_for_multi_modal(target: OpenAIChatTarget):
         )
     ]
     with patch(
-        "pyrit.common.data_url_converter.convert_local_image_to_data_url_async",
+        "pyrit.memory.storage.data_url_converter.convert_local_image_to_data_url_async",
         return_value="data:image/jpeg;base64,encoded_string",
     ):
         messages = await target._build_chat_messages_for_multi_modal_async(entries)
@@ -266,7 +266,7 @@ async def test_send_prompt_async_empty_response_adds_to_memory(openai_response_j
         ),
     )
     mock_memory = MagicMock()
-    mock_memory.get_conversation.return_value = []
+    mock_memory.get_conversation_messages.return_value = []
     mock_memory.add_message_to_memory = AsyncMock()
 
     target._memory = mock_memory
@@ -283,8 +283,6 @@ async def test_send_prompt_async_empty_response_adds_to_memory(openai_response_j
                 converted_value="hello",
                 original_value_data_type="text",
                 converted_value_data_type="text",
-                prompt_target_identifier=ComponentIdentifier(class_name="target-identifier", class_module="test"),
-                attack_identifier=ComponentIdentifier(class_name="test", class_module="test"),
                 labels={"test": "test"},
             ),
             MessagePiece(
@@ -294,15 +292,13 @@ async def test_send_prompt_async_empty_response_adds_to_memory(openai_response_j
                 converted_value=tmp_file_name,
                 original_value_data_type="image_path",
                 converted_value_data_type="image_path",
-                prompt_target_identifier=ComponentIdentifier(class_name="target-identifier", class_module="test"),
-                attack_identifier=ComponentIdentifier(class_name="test", class_module="test"),
                 labels={"test": "test"},
             ),
         ]
     )
     # Make assistant response empty
     with patch(
-        "pyrit.common.data_url_converter.convert_local_image_to_data_url_async",
+        "pyrit.memory.storage.data_url_converter.convert_local_image_to_data_url_async",
         return_value="data:image/jpeg;base64,encoded_string",
     ):
         # Mock the OpenAI SDK client to return empty content
@@ -311,7 +307,7 @@ async def test_send_prompt_async_empty_response_adds_to_memory(openai_response_j
             return_value=mock_completion
         )
         target._memory = MagicMock(MemoryInterface)
-        target._memory.get_conversation.return_value = []
+        target._memory.get_conversation_messages.return_value = []
 
         with pytest.raises(EmptyResponseException):
             await target.send_prompt_async(message=message)
@@ -321,7 +317,7 @@ async def test_send_prompt_async_rate_limit_exception_adds_to_memory(
     target: OpenAIChatTarget,
 ):
     mock_memory = MagicMock()
-    mock_memory.get_conversation.return_value = []
+    mock_memory.get_conversation_messages.return_value = []
     mock_memory.add_message_to_memory = AsyncMock()
 
     target._memory = mock_memory
@@ -342,7 +338,7 @@ async def test_send_prompt_async_rate_limit_exception_adds_to_memory(
 
 async def test_send_prompt_async_bad_request_error_adds_to_memory(target: OpenAIChatTarget):
     mock_memory = MagicMock()
-    mock_memory.get_conversation.return_value = []
+    mock_memory.get_conversation_messages.return_value = []
     mock_memory.add_message_to_memory = AsyncMock()
 
     target._memory = mock_memory
@@ -358,7 +354,7 @@ async def test_send_prompt_async_bad_request_error_adds_to_memory(target: OpenAI
     target._async_client.chat.completions.create = AsyncMock(side_effect=side_effect)  # type: ignore[method-assign]
 
     # Non-content-filter BadRequestError should be re-raised
-    with pytest.raises(Exception):  # noqa: B017  # Will raise since handle_bad_request_exception re-raises non-content-filter errors
+    with pytest.raises(Exception):  # Will raise since handle_bad_request_exception re-raises non-content-filter errors
         await target.send_prompt_async(message=message)
 
 
@@ -393,8 +389,6 @@ async def test_send_prompt_async(openai_response_json: dict, patch_central_datab
                 converted_value="hello",
                 original_value_data_type="text",
                 converted_value_data_type="text",
-                prompt_target_identifier=ComponentIdentifier(class_name="target-identifier", class_module="test"),
-                attack_identifier=ComponentIdentifier(class_name="test", class_module="test"),
                 labels={"test": "test"},
             ),
             MessagePiece(
@@ -404,14 +398,12 @@ async def test_send_prompt_async(openai_response_json: dict, patch_central_datab
                 converted_value=tmp_file_name,
                 original_value_data_type="image_path",
                 converted_value_data_type="image_path",
-                prompt_target_identifier=ComponentIdentifier(class_name="target-identifier", class_module="test"),
-                attack_identifier=ComponentIdentifier(class_name="test", class_module="test"),
                 labels={"test": "test"},
             ),
         ]
     )
     with patch(
-        "pyrit.common.data_url_converter.convert_local_image_to_data_url_async",
+        "pyrit.memory.storage.data_url_converter.convert_local_image_to_data_url_async",
         return_value="data:image/jpeg;base64,encoded_string",
     ):
         # Mock the OpenAI SDK client to return a completion
@@ -458,8 +450,6 @@ async def test_send_prompt_async_empty_response_retries(openai_response_json: di
                 converted_value="hello",
                 original_value_data_type="text",
                 converted_value_data_type="text",
-                prompt_target_identifier=ComponentIdentifier(class_name="target-identifier", class_module="test"),
-                attack_identifier=ComponentIdentifier(class_name="test", class_module="test"),
                 labels={"test": "test"},
             ),
             MessagePiece(
@@ -469,15 +459,13 @@ async def test_send_prompt_async_empty_response_retries(openai_response_json: di
                 converted_value=tmp_file_name,
                 original_value_data_type="image_path",
                 converted_value_data_type="image_path",
-                prompt_target_identifier=ComponentIdentifier(class_name="target-identifier", class_module="test"),
-                attack_identifier=ComponentIdentifier(class_name="test", class_module="test"),
                 labels={"test": "test"},
             ),
         ]
     )
     # Make assistant response empty
     with patch(
-        "pyrit.common.data_url_converter.convert_local_image_to_data_url_async",
+        "pyrit.memory.storage.data_url_converter.convert_local_image_to_data_url_async",
         return_value="data:image/jpeg;base64,encoded_string",
     ):
         # Mock the OpenAI SDK client to return empty content
@@ -486,7 +474,7 @@ async def test_send_prompt_async_empty_response_retries(openai_response_json: di
             return_value=mock_completion
         )
         target._memory = MagicMock(MemoryInterface)
-        target._memory.get_conversation.return_value = []
+        target._memory.get_conversation_messages.return_value = []
 
         with pytest.raises(EmptyResponseException):
             await target.send_prompt_async(message=message)
@@ -519,7 +507,7 @@ async def test_send_prompt_async_bad_request_error(target: OpenAIChatTarget):
     target._async_client.chat.completions.create = AsyncMock(side_effect=side_effect)  # type: ignore[method-assign]
 
     # Non-content-filter BadRequestError should be re-raised
-    with pytest.raises(Exception):  # noqa: B017  # Will raise since handle_bad_request_exception re-raises non-content-filter errors
+    with pytest.raises(Exception):  # Will raise since handle_bad_request_exception re-raises non-content-filter errors
         await target.send_prompt_async(message=message)
 
 
@@ -640,7 +628,7 @@ def test_is_response_format_json_no_metadata(target: OpenAIChatTarget):
 
 async def test_send_prompt_async_content_filter_400(target: OpenAIChatTarget):
     mock_memory = MagicMock(spec=MemoryInterface)
-    mock_memory.get_conversation.return_value = []
+    mock_memory.get_conversation_messages.return_value = []
     mock_memory.add_message_to_memory = AsyncMock()
     target._memory = mock_memory
 
@@ -693,7 +681,7 @@ async def test_send_prompt_async_other_http_error(patch_central_database):
     )
     message = Message(message_pieces=[message_piece])
     target._memory = MagicMock()
-    target._memory.get_conversation.return_value = []
+    target._memory.get_conversation_messages.return_value = []
 
     # Create proper mock request and response for APIStatusError
     mock_request = httpx.Request("POST", "https://api.openai.com/v1/chat/completions")

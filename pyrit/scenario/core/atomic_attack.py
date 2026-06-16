@@ -23,7 +23,7 @@ from pyrit.executor.attack.core.attack_executor import AttackExecutorResult
 from pyrit.executor.attack.core.attack_result_attribution import AttackResultAttribution
 from pyrit.memory import CentralMemory
 from pyrit.memory.memory_models import MAX_IDENTIFIER_VALUE_LENGTH
-from pyrit.models import AtomicAttackEvaluationIdentifier, AttackResult, SeedAttackGroup, build_atomic_attack_identifier
+from pyrit.models import AtomicAttackEvaluationIdentifier, AtomicAttackIdentifier, AttackResult, SeedAttackGroup
 from pyrit.scenario.core.attack_technique import AttackTechnique
 
 if TYPE_CHECKING:
@@ -59,7 +59,7 @@ class AtomicAttack:
         seed_groups: list[SeedAttackGroup],
         adversarial_chat: Optional["PromptTarget"] = None,
         objective_scorer: Optional["TrueFalseScorer"] = None,
-        memory_labels: Optional[dict[str, str]] = None,
+        memory_labels: dict[str, str] | None = None,
         **attack_execute_params: Any,
     ) -> None:
         """
@@ -203,7 +203,7 @@ class AtomicAttack:
         which is what makes it usable as the resume disambiguator alongside
         ``atomic_attack_name``.
         """
-        composite = build_atomic_attack_identifier(
+        composite = AtomicAttackIdentifier.build(
             technique_identifier=self._attack_technique.get_identifier(),
             seed_group=None,
         )
@@ -215,7 +215,7 @@ class AtomicAttack:
         Get the objectives from the seed groups.
 
         Returns:
-            List[str]: List of objectives from all seed groups.
+            list[str]: List of objectives from all seed groups.
         """
         return [sg.objective.value for sg in self._seed_groups if sg.objective is not None]
 
@@ -225,7 +225,7 @@ class AtomicAttack:
         Get a copy of the seed groups list for this atomic attack.
 
         Returns:
-            List[SeedAttackGroup]: A copy of the seed groups list.
+            list[SeedAttackGroup]: A copy of the seed groups list.
         """
         return list(self._seed_groups)
 
@@ -258,7 +258,7 @@ class AtomicAttack:
             objective text. Scheduled for removal in 0.16.0.
 
         Args:
-            remaining_objectives (List[str]): List of objectives that still need to be executed.
+            remaining_objectives (list[str]): List of objectives that still need to be executed.
         """
         print_deprecation_message(
             old_item="AtomicAttack.filter_seed_groups_by_objectives(remaining_objectives=...)",
@@ -433,7 +433,7 @@ class AtomicAttack:
 
         for result, idx in zip(results.completed_results, results.input_indices, strict=True):
             if idx < len(self._seed_groups):
-                identifier = build_atomic_attack_identifier(
+                identifier = AtomicAttackIdentifier.build(
                     technique_identifier=self._attack_technique.get_identifier(),
                     seed_group=self._seed_groups[idx],
                 )

@@ -10,8 +10,8 @@ import pytest
 # Skip the whole file on installs that only have the base `dev` extra.
 pytest.importorskip("torch", reason="GCG public API exposes torch-dependent symbols")
 
-import pyrit.auxiliary_attacks.gcg as gcg_pkg  # noqa: E402
-from pyrit.auxiliary_attacks.gcg import (  # noqa: E402
+import pyrit.auxiliary_attacks.gcg as gcg_pkg
+from pyrit.auxiliary_attacks.gcg import (
     GCG,
     GCGAlgorithmConfig,
     GCGConfig,

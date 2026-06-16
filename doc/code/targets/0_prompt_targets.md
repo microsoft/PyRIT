@@ -64,7 +64,7 @@ A `TargetConfiguration` composes three concerns:
 
 Each target class defines defaults; instances can override individual capabilities when they depend on deployment configuration (e.g. `HTTPTarget`, `PlaywrightTarget`).
 
-For well-known underlying models, you can look up a profile with `TargetCapabilities.get_known_capabilities(underlying_model="gpt-4o")`.
+For well-known underlying models, you can look up a profile with `get_known_capabilities(underlying_model="gpt-4o")` from `pyrit.prompt_target`.
 
 ### How consumers use capabilities
 

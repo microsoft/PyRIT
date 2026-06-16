@@ -274,9 +274,9 @@ describe("api service", () => {
             {
               turn_number: 1,
               role: "user",
-              pieces: [
+              message_pieces: [
                 {
-                  piece_id: "p1",
+                  id: "p1",
                   converted_value: "Hello",
                   converted_value_data_type: "text",
                 },

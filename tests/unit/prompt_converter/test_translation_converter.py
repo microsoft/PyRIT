@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from unit.mocks import MockPromptTarget
 
-from pyrit.models import ComponentIdentifier, Message, MessagePiece
+from pyrit.models import Message, MessagePiece
 from pyrit.prompt_converter import TranslationConverter
 
 
@@ -40,7 +40,6 @@ async def test_translation_converter_returns_stripped_response(sqlite_instance):
                 conversation_id="test-id",
                 original_value="  hola  \n",
                 original_value_data_type="text",
-                prompt_target_identifier=ComponentIdentifier(class_name="test", class_module="test"),
                 sequence=1,
             )
         ]
@@ -72,7 +71,6 @@ async def test_translation_converter_user_prompt_byte_for_byte_equivalent(sqlite
                 conversation_id="test-id",
                 original_value="hola",
                 original_value_data_type="text",
-                prompt_target_identifier=ComponentIdentifier(class_name="test", class_module="test"),
                 sequence=1,
             )
         ]
@@ -96,7 +94,7 @@ async def test_translation_converter_retries_on_exception(sqlite_instance):
     mock_send_prompt = AsyncMock(side_effect=Exception("Test failure"))
     with patch.object(prompt_target, "send_prompt_async", mock_send_prompt):
         with patch("asyncio.sleep", new_callable=AsyncMock):
-            with pytest.raises(Exception):  # noqa: B017
+            with pytest.raises(Exception):
                 await translation_converter.convert_async(prompt="hello")
 
             assert mock_send_prompt.call_count == max_retries
@@ -119,7 +117,6 @@ async def test_translation_converter_succeeds_after_retries(sqlite_instance):
                 converted_value="hola",
                 original_value_data_type="text",
                 converted_value_data_type="text",
-                prompt_target_identifier=ComponentIdentifier(class_name="test-identifier", class_module="test"),
                 sequence=1,
             )
         ]
