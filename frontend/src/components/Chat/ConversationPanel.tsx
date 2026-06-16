@@ -196,11 +196,22 @@ export default function ConversationPanel({
 
         {!isLoading && !error && conversations.map((conv) => {
           const isActive = conv.conversation_id === activeConversationId
+          const selectConversation = () => onSelectConversation(conv.conversation_id)
           return (
             <div
               key={conv.conversation_id}
               className={`${styles.conversationItem} ${isActive ? styles.conversationItemActive : ''}`}
-              onClick={() => onSelectConversation(conv.conversation_id)}
+              onClick={selectConversation}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault()
+                  selectConversation()
+                }
+              }}
+              role="button"
+              tabIndex={0}
+              aria-label={`Select conversation ${conv.conversation_id}`}
+              aria-current={isActive ? 'true' : undefined}
               data-testid={`conversation-item-${conv.conversation_id}`}
             >
               <div className={styles.conversationHeader}>

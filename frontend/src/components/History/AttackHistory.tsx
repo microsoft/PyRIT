@@ -178,7 +178,7 @@ export default function AttackHistory({ onOpenAttack, filters, onFiltersChange }
 
   return (
     <div className={styles.root}>
-      <div className={styles.header}>
+      <div className={styles.header} data-tour="history-filters">
         <div className={styles.headerRow}>
           <Text size={500} weight="semibold">Attack History</Text>
           <Button

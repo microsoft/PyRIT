@@ -12,8 +12,6 @@ Route structure:
     /api/scenarios/runs          — scenario execution lifecycle
 """
 
-from typing import Any
-
 from fastapi import APIRouter, HTTPException, Query, status
 
 from pyrit.backend.models.common import ProblemDetail
@@ -28,6 +26,7 @@ from pyrit.models.catalog.scenario import (
     RunScenarioRequest,
     ScenarioRunSummary,
 )
+from pyrit.models.scenario_result import ScenarioResult
 
 router = APIRouter(prefix="/scenarios", tags=["scenarios"])
 
@@ -198,22 +197,21 @@ async def cancel_scenario_run(scenario_result_id: str) -> ScenarioRunSummary:  #
 
 @router.get(
     "/runs/{scenario_result_id}/results",
+    response_model=ScenarioResult,
     responses={
         404: {"model": ProblemDetail, "description": "Run not found"},
         409: {"model": ProblemDetail, "description": "Run not yet completed"},
     },
 )
-async def get_scenario_run_results(scenario_result_id: str) -> dict[str, Any]:  # pyrit-async-suffix-exempt
+async def get_scenario_run_results(scenario_result_id: str) -> ScenarioResult:  # pyrit-async-suffix-exempt
     """
     Get detailed results for a completed scenario run.
-
-    Returns the full ScenarioResult serialization.
 
     Args:
         scenario_result_id: The scenario_result_id.
 
     Returns:
-        dict: ScenarioResult.to_dict() payload.
+        ScenarioResult: Detailed run results. FastAPI handles JSON serialization.
     """
     service = get_scenario_run_service()
     try:
@@ -226,4 +224,4 @@ async def get_scenario_run_results(scenario_result_id: str) -> dict[str, Any]:  
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Scenario run '{scenario_result_id}' not found",
         )
-    return result.to_dict()
+    return result

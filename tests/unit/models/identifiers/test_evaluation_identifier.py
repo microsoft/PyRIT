@@ -597,10 +597,10 @@ class TestComputeInnerAttackEvalHash:
         return attack
 
     def test_matches_manual_two_step_composition(self):
-        """Helper equals the executor recipe (build_atomic_attack_identifier + AtomicAttackEvaluationIdentifier)."""
+        """Helper equals the executor recipe (AtomicAttackIdentifier.build + AtomicAttackEvaluationIdentifier)."""
         from pyrit.models.identifiers import (
             AtomicAttackEvaluationIdentifier,
-            build_atomic_attack_identifier,
+            AtomicAttackIdentifier,
             compute_inner_attack_eval_hash,
         )
 
@@ -611,7 +611,7 @@ class TestComputeInnerAttackEvalHash:
         attack = self._attack_with_identifier(inner_id)
 
         expected = AtomicAttackEvaluationIdentifier(
-            build_atomic_attack_identifier(attack_identifier=inner_id),
+            AtomicAttackIdentifier.build(attack_identifier=inner_id),
         ).eval_hash
         assert compute_inner_attack_eval_hash(attack=attack) == expected
 
@@ -639,7 +639,7 @@ class TestComputeInnerAttackEvalHash:
         identifier must yield an entry with the same eval_hash."""
         from pyrit.memory.memory_models import AttackResultEntry
         from pyrit.models import AttackResult
-        from pyrit.models.identifiers import build_atomic_attack_identifier, compute_inner_attack_eval_hash
+        from pyrit.models.identifiers import AtomicAttackIdentifier, compute_inner_attack_eval_hash
 
         inner_id = ComponentIdentifier(
             class_name="MyAttack",
@@ -651,7 +651,7 @@ class TestComputeInnerAttackEvalHash:
         result = AttackResult(
             conversation_id="conv_1",
             objective="o",
-            atomic_attack_identifier=build_atomic_attack_identifier(attack_identifier=inner_id),
+            atomic_attack_identifier=AtomicAttackIdentifier.build(attack_identifier=inner_id),
         )
         entry = AttackResultEntry(entry=result)
         assert entry.atomic_attack_identifier["eval_hash"] == predicted

@@ -219,9 +219,7 @@ def create_conversation_scorer(
                 ComponentIdentifier: The identifier for this scorer.
             """
             return self._create_identifier(
-                children={
-                    "sub_scorers": [self._wrapped_scorer.get_identifier()],
-                },
+                sub_scorers=[self._wrapped_scorer.get_identifier()],
             )
 
     return DynamicConversationScorer()

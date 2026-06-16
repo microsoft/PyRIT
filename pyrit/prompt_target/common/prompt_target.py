@@ -7,9 +7,13 @@ from typing import Any, final
 
 from pyrit.common.deprecation import print_deprecation_message
 from pyrit.memory import CentralMemory, MemoryInterface
-from pyrit.models import ComponentIdentifier, Conversation, Identifiable, Message, MessagePiece
+from pyrit.models import ComponentIdentifier, Conversation, Identifiable, Message, MessagePiece, TargetIdentifier
 from pyrit.prompt_target.common.json_response_config import _JsonResponseConfig
-from pyrit.prompt_target.common.target_capabilities import CapabilityName, TargetCapabilities
+from pyrit.prompt_target.common.target_capabilities import (
+    CapabilityName,
+    TargetCapabilities,
+    get_known_capabilities,
+)
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 
 logger = logging.getLogger(__name__)
@@ -365,14 +369,16 @@ class PromptTarget(Identifiable):
         self,
         *,
         params: dict[str, Any] | None = None,
-        children: dict[str, ComponentIdentifier | list[ComponentIdentifier]] | None = None,
+        targets: list[ComponentIdentifier] | None = None,
     ) -> ComponentIdentifier:
         """
         Construct the target identifier.
 
-        Builds a ComponentIdentifier with the base target parameters (endpoint,
-        model_name, max_requests_per_minute) and merges in any additional params
-        or children provided by subclasses.
+        Builds a ``TargetIdentifier`` with the base target params (endpoint,
+        model_name, max_requests_per_minute) and the target's promoted child slot.
+        The child slot is exposed as an explicit named parameter (mirroring
+        ``TargetIdentifier``'s promoted field) so it cannot drift into an untyped
+        ``children`` dict.
 
         Subclasses should call this method in their _build_identifier() implementation
         to set the identifier with their specific parameters.
@@ -380,23 +386,22 @@ class PromptTarget(Identifiable):
         Args:
             params (dict[str, Any] | None): Additional behavioral parameters from
                 the subclass (e.g., temperature, top_p). Merged into the base params.
-            children (dict[str, ComponentIdentifier | list[ComponentIdentifier]] | None):
-                Named child component identifiers.
+            targets (list[ComponentIdentifier] | None): Inner targets of a
+                multi-target (e.g., ``RoundRobinTarget``), promoted to
+                ``TargetIdentifier.targets``.
 
         Returns:
             ComponentIdentifier: The identifier for this prompt target.
         """
-        all_params: dict[str, Any] = {
-            "endpoint": self._endpoint,
-            "model_name": self._model_name or "",
-            "underlying_model_name": self._underlying_model or "",
-            "max_requests_per_minute": self._max_requests_per_minute,
-            "target_configuration": self.configuration.as_identifier_params(),
-        }
-        if params:
-            all_params.update(params)
-
-        return ComponentIdentifier.of(self, params=all_params, children=children)
+        return TargetIdentifier.of(
+            self,
+            params=params,
+            endpoint=self._endpoint,
+            model_name=self._model_name or "",
+            underlying_model_name=self._underlying_model or "",
+            max_requests_per_minute=self._max_requests_per_minute,
+            targets=targets,
+        )
 
     @property
     def configuration(self) -> TargetConfiguration:
@@ -463,7 +468,7 @@ class PromptTarget(Identifiable):
             ``_DEFAULT_CONFIGURATION`` if the model is unrecognized or not provided.
         """
         if underlying_model:
-            known = TargetCapabilities.get_known_capabilities(underlying_model)
+            known = get_known_capabilities(underlying_model)
             if known is not None:
                 return TargetConfiguration(capabilities=known)
             logger.info(

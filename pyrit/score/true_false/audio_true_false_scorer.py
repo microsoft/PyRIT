@@ -48,9 +48,7 @@ class AudioTrueFalseScorer(TrueFalseScorer):
             ComponentIdentifier: The identifier for this scorer.
         """
         return self._create_identifier(
-            children={
-                "sub_scorers": [self._audio_helper.text_scorer.get_identifier()],
-            },
+            sub_scorers=[self._audio_helper.text_scorer.get_identifier()],
         )
 
     async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:

@@ -22,6 +22,7 @@ from pyrit.memory.memory_models import (
     _load_identifier,
 )
 from pyrit.models import (
+    AtomicAttackIdentifier,
     AttackOutcome,
     AttackResult,
     ComponentIdentifier,
@@ -34,7 +35,6 @@ from pyrit.models import (
     SeedObjective,
     SeedPrompt,
     SeedSimulatedConversation,
-    build_atomic_attack_identifier,
 )
 
 # ---------------------------------------------------------------------------
@@ -528,7 +528,7 @@ class TestAttackResultEntry:
     def test_get_attack_result_prefers_atomic_over_stale_attack_identifier(self):
         """When atomic_attack_identifier and attack_identifier disagree, atomic wins."""
         correct_attack_id = ComponentIdentifier(class_name="CorrectAttack", class_module="pyrit.backend")
-        atomic_id = build_atomic_attack_identifier(attack_identifier=correct_attack_id)
+        atomic_id = AtomicAttackIdentifier.build(attack_identifier=correct_attack_id)
         ar = _make_attack_result(atomic_attack_identifier=atomic_id)
         entry = AttackResultEntry(entry=ar)
 

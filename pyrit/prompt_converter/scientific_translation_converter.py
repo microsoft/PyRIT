@@ -102,5 +102,5 @@ class ScientificTranslationConverter(LLMGenericTextConverter):
             params={
                 "mode": self._mode,
             },
-            children={"converter_target": self._converter_target.get_identifier()},
+            converter_target=self._converter_target.get_identifier(),
         )

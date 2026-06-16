@@ -13,6 +13,19 @@ export default defineConfig({
     baseURL: "http://localhost:3000",
     trace: "on-first-retry",
     screenshot: "only-on-failure",
+    // Pre-set localStorage so the onboarding tour doesn't auto-start and
+    // block UI interactions in E2E tests.
+    storageState: {
+      cookies: [],
+      origins: [
+        {
+          origin: "http://localhost:3000",
+          localStorage: [
+            { name: "pyrit-tour-completed", value: "true" },
+          ],
+        },
+      ],
+    },
   },
 
   projects: [

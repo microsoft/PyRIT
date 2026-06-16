@@ -557,9 +557,14 @@ class TestScorerInitializerRoundRobin:
 
     def _register_mock_rr_target(self, *, name: str) -> MagicMock:
         """Register a mock RoundRobinTarget under the given name."""
+        from pyrit.models.identifiers import ComponentIdentifier
         from pyrit.prompt_target import RoundRobinTarget
 
         rr_mock = MagicMock(spec=RoundRobinTarget)
+        rr_mock.get_identifier.return_value = ComponentIdentifier(
+            class_name="RoundRobinTarget",
+            class_module="pyrit.prompt_target.round_robin_target",
+        )
         registry = TargetRegistry.get_registry_singleton()
         registry.register_instance(rr_mock, name=name)
         return rr_mock

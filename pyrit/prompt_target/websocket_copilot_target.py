@@ -14,13 +14,18 @@ import websockets
 from websockets.exceptions import InvalidStatus
 
 from pyrit.auth import CopilotAuthenticator, ManualCopilotAuthenticator
-from pyrit.common.data_url_converter import convert_local_image_to_data_url_async
 from pyrit.exceptions import (
     EmptyResponseException,
     pyrit_target_retry,
 )
 from pyrit.memory import DataTypeSerializer
-from pyrit.models import ComponentIdentifier, Message, MessagePiece, construct_response_from_request
+from pyrit.memory.storage import convert_local_image_to_data_url_async
+from pyrit.models import (
+    ComponentIdentifier,
+    Message,
+    MessagePiece,
+    construct_response_from_request,
+)
 from pyrit.prompt_target import PromptTarget, limit_requests_per_minute
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration

@@ -1890,6 +1890,7 @@ class MemoryInterface(abc.ABC):
         converter_classes_match: Literal["all", "any"] = "all",
         has_converters: bool | None = None,
         labels: dict[str, str | Sequence[str]] | None = None,
+        targeted_harm_categories: Sequence[str] | None = None,
         identifier_filters: Sequence[IdentifierFilter] | None = None,
         scenario_result_id: str | None = None,
     ) -> Sequence[AttackResult]:
@@ -1933,6 +1934,12 @@ class MemoryInterface(abc.ABC):
                 ["roakey_op_a", "roakey_op_b"]}`` matches attacks where ``operator ==
                 "roakey"`` AND (``operation == "roakey_op_a"`` OR ``operation ==
                 "roakey_op_b"``). Defaults to None.
+            targeted_harm_categories (Sequence[str] | None, optional): Filter results by the
+                harm categories targeted by the attack (stored on
+                ``AttackResultEntry.targeted_harm_categories``, auto-populated from the
+                attack's SeedGroup). Returns attacks targeting ANY of the listed categories
+                (OR logic, case-insensitive). An empty sequence applies no filter. Defaults
+                to None.
             identifier_filters (Sequence[IdentifierFilter] | None, optional):
                 A sequence of IdentifierFilter objects that allows filtering by various attack identifier
                 JSON properties. Defaults to None.
@@ -2048,6 +2055,18 @@ class MemoryInterface(abc.ABC):
             if effective_labels:
                 # Use database-specific JSON query method
                 conditions.append(self._get_attack_result_label_condition(labels=effective_labels))
+
+        if targeted_harm_categories:
+            # Match attacks whose targeted_harm_categories array contains ANY of the
+            # requested categories.
+            conditions.append(
+                self._get_condition_json_array_match(
+                    json_column=AttackResultEntry.targeted_harm_categories,
+                    property_path="$",
+                    array_to_match=list(targeted_harm_categories),
+                    match_mode="any",
+                )
+            )
 
         if identifier_filters:
             conditions.extend(
