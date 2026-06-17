@@ -103,7 +103,7 @@ Financial Advice, Health Consultation, and Government Decision."""
                 dataset_name=self.dataset_name,
                 authors=authors,
                 groups=groups,
-                harm_categories=item["content_policy_name"],
+                harm_categories=[item["content_policy_name"]],
                 source="https://huggingface.co/datasets/TrustAIRLab/forbidden_question_set",
                 description=description,
             )
