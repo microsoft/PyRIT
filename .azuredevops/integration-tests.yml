@@ -1,16 +1,12 @@
 
 # Builds the pyrit environment and runs integration tests
 
-trigger:
-  branches:
-    include:
-      - main
-
-# There are additional PR triggers for this that are configurable in ADO.
-
-jobs:
-- template: test-job-template.yml
+extends:
+  template: scheduled-test-pipeline-template.yml
   parameters:
+    scheduleDisplayName: Integration Tests Daily at 05:00 AM UTC (9:00 PM PST)
+    scheduleCron: "0 5 * * *"  # 5 AM UTC = 9 PM PST (UTC-8) - intentionally run at night to reduce throttling
+    triggerOnChange: true
     jobName: IntegrationTests
     jobDisplayName: "Builds the pyrit environment and runs integration tests"
     testAzureSubscription: 'integration-test-service-connection'
