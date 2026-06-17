@@ -4,11 +4,17 @@
 """Tests for pyrit.models.identifiers.evaluation_markers."""
 
 from pyrit.models.identifiers import (
+    AtomicAttackIdentifier,
     AttackIdentifier,
+    AttackTechniqueIdentifier,
+    ComponentIdentifier,
+    ConverterIdentifier,
     EvalMarker,
     Evaluate,
     Exclude,
     Include,
+    ScorerIdentifier,
+    SeedIdentifier,
     TargetIdentifier,
     Unwrap,
 )
@@ -72,3 +78,56 @@ class TestMarkersAttachedToFields:
         assert marker.only_params == frozenset({"temperature"})
 
         assert isinstance(self._marker(AttackIdentifier, "objective_scorer"), Exclude)
+
+
+def _field_marker(model_cls, field_name):
+    """Return the ``EvalMarker`` attached to a field, or ``None``."""
+    for meta in model_cls.model_fields[field_name].metadata:
+        if isinstance(meta, EvalMarker):
+            return meta
+    return None
+
+
+def _production_identifier_subclasses():
+    """All ``ComponentIdentifier`` subclasses defined in ``pyrit`` (excludes test stubs)."""
+    seen: set[type] = set()
+    stack = list(ComponentIdentifier.__subclasses__())
+    while stack:
+        cls = stack.pop()
+        if cls in seen:
+            continue
+        seen.add(cls)
+        stack.extend(cls.__subclasses__())
+    return sorted(
+        (c for c in seen if c.__module__.startswith("pyrit.")),
+        key=lambda c: c.__name__,
+    )
+
+
+class TestEveryPromotedFieldIsMarked:
+    """Every promoted field on a production identifier must declare an ``Evaluate.*`` marker."""
+
+    def test_discovery_finds_known_identifiers(self):
+        discovered = set(_production_identifier_subclasses())
+        expected = {
+            AtomicAttackIdentifier,
+            AttackIdentifier,
+            AttackTechniqueIdentifier,
+            ConverterIdentifier,
+            ScorerIdentifier,
+            SeedIdentifier,
+            TargetIdentifier,
+        }
+        assert expected <= discovered
+
+    def test_all_promoted_fields_have_eval_marker(self):
+        violations: list[str] = []
+        for cls in _production_identifier_subclasses():
+            promoted = (*cls._promoted_param_fields(), *cls._promoted_child_fields())
+            violations.extend(
+                f"{cls.__name__}.{field_name}" for field_name in promoted if _field_marker(cls, field_name) is None
+            )
+        assert not violations, (
+            "Every promoted field on a ComponentIdentifier subclass must carry an "
+            "Evaluate.* marker (use Evaluate.Include() for the default). Unmarked: " + ", ".join(sorted(violations))
+        )
