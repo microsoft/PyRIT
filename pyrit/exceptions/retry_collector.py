@@ -36,7 +36,7 @@ class RetryCollector:
             retry_state (RetryCallState): The Tenacity retry call state from the after callback.
         """
         elapsed = time.monotonic() - retry_state.start_time
-        fn_name = retry_state.fn.__name__ if retry_state.fn is not None else "unknown"
+        fn_name = getattr(retry_state.fn, "__name__", "unknown") if retry_state.fn is not None else "unknown"
 
         # Extract exception info
         exception_type = ""

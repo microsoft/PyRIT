@@ -9,7 +9,7 @@ This is the attack-centric API design where every user interaction targets a mod
 """
 
 from datetime import datetime, timezone
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from pydantic import BaseModel, Field, computed_field, field_serializer
 
@@ -263,8 +263,8 @@ class AttackSummary(AttackResult):
             return None
         return TargetInfo(
             target_type=target_id.class_name,
-            endpoint=target_id.params.get("endpoint") or None,
-            model_name=target_id.params.get("model_name") or None,
+            endpoint=cast("str | None", target_id.params.get("endpoint") or None),
+            model_name=cast("str | None", target_id.params.get("model_name") or None),
         )
 
     @computed_field  # type: ignore[prop-decorator]

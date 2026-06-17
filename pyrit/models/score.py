@@ -201,7 +201,7 @@ class Score(BaseModel):
         )
         return cls.model_validate(data)
 
-    def validate(self, *args: Any, **kwargs: Any) -> None:  # type: ignore[override]
+    def validate(self, *args: Any, **kwargs: Any) -> None:  # type: ignore[ty:invalid-method-override]
         """
         Re-run construction-time validation (DEPRECATED).
 

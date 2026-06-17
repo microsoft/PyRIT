@@ -113,11 +113,11 @@ class FoundryComposite:
     def name(self) -> str:
         """Return a human-readable name for this composite."""
         if not self.converters:
-            return self.attack.value if self.attack else "baseline"  # type: ignore[ty:invalid-return-type]
+            return self.attack.value if self.attack else "baseline"
         if self.attack is None and len(self.converters) == 1:
             return str(self.converters[0].value)
         attack_name = self.attack.value if self.attack else "baseline"
-        converter_names = ", ".join(c.value for c in self.converters)  # type: ignore[ty:no-matching-overload]
+        converter_names = ", ".join(c.value for c in self.converters)
         return f"ComposedStrategy({attack_name}, {converter_names})"
 
 

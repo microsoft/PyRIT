@@ -488,7 +488,7 @@ class ScenarioRunService:
             scenario_version=scenario_result.scenario_identifier.version,
             status=status,
             created_at=scenario_result.creation_time,
-            updated_at=scenario_result.completion_time,
+            updated_at=scenario_result.completion_time or scenario_result.creation_time,
             error=error,
             error_type=error_type,
             strategies_used=strategies_used,
