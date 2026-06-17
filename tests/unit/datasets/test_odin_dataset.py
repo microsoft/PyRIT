@@ -125,7 +125,7 @@ class TestODINDatasetInit:
 
     def test_init_with_api_key(self, api_key):
         loader = _ODINDataset(api_key=api_key)
-        assert loader.dataset_name == "0din"
+        assert loader.dataset_name == "0din_threatfeed"
         assert loader._api_key == api_key
 
     def test_init_with_env_var(self, api_key):
@@ -169,7 +169,7 @@ class TestODINDatasetInit:
         assert loader._categories == [ODINTaxonomyCategory.STRATAGEMS, ODINTaxonomyCategory.LANGUAGE]
 
     def test_dataset_name(self, api_key):
-        assert _ODINDataset(api_key=api_key).dataset_name == "0din"
+        assert _ODINDataset(api_key=api_key).dataset_name == "0din_threatfeed"
 
 
 class TestODINDatasetFetch:
@@ -216,7 +216,7 @@ class TestODINDatasetFetch:
         prompts = [s for s in dataset.seeds if isinstance(s, SeedPrompt)]
         first = prompts[0]
         assert first.data_type == "text"
-        assert first.dataset_name == "0din"
+        assert first.dataset_name == "0din_threatfeed"
         assert first.name == "Report A"
         assert first.description == "A short summary."
         assert first.harm_categories == ["language", "stratagems"]
