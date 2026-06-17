@@ -22,8 +22,8 @@
     "test:e2e:headed": "playwright test --headed"
   },
   "dependencies": {
-    "@azure/msal-browser": "^5.13.0",
-    "@azure/msal-react": "^5.4.4",
+    "@azure/msal-browser": "^5.14.0",
+    "@azure/msal-react": "^5.4.5",
     "@fluentui/react-components": "9.74.1",
     "@fluentui/react-icons": "2.0.330",
     "axios": "1.18.0",
