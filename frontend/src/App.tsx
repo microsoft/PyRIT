@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect, useRef, useMemo } from 'react'
 import { Routes, Route, Navigate, useNavigate, useLocation, useSearchParams, matchPath } from 'react-router-dom'
 import { FluentProvider, webLightTheme, webDarkTheme } from '@fluentui/react-components'
 import { useMsal } from '@azure/msal-react'
+import { Joyride } from 'react-joyride'
 import MainLayout from './components/Layout/MainLayout'
 import ChatWindow from './components/Chat/ChatWindow'
 import AttackNotFound from './components/Chat/AttackNotFound'
@@ -18,6 +19,7 @@ import type { ViewName } from './components/Sidebar/Navigation'
 import type { TargetInstance, TargetInfo } from './types'
 import { attacksApi, versionApi } from './services/api'
 import { toApiError } from './services/errors'
+import { useTour } from './hooks/useTour'
 
 const AUTO_DISMISS_MS = 5_000
 
@@ -329,16 +331,29 @@ function App() {
     />
   )
 
+  // Onboarding tour — pass handleNavigate so the tour can switch views between steps
+  const { startTour, hasCompletedTour, tourProps } = useTour(handleNavigate, isDarkMode, currentView)
+
+  // Auto-start the tour on first visit
+  useEffect(() => {
+    if (!hasCompletedTour) {
+      startTour()
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   return (
     <ErrorBoundary>
       <ConnectionHealthProvider>
         <FluentProvider theme={isDarkMode ? webDarkTheme : webLightTheme}>
+          <Joyride {...tourProps} />
           <ConnectionBannerContainer />
           <MainLayout
             currentView={currentView}
             onNavigate={handleNavigate}
             onToggleTheme={toggleTheme}
             isDarkMode={isDarkMode}
+            onStartTour={startTour}
           >
             <Routes>
               <Route

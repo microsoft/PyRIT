@@ -3,9 +3,17 @@
 
 """
 Target mappers – domain → DTO translation for target-related models.
+
+Identity vs. presentation: ``TargetIdentifier``
+is the typed, lossless *identity* projection of a target's
+``ComponentIdentifier``. ``TargetInstance`` is the backend *presentation* view —
+it adds registry binding (``target_registry_name``), flattened capabilities, and
+composite ``inner_targets`` for the frontend. These mappers read typed fields off
+``TargetIdentifier`` instead of poking ``identifier.params`` by string key.
 """
 
-from pyrit.backend.models.targets import TargetCapabilitiesInfo, TargetInstance
+from pyrit.backend.models import TargetCapabilitiesInfo, TargetInstance
+from pyrit.models import TargetIdentifier
 from pyrit.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_capabilities import CapabilityName, TargetCapabilities
 from pyrit.prompt_target.round_robin_target import RoundRobinTarget
@@ -15,7 +23,9 @@ from pyrit.prompt_target.round_robin_target import RoundRobinTarget
 _CAPABILITY_PARAM_NAMES = frozenset(cap.value for cap in CapabilityName)
 
 
-def _target_capabilities_to_info(capabilities: TargetCapabilities) -> TargetCapabilitiesInfo:
+def _target_capabilities_to_info(
+    capabilities: TargetCapabilities,
+) -> TargetCapabilitiesInfo:
     """
     Build a TargetCapabilitiesInfo DTO from a domain TargetCapabilities object.
 
@@ -55,27 +65,27 @@ def target_object_to_instance(target_registry_name: str, target_obj: PromptTarge
     Returns:
         TargetInstance DTO with metadata derived from the object.
     """
-    identifier = target_obj.get_identifier()
-    params = identifier.params
+    target_identifier = TargetIdentifier.from_component_identifier(target_obj.get_identifier())
 
-    # Keys that are extracted as top-level TargetInstance fields, are internal-only
-    # (e.g., target_configuration is the verbose capabilities blob), or duplicate
-    # capability flags (filtered via _CAPABILITY_PARAM_NAMES) — those are sourced
-    # solely from target_obj.capabilities and must not leak into target_specific_params.
-    extracted_keys = {
-        "endpoint",
-        "model_name",
-        "underlying_model_name",
-        "temperature",
-        "top_p",
-        "max_requests_per_minute",
-        "target_specific_params",
-        "target_configuration",
-    } | _CAPABILITY_PARAM_NAMES
+    # Promoted params (endpoint, model_name, …) are mirrored into params and also
+    # exposed as typed fields; strip them so they don't leak into
+    # target_specific_params. Capabilities are no longer part of the identifier at
+    # all. The strip set is also defensive: it drops the explicit
+    # target_specific_params bag (merged in separately) plus any legacy capability /
+    # configuration keys that might appear in older persisted identifiers.
+    extracted_keys = (
+        {
+            "target_specific_params",
+            "target_configuration",
+        }
+        | _CAPABILITY_PARAM_NAMES
+        | set(TargetIdentifier._promoted_param_fields())
+    )
 
     # Collect remaining params as target_specific_params so the frontend can display them
-    explicit_specific = params.get("target_specific_params") or {}
-    extra = {k: v for k, v in params.items() if k not in extracted_keys and v is not None}
+    raw_specific = target_identifier.params.get("target_specific_params")
+    explicit_specific = raw_specific if isinstance(raw_specific, dict) else {}
+    extra = {k: v for k, v in target_identifier.params.items() if k not in extracted_keys and v is not None}
     combined_specific = {**extra, **explicit_specific} or None
 
     inner_targets = _build_inner_targets(target_obj)
@@ -84,8 +94,8 @@ def target_object_to_instance(target_registry_name: str, target_obj: PromptTarge
     # only when ALL inner targets share the same deployment name. When they differ
     # (e.g. "gpt-4o-japan-nilfilter" vs "pyrit-github-gpt4"), show "—" for
     # consistency with how other targets display model_name.
-    model_name = params.get("model_name") or None
-    underlying_model_name = params.get("underlying_model_name") or None
+    model_name = target_identifier.model_name or None
+    underlying_model_name = target_identifier.underlying_model_name or None
     if model_name is None and inner_targets:
         inner_models = {t.model_name for t in inner_targets}
         model_name = inner_models.pop() if len(inner_models) == 1 else None
@@ -95,17 +105,17 @@ def target_object_to_instance(target_registry_name: str, target_obj: PromptTarge
 
     return TargetInstance(
         target_registry_name=target_registry_name,
-        target_type=identifier.class_name,
-        endpoint=params.get("endpoint") or None,
+        target_type=target_identifier.class_name,
+        endpoint=target_identifier.endpoint or None,
         model_name=model_name,
         underlying_model_name=underlying_model_name,
-        temperature=params.get("temperature"),
-        top_p=params.get("top_p"),
-        max_requests_per_minute=params.get("max_requests_per_minute"),
+        temperature=target_identifier.temperature,
+        top_p=target_identifier.top_p,
+        max_requests_per_minute=target_identifier.max_requests_per_minute,
         capabilities=_target_capabilities_to_info(target_obj.capabilities),
         target_specific_params=combined_specific,
         inner_targets=inner_targets,
-        identifier_hash=identifier.hash,
+        identifier_hash=target_identifier.hash,
     )
 
 

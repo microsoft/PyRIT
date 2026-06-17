@@ -91,11 +91,9 @@ class SelfAskCategoryScorer(TrueFalseScorer):
         return self._create_identifier(
             params={
                 "system_prompt_template": self._system_prompt,
-                "score_aggregator": self._score_aggregator.__name__,  # type: ignore[ty:unresolved-attribute]
             },
-            children={
-                "prompt_target": self._prompt_target.get_identifier(),
-            },
+            score_aggregator=self._score_aggregator.__name__,  # type: ignore[ty:unresolved-attribute]
+            prompt_target=self._prompt_target.get_identifier(),
         )
 
     def _content_classifier_to_string(self, categories: list[dict[str, str]]) -> str:
@@ -150,7 +148,6 @@ class SelfAskCategoryScorer(TrueFalseScorer):
             message_data_type=message_piece.converted_value_data_type,
             scored_prompt_id=message_piece.id,
             objective=objective,
-            attack_identifier=message_piece.attack_identifier,
         )
 
         score = unvalidated_score.to_score(score_value=unvalidated_score.raw_score_value, score_type="true_false")

@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Optional
 from uuid import UUID
 
 from pyrit.exceptions.exception_classes import InvalidJsonException
-from pyrit.models import ComponentIdentifier, Message, PromptDataType, Score, UnvalidatedScore
+from pyrit.models import Message, PromptDataType, Score, UnvalidatedScore
 from pyrit.prompt_target.common.prompt_target import PromptTarget
 from pyrit.score.scorer import Scorer
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
@@ -146,7 +146,6 @@ class FloatScaleScorer(Scorer):
         description_output_key: str = "description",
         metadata_output_key: str = "metadata",
         category_output_key: str = "category",
-        attack_identifier: ComponentIdentifier | None = None,
     ) -> UnvalidatedScore:
         score: UnvalidatedScore | None = None
         try:
@@ -164,7 +163,6 @@ class FloatScaleScorer(Scorer):
                 description_output_key=description_output_key,
                 metadata_output_key=metadata_output_key,
                 category_output_key=category_output_key,
-                attack_identifier=attack_identifier,
             )
             if score is None:
                 raise ValueError("Score returned None")

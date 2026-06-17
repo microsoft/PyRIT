@@ -36,7 +36,6 @@ def _create_message_piece(
         converted_value_sha256=sha256,
         sequence=0,
         conversation_id=conversation_id or str(uuid.uuid4()),
-        attack_identifier=ComponentIdentifier.from_dict({"id": str(uuid.uuid4())}),
     )
 
 

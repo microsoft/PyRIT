@@ -129,7 +129,7 @@ class LLMGenericTextConverter(PromptConverter):
                 "system_prompt_template_hash": system_prompt_hash,
                 "user_prompt_template_hash": user_prompt_hash,
             },
-            children={"converter_target": self._converter_target.get_identifier()},
+            converter_target=self._converter_target.get_identifier(),
         )
 
     async def convert_async(self, *, prompt: str, input_type: PromptDataType = "text") -> ConverterResult:
@@ -157,7 +157,6 @@ class LLMGenericTextConverter(PromptConverter):
             self._converter_target.set_system_prompt(
                 system_prompt=system_prompt,
                 conversation_id=conversation_id,
-                attack_identifier=None,
             )
 
         converted_prompt = prompt
@@ -175,7 +174,6 @@ class LLMGenericTextConverter(PromptConverter):
                     converted_value=converted_prompt,
                     conversation_id=conversation_id,
                     sequence=1,
-                    prompt_target_identifier=self._converter_target.get_identifier(),
                     original_value_data_type=input_type,
                     converted_value_data_type=input_type,
                     converter_identifiers=[self.get_identifier()],

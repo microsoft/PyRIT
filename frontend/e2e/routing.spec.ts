@@ -38,9 +38,9 @@ function makeMessage(attackResultId: string) {
     turn_number: 1,
     role: "assistant",
     created_at: new Date().toISOString(),
-    pieces: [
+    message_pieces: [
       {
-        piece_id: `piece-${attackResultId}`,
+        id: `piece-${attackResultId}`,
         original_value_data_type: "text",
         converted_value_data_type: "text",
         original_value: text,

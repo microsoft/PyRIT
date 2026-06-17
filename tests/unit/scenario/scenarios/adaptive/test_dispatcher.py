@@ -261,5 +261,5 @@ class TestEvalHashRoundTrip:
             assert stamped_hash == predicted_hash, (
                 f"Selector-side eval_hash ({predicted_hash}) drifted from executor-stamped "
                 f"eval_hash ({stamped_hash}) on persisted row {row.id}. "
-                f"compute_inner_attack_eval_hash and build_atomic_attack_identifier must agree."
+                f"compute_inner_attack_eval_hash and AtomicAttackIdentifier.build must agree."
             )

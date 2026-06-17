@@ -157,7 +157,7 @@ def test_set_system_prompt_writes_system_message_when_capabilities_present():
         conversation_id=conversation_id,
     )
 
-    messages = target._memory.get_conversation(conversation_id=conversation_id)
+    messages = target._memory.get_conversation_messages(conversation_id=conversation_id)
     assert len(messages) == 1
     pieces = messages[0].message_pieces
     assert len(pieces) == 1

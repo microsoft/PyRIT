@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from pyrit.common.data_url_converter import (
+from pyrit.memory.storage.data_url_converter import (
     AZURE_OPENAI_GPT4O_SUPPORTED_IMAGE_FORMATS,
     convert_local_image_to_data_url,
     convert_local_image_to_data_url_async,
@@ -42,7 +42,7 @@ async def test_convert_returns_data_url():
         mock_serializer = AsyncMock()
         mock_serializer.read_data_base64_async = AsyncMock(return_value="AAAA")
 
-        with patch("pyrit.common.data_url_converter.data_serializer_factory", return_value=mock_serializer):
+        with patch("pyrit.memory.storage.data_url_converter.data_serializer_factory", return_value=mock_serializer):
             result = await convert_local_image_to_data_url_async(tmp)
 
         assert result.startswith("data:image/png;base64,")
@@ -58,7 +58,7 @@ async def test_deprecated_alias_emits_warning_and_delegates():
         mock_serializer = AsyncMock()
         mock_serializer.read_data_base64_async = AsyncMock(return_value="AAAA")
 
-        with patch("pyrit.common.data_url_converter.data_serializer_factory", return_value=mock_serializer):
+        with patch("pyrit.memory.storage.data_url_converter.data_serializer_factory", return_value=mock_serializer):
             with pytest.warns(DeprecationWarning, match="convert_local_image_to_data_url"):
                 result = await convert_local_image_to_data_url(tmp)
 

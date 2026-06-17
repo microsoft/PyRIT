@@ -105,15 +105,13 @@ class VideoFloatScaleScorer(
 
         return self._create_identifier(
             params={
-                "score_aggregator": self._score_aggregator.__name__,  # type: ignore[ty:unresolved-attribute]
                 "num_sampled_frames": self._video_helper.num_sampled_frames,
                 "has_audio_scorer": self.audio_scorer is not None,
                 "image_objective_template": self._video_helper.image_objective_template,
                 "audio_objective_template": self._video_helper.audio_objective_template,
             },
-            children={
-                "sub_scorers": sub_scorer_ids,
-            },
+            score_aggregator=self._score_aggregator.__name__,  # type: ignore[ty:unresolved-attribute]
+            sub_scorers=sub_scorer_ids,
         )
 
     async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:

@@ -13,6 +13,11 @@ updates:
         update-types:
           - minor
           - patch
+      security-minor-and-patch:
+        applies-to: security-updates
+        update-types:
+          - minor
+          - patch
 
   - package-ecosystem: npm
     directory: /frontend
@@ -24,6 +29,11 @@ updates:
       - "microsoft/ai-red-team-dev"
     groups:
       minor-and-patch:
+        update-types:
+          - minor
+          - patch
+      security-minor-and-patch:
+        applies-to: security-updates
         update-types:
           - minor
           - patch
@@ -41,6 +51,11 @@ updates:
         update-types:
           - minor
           - patch
+      security-minor-and-patch:
+        applies-to: security-updates
+        update-types:
+          - minor
+          - patch
 
   - package-ecosystem: pre-commit
     directory: /
@@ -52,6 +67,11 @@ updates:
       - "microsoft/ai-red-team-dev"
     groups:
       minor-and-patch:
+        update-types:
+          - minor
+          - patch
+      security-minor-and-patch:
+        applies-to: security-updates
         update-types:
           - minor
           - patch
@@ -71,6 +91,11 @@ updates:
         update-types:
           - minor
           - patch
+      security-minor-and-patch:
+        applies-to: security-updates
+        update-types:
+          - minor
+          - patch
 
   - package-ecosystem: devcontainers
     directory: /
@@ -82,6 +107,11 @@ updates:
       - "microsoft/ai-red-team-dev"
     groups:
       minor-and-patch:
+        update-types:
+          - minor
+          - patch
+      security-minor-and-patch:
+        applies-to: security-updates
         update-types:
           - minor
           - patch
