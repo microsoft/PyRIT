@@ -6,7 +6,13 @@ trigger:
     include:
       - main
 
-# There are additional PR triggers for this that are configurable in ADO.
+schedules:
+- cron: "0 5 * * *"  # 5 AM UTC = 9 PM PST (UTC-8)
+  displayName: Integration Tests Daily at 05:00 AM UTC (9:00 PM PST)
+  branches:
+    include:
+      - main
+  always: true
 
 jobs:
 - template: test-job-template.yml

@@ -18,9 +18,6 @@ from pyrit.registry.object_registries.base_instance_registry import (
     BaseInstanceRegistry,
     RegistryEntry,
 )
-from pyrit.registry.object_registries.converter_registry import (
-    ConverterRegistry,
-)
 from pyrit.registry.object_registries.retrievable_instance_registry import (
     RetrievableInstanceRegistry,
 )
@@ -38,7 +35,6 @@ __all__ = [
     "RegistryEntry",
     # Concrete registries
     "AttackTechniqueRegistry",
-    "ConverterRegistry",
     "ScorerRegistry",
     "TargetRegistry",
 ]

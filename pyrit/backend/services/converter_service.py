@@ -15,14 +15,12 @@ Converters can be:
 import base64
 import inspect
 import mimetypes
-import re
 import uuid
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, ClassVar, Literal, Union, get_args, get_origin
 from urllib.parse import parse_qs, urlparse
 
-from pyrit import prompt_converter
 from pyrit.backend.mappers.converter_mappers import converter_object_to_instance
 from pyrit.backend.models.converters import (
     ConverterCatalogEntry,
@@ -38,172 +36,38 @@ from pyrit.backend.models.converters import (
 )
 from pyrit.memory import data_serializer_factory
 from pyrit.models import PromptDataType
-from pyrit.prompt_converter import PromptConverter
-from pyrit.prompt_target import PromptTarget
-from pyrit.registry.object_registries import ConverterRegistry
 
-
-def _build_converter_class_registry() -> dict[str, type]:
-    """
-    Build a registry mapping converter class names to their classes.
-
-    Uses the prompt_converter module's __all__ to discover all available converters.
-
-    Returns:
-        Dict mapping class name (str) to class (type).
-    """
-    registry: dict[str, type] = {}
-    for name in prompt_converter.__all__:
-        cls = getattr(prompt_converter, name, None)
-        if cls is not None and isinstance(cls, type) and issubclass(cls, PromptConverter):
-            registry[name] = cls
-    return registry
-
-
-# Module-level class registry (built once on import)
-_CONVERTER_CLASS_REGISTRY: dict[str, type] = _build_converter_class_registry()
-
-# Types that can be rendered as simple form fields
-_SIMPLE_TYPES: set[type] = {str, int, float, bool}
-
-
-def _is_simple_type(annotation: Any) -> bool:
-    """Return True if the annotation represents a type renderable in a form field."""
-    if annotation in _SIMPLE_TYPES:
-        return True
-    origin = get_origin(annotation)
-    if origin is Literal:
-        return True
-    if origin is Union:
-        args = get_args(annotation)
-        non_none = [a for a in args if a is not type(None)]
-        return len(non_none) == 1 and _is_simple_type(non_none[0])
-    return False
+# ``get_union_non_none_args`` is a general type-introspection utility used here to
+# render parameter types for the catalog (a presentation concern owned by this
+# service).
+from pyrit.registry.components import ConverterRegistry
+from pyrit.registry.components.converter_registry import _ConverterParameterMetadata
+from pyrit.registry.resolution import get_union_non_none_args
 
 
 def _serialize_type(annotation: Any) -> str:
     """
-    Convert a type annotation to a concise human-readable string.
+    Render a parameter's type annotation as a concise human-readable string.
+
+    Used to populate the catalog DTO consumed by the frontend (e.g. ``"str"``,
+    ``"Optional[int]"``, ``"Literal['a', 'b']"``).
 
     Returns:
         str: A human-readable representation of the type annotation.
     """
     if annotation is inspect.Parameter.empty:
         return "Any"
-    origin = get_origin(annotation)
-    if origin is Literal:
+    if get_origin(annotation) is Literal:
         args = get_args(annotation)
         return f"Literal[{', '.join(repr(a) for a in args)}]"
-    if origin is Union:
-        args = get_args(annotation)
-        non_none = [a for a in args if a is not type(None)]
-        if len(non_none) == 1:
-            inner = _serialize_type(non_none[0])
-            return f"Optional[{inner}]" if len(args) > len(non_none) else inner
+    non_none = get_union_non_none_args(annotation)
+    if non_none is not None and len(non_none) == 1:
+        inner = _serialize_type(non_none[0])
+        has_none = type(None) in get_args(annotation)
+        return f"Optional[{inner}]" if has_none else inner
     if hasattr(annotation, "__name__"):
         return str(annotation.__name__)
     return str(annotation)
-
-
-def _parse_arg_descriptions(converter_class: type) -> dict[str, str]:
-    """
-    Parse parameter descriptions from Google-style docstring Args section.
-
-    Returns:
-        dict[str, str]: Mapping of parameter names to their descriptions.
-    """
-    doc = (converter_class.__init__.__doc__ or converter_class.__doc__ or "").strip()
-    match = re.search(r"Args:\s*\n(.*?)(?:\n\s*\n|\n\s*Returns:|\n\s*Raises:|\Z)", doc, re.DOTALL)
-    if not match:
-        return {}
-    args_block = match.group(1)
-    # Detect indentation of first parameter line
-    indent_match = re.match(r"^(\s+)", args_block)
-    indent = indent_match.group(1) if indent_match else r"\s+"
-    pattern = rf"^{indent}(\w+)\s*(?:\([^)]*\))?\s*:\s*(.+?)(?=\n{indent}\w|\Z)"
-    descriptions: dict[str, str] = {}
-    for m in re.finditer(pattern, args_block, re.DOTALL | re.MULTILINE):
-        descriptions[m.group(1)] = " ".join(m.group(2).split())
-    return descriptions
-
-
-def _extract_parameters(converter_class: type) -> list[ConverterParameterSchema]:
-    """
-    Extract simple constructor parameters from a converter class.
-
-    Returns:
-        list[ConverterParameterSchema]: List of parameter schemas.
-    """
-    try:
-        sig = inspect.signature(converter_class.__init__)
-    except (ValueError, TypeError):
-        return []
-
-    arg_descriptions = _parse_arg_descriptions(converter_class)
-
-    params: list[ConverterParameterSchema] = []
-    for name, p in sig.parameters.items():
-        if name in ("self", "args", "kwargs"):
-            continue
-        if p.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
-            continue
-        if not _is_simple_type(p.annotation):
-            continue
-
-        no_default = p.default is inspect.Parameter.empty
-        is_sentinel = hasattr(p.default, "__class__") and "Sentinel" in type(p.default).__name__
-        required = no_default or is_sentinel
-
-        default_value: str | None = None
-        if not required and p.default is not None:
-            default_value = str(p.default)
-
-        choices: list[str] | None = None
-        if get_origin(p.annotation) is Literal:
-            choices = [str(a) for a in get_args(p.annotation)]
-
-        params.append(
-            ConverterParameterSchema(
-                name=name,
-                type_name=_serialize_type(p.annotation),
-                required=required,
-                default_value=default_value,
-                choices=choices,
-                description=arg_descriptions.get(name),
-            )
-        )
-
-    return params
-
-
-def _is_llm_based(converter_class: type) -> bool:
-    """
-    Check if the converter requires a target parameter.
-
-    Matches any converter whose ``__init__`` accepts
-    a ``PromptTarget`` (or subclass) parameter.
-    These converters perform LLM-based transformations and should not automatically be applied
-
-    Returns:
-        bool: True if the converter is LLM-based, False otherwise.
-    """
-    try:
-        sig = inspect.signature(converter_class.__init__)
-    except (ValueError, TypeError):
-        return False
-
-    for name, p in sig.parameters.items():
-        if name == "self":
-            continue
-        ann = p.annotation
-        if ann is inspect.Parameter.empty:
-            continue
-        try:
-            if isinstance(ann, type) and issubclass(ann, PromptTarget):
-                return True
-        except TypeError:
-            continue
-    return False
 
 
 class ConverterService:
@@ -249,48 +113,54 @@ class ConverterService:
         """
         items = [
             self._build_instance_from_object(converter_id=entry.name, converter_obj=entry.instance)
-            for entry in self._registry.get_all_instances()
+            for entry in self._registry.instances.get_all_instances()
         ]
         return ConverterInstanceListResponse(items=items)
 
     async def list_converter_catalog_async(self) -> ConverterCatalogResponse:
         """
-        List all available converter types from the backend converter registry.
+        List all available converter types from the converter class registry.
+
+        Returns every constructible converter. Deciding which entries to surface
+        to a user is a presentation concern owned by the caller (e.g. the
+        frontend), not this service.
 
         Returns:
             ConverterCatalogResponse containing all available converter classes.
         """
-        items: list[ConverterCatalogEntry] = []
-        for converter_type, converter_class in sorted(_CONVERTER_CLASS_REGISTRY.items()):
-            if (
-                converter_type in ("PromptConverter", "ConverterResult", "SelectiveTextConverter")
-                or "Strategy" in converter_type
-            ):
-                continue
-
-            supported_input_types = [
-                str(data_type) for data_type in getattr(converter_class, "SUPPORTED_INPUT_TYPES", ())
-            ]
-            supported_output_types = [
-                str(data_type) for data_type in getattr(converter_class, "SUPPORTED_OUTPUT_TYPES", ())
-            ]
-
-            # Extract first paragraph of docstring as description
-            raw_doc = (converter_class.__doc__ or "").strip()
-            description = raw_doc.split("\n\n")[0].replace("\n", " ").strip() or None
-
-            items.append(
-                ConverterCatalogEntry(
-                    converter_type=converter_type,
-                    supported_input_types=supported_input_types,
-                    supported_output_types=supported_output_types,
-                    parameters=_extract_parameters(converter_class),
-                    is_llm_based=_is_llm_based(converter_class),
-                    description=description,
-                )
+        items: list[ConverterCatalogEntry] = [
+            ConverterCatalogEntry(
+                converter_type=metadata.class_name,
+                supported_input_types=list(metadata.supported_input_types),
+                supported_output_types=list(metadata.supported_output_types),
+                parameters=[self._build_parameter_schema(p) for p in metadata.parameters if p.coercible_from_string],
+                is_llm_based=metadata.is_llm_based,
+                description=metadata.class_description or None,
             )
+            for metadata in self._registry.list_class_metadata()
+        ]
 
         return ConverterCatalogResponse(items=items)
+
+    @staticmethod
+    def _build_parameter_schema(parameter: _ConverterParameterMetadata) -> ConverterParameterSchema:
+        """
+        Map registry parameter metadata to the catalog DTO.
+
+        Renders the raw annotation to a human-readable ``type_name`` for the
+        frontend (presentation concern owned by this service).
+
+        Returns:
+            ConverterParameterSchema: The parameter schema for the catalog entry.
+        """
+        return ConverterParameterSchema(
+            name=parameter.name,
+            type_name=_serialize_type(parameter.annotation),
+            required=parameter.required,
+            default_value=parameter.default_value,
+            choices=list(parameter.choices) if parameter.choices is not None else None,
+            description=parameter.description,
+        )
 
     async def get_converter_async(self, *, converter_id: str) -> ConverterInstance | None:
         """
@@ -299,7 +169,7 @@ class ConverterService:
         Returns:
             ConverterInstance if found, None otherwise.
         """
-        obj = self._registry.get_instance_by_name(converter_id)
+        obj = self._registry.instances.get(converter_id)
         if obj is None:
             return None
         return self._build_instance_from_object(converter_id=converter_id, converter_obj=obj)
@@ -311,7 +181,7 @@ class ConverterService:
         Returns:
             The PromptConverter object if found, None otherwise.
         """
-        return self._registry.get_instance_by_name(converter_id)
+        return self._registry.instances.get(converter_id)
 
     async def create_converter_async(self, *, request: CreateConverterRequest) -> CreateConverterResponse:
         """
@@ -331,13 +201,17 @@ class ConverterService:
         """
         converter_id = str(uuid.uuid4())
 
-        # Resolve any converter references in params and instantiate
+        # Resolve any converter references in params, persist data-URI params to
+        # disk (frontend concern), then delegate construction (incl. param
+        # coercion) to the converter registry.
         params = self._resolve_converter_params(params=request.params)
-        converter_class = self._get_converter_class(converter_type=request.type)
-        params = self._coerce_params(converter_class=converter_class, params=params)
+        try:
+            converter_class = self._registry.get_class(request.type)
+        except KeyError as e:
+            raise ValueError(f"Converter type '{request.type}' not found") from e
         params = await self._persist_data_uri_params_async(converter_class=converter_class, params=params)
-        converter_obj = converter_class(**params)
-        self._registry.register_instance(converter_obj, name=converter_id)
+        converter_obj = self._registry.create_instance(request.type, **params)
+        self._registry.instances.register(converter_obj, name=converter_id)
 
         return CreateConverterResponse(
             converter_id=converter_id,
@@ -431,29 +305,6 @@ class ConverterService:
     # Private Helper Methods
     # ========================================================================
 
-    def _get_converter_class(self, *, converter_type: str) -> type:
-        """
-        Get the converter class for a given type name.
-
-        Looks up the class in the module-level converter class registry.
-
-        Args:
-            converter_type: The exact class name of the converter (e.g., 'Base64Converter').
-
-        Returns:
-            The converter class.
-
-        Raises:
-            ValueError: If the converter type is not found.
-        """
-        cls = _CONVERTER_CLASS_REGISTRY.get(converter_type)
-        if cls is None:
-            raise ValueError(
-                f"Converter type '{converter_type}' not found. "
-                f"Available types: {sorted(_CONVERTER_CLASS_REGISTRY.keys())}"
-            )
-        return cls
-
     def _resolve_converter_params(self, *, params: dict[str, Any]) -> dict[str, Any]:
         """
         Resolve converter references in params.
@@ -473,53 +324,6 @@ class ConverterService:
                     raise ValueError(f"Referenced converter '{ref['converter_id']}' not found")
                 resolved["converter"] = conv_obj
         return resolved
-
-    @staticmethod
-    def _coerce_params(*, converter_class: type, params: dict[str, Any]) -> dict[str, Any]:
-        """
-        Coerce parameter values to match the converter's __init__ type annotations.
-
-        The frontend sends all values as strings; this converts them to int, float,
-        or bool as needed based on the constructor signature.
-
-        Returns:
-            Params dict with values coerced to the expected types.
-        """
-        try:
-            sig = inspect.signature(converter_class.__init__)
-        except (ValueError, TypeError) as e:
-            raise ValueError(
-                f"Failed to inspect __init__ signature for converter '{converter_class.__name__}': {e}"
-            ) from e
-
-        coerced = dict(params)
-        for name, value in coerced.items():
-            if name not in sig.parameters or not isinstance(value, str):
-                continue
-            annotation = sig.parameters[name].annotation
-            if annotation is inspect.Parameter.empty:
-                continue
-
-            origin = get_origin(annotation)
-            # Unwrap X | None to X
-            if origin is Union:
-                args = get_args(annotation)
-                non_none = [a for a in args if a is not type(None)]
-                if len(non_none) == 1:
-                    annotation = non_none[0]
-                    origin = get_origin(annotation)
-
-            try:
-                if annotation is int:
-                    coerced[name] = int(value)
-                elif annotation is float:
-                    coerced[name] = float(value)
-                elif annotation is bool:
-                    coerced[name] = value.lower() in ("true", "1", "yes")
-            except (ValueError, TypeError) as e:
-                raise ValueError(f"Parameter '{name}' expects {annotation.__name__}, got {value!r}") from e
-
-        return coerced
 
     @staticmethod
     async def _persist_data_uri_params_async(
