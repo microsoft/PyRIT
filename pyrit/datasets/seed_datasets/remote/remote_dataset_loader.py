@@ -104,7 +104,7 @@ class _RemoteDatasetLoader(SeedDatasetProvider, ABC):
     @staticmethod
     def _standardize_harm_categories(
         raw_categories: list[str] | str | None,
-    ) -> tuple[list[str], dict[str, Any]]:
+    ) -> tuple[list[str], dict[str, str]]:
         """
         Standardize raw harm categories and preserve originals in metadata.
 
@@ -122,7 +122,7 @@ class _RemoteDatasetLoader(SeedDatasetProvider, ABC):
                            originals differ from standardized, else empty dict
         """
         standardized = standardize_harm_categories(raw_categories)
-        metadata: dict[str, Any] = {}
+        metadata: dict[str, str] = {}
 
         # Preserve original values if they exist and differ from standardized
         if raw_categories:
@@ -130,7 +130,7 @@ class _RemoteDatasetLoader(SeedDatasetProvider, ABC):
             original_list = [cat for cat in original_list if cat]  # Filter empty strings
 
             if original_list and original_list != standardized:
-                metadata["original_harm_categories"] = original_list
+                metadata["original_harm_categories"] = ",".join(original_list)
 
         return standardized, metadata
 

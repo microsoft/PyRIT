@@ -81,20 +81,28 @@ class _SimpleSafetyTestsDataset(_RemoteDatasetLoader):
         source_url = f"https://huggingface.co/datasets/{self.HF_DATASET_NAME}"
         groups = ["Patronus AI", "University of Oxford", "Bocconi University"]
 
-        seed_prompts = [
-            SeedPrompt(
+        seed_prompts = []
+        for item in data:
+            # Standardize harm categories and preserve originals
+            standardized_categories, harm_cat_metadata = self._standardize_harm_categories(item.get("harm_area"))
+
+            # Build metadata from multiple sources
+            metadata: dict[str, str | int] = {**harm_cat_metadata}
+            if category := item.get("category"):
+                metadata["category"] = category
+
+            seed_prompt = SeedPrompt(
                 value=item["prompt"],
                 data_type="text",
                 dataset_name=self.dataset_name,
-                harm_categories=[item["harm_area"]] if item.get("harm_area") else [],
+                harm_categories=standardized_categories,
                 description=description,
                 source=source_url,
                 authors=authors,
                 groups=groups,
-                metadata={"category": category} if (category := item.get("category")) else {},
+                metadata=metadata if metadata else None,
             )
-            for item in data
-        ]
+            seed_prompts.append(seed_prompt)
 
         logger.info(f"Successfully loaded {len(seed_prompts)} prompts from SimpleSafetyTests dataset")
 

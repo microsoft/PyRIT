@@ -123,7 +123,19 @@ class _ToxicChatDataset(_RemoteDatasetLoader):
         seed_prompts: list[SeedPrompt] = []
         for item in data:
             user_input = item["user_input"]
-            harm_categories = self._extract_harm_categories(item)
+            raw_harm_categories = self._extract_harm_categories(item)
+
+            # Standardize harm categories and preserve originals
+            standardized_categories, harm_cat_metadata = self._standardize_harm_categories(raw_harm_categories)
+
+            # Build metadata from multiple sources
+            metadata: dict[str, str | int] = {
+                "toxicity": str(item.get("toxicity", "")),
+                "jailbreaking": str(item.get("jailbreaking", "")),
+                "human_annotation": str(item.get("human_annotation", "")),
+            }
+            metadata.update(harm_cat_metadata)
+
             prompt = SeedPrompt(
                 value=user_input,
                 data_type="text",
@@ -132,12 +144,8 @@ class _ToxicChatDataset(_RemoteDatasetLoader):
                 source=source_url,
                 authors=authors,
                 groups=groups,
-                harm_categories=harm_categories,
-                metadata={
-                    "toxicity": str(item.get("toxicity", "")),
-                    "jailbreaking": str(item.get("jailbreaking", "")),
-                    "human_annotation": str(item.get("human_annotation", "")),
-                },
+                harm_categories=standardized_categories,
+                metadata=metadata,
             )
             seed_prompts.append(prompt)
 
