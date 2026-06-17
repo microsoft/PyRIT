@@ -243,6 +243,7 @@ class SelfAskLikertScorer(FloatScaleScorer):
         return self._create_identifier(
             params={
                 "system_prompt_template": self._system_prompt,
+                "response_json_schema": self._response_json_schema,
             },
             prompt_target=self._prompt_target.get_identifier(),
         )
@@ -315,6 +316,9 @@ class SelfAskLikertScorer(FloatScaleScorer):
             min_scale_value=str(self._min_scale_value),
             max_scale_value=str(self._max_scale_value),
         )
+        # Optional JSON schema embedded in the system prompt YAML. Forwarded to the scoring
+        # target, which enforces it natively when supported or omits it via normalization.
+        self._response_json_schema = self._scoring_instructions_template.response_json_schema
 
     def _likert_scale_description_to_string(self, descriptions: list[dict[str, str]], likert_scale_path: Path) -> str:
         """
@@ -452,6 +456,7 @@ class SelfAskLikertScorer(FloatScaleScorer):
             scored_prompt_id=message_piece.id,
             category=self._score_category,
             objective=objective,
+            response_json_schema=self._response_json_schema,
         )
 
         score = unvalidated_score.to_score(
