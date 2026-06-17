@@ -27,6 +27,8 @@ import inspect
 import types
 from typing import TYPE_CHECKING, Any, Literal, Protocol, Union, get_args, get_origin
 
+from pyrit.models.parameter import ComponentRegistryKind, RegistryReference
+
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -115,6 +117,76 @@ def _resolvable_registries() -> list[tuple[type, Callable[[], _NamedInstanceRegi
     ]
 
 
+def _kind_from_annotation(annotation: Any) -> ComponentRegistryKind | None:
+    """Infer a registry kind from a parameter annotation."""
+    if isinstance(annotation, RegistryReference):
+        return annotation.kind
+
+    candidates = get_union_non_none_args(annotation)
+    if candidates is None:
+        candidates = [annotation]
+
+    for candidate in candidates:
+        if candidate is inspect.Parameter.empty:
+            continue
+
+        if candidate is getattr(__import__('pyrit.models.identifiers', fromlist=['TargetIdentifier']), 'TargetIdentifier', None):
+            return ComponentRegistryKind.TARGET
+        if candidate is getattr(__import__('pyrit.models.identifiers', fromlist=['ConverterIdentifier']), 'ConverterIdentifier', None):
+            return ComponentRegistryKind.CONVERTER
+        if candidate is getattr(__import__('pyrit.models.identifiers', fromlist=['ScorerIdentifier']), 'ScorerIdentifier', None):
+            return ComponentRegistryKind.SCORER
+
+        if isinstance(candidate, type):
+            try:
+                from pyrit.prompt_converter import PromptConverter
+
+                if issubclass(candidate, PromptConverter):
+                    return ComponentRegistryKind.CONVERTER
+            except Exception:
+                pass
+
+            try:
+                from pyrit.prompt_target import PromptTarget
+
+                if issubclass(candidate, PromptTarget):
+                    return ComponentRegistryKind.TARGET
+            except Exception:
+                pass
+
+            try:
+                from pyrit.score.scorer import Scorer
+
+                if issubclass(candidate, Scorer):
+                    return ComponentRegistryKind.SCORER
+            except Exception:
+                pass
+
+    return None
+
+
+def get_registry_reference(annotation: Any) -> RegistryReference | None:
+    """Build a typed registry reference from an annotation when applicable."""
+    kind = _kind_from_annotation(annotation)
+    if kind is None:
+        return None
+    return RegistryReference(kind=kind, annotation=annotation)
+
+
+def _registry_getter_for_kind(kind: ComponentRegistryKind) -> Callable[[], _NamedInstanceRegistry] | None:
+    """Return the registry getter associated with a registry kind."""
+    from pyrit.registry.components import ConverterRegistry
+    from pyrit.registry.object_registries import ScorerRegistry, TargetRegistry
+
+    if kind is ComponentRegistryKind.TARGET:
+        return TargetRegistry.get_registry_singleton
+    if kind is ComponentRegistryKind.CONVERTER:
+        return lambda: ConverterRegistry.get_registry_singleton().instances
+    if kind is ComponentRegistryKind.SCORER:
+        return ScorerRegistry.get_registry_singleton
+    return None
+
+
 def get_resolvable_registry_getter(annotation: Any) -> Callable[[], _NamedInstanceRegistry] | None:
     """
     Return the registry-singleton getter for a registry-reference annotation.
@@ -130,21 +202,10 @@ def get_resolvable_registry_getter(annotation: Any) -> Callable[[], _NamedInstan
         Callable[[], _NamedInstanceRegistry] | None: A callable returning the
         registry singleton, or None when the annotation is not a registry reference.
     """
-    if annotation is inspect.Parameter.empty:
+    reference = get_registry_reference(annotation)
+    if reference is None:
         return None
-
-    candidates = get_union_non_none_args(annotation)
-    if candidates is None:
-        candidates = [annotation]
-
-    for base_type, getter in _resolvable_registries():
-        for candidate in candidates:
-            try:
-                if isinstance(candidate, type) and issubclass(candidate, base_type):
-                    return getter
-            except TypeError:
-                continue
-    return None
+    return _registry_getter_for_kind(reference.kind)
 
 
 def is_registry_reference(annotation: Any) -> bool:
@@ -155,7 +216,7 @@ def is_registry_reference(annotation: Any) -> bool:
         bool: True if a value for this parameter is supplied by name and resolved
         from a registry, False otherwise.
     """
-    return get_resolvable_registry_getter(annotation) is not None
+    return get_registry_reference(annotation) is not None
 
 
 def coerce_string_to_annotation(*, value: str, annotation: Any) -> Any:

@@ -74,6 +74,12 @@ from pyrit.models.literals import (
     PromptResponseError,
     SeedType,
 )
+from pyrit.models.parameter import (
+    ComponentRegistryKind,
+    Parameter,
+    ParameterDestination,
+    RegistryReference,
+)
 from pyrit.models.messages import (
     Conversation,
     Message,
@@ -129,6 +135,7 @@ __all__ = [
     "class_name_to_snake_case",
     "CapabilityName",
     "ComponentIdentifier",
+    "ComponentRegistryKind",
     "compute_eval_hash",
     "config_hash",
     "ConverterIdentifier",
@@ -170,10 +177,13 @@ __all__ = [
     "Modality",
     "NextMessageSystemPromptPaths",
     "ObjectiveTargetEvaluationIdentifier",
+    "Parameter",
+    "ParameterDestination",
     "PromptDataType",
     "PromptResponseError",
     "QuestionAnsweringDataset",
     "QuestionAnsweringEntry",
+    "RegistryReference",
     "QuestionChoice",
     "REGISTRY_NAME_PATTERN",
     "ScaleDescription",

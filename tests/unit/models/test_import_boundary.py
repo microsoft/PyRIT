@@ -68,6 +68,9 @@ KNOWN_COMMON_VIOLATIONS: dict[str, dict[str, str]] = {
         "pyrit.memory": "relocate",
         "pyrit.models": "relocate",
     },
+    "pyrit.common.parameter": {
+        "pyrit.models.parameter": "phase-2",
+    },
 }
 
 
