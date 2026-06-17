@@ -15,7 +15,10 @@ from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 class InsecureCodeScorer(FloatScaleScorer):
     """
     A scorer that uses an LLM to evaluate code snippets for potential security vulnerabilities.
-    Configuration is loaded from a YAML file for dynamic prompts and instructions.
+
+    This scorer is intended for generated-code evaluation scenarios where the response to score is
+    source code or a code-like snippet, such as insecure-coding parity checks across vulnerability
+    scanners. Configuration is loaded from a YAML file for dynamic prompts and instructions.
     """
 
     _DEFAULT_VALIDATOR: ScorerPromptValidator = ScorerPromptValidator(supported_data_types=["text"])
