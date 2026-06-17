@@ -604,6 +604,49 @@ def test_check_schema_migrations_not_silent_prints_output(capsys):
             engine.dispose()
 
 
+def test_memory_interface_check_schema_migration_calls_check():
+    """_check_schema_migration on MemoryInterface calls check_schema_migrations without running upgrade."""
+    from unittest.mock import MagicMock, patch
+
+    from pyrit.memory.memory_interface import MemoryInterface
+
+    obj = MagicMock(spec=MemoryInterface)
+    obj.engine = MagicMock()
+
+    with patch("pyrit.memory.migration.check_schema_migrations") as mock_check:
+        MemoryInterface._check_schema_migration(obj, silent=True)
+        mock_check.assert_called_once_with(engine=obj.engine, silent=True)
+
+
+def test_memory_interface_check_schema_migration_raises_without_engine():
+    """_check_schema_migration raises RuntimeError when engine is None."""
+    from unittest.mock import MagicMock
+
+    from pyrit.memory.memory_interface import MemoryInterface
+
+    obj = MagicMock(spec=MemoryInterface)
+    obj.engine = None
+
+    with pytest.raises(RuntimeError, match="Engine must be initialized"):
+        MemoryInterface._check_schema_migration(obj, silent=False)
+
+
+def test_memory_migrations_head_command(capsys):
+    """The 'head' subcommand of memory_migrations.py prints the current Alembic head revision."""
+    import sys
+
+    # Import the module's main function
+    sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "build_scripts"))
+    from memory_migrations import _cmd_head
+
+    _cmd_head()
+    captured = capsys.readouterr()
+    revision = captured.out.strip()
+    # Should be a non-empty hex-ish string
+    assert len(revision) > 0
+    assert all(c in "0123456789abcdef" for c in revision)
+
+
 # =============================================================================
 # Backfill tests for the Conversations table migration (b2f4c6a8d1e3)
 # =============================================================================
