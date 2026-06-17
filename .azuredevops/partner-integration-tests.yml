@@ -1,11 +1,19 @@
 # Builds the pyrit environment and runs partner integration tests. Partner integration tests are to ensure that we
 # are not breaking any contract between PyRIT and its partners.
-extends:
-  template: scheduled-test-pipeline-template.yml
+
+trigger: none
+
+schedules:
+- cron: "0 6 * * *"  # 6 AM UTC = 10 PM PST (UTC-8)
+  displayName: Partner Integration Tests Daily at 06:00 AM UTC (10:00 PM PST)
+  branches:
+    include:
+      - main
+  always: true
+
+jobs:
+- template: test-job-template.yml
   parameters:
-    scheduleDisplayName: Partner Integration Tests Daily at 06:00 AM UTC (10:00 PM PST)
-    scheduleCron: "0 6 * * *"  # 6 AM UTC = 10 PM PST (UTC-8) - intentionally run at night to reduce throttling
-    triggerOnChange: false
     jobName: PartnerIntegrationTests
     jobDisplayName: "Builds the pyrit environment and runs partner integration tests"
     testAzureSubscription: 'integration-test-service-connection'
