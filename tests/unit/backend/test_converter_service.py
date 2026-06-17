@@ -14,28 +14,25 @@ from pyrit.backend.models.converters import (
     ConverterPreviewRequest,
     CreateConverterRequest,
 )
-from pyrit.backend.services.converter_service import ConverterService, _is_llm_based, get_converter_service
+from pyrit.backend.services.converter_service import (
+    ConverterService,
+    _serialize_type,
+    get_converter_service,
+)
 from pyrit.models import ComponentIdentifier
 from pyrit.prompt_converter import (
     Base64Converter,
     CaesarConverter,
-    LLMGenericTextConverter,
-    NoiseConverter,
-    PersuasionConverter,
     RepeatTokenConverter,
     SuffixAppendConverter,
-    TenseConverter,
-    ToneConverter,
-    TranslationConverter,
-    VariationConverter,
 )
 from pyrit.prompt_converter.prompt_converter import get_converter_modalities
-from pyrit.registry.object_registries import ConverterRegistry
+from pyrit.registry.components import ConverterRegistry
 
 
 @pytest.fixture(autouse=True)
 def reset_registry():
-    """Reset the ConverterRegistry singleton before each test."""
+    """Reset the converter registry before each test."""
     ConverterRegistry.reset_instance()
     yield
     ConverterRegistry.reset_instance()
@@ -56,8 +53,7 @@ class TestListConverters:
         """Test that list_converters returns converters from registry with full params."""
         service = ConverterService()
 
-        mock_converter = MagicMock()
-        mock_converter.__class__.__name__ = "MockConverter"
+        mock_converter = MagicMock(spec=prompt_converter.PromptConverter)
         mock_identifier = ComponentIdentifier(
             class_name="MockConverter",
             class_module="tests.unit.backend.test_converter_service",
@@ -69,7 +65,7 @@ class TestListConverters:
             },
         )
         mock_converter.get_identifier.return_value = mock_identifier
-        service._registry.register_instance(mock_converter, name="conv-1")
+        service._registry.instances.register(mock_converter, name="conv-1")
 
         result = await service.list_converters_async()
 
@@ -104,6 +100,60 @@ class TestListConverterCatalog:
         assert "text" in base64_entry.supported_input_types
         assert "text" in base64_entry.supported_output_types
 
+    async def test_catalog_includes_all_constructible_converters(self) -> None:
+        """The catalog surfaces every constructible converter, including base/helper classes.
+
+        Whether to display a given converter is left to the caller (e.g. the frontend),
+        so the service no longer hides anything.
+        """
+        service = ConverterService()
+
+        result = await service.list_converter_catalog_async()
+
+        converter_types = [item.converter_type for item in result.items]
+        assert "Base64Converter" in converter_types
+        assert "SelectiveTextConverter" in converter_types
+
+    async def test_catalog_serializes_parameter_type(self) -> None:
+        """Catalog renders the raw annotation into a human-readable type_name."""
+        service = ConverterService()
+
+        result = await service.list_converter_catalog_async()
+
+        caesar_entry = next(item for item in result.items if item.converter_type == "CaesarConverter")
+        caesar_param = next(p for p in caesar_entry.parameters if p.name == "caesar_offset")
+        assert caesar_param.type_name == "int"
+
+    async def test_catalog_excludes_non_coercible_params(self) -> None:
+        """Catalog only surfaces params that can be set from a string (e.g. not the LLM target)."""
+        service = ConverterService()
+
+        result = await service.list_converter_catalog_async()
+
+        persuasion_entry = next(item for item in result.items if item.converter_type == "PersuasionConverter")
+        assert persuasion_entry.is_llm_based is True
+        assert all("Target" not in p.type_name for p in persuasion_entry.parameters)
+
+
+class TestSerializeType:
+    """Tests for the _serialize_type presentation helper."""
+
+    def test_empty_annotation(self) -> None:
+        import inspect
+
+        assert _serialize_type(inspect.Parameter.empty) == "Any"
+
+    def test_plain_type(self) -> None:
+        assert _serialize_type(int) == "int"
+
+    def test_optional_pep604(self) -> None:
+        assert _serialize_type(str | None) == "Optional[str]"
+
+    def test_literal(self) -> None:
+        from typing import Literal
+
+        assert _serialize_type(Literal["a", "b"]) == "Literal['a', 'b']"
+
 
 class TestGetConverter:
     """Tests for ConverterService.get_converter method."""
@@ -120,8 +170,7 @@ class TestGetConverter:
         """Test that get_converter returns converter built from registry object."""
         service = ConverterService()
 
-        mock_converter = MagicMock()
-        mock_converter.__class__.__name__ = "MockConverter"
+        mock_converter = MagicMock(spec=prompt_converter.PromptConverter)
         mock_identifier = ComponentIdentifier(
             class_name="MockConverter",
             class_module="tests.unit.backend.test_converter_service",
@@ -132,7 +181,7 @@ class TestGetConverter:
             },
         )
         mock_converter.get_identifier.return_value = mock_identifier
-        service._registry.register_instance(mock_converter, name="conv-1")
+        service._registry.instances.register(mock_converter, name="conv-1")
 
         result = await service.get_converter_async(converter_id="conv-1")
 
@@ -155,8 +204,8 @@ class TestGetConverterObject:
     def test_get_converter_object_returns_object_from_registry(self) -> None:
         """Test that get_converter_object returns the actual converter object."""
         service = ConverterService()
-        mock_converter = MagicMock()
-        service._registry.register_instance(mock_converter, name="conv-1")
+        mock_converter = MagicMock(spec=prompt_converter.PromptConverter)
+        service._registry.instances.register(mock_converter, name="conv-1")
 
         result = service.get_converter_object(converter_id="conv-1")
 
@@ -227,8 +276,8 @@ class TestResolveConverterParams:
         service = ConverterService()
 
         # Register a mock converter
-        mock_converter = MagicMock()
-        service._registry.register_instance(mock_converter, name="inner-conv")
+        mock_converter = MagicMock(spec=prompt_converter.PromptConverter)
+        service._registry.instances.register(mock_converter, name="inner-conv")
 
         params = {"converter": {"converter_id": "inner-conv"}}
 
@@ -275,13 +324,12 @@ class TestPreviewConversion:
         """Test preview with converter IDs."""
         service = ConverterService()
 
-        mock_converter = MagicMock()
-        mock_converter.__class__.__name__ = "MockConverter"
+        mock_converter = MagicMock(spec=prompt_converter.PromptConverter)
         mock_result = MagicMock()
         mock_result.output_text = "encoded_value"
         mock_result.output_type = "text"
         mock_converter.convert_async = AsyncMock(return_value=mock_result)
-        service._registry.register_instance(mock_converter, name="conv-1")
+        service._registry.instances.register(mock_converter, name="conv-1")
 
         request = ConverterPreviewRequest(
             original_value="test",
@@ -300,22 +348,20 @@ class TestPreviewConversion:
         """Test that preview chains multiple converters."""
         service = ConverterService()
 
-        mock_converter1 = MagicMock()
-        mock_converter1.__class__.__name__ = "MockConverter1"
+        mock_converter1 = MagicMock(spec=prompt_converter.PromptConverter)
         mock_result1 = MagicMock()
         mock_result1.output_text = "step1_output"
         mock_result1.output_type = "text"
         mock_converter1.convert_async = AsyncMock(return_value=mock_result1)
 
-        mock_converter2 = MagicMock()
-        mock_converter2.__class__.__name__ = "MockConverter2"
+        mock_converter2 = MagicMock(spec=prompt_converter.PromptConverter)
         mock_result2 = MagicMock()
         mock_result2.output_text = "step2_output"
         mock_result2.output_type = "text"
         mock_converter2.convert_async = AsyncMock(return_value=mock_result2)
 
-        service._registry.register_instance(mock_converter1, name="conv-1")
-        service._registry.register_instance(mock_converter2, name="conv-2")
+        service._registry.instances.register(mock_converter1, name="conv-1")
+        service._registry.instances.register(mock_converter2, name="conv-2")
 
         request = ConverterPreviewRequest(
             original_value="input",
@@ -333,12 +379,12 @@ class TestPreviewConversion:
         """Data URIs on *_path types are decoded via the _DATA_TYPE_EXTENSION map and persisted."""
         service = ConverterService()
 
-        mock_converter = MagicMock()
+        mock_converter = MagicMock(spec=prompt_converter.PromptConverter)
         mock_result = MagicMock()
         mock_result.output_text = "/tmp/persisted.png"
         mock_result.output_type = "image_path"
         mock_converter.convert_async = AsyncMock(return_value=mock_result)
-        service._registry.register_instance(mock_converter, name="conv-1")
+        service._registry.instances.register(mock_converter, name="conv-1")
 
         mock_serializer = MagicMock()
         mock_serializer.value = "/tmp/persisted.png"
@@ -366,12 +412,12 @@ class TestPreviewConversion:
         """Values that aren't URLs/data URIs/existing files are treated as raw base64 and persisted."""
         service = ConverterService()
 
-        mock_converter = MagicMock()
+        mock_converter = MagicMock(spec=prompt_converter.PromptConverter)
         mock_result = MagicMock()
         mock_result.output_text = "/tmp/persisted.wav"
         mock_result.output_type = "audio_path"
         mock_converter.convert_async = AsyncMock(return_value=mock_result)
-        service._registry.register_instance(mock_converter, name="conv-1")
+        service._registry.instances.register(mock_converter, name="conv-1")
 
         mock_serializer = MagicMock()
         mock_serializer.value = "/tmp/persisted.wav"
@@ -411,10 +457,10 @@ class TestGetConverterObjectsForIds:
         """Test that method returns converter objects in order."""
         service = ConverterService()
 
-        mock1 = MagicMock()
-        mock2 = MagicMock()
-        service._registry.register_instance(mock1, name="conv-1")
-        service._registry.register_instance(mock2, name="conv-2")
+        mock1 = MagicMock(spec=prompt_converter.PromptConverter)
+        mock2 = MagicMock(spec=prompt_converter.PromptConverter)
+        service._registry.instances.register(mock1, name="conv-1")
+        service._registry.instances.register(mock2, name="conv-2")
 
         result = service.get_converter_objects_for_ids(converter_ids=["conv-1", "conv-2"])
 
@@ -674,25 +720,3 @@ class TestConverterParamsExtraction:
         # Verify type info is populated from identifier
         assert isinstance(result.supported_input_types, list)
         assert isinstance(result.supported_output_types, list)
-
-
-class TestIsLlmBased:
-    """Tests for the _is_llm_based introspection helper"""
-
-    def test_detects_llm_text_converter(self) -> None:
-        # Test that _is_llm_based correctly identifies converters that use LLMS as LLM-based.
-        for cls in (
-            LLMGenericTextConverter,
-            NoiseConverter,
-            PersuasionConverter,
-            ToneConverter,
-            TenseConverter,
-            TranslationConverter,
-            VariationConverter,
-        ):
-            assert _is_llm_based(cls) is True, f"{cls.__name__} should be detected as LLM-based"
-
-    def test_does_not_flag_non_target_converters(self) -> None:
-        # Test that _is_llm_based does not incorrectly flag non-LLM converters.
-        assert _is_llm_based(Base64Converter) is False
-        assert _is_llm_based(CaesarConverter) is False

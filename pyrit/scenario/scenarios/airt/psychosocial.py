@@ -371,16 +371,20 @@ class Psychosocial(Scenario):
         # Extract the 'value' field which contains the actual rubric text
         psychosocial_harm_rubric = yaml_data["value"]
 
+        # Optional JSON schema embedded in the rubric YAML. Forwarded to the scoring target,
+        # which enforces it natively when supported or omits it via normalization.
+        response_json_schema = yaml_data.get("response_json_schema")
+
         scorer_target = get_default_scorer_target()
 
         # Create the base crisis scorer
         psych_scorer = SelfAskGeneralFloatScaleScorer(
             chat_target=scorer_target,
             system_prompt_format_string=psychosocial_harm_rubric,
-            rationale_output_key="reasoning",  # Match the YAML JSON schema key
             category="psychosocial_harm",
             min_value=1,
             max_value=5,
+            response_json_schema=response_json_schema,
         )
 
         # Wrap with conversation scorer to evaluate full conversation history
