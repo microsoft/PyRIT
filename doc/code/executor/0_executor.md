@@ -9,24 +9,23 @@ generate new prompts, or orchestrating a cross-domain injection workflow. Attack
 most familiar family, but every category in this section — attacks, workflows, benchmarks, and prompt
 generators — is the same kind of object running the same lifecycle.
 
-## Executor vs. attack technique
+## Executor vs. attack
 
-These two words get used loosely, so we pin them down:
+An **executor** is the *algorithm* — for attacks, the **attack strategy** (e.g. `PromptSendingAttack`,
+`CrescendoAttack`, `TreeOfAttacksWithPruningAttack`). It knows *how* to drive the objective target. An
+**attack** is just the most common kind of executor.
 
-- An **executor** (for attacks, an **attack strategy**) is the *algorithm* — e.g.
-  `PromptSendingAttack`, `CrescendoAttack`, `TreeOfAttacksWithPruningAttack`. It knows *how* to drive
-  the objective target.
-- An **[attack technique](../scenarios/0_attack_techniques.ipynb)** is anything that, once configured,
-  generally helps move an attack toward achieving its objective — a role-play framing, a many-shot
-  priming set, a particular jailbreak template. A technique is **specific to an attack**: it is one
-  configured executor (plus its seeds) packaged so a [scenario](../scenarios/0_scenarios.ipynb) can
-  select it by name. The technique is the *recipe*; the executor is the *engine* that runs it.
+Don't confuse the executor with an **[attack technique](../scenarios/0_attack_techniques.ipynb)** — a
+configured recipe (a role-play framing, a many-shot priming set) that a
+[scenario](../scenarios/0_scenarios.ipynb) selects by name. The technique is the *recipe*; the executor
+is the *engine* that runs it. Techniques are defined fully in the scenarios docs.
 
 ## Executor categories
 
-PyRIT ships several families of executor. The cleanest way to tell the two main *attack* families
-apart is to **count requests to the objective target**: a single-turn attack sends exactly one; a
-multi-turn attack sends more than one and adapts as it goes.
+PyRIT ships several families of executor — attacks are the largest, alongside workflows, benchmarks,
+and prompt generators. Attacks themselves split by a simple rule: **count requests to the objective
+target** — a single-turn attack sends exactly one; a multi-turn attack sends more than one and adapts
+as it goes.
 
 - **[Single-Turn](1_single_turn.ipynb)** — sends a single prompt (**one attack turn**) to the
   objective target and scores the response. It may prepare that prompt elaborately (a role-play frame,
@@ -36,9 +35,6 @@ multi-turn attack sends more than one and adapts as it goes.
   adapting until the objective is met or a turn limit is hit. Adaptive variants use an adversarial
   target to generate each next prompt from the responses; others send a fixed sequence, request the
   answer in chunks, or stream input — no adversarial target needed.
-- **[Attack Configuration](3_attack_configuration.ipynb)** — not an executor itself, but the
-  cross-cutting inputs every attack accepts (objective vs. adversarial target, prepended
-  conversations, multimodal seeds, next-turn messages, memory labels).
 - **[Compound](4_compound.ipynb)** — doesn't add turns of its own; it orchestrates *other* attacks
   (running them in sequence) toward a single objective, after the building blocks it composes.
 - **[Workflow](5_workflow.ipynb)** — generic multi-step orchestration that doesn't fit the
@@ -48,6 +44,10 @@ multi-turn attack sends more than one and adapts as it goes.
 - **[Prompt Generator](7_promptgen.ipynb)** — produces attack prompts (e.g. fuzzing, Anecdoctor) to
   augment datasets; some generate from a model alone, others probe a target to evolve effective
   prompts.
+
+**[Attack Configuration](3_attack_configuration.ipynb)** isn't an executor — it's the cross-cutting
+inputs every attack accepts (objective vs. adversarial target, prepended conversations, multimodal
+seeds, next-turn messages, memory labels). It has its own page.
 
 ## The shape of an attack
 
