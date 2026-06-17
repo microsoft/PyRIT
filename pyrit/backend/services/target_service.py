@@ -15,7 +15,7 @@ Targets can be:
 import logging
 import os
 from functools import lru_cache
-from typing import Any
+from typing import Any, ClassVar
 from urllib.parse import urlparse
 
 from pyrit import prompt_target
@@ -34,9 +34,6 @@ from pyrit.prompt_target.round_robin_target import RoundRobinTarget
 from pyrit.registry.object_registries import TargetRegistry
 
 logger = logging.getLogger(__name__)
-
-# Scope for Azure Machine Learning managed online endpoints.
-_AZURE_ML_SCOPE = "https://ml.azure.com/.default"
 
 # Recognised Azure OpenAI / AI Foundry hostname suffixes. Used for strict
 # endpoint validation when Entra ID auth is requested, so a bearer token is
@@ -138,6 +135,9 @@ class TargetService:
     Uses TargetRegistry as the sole source of truth.
     API metadata is derived from the target objects' identifiers.
     """
+
+    # Scope for Azure Machine Learning managed online endpoints.
+    _AZURE_ML_SCOPE: ClassVar[str] = "https://ml.azure.com/.default"
 
     def __init__(self) -> None:
         """Initialize the target service."""
@@ -406,7 +406,7 @@ class TargetService:
                     "Entra ID authentication for AzureMLChatTarget requires an AML endpoint "
                     f"(*.inference.ml.azure.com). Got: {endpoint}"
                 )
-            new_params["api_key"] = get_azure_async_token_provider(_AZURE_ML_SCOPE)
+            new_params["api_key"] = get_azure_async_token_provider(TargetService._AZURE_ML_SCOPE)
             return new_params
 
         raise ValueError(

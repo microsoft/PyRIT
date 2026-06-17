@@ -8,6 +8,7 @@ Import concrete implementations to trigger registration.
 """
 
 from pyrit.datasets.seed_datasets.remote.aegis_ai_content_safety_dataset import (
+    AegisHarmCategory,
     _AegisContentSafetyDataset,
 )
 from pyrit.datasets.seed_datasets.remote.agent_threat_rules_dataset import (
@@ -188,6 +189,7 @@ from pyrit.datasets.seed_datasets.remote.xstest_dataset import (
 )
 
 __all__ = [
+    "AegisHarmCategory",
     "CoCoNotCategory",
     "CoCoNotSplit",
     "DecodingTrustToxicitySubset",

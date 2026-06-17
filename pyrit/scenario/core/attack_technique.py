@@ -11,7 +11,12 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from pyrit.models import ComponentIdentifier, Identifiable, build_seed_identifier
+from pyrit.models import (
+    AttackTechniqueIdentifier,
+    ComponentIdentifier,
+    Identifiable,
+    SeedIdentifier,
+)
 
 if TYPE_CHECKING:
     from pyrit.executor.attack import AttackStrategy
@@ -59,13 +64,14 @@ class AttackTechnique(Identifiable):
         Returns:
             ComponentIdentifier: The frozen identity snapshot.
         """
-        children: dict[str, Any] = {
-            "attack": self._attack.get_identifier(),
-        }
-
+        technique_seeds: list[SeedIdentifier] | None = None
         if self._seed_technique is not None:
-            technique_seed_ids = [build_seed_identifier(seed) for seed in self._seed_technique.seeds]
+            technique_seed_ids = [SeedIdentifier.from_seed(seed) for seed in self._seed_technique.seeds]
             if technique_seed_ids:
-                children["technique_seeds"] = technique_seed_ids
+                technique_seeds = list(technique_seed_ids)
 
-        return ComponentIdentifier.of(self, children=children)
+        return AttackTechniqueIdentifier.of(
+            self,
+            attack=self._attack.get_identifier(),
+            technique_seeds=technique_seeds,
+        )

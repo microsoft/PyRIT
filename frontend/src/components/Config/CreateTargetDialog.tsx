@@ -181,19 +181,31 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
   const showEntraEndpointError = entraEndpointError !== null
 
   // Fetch the available targets when the dialog opens with RoundRobin selected.
-  // If the parent already passed targets, use those to avoid a redundant API call.
+  // If the parent already passed targets, derive availableTargets from them
+  // directly via the "adjust state during render" pattern to avoid an effect.
+  const [seenExistingTargets, setSeenExistingTargets] = useState<TargetInstance[] | null>(null)
+  if (
+    open
+    && isRoundRobin
+    && existingTargets
+    && existingTargets.length > 0
+    && existingTargets !== seenExistingTargets
+  ) {
+    setSeenExistingTargets(existingTargets)
+    setAvailableTargets(existingTargets)
+  }
+
   useEffect(() => {
     if (!open || !isRoundRobin) return
-    if (existingTargets && existingTargets.length > 0) {
-      setAvailableTargets(existingTargets)
-      return
-    }
+    if (existingTargets && existingTargets.length > 0) return
     let cancelled = false
-    targetsApi.listTargets(200).then((res) => {
-      if (!cancelled) setAvailableTargets(res.items)
-    }).catch(() => {
-      // Ignore fetch errors — the list will just be empty
-    })
+    targetsApi.listTargets(200)
+      .then((res) => {
+        if (!cancelled) setAvailableTargets(res.items)
+      })
+      .catch(() => {
+        // Ignore fetch errors — the list will just be empty
+      })
     return () => { cancelled = true }
   }, [open, isRoundRobin, existingTargets])
 

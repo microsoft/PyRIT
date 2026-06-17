@@ -40,13 +40,15 @@ flowchart LR
         P_labels["labels (VARCHAR)"]
         P_prompt_metadata["prompt_metadata (VARCHAR)"]
         P_converter_identifiers["converter_identifiers (VARCHAR)"]
-        P_prompt_target_identifier["prompt_target_identifier (VARCHAR)"]
-        P_attack_identifier["attack_identifier (VARCHAR)"]
         P_response_error["response_error (VARCHAR)"]
         P_converted_value_data_type["converted_value_data_type (VARCHAR)"]
         P_converted_value["converted_value (VARCHAR)"]
         P_converted_value_sha256["converted_value_sha256 (VARCHAR)"]
         P_original_prompt_id["original_prompt_id (UUID)"]
+  end
+ subgraph Conversations["Conversations"]
+        C_conversation_id["conversation_id (VARCHAR)"]
+        C_target_identifier["target_identifier (VARCHAR)"]
   end
  subgraph ScoreEntries["ScoreEntries"]
         Sc_id["id (UUID)"]
@@ -63,6 +65,7 @@ flowchart LR
   end
     S_value_sha256 -- N:N relationship to query --> P_original_value_sha256
     P_id -- 1:N relationship to query --> Sc_prompt_request_response_id
+    P_conversation_id -- N:1 relationship to query --> C_conversation_id
 
     style S_value_sha256 fill:#ff8800ff
     style P_id fill:#14a519ff

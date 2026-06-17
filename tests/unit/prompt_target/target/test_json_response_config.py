@@ -5,7 +5,7 @@ import json
 
 import pytest
 
-from pyrit.models.json_response_config import _JsonResponseConfig
+from pyrit.prompt_target.common.json_response_config import _JsonResponseConfig
 
 
 def test_with_none():

@@ -9,7 +9,7 @@ import uuid
 import zipfile
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
 from huggingface_hub import hf_hub_download
 from typing_extensions import override
@@ -24,8 +24,6 @@ if TYPE_CHECKING:
     from pyrit.models.seeds.seed_group import SeedUnion
 
 logger = logging.getLogger(__name__)
-
-_HF_REPO_ID = "ys-zong/VLGuard"
 
 
 class VLGuardCategory(Enum):
@@ -99,6 +97,8 @@ class _VLGuardDataset(_RemoteDatasetLoader):
     Paper: Safety Fine-Tuning at (Almost) No Cost: A Baseline for Vision Large Language Models (ICML 2024)
     """
 
+    _HF_REPO_ID: ClassVar[str] = "ys-zong/VLGuard"
+
     _AUTHORS = [
         "Yongshuo Zong",
         "Ondrej Bohdal",
@@ -137,7 +137,7 @@ class _VLGuardDataset(_RemoteDatasetLoader):
         self.subset = subset
         self.categories = categories
         self.token = token if token is not None else os.environ.get("HUGGINGFACE_TOKEN")
-        self.source = f"https://huggingface.co/datasets/{_HF_REPO_ID}"
+        self.source = f"https://huggingface.co/datasets/{self._HF_REPO_ID}"
 
         if categories is not None:
             valid_categories = {cat.value for cat in VLGuardCategory}
@@ -308,14 +308,14 @@ class _VLGuardDataset(_RemoteDatasetLoader):
 
         def _download_sync() -> tuple[str, str]:
             json_file = hf_hub_download(
-                repo_id=_HF_REPO_ID,
+                repo_id=self._HF_REPO_ID,
                 filename="test.json",
                 repo_type="dataset",
                 local_dir=str(cache_dir),
                 token=self.token,
             )
             zip_file = hf_hub_download(
-                repo_id=_HF_REPO_ID,
+                repo_id=self._HF_REPO_ID,
                 filename="test.zip",
                 repo_type="dataset",
                 local_dir=str(cache_dir),

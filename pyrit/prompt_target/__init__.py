@@ -25,6 +25,7 @@ from pyrit.prompt_target.common.target_capabilities import (
     CapabilityName,
     TargetCapabilities,
     UnsupportedCapabilityBehavior,
+    get_known_capabilities,
 )
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.prompt_target.common.target_requirements import CHAT_TARGET_REQUIREMENTS, TargetRequirements
@@ -109,5 +110,6 @@ __all__ = [
     "UnsupportedCapabilityBehavior",
     "TextTarget",
     "discover_target_capabilities_async",
+    "get_known_capabilities",
     "WebSocketCopilotTarget",
 ]

@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect } from 'react'
 import { FluentProvider, webLightTheme, webDarkTheme } from '@fluentui/react-components'
 import { useMsal } from '@azure/msal-react'
+import { Joyride } from 'react-joyride'
 import MainLayout from './components/Layout/MainLayout'
 import ChatWindow from './components/Chat/ChatWindow'
 import Home from './components/Home/Home'
@@ -15,20 +16,24 @@ import { DEFAULT_GLOBAL_LABELS } from './components/Labels/labelDefaults'
 import type { ViewName } from './components/Sidebar/Navigation'
 import type { TargetInstance, TargetInfo } from './types'
 import { attacksApi, versionApi } from './services/api'
+import { useTour } from './hooks/useTour'
 
 const AUTO_DISMISS_MS = 5_000
 
 function ConnectionBannerContainer() {
   const { status, reconnectCount } = useConnectionHealth()
-  const [showReconnected, setShowReconnected] = useState(false)
+  // Track how many reconnects the user has already had the banner dismissed for.
+  // `showReconnected` is derived: the banner is visible whenever there are
+  // un-dismissed reconnects. The auto-dismiss timer bumps `dismissedCount` so
+  // we avoid calling setState synchronously in an effect body.
+  const [dismissedCount, setDismissedCount] = useState(0)
+  const showReconnected = reconnectCount > dismissedCount
 
   useEffect(() => {
-    if (reconnectCount > 0) {
-      setShowReconnected(true)
-      const timer = setTimeout(() => setShowReconnected(false), AUTO_DISMISS_MS)
-      return () => clearTimeout(timer)
-    }
-  }, [reconnectCount])
+    if (!showReconnected) return
+    const timer = setTimeout(() => setDismissedCount(reconnectCount), AUTO_DISMISS_MS)
+    return () => clearTimeout(timer)
+  }, [showReconnected, reconnectCount])
 
   if (status === 'connected' && !showReconnected) {
     return null
@@ -178,16 +183,29 @@ function App() {
     setIsDarkMode(!isDarkMode)
   }
 
+  // Onboarding tour — pass setCurrentView so the tour can switch views between steps
+  const { startTour, hasCompletedTour, tourProps } = useTour(setCurrentView, isDarkMode, currentView)
+
+  // Auto-start the tour on first visit
+  useEffect(() => {
+    if (!hasCompletedTour) {
+      startTour()
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   return (
     <ErrorBoundary>
       <ConnectionHealthProvider>
         <FluentProvider theme={isDarkMode ? webDarkTheme : webLightTheme}>
+          <Joyride {...tourProps} />
           <ConnectionBannerContainer />
           <MainLayout
             currentView={currentView}
             onNavigate={setCurrentView}
             onToggleTheme={toggleTheme}
             isDarkMode={isDarkMode}
+            onStartTour={startTour}
           >
             {currentView === 'home' && (
               <Home

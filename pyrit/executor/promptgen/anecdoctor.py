@@ -218,7 +218,6 @@ class AnecdoctorGenerator(
         self._objective_target.set_system_prompt(
             system_prompt=system_prompt,
             conversation_id=context.conversation_id,
-            attack_identifier=self.get_identifier(),
             labels=context.memory_labels,  # deprecated
         )
 
@@ -312,7 +311,6 @@ class AnecdoctorGenerator(
             request_converter_configurations=self._request_converters,
             response_converter_configurations=self._response_converters,
             labels=context.memory_labels,
-            attack_identifier=self.get_identifier(),
         )
 
     def _load_prompt_from_yaml(self, *, yaml_filename: str) -> str:
@@ -381,7 +379,6 @@ class AnecdoctorGenerator(
         self._processing_model.set_system_prompt(
             system_prompt=kg_system_prompt,
             conversation_id=kg_conversation_id,
-            attack_identifier=self.get_identifier(),
             labels=self._memory_labels,  # deprecated
         )
 
@@ -399,7 +396,6 @@ class AnecdoctorGenerator(
             request_converter_configurations=self._request_converters,
             response_converter_configurations=self._response_converters,
             labels=self._memory_labels,
-            attack_identifier=self.get_identifier(),
         )
 
         if not kg_response:

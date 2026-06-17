@@ -94,7 +94,7 @@ class PersuasionConverter(LLMGenericTextConverter):
             params={
                 "persuasion_technique": self._persuasion_technique,
             },
-            children={"converter_target": self.converter_target.get_identifier()},
+            converter_target=self.converter_target.get_identifier(),
         )
 
     def _process_response(self, response_text: str) -> str:

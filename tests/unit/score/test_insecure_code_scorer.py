@@ -13,7 +13,9 @@ from pyrit.score import InsecureCodeScorer
 
 @pytest.fixture
 def mock_chat_target(patch_central_database):
-    return MagicMock(spec=PromptTarget)
+    target = MagicMock(spec=PromptTarget)
+    target.get_identifier.return_value = ComponentIdentifier(class_name="MockChatTarget", class_module="mock")
+    return target
 
 
 async def test_insecure_code_scorer_valid_response(mock_chat_target):

@@ -65,6 +65,7 @@ SCORER_CONTENT_CLASSIFIERS_PATH = pathlib.Path(SCORER_SEED_PROMPT_PATH, "content
 SCORER_LIKERT_PATH = pathlib.Path(SCORER_SEED_PROMPT_PATH, "likert").resolve()
 SCORER_SCALES_PATH = pathlib.Path(SCORER_SEED_PROMPT_PATH, "scales").resolve()
 HARM_DEFINITION_PATH = pathlib.Path(DATASETS_PATH, "harm_definition").resolve()
+JSON_SCHEMAS_PATH = pathlib.Path(DATASETS_PATH, "json_schemas").resolve()
 
 JAILBREAK_TEMPLATES_PATH = pathlib.Path(DATASETS_PATH, "jailbreak", "templates").resolve()
 
@@ -85,6 +86,7 @@ PATHS_DICT = {
     "docs_path": DOCS_PATH,
     "harm_definition_path": HARM_DEFINITION_PATH,
     "jailbreak_templates_path": JAILBREAK_TEMPLATES_PATH,
+    "json_schemas_path": JSON_SCHEMAS_PATH,
     "likert_path": SCORER_LIKERT_PATH,
     "log_path": LOG_PATH,
     "pyrit_home_path": HOME_PATH,

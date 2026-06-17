@@ -63,7 +63,7 @@ class MessagePiece(BaseModel):
 
     id: uuid.UUID = Field(default_factory=uuid4)
     role: ChatMessageRole
-    conversation_id: str = Field(default_factory=lambda: str(uuid4()))
+    conversation_id: str | None = None
     sequence: int = -1
     timestamp: AwareDatetime = Field(default_factory=lambda: datetime.now(tz=timezone.utc))
     original_value: str
@@ -77,8 +77,6 @@ class MessagePiece(BaseModel):
     labels: dict[str, Any] = Field(default_factory=dict)
     prompt_metadata: dict[str, Any] = Field(default_factory=dict)
     converter_identifiers: list[ComponentIdentifierField] = Field(default_factory=list)
-    prompt_target_identifier: ComponentIdentifierField | None = None
-    attack_identifier: ComponentIdentifierField | None = None
 
     # When True, the memory layer skips persisting this piece. Used for ephemeral
     # pieces a scorer creates to score arbitrary content; ``exclude=True`` keeps
@@ -95,13 +93,19 @@ class MessagePiece(BaseModel):
         """
         Emit DeprecationWarning for each deprecated kwarg explicitly passed.
 
+        Only a truthy value counts as "passed". An empty/falsy value (e.g.
+        ``labels={}``, the field default) is treated as not supplied, so callers
+        that forward ``labels=<source>.labels`` on the happy path do not trip a
+        spurious warning. This matches the post-construction assignment pattern
+        used elsewhere (``piece.labels = labels`` guarded by ``if labels:``).
+
         Returns:
             The (unchanged) input ``data`` so validation can continue.
         """
         if not isinstance(data, dict):
             return data
         for kwarg, removed_in in _DEPRECATED_KWARGS:
-            if data.get(kwarg) is not None:
+            if data.get(kwarg):
                 print_deprecation_message(
                     old_item=f"MessagePiece(..., {kwarg}=...)",
                     new_item="MessagePiece(...)",
@@ -174,7 +178,7 @@ class MessagePiece(BaseModel):
         Copy lineage metadata from ``source`` onto this piece.
 
         Lineage fields are the metadata that tie a piece back to its originating
-        conversation, attack, and target. Mutable containers (``labels``,
+        conversation. Mutable containers (``labels``,
         ``prompt_metadata``) are shallow-copied so that mutations on one piece
         do not affect others.
 
@@ -183,8 +187,6 @@ class MessagePiece(BaseModel):
         """
         self.conversation_id = source.conversation_id
         self.labels = dict(source.labels)
-        self.attack_identifier = source.attack_identifier
-        self.prompt_target_identifier = source.prompt_target_identifier
         self.prompt_metadata = dict(source.prompt_metadata)
 
     def has_error(self) -> bool:
@@ -292,4 +294,7 @@ def sort_message_pieces(message_pieces: list[MessagePiece]) -> list[MessagePiece
         convo_id: min(x.timestamp for x in message_pieces if x.conversation_id == convo_id)
         for convo_id in {x.conversation_id for x in message_pieces}
     }
-    return sorted(message_pieces, key=lambda x: (earliest_timestamps[x.conversation_id], x.conversation_id, x.sequence))
+    return sorted(
+        message_pieces,
+        key=lambda x: (earliest_timestamps[x.conversation_id], x.conversation_id or "", x.sequence),
+    )

@@ -319,23 +319,26 @@ async def test_print_scenario_result_async_uses_pretty_printer():
     fake_printer.write_async = AsyncMock()
 
     with (
-        patch("pyrit.models.scenario_result.ScenarioResult.from_dict", return_value=fake_scenario) as from_dict_mock,
+        patch(
+            "pyrit.models.scenario_result.ScenarioResult.model_validate", return_value=fake_scenario
+        ) as model_validate_mock,
         patch(
             "pyrit.output.scenario_result.pretty.PrettyScenarioResultMemoryPrinter", return_value=fake_printer
         ) as printer_cls,
     ):
         await _output.print_scenario_result_async(result_dict=result_dict)
 
-    from_dict_mock.assert_called_once_with(result_dict)
+    model_validate_mock.assert_called_once_with(result_dict)
     printer_cls.assert_called_once_with()
     fake_printer.write_async.assert_awaited_once_with(fake_scenario)
 
 
 async def test_print_scenario_result_async_roundtrip_with_real_payload():
     """
-    Integration smoke test: a real ScenarioResult.to_dict() payload must flow
-    through ScenarioResult.from_dict() inside print_scenario_result_async
-    without raising. Locks the REST contract used by the CLI thin client.
+    Integration smoke test: a real ``ScenarioResult.model_dump(mode="json", by_alias=True)``
+    payload must flow through ``ScenarioResult.model_validate(...)`` inside
+    ``print_scenario_result_async`` without raising. Locks the REST contract used by the CLI
+    thin client.
     """
     from datetime import datetime, timezone
 
@@ -361,10 +364,10 @@ async def test_print_scenario_result_async_roundtrip_with_real_payload():
         attack_results={"strat_a": [attack]},
         scenario_run_state="COMPLETED",
     )
-    payload = original.to_dict()
+    payload = original.model_dump(mode="json", by_alias=True)
 
-    # Drive print_scenario_result_async through the real from_dict path; only
-    # stub the printer to keep the test fast.
+    # Drive print_scenario_result_async through the real model_validate path;
+    # only stub the printer to keep the test fast.
     fake_printer = MagicMock()
     fake_printer.write_async = AsyncMock()
     with patch(

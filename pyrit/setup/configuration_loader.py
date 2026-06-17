@@ -11,7 +11,7 @@ from YAML files and initializes PyRIT accordingly.
 import pathlib
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from pyrit.common.path import DEFAULT_CONFIG_PATH
 from pyrit.common.yaml_loadable import YamlLoadable
@@ -31,13 +31,6 @@ if TYPE_CHECKING:
 # This matches what YAML can represent: primitives, lists, and nested dicts
 YamlPrimitive = str | int | float | bool | None
 YamlValue = YamlPrimitive | list["YamlValue"] | dict[str, "YamlValue"]
-
-# Mapping from snake_case config values to internal constants
-_MEMORY_DB_TYPE_MAP: dict[str, str] = {
-    "in_memory": IN_MEMORY,
-    "sqlite": SQLITE,
-    "azure_sql": AZURE_SQL,
-}
 
 
 @dataclass
@@ -136,6 +129,13 @@ class ConfigurationLoader(YamlLoadable):
         operation: my_operation
     """
 
+    # Mapping from snake_case config values to internal constants
+    _MEMORY_DB_TYPE_MAP: ClassVar[dict[str, str]] = {
+        "in_memory": IN_MEMORY,
+        "sqlite": SQLITE,
+        "azure_sql": AZURE_SQL,
+    }
+
     memory_db_type: str = "sqlite"
     initializers: list[str | dict[str, Any]] = field(default_factory=list)
     initialization_scripts: list[str] | None = None
@@ -172,12 +172,12 @@ class ConfigurationLoader(YamlLoadable):
         normalized = self.memory_db_type.lower().replace("-", "_")
 
         # Also handle PascalCase inputs (e.g., "InMemory" -> "in_memory")
-        if normalized not in _MEMORY_DB_TYPE_MAP:
+        if normalized not in self._MEMORY_DB_TYPE_MAP:
             # Try converting from PascalCase
             normalized = class_name_to_snake_case(self.memory_db_type)
 
-        if normalized not in _MEMORY_DB_TYPE_MAP:
-            valid_types = list(_MEMORY_DB_TYPE_MAP.keys())
+        if normalized not in self._MEMORY_DB_TYPE_MAP:
+            valid_types = list(self._MEMORY_DB_TYPE_MAP.keys())
             raise ValueError(
                 f"Invalid memory_db_type '{self.memory_db_type}'. Must be one of: {', '.join(valid_types)}"
             )
@@ -570,7 +570,7 @@ class ConfigurationLoader(YamlLoadable):
         resolved_env_files = self.resolve_env_files()
 
         # Map snake_case memory_db_type to internal constant
-        internal_memory_db_type = _MEMORY_DB_TYPE_MAP[self.memory_db_type]
+        internal_memory_db_type = self._MEMORY_DB_TYPE_MAP[self.memory_db_type]
 
         await initialize_pyrit_async(
             memory_db_type=internal_memory_db_type,

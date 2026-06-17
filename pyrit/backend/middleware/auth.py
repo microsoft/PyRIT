@@ -18,7 +18,7 @@ The middleware:
 import logging
 import os
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, ClassVar
 
 import httpx
 import jwt
@@ -29,13 +29,6 @@ from starlette.responses import JSONResponse, Response
 from starlette.types import ASGIApp
 
 logger = logging.getLogger(__name__)
-
-# Paths that bypass authentication
-_PUBLIC_PATHS = {
-    "/api/health",
-    "/api/auth/config",
-    "/api/media",
-}
 
 
 @dataclass
@@ -50,6 +43,13 @@ class AuthenticatedUser:
 
 class EntraAuthMiddleware(BaseHTTPMiddleware):
     """Validate Entra ID JWTs on every request (except public paths)."""
+
+    # Paths that bypass authentication
+    _PUBLIC_PATHS: ClassVar[set[str]] = {
+        "/api/health",
+        "/api/auth/config",
+        "/api/media",
+    }
 
     def __init__(self, app: ASGIApp) -> None:
         """Initialize the middleware with Entra ID configuration from environment variables."""
@@ -88,7 +88,7 @@ class EntraAuthMiddleware(BaseHTTPMiddleware):
         """
         # Skip auth for public paths and static files
         path = request.url.path
-        if not self._enabled or path in _PUBLIC_PATHS or not path.startswith("/api"):
+        if not self._enabled or path in self._PUBLIC_PATHS or not path.startswith("/api"):
             return await call_next(request)
 
         result = await self._authenticate_request_async(request)

@@ -17,9 +17,11 @@ from pyrit.executor.attack.component import (
     get_adversarial_chat_messages,
 )
 from pyrit.executor.attack.core.attack_config import (
+    DEFAULT_ADVERSARIAL_SEED_PROMPT,
     AttackAdversarialConfig,
     AttackConverterConfig,
     AttackScoringConfig,
+    resolve_adversarial_system_prompt,
 )
 from pyrit.executor.attack.multi_turn.multi_turn_attack_strategy import (
     ConversationSession,
@@ -28,14 +30,15 @@ from pyrit.executor.attack.multi_turn.multi_turn_attack_strategy import (
 )
 from pyrit.memory import CentralMemory
 from pyrit.models import (
+    AtomicAttackIdentifier,
     AttackOutcome,
     AttackResult,
+    Conversation,
     ConversationReference,
     ConversationType,
     Message,
     Score,
     SeedPrompt,
-    build_atomic_attack_identifier,
 )
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import CapabilityName
@@ -153,11 +156,9 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
         except ValueError as exc:
             raise ValueError(f"RedTeamingAttack {exc}") from exc
 
-        system_prompt_template_path = (
-            attack_adversarial_config.system_prompt_path or RTASystemPromptPaths.TEXT_GENERATION.value
-        )
-        self._adversarial_chat_system_prompt_template = SeedPrompt.from_yaml_with_required_parameters(
-            template_path=system_prompt_template_path,
+        self._adversarial_chat_system_prompt_template = resolve_adversarial_system_prompt(
+            config=attack_adversarial_config,
+            default_system_prompt_path=RTASystemPromptPaths.TEXT_GENERATION.value,
             required_parameters=["objective"],
             error_message="Adversarial seed prompt must have an objective",
         )
@@ -166,7 +167,7 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
         # Initialize utilities
         self._prompt_normalizer = prompt_normalizer or PromptNormalizer()
 
-        self._conversation_manager = ConversationManager(attack_identifier=self.get_identifier())
+        self._conversation_manager = ConversationManager()
 
         # set the maximum number of turns for the attack
         if max_turns <= 0:
@@ -186,6 +187,23 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
         return AttackScoringConfig(
             objective_scorer=self._objective_scorer,
             use_score_as_feedback=self._use_score_as_feedback,
+        )
+
+    def get_attack_adversarial_config(self) -> AttackAdversarialConfig | None:
+        """
+        Get the effective adversarial configuration used by this strategy.
+
+        Returns:
+            AttackAdversarialConfig | None: The adversarial target with its resolved system prompt
+                and first-message seed prompt.
+        """
+        adversarial_chat = getattr(self, "_adversarial_chat", None)
+        if adversarial_chat is None:
+            return None
+        return AttackAdversarialConfig(
+            target=adversarial_chat,
+            system_prompt=self._adversarial_chat_system_prompt_template,
+            seed_prompt=self._adversarial_chat_seed_prompt,
         )
 
     def _validate_context(self, *, context: MultiTurnAttackContext[Any]) -> None:
@@ -260,7 +278,6 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
         self._adversarial_chat.set_system_prompt(
             system_prompt=adversarial_system_prompt,
             conversation_id=context.session.adversarial_chat_conversation_id,
-            attack_identifier=self.get_identifier(),
             labels=context.memory_labels,  # deprecated
         )
 
@@ -270,11 +287,15 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
             adversarial_messages = get_adversarial_chat_messages(
                 prepended_conversation=context.prepended_conversation,
                 adversarial_chat_conversation_id=context.session.adversarial_chat_conversation_id,
-                attack_identifier=self.get_identifier(),
-                adversarial_chat_target_identifier=self._adversarial_chat.get_identifier(),
                 labels=context.memory_labels,
             )
 
+            self._memory.add_conversation_to_memory(
+                conversation=Conversation(
+                    conversation_id=context.session.adversarial_chat_conversation_id,
+                    target_identifier=self._adversarial_chat.get_identifier(),
+                )
+            )
             for msg in adversarial_messages:
                 self._memory.add_message_to_memory(request=msg)
 
@@ -333,7 +354,7 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
 
         # Prepare the result
         return AttackResult(
-            atomic_attack_identifier=build_atomic_attack_identifier(attack_identifier=self.get_identifier()),
+            atomic_attack_identifier=AtomicAttackIdentifier.build(attack_identifier=self.get_identifier()),
             conversation_id=context.session.conversation_id,
             objective=context.objective,
             outcome=(AttackOutcome.SUCCESS if achieved_objective else AttackOutcome.FAILURE),
@@ -388,7 +409,6 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
         with execution_context(
             component_role=ComponentRole.ADVERSARIAL_CHAT,
             attack_strategy_name=self.__class__.__name__,
-            attack_identifier=self.get_identifier(),
             component_identifier=self._adversarial_chat.get_identifier(),
             objective_target_conversation_id=context.session.conversation_id,
             objective=context.objective,
@@ -397,7 +417,6 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
                 message=prompt_message,
                 conversation_id=context.session.adversarial_chat_conversation_id,
                 target=self._adversarial_chat,
-                attack_identifier=self.get_identifier(),
                 labels=context.memory_labels,
             )
 
@@ -550,7 +569,6 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
         with execution_context(
             component_role=ComponentRole.OBJECTIVE_TARGET,
             attack_strategy_name=self.__class__.__name__,
-            attack_identifier=self.get_identifier(),
             component_identifier=self._objective_target.get_identifier(),
             objective_target_conversation_id=context.session.conversation_id,
             objective=context.objective,
@@ -563,7 +581,6 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
                 response_converter_configurations=self._response_converters,
                 target=self._objective_target,
                 labels=context.memory_labels,
-                attack_identifier=self.get_identifier(),
             )
 
         if response is None:
@@ -598,7 +615,6 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
         with execution_context(
             component_role=ComponentRole.OBJECTIVE_SCORER,
             attack_strategy_name=self.__class__.__name__,
-            attack_identifier=self.get_identifier(),
             component_identifier=self._objective_scorer.get_identifier(),
             objective_target_conversation_id=context.session.conversation_id,
             objective=context.objective,
@@ -613,16 +629,19 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
         objective_scores = scoring_results
         return objective_scores[0] if objective_scores else None
 
-    def _set_adversarial_chat_seed_prompt(self, *, seed_prompt: str | SeedPrompt) -> None:
+    def _set_adversarial_chat_seed_prompt(self, *, seed_prompt: str | SeedPrompt | None) -> None:
         """
         Set the seed prompt for the adversarial chat.
 
         Args:
-            seed_prompt (str | SeedPrompt): The seed prompt to set for the adversarial chat.
+            seed_prompt (str | SeedPrompt | None): The seed prompt to set for the adversarial chat.
+                When None, the default seed prompt is used.
 
         Raises:
-            ValueError: If the seed prompt is not a string or SeedPrompt object.
+            ValueError: If the seed prompt is not a string, SeedPrompt object, or None.
         """
+        if seed_prompt is None:
+            seed_prompt = DEFAULT_ADVERSARIAL_SEED_PROMPT
         if isinstance(seed_prompt, str):
             self._adversarial_chat_seed_prompt = SeedPrompt(value=seed_prompt, data_type="text", is_jinja_template=True)
         elif isinstance(seed_prompt, SeedPrompt):

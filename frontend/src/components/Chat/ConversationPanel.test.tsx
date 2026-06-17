@@ -217,6 +217,46 @@ describe("ConversationPanel", () => {
     expect(onSelectConversation).toHaveBeenCalledWith("branch-1");
   });
 
+  it("should be keyboard accessible for conversation selection", async () => {
+    const user = userEvent.setup();
+    const onSelectConversation = jest.fn();
+
+    mockedAttacksApi.getConversations.mockResolvedValue({
+      attack_result_id: "ar-attack-123",
+      main_conversation_id: "attack-123",
+      conversations: [
+        {
+          conversation_id: "branch-1",
+          message_count: 2,
+          last_message_preview: null,
+          created_at: "2026-02-18T11:00:00Z",
+        },
+      ],
+    });
+
+    render(
+      <TestWrapper>
+        <ConversationPanel
+          {...defaultProps}
+          onSelectConversation={onSelectConversation}
+        />
+      </TestWrapper>
+    );
+
+    const convItem = await screen.findByTestId("conversation-item-branch-1");
+    expect(convItem).toHaveAttribute("role", "button");
+    expect(convItem).toHaveAttribute("tabindex", "0");
+
+    convItem.focus();
+    await user.keyboard("{Enter}");
+    expect(onSelectConversation).toHaveBeenCalledWith("branch-1");
+
+    onSelectConversation.mockClear();
+    convItem.focus();
+    await user.keyboard(" ");
+    expect(onSelectConversation).toHaveBeenCalledWith("branch-1");
+  });
+
   it("should call onNewConversation when clicking new conversation button", async () => {
     const user = userEvent.setup();
     const onNewConversation = jest.fn();
