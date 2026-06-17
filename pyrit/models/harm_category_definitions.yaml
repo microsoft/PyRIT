@@ -1,0 +1,5 @@
+version: v1.0.0
+definitions:
+  HATESPEECH: "Content that expresses hate toward a group based on identity."
+  HARASSMENT: "Targeted, persistent, or aggressive interactions."
+  SELF_HARM: "Promotes or encourages self-injury behaviors."

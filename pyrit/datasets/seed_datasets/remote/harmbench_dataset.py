@@ -83,18 +83,22 @@ class _HarmBenchDataset(_RemoteDatasetLoader):
             # Extract data
             category = example["SemanticCategory"]
 
+            # Standardize harm categories and preserve originals in metadata
+            standardized_categories, harm_cat_metadata = self._standardize_harm_categories(category)
+
             # Create SeedPrompt
             seed_prompt = SeedObjective(
                 value=example["Behavior"],
                 name="HarmBench Examples",
                 dataset_name=self.dataset_name,
-                harm_categories=[category],
+                harm_categories=standardized_categories,
                 description=(
                     "A dataset of HarmBench examples containing various categories such as chemical, "
                     "biological, illegal activities, etc."
                 ),
                 source="https://github.com/centerforaisafety/HarmBench",
                 authors=["Mantas Mazeika", "Long Phan", "Xuwang Yin", "Andy Zou", "Zifan Wang", "Norman Mu"],
+                metadata=harm_cat_metadata,
             )
             seeds.append(seed_prompt)
 

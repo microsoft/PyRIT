@@ -25,6 +25,7 @@ from pyrit.common.path import DB_DATA_PATH
 from pyrit.common.text_helper import read_txt, write_txt
 from pyrit.datasets.seed_datasets.seed_dataset_provider import SeedDatasetProvider
 from pyrit.datasets.seed_datasets.seed_metadata import SeedDatasetMetadata
+from pyrit.models.harm_category import standardize_harm_categories
 
 logger = logging.getLogger(__name__)
 
@@ -99,6 +100,39 @@ class _RemoteDatasetLoader(SeedDatasetProvider, ABC):
             raise ValueError(
                 f"Expected {enum_cls.__name__}, got {type(value).__name__}: {value!r}. Valid values: {valid}"
             )
+
+    @staticmethod
+    def _standardize_harm_categories(
+        raw_categories: list[str] | str | None,
+    ) -> tuple[list[str], dict[str, Any]]:
+        """
+        Standardize raw harm categories and preserve originals in metadata.
+
+        Converts raw category string(s) to standardized HarmCategory enum names,
+        preserving the original values in metadata for later querying.
+
+        Args:
+            raw_categories: Raw category string(s) from the dataset
+                          (e.g., "violence", "harmful"), or None.
+
+        Returns:
+            A tuple of (standardized_categories, metadata_dict) where:
+            - standardized_categories: List of standardized HarmCategory enum names
+            - metadata_dict: Dictionary with "original_harm_categories" key if
+                           originals differ from standardized, else empty dict
+        """
+        standardized = standardize_harm_categories(raw_categories)
+        metadata: dict[str, Any] = {}
+
+        # Preserve original values if they exist and differ from standardized
+        if raw_categories:
+            original_list = [raw_categories] if isinstance(raw_categories, str) else list(raw_categories)
+            original_list = [cat for cat in original_list if cat]  # Filter empty strings
+
+            if original_list and original_list != standardized:
+                metadata["original_harm_categories"] = original_list
+
+        return standardized, metadata
 
     def _get_cache_file_name(self, *, source: str, file_type: str) -> str:
         """
