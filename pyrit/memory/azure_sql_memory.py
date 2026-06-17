@@ -120,7 +120,8 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
         if not skip_schema_migration:
             if self._connection_string == prod_connection_string:
                 # Production guard: verify schema compatibility without modifying the database.
-                # This allows normal usage when schemas match, but raises early if there's a mismatch.
+                # Logs a warning on mismatch but does not block startup, so developers on
+                # newer code can still query prod data.
                 self._check_schema_migration(silent=silent)
             else:
                 # For non-production databases, run normal schema migration which will create/update tables as needed.
