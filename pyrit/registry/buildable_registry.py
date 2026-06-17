@@ -57,30 +57,6 @@ class BuildableRegistry(BaseClassRegistry[T, MetadataT]):
         self._ensure_discovered()
         return sorted(self._class_entries.keys())
 
-    def get_class(self, name: str) -> type[T]:
-        """
-        Get a registered class by its catalog name.
-
-        Overrides the base lookup so the "not found" error lists the class catalog
-        (``get_class_names``) rather than the instances held under a registry's
-        ``instances`` property.
-
-        Args:
-            name (str): The class-catalog name to resolve.
-
-        Returns:
-            type[T]: The registered class.
-
-        Raises:
-            KeyError: If the name is not registered in the class catalog.
-        """
-        self._ensure_discovered()
-        entry = self._class_entries.get(name)
-        if entry is None:
-            available = ", ".join(self.get_class_names())
-            raise KeyError(f"'{name}' not found in registry. Available: {available}")
-        return entry.registered_class
-
     def list_class_metadata(
         self,
         *,
@@ -126,11 +102,7 @@ class BuildableRegistry(BaseClassRegistry[T, MetadataT]):
             ValueError: If an argument is not a valid constructor parameter, a
                 registry reference cannot be resolved, or a value cannot be coerced.
         """
-        self._ensure_discovered()
-        entry = self._class_entries.get(name)
-        if entry is None:
-            available = ", ".join(self.get_class_names())
-            raise KeyError(f"'{name}' not found in registry. Available: {available}")
+        entry = self._require_entry(name)
 
         if entry.factory is not None:
             return entry.create_instance(**kwargs)

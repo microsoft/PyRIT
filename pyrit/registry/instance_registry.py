@@ -138,6 +138,13 @@ class SupportsInstances(Protocol[T]):
     without naming a concrete class, so a registry's capabilities are legible
     from its type.
 
+    .. note::
+        Introduced with the Phase 1 foundation but not yet consumed in the codebase.
+        Its first real callers arrive when the target and scorer registries migrate
+        onto ``.instances`` (Phase 4) and functions begin accepting
+        "any registry that holds instances" structurally. It ships now so the typed
+        capability is part of the foundation rather than a later additive change.
+
     Type Parameters:
         T: The type of instances held (must be ``Identifiable``).
     """
