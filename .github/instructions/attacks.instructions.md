@@ -56,25 +56,3 @@ Requirements:
 - Calling ``super().__init__`` with positional arguments — the base
   ``AttackStrategy.__init__`` is already keyword-only, so positional calls
   raise ``TypeError`` at runtime. Always forward via kwargs.
-
-## Setting the objective target's system prompt
-
-- ``system_prompt=`` is the standard way to set the objective target's system
-  prompt: ``await attack.execute_async(objective=..., system_prompt="You are ...")``.
-  ``AttackStrategy.execute_with_context_async`` lowers it into a single ``system``-role
-  ``Message`` prepended to ``context.prepended_conversation``, so single-turn,
-  multi-turn, and TAP all deliver it without per-strategy wiring.
-- ``prepended_conversation=`` is the advanced path — use it when you need to seed
-  a full multi-message history (system + user/assistant turns), not just a system
-  prompt.
-- The two are mutually exclusive for the system slot: supplying ``system_prompt=``
-  together with a ``system``-role message inside ``prepended_conversation`` raises
-  ``ValueError``. Use one or the other.
-- Parity rule: an attack that excludes ``prepended_conversation`` from its
-  ``params_type`` (via ``AttackParameters.excluding(...)``) MUST also exclude
-  ``system_prompt`` — it is sugar for a prepended system message. Such attacks
-  reject ``system_prompt=`` with a "does not accept parameters" ``ValueError``.
-- Lowering happens in ``AttackStrategy.execute_with_context_async`` — the single
-  chokepoint every public entry point crosses, including ``execute_async`` and the
-  ``AttackExecutor`` batch/scenario path. Callers that build a context and invoke
-  ``execute_with_context_async`` directly are auto-lowered too.
