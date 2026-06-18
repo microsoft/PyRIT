@@ -41,6 +41,7 @@ from pyrit.executor.attack.core.attack_strategy import AttackStrategy
 from pyrit.executor.attack.multi_turn import MultiTurnAttackContext
 from pyrit.memory import CentralMemory
 from pyrit.models import (
+    JSON_SCHEMA_METADATA_KEY,
     AtomicAttackIdentifier,
     AttackOutcome,
     AttackResult,
@@ -1128,12 +1129,19 @@ class _TreeOfAttacksNode:
 
         Returns:
             str: The raw response from the adversarial chat, expected to be JSON formatted.
-                This response should contain at least a "prompt" field with the generated
+                This response should contain at least a "next_message" field with the generated
                 attack prompt.
         """
         # Configure for JSON response
         message = Message.from_prompt(prompt=prompt_text, role="user")
-        message.message_pieces[0].prompt_metadata = {"response_format": "json"}
+        prompt_metadata: dict[str, Any] = {"response_format": "json"}
+        # Forward the shared adversarial-chat JSON schema when present so schema-aware
+        # targets can natively constrain the response shape; non-enforcing targets
+        # ignore it and rely on the prompt's formatting instructions.
+        response_json_schema = self._adversarial_chat_system_seed_prompt.response_json_schema
+        if response_json_schema is not None:
+            prompt_metadata[JSON_SCHEMA_METADATA_KEY] = response_json_schema
+        message.message_pieces[0].prompt_metadata = prompt_metadata
 
         # Send and get response
         with execution_context(
@@ -1158,17 +1166,17 @@ class _TreeOfAttacksNode:
 
         This method parses the structured response from the adversarial chat to extract
         the generated attack prompt. The adversarial chat is expected to return JSON with
-        at least a "prompt" field containing the attack text. The method handles common
+        at least a "next_message" field containing the attack text. The method handles common
         formatting issues like markdown wrappers that LLMs sometimes add around JSON.
 
         The parsing is strict - the response must be valid JSON and must contain the
-        required "prompt" field. This ensures the TAP algorithm receives well-formed
+        required "next_message" field. This ensures the TAP algorithm receives well-formed
         prompts for attacking the objective target.
 
         Args:
             red_teaming_response (str): The raw response from the red teaming chat, expected
                 to be JSON formatted (possibly wrapped in markdown). Should contain at
-                least {"prompt": "attack text"}.
+                least {"next_message": "attack text"}.
 
         Returns:
             str: The prompt extracted from the JSON response. This is the actual attack
@@ -1176,7 +1184,7 @@ class _TreeOfAttacksNode:
 
         Raises:
             InvalidJsonException: If the response is not valid JSON after removing markdown
-                formatting, or if the parsed JSON does not contain a "prompt" field.
+                formatting, or if the parsed JSON does not contain a "next_message" field.
         """
         # Remove markdown formatting if present
         red_teaming_response = remove_markdown_json(red_teaming_response)
@@ -1190,11 +1198,13 @@ class _TreeOfAttacksNode:
             ) from None
 
         try:
-            return cast("str", red_teaming_response_dict["prompt"])
+            return cast("str", red_teaming_response_dict["next_message"])
         except KeyError:
-            logger.error(f"The response from the red teaming chat does not contain a prompt: {red_teaming_response}")
+            logger.error(
+                f"The response from the red teaming chat does not contain next_message: {red_teaming_response}"
+            )
             raise InvalidJsonException(
-                message="The response from the red teaming chat does not contain a prompt."
+                message="The response from the red teaming chat does not contain a next_message."
             ) from None
 
     def __str__(self) -> str:
