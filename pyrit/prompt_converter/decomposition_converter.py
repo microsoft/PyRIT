@@ -33,6 +33,32 @@ _MIN_RECALL = 0.8
 
 _DECOMPOSITION_DIR = pathlib.Path(CONVERTER_SEED_PROMPT_PATH) / "decomposition"
 
+# Innocuous codewords substituted for harmful noun phrases when the word-game is enabled. The list
+# bounds how many noun phrases the word-game supports; a converter with more nouns raises rather than
+# silently reusing a codeword (which would make the mapping ambiguous).
+_CODEWORDS = (
+    "apple",
+    "banana",
+    "cherry",
+    "grape",
+    "kiwi",
+    "lemon",
+    "mango",
+    "orange",
+    "papaya",
+    "raspberry",
+    "strawberry",
+    "watermelon",
+    "apricot",
+    "blueberry",
+    "coconut",
+    "fig",
+    "guava",
+    "melon",
+    "peach",
+    "pear",
+)
+
 
 def _tokens(text: str) -> list[str]:
     """
@@ -98,6 +124,9 @@ class DecompositionConverter(PromptConverter):
         converter_target: PromptTarget = REQUIRED_VALUE,  # type: ignore[ty:invalid-parameter-default]
         decomposition_prompt: SeedPrompt | None = None,
         reconstruction_prompt: SeedPrompt | None = None,
+        use_word_game: bool = False,
+        word_game_prompt: SeedPrompt | None = None,
+        codewords: tuple[str, ...] = _CODEWORDS,
     ) -> None:
         """
         Initialize the converter.
@@ -112,6 +141,15 @@ class DecompositionConverter(PromptConverter):
             reconstruction_prompt (SeedPrompt | None): Template that renders the decomposed objective
                 into the reconstruction task. Defaults to the bundled
                 ``decomposition/reconstruction_prompt.yaml``.
+            use_word_game (bool): If True, each harmful noun phrase is replaced by an innocuous codeword
+                in the reconstruction questions, and a mapping preamble is prepended in the same prompt.
+                Defaults to False.
+            word_game_prompt (SeedPrompt | None): Template for the word-game mapping preamble. Defaults
+                to the bundled ``decomposition/word_game_preamble.yaml``. Only used when
+                ``use_word_game`` is True.
+            codewords (tuple[str, ...]): Innocuous codewords substituted for harmful noun phrases when
+                the word-game is enabled. Bounds the number of noun phrases supported (a converter with
+                more nouns than codewords raises). Defaults to a bundled list of fruit names.
         """
         super().__init__(converter_target=converter_target)
         self._converter_target = converter_target
@@ -121,6 +159,11 @@ class DecompositionConverter(PromptConverter):
         self._reconstruction_prompt = reconstruction_prompt or SeedPrompt.from_yaml_file(
             _DECOMPOSITION_DIR / "reconstruction_prompt.yaml"
         )
+        self._use_word_game = use_word_game
+        self._word_game_prompt = word_game_prompt or SeedPrompt.from_yaml_file(
+            _DECOMPOSITION_DIR / "word_game_preamble.yaml"
+        )
+        self._codewords = codewords
 
     def _build_identifier(self) -> ComponentIdentifier:
         """
@@ -129,11 +172,16 @@ class DecompositionConverter(PromptConverter):
         Returns:
             ComponentIdentifier: The identifier for this converter.
         """
+        params: dict[str, Any] = {
+            "decomposition_prompt": self._decomposition_prompt.value,
+            "reconstruction_prompt": self._reconstruction_prompt.value,
+            "use_word_game": self._use_word_game,
+        }
+        if self._use_word_game:
+            params["word_game_prompt"] = self._word_game_prompt.value
+            params["codewords"] = list(self._codewords)
         return self._create_identifier(
-            params={
-                "decomposition_prompt": self._decomposition_prompt.value,
-                "reconstruction_prompt": self._reconstruction_prompt.value,
-            },
+            params=params,
             converter_target=self._converter_target.get_identifier(),
         )
 
@@ -248,28 +296,48 @@ class DecompositionConverter(PromptConverter):
         """
         Assemble the Question-A/Question-B reconstruction prompt from the decomposition.
 
+        When the word-game is enabled, each noun phrase is replaced by an innocuous codeword in its
+        question, and a mapping preamble is prepended in the same prompt.
+
         Args:
             words (list[str]): The decomposed phrases.
             types (list[str]): The role tag for each phrase.
 
         Returns:
-            str: The rendered reconstruction prompt.
+            str: The rendered reconstruction prompt, optionally prefixed with the word-game preamble.
+
+        Raises:
+            ValueError: If the word-game is enabled and there are more noun phrases than codewords.
         """
         questions = [f"Question A: How to {words[0].lower()}?"]
         question_prefixes = ["Question A"]
         structure_mask = ["using the methods in Question A"]
+        word_game_mappings: list[str] = []
         noun_index = 0
         for i in range(1, len(types)):
             if types[i] == "noun":
                 noun_index += 1
                 structure_mask.append(f"the thing in Question B{noun_index}")
-                questions.append(f"Question B{noun_index}: What is/are {words[i]}?")
                 question_prefixes.append(f"Question B{noun_index}")
+                phrase = words[i]
+                if self._use_word_game:
+                    if noun_index > len(self._codewords):
+                        raise ValueError(
+                            f"word-game supports at most {len(self._codewords)} noun phrases, got {noun_index}"
+                        )
+                    codeword = self._codewords[noun_index - 1]
+                    word_game_mappings.append(f"'{codeword}' means '{phrase}'")
+                    phrase = codeword
+                questions.append(f"Question B{noun_index}: What is/are {phrase}?")
             else:
                 structure_mask.append(words[i])
 
-        return self._reconstruction_prompt.render_template_value(
+        reconstruction = self._reconstruction_prompt.render_template_value(
             questions_prefix=" ".join(question_prefixes),
             sentence_structure=" ".join(structure_mask),
             harmful_questions=" ".join(questions),
         )
+        if self._use_word_game and word_game_mappings:
+            preamble = self._word_game_prompt.render_template_value(mapping="; ".join(word_game_mappings))
+            return f"{preamble}\n\n{reconstruction}"
+        return reconstruction

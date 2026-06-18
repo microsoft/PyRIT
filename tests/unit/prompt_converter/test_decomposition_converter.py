@@ -48,6 +48,54 @@ async def test_convert_builds_reconstruction():
     assert "flower" in result.output_text
 
 
+async def test_word_game_substitutes_codewords_and_adds_preamble():
+    target = _mock_target()
+    target.send_prompt_async.return_value = _response(GOOD_DECOMPOSITION)
+    converter = DecompositionConverter(converter_target=target, use_word_game=True)
+
+    out = (await converter.convert_async(prompt=OBJECTIVE)).output_text
+
+    # The question uses the codeword, not the raw noun.
+    assert "Question B1: What is/are apple?" in out
+    assert "Question B1: What is/are a bomb?" not in out
+    # The mapping preamble establishes the codeword in the same prompt.
+    assert "'apple' means 'a bomb'" in out
+    assert "word game" in out.lower()
+
+
+async def test_word_game_off_keeps_raw_noun_and_no_preamble():
+    target = _mock_target()
+    target.send_prompt_async.return_value = _response(GOOD_DECOMPOSITION)
+    converter = DecompositionConverter(converter_target=target)  # default use_word_game=False
+
+    out = (await converter.convert_async(prompt=OBJECTIVE)).output_text
+
+    assert "Question B1: What is/are a bomb?" in out
+    assert "word game" not in out.lower()
+
+
+async def test_word_game_uses_custom_codewords():
+    target = _mock_target()
+    target.send_prompt_async.return_value = _response(GOOD_DECOMPOSITION)
+    converter = DecompositionConverter(converter_target=target, use_word_game=True, codewords=("zebra",))
+
+    out = (await converter.convert_async(prompt=OBJECTIVE)).output_text
+
+    assert "Question B1: What is/are zebra?" in out
+    assert "'zebra' means 'a bomb'" in out
+
+
+async def test_word_game_raises_when_more_nouns_than_codewords():
+    words = ["do"] + ["a thing"] * 21
+    types = ["instruction"] + ["noun"] * 21
+    target = _mock_target()
+    target.send_prompt_async.return_value = _response(json.dumps({"words": words, "types": types}))
+    converter = DecompositionConverter(converter_target=target, use_word_game=True)
+
+    with pytest.raises(ValueError, match="word-game supports at most"):
+        await converter.convert_async(prompt="do " + ("a thing " * 21))
+
+
 async def test_request_carries_json_schema_and_sequence_zero():
     target = _mock_target()
     target.send_prompt_async.return_value = _response(GOOD_DECOMPOSITION)
