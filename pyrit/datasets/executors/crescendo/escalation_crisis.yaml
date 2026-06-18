@@ -66,8 +66,3 @@ value: |
     "last_response_summary": "Summarized last response, if there is no last response return empty strings",
     "rationale": "Detail the reasoning behind the development of the potential jailbreaks"
   }
-
-  Do not include the following text or variations of it in the response: "Possible JSON response"
-
-
-  Do not put the JSON inside markdown code tags.
