@@ -701,7 +701,7 @@ class TargetInitializer(PyRITInitializer):
         registry = TargetRegistry.get_registry_singleton()
 
         # Group registered targets by behavioral key.
-        groups: dict[tuple, list[tuple[str, PromptTarget]]] = defaultdict(list)
+        groups: dict[tuple[Any, ...], list[tuple[str, PromptTarget]]] = defaultdict(list)
         for name in self._registered_names:
             target = registry.get_instance_by_name(name)
             if target is None:
@@ -750,7 +750,7 @@ class TargetInitializer(PyRITInitializer):
             logger.info(f"Auto-grouped round-robin target: {rr_name} (members: {member_names})")
 
 
-def get_behavioral_key(target: PromptTarget) -> tuple:
+def get_behavioral_key(target: PromptTarget) -> tuple[Any, ...]:
     """
     Extract a hashable behavioral grouping key from a target's identifier.
 
@@ -774,7 +774,7 @@ def get_behavioral_key(target: PromptTarget) -> tuple:
     return tuple(parts)
 
 
-def generate_rr_name(key: tuple) -> str:
+def generate_rr_name(key: tuple[Any, ...]) -> str:
     """
     Generate a registry name for an auto-grouped round-robin target.
 

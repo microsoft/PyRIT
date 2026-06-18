@@ -112,6 +112,8 @@ class _VLSUMultimodalDataset(_RemoteDatasetLoader):
         self.max_examples = max_examples
 
         if categories is not None:
+            if not categories:
+                raise ValueError("`categories` must be a non-empty list (pass None to include all categories)")
             self._validate_enums(categories, VLSUCategory, "VLSU category")
 
     @property
