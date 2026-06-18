@@ -98,6 +98,7 @@ class OpenAIResponseTarget(OpenAITarget):
         reasoning_summary: Literal["auto", "concise", "detailed"] | None = None,
         extra_body_parameters: dict[str, Any] | None = None,
         fail_on_missing_function: bool = False,
+        image_url_as_string: bool = False,
         custom_configuration: TargetConfiguration | None = None,
         **kwargs: Any,
     ) -> None:
@@ -169,6 +170,10 @@ class OpenAIResponseTarget(OpenAITarget):
         self._custom_functions: dict[str, ToolExecutor] = custom_functions or {}
         self._fail_on_missing_function: bool = fail_on_missing_function
 
+        # Some Responses API endpoints (e.g. Corvid) require image_url as a bare string
+        # rather than the {"url": ...} object used by Chat Completions.
+        self._image_url_as_string: bool = image_url_as_string
+
         # Extract the grammar 'tool' if one is present
         # See
         # https://platform.openai.com/docs/guides/function-calling#context-free-grammars
@@ -238,7 +243,8 @@ class OpenAIResponseTarget(OpenAITarget):
             }
         if piece.converted_value_data_type == "image_path":
             data_url = await convert_local_image_to_data_url_async(piece.converted_value)
-            return {"type": "input_image", "image_url": {"url": data_url}}
+            image_url: Any = data_url if self._image_url_as_string else {"url": data_url}
+            return {"type": "input_image", "image_url": image_url}
         raise ValueError(f"Unsupported piece type for inline content: {piece.converted_value_data_type}")
 
     async def _build_input_for_multi_modal_async(self, conversation: MutableSequence[Message]) -> list[dict[str, Any]]:

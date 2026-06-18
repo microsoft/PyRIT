@@ -289,6 +289,7 @@ ENV_TARGET_CONFIGS: list[TargetConfig] = [
         key_var="AZURE_OPENAI_GPT5_KEY",
         model_var="AZURE_OPENAI_GPT5_MODEL",
         underlying_model_var="AZURE_OPENAI_GPT5_UNDERLYING_MODEL",
+        extra_kwargs={"image_url_as_string": True},
     ),
     TargetConfig(
         registry_name="azure_openai_gpt5_responses_high_reasoning",
@@ -297,7 +298,7 @@ ENV_TARGET_CONFIGS: list[TargetConfig] = [
         key_var="AZURE_OPENAI_GPT5_KEY",
         model_var="AZURE_OPENAI_GPT5_MODEL",
         underlying_model_var="AZURE_OPENAI_GPT5_UNDERLYING_MODEL",
-        extra_kwargs={"extra_body_parameters": {"reasoning": {"effort": "high"}}},
+        extra_kwargs={"extra_body_parameters": {"reasoning": {"effort": "high"}}, "image_url_as_string": True},
     ),
     TargetConfig(
         registry_name="platform_openai_responses",
@@ -305,6 +306,7 @@ ENV_TARGET_CONFIGS: list[TargetConfig] = [
         endpoint_var="PLATFORM_OPENAI_RESPONSES_ENDPOINT",
         key_var="PLATFORM_OPENAI_RESPONSES_KEY",
         model_var="PLATFORM_OPENAI_RESPONSES_MODEL",
+        extra_kwargs={"image_url_as_string": True},
     ),
     TargetConfig(
         registry_name="azure_openai_responses",
@@ -313,6 +315,7 @@ ENV_TARGET_CONFIGS: list[TargetConfig] = [
         key_var="AZURE_OPENAI_RESPONSES_KEY",
         model_var="AZURE_OPENAI_RESPONSES_MODEL",
         underlying_model_var="AZURE_OPENAI_RESPONSES_UNDERLYING_MODEL",
+        extra_kwargs={"image_url_as_string": True},
     ),
     # ============================================
     # Realtime Targets (RealtimeTarget)

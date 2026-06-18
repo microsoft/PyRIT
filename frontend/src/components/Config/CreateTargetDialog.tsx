@@ -151,6 +151,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
   const [temperature, setTemperature] = useState('1.0')
   const [topP, setTopP] = useState('1.0')
   const [repetitionPenalty, setRepetitionPenalty] = useState('1.0')
+  const [imageUrlAsString, setImageUrlAsString] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [fieldErrors, setFieldErrors] = useState<{ targetType?: string; endpoint?: string }>({})
@@ -165,6 +166,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
   const isRoundRobin = targetConfig?.kind === 'roundrobin'
   const isAzureML = targetConfig?.kind === 'azureml'
   const isOpenAi = targetConfig?.kind === 'openai'
+  const isOpenAiResponse = targetType === 'OpenAIResponseTarget'
   const supportsEntra = targetConfig?.supportsEntra ?? false
   const showAuthField = targetType !== '' && supportsEntra
   const isEntra = showAuthField && authMode === 'entra'
@@ -252,6 +254,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
     setTemperature('1.0')
     setTopP('1.0')
     setRepetitionPenalty('1.0')
+    setImageUrlAsString(false)
     setError(null)
     setFieldErrors({})
     setSelectedInnerTargets([])
@@ -335,6 +338,10 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
         if (!isNaN(parsedTopP)) params.top_p = parsedTopP
         const parsedRepetitionPenalty = parseFloat(repetitionPenalty)
         if (!isNaN(parsedRepetitionPenalty)) params.repetition_penalty = parsedRepetitionPenalty
+      }
+
+      if (isOpenAiResponse && imageUrlAsString) {
+        params.image_url_as_string = true
       }
 
       await targetsApi.createTarget({
@@ -575,6 +582,20 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                     />
                   </Field>
                 </>
+              )}
+
+              {isOpenAiResponse && (
+                <div>
+                  <Switch
+                    checked={imageUrlAsString}
+                    onChange={(_, data) => setImageUrlAsString(data.checked)}
+                    label="Send image_url as bare string"
+                  />
+                  <Text size={200} style={{ color: tokens.colorNeutralForeground3, display: 'block', marginTop: '2px' }}>
+                    Some Responses-API endpoints (e.g. Corvid) require <code>image_url</code> to be a bare data-URL
+                    string rather than an object. Leave off for standard OpenAI / Azure OpenAI.
+                  </Text>
+                </div>
               )}
 
               {showAuthField && (
