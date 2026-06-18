@@ -114,13 +114,13 @@ def test_get_all_values_returns_all_converted_strings(message_pieces: list[Messa
 
 
 class TestMessageDuplication:
-    """Tests for the Message.duplicate_message() method."""
+    """Tests for the Message.duplicate() method."""
 
-    def test_duplicate_message_creates_new_ids(self, message: Message) -> None:
-        """Test that duplicate_message creates new IDs for all pieces."""
+    def test_duplicate_creates_new_ids(self, message: Message) -> None:
+        """Test that duplicate creates new IDs for all pieces."""
         original_ids = [piece.id for piece in message.message_pieces]
 
-        duplicated = message.duplicate_message()
+        duplicated = message.duplicate()
 
         duplicated_ids = [piece.id for piece in duplicated.message_pieces]
 
@@ -131,9 +131,9 @@ class TestMessageDuplication:
         # Verify duplicated IDs are unique
         assert len(set(duplicated_ids)) == len(duplicated_ids)
 
-    def test_duplicate_message_preserves_content(self, message: Message) -> None:
-        """Test that duplicate_message preserves all content fields."""
-        duplicated = message.duplicate_message()
+    def test_duplicate_preserves_content(self, message: Message) -> None:
+        """Test that duplicate preserves all content fields."""
+        duplicated = message.duplicate()
 
         for orig_piece, dup_piece in zip(message.message_pieces, duplicated.message_pieces, strict=False):
             assert orig_piece.original_value == dup_piece.original_value
@@ -143,15 +143,15 @@ class TestMessageDuplication:
             assert orig_piece.conversation_id == dup_piece.conversation_id
             assert orig_piece.sequence == dup_piece.sequence
 
-    def test_duplicate_message_preserves_original_prompt_id(self, message: Message) -> None:
-        """Test that duplicate_message preserves original_prompt_id for tracing."""
-        duplicated = message.duplicate_message()
+    def test_duplicate_preserves_original_prompt_id(self, message: Message) -> None:
+        """Test that duplicate preserves original_prompt_id for tracing."""
+        duplicated = message.duplicate()
 
         for orig_piece, dup_piece in zip(message.message_pieces, duplicated.message_pieces, strict=False):
             assert orig_piece.original_prompt_id == dup_piece.original_prompt_id
 
-    def test_duplicate_message_creates_new_timestamp(self, message: Message) -> None:
-        """Test that duplicate_message creates new timestamps."""
+    def test_duplicate_creates_new_timestamp(self, message: Message) -> None:
+        """Test that duplicate creates new timestamps."""
         from datetime import timedelta, timezone
         from unittest.mock import patch
 
@@ -160,19 +160,19 @@ class TestMessageDuplication:
 
         with patch("pyrit.models.messages.message.datetime") as mock_datetime:
             mock_datetime.now.return_value = fake_now
-            duplicated = message.duplicate_message()
+            duplicated = message.duplicate()
 
         for dup_piece in duplicated.message_pieces:
-            # Every duplicated piece shares the new timestamp produced by duplicate_message.
+            # Every duplicated piece shares the new timestamp produced by duplicate.
             assert dup_piece.timestamp == fake_now
             # And it is strictly newer than every original timestamp.
             for orig_ts in original_timestamps:
                 assert dup_piece.timestamp > orig_ts
         mock_datetime.now.assert_called_once_with(tz=timezone.utc)
 
-    def test_duplicate_message_is_deep_copy(self, message: Message) -> None:
-        """Test that duplicate_message creates a deep copy (modifications don't affect original)."""
-        duplicated = message.duplicate_message()
+    def test_duplicate_is_deep_copy(self, message: Message) -> None:
+        """Test that duplicate creates a deep copy (modifications don't affect original)."""
+        duplicated = message.duplicate()
 
         # Modify the duplicated message
         duplicated.message_pieces[0].original_value = "Modified value"
@@ -180,16 +180,26 @@ class TestMessageDuplication:
         # Verify original is unchanged
         assert message.message_pieces[0].original_value == "First piece"
 
-    def test_duplicate_message_multiple_times(self, message: Message) -> None:
+    def test_duplicate_multiple_times(self, message: Message) -> None:
         """Test that duplicating multiple times creates unique IDs each time."""
-        dup1 = message.duplicate_message()
-        dup2 = message.duplicate_message()
+        dup1 = message.duplicate()
+        dup2 = message.duplicate()
 
         dup1_ids = {piece.id for piece in dup1.message_pieces}
         dup2_ids = {piece.id for piece in dup2.message_pieces}
 
         # Verify no overlap between duplicates
         assert dup1_ids.isdisjoint(dup2_ids)
+
+    def test_duplicate_message_emits_deprecation_warning_and_delegates(self, message: Message) -> None:
+        """The deprecated ``duplicate_message`` wrapper must warn and still delegate to ``duplicate``."""
+        with pytest.warns(DeprecationWarning, match="duplicate_message"):
+            duplicated = message.duplicate_message()
+
+        # Same behavioral contract as duplicate(): deep copy with fresh piece IDs.
+        original_ids = {piece.id for piece in message.message_pieces}
+        duplicated_ids = {piece.id for piece in duplicated.message_pieces}
+        assert original_ids.isdisjoint(duplicated_ids)
 
 
 class TestMessageFromPrompt:

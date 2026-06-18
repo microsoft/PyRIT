@@ -21,6 +21,7 @@ def compute_technique_stats(
     *,
     technique_eval_hashes: Sequence[str],
     scenario_result_id: str | None = None,
+    targeted_harm_categories: Sequence[str] | None = None,
     memory: MemoryInterface | None = None,
 ) -> dict[str, AttackStats]:
     """
@@ -39,6 +40,8 @@ def compute_technique_stats(
             Returned dict is keyed by these.
         scenario_result_id (str | None): Restrict to a single scenario run.
             Defaults to ``None`` (aggregate across all runs).
+        targeted_harm_categories (Sequence[str] | None): Restrict to results
+            whose attack targeted these harm categories. Defaults to ``None``.
         memory (MemoryInterface | None): Memory backend to query. Defaults to
             ``CentralMemory.get_memory_instance()``.
 
@@ -54,6 +57,7 @@ def compute_technique_stats(
     results = memory.get_attack_results(
         atomic_attack_eval_hashes=list(technique_eval_hashes),
         scenario_result_id=scenario_result_id,
+        targeted_harm_categories=targeted_harm_categories,
     )
 
     requested = set(technique_eval_hashes)

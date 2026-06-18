@@ -148,7 +148,7 @@ export default function Home({
         </div>
 
         <div className={styles.setupGrid}>
-          <section className={styles.card} data-testid="home-labels-card">
+          <section className={styles.card} data-testid="home-labels-card" data-tour="labels-card">
             <div className={styles.cardHeader}>
               <span className={styles.cardIcon}><TagMultipleRegular /></span>
               <Text size={500} weight="semibold">Labels</Text>
@@ -164,7 +164,7 @@ export default function Home({
             </div>
           </section>
 
-          <section className={styles.card} data-testid="home-target-card">
+          <section className={styles.card} data-testid="home-target-card" data-tour="target-card">
             <div className={styles.cardHeader}>
               <span className={styles.cardIcon}><TargetRegular /></span>
               <Text size={500} weight="semibold">Target</Text>

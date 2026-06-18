@@ -23,7 +23,7 @@ from pyrit.executor.attack.core.attack_executor import AttackExecutorResult
 from pyrit.executor.attack.core.attack_result_attribution import AttackResultAttribution
 from pyrit.memory import CentralMemory
 from pyrit.memory.memory_models import MAX_IDENTIFIER_VALUE_LENGTH
-from pyrit.models import AtomicAttackEvaluationIdentifier, AttackResult, SeedAttackGroup, build_atomic_attack_identifier
+from pyrit.models import AtomicAttackEvaluationIdentifier, AtomicAttackIdentifier, AttackResult, SeedAttackGroup
 from pyrit.scenario.core.attack_technique import AttackTechnique
 
 if TYPE_CHECKING:
@@ -203,7 +203,7 @@ class AtomicAttack:
         which is what makes it usable as the resume disambiguator alongside
         ``atomic_attack_name``.
         """
-        composite = build_atomic_attack_identifier(
+        composite = AtomicAttackIdentifier.build(
             technique_identifier=self._attack_technique.get_identifier(),
             seed_group=None,
         )
@@ -433,7 +433,7 @@ class AtomicAttack:
 
         for result, idx in zip(results.completed_results, results.input_indices, strict=True):
             if idx < len(self._seed_groups):
-                identifier = build_atomic_attack_identifier(
+                identifier = AtomicAttackIdentifier.build(
                     technique_identifier=self._attack_technique.get_identifier(),
                     seed_group=self._seed_groups[idx],
                 )

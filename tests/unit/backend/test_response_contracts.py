@@ -22,6 +22,7 @@ from pyrit.backend.models.attacks import (
     ScoreView,
 )
 from pyrit.models import (
+    AtomicAttackIdentifier,
     AttackResult,
     ComponentIdentifier,
     ConversationReference,
@@ -29,7 +30,6 @@ from pyrit.models import (
     MessagePiece,
     RetryEvent,
     Score,
-    build_atomic_attack_identifier,
 )
 
 
@@ -61,7 +61,7 @@ def _make_attack_result(*, name: str = "CrescendoAttack") -> AttackResult:
         conversation_id="attack-1",
         objective="test objective",
         attack_result_id="ar-attack-1",
-        atomic_attack_identifier=build_atomic_attack_identifier(
+        atomic_attack_identifier=AtomicAttackIdentifier.build(
             attack_identifier=ComponentIdentifier(
                 class_name=name,
                 class_module="pyrit.attacks",

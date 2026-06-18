@@ -1,79 +1,101 @@
 # Executor
 
-## Overview
+An **executor** is an *algorithm for interacting with an objective target*. You give it an objective
+and some configuration, it drives the target, and it hands back a result. That's the whole job.
 
-The `pyrit/executor` module provides a flexible framework for executing various operations in PyRIT. This document explains the core components and how they are utilized across different executor categories.
+The important thing to notice up front is that **not every executor is an attack**. Sending a single
+adversarial prompt is an executor, but so is running a Q&A benchmark over a dataset, fuzzing to
+generate new prompts, or orchestrating a cross-domain injection workflow. Attacks are the largest and
+most familiar family, but every category in this section — attacks, workflows, benchmarks, and prompt
+generators — is the same kind of object running the same lifecycle.
 
-## Core Components (`pyrit/executor/core`)
+## Executor vs. attack
 
-The core executor module contains the foundational classes and interfaces that all executor categories inherit from:
+An **executor** is the *algorithm* — for attacks, the **attack strategy** (e.g. `PromptSendingAttack`,
+`CrescendoAttack`, `TreeOfAttacksWithPruningAttack`). It knows *how* to drive the objective target. An
+**attack** is just the most common kind of executor.
 
-- **Strategy** (`strategy.py`): Abstract base class for strategies with enforced lifecycle management.
-- **StrategyContext** (`strategy.py`): The abstract base class that manages strategy context (all data needed to successfully execute the strategy).
-- **StrategyConverterConfig** (`config.py`): Configuration for prompt converters used in strategies.
-- **StrategyResult** (`pyrit/models/strategy_result.py`): Base class for all strategy results.
+Don't confuse the executor with an **[attack technique](../scenarios/0_attack_techniques.ipynb)** — a
+configured recipe (a role-play framing, a many-shot priming set) that a
+[scenario](../scenarios/0_scenarios.ipynb) selects by name. The technique is the *recipe*; the executor
+is the *engine* that runs it. Techniques are defined fully in the scenarios docs.
+
+## Executor categories
+
+PyRIT ships several families of executor — attacks are the largest, alongside workflows, benchmarks,
+and prompt generators. Attacks themselves split by a simple rule: **count requests to the objective
+target** — a single-turn attack sends exactly one; a multi-turn attack sends more than one and adapts
+as it goes.
+
+- **[Single-Turn](1_single_turn.ipynb)** — sends a single prompt (**one attack turn**) to the
+  objective target and scores the response. It may prepare that prompt elaborately (a role-play frame,
+  many-shot priming, a prepended conversation), but only one crafted message is the actual ask, so no
+  adversarial target is required to *drive* it.
+- **[Multi-Turn](2_multi_turn.ipynb)** — sends **more than one** turn to the objective target,
+  adapting until the objective is met or a turn limit is hit. Adaptive variants use an adversarial
+  target to generate each next prompt from the responses; others send a fixed sequence, request the
+  answer in chunks, or stream input — no adversarial target needed.
+- **[Compound](4_compound.ipynb)** — doesn't add turns of its own; it orchestrates *other* attacks
+  (running them in sequence) toward a single objective, after the building blocks it composes.
+- **[Workflow](5_workflow.ipynb)** — generic multi-step orchestration that doesn't fit the
+  attack/benchmark mould (e.g. cross-domain prompt injection / XPIA).
+- **[Benchmark](6_benchmark.ipynb)** — evaluates an objective target against a fixed dataset and
+  criteria (e.g. Q&A accuracy, bias).
+- **[Prompt Generator](7_promptgen.ipynb)** — produces attack prompts (e.g. fuzzing, Anecdoctor) to
+  augment datasets; some generate from a model alone, others probe a target to evolve effective
+  prompts.
+
+**[Attack Configuration](3_attack_configuration.ipynb)** isn't an executor — it's the cross-cutting
+inputs every attack accepts (objective vs. adversarial target, prepended conversations, multimodal
+seeds, next-turn messages, memory labels). It has its own page.
+
+## The shape of an attack
+
+Attacks — the most common executors — share a 4-component shape:
 
 ```{mermaid}
 flowchart LR
-    A(["Strategy"])
-    A --consumes--> B(["Strategy Context"])
-    A --takes in as parameters within __init__--> D(["Strategy Configurations (e.g. Converters)"])
-    A --produces--> C(["Strategy Result <br>"])
+    A(["Attack Strategy"])
+    A --consumes--> B(["Attack Context <br>(objective, labels, prepended conversation)"])
+    A --configured by--> D(["Attack Configurations <br>(Adversarial, Scoring, Converter)"])
+    A --produces--> C(["Attack Result"])
 ```
 
-To execute, one generally follows this pattern:
-1. Create an **strategy context** containing state information
-2. Initialize a **strategy** (with optional **configurations** for converters etc.)
-3. _Execute_ the attack strategy with the created context
-4. Receive and process the **strategy result**
+To run one:
 
-Each attack implements a lifecycle with distinct phases (all abstract methods), and the `Strategy` class provides a non-abstract `execute_async()` method that enforces this lifecycle:
-* `_validate_context`: Validate context
-* `_setup_async`: Initialize state
-* `_perform_async`: Execute the core  logic
-* `_teardown_async`: Clean up resources
+1. Initialize a **strategy** with optional **configurations** (converters, scorers, adversarial target).
+2. Call `execute_async(...)` with an **objective** (and optional prepended conversation / next message).
+3. Receive an **`AttackResult`** describing what happened and whether the objective was met.
 
-This implementation enforces a consistent execution flow across all strategies by:
-1. Guaranteeing that setup is always performed before the attack begins
-2. Ensuring the attack logic is only executed if setup succeeds
-3. Guaranteeing teardown is always executed, even if errors occur, through the use of a finally block
-4. Providing centralized error handling and logging
+The context is created for you from the `execute_async` arguments — you rarely build one by hand.
+See [Attack Configuration](3_attack_configuration.ipynb) for what you can put in the context and
+configs (prepended conversations, multimodal seeds, next-turn messages, memory labels).
 
-## Executor Categories
+The category pages above each walk through their executors with short runnable examples.
 
-All of these categories follow the flow of control described above.
+## When do you actually need a new executor class?
 
-### Attack (`pyrit/executor/attack`)
+Most of an executor's behavior comes from its *configuration and data*, not from new code. So before
+writing a new executor class, ask whether the algorithm is genuinely new — or whether an existing
+executor with different primitives would do.
 
-Attacks implement various adversarial testing strategies to send prompts to a target endpoint, evaluate the responses, and report on the success of the attack.
+For attacks specifically, the durable value of a new class is **adaptive decision-making**: branching
+and backtracking based on the objective target's feedback, like searching a graph for a path that
+works. Crescendo and TAP are the clearest examples — and you can reshape them substantially just by
+swapping their *primitives* (system prompt, converters, scorers, prepended/simulated conversations)
+rather than writing a new class.
 
-- **Single-Turn Attacks**: Single-turn attacks typically send prompts to a target endpoint to try to achieve a specific objective within a single turn. These attack strategies evaluate the target response using optional scorers to determine if the objective has been met.
-- **Multi-Turn Attacks**: Multi-turn attacks introduce an iterative attack process where an adversarial chat model generates prompts to send to a target system, attempting to achieve a specified objective over multiple turns. This strategy also evaluates the response using a scorer to determine if the objective has been met. These attacks continue iterating until the objective is met or a maximum numbers of turns is attempted. These types of attacks tend to work better than single-turn attacks in eliciting harm if a target endpoint keeps track of conversation history.
+A lot of what *looks* like a distinct executor isn't a new algorithm at all:
 
-Read more about the Attack architecture [here](../executor/attack/0_attack.md)
+- **Pure prompt transformations** — obfuscating, or deconstructing-and-reconstructing a prompt — are
+  better expressed as [converters](../converters/0_converters.ipynb) than as attack classes.
+- **Fixed framings** — a role-play wrapper, a primed Q&A history — are really a prepended conversation
+  plus seeds, i.e. an [attack technique](../scenarios/0_attack_techniques.ipynb) over an existing
+  attack like `PromptSendingAttack`.
+- **New datasets or criteria** — a different benchmark question set or a different scorer is data and
+  configuration for an existing executor, not a new class.
 
-### Prompt Generator (`pyrit/executor/promptgen`)
-
-Prompt generators create various types of prompts using different strategies. Some examples are:
-
-- **Fuzzer Generator**: Generates diverse jailbreak prompts by systematically exploring and generating prompt templates using the Monte Carlo Tree Search to balance exploration of new templates with exploitation of promising ones.
-- **Anecdoctor Generator**: Generates misinformation content by using few-shot examples directly or by extracting a knowledge graph from examples, then using it.
-
-Read more about Prompt Generators [here](../executor/promptgen/0_promptgen.md)
-
-### Workflow (`pyrit/executor/workflow`)
-
-Workflows orchestrate complex multi-step operations. Examples include:
-
-- **XPIA Workflow**: This workflow orchestrates an cross prompt-injection attack (XPIA), where one might hide a prompt injection within a website or PDF and ask a target system to evaluate the contents to trigger the prompt injection.
-
-Read more about Workflows [here](../executor/workflow/0_workflow.md)
-
-
-### Benchmark (`pyrit/executor/benchmark`)
-
-Benchmarks evaluate model performance and safety based off of specific criteria. Examples include:
-
-- **Question Answering Benchmark**: This benchmark strategy evaluates target models by sending multiple choice questions as prompts and seeing how accurately the model answers those questions. The responses are evaluated for benchmark reporting.
-
-Read more about Benchmarks [here](../executor/benchmark/0_benchmark.md)
+Several of the single-turn attacks in this section predate this guidance and remain as classes for
+compatibility. When you are building something new, prefer configuration, a converter, or a technique —
+reach for a new executor class only when you genuinely need a new algorithm (most often a
+feedback-driven loop).

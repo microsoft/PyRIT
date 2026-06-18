@@ -383,7 +383,7 @@ class ConversationEntry(Base):
     __tablename__ = "Conversations"
     __table_args__ = {"extend_existing": True}
 
-    conversation_id = mapped_column(String, primary_key=True, nullable=False)
+    conversation_id = mapped_column(String(36), primary_key=True, nullable=False)
     target_identifier: Mapped[dict[str, str] | None] = mapped_column(JSON, nullable=True)
 
     # Version of PyRIT used when this entry was created. Nullable for backwards
@@ -851,6 +851,7 @@ class AttackResultEntry(Base):
         outcome_reason (str): Optional reason for the outcome, providing additional context.
         attack_metadata (dict[str, Any]): Metadata can be included as key-value pairs to provide extra context.
         labels (dict[str, str]): Optional labels associated with the attack result entry.
+        targeted_harm_categories (list[str]): Harm categories this attack targeted.
         pruned_conversation_ids (list[str]): List of conversation IDs that were pruned from the attack.
         adversarial_chat_conversation_ids (list[str]): List of conversation IDs used for adversarial chat.
         timestamp (DateTime): The timestamp of the attack result entry.
@@ -882,6 +883,7 @@ class AttackResultEntry(Base):
     outcome_reason = mapped_column(String, nullable=True)
     attack_metadata: Mapped[dict[str, str | int | float | bool] | None] = mapped_column(JSON, nullable=True)
     labels: Mapped[dict[str, str] | None] = mapped_column(JSON, nullable=True)
+    targeted_harm_categories: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
     pruned_conversation_ids: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
     adversarial_chat_conversation_ids: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
     timestamp = mapped_column(UTCDateTime, nullable=False)
@@ -948,6 +950,7 @@ class AttackResultEntry(Base):
         self.outcome_reason = entry.outcome_reason
         self.attack_metadata = self.filter_json_serializable_metadata(entry.metadata)
         self.labels = entry.labels or {}
+        self.targeted_harm_categories = entry.targeted_harm_categories or None
 
         # Persist conversation references by type
         self.pruned_conversation_ids = [
@@ -1075,6 +1078,7 @@ class AttackResultEntry(Base):
             metadata=self.attack_metadata or {},
             timestamp=self.timestamp or datetime.now(tz=timezone.utc),
             labels=self.labels or {},
+            targeted_harm_categories=self.targeted_harm_categories or [],
             error_message=self.error_message,
             error_type=self.error_type,
             error_traceback=self.error_traceback,

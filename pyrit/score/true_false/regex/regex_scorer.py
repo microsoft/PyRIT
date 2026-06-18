@@ -47,7 +47,9 @@ class RegexScorer(TrueFalseScorer):
             raise ValueError("patterns must be a non-empty dict")
 
         self._patterns = dict(patterns)
-        self._compiled: dict[str, re.Pattern] = {name: re.compile(pattern) for name, pattern in self._patterns.items()}
+        self._compiled: dict[str, re.Pattern[str]] = {
+            name: re.compile(pattern) for name, pattern in self._patterns.items()
+        }
         self._score_categories = categories or []
 
         super().__init__(validator=validator or self._DEFAULT_VALIDATOR, score_aggregator=score_aggregator)
@@ -61,9 +63,9 @@ class RegexScorer(TrueFalseScorer):
         """
         return self._create_identifier(
             params={
-                "score_aggregator": self._score_aggregator.__name__,  # type: ignore[ty:unresolved-attribute]
                 "pattern_count": len(self._patterns),
             },
+            score_aggregator=self._score_aggregator.__name__,  # type: ignore[ty:unresolved-attribute]
         )
 
     async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:

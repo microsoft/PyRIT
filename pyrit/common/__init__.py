@@ -4,9 +4,9 @@
 """
 Common utilities and helpers for PyRIT.
 
-Heavy submodules (data_url_converter, display_response, download_hf_model,
-net_utility) are intentionally NOT re-exported here to keep ``import pyrit``
-fast.  Import them directly, e.g.::
+Heavy submodules (display_response, download_hf_model, net_utility) are
+intentionally NOT re-exported here to keep ``import pyrit`` fast.  Import them
+directly, e.g.::
 
     from pyrit.common.net_utility import get_httpx_client
 """

@@ -4,11 +4,20 @@
 """
 Retrievable instance registry for PyRIT.
 
+.. note::
+
+    **Legacy stack — do not build new registries on this.** New component
+    registries subclass ``BuildableRegistry`` and retain instances via the
+    ``.instances`` property (``DefaultInstanceRegistry``), which already
+    provides ``get``/``get_entry``/``get_all_instances``. See
+    ``ConverterRegistry`` for the target shape. This class remains only for the
+    not-yet-migrated ``ScorerRegistry`` and ``TargetRegistry`` and is removed
+    once they migrate.
+
 This module provides ``RetrievableInstanceRegistry``, which extends
 ``BaseInstanceRegistry`` with ``get()``, ``get_entry()``, and
 ``get_all_instances()`` for registries where callers retrieve stored
-objects directly (e.g., ``ScorerRegistry``, ``ConverterRegistry``,
-``TargetRegistry``).
+objects directly (e.g., ``ScorerRegistry``, ``TargetRegistry``).
 
 For the shared base class, see ``base_instance_registry``.
 For registries that store classes (type[T]), see ``class_registries/``.
@@ -29,6 +38,14 @@ __all__ = ["RetrievableInstanceRegistry", "BaseInstanceRegistry", "RegistryEntry
 class RetrievableInstanceRegistry(BaseInstanceRegistry[T]):
     """
     Base class for registries that store directly-retrievable instances.
+
+    .. note::
+
+        **Legacy — do not subclass for new registries.** Use
+        ``BuildableRegistry`` + the ``.instances`` property
+        (``DefaultInstanceRegistry``), which already exposes
+        ``get``/``get_entry``/``get_all_instances``. Retained only for the
+        not-yet-migrated ``ScorerRegistry`` and ``TargetRegistry``.
 
     Extends ``BaseInstanceRegistry`` with ``get()``, ``get_entry()``, and
     ``get_all_instances()`` for registries where callers retrieve the
