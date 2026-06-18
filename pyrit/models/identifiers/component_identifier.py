@@ -210,14 +210,17 @@ class ComponentIdentifier(BaseModel):
     #: Named child identifiers for compositional identity (e.g., a scorer's target).
     children: dict[str, ComponentIdentifier | list[ComponentIdentifier]] = Field(default_factory=dict)
     #: Content-addressed SHA256 hash. Always recomputed from the identifier's
-    #: content by the validator — any value supplied at construction (including
-    #: one read back from storage) is ignored and overwritten. The field is kept
-    #: so the flat storage shape still round-trips and serializes the hash.
+    #: content by the validator and cannot be set directly — any value supplied
+    #: at construction (a constructor kwarg or one read back from storage) is
+    #: dropped before validation. The field is kept so the flat storage shape
+    #: still round-trips and serializes the hash.
     hash: str | None = None
     #: Version tag for storage. Not included in the content hash.
     pyrit_version: str = Field(default=pyrit.__version__)
-    #: Evaluation hash. Computed by EvaluationIdentifier subclasses and attached
-    #: to the identifier so it lands in the stored JSON for DB-level filtering.
+    #: Evaluation hash. The base identifier cannot compute it (the eval rules live
+    #: in EvaluationIdentifier subclasses), so it is attached only through
+    #: ``with_eval_hash``, which is the single supported way to set it. Stamped on
+    #: so it lands in the stored JSON for DB-level filtering.
     eval_hash: str | None = None
 
     # ------------------------------------------------------------------
@@ -318,6 +321,11 @@ class ComponentIdentifier(BaseModel):
             return data
 
         data = dict(data)
+
+        # hash is always computed from content, never supplied. Drop any incoming
+        # value (a constructor kwarg or one read back from the flat storage form)
+        # so it cannot be set directly; the after-validator recomputes it.
+        data.pop(cls.KEY_HASH, None)
 
         # Map legacy keys onto canonical keys when canonical is absent.
         if cls.KEY_CLASS_NAME not in data and cls.LEGACY_KEY_TYPE in data:
@@ -506,8 +514,10 @@ class ComponentIdentifier(BaseModel):
         """
         Return a new identifier with ``eval_hash`` set.
 
-        The content hash is recomputed from the (unchanged) params and children,
-        so it is identical to this identifier's hash.
+        This is the single supported way to set ``eval_hash``: it is not
+        computed by the base model, so callers attach it here rather than via
+        the constructor. The content hash is recomputed from the (unchanged)
+        params and children, so it is identical to this identifier's hash.
 
         Args:
             eval_hash: The evaluation hash to attach.

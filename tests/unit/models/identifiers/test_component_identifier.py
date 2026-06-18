@@ -92,6 +92,25 @@ class TestComponentIdentifierCreation:
 class TestComponentIdentifierHash:
     """Tests for hash computation."""
 
+    def test_hash_cannot_be_set_via_constructor(self):
+        """Test that a hash supplied at construction is dropped and recomputed."""
+        computed = ComponentIdentifier(class_name="C", class_module="m", params={"key": "value"}).hash
+        with_bogus = ComponentIdentifier(
+            class_name="C",
+            class_module="m",
+            params={"key": "value"},
+            hash="bogus-not-used",
+        )
+        assert with_bogus.hash == computed
+
+    def test_hash_dropped_from_flat_storage_on_load(self):
+        """Test that a stored hash is dropped and recomputed on model_validate."""
+        ident = ComponentIdentifier(class_name="C", class_module="m", params={"key": "value"})
+        stored = ident.model_dump()
+        stored["hash"] = "tampered-value"
+        reloaded = ComponentIdentifier.model_validate(stored)
+        assert reloaded.hash == ident.hash
+
     def test_hash_deterministic(self):
         """Test that identical configs produce the same hash."""
         id1 = ComponentIdentifier(
@@ -1363,7 +1382,7 @@ class TestComponentIdentifierWithEvalHash:
         assert new.eval_hash == "abc123"
 
     def test_with_eval_hash_recomputes_hash(self):
-        # The content hash is recomputed from params; any passed-in hash is ignored.
+        # hash cannot be set; a passed-in value is dropped and recomputed from content.
         ident = ComponentIdentifier(class_name="Foo", class_module="m", params={"a": 1}, hash="deadbeef")
         fresh = ComponentIdentifier(class_name="Foo", class_module="m", params={"a": 1})
         new = ident.with_eval_hash("abc123")
