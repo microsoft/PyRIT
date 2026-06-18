@@ -495,8 +495,9 @@ class ScoreEntry(Base):
         self.score_rationale = entry.score_rationale
         self.score_metadata = entry.score_metadata or {}
         normalized_scorer = entry.scorer_class_identifier
-        # Stamp eval_hash before dumping so it lands in the stored JSON for DB-level filtering
-        if normalized_scorer is not None and normalized_scorer.eval_hash is None:
+        # Always recompute eval_hash before dumping so the stored JSON carries the
+        # freshly computed value for DB-level filtering (never a value from storage).
+        if normalized_scorer is not None:
             normalized_scorer = normalized_scorer.with_eval_hash(
                 ScorerEvaluationIdentifier(normalized_scorer).eval_hash
             )
@@ -949,8 +950,9 @@ class AttackResultEntry(Base):
         self.id = uuid.UUID(entry.attack_result_id)
         self.conversation_id = entry.conversation_id
         self.objective = entry.objective
-        # Stamp eval_hash before dumping so it lands in the stored JSON for DB-level filtering
-        if entry.atomic_attack_identifier and entry.atomic_attack_identifier.eval_hash is None:
+        # Always recompute eval_hash before dumping so the stored JSON carries the
+        # freshly computed value for DB-level filtering (never a value from storage).
+        if entry.atomic_attack_identifier:
             entry.atomic_attack_identifier = entry.atomic_attack_identifier.with_eval_hash(
                 AtomicAttackEvaluationIdentifier(entry.atomic_attack_identifier).eval_hash
             )
@@ -1193,8 +1195,9 @@ class ScenarioResultEntry(Base):
         self.scenario_init_data = entry.scenario_identifier.init_data
         # Convert ComponentIdentifier to dict for JSON storage
         self.objective_target_identifier = _dump_identifier(entry.objective_target_identifier)  # type: ignore[ty:invalid-assignment]
-        # Stamp eval_hash before dumping so it lands in the stored JSON for DB-level filtering.
-        if entry.objective_scorer_identifier and entry.objective_scorer_identifier.eval_hash is None:
+        # Always recompute eval_hash before dumping so the stored JSON carries the
+        # freshly computed value for DB-level filtering (never a value from storage).
+        if entry.objective_scorer_identifier:
             entry.objective_scorer_identifier = entry.objective_scorer_identifier.with_eval_hash(
                 ScorerEvaluationIdentifier(entry.objective_scorer_identifier).eval_hash
             )

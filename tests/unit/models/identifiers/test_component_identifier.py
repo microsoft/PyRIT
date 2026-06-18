@@ -228,7 +228,7 @@ class TestComponentIdentifierToDict:
         assert "children" not in result
 
     def test_to_dict_no_truncation_by_default(self):
-        """Test that values are not truncated when max_value_length is not set."""
+        """Test that values are stored in full (truncation removed)."""
         long_value = "x" * 200
         identifier = ComponentIdentifier(
             class_name="Target",
@@ -238,17 +238,6 @@ class TestComponentIdentifierToDict:
         result = identifier.to_dict()
         assert result["system_prompt"] == long_value
 
-    def test_to_dict_max_value_length_is_noop(self):
-        """Test that max_value_length is ignored (truncation removed); full values are stored."""
-        long_value = "x" * 200
-        identifier = ComponentIdentifier(
-            class_name="Target",
-            class_module="mod",
-            params={"system_prompt": long_value},
-        )
-        result = identifier.to_dict(max_value_length=100)
-        assert result["system_prompt"] == long_value
-
     def test_to_dict_does_not_truncate_non_string_params(self):
         """Test that non-string params are stored unchanged."""
         identifier = ComponentIdentifier(
@@ -256,7 +245,7 @@ class TestComponentIdentifierToDict:
             class_module="mod",
             params={"count": 999999, "flag": True},
         )
-        result = identifier.to_dict(max_value_length=5)
+        result = identifier.to_dict()
         assert result["count"] == 999999
         assert result["flag"] is True
 
@@ -267,7 +256,7 @@ class TestComponentIdentifierToDict:
             class_name="VeryLongClassNameForTesting",
             class_module=long_module,
         )
-        result = identifier.to_dict(max_value_length=10)
+        result = identifier.to_dict()
         assert result["class_name"] == "VeryLongClassNameForTesting"
         assert result["class_module"] == long_module
         assert result["hash"] == identifier.hash
@@ -286,7 +275,7 @@ class TestComponentIdentifierToDict:
             class_module="mod.parent",
             children={"target": child},
         )
-        result = parent.to_dict(max_value_length=50)
+        result = parent.to_dict()
         child_result = result["children"]["target"]
         assert child_result["endpoint"] == long_value
 
@@ -300,7 +289,7 @@ class TestComponentIdentifierToDict:
             class_module="m",
             children={"converters": [c1, c2]},
         )
-        result = parent.to_dict(max_value_length=80)
+        result = parent.to_dict()
         assert result["children"]["converters"][0]["data"] == long_value
         assert result["children"]["converters"][1]["data"] == "short"
 
@@ -1331,15 +1320,15 @@ class TestComponentIdentifierPydanticMethods:
             warnings.simplefilter("ignore", DeprecationWarning)
             assert ident.model_dump() == ident.to_dict()
 
-    def test_model_dump_context_max_value_length_is_noop(self):
+    def test_model_dump_stores_full_value(self):
         ident = ComponentIdentifier(class_name="Foo", class_module="m", params={"v": "x" * 200})
-        dumped = ident.model_dump(context={"max_value_length": 50})
+        dumped = ident.model_dump()
         assert dumped["v"] == "x" * 200
 
-    def test_model_dump_context_noop_for_children(self):
+    def test_model_dump_stores_full_nested_values(self):
         child = ComponentIdentifier(class_name="C", class_module="m", params={"v": "y" * 200})
         parent = ComponentIdentifier(class_name="P", class_module="m", params={"v": "x" * 200}, children={"c": child})
-        dumped = parent.model_dump(context={"max_value_length": 50})
+        dumped = parent.model_dump()
         assert dumped["v"] == "x" * 200
         assert dumped["children"]["c"]["v"] == "y" * 200
 

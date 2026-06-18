@@ -694,13 +694,9 @@ class ComponentIdentifier(BaseModel):
     # Deprecated shims — kept for one release cycle
     # ------------------------------------------------------------------
 
-    def to_dict(self, *, max_value_length: int | None = None) -> dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """
         Return the flat storage dict (deprecated; use ``model_dump`` instead).
-
-        Args:
-            max_value_length: Deprecated and ignored. Identifier values are no
-                longer truncated; the full value is always returned.
 
         Returns:
             The flat dict representation.
