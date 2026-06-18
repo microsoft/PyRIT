@@ -1,14 +1,11 @@
 
 # Builds the pyrit environment and runs integration tests
 
-trigger:
-  branches:
-    include:
-      - main
+trigger: none
 
 schedules:
-- cron: "0 5 * * *"  # 5 AM UTC = 9 PM PST (UTC-8)
-  displayName: Integration Tests Daily at 05:00 AM UTC (9:00 PM PST)
+- cron: "0 */3 * * *"  # Every 3 hours
+  displayName: Integration Tests Every 3 Hours
   branches:
     include:
       - main
