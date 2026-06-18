@@ -5,9 +5,12 @@
 
 from __future__ import annotations
 
+from typing import Annotated
+
 from pydantic import Field
 
 from pyrit.models.identifiers.component_identifier import ComponentIdentifier
+from pyrit.models.identifiers.evaluation_markers import Evaluate
 
 
 class TargetIdentifier(ComponentIdentifier):
@@ -20,19 +23,25 @@ class TargetIdentifier(ComponentIdentifier):
     Promotes the one child slot a target owns in its own constructor:
     ``targets`` (inner targets of a multi-target like ``RoundRobinTarget``),
     typed recursively as ``TargetIdentifier``.
+
+    ``Evaluate.*`` markers declare the behavioral projection used for the eval
+    hash: operational params (``endpoint`` / ``model_name`` /
+    ``max_requests_per_minute``) are excluded, ``underlying_model_name`` falls
+    back to ``model_name``, and ``targets`` is a wrapper passthrough that is
+    unwrapped so a multi-target hashes the same as its inner target.
     """
 
     #: Target endpoint URL.
-    endpoint: str | None = None
+    endpoint: Annotated[str | None, Evaluate.Exclude()] = None
     #: Model or deployment name used in API calls.
-    model_name: str | None = None
+    model_name: Annotated[str | None, Evaluate.Exclude()] = None
     #: Underlying model name if different (e.g., "gpt-4o").
-    underlying_model_name: str | None = None
+    underlying_model_name: Annotated[str | None, Evaluate.Include(fallback="model_name")] = None
     #: Temperature parameter for generation.
-    temperature: float | None = None
+    temperature: Annotated[float | None, Evaluate.Include()] = None
     #: Top-p parameter for generation.
-    top_p: float | None = None
+    top_p: Annotated[float | None, Evaluate.Include()] = None
     #: Maximum requests per minute.
-    max_requests_per_minute: int | None = None
+    max_requests_per_minute: Annotated[int | None, Evaluate.Exclude()] = None
     #: Inner targets of a multi-target (e.g., ``RoundRobinTarget``), typed recursively.
-    targets: list[TargetIdentifier] = Field(default_factory=list)
+    targets: Annotated[list[TargetIdentifier], Evaluate.Unwrap()] = Field(default_factory=list)

@@ -14,7 +14,13 @@ from pyrit.score.true_false.true_false_score_aggregator import (
 from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
 
 if TYPE_CHECKING:
-    from pyrit.models import ComponentIdentifier, MessagePiece, Score, UnvalidatedScore
+    from pyrit.models import (
+        ComponentIdentifier,
+        JsonSchemaDefinition,
+        MessagePiece,
+        Score,
+        UnvalidatedScore,
+    )
     from pyrit.prompt_target import PromptTarget
 
 
@@ -44,6 +50,7 @@ class SelfAskGeneralTrueFalseScorer(TrueFalseScorer):
         description_output_key: str = "description",
         metadata_output_key: str = "metadata",
         category_output_key: str = "category",
+        response_json_schema: JsonSchemaDefinition | None = None,
     ) -> None:
         """
         Initialize the SelfAskGeneralTrueFalseScorer.
@@ -72,6 +79,9 @@ class SelfAskGeneralTrueFalseScorer(TrueFalseScorer):
             description_output_key (str): JSON key for the description. Defaults to "description".
             metadata_output_key (str): JSON key for the metadata. Defaults to "metadata".
             category_output_key (str): JSON key for the category. Defaults to "category".
+            response_json_schema (JsonSchemaDefinition | None): An optional JSON schema constraining
+                the scoring response. When provided, it is forwarded to the scoring target, which
+                enforces it natively when supported or omits it via normalization. Defaults to None.
 
         Raises:
             ValueError: If system_prompt_format_string is not provided or empty.
@@ -93,6 +103,7 @@ class SelfAskGeneralTrueFalseScorer(TrueFalseScorer):
         self._description_output_key = description_output_key
         self._metadata_output_key = metadata_output_key
         self._category_output_key = category_output_key
+        self._response_json_schema = response_json_schema
 
     def _build_identifier(self) -> ComponentIdentifier:
         """
@@ -105,6 +116,7 @@ class SelfAskGeneralTrueFalseScorer(TrueFalseScorer):
             params={
                 "system_prompt_template": self._system_prompt_format_string,
                 "user_prompt_template": self._prompt_format_string,
+                "response_json_schema": self._response_json_schema,
             },
             score_aggregator=self._score_aggregator.__name__,  # type: ignore[ty:unresolved-attribute]
             prompt_target=self._prompt_target.get_identifier(),
@@ -151,6 +163,7 @@ class SelfAskGeneralTrueFalseScorer(TrueFalseScorer):
             description_output_key=self._description_output_key,
             metadata_output_key=self._metadata_output_key,
             category_output_key=self._category_output_key,
+            response_json_schema=self._response_json_schema,
         )
 
         score = unvalidated.to_score(score_value=unvalidated.raw_score_value, score_type="true_false")
