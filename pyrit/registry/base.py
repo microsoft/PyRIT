@@ -10,13 +10,15 @@ and object registries (which store T instances).
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol, TypeVar, runtime_checkable
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Iterator, Mapping
 
     from typing_extensions import Self
+
+    from pyrit.models.parameter import Parameter
 
 # Type variable for metadata (invariant for Protocol compatibility)
 MetadataT = TypeVar("MetadataT")
@@ -36,12 +38,22 @@ class ClassRegistryEntry:
         class_description (str): Human-readable description, typically from the class docstring.
         registry_name (str): The suffix-stripped snake_case key used in the registry
             (e.g., "content_harms" for ContentHarmsScenario).
+        parameters (tuple[Parameter, ...]): The derived build contract for the class.
+            Buildable registries (e.g. converters) populate this from the constructor
+            signature; scenarios/initializers use their own ``supported_parameters``
+            today and will migrate to this unified shape.
+        class_attributes (Mapping[str, Any]): Values sourced from class attributes
+            (declared on the identifier via ``Param.ClassAttr``), letting the entry
+            describe class-level facts — e.g. a converter's supported input/output
+            types — without constructing an instance. Empty for entries with none.
     """
 
     class_name: str
     class_module: str
     class_description: str = ""
     registry_name: str = ""
+    parameters: tuple[Parameter, ...] = field(kw_only=True, default=())
+    class_attributes: Mapping[str, Any] = field(kw_only=True, default_factory=dict)
 
     @staticmethod
     def description_from_docstring(cls: type, *, fallback: str = "") -> str:

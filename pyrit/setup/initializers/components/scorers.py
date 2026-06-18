@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING, ClassVar, TypeVar, cast
 
 from azure.ai.contentsafety.models import TextCategory
 
-from pyrit.common.parameter import Parameter
+from pyrit.models.parameter import Parameter
 from pyrit.registry import ScorerRegistry, TargetRegistry
 from pyrit.score import (
     AzureContentFilterScorer,

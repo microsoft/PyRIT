@@ -16,7 +16,7 @@ from typing import Any
 
 from pyrit.common.apply_defaults import get_global_default_values
 from pyrit.common.deprecation import print_deprecation_message
-from pyrit.common.parameter import Parameter
+from pyrit.models.parameter import Parameter
 
 
 def __getattr__(name: str) -> type:

@@ -74,12 +74,6 @@ from pyrit.models.literals import (
     PromptResponseError,
     SeedType,
 )
-from pyrit.models.parameter import (
-    ComponentRegistryKind,
-    Parameter,
-    ParameterDestination,
-    RegistryReference,
-)
 from pyrit.models.messages import (
     Conversation,
     Message,
@@ -90,6 +84,12 @@ from pyrit.models.messages import (
     group_conversation_message_pieces_by_sequence,
     group_message_pieces_into_conversations,
     sort_message_pieces,
+)
+from pyrit.models.parameter import (
+    ComponentType,
+    Parameter,
+    ParameterDestination,
+    RegistryReference,
 )
 from pyrit.models.question_answering import QuestionAnsweringDataset, QuestionAnsweringEntry, QuestionChoice
 from pyrit.models.results.attack_result import AttackOutcome, AttackResult, AttackResultT
@@ -135,7 +135,7 @@ __all__ = [
     "class_name_to_snake_case",
     "CapabilityName",
     "ComponentIdentifier",
-    "ComponentRegistryKind",
+    "ComponentType",
     "compute_eval_hash",
     "config_hash",
     "ConverterIdentifier",

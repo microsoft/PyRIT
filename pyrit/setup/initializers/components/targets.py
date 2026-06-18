@@ -20,8 +20,8 @@ from enum import Enum
 from typing import Any
 
 from pyrit.auth import get_azure_openai_auth, get_azure_token_provider
-from pyrit.common.parameter import Parameter
 from pyrit.models.identifiers import TARGET_EVAL_PARAM_FALLBACKS, TARGET_EVAL_PARAMS
+from pyrit.models.parameter import Parameter
 from pyrit.prompt_target import (
     AzureMLChatTarget,
     OpenAIChatTarget,
