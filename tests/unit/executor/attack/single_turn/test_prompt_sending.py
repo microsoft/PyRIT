@@ -213,7 +213,6 @@ class TestContextValidation:
                 next_message=Message.from_prompt(prompt="test", role="user"),
             ),
             conversation_id=str(uuid.uuid4()),
-            system_prompt="System prompt",
             metadata={"key": "value"},
         )
 
@@ -1051,7 +1050,38 @@ class TestAttackLifecycle:
         assert context.objective == "Test objective"
         assert context.memory_labels == {"test": "label"}
         assert context.next_message is not None
-        assert context.system_prompt == "System prompt"
+        # system_prompt= is lowered into a leading system-role prepended message
+        assert context.prepended_conversation[0].api_role == "system"
+        assert context.prepended_conversation[0].get_value() == "System prompt"
+        assert context.prepended_conversation[1].api_role == "assistant"
+
+    async def test_execute_async_delivers_system_prompt_to_conversation(self, mock_target):
+        """system_prompt= is lowered and reaches the conversation manager that seeds the target's conversation."""
+        attack = PromptSendingAttack(objective_target=mock_target)
+
+        delivered = {}
+
+        async def capture_setup(*, context, **kwargs):
+            delivered["prepended"] = list(context.prepended_conversation)
+
+        attack._conversation_manager = MagicMock()
+        attack._conversation_manager.initialize_context_async = AsyncMock(side_effect=capture_setup)
+        attack._perform_async = AsyncMock(
+            return_value=AttackResult(
+                conversation_id="test-id",
+                objective="Test objective",
+                outcome=AttackOutcome.SUCCESS,
+                executed_turns=1,
+            )
+        )
+
+        await attack.execute_async(
+            objective="Test objective",
+            system_prompt="You are a helpful assistant.",
+        )
+
+        assert [message.api_role for message in delivered["prepended"]] == ["system"]
+        assert delivered["prepended"][0].get_value() == "You are a helpful assistant."
 
     async def test_execute_async_with_invalid_params_raises_error(self, mock_target):
         """Test execute_async raises error when invalid parameters are passed"""

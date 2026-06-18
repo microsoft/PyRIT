@@ -29,7 +29,9 @@ logger = logging.getLogger(__name__)
 
 # ContextComplianceAttack generates prepended_conversation internally
 # by building a benign context conversation.
-ContextComplianceAttackParameters = AttackParameters.excluding("prepended_conversation", "next_message")
+ContextComplianceAttackParameters = AttackParameters.excluding(
+    "prepended_conversation", "next_message", "system_prompt"
+)
 
 
 class ContextComplianceAttack(PromptSendingAttack):

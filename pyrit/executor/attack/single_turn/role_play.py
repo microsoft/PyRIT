@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 
 # RolePlayAttack generates next_message and prepended_conversation internally,
 # so it does not accept these parameters from callers.
-RolePlayAttackParameters = AttackParameters.excluding("next_message", "prepended_conversation")
+RolePlayAttackParameters = AttackParameters.excluding("next_message", "prepended_conversation", "system_prompt")
 
 
 class RolePlayPaths(enum.Enum):

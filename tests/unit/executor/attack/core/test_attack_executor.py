@@ -10,7 +10,7 @@ These tests verify the new API that uses AttackParameters and params_type.
 import asyncio
 import dataclasses
 import uuid
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -28,6 +28,7 @@ from pyrit.models import (
     SeedObjective,
     SeedPrompt,
 )
+from pyrit.prompt_target import PromptTarget
 
 
 # Helper to create a properly configured mock attack
@@ -58,6 +59,25 @@ def create_seed_group(objective: str) -> SeedAttackGroup:
             SeedPrompt(value=objective, data_type="text"),
         ]
     )
+
+
+class _ConcreteSingleTurnAttack(AttackStrategy):
+    """Minimal concrete attack used to exercise the real execute_with_context_async override."""
+
+    def __init__(self, *, objective_target):
+        super().__init__(objective_target=objective_target, context_type=SingleTurnAttackContext)
+
+    def _validate_context(self, *, context):
+        pass
+
+    async def _setup_async(self, *, context):
+        pass
+
+    async def _perform_async(self, *, context):
+        return create_attack_result(context.objective)
+
+    async def _teardown_async(self, *, context):
+        pass
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -710,3 +730,32 @@ class TestParamsTypeIntegration:
         assert "prepended_conversation" not in fields
         assert "objective" in fields
         assert "memory_labels" in fields
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestExecutorSystemPromptLowering:
+    """Regression: the executor path lowers system_prompt= via the shared chokepoint.
+
+    AttackExecutor builds a context and calls execute_with_context_async directly, bypassing
+    execute_async. Lowering lives in execute_with_context_async, so the system prompt must
+    still be lowered on this path (otherwise it would silently never reach the target).
+    """
+
+    async def test_executor_lowers_broadcast_system_prompt(self):
+        attack = _ConcreteSingleTurnAttack(objective_target=MagicMock(spec=PromptTarget))
+
+        executor = AttackExecutor()
+        with patch(
+            "pyrit.executor.core.strategy.Strategy.execute_with_context_async", new_callable=AsyncMock
+        ) as mock_super:
+            mock_super.return_value = create_attack_result("Test objective")
+            await executor.execute_attack_async(
+                attack=attack,
+                objectives=["Test objective"],
+                system_prompt="You are a helpful assistant.",
+            )
+
+        context = mock_super.call_args.kwargs["context"]
+        prepended = context.prepended_conversation
+        assert [message.api_role for message in prepended] == ["system"]
+        assert prepended[0].get_value() == "You are a helpful assistant."

@@ -39,6 +39,9 @@ class AttackParameters:
     # Conversation that is automatically prepended to the target model
     prepended_conversation: list[Message] | None = None
 
+    # System prompt for the objective target; lowered to a prepended system message
+    system_prompt: str | None = None
+
     # Additional labels that can be applied to the prompts throughout the attack
     memory_labels: dict[str, str] | None = field(default_factory=dict)
 

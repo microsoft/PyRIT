@@ -317,6 +317,18 @@ class TestRolePlayAttackParamsType:
         fields = {f.name for f in dataclasses.fields(role_play_attack.params_type)}
         assert "prepended_conversation" not in fields
 
+    def test_params_type_excludes_system_prompt(self, role_play_attack):
+        """Test that params_type excludes system_prompt field"""
+        import dataclasses
+
+        fields = {f.name for f in dataclasses.fields(role_play_attack.params_type)}
+        assert "system_prompt" not in fields
+
+    async def test_execute_async_rejects_system_prompt(self, role_play_attack):
+        """Test that execute_async rejects system_prompt for an attack that excludes it"""
+        with pytest.raises(ValueError, match="does not accept parameters"):
+            await role_play_attack.execute_async(objective="Test objective", system_prompt="You are a pirate.")
+
     def test_params_type_includes_objective(self, role_play_attack):
         """Test that params_type includes objective field"""
         import dataclasses
