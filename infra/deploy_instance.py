@@ -635,11 +635,11 @@ def create_key_vault(
       - Provide a backup snapshot if the Container App is recreated.
       - Preserve the audit trail for the deployed configuration.
 
-    The vault is created with public network access enabled so that the
-    deployer (running from a corp network or dev container) can write the
-    initial secret. After the secret is uploaded, the vault is locked down
-    to publicNetworkAccess=Disabled + defaultAction=Deny + bypass=AzureServices
-    to satisfy the S360 / NS221 Secure PaaS alert.
+    The vault is created with network access restricted to the deployer's
+    public IP only (defaultAction=Deny + deployer IP allowlisted). After the
+    secret is uploaded, the deployer's IP rule is removed and public network
+    access is fully disabled to satisfy the S360 / NS221 Secure PaaS alert.
+    This avoids any window where the KV has unrestricted public access.
 
     Args:
         resource_group (str): The resource group name.
@@ -651,7 +651,22 @@ def create_key_vault(
     Returns:
         str: The Key Vault resource ID.
     """
-    logger.info("Creating Key Vault: %s", vault_name)
+    # Determine the deployer's public IP so we can allowlist only that IP
+    # instead of enabling unrestricted public access.
+    logger.info("Detecting deployer public IP for Key Vault network rules")
+    ip_result = subprocess.run(
+        ["curl", "-s", "https://ipinfo.io/ip"],
+        capture_output=True,
+        text=True,
+        check=True,
+        shell=_SHELL,
+    )
+    deployer_ip = ip_result.stdout.strip()
+    if not deployer_ip:
+        raise RuntimeError("Failed to detect deployer public IP from https://ipinfo.io/ip")
+    logger.info("Deployer IP: %s", deployer_ip)
+
+    logger.info("Creating Key Vault: %s (locked down, deployer IP allowlisted)", vault_name)
     kv_cmd = [
         "keyvault",
         "create",
@@ -665,6 +680,12 @@ def create_key_vault(
         "true",
         "--enable-purge-protection",
         "true",
+        "--default-action",
+        "Deny",
+        "--bypass",
+        "AzureServices",
+        "--network-acls-ips",
+        f"{deployer_ip}/32",
     ]
     if tags:
         kv_cmd += ["--tags"] + tags
@@ -753,13 +774,24 @@ def create_key_vault(
         if tmp_path:
             Path(tmp_path).unlink(missing_ok=True)
 
-    # Apply SFI network lockdown after the backup secret is written. Safe
-    # because the Container App does NOT reference this KV at runtime
-    # (the .env is passed inline via Bicep's envFileContents @secure() param).
+    # Remove deployer IP allowlist and fully disable public network access.
+    # The KV was never publicly open — only the deployer's IP was allowed.
     # Matches the team standard observed on existing AIRT vaults
     # (e.g. airt-chatui-kv, AIRT-Blackhat-KV): publicNetworkAccess=Disabled,
     # default-deny ACL, bypass for trusted Azure services.
-    logger.info("Applying SFI network lockdown to Key Vault: %s", vault_name)
+    logger.info("Removing deployer IP rule from Key Vault: %s", vault_name)
+    run_az(
+        args=[
+            "keyvault",
+            "network-rule",
+            "remove",
+            "--name",
+            vault_name,
+            "--ip-address",
+            f"{deployer_ip}/32",
+        ]
+    )
+    logger.info("Disabling public network access on Key Vault: %s", vault_name)
     run_az(
         args=[
             "keyvault",
@@ -768,10 +800,6 @@ def create_key_vault(
             vault_name,
             "--public-network-access",
             "Disabled",
-            "--default-action",
-            "Deny",
-            "--bypass",
-            "AzureServices",
         ]
     )
 

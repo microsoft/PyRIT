@@ -316,9 +316,10 @@ az keyvault show --name <vault-name> --query id -o tsv
 
 > **Note**: The vault should have `enableRbacAuthorization: true`. Diagnostic
 > settings (AuditEvent logs) should be configured separately by the vault
-> owner. The deploy script applies `publicNetworkAccess=Disabled +
-> defaultAction=Deny + bypass=AzureServices` after writing the backup secret
-> (matches the team standard for SFI/NS221 compliance).
+> owner. The deploy script creates the vault with `defaultAction=Deny` and only
+> the deployer's IP allowlisted, then removes the IP rule and sets
+> `publicNetworkAccess=Disabled` after writing the backup secret (matches the
+> team standard for SFI/NS221 compliance — no window of unrestricted public access).
 
 ## Preview changes before deploying (recommended)
 
