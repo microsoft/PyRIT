@@ -153,7 +153,7 @@ class _SGXSTestDataset(_RemoteDatasetLoader):
             SeedObjective(
                 value=item["prompt"],
                 dataset_name=self.dataset_name,
-                harm_categories=[item["category"]] if item.get("category") else [],
+                harm_categories=self._standardize_harm_categories(item.get("category")),
                 description=description,
                 source=source_url,
                 authors=authors,

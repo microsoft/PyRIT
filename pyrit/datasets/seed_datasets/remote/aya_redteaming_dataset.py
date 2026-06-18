@@ -104,9 +104,25 @@ class _AyaRedteamingDataset(_RemoteDatasetLoader):
         )
 
         seed_prompts = []
+        harm_category_alias_overrides: dict[str, str | list[str]] = {
+            "bullying & harassment": "HARASSMENT",
+            "discrimination & injustice": ["REPRESENTATIONAL", "HATESPEECH"],
+            "graphic material": "VIOLENT_CONTENT",
+            "harms of representation allocation and quality of service": [
+                "REPRESENTATIONAL",
+                "ALLOCATION",
+                "QUALITY_OF_SERVICE",
+            ],
+            "non-consensual sexual content": "SEXUAL_CONTENT",
+            "violence, threats & incitement": "VIOLENT_THREATS",
+        }
 
         for example in examples:
             categories = ast.literal_eval(example["harm_category"])
+            standardized_categories = self._standardize_harm_categories(
+                categories,
+                alias_overrides=harm_category_alias_overrides,
+            )
 
             # Apply filters
             if self.harm_categories_filter is not None and not any(
@@ -122,7 +138,7 @@ class _AyaRedteamingDataset(_RemoteDatasetLoader):
                     value=example["prompt"],
                     data_type="text",
                     dataset_name=self.dataset_name,
-                    harm_categories=categories,
+                    harm_categories=standardized_categories,
                     source="https://huggingface.co/datasets/CohereForAI/aya_redteaming",
                 )
             )

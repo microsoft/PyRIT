@@ -89,6 +89,10 @@ class _MedSafetyBenchDataset(_RemoteDatasetLoader):
         logger.info(f"Loading MedSafetyBench dataset (subset: {self.subset_name})")
 
         all_prompts = []
+        standardized_harm_categories = self._standardize_harm_categories(
+            "medical safety",
+            alias_overrides={"medical safety": "PUBLIC_HEALTH"},
+        )
 
         for source in self.sources:
             examples = self._fetch_from_url(
@@ -124,7 +128,7 @@ class _MedSafetyBenchDataset(_RemoteDatasetLoader):
                         value=prompt,
                         data_type="text",
                         dataset_name=self.dataset_name,
-                        harm_categories=["medical safety"],
+                        harm_categories=standardized_harm_categories,
                         description=(
                             f"Prompt from MedSafetyBench dataset - {model_type} model, "
                             f"category {category}, type {file_type}."

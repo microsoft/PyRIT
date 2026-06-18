@@ -57,10 +57,10 @@ class TestBabelscapeAlertDataset:
             dataset = await loader.fetch_dataset_async()
 
             first_prompt = dataset.seeds[0]
-            assert first_prompt.harm_categories == ["crime_injury"]
+            assert first_prompt.harm_categories == ["ILLEGAL", "VIOLENT_CONTENT"]
 
             second_prompt = dataset.seeds[1]
-            assert second_prompt.harm_categories == ["cybercrime"]
+            assert second_prompt.harm_categories == ["ILLEGAL", "MALWARE"]
 
     def test_dataset_name(self):
         """Test dataset_name property."""

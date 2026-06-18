@@ -63,7 +63,7 @@ class _CCPSensitivePromptsDataset(_RemoteDatasetLoader):
                 value=row["prompt"],
                 data_type="text",
                 dataset_name=self.dataset_name,
-                harm_categories=[row["subject"]],
+                harm_categories=self._standardize_harm_categories(row.get("subject")),
                 description="Prompts covering topics sensitive to the CCP.",
                 groups=["promptfoo"],
                 source=f"https://huggingface.co/datasets/{self.source}",

@@ -82,7 +82,7 @@ class _HarmfulQADataset(_RemoteDatasetLoader):
                 value=item["question"],
                 data_type="text",
                 dataset_name=self.dataset_name,
-                harm_categories=[item["topic"]] if item.get("topic") else [],
+                harm_categories=self._standardize_harm_categories(item.get("topic")),
                 description=description,
                 source=source_url,
                 authors=authors,

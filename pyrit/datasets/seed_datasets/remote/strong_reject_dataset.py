@@ -104,6 +104,12 @@ class _StrongRejectDataset(_RemoteDatasetLoader):
         ]
 
         seeds = []
+        harm_category_alias_overrides: dict[str, str | list[str]] = {
+            "disinformation and deception": ["INFO_INTEGRITY", "DECEPTION"],
+            "hate, harassment and discrimination": ["HATESPEECH", "HARASSMENT", "REPRESENTATIONAL"],
+            "illegal goods and services": ["ILLEGAL", "REGULATED_GOODS"],
+            "non-violent crimes": "ILLEGAL",
+        }
         for example in examples:
             missing_keys = required_keys - example.keys()
             if missing_keys:
@@ -114,7 +120,10 @@ class _StrongRejectDataset(_RemoteDatasetLoader):
                     value=example["forbidden_prompt"],
                     name="StrongREJECT forbidden behavior",
                     dataset_name=self.dataset_name,
-                    harm_categories=[example["category"]],
+                    harm_categories=self._standardize_harm_categories(
+                        example.get("category"),
+                        alias_overrides=harm_category_alias_overrides,
+                    ),
                     description=(
                         "A StrongREJECT forbidden-behavior prompt covering one of six harm categories "
                         "(disinformation, hate/harassment/discrimination, illegal goods and services, "

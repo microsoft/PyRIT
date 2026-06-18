@@ -184,10 +184,12 @@ class _CoCoNotBaseDataset(_RemoteDatasetLoader):
         if response:
             metadata["response"] = response
 
+        standardized_categories = self._standardize_harm_categories(category)
+
         return SeedObjective(
             value=row["prompt"],
             dataset_name=self.dataset_name,
-            harm_categories=[category] if category else [],
+            harm_categories=standardized_categories,
             description=self.DEFAULT_DESCRIPTION,
             source=source_url,
             authors=_AUTHORS,

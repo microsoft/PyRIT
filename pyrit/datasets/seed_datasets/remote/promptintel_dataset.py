@@ -269,7 +269,15 @@ class _PromptIntelDataset(_RemoteDatasetLoader):
 
         # Build common fields
         threats = record.get("threats", [])
-        harm_categories = threats if threats else None
+        standardized_harm_categories = self._standardize_harm_categories(
+            threats,
+            alias_overrides={
+                "indirect prompt injection": "DECEPTION",
+                "data exfiltration via prompt": "PROPRIETARY_INFO",
+                "jailbreak": "DECEPTION",
+            },
+        )
+        harm_categories = standardized_harm_categories if standardized_harm_categories else None
         author = record.get("author", "")
         authors = [author] if author else None
         date_added = self._parse_datetime(record.get("created_at"))

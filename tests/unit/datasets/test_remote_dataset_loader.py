@@ -137,6 +137,23 @@ class TestRemoteDatasetLoader:
             file_type="json",
         )
 
+    def test_standardize_harm_categories_supports_one_to_many_alias(self):
+        loader = ConcreteRemoteLoader()
+
+        standardized = loader._standardize_harm_categories("sexual violence")
+
+        assert standardized == ["SEXUAL_CONTENT", "VIOLENT_CONTENT"]
+
+    def test_standardize_harm_categories_supports_dataset_overrides(self):
+        loader = ConcreteRemoteLoader()
+
+        standardized = loader._standardize_harm_categories(
+            "ableism",
+            alias_overrides={"ableism": ["HATESPEECH", "REPRESENTATIONAL"]},
+        )
+
+        assert standardized == ["HATESPEECH", "REPRESENTATIONAL"]
+
 
 class TestFetchZipFromUrl:
     SOURCE = "https://example.com/data.zip"

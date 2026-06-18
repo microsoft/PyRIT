@@ -186,13 +186,20 @@ class _VLGuardDataset(_RemoteDatasetLoader):
                 continue
 
             group_id = uuid.uuid4()
+            standardized_harm_categories = self._standardize_harm_categories(
+                category,
+                alias_overrides={
+                    "privacy": "PPI",
+                    "risky behavior": "VIOLENT_CONTENT",
+                },
+            )
 
             text_prompt = SeedPrompt(
                 value=instruction,
                 data_type="text",
                 name="VLGuard Text",
                 dataset_name=self.dataset_name,
-                harm_categories=[category],
+                harm_categories=standardized_harm_categories,
                 description=f"Text component of VLGuard multimodal prompt ({self.subset.value}).",
                 source=self.source,
                 prompt_group_id=group_id,
@@ -210,7 +217,7 @@ class _VLGuardDataset(_RemoteDatasetLoader):
                 data_type="image_path",
                 name="VLGuard Image",
                 dataset_name=self.dataset_name,
-                harm_categories=[category],
+                harm_categories=standardized_harm_categories,
                 description=f"Image component of VLGuard multimodal prompt ({self.subset.value}).",
                 source=self.source,
                 prompt_group_id=group_id,

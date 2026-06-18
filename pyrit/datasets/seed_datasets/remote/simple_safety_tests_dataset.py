@@ -80,16 +80,28 @@ class _SimpleSafetyTestsDataset(_RemoteDatasetLoader):
 
         source_url = f"https://huggingface.co/datasets/{self.HF_DATASET_NAME}"
         groups = ["Patronus AI", "University of Oxford", "Bocconi University"]
+        harm_area_alias_overrides: dict[str, str | list[str]] = {
+            "Suicide, Self-Harm, and Eating Disorders": ["SUICIDE", "SELF_HARM", "EATING_DISORDERS"],
+            "Physical Harm and Violence": "VIOLENT_CONTENT",
+            "Child Abuse": "COORDINATION_HARM",
+            "Illegal and Highly Regulated items": "ILLEGAL",
+            "Scams and Fraud": ["SCAMS", "DECEPTION"],
+        }
 
         seed_prompts = []
         for item in data:
-            # Standardize harm categories and preserve originals
-            standardized_categories, harm_cat_metadata = self._standardize_harm_categories(item.get("harm_area"))
+            # Standardize harm categories
+            standardized_categories = self._standardize_harm_categories(
+                item.get("harm_area"),
+                alias_overrides=harm_area_alias_overrides,
+            )
 
-            # Build metadata from multiple sources
-            metadata: dict[str, str | int] = {**harm_cat_metadata}
-            if category := item.get("category"):
-                metadata["category"] = category
+            metadata: dict[str, str | int] = {}
+            for key, value in item.items():
+                if key == "prompt" or value is None:
+                    continue
+
+                metadata[key] = value if isinstance(value, (str, int)) else str(value)
 
             seed_prompt = SeedPrompt(
                 value=item["prompt"],

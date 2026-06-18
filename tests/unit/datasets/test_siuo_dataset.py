@@ -122,7 +122,7 @@ class TestSIUODataset:
                 assert seed.metadata["category"] == "self-harm"
                 assert seed.metadata["safety_warning"] == mock_data[0]["safety_warning"]
                 assert "reference_answer" not in seed.metadata
-            assert seed.harm_categories == ["self-harm"]
+            assert seed.harm_categories == ["SELF_HARM"]
             assert seed.dataset_name == "siuo"
 
     async def test_fetch_dataset_image_metadata_includes_url(self):
@@ -186,7 +186,7 @@ class TestSIUODataset:
         # Only the morality row remains: 1 group × 3 seeds
         assert len(dataset.seeds) == 3
         for seed in dataset.seeds:
-            assert seed.harm_categories == ["morality"]
+            assert seed.harm_categories == ["OTHER"]
 
     async def test_multiple_categories_filter(self):
         mock_data = [
@@ -205,7 +205,7 @@ class TestSIUODataset:
         # 2 rows kept × 3 seeds each = 6
         assert len(dataset.seeds) == 6
         kept = {seed.harm_categories[0] for seed in dataset.seeds}
-        assert kept == {"self-harm", "dangerous behavior"}
+        assert kept == {"SELF_HARM", "VIOLENT_CONTENT"}
 
     async def test_empty_after_filter_raises(self):
         mock_data = [_make_example(category="self-harm")]

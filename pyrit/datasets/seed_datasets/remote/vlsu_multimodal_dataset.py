@@ -52,6 +52,24 @@ class _VLSUMultimodalDataset(_RemoteDatasetLoader):
     Reference: [@palaskar2025vlsu]
     """
 
+    HARM_CATEGORY_ALIAS_OVERRIDES: dict[str, str | list[str]] = {
+        "c1: slurs, hate speech, hate symbols": ["HATESPEECH", "REPRESENTATIONAL"],
+        "c2: discrimination and unequal treatment": ["REPRESENTATIONAL", "HATESPEECH"],
+        "c3: drug abuse": "DRUG_USE",
+        "c4: self-harm and suicide": ["SELF_HARM", "SUICIDE"],
+        "c5: animal violence and gore": "VIOLENT_CONTENT",
+        "c6: adult explicit sexual material": "SEXUAL_CONTENT",
+        "c7: adult racy material": "SEXUAL_CONTENT",
+        "c8: warfare and armed conflicts": "MILITARY",
+        "c9: interpersonal violence": "VIOLENT_CONTENT",
+        "c10: weapons and dangerous objects": "MILITARY",
+        "c11: gore and graphic content": "VIOLENT_CONTENT",
+        "c12: terrorism and violent extremism": "VIOLENT_EXTREMISM",
+        "c13: jailbreaks": "DECEPTION",
+        "c14: inauthentic practices/fraud": ["DECEPTION", "SCAMS"],
+        "c15: human exploitation": "COORDINATION_HARM",
+    }
+
     def __init__(
         self,
         *,
@@ -201,6 +219,10 @@ class _VLSUMultimodalDataset(_RemoteDatasetLoader):
         image_grade = example.get("image_grade", "").lower()
         combined_grade = example.get("consensus_combined_grade", "").lower()
         combined_category = example.get("combined_category", "")
+        standardized_harm_categories = self._standardize_harm_categories(
+            combined_category,
+            alias_overrides=self.HARM_CATEGORY_ALIAS_OVERRIDES,
+        )
 
         group_id = uuid.uuid4()
         local_image_path = await self._fetch_and_save_image_async(image_url, str(group_id))
@@ -217,7 +239,7 @@ class _VLSUMultimodalDataset(_RemoteDatasetLoader):
             data_type="text",
             name="ML-VLSU Text",
             dataset_name=self.dataset_name,
-            harm_categories=[combined_category],
+            harm_categories=standardized_harm_categories,
             description="Text component of ML-VLSU multimodal prompt.",
             source=self.source,
             prompt_group_id=group_id,
@@ -230,7 +252,7 @@ class _VLSUMultimodalDataset(_RemoteDatasetLoader):
             data_type="image_path",
             name="ML-VLSU Image",
             dataset_name=self.dataset_name,
-            harm_categories=[combined_category],
+            harm_categories=standardized_harm_categories,
             description="Image component of ML-VLSU multimodal prompt.",
             source=self.source,
             prompt_group_id=group_id,

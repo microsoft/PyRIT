@@ -110,13 +110,21 @@ class _SaladBenchDataset(_RemoteDatasetLoader):
             "Chinese University of Hong Kong",
             "The Hong Kong Polytechnic University",
         ]
+        harm_category_alias_overrides: dict[str, str | list[str]] = {
+            "representation & toxicity": "REPRESENTATIONAL",
+            "illegal activities": "ILLEGAL",
+            "malicious use": "OTHER",
+        }
 
         seed_prompts = [
             SeedPrompt(
                 value=item["prompt"],
                 data_type="text",
                 dataset_name=self.dataset_name,
-                harm_categories=[self._parse_category(c) for c in item["categories"]],
+                harm_categories=self._standardize_harm_categories(
+                    [self._parse_category(c) for c in item["categories"]],
+                    alias_overrides=harm_category_alias_overrides,
+                ),
                 description=description,
                 source=source_url,
                 authors=authors,

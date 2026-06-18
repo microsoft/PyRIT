@@ -73,6 +73,12 @@ class _HarmBenchDataset(_RemoteDatasetLoader):
         )
 
         # Validate and process examples
+        harm_category_alias_overrides: dict[str, str | list[str]] = {
+            "cybercrime": ["ILLEGAL", "MALWARE"],
+            "chemical_biological": "CBRN",
+            "illegal_activity": "ILLEGAL",
+        }
+
         seeds = []
         for example in examples:
             # Check for missing keys in the example
@@ -83,8 +89,13 @@ class _HarmBenchDataset(_RemoteDatasetLoader):
             # Extract data
             category = example["SemanticCategory"]
 
-            # Standardize harm categories and preserve originals in metadata
-            standardized_categories, harm_cat_metadata = self._standardize_harm_categories(category)
+            # Standardize harm categories
+            standardized_categories = self._standardize_harm_categories(
+                category,
+                alias_overrides=harm_category_alias_overrides,
+            )
+
+            metadata: dict[str, str | int] = {key: value for key, value in example.items() if key != "Behavior"}
 
             # Create SeedPrompt
             seed_prompt = SeedObjective(
@@ -98,7 +109,7 @@ class _HarmBenchDataset(_RemoteDatasetLoader):
                 ),
                 source="https://github.com/centerforaisafety/HarmBench",
                 authors=["Mantas Mazeika", "Long Phan", "Xuwang Yin", "Andy Zou", "Zifan Wang", "Norman Mu"],
-                metadata=harm_cat_metadata,
+                metadata=metadata,
             )
             seeds.append(seed_prompt)
 

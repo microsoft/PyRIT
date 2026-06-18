@@ -225,6 +225,19 @@ class _SIUODataset(_RemoteDatasetLoader):
         category = example["category"]
         image_filename = example["image"]
         safety_warning = example["safety_warning"]
+        harm_category_alias_overrides: dict[str, str | list[str]] = {
+            "illegal activities & crime": "ILLEGAL",
+            "dangerous behavior": "VIOLENT_CONTENT",
+            "discrimination & stereotyping": ["REPRESENTATIONAL", "HATESPEECH"],
+            "information misinterpretation": "INFO_INTEGRITY",
+            "controversial topics, politics": "CAMPAIGNING",
+            "morality": "OTHER",
+            "religion beliefs": "OTHER",
+        }
+        standardized_harm_categories = self._standardize_harm_categories(
+            category,
+            alias_overrides=harm_category_alias_overrides,
+        )
 
         image_url = f"{self.IMAGE_BASE_URL}{image_filename}"
         image_stem = image_filename.rsplit(".", 1)[0]
@@ -244,7 +257,7 @@ class _SIUODataset(_RemoteDatasetLoader):
             value=question,
             name=f"SIUO Objective - {question_id}",
             dataset_name=self.dataset_name,
-            harm_categories=[category],
+            harm_categories=standardized_harm_categories,
             description=_DESCRIPTION,
             authors=_AUTHORS,
             groups=_GROUPS,
@@ -257,7 +270,7 @@ class _SIUODataset(_RemoteDatasetLoader):
             data_type="text",
             name=f"SIUO Text - {question_id}",
             dataset_name=self.dataset_name,
-            harm_categories=[category],
+            harm_categories=standardized_harm_categories,
             description=_DESCRIPTION,
             authors=_AUTHORS,
             groups=_GROUPS,
@@ -272,7 +285,7 @@ class _SIUODataset(_RemoteDatasetLoader):
             data_type="image_path",
             name=f"SIUO Image - {question_id}",
             dataset_name=self.dataset_name,
-            harm_categories=[category],
+            harm_categories=standardized_harm_categories,
             description=_DESCRIPTION,
             authors=_AUTHORS,
             groups=_GROUPS,

@@ -227,6 +227,25 @@ class _VisualLeakBenchDataset(_RemoteDatasetLoader):
         group_id = uuid.uuid4()
 
         harm_categories = self._build_harm_categories(category_str, pii_type_str)
+        standardized_harm_categories = list(
+            dict.fromkeys(
+                self._standardize_harm_categories(
+                    harm_categories,
+                    alias_overrides={
+                        "ocr_injection": "DECEPTION",
+                        "pii_leakage": "PPI",
+                        "email": "PPI",
+                        "dob": "PPI",
+                        "phone": "PPI",
+                        "password": "PPI",
+                        "pin": "PPI",
+                        "api_key": "PPI",
+                        "ssn": "PPI",
+                        "credit_card": "PPI",
+                    },
+                )
+            )
+        )
         text_prompt_value = self._get_query_prompt(category_str)
 
         local_image_path = await self._fetch_and_save_image_async(image_url, example_id)
@@ -236,7 +255,7 @@ class _VisualLeakBenchDataset(_RemoteDatasetLoader):
             data_type="image_path",
             name=f"VisualLeakBench Image - {example_id}",
             dataset_name=self.dataset_name,
-            harm_categories=harm_categories,
+            harm_categories=standardized_harm_categories,
             description=description,
             authors=authors,
             source=self.PAPER_URL,
@@ -255,7 +274,7 @@ class _VisualLeakBenchDataset(_RemoteDatasetLoader):
             data_type="text",
             name=f"VisualLeakBench Text - {example_id}",
             dataset_name=self.dataset_name,
-            harm_categories=harm_categories,
+            harm_categories=standardized_harm_categories,
             description=description,
             authors=authors,
             source=self.PAPER_URL,

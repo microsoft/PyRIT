@@ -80,7 +80,7 @@ Financial Advice, Health Consultation, and Government Decision."""
                 data_type="text",
                 dataset_name=self.dataset_name,
                 authors=authors,
-                harm_categories=item["content_policy_name"],
+                harm_categories=self._standardize_harm_categories(item.get("content_policy_name")),
                 source="https://huggingface.co/datasets/TrustAIRLab/forbidden_question_set",
                 description=description,
             )

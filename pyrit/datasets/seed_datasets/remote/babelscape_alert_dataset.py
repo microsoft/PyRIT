@@ -75,11 +75,18 @@ class _BabelscapeAlertDataset(_RemoteDatasetLoader):
                 cache=cache,
             )
             prompts.extend((item["prompt"], item["category"]) for item in data)
+        harm_category_alias_overrides: dict[str, str | list[str]] = {
+            "cybercrime": ["ILLEGAL", "MALWARE"],
+            "crime_injury": ["ILLEGAL", "VIOLENT_CONTENT"],
+        }
 
         seed_prompts = [
             SeedPrompt(
                 value=prompt,
-                harm_categories=[category],
+                harm_categories=self._standardize_harm_categories(
+                    category,
+                    alias_overrides=harm_category_alias_overrides,
+                ),
                 data_type="text",
                 dataset_name=self.dataset_name,
                 description=(

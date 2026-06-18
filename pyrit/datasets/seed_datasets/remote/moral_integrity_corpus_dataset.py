@@ -89,7 +89,7 @@ class _MICDataset(_RemoteDatasetLoader):
                         data_type="text",
                         dataset_name=self.dataset_name,
                         source=self.source,
-                        harm_categories=categories,
+                        harm_categories=list(dict.fromkeys(self._standardize_harm_categories(categories))),
                         authors=self.AUTHORS,
                     )
                 )

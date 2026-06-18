@@ -9,7 +9,7 @@ import logging
 import tempfile
 import zipfile
 from abc import ABC
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import fields
 from enum import Enum
 from pathlib import Path
@@ -104,35 +104,24 @@ class _RemoteDatasetLoader(SeedDatasetProvider, ABC):
     @staticmethod
     def _standardize_harm_categories(
         raw_categories: list[str] | str | None,
-    ) -> tuple[list[str], dict[str, str]]:
+        *,
+        alias_overrides: Mapping[str, object] | None = None,
+    ) -> list[str]:
         """
-        Standardize raw harm categories and preserve originals in metadata.
+        Standardize raw harm categories.
 
-        Converts raw category string(s) to standardized HarmCategory enum names,
-        preserving the original values in metadata for later querying.
+        Converts raw category string(s) to standardized HarmCategory enum names.
 
         Args:
             raw_categories: Raw category string(s) from the dataset
-                          (e.g., "violence", "harmful"), or None.
+                           (e.g., "violence", "harmful"), or None.
+            alias_overrides: Optional dataset-specific mapping that overrides alias
+                resolution and can map one raw category to multiple canonical values.
 
         Returns:
-            A tuple of (standardized_categories, metadata_dict) where:
-            - standardized_categories: List of standardized HarmCategory enum names
-            - metadata_dict: Dictionary with "original_harm_categories" key if
-                           originals differ from standardized, else empty dict
+            List of standardized HarmCategory enum names.
         """
-        standardized = standardize_harm_categories(raw_categories)
-        metadata: dict[str, str] = {}
-
-        # Preserve original values if they exist and differ from standardized
-        if raw_categories:
-            original_list = [raw_categories] if isinstance(raw_categories, str) else list(raw_categories)
-            original_list = [cat for cat in original_list if cat]  # Filter empty strings
-
-            if original_list and original_list != standardized:
-                metadata["original_harm_categories"] = ",".join(original_list)
-
-        return standardized, metadata
+        return standardize_harm_categories(raw_categories, alias_overrides=alias_overrides)
 
     def _get_cache_file_name(self, *, source: str, file_type: str) -> str:
         """

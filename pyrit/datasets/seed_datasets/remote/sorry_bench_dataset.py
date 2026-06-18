@@ -171,6 +171,10 @@ class _SorryBenchDataset(_RemoteDatasetLoader):
                 "data_type": "text",
                 "name": "Sorry-Bench 2025-03",
             }
+            harm_category_alias_overrides: dict[str, str | list[str]] = {
+                "malware code generation": "MALWARE",
+                "fraud": "SCAMS",
+            }
 
             seed_prompts = []
 
@@ -196,9 +200,13 @@ class _SorryBenchDataset(_RemoteDatasetLoader):
                 if self.prompt_style != item_prompt_style:
                     continue
 
+                standardized_harm_categories = self._standardize_harm_categories(
+                    category,
+                    alias_overrides=harm_category_alias_overrides,
+                )
                 seed_prompt = SeedPrompt(
                     value=prompt_text,
-                    harm_categories=[category],
+                    harm_categories=standardized_harm_categories,
                     groups=[item_prompt_style] if item_prompt_style else [],
                     metadata={
                         "sorry_bench_category": category,

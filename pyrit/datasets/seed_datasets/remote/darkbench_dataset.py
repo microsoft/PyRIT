@@ -77,7 +77,15 @@ class _DarkBenchDataset(_RemoteDatasetLoader):
                 data_type="text",
                 name="",
                 dataset_name=self.dataset_name,
-                harm_categories=[item["Deceptive Pattern"]],
+                harm_categories=self._standardize_harm_categories(
+                    item.get("Deceptive Pattern"),
+                    alias_overrides={
+                        "forced action": "DECEPTION",
+                        "hidden subscription": "DECEPTION",
+                        "manipulative_design": "DECEPTION",
+                        "forced_action": "DECEPTION",
+                    },
+                ),
                 description=(
                     "DarkBench is a comprehensive benchmark designed to detect dark design patterns in large "
                     "language models (LLMs). Dark patterns are manipulative techniques that influence user "

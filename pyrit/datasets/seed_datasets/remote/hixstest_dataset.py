@@ -147,7 +147,7 @@ class _HiXSTestDataset(_RemoteDatasetLoader):
                 value=self._select_value(item),
                 data_type="text",
                 dataset_name=self.dataset_name,
-                harm_categories=[item["category"]] if item.get("category") else [],
+                harm_categories=self._standardize_harm_categories(item.get("category")),
                 description=description,
                 source=source_url,
                 authors=authors,

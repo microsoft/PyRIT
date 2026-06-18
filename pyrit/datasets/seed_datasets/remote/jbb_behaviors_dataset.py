@@ -97,11 +97,12 @@ class _JBBBehaviorsDataset(_RemoteDatasetLoader):
 
                 # Map JBB categories to PyRIT harm categories
                 harm_categories = self._map_jbb_category_to_harm_category(category)
+                standardized_categories = self._standardize_harm_categories(harm_categories)
 
                 # Create SeedPrompt object with all metadata
                 seed_prompt = SeedPrompt(
                     value=behavior,
-                    harm_categories=harm_categories,
+                    harm_categories=standardized_categories,
                     groups=[category] if category else [],
                     metadata={
                         "jbb_category": category,

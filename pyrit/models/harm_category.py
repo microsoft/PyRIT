@@ -4,10 +4,15 @@
 
 """Harm category taxonomy and standardization utilities for seed classification."""
 
+import logging
 import os
+from collections.abc import Mapping
 from enum import Enum
+from typing import cast
 
 import yaml
+
+logger = logging.getLogger(__name__)
 
 try:
     from enum import StrEnum  # type: ignore[attr-defined]
@@ -17,7 +22,7 @@ except ImportError:  # Python 3.10 and below
         """Minimal backport of enum.StrEnum for Python < 3.11."""
 
 
-_HARM_CATEGORY_ALIASES: dict[str, "HarmCategory"] = {}
+_HARM_CATEGORY_ALIASES: dict[str, object] = {}
 
 with open(os.path.join(os.path.dirname(__file__), "harm_category_definitions.yaml")) as f:
     _HARM_CATEGORY_DEFINITIONS: dict[str, str] = yaml.safe_load(f).get("definitions", {})
@@ -96,36 +101,36 @@ class HarmCategory(StrEnum):
             return
         _HARM_CATEGORY_ALIASES.update(  # type: ignore[arg-type, union-attr]
             {
-                "ableism": cls.REPRESENTATIONAL,
-                "bias": cls.REPRESENTATIONAL,
+                "ableism": [cls.REPRESENTATIONAL, cls.HATESPEECH],
+                "bias": [cls.REPRESENTATIONAL, cls.HATESPEECH],
                 "biology": cls.CBRN,
                 "bullying": cls.HARASSMENT,
                 "chemistry": cls.CBRN,
                 "copyright issues": cls.COPYRIGHT,
-                "cybercrime": cls.ILLEGAL,
-                "discriminatory behavior": cls.REPRESENTATIONAL,
-                "discrimination": cls.REPRESENTATIONAL,
+                "discriminatory behavior": [cls.REPRESENTATIONAL, cls.HATESPEECH],
+                "discrimination": [cls.REPRESENTATIONAL, cls.HATESPEECH],
                 "drugs": cls.DRUG_USE,
                 "economic crime": cls.ILLEGAL,
                 "endangering national security": cls.HIGH_RISK_GOVERNMENT,
                 "endangering public health": cls.PUBLIC_HEALTH,
-                "homophobia": cls.REPRESENTATIONAL,
+                "homophobia": [cls.REPRESENTATIONAL, cls.HATESPEECH],
                 "human trafficking": cls.COORDINATION_HARM,
                 "illegal": cls.ILLEGAL,
                 "insulting behavior": cls.HARASSMENT,
                 "medicine": cls.PUBLIC_HEALTH,
                 "mental manipulation": cls.MENTAL_HEALTH,
-                "misogyny": cls.REPRESENTATIONAL,
+                "misogyny": [cls.REPRESENTATIONAL, cls.HATESPEECH],
                 "pharmacology": cls.PSEUDO_PHARMA,
                 "physical harm": cls.VIOLENT_CONTENT,
                 "physics": cls.HIGH_RISK_GOVERNMENT,
                 "privacy violation": cls.PPI,
                 "psychological harm": cls.EMOTIONAL,
                 "psychology": cls.MENTAL_HEALTH,
-                "racism": cls.REPRESENTATIONAL,
-                "religious discrimination": cls.REPRESENTATIONAL,
-                "sexism": cls.REPRESENTATIONAL,
+                "racism": [cls.REPRESENTATIONAL, cls.HATESPEECH],
+                "religious discrimination": [cls.REPRESENTATIONAL, cls.HATESPEECH],
+                "sexism": [cls.REPRESENTATIONAL, cls.HATESPEECH],
                 "sexual content": cls.SEXUAL_CONTENT,
+                "sexual violence": [cls.SEXUAL_CONTENT, cls.VIOLENT_CONTENT],
                 "stereotyping": cls.REPRESENTATIONAL,
                 "violent": cls.VIOLENT_CONTENT,
                 "violence": cls.VIOLENT_CONTENT,
@@ -134,29 +139,135 @@ class HarmCategory(StrEnum):
         )
 
     @classmethod
-    def parse(cls, value: str) -> "HarmCategory":  # type: ignore[override]
+    def _resolve_canonical_category(cls, value: str) -> "HarmCategory | None":
+        """
+        Resolve a canonical category from enum name or display value.
+
+        Returns:
+            HarmCategory enum member if found, None otherwise.
+        """
+        normalized_value = value.strip().lower()
+        if not normalized_value:
+            return None
+
+        for member in cls.__members__.values():
+            if str(member.value).lower() == normalized_value or str(member.name).lower() == normalized_value:
+                return member
+
+        return None
+
+    @classmethod
+    def _coerce_alias_mapping_value(
+        cls,
+        *,
+        alias_value: object,
+        strict: bool = False,
+    ) -> list["HarmCategory"]:
+        """
+        Convert an alias/override mapping value to one or more canonical categories.
+
+        Args:
+            alias_value: Single string or list/tuple of strings mapping to canonical categories.
+            strict: If True, raise ValueError for unmapped strings. Otherwise fallback to OTHER.
+
+        Returns:
+            List of canonical HarmCategory enum members.
+
+        Raises:
+            ValueError: If strict=True and an unmapped string is encountered.
+        """
+        values = alias_value if isinstance(alias_value, (list, tuple)) else [alias_value]
+        other_category = cast("HarmCategory", cls.OTHER)
+
+        resolved_categories: list[HarmCategory] = []
+        for value in values:
+            if isinstance(value, cls):
+                resolved_categories.append(value)
+                continue
+
+            if isinstance(value, str):
+                category = cls._resolve_canonical_category(value)
+                if category is not None:
+                    resolved_categories.append(category)
+                    continue
+
+            if strict:
+                raise ValueError(f"Invalid harm category mapping value: {value!r}")
+
+            resolved_categories.append(other_category)
+
+        return resolved_categories if resolved_categories else [other_category]
+
+    @classmethod
+    def parse_many(
+        cls,
+        value: str,
+        *,
+        alias_overrides: Mapping[str, object] | None = None,
+    ) -> list["HarmCategory"]:
+        """
+        Parse a raw harm category string to one or more canonical HarmCategory values.
+
+        Performs case-insensitive matching against canonical names/values, then
+        dataset-specific overrides, then built-in aliases. Falls back to OTHER.
+
+        Args:
+            value: Raw category string from a dataset.
+            alias_overrides: Dataset-specific alias mapping to override defaults.
+
+        Returns:
+            List of one or more canonical HarmCategory enum members.
+        """
+        normalized_value = value.strip().lower()
+        other_category = cast("HarmCategory", cls.OTHER)
+        if not normalized_value:
+            return [other_category]
+
+        cls._initialize_aliases()
+
+        canonical = cls._resolve_canonical_category(normalized_value)
+        if canonical is not None:
+            return [canonical]
+
+        if alias_overrides and normalized_value in alias_overrides:
+            return cls._coerce_alias_mapping_value(
+                alias_value=alias_overrides[normalized_value],
+                strict=True,
+            )
+
+        if normalized_value in _HARM_CATEGORY_ALIASES:
+            return cls._coerce_alias_mapping_value(alias_value=_HARM_CATEGORY_ALIASES[normalized_value])
+
+        logger.warning(
+            "Unknown harm category %r — mapping to OTHER. "
+            "Consider adding an alias in HarmCategory._initialize_aliases or passing alias_overrides.",
+            value.strip(),
+        )
+        return [other_category]
+
+    @classmethod
+    def parse(
+        cls,
+        value: str,
+        *,
+        alias_overrides: Mapping[str, object] | None = None,
+    ) -> "HarmCategory":
         """
         Parse a raw harm category string to a canonical HarmCategory.
 
-        Performs case-insensitive matching against both canonical values and aliases.
+        Performs case-insensitive matching against canonical names/values, aliases,
+        and optional dataset-specific overrides.
         Falls back to OTHER for unknown categories.
 
         Args:
             value: Raw category string from a dataset.
+            alias_overrides: Dataset-specific alias mapping to override defaults.
 
         Returns:
-            Canonical HarmCategory enum member.
+            Canonical HarmCategory enum member. For one-to-many mappings, returns
+            the first mapped category.
         """
-        value = value.strip().lower()
-
-        for member in cls:  # type: ignore[union-attr]
-            if str(member.value).lower() == value:
-                return member
-
-        if value in _HARM_CATEGORY_ALIASES:
-            return _HARM_CATEGORY_ALIASES[value]
-
-        return cls.OTHER  # type: ignore[return-value]
+        return cls.parse_many(value, alias_overrides=alias_overrides)[0]
 
     @classmethod
     def get_definition(cls, category: "HarmCategory") -> str:
@@ -174,16 +285,20 @@ class HarmCategory(StrEnum):
 
 def standardize_harm_categories(
     raw_categories: list[str] | str | None,
+    *,
+    alias_overrides: Mapping[str, object] | None = None,
 ) -> list[str]:
     """
     Standardize raw harm categories to the canonical HarmCategory taxonomy.
 
     Converts a single category string or list of strings to standardized HarmCategory enum names.
-    Uses HarmCategory.parse() for alias resolution and fallback to OTHER.
+    Supports one-to-many alias mappings and dataset-specific alias overrides.
 
     Args:
         raw_categories: Raw category string(s) from the dataset (e.g., "violence", "harmful"),
-                       or None for datasets that don't specify categories.
+            or None for datasets that don't specify categories.
+        alias_overrides: Optional dataset-specific mapping from raw categories to
+            canonical category name(s) or enum values.
 
     Returns:
         List of standardized HarmCategory enum names (their .name attribute, e.g., "VIOLENT_CONTENT").
@@ -200,12 +315,16 @@ def standardize_harm_categories(
     # Normalize input to list
     categories_list = [raw_categories] if isinstance(raw_categories, str) else list(raw_categories)
 
+    normalized_overrides: dict[str, object] = {}
+    if alias_overrides:
+        normalized_overrides = {k.strip().lower(): v for k, v in alias_overrides.items() if k and k.strip()}
+
     # Parse and standardize each category
     HarmCategory._initialize_aliases()
     standardized = []
     for raw_cat in categories_list:
         if raw_cat:  # Skip empty strings
-            parsed = HarmCategory.parse(raw_cat)
-            standardized.append(parsed.name)
+            parsed_categories = HarmCategory.parse_many(raw_cat, alias_overrides=normalized_overrides)
+            standardized.extend(parsed.name for parsed in parsed_categories)
 
     return standardized

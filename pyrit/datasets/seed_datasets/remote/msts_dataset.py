@@ -125,6 +125,12 @@ class _MSTSDataset(_RemoteDatasetLoader):
         "Suicide & Self-Harm",
         "Other",
     ]
+    HARM_CATEGORY_ALIAS_OVERRIDES: dict[str, str | list[str]] = {
+        "violent crimes": "VIOLENT_CONTENT",
+        "non-violent crimes": "ILLEGAL",
+        "sex-related crimes": "SEXUAL_CONTENT",
+        "suicide & self-harm": ["SUICIDE", "SELF_HARM"],
+    }
     modalities: list[str] = ["text", "image"]
     size: str = "large"
     tags: set[str] = {"default", "safety", "multimodal", "multilingual"}
@@ -311,7 +317,10 @@ class _MSTSDataset(_RemoteDatasetLoader):
         )
 
         group_id = uuid.uuid4()
-        harm_categories = [hazard_category] if hazard_category else []
+        harm_categories = self._standardize_harm_categories(
+            hazard_category,
+            alias_overrides=self.HARM_CATEGORY_ALIAS_OVERRIDES,
+        )
         metadata: dict[str, str | int] = {
             "case_id": case_id,
             "image_id": image_id,

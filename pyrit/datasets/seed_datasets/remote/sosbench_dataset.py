@@ -64,7 +64,7 @@ class _SOSBenchDataset(_RemoteDatasetLoader):
                 value=item["goal"],
                 data_type="text",
                 dataset_name=self.dataset_name,
-                harm_categories=[item["subject"]],
+                harm_categories=self._standardize_harm_categories(item.get("subject")),
                 description=(
                     "SOSBench is a regulation-grounded, hazard-focused benchmark encompassing "
                     "six high-risk scientific domains: chemistry, biology, medicine, pharmacology, "

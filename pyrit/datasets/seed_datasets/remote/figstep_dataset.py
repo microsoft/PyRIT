@@ -161,6 +161,13 @@ class _FigStepDataset(_RemoteDatasetLoader):
     modalities: tuple[str, ...] = ("text", "image")
     size: str = "small"
     tags: frozenset[str] = frozenset({"default", "safety", "multimodal"})
+    HARM_CATEGORY_ALIAS_OVERRIDES: dict[str, str] = {
+        "malware generation": "MALWARE",
+        "adult content": "SEXUAL_CONTENT",
+        "legal opinion": "LEGAL_ADVICE",
+        "health consultation": "PUBLIC_HEALTH",
+        "fraud": "SCAMS",
+    }
 
     def __init__(
         self,
@@ -317,12 +324,16 @@ class _FigStepDataset(_RemoteDatasetLoader):
 
         group_id = uuid.uuid4()
         common_metadata = self._build_row_metadata(row=row)
+        standardized_categories = self._standardize_harm_categories(
+            row["category_name"],
+            alias_overrides=self.HARM_CATEGORY_ALIAS_OVERRIDES,
+        )
 
         objective = SeedObjective(
             value=row["question"],
             name=f"FigStep Objective - {category_id}_{task_id}",
             dataset_name=self.dataset_name,
-            harm_categories=[row["category_name"]],
+            harm_categories=standardized_categories,
             description=_DESCRIPTION,
             authors=list(_AUTHORS),
             groups=list(_GROUPS),
@@ -335,7 +346,7 @@ class _FigStepDataset(_RemoteDatasetLoader):
             data_type="image_path",
             name=f"FigStep Image - {category_id}_{task_id}",
             dataset_name=self.dataset_name,
-            harm_categories=[row["category_name"]],
+            harm_categories=standardized_categories,
             description=_DESCRIPTION,
             authors=list(_AUTHORS),
             groups=list(_GROUPS),
@@ -350,7 +361,7 @@ class _FigStepDataset(_RemoteDatasetLoader):
             data_type="text",
             name=f"FigStep Text - {category_id}_{task_id}",
             dataset_name=self.dataset_name,
-            harm_categories=[row["category_name"]],
+            harm_categories=standardized_categories,
             description=_DESCRIPTION,
             authors=list(_AUTHORS),
             groups=list(_GROUPS),
@@ -406,12 +417,16 @@ class _FigStepDataset(_RemoteDatasetLoader):
         group_id = uuid.uuid4()
         common_metadata = self._build_row_metadata(row=row)
         common_metadata["benign_sentence"] = benign_sentence
+        standardized_categories = self._standardize_harm_categories(
+            row["category_name"],
+            alias_overrides=self.HARM_CATEGORY_ALIAS_OVERRIDES,
+        )
 
         objective = SeedObjective(
             value=row["question"],
             name=f"FigStep-Pro Objective - {category_id}_{task_id}",
             dataset_name=self.dataset_name,
-            harm_categories=[row["category_name"]],
+            harm_categories=standardized_categories,
             description=_DESCRIPTION,
             authors=list(_AUTHORS),
             groups=list(_GROUPS),
@@ -427,7 +442,7 @@ class _FigStepDataset(_RemoteDatasetLoader):
                     data_type="image_path",
                     name=f"FigStep-Pro Image - {category_id}_{task_id}_split_{split_idx}",
                     dataset_name=self.dataset_name,
-                    harm_categories=[row["category_name"]],
+                    harm_categories=standardized_categories,
                     description=_DESCRIPTION,
                     authors=list(_AUTHORS),
                     groups=list(_GROUPS),
@@ -445,7 +460,7 @@ class _FigStepDataset(_RemoteDatasetLoader):
                 data_type="text",
                 name=f"FigStep-Pro Text - {category_id}_{task_id}",
                 dataset_name=self.dataset_name,
-                harm_categories=[row["category_name"]],
+                harm_categories=standardized_categories,
                 description=_DESCRIPTION,
                 authors=list(_AUTHORS),
                 groups=list(_GROUPS),

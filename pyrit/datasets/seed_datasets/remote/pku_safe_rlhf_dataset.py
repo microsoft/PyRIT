@@ -114,12 +114,13 @@ class _PKUSafeRLHFDataset(_RemoteDatasetLoader):
             if not self.filter_harm_categories or any(
                 category in self.filter_harm_categories for category in harm_categories
             ):
+                standardized_harm_categories = self._standardize_harm_categories(sorted(harm_categories))
                 seed_prompts.append(
                     SeedPrompt(
                         value=item["prompt"],
                         data_type="text",
                         dataset_name=self.dataset_name,
-                        harm_categories=sorted(harm_categories),
+                        harm_categories=standardized_harm_categories,
                         description=(
                             "This is a Hugging Face dataset that labels a prompt and 2 responses categorizing "
                             "their helpfulness or harmfulness. Only the 'prompt' column is extracted."

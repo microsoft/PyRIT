@@ -82,6 +82,38 @@ class _MLCommonsAILuminateDataset(_RemoteDatasetLoader):
             source_type=self.source_type,
             cache=cache,
         )
+        harm_category_alias_overrides: dict[str, str | list[str]] = {
+            "vcr": "VIOLENT_CONTENT",
+            "violent crimes": "VIOLENT_CONTENT",
+            "src": "SEXUAL_CONTENT",
+            "sex-related crimes": "SEXUAL_CONTENT",
+            "cse": "SEXUAL_CONTENT",
+            "child sexual exploitation": "SEXUAL_CONTENT",
+            "ssh": ["SUICIDE", "SELF_HARM"],
+            "suicide & self-harm": ["SUICIDE", "SELF_HARM"],
+            "iwp": "CBRN",
+            "indiscriminate weapons (cbrne)": "CBRN",
+            "ipv": "COPYRIGHT",
+            "intellectual property violations": "COPYRIGHT",
+            "dfm": "REPUTATIONAL_DAMAGE",
+            "defamation": "REPUTATIONAL_DAMAGE",
+            "ncr": "ILLEGAL",
+            "non-violent crimes": "ILLEGAL",
+            "hte": "HATESPEECH",
+            "hate": "HATESPEECH",
+            "prv": "PPI",
+            "privacy violations": "PPI",
+            "spc_ele": "CAMPAIGNING",
+            "specialized advice; elections": "CAMPAIGNING",
+            "spc_fin": "FINANCIAL_ADVICE",
+            "specialized advice; financial": "FINANCIAL_ADVICE",
+            "spc_hlt": "PUBLIC_HEALTH",
+            "specialized advice; health": "PUBLIC_HEALTH",
+            "sxc_prn": "SEXUAL_CONTENT",
+            "sexual content; pornographic": "SEXUAL_CONTENT",
+            "spc_lgl": "LEGAL_ADVICE",
+            "specialized advice; legal": "LEGAL_ADVICE",
+        }
 
         seed_prompts = [
             SeedPrompt(
@@ -89,7 +121,14 @@ class _MLCommonsAILuminateDataset(_RemoteDatasetLoader):
                 data_type="text",
                 dataset_name=self.dataset_name,
                 # Saving both the full hazard category name and the abbreviation
-                harm_categories=[self.HAZARD_CATEGORIES_MAP[example["hazard"]], example["hazard"]],
+                harm_categories=list(
+                    dict.fromkeys(
+                        self._standardize_harm_categories(
+                            [self.HAZARD_CATEGORIES_MAP[example["hazard"]], example["hazard"]],
+                            alias_overrides=harm_category_alias_overrides,
+                        )
+                    )
+                ),
                 description=(
                     "This dataset contains the DEMO prompt library of the AILuminate 1.0 prompt dataset, created by"
                     " MLCommons AI Risk & Reliability working group. It contains 1,200 human-generated prompts that"

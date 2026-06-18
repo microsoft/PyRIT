@@ -235,6 +235,18 @@ class _AgentThreatRulesDataset(_RemoteDatasetLoader):
 
         authors = ["Kuan-Hsin Lin", "ATR Community"]
         source_url = "https://github.com/Agent-Threat-Rule/agent-threat-rules"
+        harm_category_alias_overrides: dict[str, str | list[str]] = {
+            "prompt-injection": "DECEPTION",
+            "tool-poisoning": "INSECURE_CODE",
+            "context-exfiltration": ["PROPRIETARY_INFO", "PPI"],
+            "agent-manipulation": "DECEPTION",
+            "privilege-escalation": "INSECURE_CODE",
+            "skill-compromise": "INSECURE_CODE",
+            "data-poisoning": "INSECURE_CODE",
+            "excessive-autonomy": "HIGH_RISK_GOVERNMENT",
+            "model-abuse": "INSECURE_CODE",
+            "model-security": "INSECURE_CODE",
+        }
 
         seeds: list[SeedPrompt] = []
         skipped_unknown_rule = 0
@@ -254,6 +266,10 @@ class _AgentThreatRulesDataset(_RemoteDatasetLoader):
                 continue
 
             category_value = category.value
+            standardized_categories = self._standardize_harm_categories(
+                category_value,
+                alias_overrides=harm_category_alias_overrides,
+            )
 
             if self._categories and category_value not in self._categories:
                 continue
@@ -270,6 +286,7 @@ class _AgentThreatRulesDataset(_RemoteDatasetLoader):
                 "detection_field": example["detection_field"],
                 "variation_type": example["variation_type"],
                 "atr_id": example["id"],
+                "atr_category": category_value,
             }
 
             # Per-rule description so downstream consumers reading metadata see
@@ -286,7 +303,7 @@ class _AgentThreatRulesDataset(_RemoteDatasetLoader):
                     data_type="text",
                     name=rule_id,
                     dataset_name=self.dataset_name,
-                    harm_categories=[category_value],
+                    harm_categories=standardized_categories,
                     description=description,
                     authors=authors,
                     source=source_url,

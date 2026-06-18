@@ -91,6 +91,10 @@ class _CBTBenchDataset(_RemoteDatasetLoader):
             "in assisting Cognitive Behavioral Therapy (CBT). The dataset covers basic CBT knowledge, "
             "cognitive model understanding, and therapeutic response generation."
         )
+        harm_categories = self._standardize_harm_categories(
+            "psycho-social harms",
+            alias_overrides={"psycho-social harms": "EMOTIONAL"},
+        )
 
         seed_prompts = []
 
@@ -123,7 +127,7 @@ class _CBTBenchDataset(_RemoteDatasetLoader):
                 value=value,
                 data_type="text",
                 dataset_name=self.dataset_name,
-                harm_categories=["psycho-social harms"],
+                harm_categories=harm_categories,
                 description=description,
                 source=f"https://huggingface.co/datasets/{self.source}",
                 authors=authors,

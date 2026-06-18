@@ -137,6 +137,22 @@ class _AegisContentSafetyDataset(_RemoteDatasetLoader):
 
         # Load dataset from Hugging Face
         hf_dataset = load_dataset("nvidia/Aegis-AI-Content-Safety-Dataset-2.0")
+        harm_category_alias_overrides: dict[str, str | list[str]] = {
+            "controlled/regulated substances": "DRUG_USE",
+            "copyright/trademark/plagiarism": ["COPYRIGHT", "TRADEMARK", "PLAGIARISM"],
+            "criminal planning/confessions": "ILLEGAL",
+            "fraud/deception": ["SCAMS", "DECEPTION"],
+            "guns and illegal weapons": "MILITARY",
+            "hate/identity hate": ["HATESPEECH", "REPRESENTATIONAL"],
+            "high risk gov decision making": "HIGH_RISK_GOVERNMENT",
+            "pii/privacy": "PPI",
+            "political/misinformation/conspiracy": ["INFO_INTEGRITY", "CAMPAIGNING"],
+            "sexual": "SEXUAL_CONTENT",
+            "sexual (minor)": "SEXUAL_CONTENT",
+            "suicide and self harm": ["SUICIDE", "SELF_HARM"],
+            "threat": "VIOLENT_THREATS",
+            "unauthorized advice": "OTHER",
+        }
 
         seed_prompts = []
 
@@ -159,6 +175,10 @@ class _AegisContentSafetyDataset(_RemoteDatasetLoader):
                     # The violated_categories field contains comma-separated category names
                     categories = [cat.strip() for cat in violated_categories.split(",") if cat.strip()]
                     prompt_harm_categories = categories
+                standardized_categories = self._standardize_harm_categories(
+                    prompt_harm_categories,
+                    alias_overrides=harm_category_alias_overrides,
+                )
 
                 # Filter by harm_categories if specified
                 if self.harm_categories_filter is not None and (
@@ -176,7 +196,7 @@ class _AegisContentSafetyDataset(_RemoteDatasetLoader):
                         value=prompt_value,
                         data_type="text",
                         dataset_name=self.dataset_name,
-                        harm_categories=prompt_harm_categories if prompt_harm_categories else None,
+                        harm_categories=standardized_categories if standardized_categories else None,
                         source=self.source,
                     )
                 )

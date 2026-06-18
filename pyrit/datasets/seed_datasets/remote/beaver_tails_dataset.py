@@ -97,7 +97,23 @@ class _BeaverTailsDataset(_RemoteDatasetLoader):
             if self.unsafe_only and item["is_safe"]:
                 continue
 
-            harm_categories = [k for k, v in item["category"].items() if v]
+            raw_harm_categories = [
+                part.strip() for k, v in item["category"].items() if v for part in k.split(",") if part.strip()
+            ]
+            harm_categories = list(
+                dict.fromkeys(
+                    self._standardize_harm_categories(
+                        raw_harm_categories,
+                        alias_overrides={
+                            "financial_crime": "ILLEGAL",
+                            "property_crime": "ILLEGAL",
+                            "theft": "ILLEGAL",
+                            "aiding_and_abetting": "COORDINATION_HARM",
+                            "incitement": "VIOLENT_THREATS",
+                        },
+                    )
+                )
+            )
 
             seed_prompts.append(
                 SeedPrompt(

@@ -107,13 +107,29 @@ class _CategoricalHarmfulQADataset(_RemoteDatasetLoader):
         )
         source_url = f"https://huggingface.co/datasets/{self.HF_DATASET_NAME}"
         groups = ["DeCLaRe Lab, Singapore University of Technology and Design"]
+        harm_category_alias_overrides: dict[str, str | list[str]] = {
+            "adult content": "SEXUAL_CONTENT",
+            "child abuse": "COORDINATION_HARM",
+            "economic harm": "ILLEGAL",
+            "fraud/deception": ["SCAMS", "DECEPTION"],
+            "hate/harass/violence": ["HATESPEECH", "HARASSMENT", "VIOLENT_CONTENT"],
+            "illegal activity": "ILLEGAL",
+            "malware viruses": "MALWARE",
+            "physical harm": "VIOLENT_CONTENT",
+            "political campaigning": "CAMPAIGNING",
+            "privacy violation activity": "PPI",
+            "tailored financial advice": "FINANCIAL_ADVICE",
+        }
 
         seed_objectives = [
             SeedObjective(
                 value=item["Question"],
                 name="CategoricalHarmfulQA",
                 dataset_name=self.dataset_name,
-                harm_categories=[item["Category"]] if item.get("Category") else [],
+                harm_categories=self._standardize_harm_categories(
+                    item.get("Category"),
+                    alias_overrides=harm_category_alias_overrides,
+                ),
                 description=description,
                 source=source_url,
                 authors=authors,

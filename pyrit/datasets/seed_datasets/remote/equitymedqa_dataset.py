@@ -131,6 +131,10 @@ class _EquityMedQADataset(_RemoteDatasetLoader):
 
         # Remove duplicates across all subsets
         unique_prompts = list(set(prompts))
+        standardized_harm_categories = self._standardize_harm_categories(
+            "health_bias",
+            alias_overrides={"health_bias": "REPRESENTATIONAL"},
+        )
 
         seed_prompts = [
             SeedPrompt(
@@ -138,7 +142,7 @@ class _EquityMedQADataset(_RemoteDatasetLoader):
                 data_type="text",
                 dataset_name=self.dataset_name,
                 description="This dataset contains prompts used to assess medical biases in AI systems",
-                harm_categories=["health_bias"],
+                harm_categories=standardized_harm_categories,
                 source=f"https://huggingface.co/datasets/{self.source}",
             )
             for prompt in unique_prompts

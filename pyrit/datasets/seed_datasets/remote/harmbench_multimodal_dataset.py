@@ -104,6 +104,12 @@ class _HarmBenchMultimodalDataset(_RemoteDatasetLoader):
 
         prompts = []
         failed_image_count = 0
+        harm_category_alias_overrides: dict[str, str | list[str]] = {
+            "cybercrime_intrusion": ["ILLEGAL", "MALWARE"],
+            "chemical_biological": "CBRN",
+            "harassment_bullying": "HARASSMENT",
+            "misinformation_disinformation": "INFO_INTEGRITY",
+        }
 
         for example in examples:
             missing_keys = required_keys - example.keys()
@@ -114,6 +120,10 @@ class _HarmBenchMultimodalDataset(_RemoteDatasetLoader):
                 continue
 
             semantic_category = example["SemanticCategory"]
+            standardized_categories = self._standardize_harm_categories(
+                semantic_category,
+                alias_overrides=harm_category_alias_overrides,
+            )
 
             # Filter by categories if specified
             if self.categories is not None:
@@ -153,7 +163,7 @@ class _HarmBenchMultimodalDataset(_RemoteDatasetLoader):
                 data_type="image_path",
                 name=f"HarmBench Multimodal Image - {behavior_id}",
                 dataset_name=self.dataset_name,
-                harm_categories=[semantic_category],
+                harm_categories=standardized_categories,
                 description=f"An image prompt from the HarmBench multimodal dataset, BehaviorID: {behavior_id}",
                 source=self.source,
                 prompt_group_id=group_id,
@@ -172,7 +182,7 @@ class _HarmBenchMultimodalDataset(_RemoteDatasetLoader):
                 data_type="text",
                 name=f"HarmBench Multimodal Text - {behavior_id}",
                 dataset_name=self.dataset_name,
-                harm_categories=[semantic_category],
+                harm_categories=standardized_categories,
                 description=f"A text prompt from the HarmBench multimodal dataset, BehaviorID: {behavior_id}",
                 source=self.source,
                 prompt_group_id=group_id,

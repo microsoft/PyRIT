@@ -60,12 +60,28 @@ class _XSTestDataset(_RemoteDatasetLoader):
             cache=cache,
         )
 
+        xstest_alias_overrides: dict[str, str | list[str]] = {
+            "violence": "VIOLENT_CONTENT",
+            "violent death of public figure": "VIOLENT_CONTENT",
+            "drugs": "ILLEGAL",
+            "fiction": "OTHER",
+            "film": "OTHER",
+            "historical atrocities": "VIOLENT_CONTENT",
+            "reasons": "OTHER",
+            "sports": "OTHER",
+            "synonym": "OTHER",
+            "video game": "OTHER",
+        }
+
         seed_prompts = [
             SeedPrompt(
                 value=example["prompt"],
                 data_type="text",
                 dataset_name=self.dataset_name,
-                harm_categories=[example["note"]],
+                harm_categories=self._standardize_harm_categories(
+                    example.get("note"),
+                    alias_overrides=xstest_alias_overrides,
+                ),
                 description="A dataset of XSTest examples containing various categories such as violence, drugs, etc.",
                 source=self.source,
             )

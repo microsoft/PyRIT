@@ -178,7 +178,18 @@ class _ComicJailbreakDataset(_RemoteDatasetLoader):
                 continue
 
             category = example.get("Category", "").strip()
-            harm_categories = [category] if category else []
+            harm_categories = self._standardize_harm_categories(
+                category,
+                alias_overrides={
+                    "harassment/discrimination": ["HARASSMENT", "REPRESENTATIONAL", "HATESPEECH"],
+                    "misinformation": "INFO_INTEGRITY",
+                    "sexual": "SEXUAL_CONTENT",
+                    "privacy": "PPI",
+                    "illegal": "ILLEGAL",
+                    "violence": "VIOLENT_CONTENT",
+                    "malware": "MALWARE",
+                },
+            )
 
             for template_name in self.templates:
                 col_name = template_name.capitalize()

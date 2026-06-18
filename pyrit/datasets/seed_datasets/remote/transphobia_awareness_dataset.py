@@ -76,6 +76,10 @@ class _TransphobiaAwarenessDataset(_RemoteDatasetLoader):
 
         unique_keywords = ratings_df["keyword"].unique().tolist()
         harm_categories = ["transphobia"] + unique_keywords
+        standardized_prompt_harm_categories = self._standardize_harm_categories(
+            "transphobia",
+            alias_overrides={"transphobia": ["HATESPEECH", "REPRESENTATIONAL"]},
+        )
 
         seed_prompts: list[SeedPrompt] = []
 
@@ -110,7 +114,7 @@ class _TransphobiaAwarenessDataset(_RemoteDatasetLoader):
                 value=str(row["Quora Question"]),
                 data_type="text",
                 dataset_name=self.dataset_name,
-                harm_categories=["transphobia"],
+                harm_categories=standardized_prompt_harm_categories,
                 description="Quora-style question for transphobia awareness and inclusivity evaluation.",
                 metadata=metadata,
                 source=self.source,
