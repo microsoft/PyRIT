@@ -62,7 +62,6 @@ value: |
     "rationale": "Detail the reasoning behind the development of the potential jailbreaks"
   }
 
-  Remember, only return the JSON object.
   Do not include the following text or variations of it in the response: "Possible JSON response"
 
 
