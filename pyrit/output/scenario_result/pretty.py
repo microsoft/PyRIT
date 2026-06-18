@@ -133,6 +133,37 @@ class PrettyScenarioResultPrinter(ScenarioResultPrinterBase):
             return str(Fore.CYAN)
         return str(Fore.GREEN)
 
+    def _render_scenario_inputs(self, result: ScenarioResult) -> str:
+        """
+        Render the scenario's human-readable input summary, if any.
+
+        Scenarios may record a ``summary`` mapping (``dict[str, str]`` of label -> value) in
+        ``ScenarioResult.metadata`` to surface the concrete inputs a run used — e.g. the jailbreak
+        templates that were sampled. Only this curated mapping is rendered; other internal metadata
+        keys (such as ``objective_hashes``) are never shown.
+
+        Args:
+            result (ScenarioResult): The scenario result.
+
+        Returns:
+            str: The rendered "Scenario Inputs" block, or an empty string when no summary is present.
+        """
+        metadata = result.metadata or {}
+        summary = metadata.get("summary")
+        if not isinstance(summary, dict) or not summary:
+            return ""
+
+        lines: list[str] = []
+        lines.append("\n")
+        lines.append(self._format_colored(f"{self._indent}🧪 Scenario Inputs", Style.BRIGHT))
+        value_indent = self._indent * 4
+        available_width = 120 - len(value_indent)
+        for key, value in summary.items():
+            lines.append(self._format_colored(f"{self._indent * 2}• {key}:", Fore.CYAN))
+            wrapped_lines = textwrap.wrap(str(value), width=available_width, break_long_words=False) or [""]
+            lines.extend(self._format_colored(f"{value_indent}{line}", Fore.CYAN) for line in wrapped_lines)
+        return "".join(lines)
+
     async def render_async(self, result: ScenarioResult) -> str:
         """
         Render the scenario result summary and return it as a string.
@@ -166,6 +197,8 @@ class PrettyScenarioResultPrinter(ScenarioResultPrinterBase):
             available_width = 120 - len(desc_indent)
             wrapped_lines = textwrap.wrap(result.scenario_description, width=available_width, break_long_words=False)
             lines.extend(self._format_colored(f"{desc_indent}{line}", Fore.CYAN) for line in wrapped_lines)
+
+        lines.append(self._render_scenario_inputs(result))
 
         lines.append("\n")
         lines.append(self._format_colored(f"{self._indent}🎯 Target Information", Style.BRIGHT))

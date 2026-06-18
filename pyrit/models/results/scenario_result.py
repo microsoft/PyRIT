@@ -99,7 +99,10 @@ class ScenarioResult(BaseModel):
     #: Free-form JSON metadata persisted with the scenario result. Currently used to record
     #: ``objective_hashes`` — the objective ``sha256`` set chosen on the first run, replayed
     #: on resume so a fresh ``random.sample`` can't silently change which objectives the
-    #: scenario operates on. Keys are not part of any public contract and may evolve.
+    #: scenario operates on. Scenarios may also set ``summary`` (a ``dict[str, str]`` of
+    #: human-readable label -> value pairs, e.g. the jailbreak templates sampled) which the
+    #: pretty printer renders under "Scenario Inputs". Keys are not part of any public contract
+    #: and may evolve.
     metadata: dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="before")

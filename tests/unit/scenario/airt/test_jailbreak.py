@@ -485,6 +485,219 @@ class TestJailbreakAttackGeneration:
 
 
 @pytest.mark.usefixtures(*FIXTURES)
+class TestJailbreakParameters:
+    """Tests for the runtime parameters declared via supported_parameters()."""
+
+    def test_supported_parameters_declares_num_templates_and_num_attempts(self) -> None:
+        """Jailbreak exposes num_templates and num_attempts as runtime parameters."""
+        params = {p.name: p for p in Jailbreak.supported_parameters()}
+        assert "num_templates" in params
+        assert "num_attempts" in params
+        assert params["num_templates"].param_type is int
+        assert params["num_templates"].default == Jailbreak.DEFAULT_NUM_TEMPLATES
+        assert params["num_attempts"].param_type is int
+        assert params["num_attempts"].default == 1
+
+    async def test_default_num_templates_used_when_unset(
+        self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups
+    ):
+        """With no constructor arg and no runtime param, the declared default is used."""
+        with patch.object(
+            Jailbreak,
+            "_resolve_seed_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value={"memory": mock_memory_seed_groups},
+        ):
+            scenario = Jailbreak(objective_scorer=mock_objective_scorer)
+            await scenario.initialize_async(objective_target=mock_objective_target)
+            assert len(scenario._jailbreaks) == Jailbreak.DEFAULT_NUM_TEMPLATES
+
+    async def test_num_templates_param_overrides_default(
+        self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups
+    ):
+        """A num_templates runtime parameter (the CLI path) is honored."""
+        with patch.object(
+            Jailbreak,
+            "_resolve_seed_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value={"memory": mock_memory_seed_groups},
+        ):
+            scenario = Jailbreak(objective_scorer=mock_objective_scorer)
+            scenario.set_params_from_args(args={"num_templates": 3})
+            await scenario.initialize_async(objective_target=mock_objective_target)
+            assert len(scenario._jailbreaks) == 3
+
+    async def test_constructor_num_templates_wins_over_param(
+        self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups
+    ):
+        """An explicit constructor num_templates takes precedence over the runtime parameter."""
+        with patch.object(
+            Jailbreak,
+            "_resolve_seed_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value={"memory": mock_memory_seed_groups},
+        ):
+            scenario = Jailbreak(objective_scorer=mock_objective_scorer, num_templates=2)
+            scenario.set_params_from_args(args={"num_templates": 7})
+            await scenario.initialize_async(objective_target=mock_objective_target)
+            assert len(scenario._jailbreaks) == 2
+
+    async def test_num_attempts_param_override(
+        self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups
+    ):
+        """A num_attempts runtime parameter multiplies the atomic attack count."""
+        with patch.object(
+            Jailbreak,
+            "_resolve_seed_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value={"memory": mock_memory_seed_groups},
+        ):
+            scenario = Jailbreak(objective_scorer=mock_objective_scorer)
+            scenario.set_params_from_args(args={"num_templates": 2, "num_attempts": 2})
+            await scenario.initialize_async(objective_target=mock_objective_target, include_baseline=False)
+            # 2 templates x 1 strategy (SIMPLE = prompt_sending) x 2 attempts
+            assert len(scenario._atomic_attacks) == 4
+
+    def test_jailbreak_names_ignores_num_templates_param_default(self, mock_objective_scorer, mock_memory_seed_groups):
+        """The non-None num_templates parameter default must not trip the mutual-exclusion guard."""
+        valid_name = TextJailBreak.get_jailbreak_templates()[0]
+        with patch.object(
+            Jailbreak,
+            "_resolve_seed_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value={"memory": mock_memory_seed_groups},
+        ):
+            scenario = Jailbreak(objective_scorer=mock_objective_scorer, jailbreak_names=[valid_name])
+            assert scenario._jailbreaks == [valid_name]
+
+    async def test_fast_path_attack_count(self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups):
+        """The documented fast path (``--strategies simple``), one template, no baseline, yields one atomic attack."""
+        with patch.object(
+            Jailbreak,
+            "_resolve_seed_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value={"memory": mock_memory_seed_groups},
+        ):
+            scenario = Jailbreak(objective_scorer=mock_objective_scorer)
+            scenario.set_params_from_args(args={"num_templates": 1})
+            await scenario.initialize_async(
+                objective_target=mock_objective_target,
+                scenario_strategies=[JailbreakStrategy.SIMPLE],
+                include_baseline=False,
+            )
+            assert len(scenario._atomic_attacks) == 1
+
+    def test_default_num_templates_is_ten(self) -> None:
+        """The team-agreed default quick-path sample size is 10 templates."""
+        assert Jailbreak.DEFAULT_NUM_TEMPLATES == 10
+
+    async def test_explicit_none_num_templates_resolves_full_catalog(self, mock_objective_scorer):
+        """Passing num_templates=None opts out of sampling and runs the full catalog."""
+        scenario = Jailbreak(objective_scorer=mock_objective_scorer, num_templates=None)
+        resolved = scenario._resolve_jailbreaks()
+        assert len(resolved) == len(TextJailBreak.get_jailbreak_templates())
+
+    async def test_metadata_persists_selected_template_names(
+        self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups
+    ):
+        """The chosen template names are persisted in ScenarioResult.metadata so resume can replay them."""
+        with patch.object(
+            Jailbreak,
+            "_resolve_seed_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value={"memory": mock_memory_seed_groups},
+        ):
+            scenario = Jailbreak(objective_scorer=mock_objective_scorer, num_templates=2)
+            await scenario.initialize_async(objective_target=mock_objective_target, include_baseline=False)
+            result_id = scenario._scenario_result_id
+            assert result_id is not None
+            stored = scenario._memory.get_scenario_results(scenario_result_ids=[result_id])[0]
+            assert stored.metadata["jailbreak_template_names"] == list(scenario._jailbreaks)
+            assert len(stored.metadata["jailbreak_template_names"]) == 2
+            # The base objective_hashes persistence must be preserved alongside the template names.
+            assert "objective_hashes" in stored.metadata
+
+    async def test_metadata_summary_lists_templates_for_visibility(
+        self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups
+    ):
+        """A human-readable 'summary' surfaces the templates tried (rendered under Scenario Inputs)."""
+        with patch.object(
+            Jailbreak,
+            "_resolve_seed_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value={"memory": mock_memory_seed_groups},
+        ):
+            scenario = Jailbreak(objective_scorer=mock_objective_scorer, num_templates=2)
+            await scenario.initialize_async(objective_target=mock_objective_target, include_baseline=False)
+            result_id = scenario._scenario_result_id
+            assert result_id is not None
+            stored = scenario._memory.get_scenario_results(scenario_result_ids=[result_id])[0]
+            summary = stored.metadata["summary"]
+            assert summary["Jailbreak templates"] == ", ".join(scenario._jailbreaks)
+
+    async def test_selected_jailbreak_names_property_after_initialize(
+        self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups
+    ):
+        """The public property exposes the resolved template names for programmatic inspection."""
+        with patch.object(
+            Jailbreak,
+            "_resolve_seed_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value={"memory": mock_memory_seed_groups},
+        ):
+            scenario = Jailbreak(objective_scorer=mock_objective_scorer, num_templates=2)
+            await scenario.initialize_async(objective_target=mock_objective_target, include_baseline=False)
+            assert scenario.selected_jailbreak_names == list(scenario._jailbreaks)
+            assert len(scenario.selected_jailbreak_names) == 2
+
+    async def test_resume_replays_persisted_templates(
+        self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups
+    ):
+        """On resume the original template sample is replayed, not a fresh random draw."""
+        real_templates = TextJailBreak.get_jailbreak_templates()
+        first_sample = real_templates[:3]
+        different_sample = real_templates[3:6]
+        with patch.object(
+            Jailbreak,
+            "_resolve_seed_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value={"memory": mock_memory_seed_groups},
+        ):
+            first_run = Jailbreak(objective_scorer=mock_objective_scorer)
+            first_run.set_params_from_args(args={"num_templates": 3})
+            with patch("pyrit.datasets.jailbreak.text_jailbreak.random.sample", return_value=list(first_sample)):
+                await first_run.initialize_async(objective_target=mock_objective_target, include_baseline=False)
+            result_id = first_run._scenario_result_id
+            assert result_id is not None
+            assert list(first_run._jailbreaks) == list(first_sample)
+
+            stored = first_run._memory.get_scenario_results(scenario_result_ids=[result_id])[0]
+            assert stored.metadata["jailbreak_template_names"] == list(first_sample)
+
+            # A second process resuming the same scenario would otherwise draw a different sample.
+            resumed = Jailbreak(objective_scorer=mock_objective_scorer, scenario_result_id=result_id)
+            resumed.set_params_from_args(args={"num_templates": 3})
+            with patch("pyrit.datasets.jailbreak.text_jailbreak.random.sample", return_value=list(different_sample)):
+                await resumed.initialize_async(objective_target=mock_objective_target, include_baseline=False)
+            assert list(resumed._jailbreaks) == list(first_sample)
+
+    async def test_num_templates_zero_param_raises(
+        self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups
+    ):
+        """An explicit num_templates of 0 raises rather than silently running the full catalog."""
+        with patch.object(
+            Jailbreak,
+            "_resolve_seed_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value={"memory": mock_memory_seed_groups},
+        ):
+            scenario = Jailbreak(objective_scorer=mock_objective_scorer)
+            scenario.set_params_from_args(args={"num_templates": 0})
+            with pytest.raises(ValueError, match="positive integer"):
+                await scenario.initialize_async(objective_target=mock_objective_target, include_baseline=False)
+
+
+@pytest.mark.usefixtures(*FIXTURES)
 class TestJailbreakLifecycle:
     """Tests for Jailbreak lifecycle."""
 
@@ -544,7 +757,7 @@ class TestJailbreakProperties:
             objective_scorer=mock_objective_scorer,
         )
 
-        assert scenario.VERSION == 1
+        assert scenario.VERSION == 2
 
     def test_scenario_default_dataset(self) -> None:
         """Test that scenario default dataset is correct."""
@@ -640,7 +853,10 @@ class TestJailbreakBaselineUniformity:
 
         first_sample = [("inline", group) for group in seed_groups[:3]]
         second_sample = [("inline", group) for group in seed_groups[5:8]]
-        scenario = Jailbreak(objective_scorer=mock_objective_scorer, num_templates=1)
+        # Use an explicit jailbreak name so deferred template resolution does not consume the patched
+        # random.sample; this test isolates seed-group sampling, not template selection.
+        template_name = TextJailBreak.get_jailbreak_templates()[0]
+        scenario = Jailbreak(objective_scorer=mock_objective_scorer, jailbreak_names=[template_name])
         with patch(
             "pyrit.scenario.core.dataset_configuration.random.sample",
             side_effect=[first_sample, second_sample],

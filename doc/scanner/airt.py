@@ -5,7 +5,7 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.19.1
+#       jupytext_version: 1.19.3
 # ---
 
 # %% [markdown]
@@ -158,11 +158,17 @@ await output_scenario_async(scenario_result)
 # pyrit_scan airt.jailbreak \
 #   --initializers target \
 #   --target openai_chat \
-#   --strategies prompt_sending \
+#   --strategies simple \
 #   --max-dataset-size 1
 # ```
 #
 # **Available strategies:** ALL, SIMPLE, COMPLEX, PromptSending, ManyShot, SkeletonKey, RolePlay
+#
+# By default the scenario randomly samples `num_templates` jailbreak templates (default: 10 of the
+# 162 available) to keep runs fast and predictable — so the fast path above needs only `--strategies
+# simple --max-dataset-size 1`. Pass `--num-templates N` to widen or narrow coverage, or
+# `--num-attempts N` to repeat each template. The specific templates chosen for a run are printed in
+# the scenario output under **Scenario Inputs** and persisted to `scenario_result.metadata`.
 
 # %%
 from pyrit.scenario.airt import Jailbreak, JailbreakStrategy
@@ -172,7 +178,7 @@ dataset_config = DatasetConfiguration(dataset_names=["airt_harms"], max_dataset_
 scenario = Jailbreak()
 await scenario.initialize_async(  # type: ignore
     objective_target=objective_target,
-    scenario_strategies=[JailbreakStrategy.PromptSending],
+    scenario_strategies=[JailbreakStrategy.SIMPLE],
     dataset_config=dataset_config,
 )
 

@@ -30,6 +30,7 @@ def _scenario_result(
     attack_results: dict[str, list[AttackResult]] | None = None,
     objective_scorer_identifier: ComponentIdentifier | None = None,
     display_group_map: dict[str, str] | None = None,
+    metadata: dict | None = None,
 ) -> ScenarioResult:
     return make_scenario_result(
         scenario_name="TestScenario",
@@ -40,6 +41,7 @@ def _scenario_result(
         attack_results=attack_results or {"strategy_a": [_attack_result()]},
         objective_scorer_identifier=objective_scorer_identifier,
         display_group_map=display_group_map or {},
+        metadata=metadata or {},
     )
 
 
@@ -94,6 +96,24 @@ async def test_write_async_with_unknown_target_when_no_params(printer, capsys):
     out = capsys.readouterr().out
     assert "Target Model: Unknown" in out
     assert "Target Endpoint: Unknown" in out
+
+
+async def test_write_async_renders_scenario_inputs_from_metadata_summary(printer, capsys):
+    result = _scenario_result(metadata={"summary": {"Jailbreak templates": "aim, dan_1, tuo"}})
+    await printer.write_async(result)
+    out = capsys.readouterr().out
+    assert "Scenario Inputs" in out
+    assert "Jailbreak templates:" in out
+    assert "aim, dan_1, tuo" in out
+
+
+async def test_write_async_omits_scenario_inputs_when_no_summary(printer, capsys):
+    # objective_hashes is internal-only and must never be rendered.
+    result = _scenario_result(metadata={"objective_hashes": ["abc123"]})
+    await printer.write_async(result)
+    out = capsys.readouterr().out
+    assert "Scenario Inputs" not in out
+    assert "abc123" not in out
 
 
 async def test_write_async_renders_scorer_section_when_scorer_identifier_present(printer, monkeypatch, capsys):

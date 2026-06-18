@@ -1,8 +1,9 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import logging
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 from pyrit.common import apply_defaults
 from pyrit.datasets import TextJailBreak
@@ -11,7 +12,7 @@ from pyrit.executor.attack.single_turn.many_shot_jailbreak import ManyShotJailbr
 from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
 from pyrit.executor.attack.single_turn.role_play import RolePlayAttack, RolePlayPaths
 from pyrit.executor.attack.single_turn.skeleton_key import SkeletonKeyAttack
-from pyrit.models import SeedAttackGroup
+from pyrit.models import Parameter, SeedAttackGroup
 from pyrit.prompt_converter import TextJailbreakConverter
 from pyrit.prompt_normalizer import PromptConverterConfiguration
 from pyrit.prompt_target.common.prompt_target import PromptTarget
@@ -23,6 +24,15 @@ from pyrit.scenario.core.scenario_context import ScenarioContext
 from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
 from pyrit.scenario.core.scenario_target_defaults import get_default_adversarial_target
 from pyrit.score import TrueFalseScorer
+
+logger = logging.getLogger(__name__)
+
+
+class _Unset:
+    """Sentinel marking an omitted ``num_templates`` argument (distinct from an explicit ``None``)."""
+
+
+_UNSET = _Unset()
 
 
 class JailbreakStrategy(ScenarioStrategy):
@@ -73,12 +83,46 @@ class Jailbreak(Scenario):
     scored to determine if the jailbreak was successful.
     """
 
-    VERSION: int = 1
+    VERSION: int = 2
+
+    #: Number of jailbreak templates sampled by default when neither the constructor argument
+    #: nor the ``num_templates`` runtime parameter is supplied. The full catalog ships 162
+    #: templates; this is a small, fast-to-run random subset (the team-agreed default for the
+    #: quick path). Raise ``--num-templates`` for broader coverage, or pass ``num_templates=None``
+    #: to run the full catalog.
+    DEFAULT_NUM_TEMPLATES: ClassVar[int] = 10
 
     @classmethod
     def required_datasets(cls) -> list[str]:
         """Return a list of dataset names required by this scenario."""
         return ["airt_harms"]
+
+    @classmethod
+    def supported_parameters(cls) -> list[Parameter]:
+        """
+        Declare runtime parameters settable from the CLI / config file.
+
+        Returns:
+            list[Parameter]: Parameters configurable per-run, exposed as ``--num-templates`` and
+            ``--num-attempts``.
+        """
+        return [
+            Parameter(
+                name="num_templates",
+                description=(
+                    "Number of jailbreak templates to randomly sample from the full catalog. "
+                    "Lower this for a faster run; raise it for broader coverage."
+                ),
+                param_type=int,
+                default=cls.DEFAULT_NUM_TEMPLATES,
+            ),
+            Parameter(
+                name="num_attempts",
+                description="Number of times to run each selected jailbreak template.",
+                param_type=int,
+                default=1,
+            ),
+        ]
 
     @apply_defaults
     def __init__(
@@ -86,8 +130,8 @@ class Jailbreak(Scenario):
         *,
         objective_scorer: TrueFalseScorer | None = None,
         scenario_result_id: str | None = None,
-        num_templates: int | None = None,
-        num_attempts: int = 1,
+        num_templates: "int | None | _Unset" = _UNSET,
+        num_attempts: int | None = None,
         jailbreak_names: list[str] | None = None,
     ) -> None:
         """
@@ -97,8 +141,16 @@ class Jailbreak(Scenario):
             objective_scorer (TrueFalseScorer | None): Scorer for detecting successful jailbreaks
                 (non-refusal). If not provided, defaults to an inverted refusal scorer.
             scenario_result_id (str | None): Optional ID of an existing scenario result to resume.
-            num_templates (int | None): Choose num_templates random jailbreaks rather than using all of them.
-            num_attempts (int | None): Number of times to try each jailbreak.
+                On resume the template names chosen by the original run are replayed (read from
+                ``ScenarioResult.metadata``) so the atomic-attack set stays stable across processes.
+            num_templates (int | None): Number of random jailbreak templates to run. When omitted,
+                falls back to the ``num_templates`` runtime parameter (default
+                ``DEFAULT_NUM_TEMPLATES``). An explicit integer takes precedence over the parameter.
+                Pass ``num_templates=None`` to opt out of sampling and run the full catalog. Configure
+                the default via the ``num_templates`` runtime parameter (``--num-templates`` / config),
+                not ``set_default_value`` — the omitted case is a sentinel, not ``None``.
+            num_attempts (int | None): Number of times to try each jailbreak. When omitted, falls back
+                to the ``num_attempts`` runtime parameter (default 1).
             jailbreak_names (list[str] | None): List of jailbreak names from the template list under datasets.
                 to use.
 
@@ -111,7 +163,7 @@ class Jailbreak(Scenario):
         """
         if jailbreak_names is None:
             jailbreak_names = []
-        if jailbreak_names and num_templates:
+        if jailbreak_names and not isinstance(num_templates, _Unset):
             raise ValueError(
                 "Please provide only one of `num_templates` (random selection)"
                 " or `jailbreak_names` (specific selection)."
@@ -121,25 +173,35 @@ class Jailbreak(Scenario):
             objective_scorer if objective_scorer else self._get_default_objective_scorer()
         )
 
-        self._num_templates = num_templates
+        # Distinguish an omitted argument (use the runtime default) from an explicit ``None``
+        # (opt out of sampling and run the full catalog).
+        if isinstance(num_templates, _Unset):
+            self._num_templates_unset = True
+            self._num_templates: int | None = None
+        else:
+            self._num_templates_unset = False
+            self._num_templates = num_templates
         self._num_attempts = num_attempts
         self._adversarial_target: PromptTarget | None = None
 
-        # Note that num_templates and jailbreak_names are mutually exclusive.
-        # If self._num_templates is None, then this returns all discoverable jailbreak templates.
-        # If self._num_templates has some value, then all_templates is a subset of all available
-        # templates, but jailbreak_names is guaranteed to be [], so diff = {}.
-        all_templates = TextJailBreak.get_jailbreak_templates(num_templates=self._num_templates)
-
-        # Example: if jailbreak_names is {'a', 'b', 'c'}, and all_templates is {'b', 'c', 'd'},
-        # then diff = {'a'}, which raises the error as 'a' was not discovered in all_templates.
-        diff = set(jailbreak_names) - set(all_templates)
-        if len(diff) > 0:
-            raise ValueError(f"Error: could not find templates `{diff}`!")
-
-        # If jailbreak_names has some value, then `if jailbreak_names` passes, and self._jailbreaks
-        # is set to jailbreak_names. Otherwise we use all_templates.
-        self._jailbreaks = jailbreak_names if jailbreak_names else all_templates
+        # Template resolution is split by selection mode:
+        # * ``jailbreak_names`` (explicit selection) is validated and resolved eagerly here so an
+        #   unknown name fails fast at construction time.
+        # * Random ``num_templates`` selection is deferred to ``_get_atomic_attacks_async`` so the
+        #   ``num_templates`` runtime parameter (populated into ``self.params`` during
+        #   ``initialize_async``) is honored — ``self.params`` does not exist yet in ``__init__``.
+        if jailbreak_names:
+            all_templates = TextJailBreak.get_jailbreak_templates()
+            # Example: if jailbreak_names is {'a', 'b', 'c'}, and all_templates is {'b', 'c', 'd'},
+            # then diff = {'a'}, which raises the error as 'a' was not discovered in all_templates.
+            diff = set(jailbreak_names) - set(all_templates)
+            if diff:
+                raise ValueError(f"Error: could not find templates `{diff}`!")
+            self._jailbreaks: list[str] = jailbreak_names
+            self._jailbreaks_explicit = True
+        else:
+            self._jailbreaks = []
+            self._jailbreaks_explicit = False
 
         super().__init__(
             version=self.VERSION,
@@ -149,6 +211,20 @@ class Jailbreak(Scenario):
             objective_scorer=self._objective_scorer,
             scenario_result_id=scenario_result_id,
         )
+
+    @property
+    def selected_jailbreak_names(self) -> list[str]:
+        """
+        Jailbreak template names selected for this run.
+
+        Populated once ``initialize_async`` has resolved the sample (or replayed the persisted set
+        on ``--resume``). For the random-sampling path this is empty before initialization. The same
+        list is also persisted to ``ScenarioResult.metadata`` and surfaced in the scenario output.
+
+        Returns:
+            list[str]: The jailbreak template names this run executes.
+        """
+        return list(self._jailbreaks)
 
     def _get_or_create_adversarial_target(self) -> PromptTarget:
         """
@@ -163,6 +239,69 @@ class Jailbreak(Scenario):
         if self._adversarial_target is None:
             self._adversarial_target = get_default_adversarial_target()
         return self._adversarial_target
+
+    def _load_persisted_jailbreak_names(self) -> list[str] | None:
+        """
+        Return the template names persisted by a prior run when resuming, otherwise ``None``.
+
+        Template resolution happens inside ``_build_atomic_attacks_async``, which the base class runs
+        *before* it applies persisted resume state. Since each template is its own atomic attack,
+        the persisted names must be read here (not in ``_apply_persisted_objectives``) so the resumed
+        run rebuilds the same atomic attacks instead of drawing a fresh random sample.
+
+        Returns:
+            list[str] | None: The persisted template names, or ``None`` when not resuming or when no
+            names were persisted.
+        """
+        if not self._scenario_result_id:
+            return None
+        stored = self._memory.get_scenario_results(scenario_result_ids=[self._scenario_result_id])
+        if not stored:
+            return None
+        names = (stored[0].metadata or {}).get("jailbreak_template_names")
+        if not names:
+            return None
+        return list(names)
+
+    def _resolve_jailbreaks(self) -> list[str]:
+        """
+        Resolve the jailbreak templates to run.
+
+        Resolution precedence:
+
+        1. On resume, replay the template names persisted by the original run (deterministic resume).
+        2. Explicit ``jailbreak_names`` (resolved in ``__init__``).
+        3. An explicit constructor ``num_templates`` (an integer wins over the runtime parameter; an
+           explicit ``None`` opts out of sampling and runs the full catalog).
+        4. The ``num_templates`` runtime parameter, which defaults to ``DEFAULT_NUM_TEMPLATES``.
+
+        Returns:
+            list[str]: The jailbreak template file names to run.
+        """
+        persisted = self._load_persisted_jailbreak_names()
+        if persisted is not None:
+            return persisted
+        if self._jailbreaks_explicit:
+            return self._jailbreaks
+        num_templates = self.params["num_templates"] if self._num_templates_unset else self._num_templates
+        return TextJailBreak.get_jailbreak_templates(num_templates=num_templates)
+
+    def _build_initial_scenario_metadata(self) -> dict[str, Any]:
+        """
+        Persist the resolved template names so ``--resume`` replays the same sample.
+
+        Extends the base ``objective_hashes`` persistence (preserved via ``super()``) with the
+        concrete template names chosen for this run, mirroring that pattern for the template axis.
+
+        Returns:
+            dict[str, Any]: Metadata payload for the new ScenarioResult.
+        """
+        metadata = super()._build_initial_scenario_metadata()
+        names = list(self._jailbreaks)
+        metadata["jailbreak_template_names"] = names
+        summary = metadata.setdefault("summary", {})
+        summary["Jailbreak templates"] = ", ".join(names)
+        return metadata
 
     async def _get_atomic_attack_from_strategy_async(
         self, *, strategy: str, jailbreak_template_name: str, seed_groups: list[SeedAttackGroup]
@@ -246,11 +385,22 @@ class Jailbreak(Scenario):
         atomic_attacks: list[AtomicAttack] = []
 
         seed_groups = list(context.seed_groups)
+
+        # Resolve templates now that runtime parameters are populated (and replay the persisted
+        # sample on --resume). Deferred here rather than in __init__ so self.params exists.
+        self._jailbreaks = self._resolve_jailbreaks()
+        logger.info(
+            "Jailbreak scenario running %d template(s): %s",
+            len(self._jailbreaks),
+            ", ".join(self._jailbreaks),
+        )
+        num_attempts = self._num_attempts if self._num_attempts is not None else self.params["num_attempts"]
+
         strategies = {s.value for s in context.scenario_strategies}
 
         for strategy in strategies:
             for template_name in self._jailbreaks:
-                for _ in range(self._num_attempts):
+                for _ in range(num_attempts):
                     atomic_attack = await self._get_atomic_attack_from_strategy_async(
                         strategy=strategy, jailbreak_template_name=template_name, seed_groups=seed_groups
                     )

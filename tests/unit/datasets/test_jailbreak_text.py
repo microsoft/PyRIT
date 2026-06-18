@@ -89,6 +89,19 @@ def test_get_jailbreak_templates_includes_subdirectory_templates():
     assert len(templates) > top_level_count, "Subdirectory templates should be included in the listing"
 
 
+def test_get_jailbreak_templates_none_returns_all():
+    """num_templates=None returns the full sorted catalog (the power-user opt-out)."""
+    all_templates = TextJailBreak.get_jailbreak_templates()
+    assert TextJailBreak.get_jailbreak_templates(num_templates=None) == all_templates
+
+
+@pytest.mark.parametrize("invalid", [0, -1, -5])
+def test_get_jailbreak_templates_non_positive_raises(invalid):
+    """num_templates must be a positive integer; 0 must not silently return the full catalog."""
+    with pytest.raises(ValueError, match="positive integer"):
+        TextJailBreak.get_jailbreak_templates(num_templates=invalid)
+
+
 def test_all_templates_render_without_syntax_errors(jailbreak_dir):
     """Test that all jailbreak templates can be successfully rendered with a test prompt."""
     yaml_files = [f for f in jailbreak_dir.rglob("*.yaml") if "multi_parameter" not in f.parts]
