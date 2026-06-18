@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -32,7 +33,7 @@ class RetryEvent(BaseModel):
     endpoint: str | None = None
     elapsed_seconds: float = 0.0
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         """
         Serialize to a dictionary suitable for JSON storage.
 
@@ -51,7 +52,7 @@ class RetryEvent(BaseModel):
         return self.model_dump(mode="json")
 
     @classmethod
-    def from_dict(cls, data: dict) -> RetryEvent:
+    def from_dict(cls, data: dict[str, Any]) -> RetryEvent:
         """
         Deserialize from a dictionary.
 

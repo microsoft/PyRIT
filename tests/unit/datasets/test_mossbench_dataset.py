@@ -86,6 +86,10 @@ class TestMossBenchDataset:
         with pytest.raises(ValueError, match="Expected MossBenchOversensitivityType"):
             _MossBenchDataset(oversensitivity_types=["type 1"])  # type: ignore[list-item]
 
+    def test_init_with_empty_oversensitivity_types_raises(self):
+        with pytest.raises(ValueError, match="`oversensitivity_types` must be a non-empty list"):
+            _MossBenchDataset(oversensitivity_types=[])
+
     def test_dataset_level_metadata(self):
         dataset = _MossBenchDataset()
         assert "refusal" in dataset.tags

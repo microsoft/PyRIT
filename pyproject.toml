@@ -189,8 +189,15 @@ missing-override-decorator = "ignore"
 [tool.ty.analysis]
 respect-type-ignore-comments = true
 # Treat colorama as Any — it has no type stubs and uses a dynamic pattern
-# (class attrs are int, __init__ converts to str via setattr) that ty can't follow
-replace-imports-with-any = ["colorama.**"]
+# (class attrs are int, __init__ converts to str via setattr) that ty can't follow.
+# cv2 (opencv) and azure.cognitiveservices.speech are optional extras that are not
+# installed in the default environment, so their lazy imports are unresolvable; treat
+# them as Any rather than erroring on the guarded ``import`` statements.
+replace-imports-with-any = [
+    "colorama.**",
+    "cv2.**",
+    "azure.cognitiveservices.speech.**",
+]
 
 [tool.ty.src]
 exclude = ["doc/code/", "pyrit/auxiliary_attacks/"]
