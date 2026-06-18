@@ -64,34 +64,6 @@ logger = logging.getLogger(__name__)
 LEGACY_PYRIT_VERSION = "<0.10.0"
 
 
-def _dump_identifier(identifier: ComponentIdentifier | None) -> dict[str, Any] | None:
-    """
-    Serialize a ``ComponentIdentifier`` to a dict for JSON storage.
-
-    Args:
-        identifier (ComponentIdentifier | None): The identifier to serialize, or None.
-
-    Returns:
-        dict[str, Any] | None: The serialized identifier, or None if ``identifier`` is falsy.
-    """
-    if not identifier:
-        return None
-    return identifier.model_dump()
-
-
-def _dump_identifiers(identifiers: list[ComponentIdentifier]) -> list[dict[str, Any]]:
-    """
-    Serialize a list of ``ComponentIdentifier`` objects for JSON storage.
-
-    Args:
-        identifiers (list[ComponentIdentifier]): The identifiers to serialize.
-
-    Returns:
-        list[dict[str, Any]]: The serialized identifiers in order.
-    """
-    return [identifier.model_dump() for identifier in identifiers]
-
-
 def _load_identifier(
     stored: dict[str, Any] | None,
     *,
@@ -321,7 +293,7 @@ class PromptMemoryEntry(Base):
         self.timestamp = entry.timestamp
         self.labels = entry.labels
         self.prompt_metadata = entry.prompt_metadata
-        self.converter_identifiers = _dump_identifiers(entry.converter_identifiers)
+        self.converter_identifiers = [identifier.model_dump() for identifier in entry.converter_identifiers]
 
         self.original_value = entry.original_value
         self.original_value_data_type = entry.original_value_data_type
@@ -410,7 +382,7 @@ class ConversationEntry(Base):
             conversation (Conversation): The conversation metadata to persist.
         """
         self.conversation_id = conversation.conversation_id
-        self.target_identifier = _dump_identifier(conversation.target_identifier)
+        self.target_identifier = conversation.target_identifier.model_dump() if conversation.target_identifier else None
         self.pyrit_version = pyrit.__version__
 
     def get_conversation(self) -> Conversation:
@@ -501,7 +473,7 @@ class ScoreEntry(Base):
             normalized_scorer = normalized_scorer.with_eval_hash(
                 ScorerEvaluationIdentifier(normalized_scorer).eval_hash
             )
-        self.scorer_class_identifier = _dump_identifier(normalized_scorer) or {}
+        self.scorer_class_identifier = normalized_scorer.model_dump() if normalized_scorer else {}
         self.prompt_request_response_id = entry.message_piece_id if entry.message_piece_id else None
         self.timestamp = entry.timestamp
         # Store in both columns for backward compatibility
@@ -956,7 +928,9 @@ class AttackResultEntry(Base):
             entry.atomic_attack_identifier = entry.atomic_attack_identifier.with_eval_hash(
                 AtomicAttackEvaluationIdentifier(entry.atomic_attack_identifier).eval_hash
             )
-        self.atomic_attack_identifier = _dump_identifier(entry.atomic_attack_identifier)
+        self.atomic_attack_identifier = (
+            entry.atomic_attack_identifier.model_dump() if entry.atomic_attack_identifier else None
+        )
         self.objective_sha256 = to_sha256(entry.objective)
 
         # Use helper method for UUID conversions
@@ -1194,14 +1168,18 @@ class ScenarioResultEntry(Base):
         self.pyrit_version = entry.scenario_identifier.pyrit_version
         self.scenario_init_data = entry.scenario_identifier.init_data
         # Convert ComponentIdentifier to dict for JSON storage
-        self.objective_target_identifier = _dump_identifier(entry.objective_target_identifier)  # type: ignore[ty:invalid-assignment]
+        self.objective_target_identifier = (  # type: ignore[ty:invalid-assignment]
+            entry.objective_target_identifier.model_dump() if entry.objective_target_identifier else None
+        )
         # Always recompute eval_hash before dumping so the stored JSON carries the
         # freshly computed value for DB-level filtering (never a value from storage).
         if entry.objective_scorer_identifier:
             entry.objective_scorer_identifier = entry.objective_scorer_identifier.with_eval_hash(
                 ScorerEvaluationIdentifier(entry.objective_scorer_identifier).eval_hash
             )
-        self.objective_scorer_identifier = _dump_identifier(entry.objective_scorer_identifier)
+        self.objective_scorer_identifier = (
+            entry.objective_scorer_identifier.model_dump() if entry.objective_scorer_identifier else None
+        )
         self.scenario_run_state = entry.scenario_run_state.value
         self.labels = entry.labels
         self.number_tries = entry.number_tries
