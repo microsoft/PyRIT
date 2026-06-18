@@ -136,7 +136,7 @@ def _dump_child_identifiers_to_dict(value: Any) -> Any:
     base ``ComponentIdentifier`` (or a different subclass) for that slot, which
     Pydantic's strict model validation would reject. Dumping such instances to
     their flat ``model_dump()`` dict lets validation re-parse them into the
-    declared subclass; the stored ``hash`` rides along, so identity is preserved.
+    declared subclass; the content hash is recomputed identically on revalidation.
 
     Args:
         value (Any): The raw child value (an identifier instance, a dict, a list
@@ -177,9 +177,10 @@ class ComponentIdentifier(BaseModel):
     Serialization: ``model_dump()`` returns a flat dict where reserved keys
     (``class_name``, ``class_module``, ``hash``, ``pyrit_version``, ``eval_hash``,
     ``children``) sit at the top level alongside the inlined param values. This shape is
-    also the storage / REST format. Pass ``context={"max_value_length": N}`` to truncate
-    long string param values. ``model_validate()`` accepts the same flat shape (plus a
-    structured form with an explicit ``params`` dict).
+    also the storage / REST format. Param values are stored in full (no truncation).
+    ``model_validate()`` accepts the same flat shape (plus a structured form with an
+    explicit ``params`` dict); the content ``hash`` is always recomputed on validation,
+    so any stored ``hash`` is ignored.
 
     Mutability: the model is frozen, but ``params`` and ``children`` are dicts whose
     contents are not deep-frozen — mutating them after construction creates an
@@ -208,14 +209,15 @@ class ComponentIdentifier(BaseModel):
     params: dict[str, JSONValue] = Field(default_factory=dict)
     #: Named child identifiers for compositional identity (e.g., a scorer's target).
     children: dict[str, ComponentIdentifier | list[ComponentIdentifier]] = Field(default_factory=dict)
-    #: Content-addressed SHA256 hash. Computed automatically when ``None``;
-    #: pass an explicit value to preserve a hash from DB storage where params
-    #: may have been truncated.
+    #: Content-addressed SHA256 hash. Always recomputed from the identifier's
+    #: content by the validator — any value supplied at construction (including
+    #: one read back from storage) is ignored and overwritten. The field is kept
+    #: so the flat storage shape still round-trips and serializes the hash.
     hash: str | None = None
     #: Version tag for storage. Not included in the content hash.
     pyrit_version: str = Field(default=pyrit.__version__)
     #: Evaluation hash. Computed by EvaluationIdentifier subclasses and attached
-    #: to the identifier so it survives DB round-trips with truncated params.
+    #: to the identifier so it lands in the stored JSON for DB-level filtering.
     eval_hash: str | None = None
 
     # ------------------------------------------------------------------
@@ -383,7 +385,7 @@ class ComponentIdentifier(BaseModel):
             # (possibly a base ComponentIdentifier or a different subclass than
             # the typed field declares). Dump them to their flat dict form so
             # Pydantic re-parses them into the declared identifier subclass.
-            # Round-tripping through model_dump preserves the stored hash.
+            # The content hash is recomputed identically on revalidation.
             for name in cls._promoted_child_fields():
                 if name in data:
                     data[name] = _dump_child_identifiers_to_dict(data[name])
@@ -399,8 +401,8 @@ class ComponentIdentifier(BaseModel):
         identifier fields into ``children`` (``None`` / empty list dropped), so a
         typed subclass serializes and hashes identically to a plain
         ``ComponentIdentifier`` with the same values. The content-addressed hash
-        is then computed if it was not provided — a pre-set hash (e.g. one
-        reconstructed from a truncated DB row) is preserved.
+        is then always recomputed from the identifier's content — any value
+        supplied at construction (e.g. one read back from storage) is discarded.
 
         Returns:
             ``self`` (mutated in-place).
@@ -422,14 +424,13 @@ class ComponentIdentifier(BaseModel):
             else:
                 self.children[name] = value
 
-        if self.hash is None:
-            hash_dict = _build_hash_dict(
-                class_name=self.class_name,
-                class_module=self.class_module,
-                params=self.params,
-                children=self.children,
-            )
-            object.__setattr__(self, "hash", config_hash(hash_dict))
+        hash_dict = _build_hash_dict(
+            class_name=self.class_name,
+            class_module=self.class_module,
+            params=self.params,
+            children=self.children,
+        )
+        object.__setattr__(self, "hash", config_hash(hash_dict))
         return self
 
     # ------------------------------------------------------------------
@@ -441,15 +442,13 @@ class ComponentIdentifier(BaseModel):
         """
         Emit the flat storage shape.
 
-        Honors ``context={"max_value_length": N}`` to truncate long string
-        param values, propagating both context and mode (``"python"`` vs
-        ``"json"``) into recursive child dumps.
+        Propagates the serialization mode (``"python"`` vs ``"json"``) into
+        recursive child dumps. Values are stored in full — identifiers are no
+        longer truncated.
 
         Returns:
             The flat dict representation of this identifier.
         """
-        context = info.context if isinstance(info.context, dict) else {}
-        max_len = context.get("max_value_length")
         mode = info.mode
 
         result: dict[str, Any] = {
@@ -461,16 +460,15 @@ class ComponentIdentifier(BaseModel):
         if self.eval_hash is not None:
             result[self.KEY_EVAL_HASH] = self.eval_hash
 
-        for key, value in self.params.items():
-            result[key] = self._truncate_value(value=value, max_length=max_len)
+        result.update(self.params)
 
         if self.children:
             serialized_children: dict[str, Any] = {}
             for name, child in self.children.items():
                 if isinstance(child, ComponentIdentifier):
-                    serialized_children[name] = child.model_dump(mode=mode, context=context)
+                    serialized_children[name] = child.model_dump(mode=mode)
                 elif isinstance(child, list):
-                    serialized_children[name] = [c.model_dump(mode=mode, context=context) for c in child]
+                    serialized_children[name] = [c.model_dump(mode=mode) for c in child]
             result[self.KEY_CHILDREN] = serialized_children
 
         return result
@@ -508,10 +506,8 @@ class ComponentIdentifier(BaseModel):
         """
         Return a new identifier with ``eval_hash`` set.
 
-        Builds a fresh instance, passing the existing ``hash`` through
-        explicitly so it is preserved rather than recomputed. This matters
-        for identifiers reconstructed from truncated DB data, where
-        recomputing from the truncated params would produce a wrong hash.
+        The content hash is recomputed from the (unchanged) params and children,
+        so it is identical to this identifier's hash.
 
         Args:
             eval_hash: The evaluation hash to attach.
@@ -525,7 +521,6 @@ class ComponentIdentifier(BaseModel):
             class_module=self.class_module,
             params=self.params,
             children=self.children,
-            hash=self.hash,
             pyrit_version=self.pyrit_version,
             eval_hash=eval_hash,
         )
@@ -628,8 +623,8 @@ class ComponentIdentifier(BaseModel):
 
         Pass-through when ``identifier`` is already an instance of ``cls``;
         otherwise revalidate its flat dump into ``cls`` (e.g. a base identifier
-        loaded from the DB), rehydrating promoted typed fields. The hash is
-        preserved across the round-trip.
+        loaded from the DB), rehydrating promoted typed fields. The content hash
+        is recomputed identically across the round-trip.
 
         Args:
             identifier: A ``ComponentIdentifier`` (possibly the base type).
@@ -695,22 +690,6 @@ class ComponentIdentifier(BaseModel):
                 hashes.update(child._collect_child_eval_hashes())
         return hashes
 
-    @staticmethod
-    def _truncate_value(*, value: Any, max_length: int | None) -> Any:
-        """
-        Truncate string values longer than ``max_length`` with a ``...`` suffix.
-
-        Args:
-            value: The value to potentially truncate.
-            max_length: Maximum length, or ``None`` to disable.
-
-        Returns:
-            The (possibly truncated) value.
-        """
-        if max_length is not None and isinstance(value, str) and len(value) > max_length:
-            return value[:max_length] + "..."
-        return value
-
     # ------------------------------------------------------------------
     # Deprecated shims — kept for one release cycle
     # ------------------------------------------------------------------
@@ -720,7 +699,8 @@ class ComponentIdentifier(BaseModel):
         Return the flat storage dict (deprecated; use ``model_dump`` instead).
 
         Args:
-            max_value_length: Optional truncation length for string params.
+            max_value_length: Deprecated and ignored. Identifier values are no
+                longer truncated; the full value is always returned.
 
         Returns:
             The flat dict representation.
@@ -730,8 +710,7 @@ class ComponentIdentifier(BaseModel):
             new_item="ComponentIdentifier.model_dump",
             removed_in="0.16.0",
         )
-        context = {"max_value_length": max_value_length} if max_value_length is not None else None
-        return self.model_dump(context=context)
+        return self.model_dump()
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> ComponentIdentifier:

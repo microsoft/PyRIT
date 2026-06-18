@@ -42,6 +42,7 @@ from pyrit.models import (
     Conversation,
     ConversationReference,
     ConversationType,
+    EvaluationIdentifier,
     MessagePiece,
     PromptDataType,
     ScenarioIdentifier,
@@ -62,14 +63,10 @@ logger = logging.getLogger(__name__)
 # Default pyrit_version for database records created before version tracking was added
 LEGACY_PYRIT_VERSION = "<0.10.0"
 
-# Maximum length for string values in ComponentIdentifier.model_dump() when storing to the database.
-# Longer values are truncated with a "..." suffix.
-MAX_IDENTIFIER_VALUE_LENGTH: int = 80
-
 
 def _dump_identifier(identifier: ComponentIdentifier | None) -> dict[str, Any] | None:
     """
-    Serialize a ``ComponentIdentifier`` to a dict for JSON storage, truncating long values.
+    Serialize a ``ComponentIdentifier`` to a dict for JSON storage.
 
     Args:
         identifier (ComponentIdentifier | None): The identifier to serialize, or None.
@@ -79,7 +76,7 @@ def _dump_identifier(identifier: ComponentIdentifier | None) -> dict[str, Any] |
     """
     if not identifier:
         return None
-    return identifier.model_dump(context={"max_value_length": MAX_IDENTIFIER_VALUE_LENGTH})
+    return identifier.model_dump()
 
 
 def _dump_identifiers(identifiers: list[ComponentIdentifier]) -> list[dict[str, Any]]:
@@ -92,19 +89,30 @@ def _dump_identifiers(identifiers: list[ComponentIdentifier]) -> list[dict[str, 
     Returns:
         list[dict[str, Any]]: The serialized identifiers in order.
     """
-    return [
-        identifier.model_dump(context={"max_value_length": MAX_IDENTIFIER_VALUE_LENGTH}) for identifier in identifiers
-    ]
+    return [identifier.model_dump() for identifier in identifiers]
 
 
-def _load_identifier(stored: dict[str, Any] | None, *, pyrit_version: str | None = None) -> ComponentIdentifier | None:
+def _load_identifier(
+    stored: dict[str, Any] | None,
+    *,
+    pyrit_version: str | None = None,
+    eval_identifier_cls: type[EvaluationIdentifier] | None = None,
+) -> ComponentIdentifier | None:
     """
     Reconstruct a ``ComponentIdentifier`` from its stored dict representation.
+
+    The content hash is recomputed on validation (never trusted from storage).
+    When ``eval_identifier_cls`` is provided, the ``eval_hash`` is likewise
+    recomputed from the (full) stored params and re-stamped onto the identifier,
+    so the stored ``eval_hash`` value is never trusted on reload.
 
     Args:
         stored (dict[str, Any] | None): The stored identifier dict, or None.
         pyrit_version (str | None): If provided, injected as the identifier's ``pyrit_version``
             so the reconstructed object reflects the version that created the row.
+        eval_identifier_cls (type[EvaluationIdentifier] | None): If provided, the
+            ``EvaluationIdentifier`` subclass used to recompute and re-stamp the
+            identifier's ``eval_hash`` on reload.
 
     Returns:
         ComponentIdentifier | None: The reconstructed identifier, or None if ``stored`` is falsy.
@@ -113,7 +121,10 @@ def _load_identifier(stored: dict[str, Any] | None, *, pyrit_version: str | None
         return None
     if pyrit_version is not None:
         stored = {**stored, "pyrit_version": pyrit_version}
-    return ComponentIdentifier.model_validate(stored)
+    identifier = ComponentIdentifier.model_validate(stored)
+    if eval_identifier_cls is not None:
+        identifier = identifier.with_eval_hash(eval_identifier_cls(identifier).eval_hash)
+    return identifier
 
 
 def _load_identifiers(
@@ -484,7 +495,7 @@ class ScoreEntry(Base):
         self.score_rationale = entry.score_rationale
         self.score_metadata = entry.score_metadata or {}
         normalized_scorer = entry.scorer_class_identifier
-        # Ensure eval_hash is set before truncation so it survives the DB round-trip
+        # Stamp eval_hash before dumping so it lands in the stored JSON for DB-level filtering
         if normalized_scorer is not None and normalized_scorer.eval_hash is None:
             normalized_scorer = normalized_scorer.with_eval_hash(
                 ScorerEvaluationIdentifier(normalized_scorer).eval_hash
@@ -505,9 +516,14 @@ class ScoreEntry(Base):
         Returns:
             Score: The reconstructed score object with all its data.
         """
-        # Convert dict back to ComponentIdentifier with the stored pyrit_version
+        # Convert dict back to ComponentIdentifier with the stored pyrit_version;
+        # eval_hash is recomputed on reload via ScorerEvaluationIdentifier.
         stored_version = self.pyrit_version or LEGACY_PYRIT_VERSION
-        scorer_identifier = _load_identifier(self.scorer_class_identifier, pyrit_version=stored_version)
+        scorer_identifier = _load_identifier(
+            self.scorer_class_identifier,
+            pyrit_version=stored_version,
+            eval_identifier_cls=ScorerEvaluationIdentifier,
+        )
         return Score(
             id=self.id,
             score_value=self.score_value,
@@ -933,7 +949,7 @@ class AttackResultEntry(Base):
         self.id = uuid.UUID(entry.attack_result_id)
         self.conversation_id = entry.conversation_id
         self.objective = entry.objective
-        # Ensure eval_hash is set before truncation so it survives the DB round-trip
+        # Stamp eval_hash before dumping so it lands in the stored JSON for DB-level filtering
         if entry.atomic_attack_identifier and entry.atomic_attack_identifier.eval_hash is None:
             entry.atomic_attack_identifier = entry.atomic_attack_identifier.with_eval_hash(
                 AtomicAttackEvaluationIdentifier(entry.atomic_attack_identifier).eval_hash
@@ -1055,7 +1071,11 @@ class AttackResultEntry(Base):
                 )
             )
 
-        atomic_id = _load_identifier(self.atomic_attack_identifier)
+        # eval_hash is recomputed on reload via AtomicAttackEvaluationIdentifier.
+        atomic_id = _load_identifier(
+            self.atomic_attack_identifier,
+            eval_identifier_cls=AtomicAttackEvaluationIdentifier,
+        )
 
         # Deserialize retry events from JSON
         retry_events = []
@@ -1173,7 +1193,7 @@ class ScenarioResultEntry(Base):
         self.scenario_init_data = entry.scenario_identifier.init_data
         # Convert ComponentIdentifier to dict for JSON storage
         self.objective_target_identifier = _dump_identifier(entry.objective_target_identifier)  # type: ignore[ty:invalid-assignment]
-        # Ensure eval_hash is set before truncation so it survives the DB round-trip.
+        # Stamp eval_hash before dumping so it lands in the stored JSON for DB-level filtering.
         if entry.objective_scorer_identifier and entry.objective_scorer_identifier.eval_hash is None:
             entry.objective_scorer_identifier = entry.objective_scorer_identifier.with_eval_hash(
                 ScorerEvaluationIdentifier(entry.objective_scorer_identifier).eval_hash
@@ -1224,8 +1244,13 @@ class ScenarioResultEntry(Base):
         # Return empty attack_results - will be populated by memory_interface
         attack_results: dict[str, list[AttackResult]] = {}
 
-        # Convert dict back to ComponentIdentifier with the stored pyrit_version
-        scorer_identifier = _load_identifier(self.objective_scorer_identifier, pyrit_version=stored_version)
+        # Convert dict back to ComponentIdentifier with the stored pyrit_version;
+        # eval_hash is recomputed on reload via ScorerEvaluationIdentifier.
+        scorer_identifier = _load_identifier(
+            self.objective_scorer_identifier,
+            pyrit_version=stored_version,
+            eval_identifier_cls=ScorerEvaluationIdentifier,
+        )
 
         # Convert dict back to ComponentIdentifier for reconstruction
         target_identifier = _load_identifier(self.objective_target_identifier)
