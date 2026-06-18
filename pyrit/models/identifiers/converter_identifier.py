@@ -5,9 +5,12 @@
 
 from __future__ import annotations
 
+from typing import Annotated
+
 from pydantic import Field
 
 from pyrit.models.identifiers.component_identifier import ComponentIdentifier
+from pyrit.models.identifiers.evaluation_markers import Evaluate
 from pyrit.models.identifiers.target_identifier import (  # noqa: TC001
     TargetIdentifier,  # runtime-required by Pydantic field annotations
 )
@@ -25,11 +28,11 @@ class ConverterIdentifier(ComponentIdentifier):
     """
 
     #: Input data types supported by this converter.
-    supported_input_types: list[PromptDataType] | None = None
+    supported_input_types: Annotated[list[PromptDataType] | None, Evaluate.Include()] = None
     #: Output data types produced by this converter.
-    supported_output_types: list[PromptDataType] | None = None
+    supported_output_types: Annotated[list[PromptDataType] | None, Evaluate.Include()] = None
     #: Target an LLM-backed converter calls (e.g., ``LLMGenericTextConverter``).
-    converter_target: TargetIdentifier | None = None
+    converter_target: Annotated[TargetIdentifier | None, Evaluate.Include()] = None
     #: Nested converters a composite wraps (e.g., ``SelectiveTextConverter``),
     #: typed recursively.
-    sub_converters: list[ConverterIdentifier] = Field(default_factory=list)
+    sub_converters: Annotated[list[ConverterIdentifier], Evaluate.Include()] = Field(default_factory=list)

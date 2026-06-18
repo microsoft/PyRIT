@@ -1,11 +1,18 @@
 # Runs end-to-end scenario tests using pyrit_scan CLI
 
-extends:
-  template: scheduled-test-pipeline-template.yml
+trigger: none
+
+schedules:
+- cron: "0 7 * * *"  # 7 AM UTC = 11 PM PST (UTC-8)
+  displayName: E2E Tests Daily at 07:00 AM UTC (11:00 PM PST)
+  branches:
+    include:
+      - main
+  always: true
+
+jobs:
+- template: test-job-template.yml
   parameters:
-    scheduleDisplayName: E2E Tests Daily at 07:00 AM UTC (11:00 AM PST)
-    scheduleCron: "0 7 * * *"  # 7 AM UTC = 11 PM PST (UTC-8) - intentionally run at night to reduce throttling
-    triggerOnChange: false
     jobName: EndToEndTests
     jobDisplayName: "Run end-to-end scenario tests"
     testAzureSubscription: 'integration-test-service-connection'

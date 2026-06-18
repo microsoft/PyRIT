@@ -1,4 +1,10 @@
 import "@testing-library/jest-dom";
+import { TextEncoder, TextDecoder } from "util";
+
+// jsdom omits TextEncoder/TextDecoder, which react-router v7 references at
+// import time. Node's util provides spec-compatible implementations.
+global.TextEncoder = TextEncoder;
+global.TextDecoder = TextDecoder as typeof global.TextDecoder;
 
 // Set Vite-equivalent env vars for tests (the AST transformer rewrites
 // import.meta.env.X → process.env.X, so these must exist as process.env).

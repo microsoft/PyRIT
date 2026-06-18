@@ -10,7 +10,13 @@ from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 
 if TYPE_CHECKING:
-    from pyrit.models import ComponentIdentifier, MessagePiece, Score, UnvalidatedScore
+    from pyrit.models import (
+        ComponentIdentifier,
+        JsonSchemaDefinition,
+        MessagePiece,
+        Score,
+        UnvalidatedScore,
+    )
     from pyrit.prompt_target import PromptTarget
 
 
@@ -41,6 +47,7 @@ class SelfAskGeneralFloatScaleScorer(FloatScaleScorer):
         description_output_key: str = "description",
         metadata_output_key: str = "metadata",
         category_output_key: str = "category",
+        response_json_schema: JsonSchemaDefinition | None = None,
     ) -> None:
         """
         Initialize the SelfAskGeneralFloatScaleScorer.
@@ -69,6 +76,9 @@ class SelfAskGeneralFloatScaleScorer(FloatScaleScorer):
             description_output_key (str): JSON key for the description. Defaults to "description".
             metadata_output_key (str): JSON key for the metadata. Defaults to "metadata".
             category_output_key (str): JSON key for the category. Defaults to "category".
+            response_json_schema (JsonSchemaDefinition | None): An optional JSON schema constraining
+                the scoring response. When provided, it is forwarded to the scoring target, which
+                enforces it natively when supported or omits it via normalization. Defaults to None.
 
         Raises:
             ValueError: If system_prompt_format_string is not provided or empty.
@@ -92,6 +102,7 @@ class SelfAskGeneralFloatScaleScorer(FloatScaleScorer):
         self._description_output_key = description_output_key
         self._metadata_output_key = metadata_output_key
         self._category_output_key = category_output_key
+        self._response_json_schema = response_json_schema
 
     def _build_identifier(self) -> ComponentIdentifier:
         """
@@ -106,6 +117,7 @@ class SelfAskGeneralFloatScaleScorer(FloatScaleScorer):
                 "user_prompt_template": self._prompt_format_string,
                 "min_value": self._min_value,
                 "max_value": self._max_value,
+                "response_json_schema": self._response_json_schema,
             },
             prompt_target=self._prompt_target.get_identifier(),
         )
@@ -151,6 +163,7 @@ class SelfAskGeneralFloatScaleScorer(FloatScaleScorer):
             description_output_key=self._description_output_key,
             metadata_output_key=self._metadata_output_key,
             category_output_key=self._category_output_key,
+            response_json_schema=self._response_json_schema,
         )
 
         score = unvalidated.to_score(

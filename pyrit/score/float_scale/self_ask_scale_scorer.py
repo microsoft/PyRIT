@@ -83,6 +83,9 @@ class SelfAskScaleScorer(FloatScaleScorer):
         scoring_instructions_template = SeedPrompt.from_yaml_file(system_prompt_path)
 
         self._system_prompt = scoring_instructions_template.render_template_value(**scale_args)
+        # Optional JSON schema embedded in the system prompt YAML. Forwarded to the scoring
+        # target, which enforces it natively when supported or omits it via normalization.
+        self._response_json_schema = scoring_instructions_template.response_json_schema
 
     def _build_identifier(self) -> ComponentIdentifier:
         """
@@ -95,6 +98,7 @@ class SelfAskScaleScorer(FloatScaleScorer):
             params={
                 "system_prompt_template": self._system_prompt,
                 "user_prompt_template": "objective: {objective}\nresponse: {response}",
+                "response_json_schema": self._response_json_schema,
             },
             prompt_target=self._prompt_target.get_identifier(),
         )
@@ -136,6 +140,7 @@ class SelfAskScaleScorer(FloatScaleScorer):
             prepended_text_message_piece=prepended_text,
             category=self._category,
             objective=objective,
+            response_json_schema=self._response_json_schema,
         )
 
         score = unvalidated_score.to_score(

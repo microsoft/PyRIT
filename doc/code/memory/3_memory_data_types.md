@@ -158,3 +158,11 @@ For atomic attacks, `AtomicAttackIdentifier.build` composes a tree of identifier
 ### Eval Hashing
 
 [`EvaluationIdentifier`](../../../pyrit/identifiers/evaluation_identifier.py) subclasses wrap a `ComponentIdentifier` and compute a separate **eval hash** that strips operational params (like endpoint URLs) so the same logical configuration on different deployments produces the same hash. This enables grouping equivalent runs for evaluation comparison.
+
+What feeds the eval hash is declared **on the strongly-typed identifier fields themselves**, via `Evaluate.*` markers attached as [`typing.Annotated`](https://docs.python.org/3/library/typing.html#typing.Annotated) metadata. This keeps the identifier classes the single source of truth — you change what an eval hash includes by editing the field, not a separate rules table:
+
+- `Evaluate.Include()` — keep this field in the eval hash (the default for an unmarked field). On a param, `fallback="model_name"` substitutes another param's value when this one is empty. On a child, `only_params={...}` restricts the child subtree to those params.
+- `Evaluate.Exclude()` — drop the field (param or child) from the eval hash. Operational target params like `endpoint`, `model_name`, and `max_requests_per_minute` are excluded this way.
+- `Evaluate.Unwrap()` — mark a wrapper passthrough slot (e.g. `TargetIdentifier.targets`). A multi-target like `RoundRobinTarget` is "looked through" to its inner target, so it eval-hashes the same as the bare inner target.
+
+For example, `TargetIdentifier` excludes `endpoint` but includes `temperature`, and the `ObjectiveTargetEvaluationIdentifier` / `ScorerEvaluationIdentifier` / `AtomicAttackEvaluationIdentifier` subclasses derive their engine rules from these markers (via `derive_eval_config`). Markers affect **only** the eval hash — the identity `hash` always keeps distinct components (e.g. a wrapper vs. its inner target) distinct.
