@@ -52,6 +52,8 @@ from pyrit.backend.services.converter_service import get_converter_service
 from pyrit.backend.services.target_service import get_target_service
 from pyrit.memory import CentralMemory, data_serializer_factory
 from pyrit.models import (
+    AtomicAttackIdentifier,
+    AttackIdentifier,
     AttackOutcome,
     AttackResult,
     ComponentIdentifier,
@@ -60,7 +62,6 @@ from pyrit.models import (
     ConversationType,
     MessagePiece,
     PromptDataType,
-    build_atomic_attack_identifier,
 )
 from pyrit.prompt_normalizer import PromptConverterConfiguration, PromptNormalizer
 
@@ -322,11 +323,11 @@ class AttackService:
         attack_result = AttackResult(
             conversation_id=conversation_id,
             objective=request.name or "Manual attack via GUI",
-            atomic_attack_identifier=build_atomic_attack_identifier(
-                attack_identifier=ComponentIdentifier(
+            atomic_attack_identifier=AtomicAttackIdentifier.build(
+                attack_identifier=AttackIdentifier(
                     class_name=request.name or "ManualAttack",
                     class_module="pyrit.backend",
-                    children={"objective_target": target_identifier} if target_identifier else {},
+                    objective_target=target_identifier,
                 ),
             ),
             outcome=AttackOutcome.UNDETERMINED,

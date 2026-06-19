@@ -17,19 +17,14 @@ jest.mock("../../services/api", () => ({
 // Mock Navigation to simplify testing
 jest.mock("../Sidebar/Navigation", () => {
   const MockNavigation = ({
-    onToggleTheme,
-    isDarkMode,
     currentView,
     onNavigate,
   }: {
-    onToggleTheme: () => void;
-    isDarkMode: boolean;
     currentView: string;
     onNavigate: (view: string) => void;
   }) => {
     return (
-      <div data-testid="navigation" data-dark-mode={isDarkMode} data-current-view={currentView}>
-        <button onClick={onToggleTheme}>Toggle</button>
+      <div data-testid="navigation" data-current-view={currentView}>
         <button onClick={() => onNavigate("config")}>Config</button>
       </div>
     );
@@ -55,8 +50,6 @@ describe("MainLayout", () => {
   });
 
   const defaultProps = {
-    onToggleTheme: jest.fn(),
-    isDarkMode: false,
     currentView: 'chat' as const,
     onNavigate: jest.fn(),
   };
@@ -140,23 +133,6 @@ describe("MainLayout", () => {
         <div>Content</div>
       </MainLayout>
     );
-
-    await waitFor(() => {
-      expect(mockedVersionApi.getVersion).toHaveBeenCalled();
-    });
-  });
-
-  it("passes theme props to Navigation", async () => {
-    mockedVersionApi.getVersion.mockResolvedValue({ version: "1.0.0" });
-
-    renderWithProvider(
-      <MainLayout {...defaultProps} isDarkMode={true}>
-        <div>Content</div>
-      </MainLayout>
-    );
-
-    const navigation = screen.getByTestId("navigation");
-    expect(navigation).toHaveAttribute("data-dark-mode", "true");
 
     await waitFor(() => {
       expect(mockedVersionApi.getVersion).toHaveBeenCalled();

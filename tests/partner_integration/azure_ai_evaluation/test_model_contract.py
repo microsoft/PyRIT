@@ -176,7 +176,7 @@ class TestSeedModels:
 
     def test_seed_prompt_has_prompt_group_id(self):
         """DatasetConfigurationBuilder sets prompt_group_id for grouping seeds."""
-        group_id = str(uuid.uuid4())
+        group_id = uuid.uuid4()
         prompt = SeedPrompt(value="test", prompt_group_id=group_id)
         assert prompt.prompt_group_id == group_id
 
@@ -196,7 +196,7 @@ class TestSeedModels:
         carry tool_name and context_type in metadata so _CallbackChatTarget can
         extract them from conversation history and pass to the agent callback.
         """
-        group_id = str(uuid.uuid4())
+        group_id = uuid.uuid4()
         ctx_metadata = {
             "is_context": True,
             "context_index": 0,

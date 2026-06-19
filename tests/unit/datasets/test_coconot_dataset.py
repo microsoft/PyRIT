@@ -213,6 +213,16 @@ class TestCoCoNotRefusalDataset:
         with pytest.raises(ValueError, match="Expected CoCoNotSplit"):
             _CoCoNotRefusalDataset(splits=[CoCoNotCategory.SAFETY])  # type: ignore[ty:invalid-argument-type]
 
+    def test_empty_categories_raises(self) -> None:
+        """An empty categories list raises ValueError at construction."""
+        with pytest.raises(ValueError, match="`categories` must be a non-empty list"):
+            _CoCoNotRefusalDataset(categories=[])
+
+    def test_empty_splits_raises(self) -> None:
+        """An empty splits list raises ValueError at construction."""
+        with pytest.raises(ValueError, match="`splits` must be a non-empty list"):
+            _CoCoNotRefusalDataset(splits=[])
+
     async def test_rows_with_empty_prompts_are_skipped(self) -> None:
         """Upstream rows with empty/whitespace ``prompt`` are dropped, not turned into empty seeds.
 

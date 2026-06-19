@@ -6,7 +6,7 @@ from __future__ import annotations
 import copy
 import uuid
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from pydantic import BaseModel, ConfigDict, model_validator
 
@@ -124,7 +124,7 @@ class Message(BaseModel):
             if message_piece.role != role:
                 raise ValueError("Inconsistent roles within the same message entry.")
 
-    def validate(self) -> None:
+    def validate(self) -> None:  # type: ignore[ty:invalid-method-override]
         """
         Validate that all message pieces are internally consistent.
 
@@ -290,7 +290,7 @@ class Message(BaseModel):
         """
         if len(self.message_pieces) == 0:
             raise ValueError("Empty message pieces.")
-        return self.message_pieces[0].conversation_id
+        return cast("str", self.message_pieces[0].conversation_id)
 
     @property
     def sequence(self) -> int:

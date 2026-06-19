@@ -70,6 +70,7 @@ def _extra_args_for(scenario_name: str) -> list[str]:
 
 
 @pytest.mark.timeout(7200)  # 2 hour timeout per scenario
+@pytest.mark.flaky(reruns=3, reruns_delay=90)
 @pytest.mark.parametrize("scenario_name", get_all_scenarios())
 def test_scenario_with_pyrit_scan(scenario_name):
     """

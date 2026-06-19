@@ -16,6 +16,7 @@ from pyrit.memory.memory_models import (
     ScenarioResultEntry,
 )
 from pyrit.models import (
+    AtomicAttackIdentifier,
     AttackOutcome,
     AttackResult,
     ComponentIdentifier,
@@ -23,7 +24,6 @@ from pyrit.models import (
     ScenarioIdentifier,
     ScenarioResult,
     SeedPrompt,
-    build_atomic_attack_identifier,
 )
 
 
@@ -48,7 +48,7 @@ def get_test_atomic_attack_identifier() -> ComponentIdentifier:
         class_name="TestAttack",
         class_module="tests.integration.memory.test_azure_sql_memory_integration",
     )
-    return build_atomic_attack_identifier(attack_identifier=attack_strategy)
+    return AtomicAttackIdentifier.build(attack_identifier=attack_strategy)
 
 
 def get_test_scorer_identifier(**kwargs) -> ComponentIdentifier:
@@ -317,45 +317,6 @@ async def test_get_attack_results_by_labels(azuresql_instance: AzureSQLMemory):
         results = azuresql_instance.get_attack_results(labels={"op_id": "nonexistent"})
         results = [r for r in results if test_id in r.conversation_id]
         assert len(results) == 0
-
-
-async def test_legacy_attack_identifier_compat(azuresql_instance: AzureSQLMemory):
-    """
-    Legacy integration test verifying the deprecated attack_identifier parameter
-    is promoted to atomic_attack_identifier via the compatibility wrapper.
-    """
-    test_id = generate_test_id()
-    conversation_ids = [f"conv_legacy_{test_id}"]
-
-    with cleanup_conversation_data(azuresql_instance, conversation_ids):
-        piece = MessagePiece(
-            conversation_id=conversation_ids[0],
-            role="user",
-            original_value="Legacy test",
-            converted_value="Legacy test",
-        )
-        azuresql_instance.add_message_pieces_to_memory(message_pieces=[piece])
-
-        legacy_id = ComponentIdentifier(
-            class_name="LegacyAttack",
-            class_module="tests.integration.memory.test_azure_sql_memory_integration",
-        )
-        result = AttackResult(
-            conversation_id=conversation_ids[0],
-            objective="Legacy objective",
-            attack_identifier=legacy_id,
-            outcome=AttackOutcome.SUCCESS,
-        )
-        # The compat wrapper should have promoted attack_identifier to atomic_attack_identifier
-        assert result.atomic_attack_identifier is not None
-        assert result.atomic_attack_identifier.class_name == "AtomicAttack"
-
-        azuresql_instance.add_attack_results_to_memory(attack_results=[result])
-
-        results = azuresql_instance.get_attack_results()
-        results = [r for r in results if test_id in r.conversation_id]
-        assert len(results) == 1
-        assert results[0].atomic_attack_identifier is not None
 
 
 async def test_scenario_result_scorer_identifier_roundtrip(azuresql_instance: AzureSQLMemory):

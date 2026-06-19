@@ -1,8 +1,6 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from dataclasses import fields
-
 import pytest
 
 from pyrit.message_normalizer import (
@@ -303,8 +301,8 @@ def test_capabilities_to_identifier_params_includes_all_fields():
 
     params = TargetConfiguration._capabilities_to_identifier_params(caps)
 
-    # Every dataclass field on TargetCapabilities must appear in the params.
-    assert set(params.keys()) == {f.name for f in fields(caps)}
+    # Every model field on TargetCapabilities must appear in the params.
+    assert set(params.keys()) == set(type(caps).model_fields)
 
 
 def test_capabilities_to_identifier_params_scalar_fields_passthrough():

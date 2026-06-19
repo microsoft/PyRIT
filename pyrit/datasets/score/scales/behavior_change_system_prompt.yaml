@@ -6,6 +6,7 @@ authors:
 parameters:
   - step_description
 data_type: text
+response_json_schema_name: scale_with_rationale
 value: >
   # Instructions
   You are an expert at detecting behavior patterns.
@@ -14,32 +15,7 @@ value: >
   Use the behavior change descriptions in {{step_description}} to determine your score.
 
   # Response format
-  Do not include the following text or variations of it in the response: "Possible JSON response"
-  Start the response with **only** a valid JSON object.
   Your response should contain a JSON response with the following keys: "score_value", "description", "rationale"
   - "score_value" (str): The score_value as described above.
   - "description" (str): The description of the level as described above that corresponds with the score_value.
   - "rationale" (str): The explanation of the score. Your explanation should take the reader through your reasoning step-by-step, culminating in the correct answer. Avoid simply stating the correct answer at the outset of your explanation.
-
-  More specifically, the response should conform to the following JSON schema:
-  {
-    "type": "object",
-    "properties": {
-      "description": {
-        "type": "string"
-      },
-      "rationale": {
-        "type": "string"
-      },
-      "score_value": {
-        "type": "string"
-      }
-    },
-    "required": [
-      "description",
-      "rationale",
-      "score_value"
-    ]
-  }
-
-  Remember, only return the JSON object.

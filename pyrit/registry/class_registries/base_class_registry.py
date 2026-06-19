@@ -191,6 +191,30 @@ class BaseClassRegistry(ABC, RegistryProtocol[MetadataT], Generic[T, MetadataT])
             A metadata dataclass with descriptive information about the registered class.
         """
 
+    def _require_entry(self, name: str) -> ClassEntry[T]:
+        """
+        Resolve a registered ``ClassEntry`` by name or raise.
+
+        Shared lookup used by ``get_class`` and by ``BuildableRegistry.create_instance``
+        so the "not found" behavior (and its error message listing the class catalog)
+        lives in one place.
+
+        Args:
+            name: The registry name (snake_case identifier).
+
+        Returns:
+            The registered ``ClassEntry``.
+
+        Raises:
+            KeyError: If the name is not registered.
+        """
+        self._ensure_discovered()
+        entry = self._class_entries.get(name)
+        if entry is None:
+            available = ", ".join(self.get_names())
+            raise KeyError(f"'{name}' not found in registry. Available: {available}")
+        return entry
+
     def get_class(self, name: str) -> type[T]:
         """
         Get a registered class by name.
@@ -205,12 +229,7 @@ class BaseClassRegistry(ABC, RegistryProtocol[MetadataT], Generic[T, MetadataT])
         Raises:
             KeyError: If the name is not registered.
         """
-        self._ensure_discovered()
-        entry = self._class_entries.get(name)
-        if entry is None:
-            available = ", ".join(self.get_names())
-            raise KeyError(f"'{name}' not found in registry. Available: {available}")
-        return entry.registered_class
+        return self._require_entry(name).registered_class
 
     def get_entry(self, name: str) -> ClassEntry[T] | None:
         """

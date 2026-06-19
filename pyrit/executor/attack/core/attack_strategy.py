@@ -26,13 +26,17 @@ from pyrit.executor.core import (
 )
 from pyrit.memory.central_memory import CentralMemory
 from pyrit.models import (
+    AttackIdentifier,
     AttackOutcome,
     AttackResult,
     ComponentIdentifier,
     ConversationReference,
+    ConverterIdentifier,
     Identifiable,
     Message,
+    ScorerIdentifier,
     SeedPrompt,
+    TargetIdentifier,
 )
 from pyrit.prompt_target.common.target_requirements import TargetRequirements
 
@@ -458,48 +462,64 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
         Returns:
             ComponentIdentifier: The identifier for this attack strategy.
         """
-        all_children: dict[str, ComponentIdentifier | list[ComponentIdentifier]] = {
-            "objective_target": self.get_objective_target().get_identifier(),
-        }
-
+        all_children: dict[str, ComponentIdentifier | list[ComponentIdentifier]] = dict(children) if children else {}
         merged_params: dict[str, Any] = dict(params) if params else {}
 
+        objective_target = TargetIdentifier.from_component_identifier(self.get_objective_target().get_identifier())
+
         # Add scorer if present
+        objective_scorer: ScorerIdentifier | None = None
         scoring_config = self.get_attack_scoring_config()
         if scoring_config and scoring_config.objective_scorer:
-            all_children["objective_scorer"] = scoring_config.objective_scorer.get_identifier()
+            objective_scorer = ScorerIdentifier.from_component_identifier(
+                scoring_config.objective_scorer.get_identifier()
+            )
 
         # Add adversarial chat target and its effective prompts if present. The adversarial
         # target becomes a child (filtered to model params by the eval rule), while the
         # effective system/seed prompts land on the attack-strategy node so they are included
-        # in both the full component hash and the eval hash. None-valued params are dropped by
-        # ComponentIdentifier.of, so strategies that do not use a given prompt simply omit it.
+        # in both the full component hash and the eval hash. None-valued promoted fields are
+        # dropped by ComponentIdentifier.of, so strategies that do not use a given prompt
+        # simply omit it.
+        adversarial_chat: TargetIdentifier | None = None
+        adversarial_system_prompt: str | None = None
+        adversarial_seed_prompt: str | None = None
         adversarial_config = self.get_attack_adversarial_config()
         if adversarial_config is not None and getattr(adversarial_config, "target", None) is not None:
-            all_children["adversarial_chat"] = adversarial_config.target.get_identifier()
-            merged_params["adversarial_system_prompt"] = self._extract_adversarial_prompt_text(
-                adversarial_config.system_prompt
-            )
-            merged_params["adversarial_seed_prompt"] = self._extract_adversarial_prompt_text(
-                adversarial_config.seed_prompt
-            )
+            adversarial_chat = TargetIdentifier.from_component_identifier(adversarial_config.target.get_identifier())
+            adversarial_system_prompt = self._extract_adversarial_prompt_text(adversarial_config.system_prompt)
+            adversarial_seed_prompt = self._extract_adversarial_prompt_text(adversarial_config.seed_prompt)
 
         # Add request converter identifiers if present
+        request_converters: list[ConverterIdentifier] | None = None
         if self._request_converters:
-            all_children["request_converters"] = [
-                converter.get_identifier() for config in self._request_converters for converter in config.converters
+            request_converters = [
+                ConverterIdentifier.from_component_identifier(converter.get_identifier())
+                for config in self._request_converters
+                for converter in config.converters
             ]
 
         # Add response converter identifiers if present
+        response_converters: list[ConverterIdentifier] | None = None
         if self._response_converters:
-            all_children["response_converters"] = [
-                converter.get_identifier() for config in self._response_converters for converter in config.converters
+            response_converters = [
+                ConverterIdentifier.from_component_identifier(converter.get_identifier())
+                for config in self._response_converters
+                for converter in config.converters
             ]
 
-        if children:
-            all_children.update(children)
-
-        return ComponentIdentifier.of(self, params=merged_params or None, children=all_children)
+        return AttackIdentifier.of(
+            self,
+            params=merged_params or None,
+            children=all_children or None,
+            objective_target=objective_target,
+            adversarial_chat=adversarial_chat,
+            objective_scorer=objective_scorer,
+            request_converters=request_converters,
+            response_converters=response_converters,
+            adversarial_system_prompt=adversarial_system_prompt,
+            adversarial_seed_prompt=adversarial_seed_prompt,
+        )
 
     @staticmethod
     def _extract_adversarial_prompt_text(value: str | SeedPrompt | None) -> str | None:

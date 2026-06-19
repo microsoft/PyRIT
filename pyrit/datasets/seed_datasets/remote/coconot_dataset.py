@@ -3,7 +3,7 @@
 
 import logging
 from enum import Enum
-from typing import TYPE_CHECKING, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from typing_extensions import override
 
@@ -106,6 +106,8 @@ class _CoCoNotBaseDataset(_RemoteDatasetLoader):
             ValueError: If any value in ``categories`` is not a CoCoNotCategory.
         """
         if categories is not None:
+            if not categories:
+                raise ValueError("`categories` must be a non-empty list (pass None to include all categories)")
             self._validate_enums(values=categories, enum_cls=CoCoNotCategory, label="categories")
         self._categories = categories
 
@@ -175,7 +177,7 @@ class _CoCoNotBaseDataset(_RemoteDatasetLoader):
         logger.info(f"Successfully loaded {len(seeds)} objectives from CoCoNot ({self.dataset_name})")
         return SeedDataset(seeds=seeds, dataset_name=self.dataset_name)
 
-    def _row_to_seed(self, *, row: dict, split: str, source_url: str) -> SeedObjective:
+    def _row_to_seed(self, *, row: dict[str, Any], split: str, source_url: str) -> SeedObjective:
         """
         Convert one HF row into a SeedObjective with full per-row metadata.
 
@@ -256,6 +258,8 @@ class _CoCoNotRefusalDataset(_CoCoNotBaseDataset):
         """
         super().__init__(categories=categories)
         if splits is not None:
+            if not splits:
+                raise ValueError("`splits` must be a non-empty list (pass None to include all splits)")
             self._validate_enums(values=splits, enum_cls=CoCoNotSplit, label="splits")
         self._splits = splits
 

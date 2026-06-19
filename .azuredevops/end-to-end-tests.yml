@@ -1,14 +1,14 @@
 # Runs end-to-end scenario tests using pyrit_scan CLI
 
-trigger: none  # Disable automatic CI triggers
+trigger: none
 
 schedules:
-- cron: "0 7 * * *"  # 7 AM UTC = 11 PM PST (UTC-8) / Midnight PDT (UTC-7)
-  displayName: Nightly E2E Tests at 11 PM PST
+- cron: "0 7 * * *"  # 7 AM UTC = 11 PM PST (UTC-8)
+  displayName: E2E Tests Daily at 07:00 AM UTC (11:00 PM PST)
   branches:
     include:
-    - main
-  always: true  # Run even if there are no code changes
+      - main
+  always: true
 
 jobs:
 - template: test-job-template.yml

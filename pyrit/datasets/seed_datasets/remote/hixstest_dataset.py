@@ -9,7 +9,7 @@ from enum import Enum
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import SeedDataset, SeedPrompt
+from pyrit.models import SeedDataset, SeedPrompt, SeedUnion
 
 logger = logging.getLogger(__name__)
 
@@ -152,7 +152,7 @@ class _HiXSTestDataset(_RemoteDatasetLoader):
         source_url = f"https://huggingface.co/datasets/{self.HF_DATASET_NAME}"
         groups = ["Walled AI", "DeCLaRe Lab, Singapore University of Technology and Design"]
 
-        seed_prompts = [
+        seed_prompts: list[SeedUnion] = [
             SeedPrompt(
                 value=self._select_value(item),
                 data_type="text",
@@ -177,7 +177,7 @@ class _HiXSTestDataset(_RemoteDatasetLoader):
 
         return SeedDataset(seeds=seed_prompts, dataset_name=self.dataset_name)
 
-    def _select_value(self, item: dict) -> str:
+    def _select_value(self, item: dict[str, str]) -> str:
         """
         Return the prompt text to use as ``SeedPrompt.value`` based on ``self.language``.
 

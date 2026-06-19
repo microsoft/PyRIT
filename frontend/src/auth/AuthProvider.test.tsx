@@ -313,4 +313,106 @@ describe("AuthProvider", () => {
         expect(screen.getByTestId("consumer")).toBeVisible();
       });
     });
+
+  // Test 20: the originally requested path is passed as MSAL state on login,
+  // so it can be restored after the redirect round-trip.
+  it("passes the requested path as state to loginRedirect", async () => {
+    window.history.replaceState(null, "", "/attacks/atk-7?tab=related");
+    mockFetchAuthConfig.mockResolvedValue({
+      clientId: "test-client",
+      tenantId: "test-tenant",
+      allowedGroupIds: "g1",
+    });
+
+    render(
+      <AuthProvider>
+        <div>Child</div>
+      </AuthProvider>
+    );
+
+    await waitFor(() => {
+      expect(mockLoginRedirect).toHaveBeenCalledWith(
+        expect.objectContaining({ state: "/attacks/atk-7?tab=related" })
+      );
+    });
+  });
+
+  // Test 21: a same-origin path returned as redirect state is restored.
+  it("restores the requested deep link from redirect state", async () => {
+    window.history.replaceState(null, "", "/");
+    mockFetchAuthConfig.mockResolvedValue({
+      clientId: "test-client",
+      tenantId: "test-tenant",
+      allowedGroupIds: "g1",
+    });
+    mockHandleRedirectPromise.mockResolvedValue({
+      account: { username: "user@test.com" },
+      state: "/attacks/atk-7",
+    });
+
+    render(
+      <AuthProvider>
+        <div>Child</div>
+      </AuthProvider>
+    );
+
+    await waitFor(() => {
+      expect(window.location.pathname).toBe("/attacks/atk-7");
+    });
+  });
+
+  // Test 22: an absolute/cross-origin state is rejected (open-redirect guard).
+  it("ignores an unsafe cross-origin redirect state", async () => {
+    window.history.replaceState(null, "", "/");
+    const replaceSpy = jest.spyOn(window.history, "replaceState");
+    mockFetchAuthConfig.mockResolvedValue({
+      clientId: "test-client",
+      tenantId: "test-tenant",
+      allowedGroupIds: "g1",
+    });
+    mockHandleRedirectPromise.mockResolvedValue({
+      account: { username: "user@test.com" },
+      state: "https://evil.example.com/phish",
+    });
+
+    render(
+      <AuthProvider>
+        <div>Child</div>
+      </AuthProvider>
+    );
+
+    await waitFor(() => {
+      expect(mockSetActiveAccount).toHaveBeenCalled();
+    });
+    expect(replaceSpy).not.toHaveBeenCalled();
+    expect(window.location.pathname).toBe("/");
+  });
+
+  // Test 23: a backslash-prefixed state ("/\evil.com") is rejected, since the
+  // URL parser normalizes "\" to "/" and would otherwise yield "//evil.com".
+  it("ignores a backslash-prefixed redirect state", async () => {
+    window.history.replaceState(null, "", "/");
+    const replaceSpy = jest.spyOn(window.history, "replaceState");
+    mockFetchAuthConfig.mockResolvedValue({
+      clientId: "test-client",
+      tenantId: "test-tenant",
+      allowedGroupIds: "g1",
+    });
+    mockHandleRedirectPromise.mockResolvedValue({
+      account: { username: "user@test.com" },
+      state: "/\\evil.example.com/phish",
+    });
+
+    render(
+      <AuthProvider>
+        <div>Child</div>
+      </AuthProvider>
+    );
+
+    await waitFor(() => {
+      expect(mockSetActiveAccount).toHaveBeenCalled();
+    });
+    expect(replaceSpy).not.toHaveBeenCalled();
+    expect(window.location.pathname).toBe("/");
+  });
 });

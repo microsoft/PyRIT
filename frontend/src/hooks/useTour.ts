@@ -9,6 +9,22 @@ import type { ViewName } from '../components/Sidebar/Navigation'
 
 const STORAGE_KEY = 'pyrit-tour-completed'
 
+// Static Joyride config — hoisted to module scope so they're created once,
+// not on every render. Joyride compares these by reference internally.
+const JOYRIDE_STEPS = [...TOUR_STEPS]
+const JOYRIDE_FLOATING_OPTIONS = { hideArrow: true } as const
+const JOYRIDE_OPTIONS = {
+  closeButtonAction: 'skip' as const,
+  overlayClickAction: false as const,
+}
+const JOYRIDE_LOCALE = {
+  back: 'Back',
+  close: 'Close',
+  last: "Anchors Away!",
+  next: 'Next',
+  skip: 'Skip tour',
+}
+
 /**
  * Manages the onboarding tour lifecycle: step progression, cross-view
  * navigation, and localStorage persistence.
@@ -143,30 +159,28 @@ export function useTour(onNavigate: (view: ViewName) => void, isDarkMode: boolea
     [isDarkMode],
   )
 
+  // Memoize tourProps so Joyride only receives a new object reference when
+  // something it cares about actually changed (run, stepIndex, callbacks, tooltip).
+  const tourProps = useMemo(() => ({
+    steps: JOYRIDE_STEPS,
+    run,
+    stepIndex,
+    onEvent: handleJoyrideEvent,
+    continuous: true as const,
+    showSkipButton: true,
+    spotlightClicks: false,
+    tooltipComponent: tooltip,
+    floatingOptions: JOYRIDE_FLOATING_OPTIONS,
+    options: JOYRIDE_OPTIONS,
+    locale: JOYRIDE_LOCALE,
+  }), [run, stepIndex, handleJoyrideEvent, tooltip])
+
   return {
     /** Call to start (or restart) the tour from step 1 on the Home view. */
     startTour,
     /** Whether the user has completed the tour at least once. */
     hasCompletedTour,
     /** Props to spread onto the `<Joyride>` component. */
-    tourProps: {
-      steps: [...TOUR_STEPS],
-      run,
-      stepIndex,
-      onEvent: handleJoyrideEvent,
-      continuous: true,
-      showSkipButton: true,
-      spotlightClicks: false,
-      tooltipComponent: tooltip,
-      floatingOptions: { hideArrow: true },
-      // Make the close (X) button skip the entire tour instead of advancing.
-      // Without this, Joyride's default 'close' action advances to the next
-      // step internally before our onEvent fires, causing the view to snap.
-      options: {
-        closeButtonAction: 'skip' as const,
-        overlayClickAction: false as const,
-      },
-      locale: { back: 'Back', close: 'Close', last: "Anchors Away!", next: 'Next', skip: 'Skip tour' },
-    },
+    tourProps,
   }
 }
