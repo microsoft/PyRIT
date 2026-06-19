@@ -14,11 +14,11 @@ A single registry for ``PromptConverter`` that both:
 - **holds** pre-configured converter instances registered via initializers or the
   backend.
 
-It is a ``BuildableRegistry``: the registry's own surface (``get_class``,
-``get_class_names``, ``list_class_metadata``, ``create_instance``) is the buildable
-class catalog. Pre-configured instances live under the ``instances`` property
-(``register``, ``get``, ``get_all_instances``, ``get_names``), a
-``DefaultInstanceRegistry``.
+It is a ``Registry``: the registry's own surface (``get_class``,
+``get_class_names``, ``get_all_registered_class_metadata``, ``create_instance``)
+is the buildable class catalog. Pre-configured instances live under the
+``instances`` property (``register``, ``get``, ``get_all_instances``,
+``get_names``), a ``DefaultInstanceRegistry``.
 """
 
 from __future__ import annotations
@@ -30,9 +30,8 @@ from typing import TYPE_CHECKING
 from pyrit.models.identifiers import ConverterIdentifier
 from pyrit.models.parameter import ComponentType
 from pyrit.registry.base import ClassRegistryEntry
-from pyrit.registry.buildable_registry import BuildableRegistry
-from pyrit.registry.class_registries.base_class_registry import ClassEntry
 from pyrit.registry.instance_registry import DefaultInstanceRegistry, InstanceRegistry
+from pyrit.registry.registry import Registry
 from pyrit.registry.resolution import derive_parameters
 
 if TYPE_CHECKING:
@@ -91,7 +90,7 @@ class ConverterMetadata(ClassRegistryEntry):
         )
 
 
-class ConverterRegistry(BuildableRegistry["PromptConverter", ConverterMetadata]):
+class ConverterRegistry(Registry["PromptConverter", ConverterMetadata]):
     """
     Registry that discovers, builds, and holds ``PromptConverter`` instances.
 
@@ -146,34 +145,32 @@ class ConverterRegistry(BuildableRegistry["PromptConverter", ConverterMetadata])
                 continue
             if not issubclass(cls, PromptConverter) or cls is PromptConverter:
                 continue
-            self._class_entries[name] = ClassEntry(registered_class=cls)
+            self.register_class(cls, name=name)
             logger.debug(f"Registered converter class: {name}")
 
-    def _build_metadata(self, name: str, entry: ClassEntry[PromptConverter]) -> ConverterMetadata:
+    def _build_metadata(self, name: str, cls: type[PromptConverter]) -> ConverterMetadata:
         """
         Build catalog metadata for a ``PromptConverter`` class.
 
         Args:
             name (str): The catalog name (exact class name) of the converter.
-            entry (ClassEntry[PromptConverter]): The class entry being described.
+            cls (type[PromptConverter]): The converter class being described.
 
         Returns:
             ConverterMetadata: Metadata describing the converter class.
         """
-        converter_class = entry.registered_class
-
         # First paragraph of the docstring as a short description.
-        raw_doc = (converter_class.__doc__ or "").strip()
+        raw_doc = (cls.__doc__ or "").strip()
         description = raw_doc.split("\n\n")[0].replace("\n", " ").strip()
 
         # Supported input/output types are class attributes, so they can be read off
         # the class without constructing an instance (see Param.ClassAttr).
-        class_attributes = ConverterIdentifier.get_class_attribute_values(converter_class)
-        parameters = tuple(derive_parameters(cls=converter_class, identifier_type=ConverterIdentifier))
+        class_attributes = ConverterIdentifier.get_class_attribute_values(cls)
+        parameters = tuple(derive_parameters(cls=cls, identifier_type=ConverterIdentifier))
 
         return ConverterMetadata(
-            class_name=converter_class.__name__,
-            class_module=converter_class.__module__,
+            class_name=cls.__name__,
+            class_module=cls.__module__,
             class_description=description,
             registry_name=name,
             parameters=parameters,

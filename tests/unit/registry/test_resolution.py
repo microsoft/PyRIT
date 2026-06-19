@@ -17,7 +17,6 @@ from pyrit.models.parameter import ComponentType
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry.object_registries import TargetRegistry
 from pyrit.registry.resolution import (
-    _component_type_for_annotation,
     derive_parameters,
     display_choices,
     resolve_constructor_args,
@@ -93,9 +92,9 @@ class _StrTargetArg:
         self.converter_target = converter_target
 
 
-def _resolve(cls: type, raw_args: dict[str, object]) -> dict[str, object]:
+def _resolve(cls: type, raw_args: dict[str, object], *, identifier_type: type | None = None) -> dict[str, object]:
     """Resolve ``raw_args`` against the derived parameter contract for ``cls``."""
-    return resolve_constructor_args(cls=cls, raw_args=raw_args)
+    return resolve_constructor_args(cls=cls, raw_args=raw_args, identifier_type=identifier_type)
 
 
 @pytest.fixture
@@ -159,41 +158,24 @@ class TestResolveConstructorArgs:
             _resolve(_SimpleOnly, {"count": "not-an-int"})
 
     def test_resolves_registry_reference_by_name(self, target_registry: TargetRegistry) -> None:
-        resolved = _resolve(_NeedsTarget, {"converter_target": "my_target", "offset": "5"})
+        resolved = _resolve(
+            _NeedsTarget, {"converter_target": "my_target", "offset": "5"}, identifier_type=ConverterIdentifier
+        )
         assert resolved["converter_target"] is target_registry.get_instance_by_name("my_target")
         assert resolved["offset"] == 5
 
     def test_registry_reference_instance_passthrough(self, target_registry: TargetRegistry) -> None:
         instance = MockPromptTarget()
-        resolved = _resolve(_NeedsTarget, {"converter_target": instance})
+        resolved = _resolve(_NeedsTarget, {"converter_target": instance}, identifier_type=ConverterIdentifier)
         assert resolved["converter_target"] is instance
 
     def test_unknown_registry_reference_raises_with_names(self, target_registry: TargetRegistry) -> None:
         with pytest.raises(ValueError, match="my_target"):
-            _resolve(_NeedsTarget, {"converter_target": "missing"})
+            _resolve(_NeedsTarget, {"converter_target": "missing"}, identifier_type=ConverterIdentifier)
 
     def test_unknown_registry_reference_empty_registry_hint(self, empty_target_registry: TargetRegistry) -> None:
         with pytest.raises(ValueError, match="is empty"):
-            _resolve(_NeedsTarget, {"converter_target": "missing"})
-
-
-class TestComponentTypeForAnnotation:
-    """Tests for the base-type reference component-type fallback."""
-
-    def test_target(self) -> None:
-        assert _component_type_for_annotation(PromptTarget) is ComponentType.TARGET
-
-    def test_optional_target(self) -> None:
-        assert _component_type_for_annotation(PromptTarget | None) is ComponentType.TARGET
-
-    def test_list_of_converters_is_not_a_reference(self) -> None:
-        from pyrit.prompt_converter import PromptConverter
-
-        # A list of converters is a structured value, not a single reference.
-        assert _component_type_for_annotation(list[PromptConverter]) is None
-
-    def test_plain(self) -> None:
-        assert _component_type_for_annotation(int) is None
+            _resolve(_NeedsTarget, {"converter_target": "missing"}, identifier_type=ConverterIdentifier)
 
 
 class TestDeriveParameters:
@@ -233,8 +215,8 @@ class TestDeriveParameters:
         assert param.reference is not None
         assert param.reference.component_type is ComponentType.TARGET
 
-    def test_no_identifier_uses_base_type_fallback(self) -> None:
-        # Without the identifier, a plain ``str`` arg stays a plain value.
+    def test_no_identifier_yields_no_references(self) -> None:
+        # Without an identifier, no parameter is treated as a reference.
         param = derive_parameters(cls=_StrTargetArg)[0]
         assert param.reference is None
         assert param.param_type is str

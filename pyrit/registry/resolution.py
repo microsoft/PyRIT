@@ -10,12 +10,10 @@ identifier. It has three responsibilities:
 
 - **Derive** (``derive_parameters``): read the constructor signature, enriched
   by the identifier's ``Param.*`` build markers, into a ``list[Parameter]``. A
-  parameter whose annotation is (or unions to) a domain base type
-  (``PromptTarget`` / ``PromptConverter`` / ``Scorer``) — or whose included
-  identifier field is typed as a child identifier (e.g. ``TargetIdentifier``) —
-  becomes a registry **reference**; every other parameter becomes a plain value
-  parameter whose ``param_type`` is the annotation with ``Optional[X]`` reduced to
-  ``X``.
+  parameter the identifier promotes as a reference to another registry (an
+  included field typed as a child identifier, e.g. ``TargetIdentifier``) becomes
+  a registry **reference**; every other parameter becomes a plain value parameter
+  whose ``param_type`` is the annotation with ``Optional[X]`` reduced to ``X``.
 - **Resolve** (``resolve_constructor_args``): derive the contract for a class
   and turn a flat dict of raw arguments into constructor-ready keyword arguments —
   coercing simple string values via ``Parameter.coerce_value`` and resolving
@@ -76,45 +74,6 @@ def _unwrap_optional(annotation: TypeAnnotation) -> TypeAnnotation:
     return annotation
 
 
-def _component_type_for_annotation(annotation: TypeAnnotation) -> ComponentType | None:
-    """
-    Infer the component family for a constructor annotation, or None if not a reference.
-
-    Transitional base-type fallback used only when no identifier type is supplied:
-    today's constructors are annotated with the domain base type
-    (``converter_target: PromptTarget``) rather than the identifier type, so a
-    parameter is a registry reference when its annotation is (or unions to) a
-    ``PromptTarget`` / ``PromptConverter`` / ``Scorer`` subclass. This lives here
-    rather than on the identifier because the ``pyrit.models`` import boundary
-    forbids identifiers from importing these component base classes.
-
-    Returns:
-        ComponentType | None: The component family, or None for a plain value.
-    """
-    if annotation is inspect.Parameter.empty:
-        return None
-
-    origin = get_origin(annotation)
-    if origin is Union or origin is types.UnionType:
-        candidates = [a for a in get_args(annotation) if a is not type(None)]
-    else:
-        candidates = [annotation]
-    for candidate in candidates:
-        if not isinstance(candidate, type):
-            continue
-        from pyrit.prompt_converter import PromptConverter
-        from pyrit.prompt_target import PromptTarget
-        from pyrit.score.scorer import Scorer
-
-        if issubclass(candidate, PromptConverter):
-            return ComponentType.CONVERTER
-        if issubclass(candidate, PromptTarget):
-            return ComponentType.TARGET
-        if issubclass(candidate, Scorer):
-            return ComponentType.SCORER
-    return None
-
-
 def _parse_arg_descriptions(cls: type) -> dict[str, str]:
     """
     Parse parameter descriptions from a Google-style docstring ``Args`` section.
@@ -156,16 +115,16 @@ def derive_parameters(*, cls: type, identifier_type: type[ComponentIdentifier] |
     Derive the declarative ``Parameter`` list for ``cls`` from its constructor.
 
     Performs the single ``inspect.signature`` call of the build pipeline and maps
-    each settable constructor parameter to a ``Parameter``: reference parameters
-    (by identifier marker or domain base type) carry a ``RegistryReference``;
-    plain parameters carry an ``Optional``-unwrapped ``param_type``. Parameter
-    order follows the constructor signature.
+    each settable constructor parameter to a ``Parameter``: parameters the
+    identifier promotes as references carry a ``RegistryReference``; plain
+    parameters carry an ``Optional``-unwrapped ``param_type``. Parameter order
+    follows the constructor signature.
 
     Args:
         cls (type): The component class whose ``__init__`` drives derivation.
         identifier_type (type[ComponentIdentifier] | None): The domain identifier
-            whose ``Param.*`` markers enrich the derivation. When None, only the
-            base-type reference fallback applies.
+            whose ``Param.*`` markers declare which parameters are registry
+            references. When None, no parameter is treated as a reference.
 
     Returns:
         list[Parameter]: One ``Parameter`` per settable constructor parameter.
@@ -189,7 +148,7 @@ def derive_parameters(*, cls: type, identifier_type: type[ComponentIdentifier] |
             continue
 
         annotation = param.annotation
-        component_type = reference_overrides.get(name) or _component_type_for_annotation(annotation)
+        component_type = reference_overrides.get(name)
         description = descriptions.get(name, "")
         default = _default_for(param)
 
@@ -323,8 +282,8 @@ def resolve_constructor_args(
         cls (type): The class being built.
         raw_args (dict[str, Any]): The raw argument values (e.g. from a form or agent).
         identifier_type (type[ComponentIdentifier] | None): The domain identifier
-            whose ``Param.*`` markers enrich the derivation. When None, only the
-            base-type reference fallback applies.
+            whose ``Param.*`` markers declare which parameters are registry
+            references. When None, no parameter is treated as a reference.
 
     Returns:
         dict[str, Any]: Arguments ready to pass to ``cls(**resolved)``.

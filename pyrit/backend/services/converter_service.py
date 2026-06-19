@@ -138,7 +138,7 @@ class ConverterService:
                 is_llm_based=metadata.is_llm_based,
                 description=metadata.class_description or None,
             )
-            for metadata in self._registry.list_class_metadata()
+            for metadata in self._registry.get_all_registered_class_metadata()
         ]
 
         return ConverterCatalogResponse(items=items)
