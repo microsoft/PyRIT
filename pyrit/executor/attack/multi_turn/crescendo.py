@@ -276,7 +276,7 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
         return AttackAdversarialConfig(
             target=adversarial_chat,
             system_prompt=self._adversarial_chat_system_prompt_template,
-            seed_prompt=None,
+            first_message=None,
         )
 
     def _validate_context(self, *, context: CrescendoAttackContext) -> None:

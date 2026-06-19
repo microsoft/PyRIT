@@ -133,7 +133,7 @@ class RolePlayAttack(PromptSendingAttack):
         adversarial_chat = getattr(self, "_adversarial_chat", None)
         if adversarial_chat is None:
             return None
-        return AttackAdversarialConfig(target=adversarial_chat, seed_prompt=None)
+        return AttackAdversarialConfig(target=adversarial_chat, first_message=None)
 
     async def _setup_async(self, *, context: SingleTurnAttackContext[Any]) -> None:
         """

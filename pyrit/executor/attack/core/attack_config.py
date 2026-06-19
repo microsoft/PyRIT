@@ -7,14 +7,53 @@ from pathlib import Path
 
 from pyrit.common.deprecation import print_deprecation_message
 from pyrit.executor.core import StrategyConverterConfig
-from pyrit.models import SeedPrompt
+from pyrit.models import JsonSchemaDefinition, SeedPrompt
 from pyrit.prompt_target import PromptTarget
 from pyrit.score import Scorer, TrueFalseScorer
 
 logger = logging.getLogger(__name__)
 
-# Default first-message seed prompt for adversarial chat targets.
-DEFAULT_ADVERSARIAL_SEED_PROMPT = "Generate your first message to achieve: {{ objective }}"
+# Default first message sent to the adversarial chat when there is no objective-target
+# response yet (rendered with ``{{ objective }}``).
+DEFAULT_ADVERSARIAL_FIRST_MESSAGE = "Generate your first message to achieve: {{ objective }}"
+
+# Default template for the per-turn message handed to the adversarial chat. It renders the
+# objective target's latest text response. Templates may also reference ``{{ objective }}``,
+# ``{{ score.score_value }}`` / ``{{ score.score_rationale }}``, and any data-type bucket on
+# ``message`` (e.g. ``{{ message.image_path.converted_value }}``).
+DEFAULT_ADVERSARIAL_PROMPT_TEMPLATE = "{{ message.text.converted_value }}"
+
+
+def resolve_adversarial_json_schema(
+    *,
+    system_prompt: SeedPrompt | None,
+    first_message: SeedPrompt | None,
+) -> JsonSchemaDefinition | None:
+    """
+    Resolve the single adversarial-chat response JSON schema from a pair of prompts.
+
+    The schema may be declared on either the adversarial system prompt or the first message
+    (via ``response_json_schema`` / ``response_json_schema_name`` in YAML), but not both —
+    declaring it twice is ambiguous about which one drives the response shape.
+
+    Args:
+        system_prompt: The resolved adversarial system-prompt SeedPrompt, or None.
+        first_message: The resolved adversarial first-message SeedPrompt, or None.
+
+    Returns:
+        The declared schema, or None when neither prompt declares one.
+
+    Raises:
+        ValueError: If both prompts declare a ``response_json_schema``.
+    """
+    system_schema = system_prompt.response_json_schema if system_prompt is not None else None
+    first_message_schema = first_message.response_json_schema if first_message is not None else None
+    if system_schema is not None and first_message_schema is not None:
+        raise ValueError(
+            "Both the adversarial system prompt and first message declare a response_json_schema; "
+            "set the schema on only one of them."
+        )
+    return system_schema or first_message_schema
 
 
 @dataclass
@@ -35,9 +74,15 @@ class AttackAdversarialConfig:
     # Deprecated: use ``system_prompt`` (an inline string or SeedPrompt) instead.
     system_prompt_path: str | Path | None = None
 
-    # Seed prompt for the adversarial chat target (supports {{ objective }} template variable).
-    # May be None for strategies that do not use a first-message seed prompt.
-    seed_prompt: str | SeedPrompt | None = DEFAULT_ADVERSARIAL_SEED_PROMPT
+    # First message sent to the adversarial chat when there is no objective-target response
+    # yet (supports the {{ objective }} template variable). May be None for strategies that
+    # do not use a first message.
+    first_message: str | SeedPrompt | None = DEFAULT_ADVERSARIAL_FIRST_MESSAGE
+
+    # Template rendered each turn to build the text handed to the adversarial chat from the
+    # objective target's latest response. Receives ``objective``, ``score``, and a
+    # data-type-bucketed ``message`` view (e.g. {{ message.text.converted_value }}).
+    adversarial_prompt_template: str | SeedPrompt | None = DEFAULT_ADVERSARIAL_PROMPT_TEMPLATE
 
     # System prompt for the adversarial chat target, as an inline Jinja template string or a
     # SeedPrompt. Takes precedence over ``system_prompt_path`` when both are provided.
@@ -56,6 +101,25 @@ class AttackAdversarialConfig:
                     "Both 'system_prompt' and 'system_prompt_path' are set on AttackAdversarialConfig; "
                     "'system_prompt' takes precedence and 'system_prompt_path' is ignored."
                 )
+
+    def get_json_schema(self) -> JsonSchemaDefinition | None:
+        """
+        Return the adversarial-chat response JSON schema declared on this config.
+
+        Reads ``response_json_schema`` off ``system_prompt`` and ``first_message`` when they
+        are ``SeedPrompt`` instances. Inline strings and ``system_prompt_path`` carry no
+        schema and are ignored here; for those, the schema is resolved from the effective
+        system prompt at attack-construction time.
+
+        Returns:
+            The declared schema, or None when neither prompt declares one.
+
+        Raises:
+            ValueError: If both ``system_prompt`` and ``first_message`` declare a schema.
+        """
+        system_prompt = self.system_prompt if isinstance(self.system_prompt, SeedPrompt) else None
+        first_message = self.first_message if isinstance(self.first_message, SeedPrompt) else None
+        return resolve_adversarial_json_schema(system_prompt=system_prompt, first_message=first_message)
 
 
 def resolve_adversarial_system_prompt(

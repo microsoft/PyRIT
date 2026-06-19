@@ -1508,7 +1508,7 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
         return AttackAdversarialConfig(
             target=adversarial_chat,
             system_prompt=self._adversarial_chat_system_seed_prompt,
-            seed_prompt=None,
+            first_message=None,
         )
 
     def _validate_context(self, *, context: TAPAttackContext) -> None:

@@ -848,7 +848,21 @@ class TestPromptGeneration:
 
         basic_context.executed_turns = 1
         basic_context.next_message = None  # No message
-        mock_prompt_normalizer.send_prompt_async.return_value = sample_response
+        # The default adversarial system prompt (text_generation) declares the shared schema,
+        # so the adversarial reply is JSON and next_message is extracted from it.
+        json_response = Message(
+            message_pieces=[
+                MessagePiece(
+                    role="assistant",
+                    original_value=(
+                        '{"next_message": "Adversarial next message", '
+                        '"rationale": "advance objective", "last_response_summary": "prior response"}'
+                    ),
+                    original_value_data_type="text",
+                )
+            ]
+        )
+        mock_prompt_normalizer.send_prompt_async.return_value = json_response
 
         # Mock build_adversarial_prompt
         with patch.object(
@@ -856,7 +870,7 @@ class TestPromptGeneration:
         ):
             result = await attack._generate_next_prompt_async(context=basic_context)
 
-        assert result.get_value() == sample_response.get_value()
+        assert result.get_value() == "Adversarial next message"
         mock_prompt_normalizer.send_prompt_async.assert_called_once()
 
     async def test_generate_next_prompt_raises_on_none_response(
@@ -885,7 +899,7 @@ class TestPromptGeneration:
         with patch.object(
             attack, "_build_adversarial_prompt_async", new_callable=AsyncMock, return_value="Built prompt"
         ):
-            with pytest.raises(ValueError, match="Received no response from adversarial chat"):
+            with pytest.raises(ValueError, match="No response received from adversarial chat"):
                 await attack._generate_next_prompt_async(context=basic_context)
 
 

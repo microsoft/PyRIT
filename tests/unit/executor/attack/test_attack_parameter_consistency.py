@@ -260,15 +260,26 @@ def red_teaming_attack(
     adversarial_config = AttackAdversarialConfig(target=mock_adversarial_chat)
     scoring_config = AttackScoringConfig(objective_scorer=mock_objective_scorer)
 
+    mock_normalizer = MagicMock(spec=PromptNormalizer)
+    # The default RedTeamingAttack adversarial system prompt declares the shared adversarial_chat
+    # JSON schema, so the adversarial reply must be JSON for next_message extraction.
+    json_adversarial_response = Message.from_prompt(
+        prompt=(
+            '{"next_message": "This is a test response.", '
+            '"rationale": "advance objective", "last_response_summary": "prior"}'
+        ),
+        role="assistant",
+    )
+    mock_normalizer.send_prompt_async = AsyncMock(return_value=json_adversarial_response)
+
     attack = RedTeamingAttack(
         objective_target=mock_chat_target,
         attack_adversarial_config=adversarial_config,
         attack_scoring_config=scoring_config,
         max_turns=10,
+        prompt_normalizer=mock_normalizer,
     )
 
-    mock_normalizer = MagicMock(spec=PromptNormalizer)
-    mock_normalizer.send_prompt_async = AsyncMock(return_value=sample_response)
     attack._prompt_normalizer = mock_normalizer
 
     return attack

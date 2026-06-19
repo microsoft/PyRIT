@@ -13,6 +13,10 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
+from pyrit.executor.attack.component.adversarial_conversation_manager import (
+    _build_adversarial_prompt_metadata,
+    _parse_adversarial_reply,
+)
 from pyrit.executor.attack.core.attack_config import (
     AttackAdversarialConfig,
     AttackConverterConfig,
@@ -211,11 +215,17 @@ async def _generate_next_message_async(
         conversation_context=conversation_context,
     )
 
+    # Forward the shared adversarial-chat JSON schema when the system prompt declares one
+    # so schema-aware targets natively constrain the reply; otherwise send raw (unchanged).
+    response_json_schema = template.response_json_schema
+    prompt_metadata = _build_adversarial_prompt_metadata(response_json_schema=response_json_schema)
+
     # Use the adversarial chat to generate the next message
     # Create a simple user message asking for generation
     request_message = Message.from_prompt(
         role="user",
         prompt="Generate the next user message based on the instructions above.",
+        prompt_metadata=prompt_metadata or None,
     )
 
     # Set the system prompt on the target
@@ -229,8 +239,15 @@ async def _generate_next_message_async(
     if not responses:
         raise ValueError("No response received from adversarial chat when generating next message")
 
-    # Change the role from assistant to user since this is a user message to be sent to the target
     response = responses[0]
+
+    # When a schema is declared, parse ``next_message`` out of the JSON reply and return it
+    # as a fresh user message. Otherwise, flip the raw response to a user message unchanged.
+    if response_json_schema is not None:
+        reply = _parse_adversarial_reply(response.get_value())
+        return Message.from_prompt(role="user", prompt=reply.next_message)
+
+    # Change the role from assistant to user since this is a user message to be sent to the target
     for piece in response.message_pieces:
         piece.role = "user"
 

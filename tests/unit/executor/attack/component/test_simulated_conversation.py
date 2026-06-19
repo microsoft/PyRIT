@@ -577,7 +577,10 @@ class TestGenerateSimulatedConversationAsync:
             message_pieces=[
                 MessagePiece(
                     role="assistant",  # LLM responds as assistant, we convert to user
-                    original_value="Generated next user message",
+                    original_value=(
+                        '{"next_message": "Generated next user message", '
+                        '"rationale": "advance objective", "last_response_summary": "prior"}'
+                    ),
                     original_value_data_type="text",
                     conversation_id=str(uuid.uuid4()),
                 )
@@ -646,7 +649,10 @@ class TestGenerateSimulatedConversationAsync:
             message_pieces=[
                 MessagePiece(
                     role="assistant",
-                    original_value="Generated message",
+                    original_value=(
+                        '{"next_message": "Generated message", '
+                        '"rationale": "advance objective", "last_response_summary": "prior"}'
+                    ),
                     original_value_data_type="text",
                     conversation_id=str(uuid.uuid4()),
                 )

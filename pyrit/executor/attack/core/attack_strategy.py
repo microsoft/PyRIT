@@ -488,7 +488,7 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
         if adversarial_config is not None and getattr(adversarial_config, "target", None) is not None:
             adversarial_chat = TargetIdentifier.from_component_identifier(adversarial_config.target.get_identifier())
             adversarial_system_prompt = self._extract_adversarial_prompt_text(adversarial_config.system_prompt)
-            adversarial_seed_prompt = self._extract_adversarial_prompt_text(adversarial_config.seed_prompt)
+            adversarial_seed_prompt = self._extract_adversarial_prompt_text(adversarial_config.first_message)
 
         # Add request converter identifiers if present
         request_converters: list[ConverterIdentifier] | None = None

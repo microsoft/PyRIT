@@ -161,7 +161,7 @@ class AttackTechniqueFactory(Identifiable):
             adversarial_system_prompt = adversarial_config.system_prompt
             if adversarial_system_prompt is None and adversarial_config.system_prompt_path is not None:
                 adversarial_system_prompt = SeedPrompt.from_yaml_file(adversarial_config.system_prompt_path)
-            adversarial_seed_prompt = adversarial_config.seed_prompt
+            adversarial_seed_prompt = adversarial_config.first_message
 
         self._name = name
         self._attack_class = attack_class
@@ -562,13 +562,13 @@ class AttackTechniqueFactory(Identifiable):
                 if system_prompt is None and override.system_prompt_path is not None:
                     system_prompt = SeedPrompt.from_yaml_file(override.system_prompt_path)
             if seed_prompt is None:
-                seed_prompt = override.seed_prompt
+                seed_prompt = override.first_message
 
         config_kwargs: dict[str, Any] = {"target": target}
         if system_prompt is not None:
             config_kwargs["system_prompt"] = system_prompt
         if seed_prompt is not None:
-            config_kwargs["seed_prompt"] = seed_prompt
+            config_kwargs["first_message"] = seed_prompt
         return AttackAdversarialConfig(**config_kwargs)
 
     def _get_accepted_params(self) -> set[str]:
