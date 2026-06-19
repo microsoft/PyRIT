@@ -417,7 +417,7 @@ describe("FeedbackDialog", () => {
   });
 
   it("resets the form when the dialog is reopened", async () => {
-    const { rerender } = renderDialog();
+    const { unmount } = renderDialog();
     const user = userEvent.setup();
     const describe = screen.getByTestId(
       "feedback-bug-describe-input",
@@ -425,16 +425,9 @@ describe("FeedbackDialog", () => {
     await user.click(describe);
     await user.paste("Some prior content that should be cleared");
 
-    rerender(
-      <TestWrapper>
-        <FeedbackDialog {...defaultProps} open={false} />
-      </TestWrapper>,
-    );
-    rerender(
-      <TestWrapper>
-        <FeedbackDialog {...defaultProps} open={true} />
-      </TestWrapper>,
-    );
+    // Unmount and remount to simulate the conditional rendering in App.tsx.
+    unmount();
+    renderDialog();
 
     const describeAfter = screen.getByTestId(
       "feedback-bug-describe-input",

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import {
   Dialog,
   DialogSurface,
@@ -164,16 +164,6 @@ export default function FeedbackDialog({ open, onClose, context }: FeedbackDialo
   const [fields, setFields] = useState<DialogFields>({})
   const [optionalContact, setOptionalContact] = useState('')
   const [confirmOpen, setConfirmOpen] = useState(false)
-
-  // Reset state whenever the dialog closes so a re-open shows a clean form.
-  useEffect(() => {
-    if (!open) {
-      setCategory('bug')
-      setFields({})
-      setOptionalContact('')
-      setConfirmOpen(false)
-    }
-  }, [open])
 
   const update = (name: keyof DialogFields, value: string) =>
     setFields((prev) => ({ ...prev, [name]: value }))

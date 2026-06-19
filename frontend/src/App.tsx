@@ -412,15 +412,17 @@ function App() {
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
           </MainLayout>
-          <FeedbackDialog
-            open={feedbackOpen}
-            onClose={() => setFeedbackOpen(false)}
-            context={{
-              app_version: appVersion || undefined,
-              current_view: currentView,
-              target_type: activeTarget?.target_type,
-            }}
-          />
+          {feedbackOpen && (
+            <FeedbackDialog
+              open={feedbackOpen}
+              onClose={() => setFeedbackOpen(false)}
+              context={{
+                app_version: appVersion || undefined,
+                current_view: currentView,
+                target_type: activeTarget?.target_type,
+              }}
+            />
+          )}
         </FluentProvider>
       </ConnectionHealthProvider>
     </ErrorBoundary>
