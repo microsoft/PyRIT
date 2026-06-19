@@ -13,6 +13,7 @@ import {
   QuestionCircleRegular,
   SettingsRegular,
   HistoryRegular,
+  PersonFeedbackRegular,
   WeatherMoonRegular,
   WeatherSunnyRegular,
 } from '@fluentui/react-icons'
@@ -26,6 +27,7 @@ interface NavigationProps {
   currentView: ViewName
   onNavigate: (view: ViewName) => void
   onStartTour?: () => void
+  onOpenFeedback: () => void
 }
 
 const THEME_MENU_NAME = 'theme'
@@ -37,7 +39,7 @@ const THEME_LABELS: Record<ThemeMode, string> = {
 }
 
 
-export default function Navigation({ currentView, onNavigate, onStartTour }: NavigationProps) {
+export default function Navigation({ currentView, onNavigate, onStartTour, onOpenFeedback }: NavigationProps) {
   const styles = useNavigationStyles()
   const { mode, resolved, setMode } = useTheme()
 
@@ -108,6 +110,14 @@ export default function Navigation({ currentView, onNavigate, onStartTour }: Nav
           aria-label="Take a tour"
         />
       )}
+      <Button
+        className={styles.navButton}
+        appearance="subtle"
+        icon={<PersonFeedbackRegular />}
+        title="Feedback"
+        aria-label="Feedback"
+        onClick={onOpenFeedback}
+      />
       <Menu
         checkedValues={{ [THEME_MENU_NAME]: [mode] }}
         onCheckedValueChange={handleThemeChange}

@@ -12,6 +12,7 @@ interface MainLayoutProps {
   children: React.ReactNode
   currentView: ViewName
   onNavigate: (view: ViewName) => void
+  onOpenFeedback: () => void
   onStartTour?: () => void
 }
 
@@ -19,6 +20,7 @@ export default function MainLayout({
   children,
   currentView,
   onNavigate,
+  onOpenFeedback,
   onStartTour,
 }: MainLayoutProps) {
   const styles = useMainLayoutStyles()
@@ -53,6 +55,7 @@ export default function MainLayout({
           <Navigation
             currentView={currentView}
             onNavigate={onNavigate}
+            onOpenFeedback={onOpenFeedback}
             onStartTour={onStartTour}
           />
         </aside>

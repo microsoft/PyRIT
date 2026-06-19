@@ -17,6 +17,7 @@ describe("Navigation", () => {
   const defaultProps = {
     currentView: "chat" as const,
     onNavigate: jest.fn(),
+    onOpenFeedback: jest.fn(),
   };
 
   beforeEach(() => {
@@ -83,8 +84,19 @@ describe("Navigation", () => {
     ).toBeInTheDocument();
   });
 
-  it("calls onNavigate with 'history' when history button is clicked", async () => {
-    const user = userEvent.setup();
+  it("renders the feedback button and forwards clicks to onOpenFeedback", () => {
+    const onOpenFeedback = jest.fn();
+    renderWithProvider(
+      <Navigation {...defaultProps} onOpenFeedback={onOpenFeedback} />
+    );
+
+    const feedbackButton = screen.getByTitle("Feedback");
+    expect(feedbackButton).toBeInTheDocument();
+    fireEvent.click(feedbackButton);
+    expect(onOpenFeedback).toHaveBeenCalledTimes(1);
+  });
+
+  it("calls onNavigate with 'history' when history button is clicked", () => {
     const onNavigate = jest.fn();
     renderWithProvider(
       <Navigation {...defaultProps} onNavigate={onNavigate} />
