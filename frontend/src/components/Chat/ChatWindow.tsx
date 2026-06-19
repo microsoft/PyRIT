@@ -16,7 +16,7 @@ import LabelsBar from '../Labels/LabelsBar'
 import type { ChatInputAreaHandle } from './ChatInputArea'
 import { attacksApi } from '../../services/api'
 import { toApiError } from '../../services/errors'
-import { buildMessagePieces, backendMessagesToFrontend } from '../../utils/messageMapper'
+import { buildMessagePieces, backendMessagesToFrontend, buildSystemPrompt } from '../../utils/messageMapper'
 import type { Message, MessageAttachment, TargetInstance, TargetInfo } from '../../types'
 import { targetEndpoint, targetModelName, targetType } from '../../utils/targetIdentity'
 import type { ViewName } from '../Sidebar/Navigation'
@@ -71,6 +71,7 @@ export default function ChatWindow({
   const [isPanelOpen, setIsPanelOpen] = useState(false)
   const [isConverterPanelOpen, setIsConverterPanelOpen] = useState(false)
   const [chatInputText, setChatInputText] = useState('')
+  const [systemPrompt, setSystemPrompt] = useState('')
   const [attachmentTypes, setAttachmentTypes] = useState<string[]>([])
   const [attachmentData, setAttachmentData] = useState<Record<string, string>>({})
   const [pieceConversions, setPieceConversions] = useState<Record<string, PieceConversion>>({})
@@ -143,6 +144,7 @@ export default function ChatWindow({
     if (!attackResultId) {
       setMessages([])
       setLoadedConversationId(null)
+      setSystemPrompt('')
     }
   }
 
@@ -290,6 +292,9 @@ export default function ChatWindow({
         const createResponse = await attacksApi.createAttack({
           target_registry_name: activeTarget.target_registry_name,
           labels: labels,
+          prepended_conversation: activeTarget.capabilities?.supports_system_prompt
+            ? buildSystemPrompt(systemPrompt)
+            : undefined,
         })
         currentAttackResultId = createResponse.attack_result_id
         currentConversationId = createResponse.conversation_id
@@ -631,6 +636,9 @@ export default function ChatWindow({
         <ChatInputArea
           ref={inputBoxRef}
           onSend={handleSend}
+          showSystemPrompt={!attackResultId}
+          systemPrompt={systemPrompt}
+          onSystemPromptChange={setSystemPrompt}
           disabled={isSending || !activeTarget || singleTurnLimitReached || isOperatorLocked || isCrossTargetLocked}
           activeTarget={activeTarget}
           singleTurnLimitReached={singleTurnLimitReached}

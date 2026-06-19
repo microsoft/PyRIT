@@ -5,6 +5,7 @@ import type {
   MessageAttachment,
   MessageError,
   MessagePieceRequest,
+  PrependedMessageRequest,
 } from '../types'
 
 /**
@@ -49,6 +50,15 @@ export function dataTypeToAttachmentType(dataType: string): 'image' | 'audio' | 
  */
 export function buildDataUri(base64Value: string, mimeType: string): string {
   return `data:${mimeType};base64,${base64Value}`
+}
+
+/**
+ * Build the `prepended_conversation` payload for a system prompt, or `undefined` when blank.
+ */
+export function buildSystemPrompt(value: string): PrependedMessageRequest[] | undefined {
+  const trimmed = value.trim()
+  if (!trimmed) return undefined
+  return [{ role: 'system', pieces: [{ data_type: 'text', original_value: trimmed }] }]
 }
 
 /**
