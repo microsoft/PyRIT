@@ -13,7 +13,7 @@ meaningful context in their messages.
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any
+from typing import Any, cast
 
 from pyrit.models import ComponentIdentifier
 
@@ -235,10 +235,10 @@ def execution_context(
 
     """
     # Extract endpoint and component_name from component_identifier if available
-    endpoint = None
+    endpoint: str | None = None
     component_name = None
     if component_identifier:
-        endpoint = component_identifier.params.get("endpoint")
+        endpoint = cast("str | None", component_identifier.params.get("endpoint"))
         component_name = component_identifier.class_name
 
     context = ExecutionContext(

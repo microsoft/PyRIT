@@ -121,6 +121,10 @@ class TestPromptIntelDatasetInit:
         with pytest.raises(ValueError, match="Expected PromptIntelCategory"):
             _PromptIntelDataset(api_key=api_key, categories=["manipulation"])
 
+    def test_init_empty_categories_raises(self, api_key):
+        with pytest.raises(ValueError, match="`categories` must be a non-empty list"):
+            _PromptIntelDataset(api_key=api_key, categories=[])
+
     def test_init_multiple_categories_accepted(self, api_key):
         loader = _PromptIntelDataset(
             api_key=api_key,

@@ -9,7 +9,6 @@ source: AI Red Team
 parameters:
   - objective
   - max_turns
-response_json_schema_name: adversarial_chat
 data_type: text
 value: |
   # Instructions
@@ -24,4 +23,3 @@ value: |
 
   # Conversation Objective
   The conversation objective is to: {{ objective }}
-
