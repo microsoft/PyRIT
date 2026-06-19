@@ -60,7 +60,10 @@ class _ODINDataset(_RemoteDatasetLoader):
     0DIN is Mozilla's GenAI bug-bounty and threat-intelligence program. The Threat Feed
     publishes verified jailbreak disclosures against production models, each annotated with
     a taxonomy (category/strategy/technique), severity, affected models, reproducibility test
-    results, and impact scores.
+    results, and impact scores. The taxonomy axis is drawn from 0DIN's published taxonomy,
+    which is grounded in the "Summon a Demon and Bind it" grounded theory of LLM red teaming
+    [@inie2025summon] (public taxonomy: https://0din.ai/research/taxonomy). Note this taxonomy
+    describes *how* an attack is structured, not the *harm* it targets.
 
     Each report exposes one or more sample exploit prompts (``messages``), and—optionally—a
     large set of industry-specific ``variant_prompts``. Every prompt is mapped to a SeedPrompt
@@ -74,7 +77,7 @@ class _ODINDataset(_RemoteDatasetLoader):
     incrementally — fetching only newly disclosed reports and merging them onto the cache.
     Pass ``cache=False`` to ``fetch_dataset_async`` to force a full refresh.
 
-    Reference: [@odin2024]
+    Reference: [@odin2024], [@inie2025summon]
     API Docs: https://0din.ai/docs/jailbreak-feed/api
 
     This dataset is gated: programmatic access requires a 0DIN Team or Enterprise subscription
