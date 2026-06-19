@@ -79,7 +79,8 @@ describe('SystemPromptSetup', () => {
 
     await user.click(screen.getByRole('button', { name: /system prompt/i }))
 
-    expect(screen.getByText(/2,001 characters/i)).toBeInTheDocument()
+    const expected = `${(2001).toLocaleString()} characters`
+    expect(screen.getByTestId('system-prompt-counter')).toHaveTextContent(expected)
   })
 
   describe('when the target does not support system prompts', () => {
