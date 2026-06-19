@@ -7,6 +7,7 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import App from "./App";
 import { ThemeProvider } from "./hooks/useTheme";
+
 import { attacksApi } from "./services/api";
 
 const mockGetActiveAccount = jest.fn();
@@ -283,9 +284,11 @@ describe("App", () => {
   // initialPath lets a test deep-link straight to a view (e.g. "/config").
   function renderApp(initialPath = "/") {
     return render(
-      <MemoryRouter initialEntries={[initialPath]}>
-        <App />
-      </MemoryRouter>
+      <ThemeProvider>
+        <MemoryRouter initialEntries={[initialPath]}>
+          <App />
+        </MemoryRouter>
+      </ThemeProvider>
     );
   }
 
@@ -294,13 +297,6 @@ describe("App", () => {
     mockGetActiveAccount.mockReturnValue(null);
     window.localStorage.clear();
   });
-
-  const renderApp = () =>
-    render(
-      <ThemeProvider>
-        <App />
-      </ThemeProvider>
-    );
 
   it("renders with FluentProvider and MainLayout", () => {
     renderApp();

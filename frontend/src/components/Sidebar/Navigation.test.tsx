@@ -3,7 +3,7 @@
  * Licensed under the MIT license.
  */
 
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ThemeProvider, useTheme } from "../../hooks/useTheme";
 import Navigation from "./Navigation";
@@ -96,7 +96,8 @@ describe("Navigation", () => {
     expect(onOpenFeedback).toHaveBeenCalledTimes(1);
   });
 
-  it("calls onNavigate with 'history' when history button is clicked", () => {
+  it("calls onNavigate with 'history' when history button is clicked", async () => {
+    const user = userEvent.setup();
     const onNavigate = jest.fn();
     renderWithProvider(
       <Navigation {...defaultProps} onNavigate={onNavigate} />

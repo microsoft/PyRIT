@@ -99,7 +99,7 @@ export default function Navigation({ currentView, onNavigate, onStartTour, onOpe
       />
 
       <div className={styles.spacer} />
-      
+
       {onStartTour && (
         <Button
           className={styles.navButton}
