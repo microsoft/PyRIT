@@ -15,7 +15,7 @@
 #
 # ## Translating from Seeds for Attack Parameters
 #
-# Most [attacks](../executor/attack/0_attack.md) make use of several parameters.
+# Most [executors](../executor/0_executor.md) make use of several parameters.
 #
 # 1. An **objective** - what you're trying to achieve
 # 2. A **next_message** (optional) - the next message to send to the target
@@ -156,6 +156,10 @@ print(system_prompt.value)
 # - **Audio/video files** (when supported by TinyTag): bitrate, samplerate, bitdepth, filesize, duration
 #
 # This metadata enables filtering (e.g., "find all WAV files with 24kHz sample rate") to match target system requirements.
+#
+# **Constraining the Response Shape:**
+# - `response_json_schema:` inlines a JSON schema on a seed; `response_json_schema_name:` references one bundled under `pyrit/datasets/json_schemas/` (e.g. `true_false_with_rationale`). Set at most one.
+# - Targets that support structured output (e.g. OpenAI's `json_schema` response format) enforce it natively; other targets get the schema appended to the prompt text automatically by the normalization pipeline.
 #
 # #### YAML Example
 #

@@ -41,7 +41,7 @@ def compute_technique_stats(
         scenario_result_id (str | None): Restrict to a single scenario run.
             Defaults to ``None`` (aggregate across all runs).
         targeted_harm_categories (Sequence[str] | None): Restrict to results
-            whose prompts targeted these harm categories. Defaults to ``None``.
+            whose attack targeted these harm categories. Defaults to ``None``.
         memory (MemoryInterface | None): Memory backend to query. Defaults to
             ``CentralMemory.get_memory_instance()``.
 

@@ -95,29 +95,6 @@ class ScorerMetrics:
 
         return cls(**filtered_data)
 
-    @classmethod
-    def from_json(cls: type[T], file_path: str | Path) -> T:
-        """
-        Load a metrics instance from a JSON file (deprecated alias for ``from_json_file``).
-
-        The name ``from_json`` is misleading because it accepts a *file path*, not a JSON
-        string. Use ``from_json_file`` instead.
-
-        Args:
-            file_path (str | Path): The path to the JSON file.
-
-        Returns:
-            ScorerMetrics: An instance of ScorerMetrics (or subclass) with the loaded data.
-        """
-        from pyrit.common.deprecation import print_deprecation_message
-
-        print_deprecation_message(
-            old_item=f"{cls.__name__}.from_json",
-            new_item=f"{cls.__name__}.from_json_file",
-            removed_in="0.15.0",
-        )
-        return cls.from_json_file(file_path)
-
 
 @dataclass
 class HarmScorerMetrics(ScorerMetrics):

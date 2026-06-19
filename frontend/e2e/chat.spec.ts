@@ -53,9 +53,9 @@ async function mockBackendAPIs(page: Page) {
         turn_number: turnNumber,
         role: "user",
         created_at: new Date().toISOString(),
-        pieces: [
+        message_pieces: [
           {
-            piece_id: `piece-u-${turnNumber}`,
+            id: `piece-u-${turnNumber}`,
             original_value_data_type: "text",
             converted_value_data_type: "text",
             original_value: userText,
@@ -69,9 +69,9 @@ async function mockBackendAPIs(page: Page) {
         turn_number: turnNumber,
         role: "assistant",
         created_at: new Date().toISOString(),
-        pieces: [
+        message_pieces: [
           {
-            piece_id: `piece-a-${turnNumber}`,
+            id: `piece-a-${turnNumber}`,
             original_value_data_type: "text",
             converted_value_data_type: "text",
             original_value: `Mock response for: ${userText}`,
@@ -362,9 +362,9 @@ function buildModalityMock(
             turn_number: 0,
             role: "user",
             created_at: new Date().toISOString(),
-            pieces: [
+            message_pieces: [
               {
-                piece_id: "u1",
+                id: "u1",
                 original_value_data_type: "text",
                 converted_value_data_type: "text",
                 original_value: userText,
@@ -378,7 +378,7 @@ function buildModalityMock(
             turn_number: 1,
             role: "assistant",
             created_at: new Date().toISOString(),
-            pieces: assistantPieces,
+            message_pieces: assistantPieces,
           },
         ];
         postSeen = true;
@@ -423,7 +423,7 @@ function buildModalityMock(
 test.describe("Multi-modal: Image response", () => {
   const setupImageMock = buildModalityMock([
     {
-      piece_id: "img-1",
+      id: "img-1",
       original_value_data_type: "text",
       converted_value_data_type: "image_path",
       original_value: "generated image",
@@ -457,7 +457,7 @@ test.describe("Multi-modal: Image response", () => {
 test.describe("Multi-modal: Audio response", () => {
   const setupAudioMock = buildModalityMock([
     {
-      piece_id: "aud-1",
+      id: "aud-1",
       original_value_data_type: "text",
       converted_value_data_type: "audio_path",
       original_value: "spoken text",
@@ -488,7 +488,7 @@ test.describe("Multi-modal: Audio response", () => {
 test.describe("Multi-modal: Video response", () => {
   const setupVideoMock = buildModalityMock([
     {
-      piece_id: "vid-1",
+      id: "vid-1",
       original_value_data_type: "text",
       converted_value_data_type: "video_path",
       original_value: "generated video",
@@ -520,7 +520,7 @@ test.describe("Multi-modal: Video response", () => {
 test.describe("Multi-modal: Mixed text + image response", () => {
   const setupMixedMock = buildModalityMock([
     {
-      piece_id: "txt-1",
+      id: "txt-1",
       original_value_data_type: "text",
       converted_value_data_type: "text",
       original_value: "Here is the analysis:",
@@ -529,7 +529,7 @@ test.describe("Multi-modal: Mixed text + image response", () => {
       response_error: "none",
     },
     {
-      piece_id: "img-2",
+      id: "img-2",
       original_value_data_type: "text",
       converted_value_data_type: "image_path",
       original_value: "chart image",
@@ -559,7 +559,7 @@ test.describe("Multi-modal: Mixed text + image response", () => {
 test.describe("Multi-modal: Error response from target", () => {
   const setupErrorMock = buildModalityMock([
     {
-      piece_id: "err-1",
+      id: "err-1",
       original_value_data_type: "text",
       converted_value_data_type: "text",
       original_value: "",

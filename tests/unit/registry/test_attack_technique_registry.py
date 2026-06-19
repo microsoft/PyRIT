@@ -285,6 +285,9 @@ def _scenario_factories() -> list[AttackTechniqueFactory]:
         adv_target.capabilities.includes.return_value = True
         TargetRegistry.get_registry_singleton().register_instance(adv_target, name="adversarial_chat")
         SCENARIO_FACTORIES_FIXTURE.extend(build_scenario_technique_factories())
+        # This runs at collection time (parametrize). Reset so we don't leak the mock
+        # "adversarial_chat" into the global TargetRegistry singleton of every xdist worker.
+        TargetRegistry.reset_instance()
     return SCENARIO_FACTORIES_FIXTURE
 
 
@@ -341,12 +344,9 @@ class TestScorerOverrideTypeInference:
         mock_scorer = MagicMock(spec=TrueFalseScorer)
         return AttackScoringConfig(objective_scorer=mock_scorer)
 
-    def _make_adversarial_config(self):
-        """Create an AttackAdversarialConfig wrapping a mock chat target."""
-        from pyrit.executor.attack.core.attack_config import AttackAdversarialConfig
-
-        chat = MagicMock(spec=PromptTarget)
-        return AttackAdversarialConfig(target=chat)
+    def _make_adversarial_chat(self):
+        """Create a mock chat target for use as an adversarial_chat."""
+        return MagicMock(spec=PromptTarget)
 
     def test_tap_factory_rejects_generic_config_with_raise_policy(self):
         """TAP factory raises when given a generic AttackScoringConfig and policy is RAISE."""
@@ -355,7 +355,7 @@ class TestScorerOverrideTypeInference:
         factory = AttackTechniqueFactory(
             name="tap_raise",
             attack_class=TreeOfAttacksWithPruningAttack,
-            adversarial_config=self._make_adversarial_config(),
+            adversarial_chat=self._make_adversarial_chat(),
             scorer_override_policy=ScorerOverridePolicy.RAISE,
         )
 
@@ -377,7 +377,7 @@ class TestScorerOverrideTypeInference:
         factory = AttackTechniqueFactory(
             name="tap_warn",
             attack_class=TreeOfAttacksWithPruningAttack,
-            adversarial_config=self._make_adversarial_config(),
+            adversarial_chat=self._make_adversarial_chat(),
             scorer_override_policy=ScorerOverridePolicy.WARN,
         )
 
@@ -409,7 +409,7 @@ class TestScorerOverrideTypeInference:
         factory = AttackTechniqueFactory(
             name="tap_skip",
             attack_class=TreeOfAttacksWithPruningAttack,
-            adversarial_config=self._make_adversarial_config(),
+            adversarial_chat=self._make_adversarial_chat(),
             scorer_override_policy=ScorerOverridePolicy.SKIP,
         )
 
@@ -442,7 +442,7 @@ class TestScorerOverrideTypeInference:
         factory = AttackTechniqueFactory(
             name="tap_accept",
             attack_class=TreeOfAttacksWithPruningAttack,
-            adversarial_config=self._make_adversarial_config(),
+            adversarial_chat=self._make_adversarial_chat(),
             scorer_override_policy=ScorerOverridePolicy.RAISE,
         )
 

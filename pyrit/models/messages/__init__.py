@@ -9,6 +9,7 @@ Messages module - message types and helpers for PyRIT.
 - conversations: Free functions that operate on collections of messages/pieces.
 """
 
+from pyrit.models.messages.conversation import Conversation
 from pyrit.models.messages.conversations import (
     construct_response_from_request,
     flatten_to_message_pieces,
@@ -20,6 +21,7 @@ from pyrit.models.messages.message import Message
 from pyrit.models.messages.message_piece import MessagePiece, sort_message_pieces
 
 __all__ = [
+    "Conversation",
     "Message",
     "MessagePiece",
     "construct_response_from_request",

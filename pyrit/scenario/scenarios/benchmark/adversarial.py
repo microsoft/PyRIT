@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, ClassVar
 
 from pyrit.analytics import get_cached_results_for_technique
 from pyrit.common import Parameter, apply_defaults
-from pyrit.executor.attack import AttackAdversarialConfig, AttackScoringConfig
+from pyrit.executor.attack import AttackScoringConfig
 from pyrit.models import (
     AttackOutcome,
     AttackResult,
@@ -41,7 +41,10 @@ def _build_benchmark_strategy() -> type[ScenarioStrategy]:
 
     Reads ``core`` adversarial-capable factories from the
     ``AttackTechniqueRegistry`` singleton and passes them to
-    ``build_strategy_class_from_factories``. The resulting enum has one
+    ``build_strategy_class_from_factories``. Factories that bake their own
+    ``adversarial_chat`` are excluded — the benchmark sweeps each technique
+    across the user-supplied targets, which is incompatible with a technique
+    that pins its own adversarial target. The resulting enum has one
     concrete member per factory (e.g. ``red_teaming``, ``tap``,
     ``crescendo_simulated``) plus ``default`` / ``light`` / ``single_turn``
     / ``multi_turn`` aggregates derived from each factory's ``strategy_tags``.
@@ -57,7 +60,7 @@ def _build_benchmark_strategy() -> type[ScenarioStrategy]:
     factories = [
         factory
         for factory in registry.get_factories_or_raise().values()
-        if factory.uses_adversarial and "core" in factory.strategy_tags
+        if factory.uses_adversarial and "core" in factory.strategy_tags and factory.adversarial_chat is None
     ]
     return AttackTechniqueRegistry.build_strategy_class_from_factories(  # type: ignore[ty:invalid-return-type]
         class_name="BenchmarkStrategy",
@@ -85,7 +88,7 @@ class AdversarialBenchmark(Scenario):
     ``(technique × adversarial_target × dataset)`` cross-product: for each
     selected adversarial-capable ``core`` factory in the
     ``AttackTechniqueRegistry`` and each requested target, it calls
-    ``factory.create(attack_adversarial_config_override=...)`` with the
+    ``factory.create(adversarial_chat=...)`` with the
     resolved target — no global registry mutation. The resulting
     ``AtomicAttack`` is named ``f"{technique}__{target}_{dataset}"`` with
     ``display_group`` set to the target's registry name so per-model ASR
@@ -198,7 +201,7 @@ class AdversarialBenchmark(Scenario):
         each name to a ``PromptTarget`` via ``TargetRegistry``, and
         cross-products the selected adversarial-capable techniques over the
         resolved targets and configured datasets. Each pair calls
-        ``factory.create(attack_adversarial_config_override=...)`` with the
+        ``factory.create(adversarial_chat=...)`` with the
         resolved target — no global registry state is touched. When
         ``self._use_cached`` is set, the final candidate list is filtered
         against the live behavioral cache via
@@ -263,7 +266,7 @@ class AdversarialBenchmark(Scenario):
                     attack_technique = factory.create(
                         objective_target=self._objective_target,
                         attack_scoring_config=scoring_config,
-                        attack_adversarial_config_override=AttackAdversarialConfig(target=target_instance),
+                        adversarial_chat=target_instance,
                     )
                     # ``display_group`` is set explicitly here so result roll-ups group by the
                     # TargetRegistry name the caller passed via ``--adversarial-targets`` —

@@ -44,6 +44,24 @@ class TestFromSeedGroupAsync:
 
         assert params.objective == "Test objective"
 
+    async def test_extracts_targeted_harm_categories_from_seed_group(self) -> None:
+        """Harm categories from the seed group's seeds are captured onto the parameters."""
+        objective = SeedObjective(value="Test objective", harm_categories=["violence"])
+        prompt = SeedPrompt(value="Test prompt", data_type="text", role="user", harm_categories=["hate", "violence"])
+        seed_group = SeedAttackGroup(seeds=[objective, prompt])
+
+        params = await AttackParameters.from_seed_group_async(seed_group=seed_group)
+
+        assert sorted(params.targeted_harm_categories) == ["hate", "violence"]
+
+    async def test_targeted_harm_categories_empty_when_seed_group_has_none(
+        self, seed_group_with_objective: SeedAttackGroup
+    ) -> None:
+        """When no seed declares harm categories, the parameters list is empty."""
+        params = await AttackParameters.from_seed_group_async(seed_group=seed_group_with_objective)
+
+        assert params.targeted_harm_categories == []
+
     async def test_raises_when_no_objective(self) -> None:
         """Test that ValueError is raised when SeedAttackGroup has no objective."""
         # SeedAttackGroup now validates exactly one objective at construction

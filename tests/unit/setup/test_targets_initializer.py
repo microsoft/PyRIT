@@ -822,6 +822,48 @@ class TestTargetInitializerAutoGroup:
         # Should have 3 inner targets (gpt4o, gpt4o2, unsafe_chat)
         assert len(rr._targets) == 3
 
+    async def test_auto_group_deduplicates_identical_targets(self) -> None:
+        """Test that targets with identical config (same endpoint+model+key) are deduplicated in auto-grouping."""
+        from pyrit.prompt_target import RoundRobinTarget
+
+        # Set GPT4O_1 and GPT4O_2, but also set a third env var block that points
+        # to the SAME endpoint+key+model as GPT4O_1. This simulates the real-world
+        # case where .env has overlapping entries.
+        os.environ.update(self.GPT4O_1_ENV)
+        os.environ.update(self.GPT4O_2_ENV)
+        os.environ.update(self.UNSAFE1_ENV)
+
+        # Register a duplicate: same endpoint, key, model as UNSAFE1 but under a different registry name.
+        # We do this by directly registering a target with the same params.
+        from pyrit.prompt_target import OpenAIChatTarget
+
+        dup_target = OpenAIChatTarget(
+            endpoint="https://unsafe1.openai.azure.com",
+            api_key="key1",
+            model_name="gpt-4o",
+            underlying_model="gpt-4o",
+        )
+        registry = TargetRegistry.get_registry_singleton()
+
+        init = TargetInitializer()
+        await init.initialize_async()
+
+        # Register the duplicate after init so it's in the registry with a distinct name.
+        registry.register_instance(dup_target, name="unsafe1_duplicate")
+        init._registered_names.append("unsafe1_duplicate")
+
+        # Re-run auto-grouping (clear existing RR first)
+        existing_rr = registry.get_instance_by_name("OpenAIChatTarget_gpt-4o_rr")
+        if existing_rr:
+            registry._instances.pop("OpenAIChatTarget_gpt-4o_rr", None)
+        init._auto_group_targets()
+
+        rr = registry.get_instance_by_name("OpenAIChatTarget_gpt-4o_rr")
+        assert rr is not None
+        assert isinstance(rr, RoundRobinTarget)
+        # Should have 3, not 4 — the duplicate should be deduplicated
+        assert len(rr._targets) == 3
+
 
 class TestGetBehavioralKey:
     """Tests for _get_behavioral_key helper function."""

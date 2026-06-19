@@ -7,7 +7,6 @@ import os
 import tempfile
 import uuid
 from collections.abc import Sequence
-from datetime import timezone
 from unittest.mock import MagicMock
 
 import pytest
@@ -20,7 +19,7 @@ from sqlalchemy.sql.sqltypes import NullType
 from pyrit.memory.alembic.versions.ab8f2c1a9d07_pre_alembic_release_schema import INITIAL_METADATA
 from pyrit.memory.memory_models import EmbeddingDataEntry, PromptMemoryEntry
 from pyrit.memory.migration import run_schema_migrations
-from pyrit.models import MessagePiece
+from pyrit.models import Conversation, MessagePiece
 from pyrit.prompt_converter.base64_converter import Base64Converter
 from pyrit.prompt_target.text_target import TextTarget
 from unit.mocks import get_sample_conversation_entries
@@ -58,7 +57,6 @@ def test_conversation_data_schema(sqlite_instance):
         "labels",
         "prompt_metadata",
         "converter_identifiers",
-        "prompt_target_identifier",
         "original_value_data_type",
         "original_value",
         "original_value_sha256",
@@ -97,8 +95,6 @@ def test_conversation_data_column_types(sqlite_instance):
         "labels": (String, JSON),
         "prompt_metadata": (String, JSON),
         "converter_identifiers": (String, JSON),
-        "prompt_target_identifier": (String, JSON),
-        "attack_identifier": (String, JSON),
         "response_error": String,
         "original_value_data_type": String,
         "original_value": String,
@@ -522,47 +518,79 @@ def test_get_memories_with_json_properties(sqlite_instance):
     converter_identifiers = [Base64Converter().get_identifier()]
     target = TextTarget()
 
-    # Start a session
-    with sqlite_instance.get_session() as session:
-        # Create a ConversationData entry with all attributes filled
-        piece = MessagePiece(
-            conversation_id=specific_conversation_id,
-            role="user",
-            sequence=1,
-            original_value="Test content",
-            converted_value="Test content",
-            labels={"normalizer_id": "id1"},
-            converter_identifiers=converter_identifiers,
-            prompt_target_identifier=target.get_identifier(),
-        )
-        entry = PromptMemoryEntry(entry=piece)
+    piece = MessagePiece(
+        conversation_id=specific_conversation_id,
+        role="user",
+        sequence=1,
+        original_value="Test content",
+        converted_value="Test content",
+        labels={"normalizer_id": "id1"},
+        converter_identifiers=converter_identifiers,
+    )
 
-        # Insert the ConversationData entry
-        session.add(entry)
-        session.commit()
+    sqlite_instance.add_conversation_to_memory(
+        conversation=Conversation(conversation_id=specific_conversation_id, target_identifier=target.get_identifier())
+    )
+    sqlite_instance.add_message_pieces_to_memory(message_pieces=[piece])
 
-        # Use the get_memories_with_conversation_id method to retrieve entries with the specific conversation_id
-        retrieved_entries = sqlite_instance.get_conversation(conversation_id=specific_conversation_id)
+    # Use the get_memories_with_conversation_id method to retrieve entries with the specific conversation_id
+    retrieved_entries = sqlite_instance.get_conversation_messages(conversation_id=specific_conversation_id)
 
-        # Verify that the retrieved entry matches the inserted entry
-        assert len(retrieved_entries) == 1
-        retrieved_entry = retrieved_entries[0].message_pieces[0]
-        assert retrieved_entry.conversation_id == specific_conversation_id
-        assert retrieved_entry.api_role == "user"
-        assert retrieved_entry.original_value == "Test content"
-        # For timestamp, you might want to check if it's close to the current time instead of an exact match
-        assert abs((retrieved_entry.timestamp - piece.timestamp).total_seconds()) < 0.1
-        assert abs((retrieved_entry.timestamp - entry.timestamp.replace(tzinfo=timezone.utc)).total_seconds()) < 0.1
+    # Verify that the retrieved entry matches the inserted entry
+    assert len(retrieved_entries) == 1
+    retrieved_entry = retrieved_entries[0].message_pieces[0]
+    assert retrieved_entry.conversation_id == specific_conversation_id
+    assert retrieved_entry.api_role == "user"
+    assert retrieved_entry.original_value == "Test content"
+    # For timestamp, you might want to check if it's close to the current time instead of an exact match
+    assert abs((retrieved_entry.timestamp - piece.timestamp).total_seconds()) < 0.1
 
-        converter_identifiers = retrieved_entry.converter_identifiers
-        assert len(converter_identifiers) == 1
-        assert converter_identifiers[0].class_name == "Base64Converter"
+    converter_identifiers = retrieved_entry.converter_identifiers
+    assert len(converter_identifiers) == 1
+    assert converter_identifiers[0].class_name == "Base64Converter"
 
-        prompt_target = retrieved_entry.prompt_target_identifier
-        assert prompt_target.class_name == "TextTarget"
+    # The target identifier is conversation-scoped and stored in the Conversations table.
+    metadata = sqlite_instance._get_conversation(conversation_id=specific_conversation_id)
+    assert metadata is not None
+    assert metadata.target_identifier.class_name == "TextTarget"
 
-        labels = retrieved_entry.labels
-        assert labels["normalizer_id"] == "id1"
+    labels = retrieved_entry.labels
+    assert labels["normalizer_id"] == "id1"
+
+
+def test_register_conversation_none_target_does_not_clobber(sqlite_instance):
+    # A conversation is held with a single target. Registering it records the
+    # target; a later registration for the same conversation with no target (e.g.
+    # a branched copy whose source had no metadata) must NOT overwrite it with None.
+    conversation_id = "conv-none-clobber"
+    target = TextTarget()
+
+    request_piece = MessagePiece(
+        conversation_id=conversation_id,
+        role="user",
+        sequence=1,
+        original_value="hello",
+    )
+    sqlite_instance.add_conversation_to_memory(
+        conversation=Conversation(conversation_id=conversation_id, target_identifier=target.get_identifier())
+    )
+    sqlite_instance.add_message_pieces_to_memory(message_pieces=[request_piece])
+
+    response_piece = MessagePiece(
+        conversation_id=conversation_id,
+        role="assistant",
+        sequence=2,
+        original_value="world",
+    )
+    sqlite_instance.add_conversation_to_memory(
+        conversation=Conversation(conversation_id=conversation_id, target_identifier=None)
+    )
+    sqlite_instance.add_message_pieces_to_memory(message_pieces=[response_piece])
+
+    metadata = sqlite_instance._get_conversation(conversation_id=conversation_id)
+    assert metadata is not None
+    assert metadata.target_identifier is not None
+    assert metadata.target_identifier.class_name == "TextTarget"
 
 
 def test_update_entries(sqlite_instance):

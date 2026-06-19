@@ -14,6 +14,7 @@ from pyrit.analytics.result_analysis import (
 )
 from pyrit.memory.memory_interface import MemoryInterface
 from pyrit.models import (
+    AtomicAttackIdentifier,
     AttackOutcome,
     AttackResult,
     ComponentIdentifier,
@@ -32,14 +33,15 @@ def make_attack(
     """
     Minimal valid AttackResult for analytics tests.
     """
-    attack_identifier: ComponentIdentifier | None = None
+    atomic_attack_identifier: ComponentIdentifier | None = None
     if attack_type is not None:
         attack_identifier = ComponentIdentifier(class_name=attack_type, class_module="tests.unit.analytics")
+        atomic_attack_identifier = AtomicAttackIdentifier.build(attack_identifier=attack_identifier)
 
     return AttackResult(
         conversation_id=conversation_id,
         objective="test objective",
-        attack_identifier=attack_identifier,
+        atomic_attack_identifier=atomic_attack_identifier,
         outcome=outcome,
     )
 

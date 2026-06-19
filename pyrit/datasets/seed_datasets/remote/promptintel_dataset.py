@@ -5,7 +5,7 @@ import logging
 import os
 from datetime import datetime
 from enum import Enum
-from typing import Any
+from typing import Any, ClassVar
 
 import requests
 from typing_extensions import override
@@ -16,14 +16,6 @@ from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
 from pyrit.models import Modality, SeedDataset, SeedPrompt, SeedUnion
 
 logger = logging.getLogger(__name__)
-
-# Maps PromptIntel short category IDs to their full taxonomy names
-_CATEGORY_DISPLAY_NAMES: dict[str, str] = {
-    "manipulation": "Prompt Manipulation",
-    "abuse": "Abusing Legitimate Functions",
-    "patterns": "Suspicious Prompt Patterns",
-    "outputs": "Abnormal Outputs",
-}
 
 
 class PromptIntelSeverity(Enum):
@@ -70,6 +62,14 @@ class _PromptIntelDataset(_RemoteDatasetLoader):
     size: str = "medium"  # indicator count varies with registry contents; gated by API key
     tags: frozenset[str] = frozenset({"safety", "jailbreak", "cybersecurity"})
 
+    # Maps PromptIntel short category IDs to their full taxonomy names
+    _CATEGORY_DISPLAY_NAMES: ClassVar[dict[str, str]] = {
+        "manipulation": "Prompt Manipulation",
+        "abuse": "Abusing Legitimate Functions",
+        "patterns": "Suspicious Prompt Patterns",
+        "outputs": "Abnormal Outputs",
+    }
+
     API_BASE_URL = "https://api.promptintel.novahunting.ai/api/v1"
     PROMPT_WEB_URL = "https://promptintel.novahunting.ai/prompt"
     MAX_PAGE_LIMIT = 100
@@ -102,6 +102,8 @@ class _PromptIntelDataset(_RemoteDatasetLoader):
             self._validate_enum(severity, PromptIntelSeverity, "severity")
 
         if categories is not None:
+            if not categories:
+                raise ValueError("`categories` must be a non-empty list (pass None to include all categories)")
             self._validate_enums(categories, PromptIntelCategory, "category")
 
         self._severity = severity
@@ -223,7 +225,7 @@ class _PromptIntelDataset(_RemoteDatasetLoader):
 
         categories = record.get("categories", [])
         if categories:
-            display_names = [_CATEGORY_DISPLAY_NAMES.get(c, c) for c in categories if isinstance(c, str)]
+            display_names = [self._CATEGORY_DISPLAY_NAMES.get(c, c) for c in categories if isinstance(c, str)]
             metadata["categories"] = ", ".join(display_names)
 
         tags = record.get("tags", [])

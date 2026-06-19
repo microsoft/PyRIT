@@ -4,7 +4,7 @@
 import logging
 import uuid
 from enum import Enum
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, ClassVar, Literal
 
 from typing_extensions import override
 
@@ -36,13 +36,6 @@ class SIUOCategory(Enum):
     CONTROVERSIAL_TOPICS_POLITICS = "controversial topics, politics"
 
 
-_DESCRIPTION = (
-    "A multimodal example from the SIUO (Safe Inputs but Unsafe Output) benchmark. "
-    "Each example pairs an individually-safe image with an individually-safe text "
-    "question; the harm only emerges when the two are combined."
-)
-
-
 class _SIUODataset(_RemoteDatasetLoader):
     """
     Loader for the SIUO (Safe Inputs but Unsafe Output) multimodal benchmark.
@@ -72,7 +65,13 @@ class _SIUODataset(_RemoteDatasetLoader):
     Paper: https://arxiv.org/abs/2406.15279
     """
 
-    _AUTHORS = [
+    _DESCRIPTION: ClassVar[str] = (
+        "A multimodal example from the SIUO (Safe Inputs but Unsafe Output) benchmark. "
+        "Each example pairs an individually-safe image with an individually-safe text "
+        "question; the harm only emerges when the two are combined."
+    )
+
+    _AUTHORS: ClassVar[list[str]] = [
         "Siyin Wang",
         "Xingsong Ye",
         "Qinyuan Cheng",
@@ -83,7 +82,7 @@ class _SIUODataset(_RemoteDatasetLoader):
         "Xuanjing Huang",
     ]
 
-    _GROUPS = [
+    _GROUPS: ClassVar[list[str]] = [
         "Fudan University",
         "National University of Singapore",
         "Shanghai AI Laboratory",
@@ -137,6 +136,8 @@ class _SIUODataset(_RemoteDatasetLoader):
         self.categories = categories
 
         if categories is not None:
+            if not categories:
+                raise ValueError("`categories` must be a non-empty list (pass None to include all categories)")
             self._validate_enums(categories, SIUOCategory, "SIUO category")
 
     @property
@@ -252,7 +253,7 @@ class _SIUODataset(_RemoteDatasetLoader):
             name=f"SIUO Objective - {question_id}",
             dataset_name=self.dataset_name,
             harm_categories=[category],
-            description=_DESCRIPTION,
+            description=self._DESCRIPTION,
             authors=self._AUTHORS,
             groups=self._GROUPS,
             source=self.PAPER_URL,
@@ -265,7 +266,7 @@ class _SIUODataset(_RemoteDatasetLoader):
             name=f"SIUO Text - {question_id}",
             dataset_name=self.dataset_name,
             harm_categories=[category],
-            description=_DESCRIPTION,
+            description=self._DESCRIPTION,
             authors=self._AUTHORS,
             groups=self._GROUPS,
             source=self.PAPER_URL,
@@ -280,7 +281,7 @@ class _SIUODataset(_RemoteDatasetLoader):
             name=f"SIUO Image - {question_id}",
             dataset_name=self.dataset_name,
             harm_categories=[category],
-            description=_DESCRIPTION,
+            description=self._DESCRIPTION,
             authors=self._AUTHORS,
             groups=self._GROUPS,
             source=self.PAPER_URL,

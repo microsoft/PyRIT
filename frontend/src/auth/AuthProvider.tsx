@@ -31,9 +31,16 @@ function LoginRedirect() {
   const config = useAuthConfig()
 
   useEffect(() => {
-    instance.loginRedirect(buildLoginRequest(config.clientId)).catch((error) => {
-      console.error('Login redirect failed:', error)
-    })
+    // Capture the path the user originally requested so it can be restored
+    // after the login round-trip (see the redirect handling in initMsal).
+    instance
+      .loginRedirect({
+        ...buildLoginRequest(config.clientId),
+        state: window.location.pathname + window.location.search,
+      })
+      .catch((error) => {
+        console.error('Login redirect failed:', error)
+      })
   }, [instance, config])
 
   return <div style={{ padding: '2rem', textAlign: 'center' }}>Redirecting to login...</div>
@@ -41,6 +48,18 @@ function LoginRedirect() {
 
 interface AuthProviderProps {
   children: ReactNode
+}
+
+/**
+ * True for root-relative paths ("/history") that are safe to restore after a
+ * login redirect. Rejects protocol-relative ("//evil.com") and backslash
+ * variants ("/\evil.com", which browsers coerce to "//"), since a tampered MSAL
+ * state value could otherwise become an open redirect to an external origin. The
+ * leading "/\" is rejected explicitly here; the path is never run through a URL
+ * parser.
+ */
+function isSafeInternalPath(path: string): boolean {
+  return path.startsWith('/') && !path.startsWith('//') && !path.startsWith('/\\')
 }
 
 export function AuthProvider({ children }: AuthProviderProps) {
@@ -84,6 +103,18 @@ export function AuthProvider({ children }: AuthProviderProps) {
         const redirectResult = await instance.handleRedirectPromise()
         if (redirectResult?.account) {
           instance.setActiveAccount(redirectResult.account)
+        }
+
+        // Restore the deep link the user originally requested, captured as
+        // MSAL state before the login redirect (see LoginRedirect). Only
+        // same-origin paths are honored, guarding against an open redirect.
+        const requestedPath = typeof redirectResult?.state === 'string' ? redirectResult.state : null
+        if (
+          requestedPath &&
+          isSafeInternalPath(requestedPath) &&
+          requestedPath !== window.location.pathname + window.location.search
+        ) {
+          window.history.replaceState(null, '', requestedPath)
         }
 
         // Fall back to any cached account from a previous session

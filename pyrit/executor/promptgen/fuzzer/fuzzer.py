@@ -1003,7 +1003,6 @@ class FuzzerGenerator(
             requests=requests,
             target=self._objective_target,
             labels=context.memory_labels,
-            attack_identifier=self.get_identifier(),
             batch_size=self._batch_size,
         )
 
@@ -1078,6 +1077,9 @@ class FuzzerGenerator(
 
         Returns:
             int: The number of jailbreaks found.
+
+        Raises:
+            ValueError: If a scored response piece has no conversation_id.
         """
         jailbreak_count = 0
         response_pieces = [response.message_pieces[0] for response in responses]
@@ -1085,7 +1087,10 @@ class FuzzerGenerator(
         for index, score in enumerate(scores):
             if self._is_jailbreak(score):
                 jailbreak_count += 1
-                context.jailbreak_conversation_ids.append(response_pieces[index].conversation_id)
+                conversation_id = response_pieces[index].conversation_id
+                if conversation_id is None:
+                    raise ValueError("Response piece has no conversation_id; cannot record jailbreak conversation.")
+                context.jailbreak_conversation_ids.append(conversation_id)
 
         # Update tracking
         context.total_jailbreak_count += jailbreak_count

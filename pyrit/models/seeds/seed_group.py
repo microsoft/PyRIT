@@ -450,7 +450,6 @@ class SeedGroup(BaseModel):
                     role=role,
                     original_value=prompt.value,
                     original_value_data_type=prompt.data_type or "text",
-                    prompt_target_identifier=None,
                     conversation_id=str(prompt.prompt_group_id),
                     sequence=sequence,
                     prompt_metadata=prompt.metadata,

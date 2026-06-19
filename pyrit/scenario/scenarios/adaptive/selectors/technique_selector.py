@@ -39,7 +39,7 @@ class SelectorScope:
     in-flight run. When ``False`` (default), query across all runs."""
 
     targeted_harm_categories: Sequence[str] | None = None
-    """Filter to results whose prompts targeted these harm categories.
+    """Filter to results whose attack targeted these harm categories.
     ``None`` means no harm-category filter."""
 
     @classmethod

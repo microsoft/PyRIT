@@ -80,4 +80,13 @@ export const useTargetBadgeStyles = makeStyles({
     overflowX: 'auto',
     boxSizing: 'border-box',
   },
+  /** A single inner target entry in the tooltip's Inner Targets section. */
+  innerTargetItem: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: tokens.spacingVerticalXXS,
+    padding: `${tokens.spacingVerticalXXS} ${tokens.spacingHorizontalXS}`,
+    backgroundColor: tokens.colorNeutralBackground2,
+    borderRadius: tokens.borderRadiusSmall,
+  },
 })

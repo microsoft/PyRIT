@@ -41,6 +41,10 @@ export const useConversationPanelStyles = makeStyles({
     '&:hover': {
       backgroundColor: tokens.colorNeutralBackground1Hover,
     },
+    '&:focus-visible': {
+      outline: `2px solid ${tokens.colorStrokeFocus2}`,
+      outlineOffset: '-2px',
+    },
   },
   conversationItemActive: {
     backgroundColor: tokens.colorNeutralBackground1Selected,

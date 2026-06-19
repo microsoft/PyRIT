@@ -33,9 +33,23 @@ function formatParams(params?: Record<string, unknown> | null): string {
 
 export default function TargetBadge({ target }: TargetBadgeProps) {
   const styles = useTargetBadgeStyles()
-  const displayName = target.model_name
-    ? `${target.target_type} (${target.model_name})`
-    : target.target_type
+  const innerTargets = target.inner_targets ?? []
+  const isRoundRobin = innerTargets.length > 0
+
+  // For RoundRobinTarget, prefer underlying_model_name because inner targets share
+  // the same underlying model but may have different deployment names (model_name).
+  // For regular targets, use model_name as before.
+  const badgeModel = isRoundRobin
+    ? (target.underlying_model_name ?? target.model_name)
+    : target.model_name
+  const displayName = isRoundRobin
+    ? badgeModel
+      ? `${target.target_type} (${badgeModel} ×${innerTargets.length})`
+      : `${target.target_type} (×${innerTargets.length})`
+    : target.model_name
+      ? `${target.target_type} (${target.model_name})`
+      : target.target_type
+
   const showUnderlying =
     target.underlying_model_name &&
     target.model_name &&
@@ -46,6 +60,9 @@ export default function TargetBadge({ target }: TargetBadgeProps) {
   const inputModalities = target.capabilities?.supported_input_modalities ?? []
   const outputModalities = target.capabilities?.supported_output_modalities ?? []
   const params = formatParams(target.target_specific_params)
+
+  // Extract weights from params so we can show them next to each inner target
+  const weights = target.target_specific_params?.weights as number[] | undefined
 
   const tooltipContent = (
     <div className={styles.tooltipBody}>
@@ -89,6 +106,28 @@ export default function TargetBadge({ target }: TargetBadgeProps) {
               <Text size={200} italic>None</Text>
             )}
           </div>
+        </div>
+      )}
+      {/* Inner targets section — only shown for composite targets like RoundRobinTarget */}
+      {isRoundRobin && (
+        <div className={styles.tooltipSection}>
+          <span className={styles.sectionLabel}>Inner Targets ({innerTargets.length})</span>
+          {innerTargets.map((inner, idx) => (
+            <div key={inner.target_registry_name} className={styles.innerTargetItem}>
+              <Text size={200} weight="semibold">
+                #{idx + 1}{weights?.[idx] != null ? ` (weight: ${weights[idx]})` : ''}
+              </Text>
+              <Text size={200}>
+                {inner.target_type}
+                {inner.model_name ? ` — ${inner.model_name}` : ''}
+              </Text>
+              {inner.endpoint && (
+                <Text className={styles.endpointText} size={200}>
+                  {inner.endpoint}
+                </Text>
+              )}
+            </div>
+          ))}
         </div>
       )}
       {params && (

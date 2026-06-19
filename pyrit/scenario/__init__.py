@@ -32,7 +32,7 @@ from pyrit.scenario.core import (
 )
 
 # Import scenario submodules directly and register them as virtual subpackages
-# This allows: from pyrit.scenario.airt import ContentHarms
+# This allows: from pyrit.scenario.airt import Jailbreak
 # without needing separate pyrit/scenario/airt/ directories
 from pyrit.scenario.scenarios import adaptive as _adaptive_module
 from pyrit.scenario.scenarios import airt as _airt_module

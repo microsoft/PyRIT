@@ -4,6 +4,7 @@ import {
 import {
   ChatRegular,
   HomeRegular,
+  QuestionCircleRegular,
   SettingsRegular,
   HistoryRegular,
   PersonFeedbackRegular,
@@ -19,20 +20,15 @@ interface NavigationProps {
   onNavigate: (view: ViewName) => void
   onToggleTheme: () => void
   isDarkMode: boolean
+  onStartTour?: () => void
   onOpenFeedback: () => void
 }
 
-export default function Navigation({
-  currentView,
-  onNavigate,
-  onToggleTheme,
-  isDarkMode,
-  onOpenFeedback,
-}: NavigationProps) {
+export default function Navigation({ currentView, onNavigate, onToggleTheme, isDarkMode, onStartTour, onOpenFeedback }: NavigationProps) {
   const styles = useNavigationStyles()
 
   return (
-    <div className={styles.root}>
+    <div className={styles.root} data-tour="sidebar-nav">
       <Button
         className={styles.navButton}
         data-active={currentView === 'home'}
@@ -74,6 +70,17 @@ export default function Navigation({
       />
 
       <div className={styles.spacer} />
+
+      {onStartTour && (
+        <Button
+          className={styles.navButton}
+          appearance="subtle"
+          icon={<QuestionCircleRegular />}
+          onClick={onStartTour}
+          title="Take a tour"
+          aria-label="Take a tour"
+        />
+      )}
 
       <Button
         className={styles.navButton}

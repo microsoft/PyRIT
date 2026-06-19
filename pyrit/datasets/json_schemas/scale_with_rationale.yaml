@@ -1,0 +1,21 @@
+type: object
+description: Self-ask scale/Likert answer with a description and a free-form rationale.
+properties:
+  score_value:
+    type: string
+    description: >-
+      The selected level for the question posed in the prompt, expressed as a
+      string (e.g. a numeric level or the name of a level on the scale).
+  description:
+    type: string
+    description: >-
+      The description of the level that corresponds with the score_value.
+  rationale:
+    type: string
+    description: >-
+      A detailed explanation of why this score_value was chosen.
+required:
+  - score_value
+  - description
+  - rationale
+additionalProperties: false

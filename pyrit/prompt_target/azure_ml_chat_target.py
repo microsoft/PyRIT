@@ -9,26 +9,20 @@ from httpx import HTTPStatusError
 
 from pyrit.auth import ensure_async_token_provider
 from pyrit.common import default_values, net_utility
-from pyrit.common.deprecation import print_deprecation_message
 from pyrit.exceptions import (
     EmptyResponseException,
     RateLimitException,
     handle_bad_request_exception,
     pyrit_target_retry,
 )
-from pyrit.message_normalizer import ChatMessageNormalizer, MessageListNormalizer
+from pyrit.message_normalizer import ChatMessageNormalizer
 from pyrit.models import (
     ComponentIdentifier,
     Message,
     construct_response_from_request,
 )
 from pyrit.prompt_target.common.prompt_target import PromptTarget
-from pyrit.prompt_target.common.target_capabilities import (
-    CapabilityHandlingPolicy,
-    CapabilityName,
-    TargetCapabilities,
-    UnsupportedCapabilityBehavior,
-)
+from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.prompt_target.common.utils import limit_requests_per_minute, validate_temperature, validate_top_p
 
@@ -65,7 +59,6 @@ class AzureMLChatTarget(PromptTarget):
         endpoint: str | None = None,
         api_key: str | Callable[[], str | Awaitable[str]] | None = None,
         model_name: str = "",
-        message_normalizer: MessageListNormalizer[Any] | None = None,
         max_new_tokens: int = 400,
         temperature: float = 1.0,
         top_p: float = 1.0,
@@ -88,10 +81,6 @@ class AzureMLChatTarget(PromptTarget):
                 Defaults to the value of the ``AZURE_ML_KEY`` environment variable.
             model_name (str): The name of the model being used (e.g., "Llama-3.2-3B-Instruct").
                 Used for identification purposes. Defaults to empty string.
-            message_normalizer (MessageListNormalizer[Any] | None): **Deprecated.** Use
-                ``custom_configuration`` with ``CapabilityHandlingPolicy`` instead. Previously used for
-                models that do not allow system prompts.
-                Will be removed in 0.15.0.
             max_new_tokens (int): The maximum number of tokens to generate in the response.
                 Defaults to 400.
             temperature (float): The temperature for generating diverse responses. 1.0 is most random,
@@ -111,45 +100,10 @@ class AzureMLChatTarget(PromptTarget):
                 Note that the link above may not be comprehensive, and specific acceptable parameters may be
                 model-dependent. If a model does not accept a certain parameter that is passed in, it will be skipped
                 without throwing an error.
-
-        Raises:
-            ValueError: If both `message_normalizer` and `custom_configuration` are provided,
-                since `message_normalizer` is deprecated and the two configurations may conflict.
         """
         endpoint_value = default_values.get_required_value(
             env_var_name=self.endpoint_uri_environment_variable, passed_value=endpoint
         )
-
-        # Translate legacy message_normalizer into TargetConfiguration
-        if message_normalizer is not None:
-            if custom_configuration is not None:
-                raise ValueError(
-                    "Cannot specify both 'message_normalizer' and 'custom_configuration'. "
-                    "Use 'custom_configuration' only; 'message_normalizer' is deprecated and "
-                    "will be removed in 0.15.0."
-                )
-            print_deprecation_message(
-                old_item="AzureMLChatTarget(message_normalizer=...)",
-                new_item="AzureMLChatTarget(custom_configuration=...)",
-                removed_in="0.15.0",
-            )
-            # The legacy message_normalizer was primarily used to handle system prompts
-            # for models that don't support them (e.g. GenericSystemSquashNormalizer).
-            # We translate it into a TargetConfiguration that marks system_prompt as
-            # unsupported + ADAPT so the pipeline invokes the user's normalizer.
-            default_caps = self._DEFAULT_CONFIGURATION.capabilities
-            default_behaviors = dict(self._DEFAULT_CONFIGURATION.policy.behaviors)
-            default_behaviors[CapabilityName.SYSTEM_PROMPT] = UnsupportedCapabilityBehavior.ADAPT
-            custom_configuration = TargetConfiguration(
-                capabilities=TargetCapabilities(
-                    supports_multi_message_pieces=default_caps.supports_multi_message_pieces,
-                    supports_editable_history=default_caps.supports_editable_history,
-                    supports_multi_turn=default_caps.supports_multi_turn,
-                    supports_system_prompt=False,
-                ),
-                policy=CapabilityHandlingPolicy(behaviors=default_behaviors),
-                normalizer_overrides={CapabilityName.SYSTEM_PROMPT: message_normalizer},
-            )
 
         PromptTarget.__init__(
             self,

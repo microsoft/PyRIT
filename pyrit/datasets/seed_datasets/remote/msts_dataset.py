@@ -5,7 +5,7 @@ import io
 import logging
 import uuid
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 from urllib.parse import urlparse
 
 from typing_extensions import override
@@ -23,34 +23,6 @@ if TYPE_CHECKING:
     from pyrit.models.seeds.seed_group import SeedUnion
 
 logger = logging.getLogger(__name__)
-
-_HF_REPO_ID = "felfri/MSTS"
-
-_LANGUAGE_TO_SPLIT: dict[str, str] = {
-    "en": "english",
-    "de": "german",
-    "ru": "russian",
-    "zh": "chinese",
-    "hi": "hindi",
-    "es": "spanish",
-    "it": "italian",
-    "fr": "french",
-    "ko": "korean",
-    "ar": "arabic",
-    "fa": "farsi",
-}
-
-_VALID_TEXT_MODIFIERS: frozenset[str] = frozenset({"assistance", "intention"})
-
-_PIL_FORMAT_TO_EXTENSION: dict[str, str] = {
-    "JPEG": "jpg",
-    "JPG": "jpg",
-    "PNG": "png",
-    "GIF": "gif",
-    "BMP": "bmp",
-    "TIFF": "tiff",
-    "WEBP": "webp",
-}
 
 
 class _MSTSDataset(_RemoteDatasetLoader):
@@ -82,7 +54,35 @@ class _MSTSDataset(_RemoteDatasetLoader):
     Paper: [@rottger2025msts]
     """
 
-    _AUTHORS: list[str] = [
+    _HF_REPO_ID: ClassVar[str] = "felfri/MSTS"
+
+    _LANGUAGE_TO_SPLIT: ClassVar[dict[str, str]] = {
+        "en": "english",
+        "de": "german",
+        "ru": "russian",
+        "zh": "chinese",
+        "hi": "hindi",
+        "es": "spanish",
+        "it": "italian",
+        "fr": "french",
+        "ko": "korean",
+        "ar": "arabic",
+        "fa": "farsi",
+    }
+
+    _VALID_TEXT_MODIFIERS: ClassVar[frozenset[str]] = frozenset({"assistance", "intention"})
+
+    _PIL_FORMAT_TO_EXTENSION: ClassVar[dict[str, str]] = {
+        "JPEG": "jpg",
+        "JPG": "jpg",
+        "PNG": "png",
+        "GIF": "gif",
+        "BMP": "bmp",
+        "TIFF": "tiff",
+        "WEBP": "webp",
+    }
+
+    _AUTHORS: ClassVar[list[str]] = [
         "Paul Röttger",
         "Giuseppe Attanasio",
         "Felix Friedrich",
@@ -107,7 +107,7 @@ class _MSTSDataset(_RemoteDatasetLoader):
         "Bertie Vidgen",
     ]
 
-    _GROUPS: list[str] = [
+    _GROUPS: ClassVar[list[str]] = [
         "Bocconi University",
         "Instituto de Telecomunicações",
         "TU Darmstadt / hessian.AI",
@@ -158,7 +158,7 @@ class _MSTSDataset(_RemoteDatasetLoader):
         self.languages = self._resolve_languages(languages)
         self.text_modifiers = self._resolve_text_modifiers(text_modifiers)
         self.token = token
-        self.source = f"https://huggingface.co/datasets/{_HF_REPO_ID}"
+        self.source = f"https://huggingface.co/datasets/{self._HF_REPO_ID}"
 
     @property
     @override
@@ -187,9 +187,9 @@ class _MSTSDataset(_RemoteDatasetLoader):
         failed_image_count = 0
 
         for language in self.languages:
-            split_name = _LANGUAGE_TO_SPLIT[language]
+            split_name = self._LANGUAGE_TO_SPLIT[language]
             split_data = await self._fetch_from_huggingface_async(
-                dataset_name=_HF_REPO_ID,
+                dataset_name=self._HF_REPO_ID,
                 split=split_name,
                 cache=cache,
                 token=self.token,
@@ -242,11 +242,11 @@ class _MSTSDataset(_RemoteDatasetLoader):
             )
 
         if languages == ["all"]:
-            return list(_LANGUAGE_TO_SPLIT.keys())
+            return list(_MSTSDataset._LANGUAGE_TO_SPLIT.keys())
 
-        invalid = [lang for lang in languages if lang not in _LANGUAGE_TO_SPLIT]
+        invalid = [lang for lang in languages if lang not in _MSTSDataset._LANGUAGE_TO_SPLIT]
         if invalid:
-            valid = ", ".join(sorted(_LANGUAGE_TO_SPLIT.keys()))
+            valid = ", ".join(sorted(_MSTSDataset._LANGUAGE_TO_SPLIT.keys()))
             raise ValueError(
                 f"Unsupported MSTS language(s): {invalid}. Valid ISO codes: {valid}. "
                 f"Pass ['all'] to load every language."
@@ -276,9 +276,9 @@ class _MSTSDataset(_RemoteDatasetLoader):
                 "MSTS text_modifiers must not be empty. Pass None to use the default ['assistance', 'intention']."
             )
 
-        invalid = [m for m in text_modifiers if m not in _VALID_TEXT_MODIFIERS]
+        invalid = [m for m in text_modifiers if m not in _MSTSDataset._VALID_TEXT_MODIFIERS]
         if invalid:
-            valid = ", ".join(sorted(_VALID_TEXT_MODIFIERS))
+            valid = ", ".join(sorted(_MSTSDataset._VALID_TEXT_MODIFIERS))
             raise ValueError(f"Invalid MSTS text_modifiers: {invalid}. Valid values: {valid}.")
 
         return list(text_modifiers)
@@ -391,7 +391,7 @@ class _MSTSDataset(_RemoteDatasetLoader):
 
         pil_format = getattr(pil_image, "format", None) if pil_image is not None else None
         if isinstance(pil_format, str):
-            mapped = _PIL_FORMAT_TO_EXTENSION.get(pil_format.upper())
+            mapped = _MSTSDataset._PIL_FORMAT_TO_EXTENSION.get(pil_format.upper())
             if mapped:
                 return mapped
 

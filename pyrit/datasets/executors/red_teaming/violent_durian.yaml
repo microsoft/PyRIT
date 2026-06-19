@@ -6,7 +6,7 @@ authors:
   - AI Red Team
 groups:
   - AI Red Team
-source: AI Red Team
+source: https://github.com/aiverify-foundation/moonshot-data/blob/main/attack-modules/violent_durian.py
 parameters:
   - objective
 data_type: text
