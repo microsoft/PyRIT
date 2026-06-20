@@ -119,7 +119,7 @@ class ConverterRegistry(Registry["PromptConverter", ConverterMetadata]):
         """Return ``ConverterIdentifier`` so its ``Param.*`` markers drive derivation."""
         return ConverterIdentifier
 
-    def _get_registry_name(self, cls: type) -> str:
+    def _get_registry_name(self, cls: type[PromptConverter]) -> str:
         """
         Use the exact class name as the catalog key.
 
@@ -142,8 +142,11 @@ class ConverterRegistry(Registry["PromptConverter", ConverterMetadata]):
                 continue
             if not issubclass(cls, PromptConverter) or cls is PromptConverter:
                 continue
-            self.register_class(cls, name=name)
-            logger.debug(f"Registered converter class: {name}")
+            # Key off the class itself (via _get_registry_name) rather than the
+            # __all__ export name so the catalog key always matches class_name,
+            # even if an export is ever aliased.
+            self.register_class(cls)
+            logger.debug(f"Registered converter class: {cls.__name__}")
 
     def _metadata_class(self) -> type[ConverterMetadata]:
         """Return ``ConverterMetadata``; the base populates it from the common fields."""

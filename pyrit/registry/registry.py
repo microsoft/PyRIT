@@ -26,7 +26,6 @@ registry singleton.
 
 from __future__ import annotations
 
-import inspect
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
@@ -48,6 +47,81 @@ if TYPE_CHECKING:
 
 T = TypeVar("T")
 MetadataT = TypeVar("MetadataT", bound=ClassRegistryEntry)
+
+
+def _get_metadata_value(metadata: Any, key: str) -> tuple[bool, Any]:
+    """
+    Get a value from a metadata object by key.
+
+    Checks direct attributes first, then falls back to the ``params`` dict
+    (used by ComponentIdentifier). Returns a (found, value) tuple.
+
+    Args:
+        metadata: The metadata object to look up.
+        key (str): The attribute or params key to find.
+
+    Returns:
+        tuple: (True, value) if found, (False, None) otherwise.
+    """
+    if hasattr(metadata, key):
+        return True, getattr(metadata, key)
+
+    params = getattr(metadata, "params", None)
+    if isinstance(params, dict) and key in params:
+        return True, params[key]
+
+    return False, None
+
+
+def _matches_filters(
+    metadata: Any,
+    *,
+    include_filters: dict[str, Any] | None = None,
+    exclude_filters: dict[str, Any] | None = None,
+) -> bool:
+    """
+    Check if a metadata object matches all provided filters.
+
+    Supports filtering on any property of the metadata dataclass or on keys
+    inside the ``params`` dict (for ComponentIdentifier metadata):
+
+    - For simple types (str, int, bool): exact match comparison.
+    - For sequence types (list, tuple): checks if the filter value is contained.
+
+    Items must match ALL include_filters (AND logic) and must NOT match ANY
+    exclude_filters.
+
+    Args:
+        metadata: The metadata dataclass instance to check.
+        include_filters: Optional dict of filters that must ALL match.
+        exclude_filters: Optional dict of filters that must ALL NOT match.
+
+    Returns:
+        bool: True if all include_filters match and no exclude_filters match.
+    """
+    if include_filters:
+        for key, filter_value in include_filters.items():
+            found, actual_value = _get_metadata_value(metadata, key)
+            if not found:
+                return False
+            if isinstance(actual_value, (list, tuple)):
+                if filter_value not in actual_value:
+                    return False
+            elif actual_value != filter_value:
+                return False
+
+    if exclude_filters:
+        for key, filter_value in exclude_filters.items():
+            found, actual_value = _get_metadata_value(metadata, key)
+            if not found:
+                continue
+            if isinstance(actual_value, (list, tuple)):
+                if filter_value in actual_value:
+                    return False
+            elif actual_value == filter_value:
+                return False
+
+    return True
 
 
 class Registry(ABC, Generic[T, MetadataT]):
@@ -162,35 +236,15 @@ class Registry(ABC, Generic[T, MetadataT]):
         Returns:
             MetadataT: A metadata descriptor for the registered class.
         """
-        return self._metadata_class()(
+        metadata_class = self._metadata_class()
+        return metadata_class(
             class_name=cls.__name__,
             class_module=cls.__module__,
-            class_description=self._describe(cls),
+            class_description=metadata_class.summary_from_docstring(cls),
             registry_name=name,
             parameters=self._derive_parameters(cls),
             class_attributes=self._class_attributes(cls),
         )
-
-    @staticmethod
-    def _describe(cls: type[T]) -> str:
-        """
-        Extract a short description from the first paragraph of a class docstring.
-
-        Uses the class's own docstring only (never an inherited one), normalizes
-        indentation, and collapses the first paragraph's whitespace into a single
-        line. Empty when the class has no docstring.
-
-        Args:
-            cls (type[T]): The class to describe.
-
-        Returns:
-            str: The first-paragraph description, or "" when there is no docstring.
-        """
-        raw = cls.__doc__
-        if not raw:
-            return ""
-        first_paragraph = inspect.cleandoc(raw).split("\n\n", 1)[0]
-        return " ".join(first_paragraph.split())
 
     def _derive_parameters(self, cls: type[T]) -> tuple[Parameter, ...]:
         """
@@ -266,6 +320,10 @@ class Registry(ABC, Generic[T, MetadataT]):
             ValueError: If the constructor cannot be introspected or a reference
                 parameter has no registry wired for its component type.
         """
+        # Derived here only to validate references; the metadata cache derives the
+        # contract again lazily in _build_metadata. The two happen at different
+        # lifecycle stages (register vs. first metadata access), and derivation is
+        # cheap, so the small duplication is deliberate rather than worth caching.
         parameters = self._derive_parameters(cls)
         for param in parameters:
             if param.reference is not None and not is_component_type_resolvable(param.reference.component_type):
@@ -364,8 +422,6 @@ class Registry(ABC, Generic[T, MetadataT]):
         Returns:
             list[MetadataT]: Metadata describing each registered class (filtered).
         """
-        from pyrit.registry.base import _matches_filters
-
         metadata = list(self._ensure_metadata().values())
         if not include_filters and not exclude_filters:
             return metadata
@@ -457,5 +513,4 @@ class Registry(ABC, Generic[T, MetadataT]):
         Returns:
             Iterator[str]: An iterator over sorted registered names.
         """
-        self._ensure_discovered()
-        return iter(sorted(self._classes.keys()))
+        return iter(self.get_class_names())

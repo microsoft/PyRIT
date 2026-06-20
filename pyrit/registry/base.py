@@ -10,6 +10,7 @@ and object registries (which store T instances).
 
 from __future__ import annotations
 
+import inspect
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol, TypeVar, runtime_checkable
 
@@ -69,6 +70,27 @@ class ClassRegistryEntry:
         doc = cls.__doc__ or ""
         cleaned = " ".join(doc.split())
         return cleaned or fallback
+
+    @staticmethod
+    def summary_from_docstring(cls: type) -> str:
+        """
+        Extract a short summary from the first paragraph of a class docstring.
+
+        Uses the class's own docstring only (never an inherited one), normalizes
+        indentation, and collapses the first paragraph's whitespace onto one line.
+        Empty when the class has no docstring. This is the catalog-display
+        counterpart to ``description_from_docstring`` (which collapses the whole
+        docstring); buildable registries populate ``class_description`` from this
+        first-paragraph form.
+
+        Returns:
+            str: The first-paragraph summary, or "" when there is no docstring.
+        """
+        raw = cls.__doc__
+        if not raw:
+            return ""
+        first_paragraph = inspect.cleandoc(raw).split("\n\n", 1)[0]
+        return " ".join(first_paragraph.split())
 
 
 @runtime_checkable
