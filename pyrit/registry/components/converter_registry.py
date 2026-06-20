@@ -32,7 +32,6 @@ from pyrit.models.parameter import ComponentType
 from pyrit.registry.base import ClassRegistryEntry
 from pyrit.registry.instance_registry import DefaultInstanceRegistry, InstanceRegistry
 from pyrit.registry.registry import Registry
-from pyrit.registry.resolution import derive_parameters
 
 if TYPE_CHECKING:
     from pyrit.prompt_converter import PromptConverter
@@ -146,31 +145,6 @@ class ConverterRegistry(Registry["PromptConverter", ConverterMetadata]):
             self.register_class(cls, name=name)
             logger.debug(f"Registered converter class: {name}")
 
-    def _build_metadata(self, name: str, cls: type[PromptConverter]) -> ConverterMetadata:
-        """
-        Build catalog metadata for a ``PromptConverter`` class.
-
-        Args:
-            name (str): The catalog name (exact class name) of the converter.
-            cls (type[PromptConverter]): The converter class being described.
-
-        Returns:
-            ConverterMetadata: Metadata describing the converter class.
-        """
-        # First paragraph of the docstring as a short description.
-        raw_doc = (cls.__doc__ or "").strip()
-        description = raw_doc.split("\n\n")[0].replace("\n", " ").strip()
-
-        # Supported input/output types are class attributes, so they can be read off
-        # the class without constructing an instance (see Param.ClassAttr).
-        class_attributes = ConverterIdentifier.get_class_attribute_values(cls)
-        parameters = tuple(derive_parameters(cls=cls, identifier_type=ConverterIdentifier))
-
-        return ConverterMetadata(
-            class_name=cls.__name__,
-            class_module=cls.__module__,
-            class_description=description,
-            registry_name=name,
-            parameters=parameters,
-            class_attributes=class_attributes,
-        )
+    def _metadata_class(self) -> type[ConverterMetadata]:
+        """Return ``ConverterMetadata``; the base populates it from the common fields."""
+        return ConverterMetadata

@@ -26,10 +26,12 @@ registry singleton.
 
 from __future__ import annotations
 
+import inspect
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Generic, TypeVar
+from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
 from pyrit.models import class_name_to_snake_case
+from pyrit.registry.base import ClassRegistryEntry
 from pyrit.registry.resolution import (
     derive_parameters,
     is_component_type_resolvable,
@@ -37,14 +39,15 @@ from pyrit.registry.resolution import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Iterator, Mapping
 
     from typing_extensions import Self
 
     from pyrit.models.identifiers.component_identifier import ComponentIdentifier
+    from pyrit.models.parameter import Parameter
 
 T = TypeVar("T")
-MetadataT = TypeVar("MetadataT")
+MetadataT = TypeVar("MetadataT", bound=ClassRegistryEntry)
 
 
 class Registry(ABC, Generic[T, MetadataT]):
@@ -64,7 +67,7 @@ class Registry(ABC, Generic[T, MetadataT]):
     Subclasses must implement:
 
     - ``_discover()`` — populate the catalog by calling ``register_class`` for each class.
-    - ``_build_metadata(name, cls)`` — build the metadata descriptor for a class.
+    - ``_metadata_class()`` — return the concrete metadata dataclass the base builds.
 
     Type Parameters:
         T: The type of classes being registered (e.g. ``PromptConverter``).
@@ -72,7 +75,7 @@ class Registry(ABC, Generic[T, MetadataT]):
     """
 
     # Class-level singleton instances, keyed by registry class.
-    _singletons: dict[type, Registry[object, object]] = {}
+    _singletons: dict[type, Registry[Any, Any]] = {}
 
     def __init__(self, *, lazy_discovery: bool = True) -> None:
         """
@@ -131,11 +134,26 @@ class Registry(ABC, Generic[T, MetadataT]):
         """
 
     @abstractmethod
+    def _metadata_class(self) -> type[MetadataT]:
+        """
+        Return the concrete metadata dataclass this registry builds.
+
+        The base ``_build_metadata`` constructs this type from the common
+        ``ClassRegistryEntry`` fields. Subclasses whose metadata carries extra
+        fields beyond the common shape override ``_build_metadata`` instead.
+
+        Returns:
+            type[MetadataT]: The metadata dataclass (e.g. ``ConverterMetadata``).
+        """
+
     def _build_metadata(self, name: str, cls: type[T]) -> MetadataT:
         """
         Build the metadata descriptor for a registered class.
 
-        Subclasses must implement this to provide registry-specific metadata.
+        Populates the common ``ClassRegistryEntry`` fields — name/module, a
+        first-paragraph description, the derived ``Parameter`` build contract, and
+        any ``Param.ClassAttr`` class attributes — into the registry's
+        ``_metadata_class``. Subclasses needing extra fields override this.
 
         Args:
             name (str): The catalog name (the registry key) for the class.
@@ -144,6 +162,63 @@ class Registry(ABC, Generic[T, MetadataT]):
         Returns:
             MetadataT: A metadata descriptor for the registered class.
         """
+        return self._metadata_class()(
+            class_name=cls.__name__,
+            class_module=cls.__module__,
+            class_description=self._describe(cls),
+            registry_name=name,
+            parameters=self._derive_parameters(cls),
+            class_attributes=self._class_attributes(cls),
+        )
+
+    @staticmethod
+    def _describe(cls: type[T]) -> str:
+        """
+        Extract a short description from the first paragraph of a class docstring.
+
+        Uses the class's own docstring only (never an inherited one), normalizes
+        indentation, and collapses the first paragraph's whitespace into a single
+        line. Empty when the class has no docstring.
+
+        Args:
+            cls (type[T]): The class to describe.
+
+        Returns:
+            str: The first-paragraph description, or "" when there is no docstring.
+        """
+        raw = cls.__doc__
+        if not raw:
+            return ""
+        first_paragraph = inspect.cleandoc(raw).split("\n\n", 1)[0]
+        return " ".join(first_paragraph.split())
+
+    def _derive_parameters(self, cls: type[T]) -> tuple[Parameter, ...]:
+        """
+        Derive the class's ``Parameter`` build contract under this registry's identifier.
+
+        Args:
+            cls (type[T]): The class to introspect.
+
+        Returns:
+            tuple[Parameter, ...]: The derived build contract.
+        """
+        return tuple(derive_parameters(cls=cls, identifier_type=self._identifier_type()))
+
+    def _class_attributes(self, cls: type[T]) -> Mapping[str, Any]:
+        """
+        Read this registry's ``Param.ClassAttr`` class attributes off a class.
+
+        Args:
+            cls (type[T]): The class to read class-level attributes from.
+
+        Returns:
+            Mapping[str, Any]: Field-name → class-attribute value, empty when the
+                registry has no domain identifier.
+        """
+        identifier_type = self._identifier_type()
+        if identifier_type is None:
+            return {}
+        return identifier_type.get_class_attribute_values(cls)
 
     def _identifier_type(self) -> type[ComponentIdentifier] | None:
         """
@@ -191,7 +266,7 @@ class Registry(ABC, Generic[T, MetadataT]):
             ValueError: If the constructor cannot be introspected or a reference
                 parameter has no registry wired for its component type.
         """
-        parameters = derive_parameters(cls=cls, identifier_type=self._identifier_type())
+        parameters = self._derive_parameters(cls)
         for param in parameters:
             if param.reference is not None and not is_component_type_resolvable(param.reference.component_type):
                 raise ValueError(
