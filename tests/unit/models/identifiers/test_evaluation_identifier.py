@@ -420,13 +420,9 @@ class TestParamFallbacks:
         assert result1["children"]["prompt_target"] != result2["children"]["prompt_target"]
 
 
-def test_compute_eval_hash_raises_when_hash_none_and_no_rules():
-    identifier = ComponentIdentifier.__new__(ComponentIdentifier)
-    object.__setattr__(identifier, "hash", None)
-    object.__setattr__(identifier, "class_name", "Test")
-    object.__setattr__(identifier, "class_module", "test.module")
-    with pytest.raises(RuntimeError, match="hash should be set by __post_init__"):
-        compute_eval_hash(identifier, child_eval_rules={})
+def test_compute_eval_hash_no_rules_returns_content_hash():
+    identifier = ComponentIdentifier(class_name="Test", class_module="test.module")
+    assert compute_eval_hash(identifier, child_eval_rules={}) == identifier.hash
 
 
 # ---------------------------------------------------------------------------

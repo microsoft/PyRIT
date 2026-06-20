@@ -241,8 +241,6 @@ def compute_eval_hash(
             identifier = inner[0]
 
     if not child_eval_rules and own_rule is None:
-        if identifier.hash is None:
-            raise RuntimeError("hash should be set by __post_init__")
         return identifier.hash
 
     eval_dict = _build_eval_dict(

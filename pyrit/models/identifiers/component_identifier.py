@@ -22,7 +22,16 @@ import logging
 from abc import ABC, abstractmethod
 from typing import Any, ClassVar, get_args, get_origin
 
-from pydantic import BaseModel, ConfigDict, Field, SerializationInfo, model_serializer, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    PrivateAttr,
+    SerializationInfo,
+    computed_field,
+    model_serializer,
+    model_validator,
+)
 from typing_extensions import Self, TypeAliasType
 
 import pyrit
@@ -209,12 +218,6 @@ class ComponentIdentifier(BaseModel):
     params: dict[str, JSONValue] = Field(default_factory=dict)
     #: Named child identifiers for compositional identity (e.g., a scorer's target).
     children: dict[str, ComponentIdentifier | list[ComponentIdentifier]] = Field(default_factory=dict)
-    #: Content-addressed SHA256 hash. Always recomputed from the identifier's
-    #: content by the validator and cannot be set directly — any value supplied
-    #: at construction (a constructor kwarg or one read back from storage) is
-    #: dropped before validation. The field is kept so the flat storage shape
-    #: still round-trips and serializes the hash.
-    hash: str | None = None
     #: Version tag for storage. Not included in the content hash.
     pyrit_version: str = Field(default=pyrit.__version__)
     #: Evaluation hash. The base identifier cannot compute it (the eval rules live
@@ -222,6 +225,10 @@ class ComponentIdentifier(BaseModel):
     #: ``with_eval_hash``, which is the single supported way to set it. Stamped on
     #: so it lands in the stored JSON for DB-level filtering.
     eval_hash: str | None = None
+
+    #: Cache backing the read-only ``hash`` computed field. Populated once by the
+    #: after-validator from the identifier's content; never set externally.
+    _hash: str = PrivateAttr(default="")
 
     # ------------------------------------------------------------------
     # Promotion (typed projection — derived from the subclass's own fields)
@@ -322,9 +329,9 @@ class ComponentIdentifier(BaseModel):
 
         data = dict(data)
 
-        # hash is always computed from content, never supplied. Drop any incoming
+        # hash is a read-only computed field, never supplied. Drop any incoming
         # value (a constructor kwarg or one read back from the flat storage form)
-        # so it cannot be set directly; the after-validator recomputes it.
+        # so extra="forbid" does not reject it; the computed field derives it.
         data.pop(cls.KEY_HASH, None)
 
         # Map legacy keys onto canonical keys when canonical is absent.
@@ -401,16 +408,16 @@ class ComponentIdentifier(BaseModel):
         return data
 
     @model_validator(mode="after")
-    def _promote_and_compute_hash(self) -> ComponentIdentifier:
+    def _promote_typed_fields(self) -> ComponentIdentifier:
         """
-        Mirror promoted typed fields into ``params`` / ``children`` and hash.
+        Mirror promoted typed fields into ``params`` / ``children``, then hash.
 
         Promoted scalar fields are written into ``params`` and promoted
         identifier fields into ``children`` (``None`` / empty list dropped), so a
         typed subclass serializes and hashes identically to a plain
         ``ComponentIdentifier`` with the same values. The content-addressed hash
-        is then always recomputed from the identifier's content — any value
-        supplied at construction (e.g. one read back from storage) is discarded.
+        is then computed once from the populated content and cached in ``_hash``,
+        backing the read-only ``hash`` computed field.
 
         Returns:
             ``self`` (mutated in-place).
@@ -438,8 +445,25 @@ class ComponentIdentifier(BaseModel):
             params=self.params,
             children=self.children,
         )
-        object.__setattr__(self, "hash", config_hash(hash_dict))
+        object.__setattr__(self, "_hash", config_hash(hash_dict))
         return self
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def hash(self) -> str:
+        """
+        Content-addressed SHA256 hash, derived from this identifier's content.
+
+        Computed once by the after-validator from ``class_name`` /
+        ``class_module`` / ``params`` / ``children`` and cached in ``_hash``. It
+        is a read-only computed field: nothing can set it, and any ``hash`` value
+        supplied at construction (a kwarg, or one read back from the flat storage
+        form) is dropped before validation.
+
+        Returns:
+            The SHA256 content hash.
+        """
+        return self._hash
 
     # ------------------------------------------------------------------
     # Serializer
@@ -543,12 +567,7 @@ class ComponentIdentifier(BaseModel):
     def short_hash(self) -> str:
         """
         Return the first 8 characters of the hash for display and logging.
-
-        Raises:
-            RuntimeError: If the hash has not been set by the validator.
         """
-        if self.hash is None:
-            raise RuntimeError("hash should be set by validator")
         return self.hash[:8]
 
     @property

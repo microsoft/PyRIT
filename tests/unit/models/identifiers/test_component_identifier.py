@@ -1304,13 +1304,9 @@ class TestCollectChildEvalHashes:
         assert parent._collect_child_eval_hashes() == {"has_hash"}
 
 
-def test_short_hash_raises_when_hash_none():
-    obj = ComponentIdentifier.__new__(ComponentIdentifier)
-    object.__setattr__(obj, "hash", None)
-    object.__setattr__(obj, "class_name", "Test")
-    object.__setattr__(obj, "class_module", "test.module")
-    with pytest.raises(RuntimeError, match="hash should be set"):
-        _ = obj.short_hash
+def test_short_hash_returns_hash_prefix():
+    identifier = ComponentIdentifier(class_name="Test", class_module="test.module")
+    assert identifier.short_hash == identifier.hash[:8]
 
 
 class TestComponentIdentifierPydanticMethods:
