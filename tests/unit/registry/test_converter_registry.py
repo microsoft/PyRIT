@@ -384,7 +384,7 @@ class TestClassMetadata:
         meta = self._metadata_for(registry, "PersuasionConverter")
         references = [p for p in meta.parameters if p.reference is not None]
         assert references, "expected at least one reference parameter (the LLM target)"
-        assert any(p.reference.component_type is ComponentType.TARGET for p in references)
+        assert any(p.is_reference_to(ComponentType.TARGET) for p in meta.parameters)
 
 
 # ---------------------------------------------------------------------------
@@ -486,9 +486,7 @@ class TestRegistrationGate:
 
         for meta in registry.get_all_registered_class_metadata():
             parameters = derive_parameters(cls=registry.get_class(meta.class_name), identifier_type=ConverterIdentifier)
-            has_target = any(
-                p.reference is not None and p.reference.component_type is ComponentType.TARGET for p in parameters
-            )
+            has_target = any(p.is_reference_to(ComponentType.TARGET) for p in parameters)
             assert meta.is_llm_based is has_target, f"is_llm_based mismatch for {meta.class_name}"
 
     def test_register_class_raises_for_unresolvable_reference(self, registry: ConverterRegistry) -> None:

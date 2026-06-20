@@ -115,6 +115,30 @@ class TestIsStringCoercible:
         assert p.is_string_coercible is False
 
 
+class TestIsReferenceTo:
+    """``Parameter.is_reference_to`` is the single predicate for "points at this component family"."""
+
+    def test_matching_component_type_is_true(self) -> None:
+        p = Parameter(
+            name="converter_target",
+            description="d",
+            reference=RegistryReference(component_type=ComponentType.TARGET),
+        )
+        assert p.is_reference_to(ComponentType.TARGET) is True
+
+    def test_other_component_type_is_false(self) -> None:
+        p = Parameter(
+            name="converter_target",
+            description="d",
+            reference=RegistryReference(component_type=ComponentType.TARGET),
+        )
+        assert p.is_reference_to(ComponentType.SCORER) is False
+
+    def test_non_reference_is_false(self) -> None:
+        p = Parameter(name="x", description="d", param_type=int)
+        assert p.is_reference_to(ComponentType.TARGET) is False
+
+
 class TestCoerceValueScalars:
     """``Parameter.coerce_value`` coerces plain scalars."""
 

@@ -54,8 +54,7 @@ class Parameter:
     or ``Enum`` *is* the allowed set). ``reference``, when set, marks the parameter
     as a registry reference: its value is supplied *by name* and resolved to a
     registered instance by the registry layer (``Parameter`` itself never resolves
-    references). ``pyrit.common.parameter`` re-exports this model for existing
-    callers.
+    references). 
 
     ``coerce_value`` and ``validate`` are the only public behaviors; all coercion
     branching lives behind them so callers never touch a free function.
@@ -86,6 +85,23 @@ class Parameter:
         if self.param_type in _SUPPORTED_SCALAR_TYPES:
             return True
         return get_origin(self.param_type) is Literal
+
+    def is_reference_to(self, component_type: ComponentType) -> bool:
+        """
+        Whether this parameter is a registry reference to the given component family.
+
+        A reference parameter is supplied by name and resolved to a registered
+        instance by the registry layer. This is the single source of truth for
+        "does this parameter point at a ``TARGET`` / ``CONVERTER`` / ``SCORER``",
+        so callers never re-derive it from ``reference`` internals.
+
+        Args:
+            component_type (ComponentType): The component family to test against.
+
+        Returns:
+            bool: True when this parameter is a reference to ``component_type``.
+        """
+        return self.reference is not None and self.reference.component_type is component_type
 
     def coerce_value(self, raw_value: Any) -> Any:
         """

@@ -85,9 +85,7 @@ class ConverterMetadata(ClassRegistryEntry):
     @property
     def is_llm_based(self) -> bool:
         """Whether the converter requires an LLM target (a TARGET reference parameter)."""
-        return any(
-            p.reference is not None and p.reference.component_type is ComponentType.TARGET for p in self.parameters
-        )
+        return any(p.is_reference_to(ComponentType.TARGET) for p in self.parameters)
 
 
 class ConverterRegistry(Registry["PromptConverter", ConverterMetadata]):
