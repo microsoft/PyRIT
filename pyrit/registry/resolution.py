@@ -185,6 +185,17 @@ class _NamedInstanceRegistry(Protocol):
         ...
 
 
+# TODO (Phase 4 — Target/Scorer migration): this function is deliberately left
+# in its current, slightly awkward shape until Target/Scorer become unified
+# ``Registry`` instances. It wants to be a flat ``ComponentType -> Registry class``
+# mapping, but it can't be one yet because the three families don't share a uniform
+# name->instance surface: ``ConverterRegistry`` is a ``Registry`` whose instances
+# live under ``.instances``, while ``TargetRegistry``/``ScorerRegistry`` are still
+# legacy object registries whose singleton *is* the instance registry (hence the
+# ``.instances`` hop for converters but not the others). Once Target/Scorer migrate
+# onto ``Registry`` + ``.instances`` (Phase 4), collapse this into a single mapping
+# to the registry classes and fold ``is_component_type_resolvable`` into the base
+# ``Registry`` as a private method.
 def _registry_getter_for_component_type(component_type: ComponentType) -> Callable[[], _NamedInstanceRegistry] | None:
     """
     Return the getter for the registry singleton that resolves a component family.
@@ -217,6 +228,10 @@ def is_component_type_resolvable(component_type: ComponentType) -> bool:
     This is the registration-time gate used by buildable registries: a reference
     parameter whose component type has no paired registry can never be resolved by
     name and should fail fast instead of erroring only at build time.
+
+    NOTE: This belongs on the ``Registry`` base as a private method; it lives here
+    for now only because it wraps ``_registry_getter_for_component_type``. Both move
+    together in Phase 4 (see that function's note).
 
     Returns:
         bool: True when references of ``component_type`` can be resolved by name.
