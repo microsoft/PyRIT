@@ -54,7 +54,7 @@ class Parameter:
     or ``Enum`` *is* the allowed set). ``reference``, when set, marks the parameter
     as a registry reference: its value is supplied *by name* and resolved to a
     registered instance by the registry layer (``Parameter`` itself never resolves
-    references). 
+    references).
 
     ``coerce_value`` and ``validate`` are the only public behaviors; all coercion
     branching lives behind them so callers never touch a free function.
