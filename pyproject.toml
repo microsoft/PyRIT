@@ -50,6 +50,7 @@ dependencies = [
     "numpy>=1.26.0; python_version < '3.14'",
     "numpy>=2.3.0; python_version >= '3.14'",
     "openai>=2.2.0",
+    "anthropic>=0.40.0",
     "openpyxl>=3.1.5",
     "pillow>=12.2.0",
     "pydantic>=2.11.5",
