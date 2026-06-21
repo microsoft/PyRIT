@@ -118,6 +118,10 @@ class TestParseArgs:
         args = pyrit_scan.parse_args(["--list-targets"])
         assert args.list_targets is True
 
+    def test_parse_args_with_list_converters(self):
+        args = pyrit_scan.parse_args(["--list-converters"])
+        assert args.list_converters is True
+
     def test_parse_args_with_server_url(self):
         args = pyrit_scan.parse_args(["--list-scenarios", "--server-url", "http://remote:9000"])
         assert args.server_url == "http://remote:9000"
@@ -156,6 +160,7 @@ def _mock_api_client():
     client.list_scenarios_async.return_value = {"items": [], "pagination": {"total": 0}}
     client.list_initializers_async.return_value = {"items": [], "pagination": {"total": 0}}
     client.list_targets_async.return_value = {"items": [], "pagination": {"total": 0}}
+    client.list_converters_async.return_value = {"items": []}
     client.get_scenario_async.return_value = {
         "scenario_name": "test_scenario",
         "supported_parameters": [],
@@ -226,6 +231,18 @@ class TestMain:
 
         assert result == 0
         mock_client.list_targets_async.assert_awaited_once()
+
+    @patch("pyrit.cli._server_launcher.ServerLauncher.probe_health_async", new_callable=AsyncMock, return_value=True)
+    @patch("pyrit.cli.api_client.PyRITApiClient")
+    def test_main_list_converters(self, mock_client_class, mock_probe):
+        """Test main with --list-converters flag."""
+        mock_client = _mock_api_client()
+        mock_client_class.return_value = mock_client
+
+        result = pyrit_scan.main(["--list-converters"])
+
+        assert result == 0
+        mock_client.list_converters_async.assert_awaited_once()
 
     def test_main_no_args_shows_help(self):
         """Test main with no arguments shows help."""

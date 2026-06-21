@@ -36,6 +36,7 @@ class PyRITShell(cmd.Cmd):
         list-scenarios             - List all available scenarios
         list-initializers          - List all available initializers
         list-targets               - List all available targets
+        list-converters            - List all registered converter instances
         run <scenario> [opts]      - Run a scenario with optional parameters
         scenario-history [N]       - List the last N (default 10) scenario runs
         print-scenario [id]        - Print detailed results for a scenario run
@@ -233,6 +234,21 @@ class PyRITShell(cmd.Cmd):
             _output.print_target_list(items=resp.get("items", []))
         except Exception as e:
             print(f"Error listing targets: {e}")
+
+    def do_list_converters(self, arg: str) -> None:
+        """List all registered converter instances."""
+        if arg.strip():
+            print(f"Error: list-converters does not accept arguments, got: {arg.strip()}")
+            return
+        if not self._ensure_client():
+            return
+        from pyrit.cli import _output
+
+        try:
+            resp = self._run_async(self._api_client.list_converters_async())
+            _output.print_converter_list(items=resp.get("items", []))
+        except Exception as e:
+            print(f"Error listing converters: {e}")
 
     def do_add_initializer(self, arg: str) -> None:
         """

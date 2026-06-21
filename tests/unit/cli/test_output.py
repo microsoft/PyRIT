@@ -220,6 +220,40 @@ def test_print_target_list_full(capsys):
 
 
 # ---------------------------------------------------------------------------
+# print_converter_list
+# ---------------------------------------------------------------------------
+
+
+def test_print_converter_list_empty(capsys):
+    _output.print_converter_list(items=[])
+    captured = capsys.readouterr()
+    assert "No converters found in registry" in captured.out
+    assert "converter.translation_spanish" in captured.out
+
+
+def test_print_converter_list_full(capsys):
+    items = [
+        {
+            "converter_id": "translation_spanish",
+            "converter_type": "TranslationConverter",
+            "display_name": "Spanish translation",
+        },
+        {
+            "converter_id": "pipeline_1",
+            "converter_type": "PromptConverterPipeline",
+            "sub_converter_ids": ["base64", "rot13"],
+        },
+    ]
+    _output.print_converter_list(items=items)
+    captured = capsys.readouterr()
+    assert "translation_spanish" in captured.out
+    assert "Class: TranslationConverter" in captured.out
+    assert "Name: Spanish translation" in captured.out
+    assert "Sub-converters: base64, rot13" in captured.out
+    assert "Total converters: 2" in captured.out
+
+
+# ---------------------------------------------------------------------------
 # print_scenario_run_progress
 # ---------------------------------------------------------------------------
 

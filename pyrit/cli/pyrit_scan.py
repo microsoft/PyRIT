@@ -77,10 +77,11 @@ Examples:
   # Start the backend server
   pyrit_scan --start-server
 
-  # List scenarios, initializers, or targets
+  # List scenarios, initializers, targets, or converters
   pyrit_scan --list-scenarios
   pyrit_scan --list-initializers
   pyrit_scan --list-targets
+  pyrit_scan --list-converters
 
   # Run single-turn cyber attacks against a target
   pyrit_scan airt.cyber --target openai_chat --strategies single_turn
@@ -178,6 +179,11 @@ def _build_base_parser(*, add_help: bool = True) -> ArgumentParser:
         "--list-targets",
         action="store_true",
         help="List all available targets and exit",
+    )
+    discovery_group.add_argument(
+        "--list-converters",
+        action="store_true",
+        help="List all registered converter instances and exit",
     )
     discovery_group.add_argument(
         "--add-initializer",
@@ -418,6 +424,7 @@ def _is_command_specified(*, parsed_args: Namespace) -> bool:
         parsed_args.list_scenarios
         or parsed_args.list_initializers
         or parsed_args.list_targets
+        or parsed_args.list_converters
         or parsed_args.add_initializer
         or parsed_args.scenario_name
     )
@@ -480,6 +487,10 @@ async def _handle_list_commands_async(*, client: Any, parsed_args: Namespace) ->
     if parsed_args.list_targets:
         resp = await client.list_targets_async()
         _output.print_target_list(items=resp.get("items", []))
+        return 0
+    if parsed_args.list_converters:
+        resp = await client.list_converters_async()
+        _output.print_converter_list(items=resp.get("items", []))
         return 0
     return None
 

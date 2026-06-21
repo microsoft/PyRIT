@@ -196,6 +196,45 @@ def print_target_list(*, items: list[dict[str, Any]]) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Converter listing
+# ---------------------------------------------------------------------------
+
+
+def print_converter_list(*, items: list[dict[str, Any]]) -> None:
+    """
+    Print a formatted list of registered converter instances.
+
+    Args:
+        items: List of converter dicts from ``GET /api/converters``.
+    """
+    if not items:
+        print("\nNo converters found in registry.")
+        print(
+            "\nConverters are registered by initializers. Include an initializer that "
+            "registers converters to attach them to scenario techniques, for example:\n"
+            "  --strategies role_play:converter.translation_spanish\n"
+        )
+        return
+
+    print("\nRegistered Converters:")
+    print("=" * 80)
+    for conv in items:
+        name = conv.get("converter_id", "unknown")
+        _header(name)
+        print(f"    Class: {conv.get('converter_type', '')}")
+        display_name = conv.get("display_name") or ""
+        if display_name:
+            print(f"    Name: {display_name}")
+        sub_ids = conv.get("sub_converter_ids") or []
+        if sub_ids:
+            print(f"    Sub-converters: {', '.join(sub_ids)}")
+    print("\n" + "=" * 80)
+    print(f"\nTotal converters: {len(items)}")
+    print("\nAttach a converter to a scenario technique with, for example:")
+    print("  --strategies role_play:converter.<name>\n")
+
+
+# ---------------------------------------------------------------------------
 # Scenario run progress & summary
 # ---------------------------------------------------------------------------
 

@@ -21,6 +21,7 @@ def mock_api_client():
     client.list_scenarios_async.return_value = {"items": [], "pagination": {"total": 0}}
     client.list_initializers_async.return_value = {"items": [], "pagination": {"total": 0}}
     client.list_targets_async.return_value = {"items": [], "pagination": {"total": 0}}
+    client.list_converters_async.return_value = {"items": []}
     client.list_scenario_runs_async.return_value = {"items": []}
     # Default: scenario fetch returns no declared params (back-compat for older tests)
     client.get_scenario_async.return_value = {"scenario_name": "foo", "supported_parameters": []}
@@ -92,6 +93,17 @@ class TestPyRITShell:
         s, client = shell
         s.do_list_targets("")
         client.list_targets_async.assert_awaited_once()
+
+    def test_do_list_converters(self, shell):
+        s, client = shell
+        s.do_list_converters("")
+        client.list_converters_async.assert_awaited_once()
+
+    def test_do_list_converters_rejects_args(self, shell, capsys):
+        s, _ = shell
+        s.do_list_converters("extra")
+        captured = capsys.readouterr()
+        assert "does not accept arguments" in captured.out
 
     def test_do_run_empty_args(self, shell, capsys):
         s, _ = shell
@@ -521,6 +533,12 @@ class TestListErrors:
         client.list_targets_async = AsyncMock(side_effect=RuntimeError("x"))
         s.do_list_targets("")
         assert "Error listing targets" in capsys.readouterr().out
+
+    def test_list_converters_error(self, shell, capsys):
+        s, client = shell
+        client.list_converters_async = AsyncMock(side_effect=RuntimeError("x"))
+        s.do_list_converters("")
+        assert "Error listing converters" in capsys.readouterr().out
 
     def test_scenario_history_error(self, shell, capsys):
         s, client = shell
