@@ -115,6 +115,9 @@ print(f"Adversarial accepts text+image feedback: {adversarial_accepts_text_plus_
 #
 # - `roakey.png` is loaded from the docs root.
 # - A modern color photo of a three-masted ship is loaded from a checked-in asset.
+# - Ship photo source: [Gorch Fock unter Segeln Kieler Foerde 2006](
+#   https://en.wikipedia.org/wiki/German_training_ship_Gorch_Fock_%281958%29#/media/File:Gorch_Fock_unter_Segeln_Kieler_Foerde_2006.jpg
+#   ) (Wikimedia Commons), licensed under CC BY-SA 2.5.
 
 # %%
 roakey_seed_path = (Path(".") / ".." / ".." / "roakey.png").resolve()
