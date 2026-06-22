@@ -148,8 +148,10 @@ class DecompositionConverter(PromptConverter):
                 to the bundled ``decomposition/word_game_preamble.yaml``. Only used when
                 ``use_word_game`` is True.
             codewords (tuple[str, ...]): Innocuous codewords substituted for harmful noun phrases when
-                the word-game is enabled. Bounds the number of noun phrases supported (a converter with
-                more nouns than codewords raises). Defaults to a bundled list of fruit names.
+                the word-game is enabled. Defaults to a bundled list of fruit names.
+
+        Raises:
+            ValueError: If ``codewords`` contains duplicates.
         """
         super().__init__(converter_target=converter_target)
         self._converter_target = converter_target
@@ -163,6 +165,8 @@ class DecompositionConverter(PromptConverter):
         self._word_game_prompt = word_game_prompt or SeedPrompt.from_yaml_file(
             _DECOMPOSITION_DIR / "word_game_preamble.yaml"
         )
+        if len(set(codewords)) != len(codewords):
+            raise ValueError("codewords must be unique; duplicates produce an ambiguous word-game mapping")
         self._codewords = codewords
 
     def _build_identifier(self) -> ComponentIdentifier:
@@ -323,7 +327,8 @@ class DecompositionConverter(PromptConverter):
                 if self._use_word_game:
                     if noun_index > len(self._codewords):
                         raise ValueError(
-                            f"word-game supports at most {len(self._codewords)} noun phrases, got {noun_index}"
+                            f"word-game supports at most {len(self._codewords)} noun phrases, but the "
+                            "objective has more; pass additional codewords to support it"
                         )
                     codeword = self._codewords[noun_index - 1]
                     word_game_mappings.append(f"'{codeword}' means '{phrase}'")

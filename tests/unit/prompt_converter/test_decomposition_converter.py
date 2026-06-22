@@ -85,6 +85,12 @@ async def test_word_game_uses_custom_codewords():
     assert "'zebra' means 'a bomb'" in out
 
 
+async def test_duplicate_codewords_raise():
+    target = _mock_target()
+    with pytest.raises(ValueError, match="unique"):
+        DecompositionConverter(converter_target=target, use_word_game=True, codewords=("apple", "apple"))
+
+
 async def test_word_game_raises_when_more_nouns_than_codewords():
     words = ["do"] + ["a thing"] * 21
     types = ["instruction"] + ["noun"] * 21
