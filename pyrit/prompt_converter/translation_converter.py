@@ -59,7 +59,7 @@ class TranslationConverter(LLMGenericTextConverter):
         )
 
         self.language = language.lower()
-        self.system_prompt = system_prompt_template.render_template_value(languages=language)
+        self.system_prompt = system_prompt_template.render_template_value(language=language)
 
         super().__init__(
             converter_target=converter_target,
@@ -67,7 +67,6 @@ class TranslationConverter(LLMGenericTextConverter):
             user_prompt_template_with_objective=user_prompt_template,
             max_retry_attempts=max_retries,
             retry_wait_max_seconds=max_wait_time_in_seconds,
-            languages=language,
             language=self.language,
         )
         self.converter_target = converter_target
