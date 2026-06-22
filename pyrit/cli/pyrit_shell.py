@@ -297,7 +297,11 @@ class PyRITShell(cmd.Cmd):
         Options:
             --target <name>                 Target name (required)
             --initializers <name> ...       Initializer names (supports name:key=val syntax)
-            --strategies, -s <s1> <s2> ...  Strategy names
+            --strategies, -s <s1> <s2> ...  Strategy names. Append registered
+                                            converters to a technique with
+                                            ':converter.<name>' (repeatable), e.g.
+                                            role_play:converter.translation_spanish.
+                                            Use list-converters to see names.
             --max-concurrency <N>           Maximum concurrent operations
             --max-retries <N>               Maximum retry attempts
             --memory-labels <JSON>          JSON string of labels

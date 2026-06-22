@@ -91,6 +91,10 @@ Examples:
     --strategies role_play --dataset-names airt_hate
     --max-dataset-size 5 --max-concurrency 4
 
+  # Attach registered converters to a technique (repeatable, applied in order)
+  pyrit_scan airt.rapid_response --target openai_chat
+    --strategies role_play:converter.translation_spanish:converter.leetspeak
+
   # Run multi-turn red team agent with labels for tracking
   pyrit_scan airt.red_team_agent --target openai_chat
     --strategies crescendo
