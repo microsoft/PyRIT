@@ -26,7 +26,6 @@ jest.mock("react-joyride", () => ({
 jest.mock("./hooks/useTour", () => ({
   useTour: () => ({
     startTour: jest.fn(),
-    hasCompletedTour: true,
     tourProps: {
       steps: [],
       run: false,
