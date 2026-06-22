@@ -2,11 +2,12 @@
 # Licensed under the MIT license.
 
 import logging
+import warnings
 
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import Modality, SeedDataset, SeedPrompt
+from pyrit.models import Modality, SeedDataset, SeedPrompt, SeedUnion
 
 logger = logging.getLogger(__name__)
 
@@ -36,15 +37,24 @@ class _SimpleSafetyTestsDataset(_RemoteDatasetLoader):
     def __init__(
         self,
         *,
-        split: str = "test",
+        split: str | None = None,
     ) -> None:
         """
         Initialize the SimpleSafetyTests dataset loader.
 
         Args:
-            split: Dataset split to load. Defaults to "test".
+            split: **Deprecated.** Upstream ``Bertievidgen/SimpleSafetyTests`` publishes
+                only the ``"test"`` split, so this kwarg has no effect. It will be
+                removed in v0.16.0.
         """
-        self.split = split
+        if split is not None:
+            warnings.warn(
+                "'split' is deprecated and will be removed in v0.16.0. "
+                "Upstream Bertievidgen/SimpleSafetyTests publishes only the 'test' "
+                "split, so this kwarg has no effect.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
 
     @property
     def dataset_name(self) -> str:
@@ -65,7 +75,7 @@ class _SimpleSafetyTestsDataset(_RemoteDatasetLoader):
 
         data = await self._fetch_from_huggingface_async(
             dataset_name=self.HF_DATASET_NAME,
-            split=self.split,
+            split="test",
             cache=cache,
         )
 
@@ -86,7 +96,7 @@ class _SimpleSafetyTestsDataset(_RemoteDatasetLoader):
         source_url = f"https://huggingface.co/datasets/{self.HF_DATASET_NAME}"
         groups = ["Patronus AI", "University of Oxford", "Bocconi University"]
 
-        seed_prompts = [
+        seed_prompts: list[SeedUnion] = [
             SeedPrompt(
                 value=item["prompt"],
                 data_type="text",

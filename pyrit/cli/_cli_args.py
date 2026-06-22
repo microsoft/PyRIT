@@ -21,7 +21,7 @@ import json
 import logging
 import shlex
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional, get_origin
+from typing import TYPE_CHECKING, Any, get_origin
 
 from pyrit.common.cli_helpers import (
     CONFIG_FILE_HELP,
@@ -67,7 +67,7 @@ def validate_database(*, database: str) -> str:
     return database
 
 
-def validate_integer(value: str, *, name: str = "value", min_value: Optional[int] = None) -> int:
+def validate_integer(value: str, *, name: str = "value", min_value: int | None = None) -> int:
     """
     Validate and parse an integer value.
 
@@ -492,7 +492,7 @@ def _parse_shell_arguments(*, parts: list[str], arg_specs: list[_ArgSpec]) -> di
     return result
 
 
-def parse_run_arguments(*, args_string: str, declared_params: Optional[list[Parameter]] = None) -> dict[str, Any]:
+def parse_run_arguments(*, args_string: str, declared_params: list[Parameter] | None = None) -> dict[str, Any]:
     """
     Parse run command arguments from a string (for shell mode).
 
@@ -535,8 +535,8 @@ def parse_list_targets_arguments(*, args_string: str) -> dict[str, Any]:
 
     Returns:
         Dictionary with parsed arguments:
-            - initializers: Optional[list[str | dict[str, Any]]]
-            - initialization_scripts: Optional[list[str]]
+            - initializers: list[str | dict[str, Any]] | None
+            - initialization_scripts: list[str] | None
 
     Raises:
         ValueError: If parsing or validation fails.
@@ -643,7 +643,7 @@ def extract_scenario_args(*, parsed: dict[str, Any]) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def build_parameters_from_api(*, api_params: list[dict[str, Any]]) -> Optional[list[Parameter]]:
+def build_parameters_from_api(*, api_params: list[dict[str, Any]]) -> list[Parameter] | None:
     """
     Build ``Parameter`` objects from a scenario catalog's ``supported_parameters``.
 
@@ -655,7 +655,7 @@ def build_parameters_from_api(*, api_params: list[dict[str, Any]]) -> Optional[l
         api_params: List of parameter dicts from ``GET /api/scenarios/catalog/{name}``.
 
     Returns:
-        Optional[list[Parameter]]: Parameter list when ``api_params`` is non-empty, else ``None``.
+        list[Parameter] | None: Parameter list when ``api_params`` is non-empty, else ``None``.
     """
     if not api_params:
         return None
@@ -669,7 +669,7 @@ def build_parameters_from_api(*, api_params: list[dict[str, Any]]) -> Optional[l
         else:
             resolved_type = type_map.get(type_display)
         raw_choices = p.get("choices")
-        choices: Optional[tuple[Any, ...]] = tuple(raw_choices) if raw_choices else None
+        choices: tuple[Any, ...] | None = tuple(raw_choices) if raw_choices else None
         parameters.append(
             Parameter(
                 name=p["name"],
@@ -699,7 +699,7 @@ _logger = logging.getLogger(__name__)
 
 def merge_config_scenario_args(
     *,
-    config_scenario: Optional[ScenarioConfig],
+    config_scenario: ScenarioConfig | None,
     effective_scenario_name: str,
     cli_args: dict[str, Any],
 ) -> dict[str, Any]:
@@ -711,7 +711,7 @@ def merge_config_scenario_args(
     Mutable values are deep-copied so they don't leak across runs.
 
     Args:
-        config_scenario (Optional[ScenarioConfig]): The ``scenario:`` block from
+        config_scenario (ScenarioConfig | None): The ``scenario:`` block from
             the layered config, or ``None`` when not configured.
         effective_scenario_name (str): The scenario about to run (CLI wins).
         cli_args (dict[str, Any]): Scenario args supplied on the CLI.

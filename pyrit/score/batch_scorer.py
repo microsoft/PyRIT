@@ -5,7 +5,6 @@ import logging
 import uuid
 from collections.abc import Sequence
 from datetime import datetime
-from typing import Optional
 
 from pyrit.memory import CentralMemory
 from pyrit.models import (
@@ -47,17 +46,17 @@ class BatchScorer:
         self,
         *,
         scorer: Scorer,
-        attack_id: Optional[str | uuid.UUID] = None,
-        conversation_id: Optional[str | uuid.UUID] = None,
-        prompt_ids: Optional[list[str] | list[uuid.UUID]] = None,
-        labels: Optional[dict[str, str]] = None,
-        sent_after: Optional[datetime] = None,
-        sent_before: Optional[datetime] = None,
-        original_values: Optional[list[str]] = None,
-        converted_values: Optional[list[str]] = None,
-        data_type: Optional[str] = None,
-        not_data_type: Optional[str] = None,
-        converted_value_sha256: Optional[list[str]] = None,
+        attack_id: str | uuid.UUID | None = None,
+        conversation_id: str | uuid.UUID | None = None,
+        prompt_ids: list[str] | list[uuid.UUID] | None = None,
+        labels: dict[str, str] | None = None,
+        sent_after: datetime | None = None,
+        sent_before: datetime | None = None,
+        original_values: list[str] | None = None,
+        converted_values: list[str] | None = None,
+        data_type: str | None = None,
+        not_data_type: str | None = None,
+        converted_value_sha256: list[str] | None = None,
         objective: str = "",
     ) -> list[Score]:
         """
@@ -65,17 +64,17 @@ class BatchScorer:
 
         Args:
             scorer (Scorer): The Scorer object to use for scoring.
-            attack_id (Optional[str | uuid.UUID]): The ID of the attack. Defaults to None.
-            conversation_id (Optional[str | uuid.UUID]): The ID of the conversation. Defaults to None.
-            prompt_ids (Optional[list[str] | list[uuid.UUID]]): A list of prompt IDs. Defaults to None.
-            labels (Optional[dict[str, str]]): A dictionary of labels. Defaults to None.
-            sent_after (Optional[datetime]): Filter for prompts sent after this datetime. Defaults to None.
-            sent_before (Optional[datetime]): Filter for prompts sent before this datetime. Defaults to None.
-            original_values (Optional[list[str]]): A list of original values. Defaults to None.
-            converted_values (Optional[list[str]]): A list of converted values. Defaults to None.
-            data_type (Optional[str]): The data type to filter by. Defaults to None.
-            not_data_type (Optional[str]): The data type to exclude. Defaults to None.
-            converted_value_sha256 (Optional[list[str]]): A list of SHA256 hashes of converted values.
+            attack_id (str | uuid.UUID | None): The ID of the attack. Defaults to None.
+            conversation_id (str | uuid.UUID | None): The ID of the conversation. Defaults to None.
+            prompt_ids (list[str] | list[uuid.UUID] | None): A list of prompt IDs. Defaults to None.
+            labels (dict[str, str] | None): A dictionary of labels. Defaults to None.
+            sent_after (datetime | None): Filter for prompts sent after this datetime. Defaults to None.
+            sent_before (datetime | None): Filter for prompts sent before this datetime. Defaults to None.
+            original_values (list[str] | None): A list of original values. Defaults to None.
+            converted_values (list[str] | None): A list of converted values. Defaults to None.
+            data_type (str | None): The data type to filter by. Defaults to None.
+            not_data_type (str | None): The data type to exclude. Defaults to None.
+            converted_value_sha256 (list[str] | None): A list of SHA256 hashes of converted values.
                 Defaults to None.
             objective (str): A task is used to give the scorer more context on what exactly to score.
                 A task might be the request prompt text or the original attack model's objective.

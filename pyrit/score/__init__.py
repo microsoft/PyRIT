@@ -38,6 +38,7 @@ from pyrit.score.scorer_evaluation.scorer_metrics_io import (
     get_all_harm_metrics,
     get_all_objective_metrics,
 )
+from pyrit.score.scorer_info import get_scorer_info
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.true_false.anthrax_keyword_scorer import AnthraxKeywordScorer
 from pyrit.score.true_false.decoding_scorer import DecodingScorer
@@ -165,6 +166,7 @@ __all__ = [
     "ScorerMetricsWithIdentity",
     "get_all_harm_metrics",
     "get_all_objective_metrics",
+    "get_scorer_info",
     "find_objective_metrics_by_eval_hash",
     "ScorerPromptValidator",
     "SelfAskCategoryScorer",

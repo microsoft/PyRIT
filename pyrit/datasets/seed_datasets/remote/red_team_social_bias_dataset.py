@@ -5,10 +5,12 @@ import ast
 import logging
 from uuid import uuid4
 
+from typing_extensions import override
+
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import Modality, SeedDataset, SeedPrompt
+from pyrit.models import Modality, SeedDataset, SeedPrompt, SeedUnion
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +25,10 @@ class _RedTeamSocialBiasDataset(_RemoteDatasetLoader):
 
     Reference: [@vantaylor2024socialbias]
     """
+
+    _AUTHORS = ["Simone Van Taylor"]
+
+    _GROUPS: list[str] = []
 
     # Metadata
     modalities: tuple[Modality, ...] = (Modality.TEXT,)
@@ -43,10 +49,12 @@ class _RedTeamSocialBiasDataset(_RemoteDatasetLoader):
         self.source = source
 
     @property
+    @override
     def dataset_name(self) -> str:
         """Return the dataset name."""
         return "red_team_social_bias"
 
+    @override
     async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch Red Team Social Bias dataset and return as SeedDataset.
@@ -69,18 +77,14 @@ class _RedTeamSocialBiasDataset(_RemoteDatasetLoader):
             cache=cache,
         )
 
-        common_metadata = {
-            "dataset_name": self.dataset_name,
-            "authors": ["Simone van Taylor"],
-            "description": (
-                "This dataset contains aggregated and unified existing red-teaming prompts "
-                "designed to identify stereotypes, discrimination, hate speech, and other "
-                "representation harms in text-based Large Language Models (LLMs)."
-            ),
-            "source": f"https://huggingface.co/datasets/{self.source}",
-        }
+        description = (
+            "This dataset contains aggregated and unified existing red-teaming prompts "
+            "designed to identify stereotypes, discrimination, hate speech, and other "
+            "representation harms in text-based Large Language Models (LLMs)."
+        )
+        source = f"https://huggingface.co/datasets/{self.source}"
 
-        seed_prompts = []
+        seed_prompts: list[SeedUnion] = []
 
         for item in data:
             prompt_type = item.get("prompt_type")
@@ -88,18 +92,14 @@ class _RedTeamSocialBiasDataset(_RemoteDatasetLoader):
             if prompt_type is None:
                 continue
 
-            # Dictionary of metadata for the current prompt
-            prompt_metadata = {
-                **common_metadata,
-                "harm_categories": (
-                    [item["categorization"]]
-                    if not isinstance(item.get("categorization"), list)
-                    else item.get("categorization", [])
-                ),
-                "groups": [item.get("organization", "")],
-                "metadata": {
-                    "prompt_type": prompt_type,
-                },
+            harm_categories = (
+                [item["categorization"]]
+                if not isinstance(item.get("categorization"), list)
+                else item.get("categorization", [])
+            )
+            metadata = {
+                "prompt_type": prompt_type,
+                "organization": item.get("organization", ""),
             }
 
             if prompt_type in ["Multi Turn"]:
@@ -119,9 +119,15 @@ class _RedTeamSocialBiasDataset(_RemoteDatasetLoader):
                         SeedPrompt(
                             value=user_prompt,
                             data_type="text",
+                            dataset_name=self.dataset_name,
                             prompt_group_id=group_id,
                             sequence=i,
-                            **prompt_metadata,  # type: ignore[ty:invalid-argument-type]
+                            harm_categories=harm_categories,
+                            description=description,
+                            authors=self._AUTHORS,
+                            groups=self._GROUPS,
+                            source=source,
+                            metadata=metadata,
                         )
                     )
             else:
@@ -138,7 +144,13 @@ class _RedTeamSocialBiasDataset(_RemoteDatasetLoader):
                     SeedPrompt(
                         value=escaped_cleaned_value,
                         data_type="text",
-                        **prompt_metadata,  # type: ignore[ty:invalid-argument-type]
+                        dataset_name=self.dataset_name,
+                        harm_categories=harm_categories,
+                        description=description,
+                        authors=self._AUTHORS,
+                        groups=self._GROUPS,
+                        source=source,
+                        metadata=metadata,
                     )
                 )
 

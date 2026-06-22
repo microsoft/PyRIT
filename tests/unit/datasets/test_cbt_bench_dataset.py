@@ -87,11 +87,10 @@ class TestCBTBenchDataset:
             assert first_prompt.metadata["core_belief_fine_grained"] == ["I am unlovable", "I am immoral"]
 
     async def test_fetch_dataset_with_custom_config(self, mock_cbt_bench_data):
-        """Test fetching with custom HuggingFace config and split."""
+        """Test fetching with custom HuggingFace config."""
         loader = _CBTBenchDataset(
             source="custom/cbt-bench",
             config="core_major_seed",
-            split="test",
         )
 
         with patch.object(loader, "_fetch_from_huggingface_async", return_value=mock_cbt_bench_data) as mock_fetch:
@@ -102,8 +101,13 @@ class TestCBTBenchDataset:
             call_kwargs = mock_fetch.call_args.kwargs
             assert call_kwargs["dataset_name"] == "custom/cbt-bench"
             assert call_kwargs["config"] == "core_major_seed"
-            assert call_kwargs["split"] == "test"
+            assert call_kwargs["split"] == "train"
             assert call_kwargs["cache"] is False
+
+    def test_split_kwarg_emits_deprecation_warning(self):
+        """Passing the deprecated ``split`` kwarg emits a DeprecationWarning."""
+        with pytest.warns(DeprecationWarning, match="'split' is deprecated"):
+            _CBTBenchDataset(split="train")
 
     async def test_fetch_dataset_situation_only(self, mock_cbt_bench_data_missing_thoughts):
         """Test that items with only situation (no thoughts) still work."""

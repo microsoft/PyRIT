@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 from pathlib import Path
-from typing import Any, Optional, Union
+from typing import Any
 
 from pyrit.common import apply_defaults
 from pyrit.common.deprecation import print_deprecation_message  # Deprecated. Will be removed in 0.16.0.
@@ -90,9 +90,9 @@ class Jailbreak(Scenario):
     def __init__(
         self,
         *,
-        objective_scorer: Optional[TrueFalseScorer] = None,
-        scenario_result_id: Optional[str] = None,
-        num_templates: Optional[int] = None,
+        objective_scorer: TrueFalseScorer | None = None,
+        scenario_result_id: str | None = None,
+        num_templates: int | None = None,
         num_attempts: int = 1,
         jailbreak_names: list[str] | None = None,
         include_baseline: bool | None = None,  # Deprecated. Will be removed in 0.16.0.
@@ -101,12 +101,12 @@ class Jailbreak(Scenario):
         Initialize the jailbreak scenario.
 
         Args:
-            objective_scorer (Optional[TrueFalseScorer]): Scorer for detecting successful jailbreaks
+            objective_scorer (TrueFalseScorer | None): Scorer for detecting successful jailbreaks
                 (non-refusal). If not provided, defaults to an inverted refusal scorer.
-            scenario_result_id (Optional[str]): Optional ID of an existing scenario result to resume.
-            num_templates (Optional[int]): Choose num_templates random jailbreaks rather than using all of them.
-            num_attempts (Optional[int]): Number of times to try each jailbreak.
-            jailbreak_names (Optional[List[str]]): List of jailbreak names from the template list under datasets.
+            scenario_result_id (str | None): Optional ID of an existing scenario result to resume.
+            num_templates (int | None): Choose num_templates random jailbreaks rather than using all of them.
+            num_attempts (int | None): Number of times to try each jailbreak.
+            jailbreak_names (list[str] | None): List of jailbreak names from the template list under datasets.
                 to use.
             include_baseline (bool | None): **Deprecated.** Will be removed in 0.16.0. Pass
                 ``include_baseline`` to ``initialize_async`` instead.
@@ -132,7 +132,7 @@ class Jailbreak(Scenario):
 
         self._num_templates = num_templates
         self._num_attempts = num_attempts
-        self._adversarial_target: Optional[PromptTarget] = None
+        self._adversarial_target: PromptTarget | None = None
 
         # Note that num_templates and jailbreak_names are mutually exclusive.
         # If self._num_templates is None, then this returns all discoverable jailbreak templates.
@@ -170,7 +170,7 @@ class Jailbreak(Scenario):
             self._legacy_include_baseline = include_baseline
 
         # Will be resolved in _get_atomic_attacks_async
-        self._seed_groups: Optional[list[SeedAttackGroup]] = None
+        self._seed_groups: list[SeedAttackGroup] | None = None
 
     def _get_or_create_adversarial_target(self) -> PromptTarget:
         """
@@ -191,7 +191,7 @@ class Jailbreak(Scenario):
         Resolve seed groups from dataset configuration.
 
         Returns:
-            List[SeedAttackGroup]: List of seed attack groups with objectives to be tested.
+            list[SeedAttackGroup]: List of seed attack groups with objectives to be tested.
         """
         # Use dataset_config (guaranteed to be set by initialize_async)
         seed_groups = self._dataset_config.get_all_seed_attack_groups()
@@ -233,7 +233,7 @@ class Jailbreak(Scenario):
             request_converters=PromptConverterConfiguration.from_converters(converters=[jailbreak_converter])
         )
 
-        attack: Optional[Union[ManyShotJailbreakAttack, PromptSendingAttack, RolePlayAttack, SkeletonKeyAttack]] = None
+        attack: ManyShotJailbreakAttack | PromptSendingAttack | RolePlayAttack | SkeletonKeyAttack | None = None
         args: dict[str, Any] = {
             "objective_target": self._objective_target,
             "attack_scoring_config": AttackScoringConfig(objective_scorer=self._objective_scorer),
@@ -274,7 +274,7 @@ class Jailbreak(Scenario):
         This method creates an atomic attack for each retrieved jailbreak template.
 
         Returns:
-            List[AtomicAttack]: List of atomic attacks to execute, one per jailbreak template.
+            list[AtomicAttack]: List of atomic attacks to execute, one per jailbreak template.
         """
         atomic_attacks: list[AtomicAttack] = []
 

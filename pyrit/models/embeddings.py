@@ -68,23 +68,6 @@ class EmbeddingResponse(BaseModel):
         embedding_json_data = file_path.read_text(encoding="utf-8")
         return EmbeddingResponse.model_validate_json(embedding_json_data)
 
-    def to_json(self) -> str:
-        """
-        Serialize this embedding response to JSON (deprecated, use ``model_dump_json`` instead).
-
-        Returns:
-            str: JSON-encoded embedding response.
-
-        """
-        from pyrit.common.deprecation import print_deprecation_message
-
-        print_deprecation_message(
-            old_item="EmbeddingResponse.to_json",
-            new_item="EmbeddingResponse.model_dump_json",
-            removed_in="0.15.0",
-        )
-        return self.model_dump_json()
-
 
 class EmbeddingSupport(ABC):
     """Protocol-like interface for classes that generate text embeddings."""

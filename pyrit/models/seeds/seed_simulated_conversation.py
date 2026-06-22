@@ -15,12 +15,14 @@ from __future__ import annotations
 
 import enum
 import hashlib
+import importlib.metadata
 import json
 import logging
 from pathlib import Path
-from typing import Any, Optional, Union
+from typing import Any, Literal
 
-import pyrit
+from pydantic import field_validator, model_validator
+
 from pyrit.common.path import EXECUTOR_SIMULATED_TARGET_PATH
 from pyrit.models.seeds.seed import Seed
 from pyrit.models.seeds.seed_prompt import SeedPrompt
@@ -66,64 +68,62 @@ class SeedSimulatedConversation(Seed):
 
     """
 
-    def __init__(
-        self,
-        *,
-        adversarial_chat_system_prompt_path: Union[str, Path],
-        simulated_target_system_prompt_path: Optional[Union[str, Path]] = None,
-        next_message_system_prompt_path: Optional[Union[str, Path]] = None,
-        num_turns: int = 3,
-        sequence: int = 0,
-        pyrit_version: Optional[str] = None,
-        **kwargs: Any,
-    ) -> None:
+    # Discriminator field for the polymorphic Seed union (see seed_group.SeedUnion).
+    seed_type: Literal["simulated_conversation"] = "simulated_conversation"
+
+    # Simulated conversations are always text. Narrowing the base field rejects non-text values
+    # up-front rather than silently dropping them downstream.
+    data_type: Literal["text"] = "text"
+
+    # value is computed from the config in the after-validator. The base default of "" plus a
+    # before-validator that strips any user-supplied value keeps round-trips clean: a dumped
+    # value comes back in, is dropped, then is recomputed (and matches if the config matches).
+    value: str = ""
+
+    # Simulated conversations are general techniques by default.
+    is_general_technique: bool = True
+
+    num_turns: int = 3
+    sequence: int = 0
+    adversarial_chat_system_prompt_path: Path
+    simulated_target_system_prompt_path: Path = SimulatedTargetSystemPromptPaths.COMPLIANT.value
+    next_message_system_prompt_path: Path | None = None
+    pyrit_version: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _strip_user_value(cls, data: Any) -> Any:
         """
-        Initialize a SeedSimulatedConversation.
+        Drop any user-supplied ``value`` from dict input; it is always recomputed in the
+        after-validator. This keeps round-tripping clean and makes the API honest about the
+        fact that ``value`` is a derived JSON serialization of the config.
 
-        Args:
-            adversarial_chat_system_prompt_path: Path to YAML file containing the adversarial
-                chat system prompt.
-            simulated_target_system_prompt_path: Optional path to YAML file containing
-                the simulated target system prompt. Defaults to the compliant prompt.
-            next_message_system_prompt_path: Optional path to YAML file containing the system
-                prompt for generating a final user message. If provided, after the simulated
-                conversation is generated, a single LLM call generates a user message that
-                attempts to get the target to fulfill the objective. Defaults to None
-                (no next message generation).
-            num_turns: Number of conversation turns to generate. Defaults to 3.
-            sequence: The starting sequence number for generated turns. When combined with
-                static SeedPrompts, this determines where the simulated turns are inserted.
-                Defaults to 0.
-            pyrit_version: PyRIT version for reproducibility tracking. Defaults to current version.
-            **kwargs: Additional arguments passed to the Seed base class.
-
-        Raises:
-            ValueError: If num_turns is not positive or sequence is negative.
-
+        Returns:
+            The data with ``value`` removed if it was a dict; otherwise the input unchanged.
         """
-        # Apply default for simulated target system prompt if not provided
-        if simulated_target_system_prompt_path is None:
-            simulated_target_system_prompt_path = SimulatedTargetSystemPromptPaths.COMPLIANT.value
-        if num_turns <= 0:
+        if isinstance(data, dict) and "value" in data:
+            data = dict(data)
+            data.pop("value", None)
+        return data
+
+    @field_validator("simulated_target_system_prompt_path", mode="before")
+    @classmethod
+    def _default_simulated_target_path(cls, value: Any) -> Any:
+        # Reconstruction from memory may pass an explicit None; fall back to the compliant default.
+        if value is None:
+            return SimulatedTargetSystemPromptPaths.COMPLIANT.value
+        return value
+
+    @model_validator(mode="after")
+    def _validate_and_compute_value(self) -> SeedSimulatedConversation:
+        if self.num_turns <= 0:
             raise ValueError("num_turns must be a positive integer")
-        if sequence < 0:
+        if self.sequence < 0:
             raise ValueError("sequence must be a non-negative integer")
-
-        self.adversarial_chat_system_prompt_path = Path(adversarial_chat_system_prompt_path)
-        self.simulated_target_system_prompt_path = Path(simulated_target_system_prompt_path)
-        self.next_message_system_prompt_path = (
-            Path(next_message_system_prompt_path) if next_message_system_prompt_path else None
-        )
-        self.num_turns = num_turns
-        self.sequence = sequence
-        self.pyrit_version = pyrit_version or pyrit.__version__
-
-        # Compute value and pass to parent
-        # Remove 'value' from kwargs if present since we compute it
-        kwargs.pop("value", None)
-        # Default is_general_technique to True for simulated conversations
-        kwargs.setdefault("is_general_technique", True)
-        super().__init__(value=self._compute_value(), **kwargs)
+        if not self.pyrit_version:
+            self.pyrit_version = importlib.metadata.version("pyrit")
+        self.value = self._compute_value()
+        return self
 
     def _compute_value(self) -> str:
         """
@@ -144,70 +144,6 @@ class SeedSimulatedConversation(Seed):
             "pyrit_version": self.pyrit_version,
         }
         return json.dumps(config, sort_keys=True, separators=(",", ":"))
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> SeedSimulatedConversation:
-        """
-        Create a SeedSimulatedConversation from a dictionary, typically from YAML.
-
-        Expected format:
-            num_turns: 3
-            adversarial_chat_system_prompt_path: path/to/adversarial.yaml
-            simulated_target_system_prompt_path: path/to/simulated.yaml  # optional
-
-        Args:
-            data: Dictionary containing the configuration.
-
-        Returns:
-            A new SeedSimulatedConversation instance.
-
-        Raises:
-            ValueError: If required configuration fields are missing.
-
-        """
-        adversarial_path = data.get("adversarial_chat_system_prompt_path")
-        if not adversarial_path:
-            raise ValueError("adversarial_chat_system_prompt_path is required")
-
-        return cls(
-            num_turns=data.get("num_turns", 3),
-            sequence=data.get("sequence", 0),
-            adversarial_chat_system_prompt_path=adversarial_path,
-            simulated_target_system_prompt_path=data.get("simulated_target_system_prompt_path"),
-            next_message_system_prompt_path=data.get("next_message_system_prompt_path"),
-        )
-
-    @classmethod
-    def from_yaml_with_required_parameters(
-        cls,
-        template_path: Union[str, Path],
-        required_parameters: list[str],
-        error_message: Optional[str] = None,
-    ) -> SeedSimulatedConversation:
-        """
-        Load a SeedSimulatedConversation from a YAML file and validate required parameters.
-
-        Args:
-            template_path: Path to the YAML file containing the config.
-            required_parameters: List of parameter names that must exist.
-            error_message: Custom error message if validation fails.
-
-        Returns:
-            The loaded and validated SeedSimulatedConversation.
-
-        Raises:
-            ValueError: If required parameters are missing.
-
-        """
-        instance = cls.from_yaml_file(template_path)
-
-        # Check required parameters
-        for param in required_parameters:
-            if not hasattr(instance, param) or getattr(instance, param) is None:
-                msg = error_message or f"Missing required parameter: {param}"
-                raise ValueError(msg)
-
-        return instance
 
     def get_identifier(self) -> dict[str, Any]:
         """
@@ -246,8 +182,8 @@ class SeedSimulatedConversation(Seed):
         *,
         objective: str,
         num_turns: int,
-        simulated_target_system_prompt_path: Optional[Union[str, Path]] = None,
-    ) -> Optional[str]:
+        simulated_target_system_prompt_path: str | Path | None = None,
+    ) -> str | None:
         """
         Load and render the simulated target system prompt.
 

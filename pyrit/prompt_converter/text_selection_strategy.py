@@ -5,7 +5,6 @@ import abc
 import random
 import re
 from re import Pattern
-from typing import Optional, Union
 
 
 class TextSelectionStrategy(abc.ABC):
@@ -81,10 +80,10 @@ class WordSelectionStrategy(TextSelectionStrategy):
         Select word indices to be converted.
 
         Args:
-            words (List[str]): The list of words to select from.
+            words (list[str]): The list of words to select from.
 
         Returns:
-            List[int]: A list of indices representing which words should be converted.
+            list[int]: A list of indices representing which words should be converted.
         """
 
     def select_range(self, *, text: str, word_separator: str = " ") -> tuple[int, int]:
@@ -133,13 +132,13 @@ class IndexSelectionStrategy(TextSelectionStrategy):
     Selects text based on absolute character indices.
     """
 
-    def __init__(self, *, start: int = 0, end: Optional[int] = None) -> None:
+    def __init__(self, *, start: int = 0, end: int | None = None) -> None:
         """
         Initialize the index selection strategy.
 
         Args:
             start (int): The starting character index (inclusive). Defaults to 0.
-            end (Optional[int]): The ending character index (exclusive). If None, selects to end of text.
+            end (int | None): The ending character index (exclusive). If None, selects to end of text.
         """
         self._start = start
         self._end = end
@@ -165,12 +164,12 @@ class RegexSelectionStrategy(TextSelectionStrategy):
     Selects text based on the first regex match.
     """
 
-    def __init__(self, *, pattern: Union[str, Pattern[str]]) -> None:
+    def __init__(self, *, pattern: str | Pattern[str]) -> None:
         """
         Initialize the regex selection strategy.
 
         Args:
-            pattern (Union[str, Pattern[str]]): The regex pattern to match.
+            pattern (str | Pattern[str]): The regex pattern to match.
         """
         self._pattern = re.compile(pattern) if isinstance(pattern, str) else pattern
 
@@ -290,7 +289,7 @@ class ProportionSelectionStrategy(TextSelectionStrategy):
     Selects a proportion of text anchored to a specific position (start, end, middle, or random).
     """
 
-    def __init__(self, *, proportion: float, anchor: str = "start", seed: Optional[int] = None) -> None:
+    def __init__(self, *, proportion: float, anchor: str = "start", seed: int | None = None) -> None:
         """
         Initialize the proportion selection strategy.
 
@@ -301,7 +300,7 @@ class ProportionSelectionStrategy(TextSelectionStrategy):
                 - 'end': Select from the end
                 - 'middle': Select from the middle
                 - 'random': Select from a random position
-            seed (Optional[int]): Random seed for reproducible random selections. Defaults to None.
+            seed (int | None): Random seed for reproducible random selections. Defaults to None.
 
         Raises:
             ValueError: If proportion is not between 0.0 and 1.0, or anchor is invalid.
@@ -404,7 +403,7 @@ class WordIndexSelectionStrategy(WordSelectionStrategy):
         Initialize the word index selection strategy.
 
         Args:
-            indices (List[int]): The list of word indices to select.
+            indices (list[int]): The list of word indices to select.
         """
         self._indices = indices
 
@@ -413,10 +412,10 @@ class WordIndexSelectionStrategy(WordSelectionStrategy):
         Select words at the specified indices.
 
         Args:
-            words (List[str]): The list of words to select from.
+            words (list[str]): The list of words to select from.
 
         Returns:
-            List[int]: The list of valid indices.
+            list[int]: The list of valid indices.
 
         Raises:
             ValueError: If any indices are out of range.
@@ -443,7 +442,7 @@ class WordKeywordSelectionStrategy(WordSelectionStrategy):
         Initialize the word keyword selection strategy.
 
         Args:
-            keywords (List[str]): The list of keywords to match.
+            keywords (list[str]): The list of keywords to match.
             case_sensitive (bool): Whether matching is case-sensitive. Defaults to True.
         """
         self._keywords = keywords
@@ -454,10 +453,10 @@ class WordKeywordSelectionStrategy(WordSelectionStrategy):
         Select words that match the keywords.
 
         Args:
-            words (List[str]): The list of words to select from.
+            words (list[str]): The list of words to select from.
 
         Returns:
-            List[int]: The list of indices where keywords were found.
+            list[int]: The list of indices where keywords were found.
         """
         if not words:
             return []
@@ -473,13 +472,13 @@ class WordProportionSelectionStrategy(WordSelectionStrategy):
     Selects a random proportion of words.
     """
 
-    def __init__(self, *, proportion: float, seed: Optional[int] = None) -> None:
+    def __init__(self, *, proportion: float, seed: int | None = None) -> None:
         """
         Initialize the word proportion selection strategy.
 
         Args:
             proportion (float): The proportion of words to select (0.0 to 1.0).
-            seed (Optional[int]): Random seed for reproducible selections. Defaults to None.
+            seed (int | None): Random seed for reproducible selections. Defaults to None.
 
         Raises:
             ValueError: If proportion is not between 0.0 and 1.0.
@@ -495,10 +494,10 @@ class WordProportionSelectionStrategy(WordSelectionStrategy):
         Select a random proportion of words.
 
         Args:
-            words (List[str]): The list of words to select from.
+            words (list[str]): The list of words to select from.
 
         Returns:
-            List[int]: The list of randomly selected indices.
+            list[int]: The list of randomly selected indices.
         """
         if not words:
             return []
@@ -515,12 +514,12 @@ class WordRegexSelectionStrategy(WordSelectionStrategy):
     Selects words that match a regex pattern.
     """
 
-    def __init__(self, *, pattern: Union[str, Pattern[str]]) -> None:
+    def __init__(self, *, pattern: str | Pattern[str]) -> None:
         """
         Initialize the word regex selection strategy.
 
         Args:
-            pattern (Union[str, Pattern[str]]): The regex pattern to match against words.
+            pattern (str | Pattern[str]): The regex pattern to match against words.
         """
         self._pattern = re.compile(pattern) if isinstance(pattern, str) else pattern
 
@@ -529,10 +528,10 @@ class WordRegexSelectionStrategy(WordSelectionStrategy):
         Select words that match the regex pattern.
 
         Args:
-            words (List[str]): The list of words to select from.
+            words (list[str]): The list of words to select from.
 
         Returns:
-            List[int]: The list of indices where words matched the pattern.
+            list[int]: The list of indices where words matched the pattern.
         """
         if not words:
             return []
@@ -573,10 +572,10 @@ class WordPositionSelectionStrategy(WordSelectionStrategy):
         Select words based on the relative position.
 
         Args:
-            words (List[str]): The list of words to select from.
+            words (list[str]): The list of words to select from.
 
         Returns:
-            List[int]: The list of indices in the specified position range.
+            list[int]: The list of indices in the specified position range.
         """
         if not words:
             return []
@@ -598,9 +597,9 @@ class AllWordsSelectionStrategy(WordSelectionStrategy):
         Select all words.
 
         Args:
-            words (List[str]): The list of words to select from.
+            words (list[str]): The list of words to select from.
 
         Returns:
-            List[int]: All word indices.
+            list[int]: All word indices.
         """
         return list(range(len(words)))

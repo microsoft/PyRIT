@@ -8,8 +8,6 @@ Provides endpoints for managing target instances.
 Target types are set at app startup via initializers - you cannot add new types at runtime.
 """
 
-from typing import Optional
-
 from fastapi import APIRouter, HTTPException, Query, status
 
 from pyrit.backend.models.common import ProblemDetail
@@ -32,7 +30,7 @@ router = APIRouter(prefix="/targets", tags=["targets"])
 )
 async def list_targets(  # pyrit-async-suffix-exempt
     limit: int = Query(50, ge=1, le=200, description="Maximum items per page"),
-    cursor: Optional[str] = Query(None, description="Pagination cursor (target_registry_name)"),
+    cursor: str | None = Query(None, description="Pagination cursor (target_registry_name)"),
 ) -> TargetListResponse:
     """
     List target instances with pagination.

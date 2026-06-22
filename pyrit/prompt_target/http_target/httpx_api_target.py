@@ -5,7 +5,7 @@ import logging
 import mimetypes
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Literal, Optional
+from typing import Any, Literal
 
 import aiofiles
 import httpx
@@ -42,15 +42,15 @@ class HTTPXAPITarget(HTTPTarget):
         *,
         http_url: str,
         method: Literal["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"] = "POST",
-        file_path: Optional[str] = None,
-        json_data: Optional[dict[str, Any]] = None,
-        form_data: Optional[dict[str, Any]] = None,
-        params: Optional[dict[str, Any]] = None,
-        headers: Optional[dict[str, str]] = None,
-        http2: Optional[bool] = None,
+        file_path: str | None = None,
+        json_data: dict[str, Any] | None = None,
+        form_data: dict[str, Any] | None = None,
+        params: dict[str, Any] | None = None,
+        headers: dict[str, str] | None = None,
+        http2: bool | None = None,
         callback_function: Callable[..., Any] | None = None,
-        max_requests_per_minute: Optional[int] = None,
-        custom_configuration: Optional[TargetConfiguration] = None,
+        max_requests_per_minute: int | None = None,
+        custom_configuration: TargetConfiguration | None = None,
         **httpx_client_kwargs: Any,
     ) -> None:
         """

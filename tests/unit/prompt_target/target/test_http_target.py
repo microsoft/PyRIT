@@ -70,7 +70,6 @@ async def test_send_prompt_async(mock_request, mock_http_target, mock_http_respo
         MagicMock(
             converted_value="test_prompt",
             converted_value_data_type="text",
-            prompt_target_identifier=None,
             attack_identifier=None,
             conversation_id="",
             labels={},
@@ -125,7 +124,6 @@ async def test_send_prompt_async_client_kwargs(patch_central_database):
             MagicMock(
                 converted_value="",
                 converted_value_data_type="text",
-                prompt_target_identifier=None,
                 attack_identifier=None,
                 conversation_id="",
                 labels={},
@@ -164,7 +162,6 @@ async def test_send_prompt_regex_parse_async(mock_request, mock_http_target):
         MagicMock(
             converted_value="test_prompt",
             converted_value_data_type="text",
-            prompt_target_identifier=None,
             attack_identifier=None,
             conversation_id="",
             labels={},
@@ -200,7 +197,6 @@ async def test_send_prompt_async_keeps_original_template(mock_request, mock_http
         MagicMock(
             converted_value="test_prompt",
             converted_value_data_type="text",
-            prompt_target_identifier=None,
             attack_identifier=None,
             conversation_id="",
             labels={},
@@ -228,7 +224,6 @@ async def test_send_prompt_async_keeps_original_template(mock_request, mock_http
         MagicMock(
             converted_value="second_test_prompt",
             converted_value_data_type="text",
-            prompt_target_identifier=None,
             attack_identifier=None,
             conversation_id="",
             labels={},
@@ -285,7 +280,6 @@ async def test_http_target_with_injected_client(patch_central_database):
             MagicMock(
                 converted_value="test_prompt",
                 converted_value_data_type="text",
-                prompt_target_identifier=None,
                 attack_identifier=None,
                 conversation_id="",
                 labels={},

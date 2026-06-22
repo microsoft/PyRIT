@@ -145,8 +145,8 @@ class AttackExecutor:
         # and then run it under more than one ``asyncio.run(...)`` invocation. By
         # constructing the semaphore inside ``_get_semaphore()`` and rebuilding when the
         # running loop changes, one AttackExecutor instance is safe to reuse across loops.
-        self._semaphore: Optional[asyncio.Semaphore] = None
-        self._semaphore_loop: Optional[asyncio.AbstractEventLoop] = None
+        self._semaphore: asyncio.Semaphore | None = None
+        self._semaphore_loop: asyncio.AbstractEventLoop | None = None
 
     def _get_semaphore(self) -> asyncio.Semaphore:
         """
@@ -174,9 +174,9 @@ class AttackExecutor:
         seed_groups: Sequence[SeedAttackGroup],
         adversarial_chat: Optional["PromptTarget"] = None,
         objective_scorer: Optional["TrueFalseScorer"] = None,
-        field_overrides: Optional[Sequence[dict[str, Any]]] = None,
+        field_overrides: Sequence[dict[str, Any]] | None = None,
         return_partial_on_failure: bool = False,
-        attribution: Optional[AttackResultAttribution] = None,
+        attribution: AttackResultAttribution | None = None,
         **broadcast_fields: Any,
     ) -> AttackExecutorResult[AttackStrategyResultT]:
         """
@@ -254,9 +254,9 @@ class AttackExecutor:
         *,
         attack: AttackStrategy[AttackStrategyContextT, AttackStrategyResultT],
         objectives: Sequence[str],
-        field_overrides: Optional[Sequence[dict[str, Any]]] = None,
+        field_overrides: Sequence[dict[str, Any]] | None = None,
         return_partial_on_failure: bool = False,
-        attribution: Optional[AttackResultAttribution] = None,
+        attribution: AttackResultAttribution | None = None,
         **broadcast_fields: Any,
     ) -> AttackExecutorResult[AttackStrategyResultT]:
         """
@@ -323,7 +323,7 @@ class AttackExecutor:
         attack: AttackStrategy[AttackStrategyContextT, AttackStrategyResultT],
         params_list: Sequence[AttackParameters],
         return_partial_on_failure: bool = False,
-        attribution: Optional[AttackResultAttribution] = None,
+        attribution: AttackResultAttribution | None = None,
     ) -> AttackExecutorResult[AttackStrategyResultT]:
         """
         Execute attacks in parallel with a list of pre-built parameters.

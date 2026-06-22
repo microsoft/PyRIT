@@ -12,6 +12,7 @@ import pytest
 from pyrit.executor.attack import AttackExecutor, AttackStrategy
 from pyrit.executor.attack.core import AttackExecutorResult
 from pyrit.models import (
+    AtomicAttackIdentifier,
     AttackOutcome,
     AttackResult,
     ComponentIdentifier,
@@ -19,7 +20,6 @@ from pyrit.models import (
     SeedGroup,
     SeedObjective,
     SeedPrompt,
-    build_atomic_attack_identifier,
 )
 from pyrit.scenario import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
@@ -28,7 +28,9 @@ from pyrit.scenario.core.attack_technique import AttackTechnique
 @pytest.fixture
 def mock_attack():
     """Create a mock AttackStrategy for testing."""
-    return MagicMock(spec=AttackStrategy)
+    attack = MagicMock(spec=AttackStrategy)
+    attack.get_identifier.return_value = ComponentIdentifier(class_name="MockAttack", class_module="pyrit.test")
+    return attack
 
 
 @pytest.fixture
@@ -789,7 +791,7 @@ class TestEnrichAtomicAttackIdentifiers:
             objective="obj1",
             outcome=AttackOutcome.SUCCESS,
             executed_turns=1,
-            atomic_attack_identifier=build_atomic_attack_identifier(attack_identifier=attack_id),
+            atomic_attack_identifier=AtomicAttackIdentifier.build(attack_identifier=attack_id),
         )
 
         atomic = AtomicAttack(
@@ -844,7 +846,7 @@ class TestEnrichAtomicAttackIdentifiers:
             objective="obj1",
             outcome=AttackOutcome.SUCCESS,
             executed_turns=1,
-            atomic_attack_identifier=build_atomic_attack_identifier(attack_identifier=attack_id),
+            atomic_attack_identifier=AtomicAttackIdentifier.build(attack_identifier=attack_id),
         )
 
         atomic = AtomicAttack(
@@ -884,7 +886,7 @@ class TestEnrichAtomicAttackIdentifiers:
             objective="obj1",
             outcome=AttackOutcome.SUCCESS,
             executed_turns=1,
-            atomic_attack_identifier=build_atomic_attack_identifier(attack_identifier=attack_id),
+            atomic_attack_identifier=AtomicAttackIdentifier.build(attack_identifier=attack_id),
         )
 
         atomic = AtomicAttack(
@@ -927,14 +929,14 @@ class TestEnrichAtomicAttackIdentifiers:
                 objective="obj1",
                 outcome=AttackOutcome.SUCCESS,
                 executed_turns=1,
-                atomic_attack_identifier=build_atomic_attack_identifier(attack_identifier=attack_id),
+                atomic_attack_identifier=AtomicAttackIdentifier.build(attack_identifier=attack_id),
             ),
             AttackResult(
                 conversation_id="c2",
                 objective="obj2",
                 outcome=AttackOutcome.SUCCESS,
                 executed_turns=1,
-                atomic_attack_identifier=build_atomic_attack_identifier(attack_identifier=attack_id),
+                atomic_attack_identifier=AtomicAttackIdentifier.build(attack_identifier=attack_id),
             ),
         ]
 
@@ -973,7 +975,7 @@ class TestEnrichAtomicAttackIdentifiers:
             outcome=AttackOutcome.SUCCESS,
             executed_turns=1,
             attack_result_id="00000000-0000-0000-0000-000000000001",
-            atomic_attack_identifier=build_atomic_attack_identifier(attack_identifier=attack_id),
+            atomic_attack_identifier=AtomicAttackIdentifier.build(attack_identifier=attack_id),
         )
 
         atomic = AtomicAttack(
@@ -998,7 +1000,7 @@ class TestEnrichAtomicAttackIdentifiers:
         assert persisted["class_name"] == "AtomicAttack"
 
     async def test_enrichment_skips_db_update_when_no_attack_result_id(self, mock_attack):
-        """Test that enrichment does not attempt a DB update when attack_result_id is None."""
+        """Test that enrichment does not attempt a DB update when attack_result_id is empty."""
         seed_groups = [
             SeedAttackGroup(
                 seeds=[
@@ -1013,8 +1015,8 @@ class TestEnrichAtomicAttackIdentifiers:
             objective="obj1",
             outcome=AttackOutcome.SUCCESS,
             executed_turns=1,
-            attack_result_id=None,
-            atomic_attack_identifier=build_atomic_attack_identifier(attack_identifier=attack_id),
+            attack_result_id="",
+            atomic_attack_identifier=AtomicAttackIdentifier.build(attack_identifier=attack_id),
         )
 
         atomic = AtomicAttack(

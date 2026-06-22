@@ -1,7 +1,6 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from typing import Optional
 
 from pyrit.models import ComponentIdentifier
 from pyrit.prompt_converter.text_selection_strategy import WordSelectionStrategy
@@ -17,14 +16,14 @@ class UnicodeReplacementConverter(WordLevelConverter):
         self,
         *,
         encode_spaces: bool = False,
-        word_selection_strategy: Optional[WordSelectionStrategy] = None,
+        word_selection_strategy: WordSelectionStrategy | None = None,
     ) -> None:
         """
         Initialize the converter with the specified selection strategy.
 
         Args:
             encode_spaces (bool): If True, spaces in the prompt will be replaced with unicode representation.
-            word_selection_strategy (Optional[WordSelectionStrategy]): Strategy for selecting which words to convert.
+            word_selection_strategy (WordSelectionStrategy | None): Strategy for selecting which words to convert.
                 If None, all words will be converted.
         """
         super().__init__(word_selection_strategy=word_selection_strategy)

@@ -90,3 +90,27 @@ async def test_history_squash_preserves_original_list():
     original_len = len(messages)
     await HistorySquashNormalizer().normalize_async(messages)
     assert len(messages) == original_len
+
+
+async def test_history_squash_propagates_last_message_metadata():
+    """
+    Regression: the squashed piece must carry the last message's prompt_metadata
+    so downstream normalizers (e.g. JsonSchemaNormalizer) still see request-level
+    metadata such as the JSON schema key. Without propagation, the schema would
+    be silently dropped when both MULTI_TURN and JSON_SCHEMA need adaptation.
+    """
+    schema = {"type": "object", "properties": {"x": {"type": "string"}}}
+    last_piece = MessagePiece(
+        role="user",
+        original_value="please score",
+        prompt_metadata={"json_schema": schema, "scenario": "regression"},
+    )
+    messages = [
+        _make_message("assistant", "earlier reply"),
+        Message(message_pieces=[last_piece]),
+    ]
+    result = await HistorySquashNormalizer().normalize_async(messages)
+
+    assert len(result) == 1
+    squashed_piece = result[0].message_pieces[0]
+    assert squashed_piece.prompt_metadata == {"json_schema": schema, "scenario": "regression"}

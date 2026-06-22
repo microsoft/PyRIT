@@ -4,9 +4,9 @@
 """
 Common utilities and helpers for PyRIT.
 
-Heavy submodules (data_url_converter, display_response, download_hf_model,
-net_utility) are intentionally NOT re-exported here to keep ``import pyrit``
-fast.  Import them directly, e.g.::
+Heavy submodules (display_response, download_hf_model, net_utility) are
+intentionally NOT re-exported here to keep ``import pyrit`` fast.  Import them
+directly, e.g.::
 
     from pyrit.common.net_utility import get_httpx_client
 """
@@ -20,6 +20,7 @@ from pyrit.common.apply_defaults import (
     reset_default_values,
     set_default_value,
 )
+from pyrit.common.brick_contract import enforce_keyword_only_init
 from pyrit.common.default_values import get_non_required_value, get_required_value
 from pyrit.common.deprecation import print_deprecation_message
 from pyrit.common.notebook_utils import is_in_ipython_session
@@ -41,6 +42,7 @@ __all__ = [
     "combine_dict",
     "combine_list",
     "DefaultValueScope",
+    "enforce_keyword_only_init",
     "get_global_default_values",
     "get_kwarg_param",
     "get_non_required_value",

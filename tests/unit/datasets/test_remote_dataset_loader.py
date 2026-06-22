@@ -137,6 +137,45 @@ class TestRemoteDatasetLoader:
             file_type="json",
         )
 
+    def test_fetch_from_url_invalid_file_type_raises(self):
+        loader = ConcreteRemoteLoader()
+        with pytest.raises(ValueError, match="Invalid file_type"):
+            loader._fetch_from_url(
+                source="https://example.com/data.xyz",
+                source_type="public_url",
+                cache=False,
+            )
+
+    def test_fetch_from_public_url_non_json_file_type(self):
+        loader = ConcreteRemoteLoader()
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.text = "header1,header2\nvalue1,value2\n"
+        with patch("requests.get", return_value=mock_response):
+            result = loader._fetch_from_public_url(source="https://example.com/data.csv", file_type="csv")
+        assert result == [{"header1": "value1", "header2": "value2"}]
+
+    def test_fetch_from_public_url_invalid_file_type_raises(self):
+        loader = ConcreteRemoteLoader()
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.text = ""
+        with patch("requests.get", return_value=mock_response), pytest.raises(ValueError, match="Invalid file_type"):
+            loader._fetch_from_public_url(source="https://example.com/data.xyz", file_type="xyz")
+
+    def test_fetch_from_file_json(self, tmp_path):
+        loader = ConcreteRemoteLoader()
+        source = tmp_path / "data.json"
+        source.write_text('[{"key": "value"}]', encoding="utf-8")
+        assert loader._fetch_from_file(source=str(source), file_type="json") == [{"key": "value"}]
+
+    def test_fetch_from_file_invalid_file_type_raises(self, tmp_path):
+        loader = ConcreteRemoteLoader()
+        source = tmp_path / "data.xyz"
+        source.write_text("anything", encoding="utf-8")
+        with pytest.raises(ValueError, match="Invalid file_type"):
+            loader._fetch_from_file(source=str(source), file_type="xyz")
+
 
 class TestFetchZipFromUrl:
     SOURCE = "https://example.com/data.zip"

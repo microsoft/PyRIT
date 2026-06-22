@@ -50,7 +50,7 @@
 from pyrit.output import output_scenario_async
 from pyrit.prompt_target import OpenAIChatTarget
 from pyrit.scenario import DatasetConfiguration
-from pyrit.scenario.scenarios.benchmark import AdversarialBenchmark
+from pyrit.scenario.benchmark import AdversarialBenchmark
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 from pyrit.setup.initializers import LoadDefaultDatasets, ScorerInitializer, TargetInitializer
 

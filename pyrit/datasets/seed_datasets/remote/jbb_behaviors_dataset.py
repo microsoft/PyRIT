@@ -3,10 +3,12 @@
 
 import logging
 
+from typing_extensions import override
+
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import Modality, SeedDataset, SeedPrompt
+from pyrit.models import Modality, SeedDataset, SeedPrompt, SeedUnion
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +25,28 @@ class _JBBBehaviorsDataset(_RemoteDatasetLoader):
     and may contain offensive content. Users should check with their legal department
     before using these prompts against production LLMs.
     """
+
+    _AUTHORS = [
+        "Patrick Chao",
+        "Edoardo Debenedetti",
+        "Alexander Robey",
+        "Maksym Andriushchenko",
+        "Francesco Croce",
+        "Vikash Sehwag",
+        "Edgar Dobriban",
+        "Nicolas Flammarion",
+        "George J. Pappas",
+        "Florian Tramer",
+        "Hamed Hassani",
+        "Eric Wong",
+    ]
+
+    _GROUPS = [
+        "University of Pennsylvania",
+        "ETH Zurich",
+        "EPFL",
+        "Sony AI",
+    ]
 
     # Metadata
     modalities: tuple[Modality, ...] = (Modality.TEXT,)
@@ -46,10 +70,12 @@ class _JBBBehaviorsDataset(_RemoteDatasetLoader):
         self.split = split
 
     @property
+    @override
     def dataset_name(self) -> str:
         """Return the dataset name."""
         return "jbb_behaviors"
 
+    @override
     async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch JBB-Behaviors dataset and return as SeedDataset.
@@ -76,20 +102,12 @@ class _JBBBehaviorsDataset(_RemoteDatasetLoader):
                 cache=cache,
             )
 
-            # Define common metadata
-            common_metadata = {
-                "dataset_name": self.dataset_name,
-                "authors": ["JailbreakBench Team"],
-                "description": (
-                    "A dataset of harmful behaviors for jailbreaking evaluation from JailbreakBench. "
-                    "Contains behaviors designed to test AI safety measures."
-                ),
-                "source": self.source,
-                "data_type": "text",
-                "name": "JBB-Behaviors",
-            }
+            description = (
+                "A dataset of harmful behaviors for jailbreaking evaluation from JailbreakBench. "
+                "Contains behaviors designed to test AI safety measures."
+            )
 
-            seed_prompts = []
+            seed_prompts: list[SeedUnion] = []
 
             for item in data:
                 # Extract the required fields
@@ -106,13 +124,18 @@ class _JBBBehaviorsDataset(_RemoteDatasetLoader):
                 # Create SeedPrompt object with all metadata
                 seed_prompt = SeedPrompt(
                     value=behavior,
+                    data_type="text",
+                    name="JBB-Behaviors",
+                    dataset_name=self.dataset_name,
                     harm_categories=harm_categories,
-                    groups=[category] if category else [],
+                    description=description,
+                    authors=self._AUTHORS,
+                    groups=self._GROUPS,
+                    source=self.source,
                     metadata={
                         "jbb_category": category,
                         "original_source": "JailbreakBench",
                     },
-                    **common_metadata,  # type: ignore[ty:invalid-argument-type]
                 )
 
                 seed_prompts.append(seed_prompt)

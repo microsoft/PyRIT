@@ -1,7 +1,6 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from typing import Optional
 
 from pyrit.embedding import OpenAITextEmbedding
 from pyrit.memory.memory_models import EmbeddingDataEntry
@@ -16,12 +15,12 @@ class MemoryEmbedding:
         embedding_model (EmbeddingSupport): An instance of a class that supports embedding generation.
     """
 
-    def __init__(self, *, embedding_model: Optional[EmbeddingSupport] = None) -> None:
+    def __init__(self, *, embedding_model: EmbeddingSupport | None = None) -> None:
         """
         Initialize the memory embedding helper with a backing embedding model.
 
         Args:
-            embedding_model (Optional[EmbeddingSupport]): The embedding model used to
+            embedding_model (EmbeddingSupport | None): The embedding model used to
                 generate text embeddings. If not provided, a ValueError is raised.
 
         Raises:
@@ -55,7 +54,7 @@ class MemoryEmbedding:
         raise ValueError("Only text data is supported for embedding.")
 
 
-def default_memory_embedding_factory(embedding_model: Optional[EmbeddingSupport] = None) -> MemoryEmbedding | None:
+def default_memory_embedding_factory(embedding_model: EmbeddingSupport | None = None) -> MemoryEmbedding | None:
     """
     Create a MemoryEmbedding instance with default or provided embedding model.
 

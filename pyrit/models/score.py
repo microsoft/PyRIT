@@ -46,7 +46,7 @@ class Score(BaseModel):
         validate_assignment=False,
     )
 
-    id: uuid.UUID | str = Field(default_factory=uuid4)  # noqa: A003
+    id: uuid.UUID | str = Field(default_factory=uuid4)
 
     # The value the scorer ended up with; e.g. "true" (if true_false) or "0.5" (if float_scale)
     score_value: str
@@ -201,7 +201,7 @@ class Score(BaseModel):
         )
         return cls.model_validate(data)
 
-    def validate(self, *args: Any, **kwargs: Any) -> None:  # type: ignore[override]
+    def validate(self, *args: Any, **kwargs: Any) -> None:  # type: ignore[ty:invalid-method-override]
         """
         Re-run construction-time validation (DEPRECATED).
 

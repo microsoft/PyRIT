@@ -24,8 +24,9 @@ from pathlib import Path
 from typing import Any, Literal, cast
 from urllib.parse import parse_qs, urlparse
 
-from pyrit.backend.mappers.attack_mappers import (
-    attack_result_to_summary,
+from pyrit.backend.mappers import (
+    attack_result_to_summary_async,
+    format_last_message_preview,
     pyrit_messages_to_dto_async,
     request_piece_to_pyrit_message_piece,
     request_to_pyrit_message,
@@ -49,17 +50,18 @@ from pyrit.backend.models.attacks import (
 from pyrit.backend.models.common import PaginationInfo
 from pyrit.backend.services.converter_service import get_converter_service
 from pyrit.backend.services.target_service import get_target_service
-from pyrit.memory import CentralMemory
+from pyrit.memory import CentralMemory, data_serializer_factory
 from pyrit.models import (
+    AtomicAttackIdentifier,
+    AttackIdentifier,
     AttackOutcome,
     AttackResult,
     ComponentIdentifier,
+    Conversation,
     ConversationStats,
     ConversationType,
     MessagePiece,
     PromptDataType,
-    build_atomic_attack_identifier,
-    data_serializer_factory,
 )
 from pyrit.prompt_normalizer import PromptConverterConfiguration, PromptNormalizer
 
@@ -177,15 +179,17 @@ class AttackService:
 
             total_count = (main_stats.message_count if main_stats else 0) + sum(s.message_count for s in pruned_stats)
             preview = main_stats.last_message_preview if main_stats else None
+            preview_data_type = main_stats.last_message_data_type if main_stats else None
             conv_labels = (main_stats.labels if main_stats else None) or {}
 
             merged = ConversationStats(
                 message_count=total_count,
                 last_message_preview=preview,
+                last_message_data_type=preview_data_type,
                 labels=conv_labels,
             )
 
-            page.append(attack_result_to_summary(ar, stats=merged))
+            page.append(await attack_result_to_summary_async(ar, stats=merged))
 
         return AttackListResponse(
             items=page,
@@ -232,7 +236,7 @@ class AttackService:
         ar = results[0]
         stats_map = self._memory.get_conversation_stats(conversation_ids=[ar.conversation_id])
         stats = stats_map.get(ar.conversation_id, ConversationStats(message_count=0))
-        return attack_result_to_summary(ar, stats=stats)
+        return await attack_result_to_summary_async(ar, stats=stats)
 
     async def get_conversation_messages_async(
         self,
@@ -264,7 +268,7 @@ class AttackService:
             raise ValueError(f"Conversation '{conversation_id}' is not part of attack '{attack_result_id}'")
 
         # Get messages for this conversation
-        pyrit_messages = self._memory.get_conversation(conversation_id=conversation_id)
+        pyrit_messages = self._memory.get_conversation_messages(conversation_id=conversation_id)
         backend_messages = await pyrit_messages_to_dto_async(list(pyrit_messages))
 
         return ConversationMessagesResponse(
@@ -310,6 +314,7 @@ class AttackService:
                 cutoff_index=request.cutoff_index,
                 labels_override=labels,
                 remap_assistant_to_simulated=True,
+                target_identifier=target_identifier,
             )
         else:
             conversation_id = str(uuid.uuid4())
@@ -318,11 +323,11 @@ class AttackService:
         attack_result = AttackResult(
             conversation_id=conversation_id,
             objective=request.name or "Manual attack via GUI",
-            atomic_attack_identifier=build_atomic_attack_identifier(
-                attack_identifier=ComponentIdentifier(
+            atomic_attack_identifier=AtomicAttackIdentifier.build(
+                attack_identifier=AttackIdentifier(
                     class_name=request.name or "ManualAttack",
                     class_module="pyrit.backend",
-                    children={"objective_target": target_identifier} if target_identifier else {},
+                    objective_target=target_identifier,
                 ),
             ),
             outcome=AttackOutcome.UNDETERMINED,
@@ -342,6 +347,7 @@ class AttackService:
                 conversation_id=conversation_id,
                 prepended=request.prepended_conversation,
                 labels=labels,  # deprecated
+                target_identifier=target_identifier,
             )
 
         return CreateAttackResponse(
@@ -412,14 +418,17 @@ class AttackService:
         for conv_id in active_conv_ids:
             stats = stats_map.get(conv_id)
             created_at = stats.created_at if stats else None
-            # SQLite returns naive datetimes — normalize to UTC (same pattern as _ensure_utc)
+            # SQLite returns naive datetimes — normalize to UTC (same pattern as the UTCDateTime column type)
             if created_at is not None and created_at.tzinfo is None:
                 created_at = created_at.replace(tzinfo=timezone.utc)
             conversations.append(
                 ConversationSummary(
                     conversation_id=conv_id,
                     message_count=stats.message_count if stats else 0,
-                    last_message_preview=stats.last_message_preview if stats else None,
+                    last_message_preview=format_last_message_preview(
+                        value=stats.last_message_preview if stats else None,
+                        data_type=stats.last_message_data_type if stats else None,
+                    ),
                     created_at=created_at,
                 )
             )
@@ -470,9 +479,11 @@ class AttackService:
 
         # --- Branch via duplication (preferred for tracking) ---------------
         if request.source_conversation_id is not None and request.cutoff_index is not None:
+            source_metadata = self._memory._get_conversation(conversation_id=request.source_conversation_id)
             new_conversation_id = self._duplicate_conversation_up_to(
                 source_conversation_id=request.source_conversation_id,
                 cutoff_index=request.cutoff_index,
+                target_identifier=source_metadata.target_identifier if source_metadata else None,
             )
         else:
             new_conversation_id = str(uuid.uuid4())
@@ -617,11 +628,13 @@ class AttackService:
                 labels=attack_labels,  # deprecated
             )
         else:
+            existing_metadata = self._memory._get_conversation(conversation_id=msg_conversation_id)
             await self._store_message_only_async(
                 conversation_id=msg_conversation_id,
                 request=request,
                 sequence=sequence,
                 labels=attack_labels,  # deprecated
+                target_identifier=existing_metadata.target_identifier if existing_metadata else None,
             )
 
         await self._update_attack_after_message_async(attack_result_id=attack_result_id, ar=ar, request=request)
@@ -823,6 +836,7 @@ class AttackService:
         cutoff_index: int,
         labels_override: dict[str, str] | None = None,
         remap_assistant_to_simulated: bool = False,
+        target_identifier: ComponentIdentifier | None = None,
     ) -> str:
         """
         Duplicate messages from a conversation up to and including a turn index.
@@ -841,10 +855,13 @@ class AttackService:
                 ``assistant`` are changed to ``simulated_assistant`` so the
                 branched context is inert and won't confuse the target.
 
+            target_identifier (ComponentIdentifier | None): The target the new conversation
+                is held with, if known. Recorded once for the duplicated conversation.
+
         Returns:
             The new conversation ID containing the duplicated messages.
         """
-        messages = self._memory.get_conversation(conversation_id=source_conversation_id)
+        messages = self._memory.get_conversation_messages(conversation_id=source_conversation_id)
         messages_to_copy = [m for m in messages if m.sequence <= cutoff_index]
 
         new_conversation_id, all_pieces = self._memory.duplicate_messages(messages=messages_to_copy)
@@ -860,6 +877,9 @@ class AttackService:
                 piece.role = "simulated_assistant"
 
         if all_pieces:
+            self._memory.add_conversation_to_memory(
+                conversation=Conversation(conversation_id=new_conversation_id, target_identifier=target_identifier)
+            )
             self._memory.add_message_pieces_to_memory(message_pieces=list(all_pieces))
 
         return new_conversation_id
@@ -948,8 +968,14 @@ class AttackService:
         conversation_id: str,
         prepended: list[Any],
         labels: dict[str, str] | None = None,  # deprecated
+        target_identifier: ComponentIdentifier | None = None,
     ) -> None:
         """Store prepended conversation messages in memory."""
+        if not prepended:
+            return
+        self._memory.add_conversation_to_memory(
+            conversation=Conversation(conversation_id=conversation_id, target_identifier=target_identifier)
+        )
         for seq, msg in enumerate(prepended):
             for p in msg.pieces:
                 piece = request_piece_to_pyrit_message_piece(
@@ -1005,9 +1031,13 @@ class AttackService:
         request: AddMessageRequest,
         sequence: int,
         labels: dict[str, str] | None = None,  # deprecated
+        target_identifier: ComponentIdentifier | None = None,
     ) -> None:
         """Store message without sending (send=False)."""
         await self._persist_base64_pieces_async(request)
+        self._memory.add_conversation_to_memory(
+            conversation=Conversation(conversation_id=conversation_id, target_identifier=target_identifier)
+        )
         for p in request.pieces:
             piece = request_piece_to_pyrit_message_piece(
                 piece=p,

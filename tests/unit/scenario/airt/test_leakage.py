@@ -14,7 +14,7 @@ from pyrit.prompt_target import PromptTarget
 from pyrit.registry import TargetRegistry
 from pyrit.registry.object_registries.attack_technique_registry import AttackTechniqueRegistry
 from pyrit.scenario import DatasetConfiguration
-from pyrit.scenario.airt import Leakage
+from pyrit.scenario.airt import Leakage  # type: ignore[ty:unresolved-import]
 from pyrit.scenario.core import BaselineAttackPolicy
 from pyrit.scenario.scenarios.airt.leakage import _build_leakage_strategy
 from pyrit.score import TrueFalseCompositeScorer

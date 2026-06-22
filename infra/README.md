@@ -419,7 +419,7 @@ needed in the container.
 
 | .pyrit_conf field | Bicep param | Env var | Notes |
 |-------------------|-------------|---------|-------|
-| `initializers` | `pyritInitializer` | `PYRIT_INITIALIZER` | Default `target airt`: `target` populates the TargetRegistry (read by the GUI); `airt` loads converter, scorer, and adversarial defaults |
+| `initializers` | `pyritInitializer` | `PYRIT_INITIALIZER` | Default `target, airt`: `target` populates the TargetRegistry (read by the GUI); `airt` loads converter, scorer, and adversarial defaults |
 | `operator` | — | Set per-user in the GUI | |
 | `operation` | — | Set per-user in the GUI | |
 

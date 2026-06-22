@@ -17,28 +17,11 @@ ComponentIdentifier``). The previous ``pyrit.identifiers`` location is kept as
 a deprecation shim through ``0.16.0``.
 """
 
-from typing import TYPE_CHECKING, Any
+import importlib
+from typing import Any
 
 from pyrit.common.deprecation import print_deprecation_message
-from pyrit.models.attack_result import AttackOutcome, AttackResult, AttackResultT
-from pyrit.models.chat_message import (
-    ALLOWED_CHAT_MESSAGE_ROLES,
-    ChatMessage,
-    ChatMessagesDataset,
-)
-from pyrit.models.conversation_reference import ConversationReference, ConversationType
 from pyrit.models.conversation_stats import ConversationStats
-from pyrit.models.data_type_serializer import (
-    AllowedCategories,
-    AudioPathDataTypeSerializer,
-    BinaryPathDataTypeSerializer,
-    DataTypeSerializer,
-    ErrorDataTypeSerializer,
-    ImagePathDataTypeSerializer,
-    TextDataTypeSerializer,
-    VideoPathDataTypeSerializer,
-    data_serializer_factory,
-)
 from pyrit.models.embeddings import EmbeddingData, EmbeddingResponse, EmbeddingSupport, EmbeddingUsageInformation
 from pyrit.models.harm_definition import HarmDefinition, ScaleDescription, get_all_harm_definitions
 from pyrit.models.identifiers import (
@@ -46,24 +29,47 @@ from pyrit.models.identifiers import (
     TARGET_EVAL_PARAM_FALLBACKS,
     TARGET_EVAL_PARAMS,
     AtomicAttackEvaluationIdentifier,
+    AtomicAttackIdentifier,
+    AttackIdentifier,
+    AttackTechniqueIdentifier,
     ChildEvalRule,
     ComponentIdentifier,
+    ConverterIdentifier,
+    Evaluate,
     EvaluationIdentifier,
     Identifiable,
     IdentifierFilter,
     IdentifierType,
     ObjectiveTargetEvaluationIdentifier,
     ScorerEvaluationIdentifier,
-    build_atomic_attack_identifier,
-    build_seed_identifier,
+    ScorerIdentifier,
+    SeedIdentifier,
+    TargetIdentifier,
     class_name_to_snake_case,
     compute_eval_hash,
     config_hash,
     snake_case_to_class_name,
     validate_registry_name,
 )
-from pyrit.models.literals import ChatMessageRole, Modality, PromptDataType, PromptResponseError, SeedType
+from pyrit.models.json_schema_definition import (
+    COMMON_JSON_SCHEMAS,
+    JSON_SCHEMA_METADATA_KEY,
+    SEED_RESPONSE_JSON_SCHEMA_METADATA_KEY,
+    JsonSchemaDefinition,
+    get_common_json_schema,
+    register_common_json_schema,
+    unregister_common_json_schema,
+)
+from pyrit.models.literals import (
+    MEDIA_PATH_DATA_TYPES,
+    ChatMessageRole,
+    Modality,
+    PromptDataType,
+    PromptResponseError,
+    SeedType,
+)
 from pyrit.models.messages import (
+    Conversation,
     Message,
     MessagePiece,
     construct_response_from_request,
@@ -73,9 +79,18 @@ from pyrit.models.messages import (
     group_message_pieces_into_conversations,
     sort_message_pieces,
 )
+from pyrit.models.messages.chat_message import (
+    ALLOWED_CHAT_MESSAGE_ROLES,
+    ChatMessage,
+    ChatMessagesDataset,
+    ToolCall,
+)
+from pyrit.models.messages.conversation_reference import ConversationReference, ConversationType
 from pyrit.models.question_answering import QuestionAnsweringDataset, QuestionAnsweringEntry, QuestionChoice
+from pyrit.models.results.attack_result import AttackOutcome, AttackResult, AttackResultT
+from pyrit.models.results.scenario_result import ScenarioIdentifier, ScenarioResult, ScenarioRunState
+from pyrit.models.results.strategy_result import StrategyResult, StrategyResultT
 from pyrit.models.retry_event import RetryEvent
-from pyrit.models.scenario_result import ScenarioIdentifier, ScenarioResult
 from pyrit.models.score import Score, ScoreType, UnvalidatedScore
 
 # Seeds - import from new seeds submodule for forward compatibility
@@ -90,34 +105,35 @@ from pyrit.models.seeds import (
     SeedObjective,
     SeedPrompt,
     SeedSimulatedConversation,
+    SeedUnion,
     SimulatedTargetSystemPromptPaths,
 )
-
-# Keep old module-level imports working (deprecated, will be removed)
-# These are re-exported from the seeds submodule
-from pyrit.models.storage_io import AzureBlobStorageIO, DiskStorageIO, StorageIO
-from pyrit.models.strategy_result import StrategyResult, StrategyResultT
+from pyrit.models.target_capabilities import CapabilityName, TargetCapabilities
 
 __all__ = [
     "ALLOWED_CHAT_MESSAGE_ROLES",
     "AllowedCategories",
     "AtomicAttackEvaluationIdentifier",
+    "AtomicAttackIdentifier",
+    "AttackIdentifier",
+    "AttackTechniqueIdentifier",
     "AttackResult",
     "AttackResultT",
     "AttackOutcome",
     "AudioPathDataTypeSerializer",
     "AzureBlobStorageIO",
     "BinaryPathDataTypeSerializer",
-    "build_atomic_attack_identifier",
-    "build_seed_identifier",
     "ChatMessage",
     "ChatMessagesDataset",
     "ChatMessageRole",
     "ChildEvalRule",
     "class_name_to_snake_case",
+    "CapabilityName",
     "ComponentIdentifier",
     "compute_eval_hash",
     "config_hash",
+    "ConverterIdentifier",
+    "Conversation",
     "ConversationReference",
     "ConversationStats",
     "ConversationType",
@@ -130,6 +146,7 @@ __all__ = [
     "EmbeddingSupport",
     "EmbeddingUsageInformation",
     "ErrorDataTypeSerializer",
+    "Evaluate",
     "EvaluationIdentifier",
     "flatten_to_message_pieces",
     "get_all_harm_definitions",
@@ -141,6 +158,14 @@ __all__ = [
     "IdentifierFilter",
     "IdentifierType",
     "ImagePathDataTypeSerializer",
+    "COMMON_JSON_SCHEMAS",
+    "get_common_json_schema",
+    "register_common_json_schema",
+    "unregister_common_json_schema",
+    "JSON_SCHEMA_METADATA_KEY",
+    "SEED_RESPONSE_JSON_SCHEMA_METADATA_KEY",
+    "JsonSchemaDefinition",
+    "MEDIA_PATH_DATA_TYPES",
     "Message",
     "MessagePiece",
     "Modality",
@@ -159,6 +184,7 @@ __all__ = [
     "ScorerIdentifier",
     "ScenarioIdentifier",
     "ScenarioResult",
+    "ScenarioRunState",
     "Seed",
     "SeedAttackGroup",
     "SeedAttackTechniqueGroup",
@@ -166,8 +192,10 @@ __all__ = [
     "SeedPrompt",
     "SeedDataset",
     "SeedGroup",
+    "SeedIdentifier",
     "SeedSimulatedConversation",
     "SeedType",
+    "SeedUnion",
     "SimulatedTargetSystemPromptPaths",
     "snake_case_to_class_name",
     "sort_message_pieces",
@@ -176,36 +204,46 @@ __all__ = [
     "StrategyResultT",
     "TARGET_EVAL_PARAM_FALLBACKS",
     "TARGET_EVAL_PARAMS",
+    "TargetCapabilities",
+    "TargetIdentifier",
     "TextDataTypeSerializer",
+    "ToolCall",
     "UnvalidatedScore",
     "validate_registry_name",
     "VideoPathDataTypeSerializer",
     "RetryEvent",
 ]
 
-if TYPE_CHECKING:
-    # Type-only alias so static checkers can resolve ``from pyrit.models import ScorerIdentifier``.
-    # At runtime the symbol is served by ``__getattr__`` below so accessing it emits a one-shot
-    # DeprecationWarning per process. Will be removed in 0.16.0.
-    ScorerIdentifier = ComponentIdentifier
-
-# Deprecated rename aliases (pre-#1387 names that were collapsed into ComponentIdentifier).
-_DEPRECATED_RENAME_ALIASES: dict[str, Any] = {
-    "ScorerIdentifier": ComponentIdentifier,
+# Names that moved to ``pyrit.memory.storage``. Served lazily via importlib so that
+# importing ``pyrit.models`` stays import-boundary clean and fires no warning until a
+# moved name is actually accessed. Will be removed in 0.17.0.
+_MOVED_TO_MEMORY_STORAGE: dict[str, str] = {
+    "AllowedCategories": "pyrit.memory.storage.serializers",
+    "AudioPathDataTypeSerializer": "pyrit.memory.storage.serializers",
+    "BinaryPathDataTypeSerializer": "pyrit.memory.storage.serializers",
+    "DataTypeSerializer": "pyrit.memory.storage.serializers",
+    "ErrorDataTypeSerializer": "pyrit.memory.storage.serializers",
+    "ImagePathDataTypeSerializer": "pyrit.memory.storage.serializers",
+    "TextDataTypeSerializer": "pyrit.memory.storage.serializers",
+    "VideoPathDataTypeSerializer": "pyrit.memory.storage.serializers",
+    "data_serializer_factory": "pyrit.memory.storage.serializers",
+    "AzureBlobStorageIO": "pyrit.memory.storage.storage",
+    "DiskStorageIO": "pyrit.memory.storage.storage",
+    "StorageIO": "pyrit.memory.storage.storage",
 }
 
 _warned: set[str] = set()
 
 
 def __getattr__(name: str) -> Any:
-    if name in _DEPRECATED_RENAME_ALIASES:
-        target = _DEPRECATED_RENAME_ALIASES[name]
+    if name in _MOVED_TO_MEMORY_STORAGE:
+        target_module = _MOVED_TO_MEMORY_STORAGE[name]
         if name not in _warned:
             print_deprecation_message(
                 old_item=f"{__name__}.{name}",
-                new_item=target,
-                removed_in="0.16.0",
+                new_item=f"{target_module}.{name}",
+                removed_in="0.17.0",
             )
             _warned.add(name)
-        return target
+        return getattr(importlib.import_module(target_module), name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

@@ -8,7 +8,7 @@ This package contains registries that store pre-configured instances (not classe
 Examples include ScorerRegistry which stores Scorer instances that have been
 initialized with their required parameters (e.g., chat_target).
 
-For registries that store classes (Type[T]), see class_registries/.
+For registries that store classes (type[T]), see class_registries/.
 """
 
 from pyrit.registry.object_registries.attack_technique_registry import (
@@ -17,9 +17,6 @@ from pyrit.registry.object_registries.attack_technique_registry import (
 from pyrit.registry.object_registries.base_instance_registry import (
     BaseInstanceRegistry,
     RegistryEntry,
-)
-from pyrit.registry.object_registries.converter_registry import (
-    ConverterRegistry,
 )
 from pyrit.registry.object_registries.retrievable_instance_registry import (
     RetrievableInstanceRegistry,
@@ -38,7 +35,6 @@ __all__ = [
     "RegistryEntry",
     # Concrete registries
     "AttackTechniqueRegistry",
-    "ConverterRegistry",
     "ScorerRegistry",
     "TargetRegistry",
 ]

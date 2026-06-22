@@ -203,7 +203,7 @@ class TestSelectiveTextConverter:
             selection_strategy=IndexSelectionStrategy(start=11, end=None),
         )
         result = await converter.convert_async(prompt="Hello World", input_type="text")
-        # "" (empty string) in base64 is ""  # noqa: ERA001
+        # "" (empty string) in base64 is ""
         assert result.output_text == "Hello World"
         assert result.output_type == "text"
 

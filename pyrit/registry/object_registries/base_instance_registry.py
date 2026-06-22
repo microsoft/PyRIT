@@ -4,6 +4,17 @@
 """
 Base instance registry for PyRIT.
 
+.. note::
+
+    **Legacy stack — do not build new registries on this.** New component
+    registries should subclass ``BuildableRegistry`` (a class catalog that can
+    build instances by name) and hold pre-configured instances via the
+    ``.instances`` property (a ``DefaultInstanceRegistry``). See
+    ``ConverterRegistry`` for the target shape. This class and
+    ``RetrievableInstanceRegistry`` remain only because ``TargetRegistry``,
+    ``ScorerRegistry``, and ``AttackTechniqueRegistry`` still subclass them;
+    the whole stack is removed once those migrate.
+
 This module provides ``BaseInstanceRegistry``, the shared infrastructure for
 registries that store ``Identifiable`` objects (not classes): singleton
 lifecycle, registration, tags, metadata, container protocol.
@@ -13,50 +24,44 @@ non-retrievable items (e.g., ``AttackTechniqueRegistry``).  For registries
 where callers retrieve stored objects directly, subclass
 ``RetrievableInstanceRegistry`` instead.
 
-For registries that store classes (Type[T]), see ``class_registries/``.
+For registries that store classes (type[T]), see ``class_registries/``.
 """
 
 from __future__ import annotations
 
 from abc import ABC
-from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
 from pyrit.models import ComponentIdentifier, Identifiable
 from pyrit.registry.base import RegistryProtocol
+from pyrit.registry.instance_registry import RegistryEntry
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
-    from typing import Self
+
+    from typing_extensions import Self
+
+# Re-exported for back-compat; the canonical definition now lives in
+# ``pyrit.registry.instance_registry`` alongside the new instance-registry capability.
+__all__ = ["BaseInstanceRegistry", "RegistryEntry"]
 
 T = TypeVar("T", bound=Identifiable)  # The type of items stored
-
-
-@dataclass
-class RegistryEntry(Generic[T]):
-    """
-    A wrapper around a registered item, holding its name, tags, and the item itself.
-
-    Tags are always stored as ``dict[str, str]``. When callers pass a plain
-    ``list[str]``, each string is normalized to a key with an empty-string value.
-
-    Attributes:
-        name: The registry name for this entry.
-        instance: The registered object.
-        tags: Key-value tags for categorization and filtering.
-        metadata: Arbitrary key-value metadata for capability flags and
-            other per-entry data that should not pollute the tag namespace.
-    """
-
-    name: str
-    instance: T
-    tags: dict[str, str] = field(default_factory=dict)
-    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 class BaseInstanceRegistry(ABC, RegistryProtocol[ComponentIdentifier], Generic[T]):
     """
     Abstract base class providing shared registry infrastructure.
+
+    .. note::
+
+        **Legacy — do not subclass for new registries.** New component
+        registries subclass ``BuildableRegistry`` and expose retained instances
+        via the ``.instances`` property (``DefaultInstanceRegistry``), which
+        carries this same surface (``register``/``get``/``get_by_tag``/
+        ``add_tags``/``find_dependents_of_tag``/``list_metadata``). This class
+        survives only for the not-yet-migrated ``TargetRegistry``,
+        ``ScorerRegistry``, and ``AttackTechniqueRegistry`` and is removed once
+        they move to ``.instances``.
 
     Provides singleton lifecycle, registration, tag-based lookup, metadata
     filtering, and the standard container protocol (``__contains__``,
@@ -88,7 +93,7 @@ class BaseInstanceRegistry(ABC, RegistryProtocol[ComponentIdentifier], Generic[T
         """
         if cls not in cls._instances:
             cls._instances[cls] = cls()
-        return cls._instances[cls]
+        return cls._instances[cls]  # type: ignore[ty:invalid-return-type]
 
     @classmethod
     def reset_instance(cls) -> None:

@@ -3,7 +3,7 @@
 
 """CSV → goals/targets loader for the GCG attack.
 
-Decoupled from :class:`GCGGenerator` so that callers with goals and targets
+Decoupled from ``GCGGenerator`` so that callers with goals and targets
 already in memory can pass them straight into ``execute_async`` without going
 through ``pandas`` or any filesystem access.
 """
@@ -34,7 +34,7 @@ def load_goals_and_targets(
             ``train_data`` falls back to whatever default the legacy loader
             returns (an empty list today).
         random_seed (int): Seed used to shuffle the training rows. Defaults
-            to ``42`` to match :class:`GCGAlgorithmConfig`'s default.
+            to ``42`` to match ``GCGAlgorithmConfig``'s default.
 
     Returns:
         tuple[list[str], list[str], list[str], list[str]]:

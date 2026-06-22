@@ -4,7 +4,7 @@
 import logging
 from dataclasses import dataclass, fields
 from enum import Enum
-from typing import Any, ClassVar, Literal, Optional
+from typing import Any, ClassVar, Literal
 
 logger = logging.getLogger(__name__)
 
@@ -94,12 +94,12 @@ class SeedDatasetMetadata:
     # All fields are optional sets to support both real metadata (single-element)
     # and filter criteria (multi-element). SINGULAR_FIELDS enforces that parsers
     # only produce single-element sets for size and source_type.
-    tags: Optional[set[str]] = None
-    size: Optional[set[str]] = None
-    modalities: Optional[set[str]] = None
-    source_type: Optional[set[str]] = None
-    load_time: Optional[set[SeedDatasetLoadTime]] = None
-    harm_categories: Optional[set[str]] = None
+    tags: set[str] | None = None
+    size: set[str] | None = None
+    modalities: set[str] | None = None
+    source_type: set[str] | None = None
+    load_time: set[SeedDatasetLoadTime] | None = None
+    harm_categories: set[str] | None = None
 
     # Fields that must have at most 1 element in real dataset metadata.
     SINGULAR_FIELDS: ClassVar[frozenset[str]] = frozenset({"size", "source_type"})
@@ -195,7 +195,7 @@ class SeedDatasetFilter:
     def __init__(
         self,
         *,
-        criteria: Optional[list[SeedDatasetMetadata]] = None,
+        criteria: list[SeedDatasetMetadata] | None = None,
         strict_match: bool = False,
         **kwargs: Any,
     ) -> None:

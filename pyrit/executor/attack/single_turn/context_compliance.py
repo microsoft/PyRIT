@@ -3,7 +3,7 @@
 
 import logging
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
 from pyrit.common.path import EXECUTOR_SEED_PROMPT_PATH
@@ -59,12 +59,12 @@ class ContextComplianceAttack(PromptSendingAttack):
         *,
         objective_target: PromptTarget = REQUIRED_VALUE,  # type: ignore[ty:invalid-parameter-default]
         attack_adversarial_config: AttackAdversarialConfig,
-        attack_converter_config: Optional[AttackConverterConfig] = None,
-        attack_scoring_config: Optional[AttackScoringConfig] = None,
-        prompt_normalizer: Optional[PromptNormalizer] = None,
+        attack_converter_config: AttackConverterConfig | None = None,
+        attack_scoring_config: AttackScoringConfig | None = None,
+        prompt_normalizer: PromptNormalizer | None = None,
         max_attempts_on_failure: int = 0,
-        context_description_instructions_path: Optional[Path] = None,
-        affirmative_response: Optional[str] = None,
+        context_description_instructions_path: Path | None = None,
+        affirmative_response: str | None = None,
     ) -> None:
         """
         Initialize the context compliance attack strategy.
@@ -73,19 +73,24 @@ class ContextComplianceAttack(PromptSendingAttack):
             objective_target (PromptTarget): The target system to attack. Must be a PromptTarget.
             attack_adversarial_config (AttackAdversarialConfig): Configuration for the adversarial component,
                 including the adversarial chat target used for rephrasing.
-            attack_converter_config (Optional[AttackConverterConfig]): Configuration for attack converters,
+            attack_converter_config (AttackConverterConfig | None): Configuration for attack converters,
                 including request and response converters.
-            attack_scoring_config (Optional[AttackScoringConfig]): Configuration for attack scoring.
-            prompt_normalizer (Optional[PromptNormalizer]): The prompt normalizer to use for sending prompts.
+            attack_scoring_config (AttackScoringConfig | None): Configuration for attack scoring.
+            prompt_normalizer (PromptNormalizer | None): The prompt normalizer to use for sending prompts.
             max_attempts_on_failure (int): Maximum number of attempts to retry on failure.
-            context_description_instructions_path (Optional[Path]): Path to the context description
+            context_description_instructions_path (Path | None): Path to the context description
                 instructions YAML file. If not provided, uses the default path.
-            affirmative_response (Optional[str]): The affirmative response to be used in the conversation history.
+            affirmative_response (str | None): The affirmative response to be used in the conversation history.
                 If not provided, uses the default "yes.".
 
         Raises:
             ValueError: If the context description instructions file is invalid.
         """
+        # Store adversarial chat target BEFORE super().__init__(), because the base
+        # PromptSendingAttack builds and caches the attack identifier during init and the
+        # identifier must include the adversarial chat target.
+        self._adversarial_chat = attack_adversarial_config.target
+
         # Initialize base class
         super().__init__(
             objective_target=objective_target,
@@ -96,15 +101,25 @@ class ContextComplianceAttack(PromptSendingAttack):
             params_type=ContextComplianceAttackParameters,
         )
 
-        # Store adversarial chat target
-        self._adversarial_chat = attack_adversarial_config.target
-
         # Load context description instructions
         instructions_path = context_description_instructions_path or self.DEFAULT_CONTEXT_DESCRIPTION_PATH
         self._load_context_description_instructions(instructions_path=instructions_path)
 
         # Set affirmative response
         self._affirmative_response = affirmative_response or self.DEFAULT_AFFIRMATIVE_RESPONSE
+
+    def get_attack_adversarial_config(self) -> AttackAdversarialConfig | None:
+        """
+        Get the effective adversarial configuration used by this strategy.
+
+        Returns:
+            AttackAdversarialConfig | None: The adversarial target used for rephrasing. The
+                system/seed prompts are not used (context compliance uses its own instruction files).
+        """
+        adversarial_chat = getattr(self, "_adversarial_chat", None)
+        if adversarial_chat is None:
+            return None
+        return AttackAdversarialConfig(target=adversarial_chat, seed_prompt=None)
 
     def _load_context_description_instructions(self, *, instructions_path: Path) -> None:
         """
@@ -234,7 +249,6 @@ class ContextComplianceAttack(PromptSendingAttack):
         response = await self._prompt_normalizer.send_prompt_async(
             message=message,
             target=self._adversarial_chat,
-            attack_identifier=self.get_identifier(),
             labels=context.memory_labels,
         )
 
@@ -261,7 +275,6 @@ class ContextComplianceAttack(PromptSendingAttack):
         response = await self._prompt_normalizer.send_prompt_async(
             message=message,
             target=self._adversarial_chat,
-            attack_identifier=self.get_identifier(),
             labels=context.memory_labels,
         )
 
@@ -286,7 +299,6 @@ class ContextComplianceAttack(PromptSendingAttack):
         response = await self._prompt_normalizer.send_prompt_async(
             message=message,
             target=self._adversarial_chat,
-            attack_identifier=self.get_identifier(),
             labels=context.memory_labels,
         )
 

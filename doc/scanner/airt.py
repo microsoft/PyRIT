@@ -50,7 +50,7 @@ objective_target = OpenAIChatTarget()
 # **Available strategies:** ALL, DEFAULT, SINGLE_TURN, MULTI_TURN, role_play, many_shot, tap
 
 # %%
-from pyrit.scenario.scenarios.airt import RapidResponse, RapidResponseStrategy
+from pyrit.scenario.airt import RapidResponse, RapidResponseStrategy
 
 dataset_config = DatasetConfiguration(dataset_names=["airt_hate"], max_dataset_size=1)
 
@@ -99,7 +99,7 @@ await output_scenario_async(scenario_result)
 # meaningful because psychosocial harms emerge through multi-turn escalation.
 
 # %%
-from pyrit.scenario.scenarios.airt import Psychosocial, PsychosocialStrategy
+from pyrit.scenario.airt import Psychosocial, PsychosocialStrategy
 
 dataset_config = DatasetConfiguration(dataset_names=["airt_imminent_crisis"], max_dataset_size=1)
 
@@ -132,7 +132,7 @@ await output_scenario_async(scenario_result)
 # **Available strategies:** ALL, MULTI_TURN, red_teaming
 
 # %%
-from pyrit.scenario.scenarios.airt import Cyber, CyberStrategy
+from pyrit.scenario.airt import Cyber, CyberStrategy
 
 dataset_config = DatasetConfiguration(dataset_names=["airt_malware"], max_dataset_size=1)
 
@@ -165,7 +165,7 @@ await output_scenario_async(scenario_result)
 # **Available strategies:** ALL, SIMPLE, COMPLEX, PromptSending, ManyShot, SkeletonKey, RolePlay
 
 # %%
-from pyrit.scenario.scenarios.airt import Jailbreak, JailbreakStrategy
+from pyrit.scenario.airt import Jailbreak, JailbreakStrategy
 
 dataset_config = DatasetConfiguration(dataset_names=["airt_harms"], max_dataset_size=1)
 
@@ -213,7 +213,7 @@ await output_scenario_async(scenario_result)
 # no built-in threshold — the scorer returns a raw float for you to interpret per your use case.
 
 # %%
-from pyrit.scenario.scenarios.airt import Leakage, LeakageStrategy
+from pyrit.scenario.airt import Leakage, LeakageStrategy
 
 dataset_config = DatasetConfiguration(dataset_names=["airt_leakage"], max_dataset_size=1)
 
@@ -245,7 +245,7 @@ await output_scenario_async(scenario_result)
 # **Available strategies:** ALL, SINGLE_TURN, MULTI_TURN, ContextCompliance, RolePlay, PersuasiveRedTeamingAttack
 
 # %%
-from pyrit.scenario.scenarios.airt import Scam, ScamStrategy
+from pyrit.scenario.airt import Scam, ScamStrategy
 
 dataset_config = DatasetConfiguration(dataset_names=["airt_scams"], max_dataset_size=1)
 

@@ -2,6 +2,7 @@
 # Licensed under the MIT license.
 
 import os
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -11,7 +12,7 @@ from pyrit.prompt_converter import AzureSpeechTextToAudioConverter
 
 def is_speechsdk_installed():
     try:
-        import azure.cognitiveservices.speech  # noqa: F401
+        import azure.cognitiveservices.speech  # type: ignore[ty:unresolved-import]  # noqa: F401
 
         return True
     except ModuleNotFoundError:
@@ -33,7 +34,7 @@ class TestAzureSpeechTextToAudioConverter:
         MockSpeechSynthesizer,  # noqa: N803
         sqlite_instance,
     ):
-        import azure.cognitiveservices.speech as speechsdk
+        import azure.cognitiveservices.speech as speechsdk  # type: ignore[ty:unresolved-import]
 
         mock_synthesizer = MagicMock()
         mock_result = MagicMock()
@@ -58,7 +59,7 @@ class TestAzureSpeechTextToAudioConverter:
             file_path = converted_output.output_text
             assert file_path
             assert os.path.exists(file_path)
-            data = open(file_path, "rb").read()  # noqa: SIM115
+            data = Path(file_path).read_bytes()
             assert data == b"dummy_audio_data"
             os.remove(file_path)
             MockSpeechConfig.assert_called_once_with(subscription="dummy_value", region="dummy_value")
@@ -130,14 +131,6 @@ class TestAzureSpeechTextToAudioConverter:
 
         with pytest.raises(ValueError, match="AZURE_SPEECH_RESOURCE_ID"):
             AzureSpeechTextToAudioConverter(azure_speech_region="test_region", azure_speech_key=my_provider)
-
-    def test_use_entra_auth_emits_deprecation_warning(self):
-        with pytest.warns(DeprecationWarning, match="use_entra_auth.*deprecated"):
-            AzureSpeechTextToAudioConverter(
-                azure_speech_region="test_region",
-                azure_speech_resource_id="test_resource_id",
-                use_entra_auth=True,
-            )
 
     @patch("azure.cognitiveservices.speech.SpeechConfig")
     @patch(

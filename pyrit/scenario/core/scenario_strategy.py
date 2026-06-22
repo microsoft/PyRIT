@@ -129,7 +129,7 @@ class ScenarioStrategy(Enum, metaclass=_DeprecatedEnumMeta):
         to all non-aggregate strategies.
 
         Returns:
-            Set[str]: Set of tags that represent aggregates.
+            set[str]: Set of tags that represent aggregates.
         """
         return {"all"}
 
@@ -145,7 +145,7 @@ class ScenarioStrategy(Enum, metaclass=_DeprecatedEnumMeta):
             tag (str): The tag to filter by (e.g., "easy", "converter", "multi_turn").
 
         Returns:
-            Set[T]: Set of strategies that include the specified tag, excluding
+            set[T]: Set of strategies that include the specified tag, excluding
                     any aggregate markers.
         """
         aggregate_tags = cls.get_aggregate_tags()
@@ -189,32 +189,6 @@ class ScenarioStrategy(Enum, metaclass=_DeprecatedEnumMeta):
         """
         aggregate_tags = cls.get_aggregate_tags()
         return [s for s in cls if s.value in aggregate_tags]
-
-    @classmethod
-    def normalize_strategies(cls: type[T], strategies: set[T]) -> set[T]:
-        """
-        Normalize a set of attack strategies by expanding aggregate tags.
-
-        This method processes a set of strategies and expands any aggregate tags
-        (like EASY, MODERATE, DIFFICULT or FAST, MEDIUM) into their constituent concrete strategies.
-        The aggregate tag markers themselves are removed from the result.
-
-        The special "all" tag is automatically supported and expands to all non-aggregate strategies.
-
-        Args:
-            strategies (Set[T]): The initial set of attack strategies, which may include
-                                aggregate tags.
-
-        Returns:
-            Set[T]: The normalized set of concrete attack strategies with aggregate tags
-                   expanded and removed.
-        """
-        print_deprecation_message(
-            old_item="ScenarioStrategy.normalize_strategies",
-            new_item="ScenarioStrategy.expand",
-            removed_in="0.15.0",
-        )
-        return set(cls.expand(strategies))
 
     @classmethod
     def expand(cls: type[T], strategies: set[T]) -> list[T]:

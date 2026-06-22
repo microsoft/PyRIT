@@ -10,7 +10,7 @@ import math
 import random
 import time
 from copy import deepcopy
-from typing import Any, Optional
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -132,7 +132,7 @@ class AttackPrompt:
         target: str,
         tokenizer: Any,
         control_init: str = "! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! !",
-        test_prefixes: Optional[list[str]] = None,
+        test_prefixes: list[str] | None = None,
     ) -> None:
         """
         Initializes the AttackPrompt object with the provided parameters.
@@ -417,16 +417,16 @@ class PromptManager:
         targets: list[str],
         tokenizer: Any,
         control_init: str = "! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! !",
-        test_prefixes: Optional[list[str]] = None,
-        managers: Optional[dict[str, type[AttackPrompt]]] = None,
+        test_prefixes: list[str] | None = None,
+        managers: dict[str, type[AttackPrompt]] | None = None,
     ) -> None:
         """
         Initializes the PromptManager object with the provided parameters.
 
         Args:
-            goals (List[str]):
+            goals (list[str]):
                 The list of intended goals of the attack
-            targets (List[str]):
+            targets (list[str]):
                 The list of targets of the attack
             tokenizer (Transformer Tokenizer):
                 The tokenizer used to convert text into tokens. Must have a chat template configured.
@@ -539,22 +539,22 @@ class MultiPromptAttack:
         targets: list[str],
         workers: list[ModelWorker],
         control_init: str = "! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! !",
-        test_prefixes: Optional[list[str]] = None,
-        logfile: Optional[str] = None,
-        managers: Optional[dict[str, Any]] = None,
-        test_goals: Optional[list[str]] = None,
-        test_targets: Optional[list[str]] = None,
-        test_workers: Optional[list[ModelWorker]] = None,
+        test_prefixes: list[str] | None = None,
+        logfile: str | None = None,
+        managers: dict[str, Any] | None = None,
+        test_goals: list[str] | None = None,
+        test_targets: list[str] | None = None,
+        test_workers: list[ModelWorker] | None = None,
     ) -> None:
         """
         Initializes the MultiPromptAttack object with the provided parameters.
 
         Args:
-            goals (List[str]):
+            goals (list[str]):
                 The list of intended goals of the attack
-            targets (List[str]):
+            targets (list[str]):
                 The list of targets of the attack
-            workers (List[Worker]):
+            workers (list[Worker]):
                 The list of workers used in the attack
             control_init (str, optional):
                 A string used to control the attack (default is "! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! !")
@@ -619,7 +619,7 @@ class MultiPromptAttack:
         worker_index: int,
         control_cand: torch.Tensor,
         filter_cand: bool = True,
-        curr_control: Optional[str] = None,
+        curr_control: str | None = None,
     ) -> list[str]:
         cands, count = [], 0
         worker = self.workers[worker_index]
@@ -656,8 +656,8 @@ class MultiPromptAttack:
         topk: int = 256,
         temp: float = 1.0,
         allow_non_ascii: bool = True,
-        target_weight: Optional[float] = None,
-        control_weight: Optional[float] = None,
+        target_weight: float | None = None,
+        control_weight: float | None = None,
         anneal: bool = True,
         anneal_from: int = 0,
         prev_loss: float = np.inf,
@@ -873,23 +873,23 @@ class ProgressiveMultiPromptAttack:
         progressive_goals: bool = True,
         progressive_models: bool = True,
         control_init: str = "! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! !",
-        test_prefixes: Optional[list[str]] = None,
-        logfile: Optional[str] = None,
-        managers: Optional[dict[str, Any]] = None,
-        test_goals: Optional[list[str]] = None,
-        test_targets: Optional[list[str]] = None,
-        test_workers: Optional[list[ModelWorker]] = None,
+        test_prefixes: list[str] | None = None,
+        logfile: str | None = None,
+        managers: dict[str, Any] | None = None,
+        test_goals: list[str] | None = None,
+        test_targets: list[str] | None = None,
+        test_workers: list[ModelWorker] | None = None,
         **kwargs: Any,
     ) -> None:
         """
         Initializes the ProgressiveMultiPromptAttack object with the provided parameters.
 
         Args:
-            goals (List[str]):
+            goals (list[str]):
                 The list of intended goals of the attack
-            targets (List[str]):
+            targets (list[str]):
                 The list of targets of the attack
-            workers (List[Worker]):
+            workers (list[Worker]):
                 The list of workers used in the attack
             progressive_goals (bool, optional):
                 If true, goals progress over time (default is True)
@@ -897,17 +897,17 @@ class ProgressiveMultiPromptAttack:
                 If true, models progress over time (default is True)
             control_init (str, optional):
                 A string used to control the attack (default is "! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! !")
-            test_prefixes (List[str], optional):
+            test_prefixes (list[str], optional):
                 A list of prefixes to test the attack (default is _DEFAULT_TEST_PREFIXES).
             logfile (str, optional):
                 A file to which logs will be written
             managers (dict, optional):
                 A dictionary of manager objects, required to create the prompts.
-            test_goals (List[str], optional):
+            test_goals (list[str], optional):
                 The list of test goals of the attack
-            test_targets (List[str], optional):
+            test_targets (list[str], optional):
                 The list of test targets of the attack
-            test_workers (List[Worker], optional):
+            test_workers (list[Worker], optional):
                 The list of test workers used in the attack
         """
         if test_prefixes is None:
@@ -986,8 +986,8 @@ class ProgressiveMultiPromptAttack:
         topk: int = 256,
         temp: float = 1.0,
         allow_non_ascii: bool = False,
-        target_weight: Optional[float] = None,
-        control_weight: Optional[float] = None,
+        target_weight: float | None = None,
+        control_weight: float | None = None,
         anneal: bool = True,
         test_steps: int = 50,
         incr_control: bool = True,
@@ -1119,12 +1119,12 @@ class IndividualPromptAttack:
         targets: list[str],
         workers: list[ModelWorker],
         control_init: str = "! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! !",
-        test_prefixes: Optional[list[str]] = None,
-        logfile: Optional[str] = None,
-        managers: Optional[dict[str, Any]] = None,
-        test_goals: Optional[list[str]] = None,
-        test_targets: Optional[list[str]] = None,
-        test_workers: Optional[list[ModelWorker]] = None,
+        test_prefixes: list[str] | None = None,
+        logfile: str | None = None,
+        managers: dict[str, Any] | None = None,
+        test_goals: list[str] | None = None,
+        test_targets: list[str] | None = None,
+        test_workers: list[ModelWorker] | None = None,
         **kwargs: Any,
     ) -> None:
         """
@@ -1225,8 +1225,8 @@ class IndividualPromptAttack:
         topk: int = 256,
         temp: float = 1.0,
         allow_non_ascii: bool = True,
-        target_weight: Optional[float] = None,
-        control_weight: Optional[float] = None,
+        target_weight: float | None = None,
+        control_weight: float | None = None,
         anneal: bool = True,
         test_steps: int = 50,
         incr_control: bool = True,
@@ -1331,12 +1331,12 @@ class EvaluateAttack:
         targets: list[str],
         workers: list[ModelWorker],
         control_init: str = "! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! !",
-        test_prefixes: Optional[list[str]] = None,
-        logfile: Optional[str] = None,
-        managers: Optional[dict[str, Any]] = None,
-        test_goals: Optional[list[str]] = None,
-        test_targets: Optional[list[str]] = None,
-        test_workers: Optional[list[ModelWorker]] = None,
+        test_prefixes: list[str] | None = None,
+        logfile: str | None = None,
+        managers: dict[str, Any] | None = None,
+        test_goals: list[str] | None = None,
+        test_targets: list[str] | None = None,
+        test_workers: list[ModelWorker] | None = None,
         **kwargs: Any,
     ) -> None:
         """
@@ -1549,7 +1549,7 @@ class ModelWorker:
         self.tokenizer = tokenizer
         self.tasks: mp.JoinableQueue[Any] = mp.JoinableQueue()
         self.results: mp.JoinableQueue[Any] = mp.JoinableQueue()
-        self.process: Optional[mp.Process] = None
+        self.process: mp.Process | None = None
 
     @staticmethod
     def run(model: Any, tasks: mp.JoinableQueue[Any], results: mp.JoinableQueue[Any]) -> None:

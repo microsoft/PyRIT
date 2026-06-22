@@ -1,4 +1,4 @@
-import { useState, useMemo, forwardRef } from 'react'
+import React, { useState, useMemo, forwardRef } from 'react'
 import {
   Table,
   TableHeader,
@@ -26,6 +26,8 @@ import {
   MathFormulaRegular,
   WrenchRegular,
   ArrowHookUpLeftRegular,
+  ChevronRightRegular,
+  ChevronDownRegular,
 } from '@fluentui/react-icons'
 import type { TargetInstance } from '../../types'
 import { useTargetTableStyles } from './TargetTable.styles'
@@ -191,9 +193,72 @@ function CapabilityCells({ target }: { target: TargetInstance }) {
   )
 }
 
+/** Render expandable sub-rows for a RoundRobinTarget's inner targets.
+ *  Reused by both the active target summary and the main table. */
+function InnerTargetRows({ parentKey, innerTargets, weights }: {
+  parentKey: string
+  innerTargets: TargetInstance[]
+  weights: number[] | undefined
+}) {
+  const styles = useTargetTableStyles()
+  return (
+    <>
+      {innerTargets.map((inner, idx) => (
+        <TableRow key={`${parentKey}-inner-${idx}`} className={styles.innerTargetRow}>
+          <TableCell>
+            <Text size={200} style={{ paddingLeft: '28px' }}>#{idx + 1}</Text>
+          </TableCell>
+          <TableCell>
+            <Text size={200}>{inner.target_type}</Text>
+          </TableCell>
+          <TableCell>
+            <ModelCell target={inner} />
+          </TableCell>
+          <TableCell>
+            <Text size={200} className={styles.endpointCell} title={inner.endpoint || undefined}>
+              {inner.endpoint || '—'}
+            </Text>
+          </TableCell>
+          <TableCell className={styles.inputsModalityCell}>
+            <ModalityCell modalities={inner.capabilities?.supported_input_modalities} />
+          </TableCell>
+          <TableCell className={styles.modalityCell}>
+            <ModalityCell modalities={inner.capabilities?.supported_output_modalities} />
+          </TableCell>
+          <CapabilityCells target={inner} />
+          <TableCell>
+            <Text size={200} className={styles.paramsCell}>
+              {weights?.[idx] != null ? `weight: ${weights[idx]}` : '—'}
+            </Text>
+          </TableCell>
+        </TableRow>
+      ))}
+    </>
+  )
+}
+
 export default function TargetTable({ targets, activeTarget, onSetActiveTarget }: TargetTableProps) {
   const styles = useTargetTableStyles()
   const [typeFilter, setTypeFilter] = useState('')
+  // Tracks which RoundRobinTarget rows are expanded to show inner targets.
+  // We use a Set of target_registry_name strings — when a name is in the set,
+  // that row's sub-rows are visible.
+  const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set())
+
+  const toggleExpanded = (registryName: string) => {
+    setExpandedRows((prev) => {
+      const next = new Set(prev)
+      if (next.has(registryName)) {
+        next.delete(registryName)
+      } else {
+        next.add(registryName)
+      }
+      return next
+    })
+  }
+
+  const hasInnerTargets = (target: TargetInstance): boolean =>
+    (target.inner_targets ?? []).length > 0
 
   const targetTypes = useMemo(
     () => Array.from(new Set(targets.map(t => t.target_type))).sort(),
@@ -218,7 +283,18 @@ export default function TargetTable({ targets, activeTarget, onSetActiveTarget }
                 <Badge appearance="filled" color="brand" icon={<CheckmarkRegular />}>Active</Badge>
               </TableCell>
               <TableCell style={{ width: '140px' }}>
-                <Text size={200}>{activeTarget.target_type}</Text>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                  {hasInnerTargets(activeTarget) && (
+                    <Button
+                      appearance="subtle"
+                      size="small"
+                      icon={expandedRows.has(activeTarget.target_registry_name) ? <ChevronDownRegular /> : <ChevronRightRegular />}
+                      onClick={() => toggleExpanded(activeTarget.target_registry_name)}
+                      aria-label={expandedRows.has(activeTarget.target_registry_name) ? 'Collapse inner targets' : 'Expand inner targets'}
+                    />
+                  )}
+                  <Text size={200}>{activeTarget.target_type}</Text>
+                </div>
               </TableCell>
               <TableCell style={{ width: '160px' }}>
                 <ModelCell target={activeTarget} />
@@ -241,6 +317,14 @@ export default function TargetTable({ targets, activeTarget, onSetActiveTarget }
                 </Text>
               </TableCell>
             </TableRow>
+            {/* Expandable sub-rows for the active target summary */}
+            {expandedRows.has(activeTarget.target_registry_name) && activeTarget.inner_targets && (
+              <InnerTargetRows
+                parentKey="active"
+                innerTargets={activeTarget.inner_targets}
+                weights={activeTarget.target_specific_params?.weights as number[] | undefined}
+              />
+            )}
           </TableBody>
         </Table>
       )}
@@ -305,51 +389,80 @@ export default function TargetTable({ targets, activeTarget, onSetActiveTarget }
           </TableRow>
         </TableHeader>
         <TableBody>
-          {filteredTargets.map((target) => (
-            <TableRow
-              key={target.target_registry_name}
-              className={isActive(target) ? styles.activeRow : undefined}
-            >
-              <TableCell>
-                {isActive(target) ? (
-                  <Badge appearance="filled" color="brand" icon={<CheckmarkRegular />}>
-                    Active
-                  </Badge>
-                ) : (
-                  <Button
-                    appearance="primary"
-                    size="small"
-                    onClick={() => onSetActiveTarget(target)}
-                  >
-                    Set Active
-                  </Button>
+          {filteredTargets.map((target) => {
+            const expanded = expandedRows.has(target.target_registry_name)
+            const expandable = hasInnerTargets(target)
+            // Extract weights from target_specific_params so we can show per-inner-target weight
+            const weights = target.target_specific_params?.weights as number[] | undefined
+
+            return (
+              <React.Fragment key={target.target_registry_name}>
+                <TableRow
+                  className={isActive(target) ? styles.activeRow : undefined}
+                >
+                  <TableCell>
+                    {isActive(target) ? (
+                      <Badge appearance="filled" color="brand" icon={<CheckmarkRegular />}>
+                        Active
+                      </Badge>
+                    ) : (
+                      <Button
+                        appearance="primary"
+                        size="small"
+                        onClick={() => onSetActiveTarget(target)}
+                      >
+                        Set Active
+                      </Button>
+                    )}
+                  </TableCell>
+                  <TableCell>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                      {/* Chevron in the Type column keeps the action column aligned */}
+                      {expandable && (
+                        <Button
+                          appearance="subtle"
+                          size="small"
+                          icon={expanded ? <ChevronDownRegular /> : <ChevronRightRegular />}
+                          onClick={() => toggleExpanded(target.target_registry_name)}
+                          aria-label={expanded ? 'Collapse inner targets' : 'Expand inner targets'}
+                        />
+                      )}
+                      <Text size={200}>{target.target_type}</Text>
+                    </div>
+                  </TableCell>
+                  <TableCell>
+                    <ModelCell target={target} />
+                  </TableCell>
+                  <TableCell>
+                    <Text size={200} className={styles.endpointCell} title={target.endpoint || undefined}>
+                      {target.endpoint || '—'}
+                    </Text>
+                  </TableCell>
+                  <TableCell className={styles.inputsModalityCell}>
+                    <ModalityCell modalities={target.capabilities?.supported_input_modalities} />
+                  </TableCell>
+                  <TableCell className={styles.modalityCell}>
+                    <ModalityCell modalities={target.capabilities?.supported_output_modalities} />
+                  </TableCell>
+                  <CapabilityCells target={target} />
+                  <TableCell>
+                    <Text size={200} className={styles.paramsCell}>
+                      {formatParams(target.target_specific_params) || '—'}
+                    </Text>
+                  </TableCell>
+                </TableRow>
+
+                {/* Sub-rows for each inner target, visible when the parent row is expanded */}
+                {expanded && target.inner_targets && (
+                  <InnerTargetRows
+                    parentKey={target.target_registry_name}
+                    innerTargets={target.inner_targets}
+                    weights={weights}
+                  />
                 )}
-              </TableCell>
-              <TableCell>
-                <Text size={200}>{target.target_type}</Text>
-              </TableCell>
-              <TableCell>
-                <ModelCell target={target} />
-              </TableCell>
-              <TableCell>
-                <Text size={200} className={styles.endpointCell} title={target.endpoint || undefined}>
-                  {target.endpoint || '—'}
-                </Text>
-              </TableCell>
-              <TableCell className={styles.inputsModalityCell}>
-                <ModalityCell modalities={target.capabilities?.supported_input_modalities} />
-              </TableCell>
-              <TableCell className={styles.modalityCell}>
-                <ModalityCell modalities={target.capabilities?.supported_output_modalities} />
-              </TableCell>
-              <CapabilityCells target={target} />
-              <TableCell>
-                <Text size={200} className={styles.paramsCell}>
-                  {formatParams(target.target_specific_params) || '—'}
-                </Text>
-              </TableCell>
-            </TableRow>
-          ))}
+              </React.Fragment>
+            )
+          })}
         </TableBody>
       </Table>
     </div>

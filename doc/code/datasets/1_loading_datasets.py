@@ -18,6 +18,7 @@
 # The following command lists all built-in datasets available in PyRIT. Some datasets are stored locally, while others are fetched remotely from sources like HuggingFace.
 #
 # Many of these datasets come from published research, including
+# 0DIN [@odin2024],
 # Aegis [@ghosh2025aegis],
 # Agent Threat Rules [@atr2026],
 # ALERT [@tedeschi2024alert],
@@ -37,6 +38,7 @@
 # JailbreakV-28K [@luo2024jailbreakv],
 # LLM-LAT [@sheshadri2024lat],
 # MedSafetyBench [@han2024medsafetybench],
+# MM-SafetyBench [@liu2024mmsafetybench],
 # Moral Integrity Corpus [@ziems2022mic],
 # MOSSBench [@li2024mossbench],
 # Multilingual Alignment Prism [@aakanksha2024multilingual],
@@ -54,7 +56,7 @@
 # VLSU [@palaskar2025vlsu],
 # VLGuard [@zong2024vlguard],
 # XSTest [@rottger2023xstest],
-# AILuminate [@vidgen2024ailuminate],
+# AILuminate [@ghosh2025ailuminate],
 # Transphobia Awareness [@scheuerman2025transphobia],
 # Red Team Social Bias [@vantaylor2024socialbias],
 # and PromptIntel [@roccia2024promptintel].

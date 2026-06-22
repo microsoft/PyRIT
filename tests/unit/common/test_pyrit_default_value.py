@@ -1,7 +1,6 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from typing import Optional
 
 import pytest
 
@@ -28,7 +27,7 @@ class TestApplyDefaultsDecorator:
 
         class TestClass:
             @apply_defaults
-            def __init__(self, *, param1: Optional[str] = None, param2: Optional[int] = None) -> None:
+            def __init__(self, *, param1: str | None = None, param2: int | None = None) -> None:
                 self.param1 = param1
                 self.param2 = param2
 
@@ -41,7 +40,7 @@ class TestApplyDefaultsDecorator:
 
         class TestClass:
             @apply_defaults
-            def __init__(self, *, param1: Optional[str] = None) -> None:
+            def __init__(self, *, param1: str | None = None) -> None:
                 self.param1 = param1
 
         set_default_value(class_type=TestClass, parameter_name="param1", value="default_value")
@@ -55,7 +54,7 @@ class TestApplyDefaultsDecorator:
         class TestClass:
             @apply_defaults
             def __init__(
-                self, *, param1: Optional[str] = None, param2: Optional[int] = None, param3: Optional[float] = None
+                self, *, param1: str | None = None, param2: int | None = None, param3: float | None = None
             ) -> None:
                 self.param1 = param1
                 self.param2 = param2
@@ -75,7 +74,7 @@ class TestApplyDefaultsDecorator:
 
         class TestClass:
             @apply_defaults
-            def __init__(self, *, param1: Optional[str] = None, param2: Optional[int] = None) -> None:
+            def __init__(self, *, param1: str | None = None, param2: int | None = None) -> None:
                 self.param1 = param1
                 self.param2 = param2
 
@@ -92,7 +91,7 @@ class TestApplyDefaultsDecorator:
         class TestClass:
             @apply_defaults
             def __init__(
-                self, *, param1: Optional[str] = None, param2: Optional[int] = None, param3: Optional[float] = None
+                self, *, param1: str | None = None, param2: int | None = None, param3: float | None = None
             ) -> None:
                 self.param1 = param1
                 self.param2 = param2
@@ -115,9 +114,9 @@ class TestApplyDefaultsDecorator:
             def __init__(
                 self,
                 *,
-                param_int: Optional[int] = None,
-                param_bool: Optional[bool] = None,
-                param_str: Optional[str] = None,
+                param_int: int | None = None,
+                param_bool: bool | None = None,
+                param_str: str | None = None,
             ) -> None:
                 self.param_int = param_int
                 self.param_bool = param_bool
@@ -145,13 +144,13 @@ class TestInheritance:
 
         class ParentClass:
             @apply_defaults
-            def __init__(self, *, param1: Optional[str] = None, param2: Optional[int] = None) -> None:
+            def __init__(self, *, param1: str | None = None, param2: int | None = None) -> None:
                 self.param1 = param1
                 self.param2 = param2
 
         class ChildClass(ParentClass):
             @apply_defaults
-            def __init__(self, *, param1: Optional[str] = None, param2: Optional[int] = None) -> None:
+            def __init__(self, *, param1: str | None = None, param2: int | None = None) -> None:
                 super().__init__(param1=param1, param2=param2)
 
         set_default_value(class_type=ParentClass, parameter_name="param1", value="parent_value")
@@ -166,13 +165,13 @@ class TestInheritance:
 
         class ParentClass:
             @apply_defaults
-            def __init__(self, *, param1: Optional[str] = None, param2: Optional[int] = None) -> None:
+            def __init__(self, *, param1: str | None = None, param2: int | None = None) -> None:
                 self.param1 = param1
                 self.param2 = param2
 
         class ChildClass(ParentClass):
             @apply_defaults
-            def __init__(self, *, param1: Optional[str] = None, param2: Optional[int] = None) -> None:
+            def __init__(self, *, param1: str | None = None, param2: int | None = None) -> None:
                 super().__init__(param1=param1, param2=param2)
 
         set_default_value(class_type=ParentClass, parameter_name="param1", value="parent_value")
@@ -189,19 +188,19 @@ class TestInheritance:
 
         class GrandParent:
             @apply_defaults
-            def __init__(self, *, param1: Optional[str] = None) -> None:
+            def __init__(self, *, param1: str | None = None) -> None:
                 self.param1 = param1
 
         class Parent(GrandParent):
             @apply_defaults
-            def __init__(self, *, param1: Optional[str] = None, param2: Optional[int] = None) -> None:
+            def __init__(self, *, param1: str | None = None, param2: int | None = None) -> None:
                 super().__init__(param1=param1)
                 self.param2 = param2
 
         class Child(Parent):
             @apply_defaults
             def __init__(
-                self, *, param1: Optional[str] = None, param2: Optional[int] = None, param3: Optional[float] = None
+                self, *, param1: str | None = None, param2: int | None = None, param3: float | None = None
             ) -> None:
                 super().__init__(param1=param1, param2=param2)
                 self.param3 = param3
@@ -220,12 +219,12 @@ class TestInheritance:
 
         class ParentClass:
             @apply_defaults
-            def __init__(self, *, param1: Optional[str] = None) -> None:
+            def __init__(self, *, param1: str | None = None) -> None:
                 self.param1 = param1
 
         class ChildClass(ParentClass):
             @apply_defaults
-            def __init__(self, *, param1: Optional[str] = None) -> None:
+            def __init__(self, *, param1: str | None = None) -> None:
                 super().__init__(param1=param1)
 
         set_default_value(class_type=ChildClass, parameter_name="param1", value="child_value")
@@ -354,7 +353,7 @@ class TestSetDefaultValue:
 
         class TestClass:
             @apply_defaults
-            def __init__(self, *, param1: Optional[str] = None) -> None:
+            def __init__(self, *, param1: str | None = None) -> None:
                 self.param1 = param1
 
         set_default_value(class_type=TestClass, parameter_name="param1", value="stored_value")
@@ -367,7 +366,7 @@ class TestSetDefaultValue:
 
         class TestClass:
             @apply_defaults
-            def __init__(self, *, param1: Optional[str] = None) -> None:
+            def __init__(self, *, param1: str | None = None) -> None:
                 self.param1 = param1
 
         set_default_value(class_type=TestClass, parameter_name="param1", value="first_value")
@@ -392,9 +391,9 @@ class TestComplexScenarios:
             def __init__(
                 self,
                 *,
-                temperature: Optional[float] = None,
-                top_p: Optional[float] = None,
-                max_tokens: Optional[int] = None,
+                temperature: float | None = None,
+                top_p: float | None = None,
+                max_tokens: int | None = None,
             ) -> None:
                 self.temperature = temperature
                 self.top_p = top_p
@@ -405,9 +404,9 @@ class TestComplexScenarios:
             def __init__(
                 self,
                 *,
-                temperature: Optional[float] = None,
-                top_p: Optional[float] = None,
-                max_tokens: Optional[int] = None,
+                temperature: float | None = None,
+                top_p: float | None = None,
+                max_tokens: int | None = None,
             ) -> None:
                 super().__init__(temperature=temperature, top_p=top_p, max_tokens=max_tokens)
 
@@ -441,12 +440,12 @@ class TestComplexScenarios:
 
         class ClassA:
             @apply_defaults
-            def __init__(self, *, param: Optional[str] = None) -> None:
+            def __init__(self, *, param: str | None = None) -> None:
                 self.param = param
 
         class ClassB:
             @apply_defaults
-            def __init__(self, *, param: Optional[str] = None) -> None:
+            def __init__(self, *, param: str | None = None) -> None:
                 self.param = param
 
         set_default_value(class_type=ClassA, parameter_name="param", value="value_a")
@@ -471,7 +470,7 @@ class TestResetDefaultValues:
 
         class TestClass:
             @apply_defaults
-            def __init__(self, *, param1: Optional[str] = None, param2: Optional[int] = None) -> None:
+            def __init__(self, *, param1: str | None = None, param2: int | None = None) -> None:
                 self.param1 = param1
                 self.param2 = param2
 
@@ -497,12 +496,12 @@ class TestResetDefaultValues:
 
         class ClassA:
             @apply_defaults
-            def __init__(self, *, param: Optional[str] = None) -> None:
+            def __init__(self, *, param: str | None = None) -> None:
                 self.param = param
 
         class ClassB:
             @apply_defaults
-            def __init__(self, *, param: Optional[int] = None) -> None:
+            def __init__(self, *, param: int | None = None) -> None:
                 self.param = param
 
         # Set defaults for multiple classes
@@ -523,7 +522,7 @@ class TestResetDefaultValues:
 
         class TestClass:
             @apply_defaults
-            def __init__(self, *, param: Optional[str] = None) -> None:
+            def __init__(self, *, param: str | None = None) -> None:
                 self.param = param
 
         # Set initial default
@@ -544,7 +543,7 @@ class TestResetDefaultValues:
 
         class TestClass:
             @apply_defaults
-            def __init__(self, *, param: Optional[str] = None) -> None:
+            def __init__(self, *, param: str | None = None) -> None:
                 self.param = param
 
         # Reset when no defaults are set
@@ -562,12 +561,12 @@ class TestResetDefaultValues:
 
         class ParentClass:
             @apply_defaults
-            def __init__(self, *, param: Optional[str] = None) -> None:
+            def __init__(self, *, param: str | None = None) -> None:
                 self.param = param
 
         class ChildClass(ParentClass):
             @apply_defaults
-            def __init__(self, *, param: Optional[str] = None) -> None:
+            def __init__(self, *, param: str | None = None) -> None:
                 super().__init__(param=param)
 
         # Set defaults for both parent and child
@@ -588,7 +587,7 @@ class TestResetDefaultValues:
 
         class TestClass:
             @apply_defaults
-            def __init__(self, *, param1: Optional[str] = None, param2: Optional[str] = None) -> None:
+            def __init__(self, *, param1: str | None = None, param2: str | None = None) -> None:
                 self.param1 = param1
                 self.param2 = param2
 
@@ -761,7 +760,7 @@ class TestRequiredValue:
                 self,
                 *,
                 required_param: str = REQUIRED_VALUE,  # type: ignore[assignment]
-                optional_param: Optional[str] = None,
+                optional_param: str | None = None,
             ) -> None:
                 self.required_param = required_param
                 self.optional_param = optional_param
@@ -847,7 +846,7 @@ class TestRequiredValue:
 
         class TestClass1:
             @apply_defaults
-            def __init__(self, *, param: Optional[str] = None) -> None:
+            def __init__(self, *, param: str | None = None) -> None:
                 self.param = param
 
         class TestClass2:

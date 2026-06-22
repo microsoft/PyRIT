@@ -10,7 +10,7 @@ Targets are registered explicitly via initializers as pre-configured instances.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Optional, Union
+from typing import TYPE_CHECKING
 
 from pyrit.registry.object_registries.retrievable_instance_registry import (
     RetrievableInstanceRegistry,
@@ -38,8 +38,8 @@ class TargetRegistry(RetrievableInstanceRegistry["PromptTarget"]):
         self,
         target: PromptTarget,
         *,
-        name: Optional[str] = None,
-        tags: Optional[Union[dict[str, str], list[str]]] = None,
+        name: str | None = None,
+        tags: dict[str, str] | list[str] | None = None,
     ) -> None:
         """
         Register a target instance.
@@ -61,7 +61,7 @@ class TargetRegistry(RetrievableInstanceRegistry["PromptTarget"]):
         self.register(target, name=name, tags=tags)
         logger.debug(f"Registered target instance: {name} ({target.__class__.__name__})")
 
-    def get_instance_by_name(self, name: str) -> Optional[PromptTarget]:
+    def get_instance_by_name(self, name: str) -> PromptTarget | None:
         """
         Get a registered target instance by name.
 

@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from pyrit.models.scenario_result import ScenarioResult
+from pyrit.models import ScenarioResult
 from pyrit.output.scenario_result.base import ScenarioResultPrinterBase
 
 

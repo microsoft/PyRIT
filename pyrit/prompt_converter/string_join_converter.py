@@ -1,7 +1,6 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from typing import Optional
 
 from pyrit.models import ComponentIdentifier
 from pyrit.prompt_converter.text_selection_strategy import WordSelectionStrategy
@@ -17,14 +16,14 @@ class StringJoinConverter(WordLevelConverter):
         self,
         *,
         join_value: str = "-",
-        word_selection_strategy: Optional[WordSelectionStrategy] = None,
+        word_selection_strategy: WordSelectionStrategy | None = None,
     ) -> None:
         """
         Initialize the converter with the specified join value and selection strategy.
 
         Args:
             join_value (str): The string used to join characters of each word.
-            word_selection_strategy (Optional[WordSelectionStrategy]): Strategy for selecting which words to convert.
+            word_selection_strategy (WordSelectionStrategy | None): Strategy for selecting which words to convert.
                 If None, all words will be converted.
         """
         super().__init__(word_selection_strategy=word_selection_strategy)

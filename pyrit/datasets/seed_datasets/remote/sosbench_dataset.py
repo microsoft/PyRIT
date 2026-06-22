@@ -3,10 +3,12 @@
 
 import logging
 
+from typing_extensions import override
+
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import Modality, SeedDataset, SeedPrompt
+from pyrit.models import Modality, SeedDataset, SeedPrompt, SeedUnion
 
 logger = logging.getLogger(__name__)
 
@@ -41,10 +43,12 @@ class _SOSBenchDataset(_RemoteDatasetLoader):
         self.source = source
 
     @property
+    @override
     def dataset_name(self) -> str:
         """Return the dataset name."""
         return "sosbench"
 
+    @override
     async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch SOSBench dataset and return as SeedDataset.
@@ -64,7 +68,7 @@ class _SOSBenchDataset(_RemoteDatasetLoader):
             cache=cache,
         )
 
-        seed_prompts = [
+        seed_prompts: list[SeedUnion] = [
             SeedPrompt(
                 value=item["goal"],
                 data_type="text",
@@ -91,6 +95,12 @@ class _SOSBenchDataset(_RemoteDatasetLoader):
                     "Xianyan Chen",
                     "Zhen Xiang",
                     "Radha Poovendran",
+                ],
+                groups=[
+                    "University of Washington",
+                    "University of Georgia",
+                    "Western Washington University",
+                    "University of Illinois Urbana-Champaign",
                 ],
             )
             for item in data

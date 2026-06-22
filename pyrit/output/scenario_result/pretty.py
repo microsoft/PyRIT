@@ -6,8 +6,7 @@ import textwrap
 from colorama import Fore, Style
 
 from pyrit.common.deprecation import print_deprecation_message
-from pyrit.models import AttackOutcome
-from pyrit.models.scenario_result import ScenarioResult
+from pyrit.models import AttackOutcome, ScenarioResult
 from pyrit.output.scenario_result.base import ScenarioResultPrinterBase
 from pyrit.output.scorer.base import ScorerPrinterBase
 from pyrit.output.sink import Sink

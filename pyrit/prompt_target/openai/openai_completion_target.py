@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 import logging
-from typing import Any, Optional
+from typing import Any
 
 from pyrit.exceptions.exception_classes import (
     pyrit_target_retry,
@@ -21,15 +21,22 @@ class OpenAICompletionTarget(OpenAITarget):
 
     _DEFAULT_CONFIGURATION: TargetConfiguration = TargetConfiguration(capabilities=TargetCapabilities())
 
+    # Grandfathered: positional params predate the kwargs-only contract; the
+    # sandwiched ``*args``/``**kwargs`` shape forwards extras to ``OpenAITarget``.
+    # TODO: remove this opt-out and move ``*args`` up to immediately after
+    # ``self`` (or insert ``*,`` and drop ``*args`` entirely) in 0.16.0
+    # (this will be a BREAKING CHANGE for callers passing arguments positionally).
+    _brick_legacy_init = True
+
     def __init__(
         self,
-        max_tokens: Optional[int] = None,
-        temperature: Optional[float] = None,
-        top_p: Optional[float] = None,
-        presence_penalty: Optional[float] = None,
-        frequency_penalty: Optional[float] = None,
-        n: Optional[int] = None,
-        custom_configuration: Optional[TargetConfiguration] = None,
+        max_tokens: int | None = None,
+        temperature: float | None = None,
+        top_p: float | None = None,
+        presence_penalty: float | None = None,
+        frequency_penalty: float | None = None,
+        n: int | None = None,
+        custom_configuration: TargetConfiguration | None = None,
         *args: Any,
         **kwargs: Any,
     ) -> None:
@@ -133,7 +140,7 @@ class OpenAICompletionTarget(OpenAITarget):
         logger.info(f"Sending the following prompt to the prompt target: {message_piece.converted_value}")
 
         # Build request parameters
-        body_parameters = {
+        body_parameters: dict[str, Any] = {
             "model": self._model_name,
             "prompt": message_piece.converted_value,
             "top_p": self._top_p,
@@ -145,7 +152,7 @@ class OpenAICompletionTarget(OpenAITarget):
         }
 
         # Filter out None values
-        request_params = {k: v for k, v in body_parameters.items() if v is not None}
+        request_params: dict[str, Any] = {k: v for k, v in body_parameters.items() if v is not None}
 
         # Use unified error handler - automatically detects Completion and validates
         response = await self._handle_openai_request_async(

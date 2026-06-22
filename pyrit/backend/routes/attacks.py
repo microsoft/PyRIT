@@ -10,7 +10,7 @@ This is the attack-centric API design.
 
 import logging
 from collections.abc import Sequence
-from typing import Literal, Optional
+from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Query, status
 
@@ -39,7 +39,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/attacks", tags=["attacks"])
 
 
-def _parse_labels(label_params: Optional[list[str]]) -> Optional[dict[str, str | Sequence[str]]]:
+def _parse_labels(label_params: list[str] | None) -> dict[str, str | Sequence[str]] | None:
     """
     Parse 'key:value' label query params into a dict grouping values by key.
 
@@ -69,13 +69,13 @@ def _parse_labels(label_params: Optional[list[str]]) -> Optional[dict[str, str |
     response_model=AttackListResponse,
 )
 async def list_attacks(  # pyrit-async-suffix-exempt
-    attack_types: Optional[list[str]] = Query(
+    attack_types: list[str] | None = Query(
         None,
         description="Filter by attack type names. May be specified multiple times to OR-match "
         "across types (e.g. ?attack_types=A&attack_types=B). Case-insensitive. "
         "Omit to return all attacks regardless of type.",
     ),
-    converter_types: Optional[list[str]] = Query(
+    converter_types: list[str] | None = Query(
         None,
         description="Filter by converter type names. May be specified multiple times; "
         "combination semantics are controlled by converter_types_match "
@@ -88,24 +88,24 @@ async def list_attacks(  # pyrit-async-suffix-exempt
         description="How to combine multiple converter_types: 'any' (attack has at least one) "
         "or 'all' (attack has every one). Defaults to 'all'.",
     ),
-    has_converters: Optional[bool] = Query(
+    has_converters: bool | None = Query(
         None,
         description="Filter by converter presence. true = attacks with at least one converter; "
         "false = attacks with no converters. Omit for no filter.",
     ),
-    outcome: Optional[Literal["undetermined", "success", "failure", "error"]] = Query(
+    outcome: Literal["undetermined", "success", "failure", "error"] | None = Query(
         None, description="Filter by outcome"
     ),
-    label: Optional[list[str]] = Query(
+    label: list[str] | None = Query(
         None,
         description="Filter by labels (format: key:value). May be specified multiple times; "
         "OR-matched within a key, AND-matched across keys "
         "(e.g. ?label=op:red&label=op:blue matches op=red OR op=blue).",
     ),
-    min_turns: Optional[int] = Query(None, ge=0, description="Filter by minimum executed turns"),
-    max_turns: Optional[int] = Query(None, ge=0, description="Filter by maximum executed turns"),
+    min_turns: int | None = Query(None, ge=0, description="Filter by minimum executed turns"),
+    max_turns: int | None = Query(None, ge=0, description="Filter by maximum executed turns"),
     limit: int = Query(20, ge=1, le=100, description="Maximum items per page"),
-    cursor: Optional[str] = Query(
+    cursor: str | None = Query(
         None,
         description="Pagination cursor: the attack_result_id of the last item from the previous page. "
         "Omit to start from the beginning. The response includes next_cursor for the next page.",

@@ -460,8 +460,8 @@ async def test_connect_tts(sqlite_instance, endpoint, api_key, model_name):
     [
         ("AZURE_OPENAI_VIDEO_ENDPOINT", "AZURE_OPENAI_VIDEO_KEY", "AZURE_OPENAI_VIDEO_MODEL"),
         # OpenAI Platform endpoint returns HTTP 401 "Missing scopes: api.videos.write" for all requests
-        # ("PLATFORM_OPENAI_VIDEO_ENDPOINT", "PLATFORM_OPENAI_VIDEO_KEY",  # noqa: ERA001
-        #  "PLATFORM_OPENAI_VIDEO_MODEL"),  # noqa: ERA001
+        # ("PLATFORM_OPENAI_VIDEO_ENDPOINT", "PLATFORM_OPENAI_VIDEO_KEY",
+        #  "PLATFORM_OPENAI_VIDEO_MODEL"),
     ],
 )
 async def test_connect_video(sqlite_instance, endpoint, api_key, model_name):

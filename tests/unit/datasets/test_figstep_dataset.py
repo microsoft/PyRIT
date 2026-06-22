@@ -87,6 +87,10 @@ class TestFigStepDataset:
         with pytest.raises(ValueError, match="Expected FigStepCategory"):
             _FigStepDataset(categories=["Illegal Activity"])  # type: ignore[list-item]
 
+    def test_init_with_empty_categories_raises(self):
+        with pytest.raises(ValueError, match="`categories` must be a non-empty list"):
+            _FigStepDataset(categories=[])
+
     def test_init_pro_with_full_subset_raises(self):
         with pytest.raises(ValueError, match="FigStep-Pro sub-images are only published for SafeBench-Tiny"):
             _FigStepDataset(use_tiny=False, variant=FigStepVariant.FIGSTEP_PRO)

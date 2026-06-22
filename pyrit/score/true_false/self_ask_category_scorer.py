@@ -3,7 +3,6 @@
 
 import enum
 from pathlib import Path
-from typing import Optional, Union
 
 import yaml
 
@@ -42,19 +41,19 @@ class SelfAskCategoryScorer(TrueFalseScorer):
         self,
         *,
         chat_target: PromptTarget,
-        content_classifier_path: Union[str, Path],
+        content_classifier_path: str | Path,
         score_aggregator: TrueFalseAggregatorFunc = TrueFalseScoreAggregator.OR,
-        validator: Optional[ScorerPromptValidator] = None,
+        validator: ScorerPromptValidator | None = None,
     ) -> None:
         """
         Initialize a new instance of the SelfAskCategoryScorer class.
 
         Args:
             chat_target (PromptTarget): The chat target to interact with.
-            content_classifier_path (Union[str, Path]): The path to the classifier YAML file.
+            content_classifier_path (str | Path): The path to the classifier YAML file.
             score_aggregator (TrueFalseAggregatorFunc): The aggregator function to use.
                 Defaults to TrueFalseScoreAggregator.OR.
-            validator (Optional[ScorerPromptValidator]): Custom validator. Defaults to None.
+            validator (ScorerPromptValidator | None): Custom validator. Defaults to None.
         """
         super().__init__(
             score_aggregator=score_aggregator,
@@ -81,6 +80,9 @@ class SelfAskCategoryScorer(TrueFalseScorer):
             categories=categories_as_string,
             no_category_found=self._no_category_found_category,
         )
+        # Optional JSON schema embedded in the system prompt YAML. Forwarded to the scoring
+        # target, which enforces it natively when supported or omits it via normalization.
+        self._response_json_schema = scoring_instructions_template.response_json_schema
 
     def _build_identifier(self) -> ComponentIdentifier:
         """
@@ -92,11 +94,10 @@ class SelfAskCategoryScorer(TrueFalseScorer):
         return self._create_identifier(
             params={
                 "system_prompt_template": self._system_prompt,
-                "score_aggregator": self._score_aggregator.__name__,  # type: ignore[ty:unresolved-attribute]
+                "response_json_schema": self._response_json_schema,
             },
-            children={
-                "prompt_target": self._prompt_target.get_identifier(),
-            },
+            score_aggregator=self._score_aggregator.__name__,  # type: ignore[ty:unresolved-attribute]
+            prompt_target=self._prompt_target.get_identifier(),
         )
 
     def _content_classifier_to_string(self, categories: list[dict[str, str]]) -> str:
@@ -104,7 +105,7 @@ class SelfAskCategoryScorer(TrueFalseScorer):
         Convert the content classifier categories to a string representation to be put in a system prompt.
 
         Args:
-            categories (list[Dict[str, str]]): The categories to convert.
+            categories (list[dict[str, str]]): The categories to convert.
 
         Returns:
             str: The string representation of the categories.
@@ -129,13 +130,13 @@ class SelfAskCategoryScorer(TrueFalseScorer):
 
         return category_descriptions
 
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: Optional[str] = None) -> list[Score]:
+    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
         """
         Scores the given message using the chat target.
 
         Args:
             message_piece (MessagePiece): The message piece to score.
-            objective (Optional[str]): The task based on which the text should be scored
+            objective (str | None): The task based on which the text should be scored
                 (the original attacker model's objective). Defaults to None.
 
         Returns:
@@ -151,7 +152,7 @@ class SelfAskCategoryScorer(TrueFalseScorer):
             message_data_type=message_piece.converted_value_data_type,
             scored_prompt_id=message_piece.id,
             objective=objective,
-            attack_identifier=message_piece.attack_identifier,
+            response_json_schema=self._response_json_schema,
         )
 
         score = unvalidated_score.to_score(score_value=unvalidated_score.raw_score_value, score_type="true_false")

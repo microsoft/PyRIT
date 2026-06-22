@@ -8,27 +8,33 @@ SeedObjective class for representing seed objectives.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Optional, Union
+from typing import Literal
+
+from pydantic import model_validator
 
 from pyrit.common.path import PATHS_DICT
 from pyrit.models.seeds.seed import Seed
 
-if TYPE_CHECKING:
-    from pathlib import Path
-
 logger = logging.getLogger(__name__)
 
 
-@dataclass
 class SeedObjective(Seed):
     """Represents a seed objective with various attributes and metadata."""
 
-    is_general_technique: bool = False
+    # Discriminator field for the polymorphic Seed union (see seed_group.SeedUnion).
+    seed_type: Literal["objective"] = "objective"
 
-    def __post_init__(self) -> None:
+    # Objectives are always text. Narrowing the base field rejects non-text values up-front
+    # rather than silently dropping them downstream.
+    data_type: Literal["text"] = "text"
+
+    @model_validator(mode="after")
+    def _validate_and_render(self) -> SeedObjective:
         """
         Post-initialization to render the template to replace existing values.
+
+        Returns:
+            SeedObjective: The validated, rendered objective.
 
         Raises:
             ValueError: If is_general_technique is True.
@@ -37,26 +43,5 @@ class SeedObjective(Seed):
             raise ValueError("SeedObjective cannot be a general technique.")
         # Only trusted templates are rendered through Jinja — see seed_prompt.py for details.
         if self.is_jinja_template:
-            self.value = super().render_template_value_silent(**PATHS_DICT)
-
-    @classmethod
-    def from_yaml_with_required_parameters(
-        cls,
-        template_path: Union[str, Path],
-        required_parameters: list[str],
-        error_message: Optional[str] = None,
-    ) -> SeedObjective:
-        """
-        Load a Seed from a YAML file. Because SeedObjectives do not have any parameters, the required_parameters
-        and error_message arguments are unused.
-
-        Args:
-            template_path: Path to the YAML file containing the template.
-            required_parameters: List of parameter names that must exist in the template.
-            error_message: Custom error message if validation fails. If None, a default message is used.
-
-        Returns:
-            SeedObjective: The loaded and validated seed of the specific subclass type.
-
-        """
-        return cls.from_yaml_file(template_path)
+            self.value = self.render_template_value_silent(**PATHS_DICT)
+        return self

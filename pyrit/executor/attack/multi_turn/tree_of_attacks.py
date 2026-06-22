@@ -35,21 +35,24 @@ from pyrit.executor.attack.core.attack_config import (
     AttackAdversarialConfig,
     AttackConverterConfig,
     AttackScoringConfig,
+    resolve_adversarial_system_prompt,
 )
 from pyrit.executor.attack.core.attack_strategy import AttackStrategy
 from pyrit.executor.attack.multi_turn import MultiTurnAttackContext
 from pyrit.memory import CentralMemory
 from pyrit.models import (
+    JSON_SCHEMA_METADATA_KEY,
+    AtomicAttackIdentifier,
     AttackOutcome,
     AttackResult,
     ComponentIdentifier,
+    Conversation,
     ConversationReference,
     ConversationType,
     Message,
     MessagePiece,
     Score,
     SeedPrompt,
-    build_atomic_attack_identifier,
 )
 from pyrit.prompt_normalizer import PromptConverterConfiguration, PromptNormalizer
 from pyrit.prompt_target import CapabilityName, PromptTarget
@@ -106,8 +109,8 @@ class TAPAttackScoringConfig(AttackScoringConfig):
         self,
         *,
         objective_scorer: FloatScaleThresholdScorer,
-        refusal_scorer: Optional[TrueFalseScorer] = None,
-        auxiliary_scorers: Optional[list[Scorer]] = None,
+        refusal_scorer: TrueFalseScorer | None = None,
+        auxiliary_scorers: list[Scorer] | None = None,
         use_score_as_feedback: bool = True,
     ) -> None:
         """
@@ -117,8 +120,8 @@ class TAPAttackScoringConfig(AttackScoringConfig):
             objective_scorer (FloatScaleThresholdScorer): The scorer for evaluating attack success.
                 Must be a FloatScaleThresholdScorer to provide both granular float scores
                 for node comparison and a threshold for success determination.
-            refusal_scorer (Optional[TrueFalseScorer]): Optional scorer for detecting refusals.
-            auxiliary_scorers (Optional[List[Scorer]]): Additional scorers for auxiliary metrics.
+            refusal_scorer (TrueFalseScorer | None): Optional scorer for detecting refusals.
+            auxiliary_scorers (list[Scorer] | None): Additional scorers for auxiliary metrics.
             use_score_as_feedback (bool): Whether to use scoring results as feedback. Defaults to True.
 
         Raises:
@@ -171,12 +174,11 @@ class TAPAttackContext(MultiTurnAttackContext[Any]):
     nodes: list["_TreeOfAttacksNode"] = field(default_factory=list)
 
     # Best conversation ID and score found during the attack
-    best_conversation_id: Optional[str] = None
-    best_objective_score: Optional[Score] = None
-    best_adversarial_conversation_id: Optional[str] = None
+    best_conversation_id: str | None = None
+    best_objective_score: Score | None = None
+    best_adversarial_conversation_id: str | None = None
 
 
-@dataclass
 class TAPAttackResult(AttackResult):
     """
     Result of the Tree of Attacks with Pruning (TAP) attack strategy execution.
@@ -186,7 +188,7 @@ class TAPAttackResult(AttackResult):
     """
 
     @property
-    def tree_visualization(self) -> Optional[Tree]:
+    def tree_visualization(self) -> Tree | None:
         """Get the tree visualization from metadata."""
         return self.metadata.get("tree_visualization", None)
 
@@ -236,12 +238,12 @@ class TAPAttackResult(AttackResult):
         self.metadata["auxiliary_scores_summary"] = value
 
     @property
-    def best_adversarial_conversation_id(self) -> Optional[str]:
+    def best_adversarial_conversation_id(self) -> str | None:
         """Get the adversarial conversation ID for the best-scoring branch."""
-        return cast("Optional[str]", self.metadata.get("best_adversarial_conversation_id", None))
+        return cast("str | None", self.metadata.get("best_adversarial_conversation_id", None))
 
     @best_adversarial_conversation_id.setter
-    def best_adversarial_conversation_id(self, value: Optional[str]) -> None:
+    def best_adversarial_conversation_id(self, value: str | None) -> None:
         """Set the best adversarial conversation ID."""
         self.metadata["best_adversarial_conversation_id"] = value
 
@@ -286,16 +288,16 @@ class _TreeOfAttacksNode:
         adversarial_chat_system_seed_prompt: SeedPrompt,
         desired_response_prefix: str,
         objective_scorer: Scorer,
-        on_topic_scorer: Optional[Scorer],
+        on_topic_scorer: Scorer | None,
         request_converters: list[PromptConverterConfiguration],
         response_converters: list[PromptConverterConfiguration],
-        auxiliary_scorers: Optional[list[Scorer]],
+        auxiliary_scorers: list[Scorer] | None,
         attack_id: ComponentIdentifier,
         attack_strategy_name: str,
-        memory_labels: Optional[dict[str, str]] = None,
-        parent_id: Optional[str] = None,
-        prompt_normalizer: Optional[PromptNormalizer] = None,
-        initial_prompt: Optional[Message] = None,
+        memory_labels: dict[str, str] | None = None,
+        parent_id: str | None = None,
+        prompt_normalizer: PromptNormalizer | None = None,
+        initial_prompt: Message | None = None,
     ) -> None:
         """
         Initialize a tree node.
@@ -308,16 +310,16 @@ class _TreeOfAttacksNode:
             adversarial_chat_system_seed_prompt (SeedPrompt): The system prompt for the adversarial chat
             desired_response_prefix (str): The prefix for the desired response.
             objective_scorer (Scorer): The scorer for evaluating the objective target's response.
-            on_topic_scorer (Optional[Scorer]): Optional scorer to check if the prompt is on-topic.
-            request_converters (List[PromptConverterConfiguration]): Converters for request normalization
-            response_converters (List[PromptConverterConfiguration]): Converters for response normalization
-            auxiliary_scorers (Optional[List[Scorer]]): Additional scorers for the response
+            on_topic_scorer (Scorer | None): Optional scorer to check if the prompt is on-topic.
+            request_converters (list[PromptConverterConfiguration]): Converters for request normalization
+            response_converters (list[PromptConverterConfiguration]): Converters for response normalization
+            auxiliary_scorers (list[Scorer] | None): Additional scorers for the response
             attack_id (ComponentIdentifier): Unique identifier for the attack.
             attack_strategy_name (str): Name of the attack strategy for execution context.
-            memory_labels (Optional[dict[str, str]]): Labels for memory storage.
-            parent_id (Optional[str]): ID of the parent node, if this is a child node
-            prompt_normalizer (Optional[PromptNormalizer]): Normalizer for handling prompts and responses.
-            initial_prompt (Optional[Message]): Initial message to send for the first turn,
+            memory_labels (dict[str, str] | None): Labels for memory storage.
+            parent_id (str | None): ID of the parent node, if this is a child node
+            prompt_normalizer (PromptNormalizer | None): Normalizer for handling prompts and responses.
+            initial_prompt (Message | None): Initial message to send for the first turn,
                 bypassing adversarial chat generation. Supports multimodal messages.
         """
         # Store configuration
@@ -354,21 +356,21 @@ class _TreeOfAttacksNode:
         # Execution results (populated after send_prompt_async)
         self.completed = False
         self.off_topic = False
-        self.objective_score: Optional[Score] = None
+        self.objective_score: Score | None = None
         self.auxiliary_scores: dict[str, Score] = {}
-        self.last_prompt_sent: Optional[str] = None
-        self.last_response: Optional[str] = None
-        self.error_message: Optional[str] = None
+        self.last_prompt_sent: str | None = None
+        self.last_response: str | None = None
+        self.error_message: str | None = None
 
         # Context from prepended conversation (for adversarial chat system prompt)
-        self._conversation_context: Optional[str] = None
+        self._conversation_context: str | None = None
 
         # Initial prompt for first turn (bypasses adversarial chat generation)
         # This supports multimodal messages
-        self._initial_prompt: Optional[Message] = initial_prompt
+        self._initial_prompt: Message | None = initial_prompt
 
         # Current objective (set when send_prompt_async is called)
-        self._objective: Optional[str] = None
+        self._objective: str | None = None
 
     async def initialize_with_prepended_conversation_async(
         self,
@@ -392,8 +394,8 @@ class _TreeOfAttacksNode:
             - The context is used in _generate_first_turn_prompt_async
 
         Args:
-            prepended_conversation (List[Message]): The conversation history to replay.
-            prepended_conversation_config (Optional[PrependedConversationConfig]):
+            prepended_conversation (list[Message]): The conversation history to replay.
+            prepended_conversation_config (PrependedConversationConfig | None):
                 Configuration for how to process the prepended conversation.
 
         Note:
@@ -405,7 +407,6 @@ class _TreeOfAttacksNode:
 
         # Use ConversationManager to add messages to memory
         conversation_manager = ConversationManager(
-            attack_identifier=self._attack_id,
             prompt_normalizer=self._prompt_normalizer,
         )
 
@@ -414,6 +415,7 @@ class _TreeOfAttacksNode:
             conversation_id=self.objective_target_conversation_id,
             request_converters=self._request_converters,
             prepended_conversation_config=prepended_conversation_config,
+            target_identifier=self._objective_target.get_identifier(),
         )
 
         # Build context string for adversarial chat system prompt (like Crescendo)
@@ -559,7 +561,6 @@ class _TreeOfAttacksNode:
         with execution_context(
             component_role=ComponentRole.OBJECTIVE_TARGET,
             attack_strategy_name=self._attack_strategy_name,
-            attack_identifier=self._attack_id,
             component_identifier=self._objective_target.get_identifier(),
             objective_target_conversation_id=self.objective_target_conversation_id,
             objective=self._objective,
@@ -571,7 +572,6 @@ class _TreeOfAttacksNode:
                 conversation_id=self.objective_target_conversation_id,
                 target=self._objective_target,
                 labels=self._memory_labels,
-                attack_identifier=self._attack_id,
             )
 
         # Store the last response text for reference
@@ -619,7 +619,6 @@ class _TreeOfAttacksNode:
         with execution_context(
             component_role=ComponentRole.OBJECTIVE_TARGET,
             attack_strategy_name=self._attack_strategy_name,
-            attack_identifier=self._attack_id,
             component_identifier=self._objective_target.get_identifier(),
             objective_target_conversation_id=self.objective_target_conversation_id,
             objective=self._objective,
@@ -631,7 +630,6 @@ class _TreeOfAttacksNode:
                 conversation_id=self.objective_target_conversation_id,
                 target=self._objective_target,
                 labels=self._memory_labels,
-                attack_identifier=self._attack_id,
             )
 
         # Store the last response text for reference
@@ -676,7 +674,6 @@ class _TreeOfAttacksNode:
         with execution_context(
             component_role=ComponentRole.OBJECTIVE_SCORER,
             attack_strategy_name=self._attack_strategy_name,
-            attack_identifier=self._attack_id,
             component_identifier=self._objective_scorer.get_identifier(),
             objective_target_conversation_id=self.objective_target_conversation_id,
             objective=objective,
@@ -699,7 +696,8 @@ class _TreeOfAttacksNode:
         # Extract auxiliary scores
         auxiliary_scores = scoring_results["auxiliary_scores"]
         for score in auxiliary_scores:
-            scorer_name = score.scorer_class_identifier.class_name
+            scorer_identifier = score.scorer_class_identifier
+            scorer_name = scorer_identifier.class_name if scorer_identifier else "unknown"
             self.auxiliary_scores[scorer_name] = score
             logger.debug(f"Node {self.node_id}: {scorer_name} score: {score.get_value()}")
 
@@ -822,10 +820,15 @@ class _TreeOfAttacksNode:
                 conversation_id=self.objective_target_conversation_id
             )
         else:
-            messages = self._memory.get_conversation(conversation_id=self.objective_target_conversation_id)
+            messages = self._memory.get_conversation_messages(conversation_id=self.objective_target_conversation_id)
             system_messages = [m for m in messages if m.api_role == "system"]
             if system_messages:
                 new_id, pieces = self._memory.duplicate_messages(messages=system_messages)
+                self._memory.add_conversation_to_memory(
+                    conversation=Conversation(
+                        conversation_id=new_id, target_identifier=self._objective_target.get_identifier()
+                    )
+                )
                 self._memory.add_message_pieces_to_memory(message_pieces=pieces)
                 duplicate_node.objective_target_conversation_id = new_id
             else:
@@ -904,7 +907,7 @@ class _TreeOfAttacksNode:
             # Generate feedback prompt and get a new response
             feedback_prompt = self._generate_off_topic_feedback_prompt(
                 original_prompt=prompt,
-                off_topic_rationale=on_topic_score.score_rationale,
+                off_topic_rationale=on_topic_score.score_rationale or "",
                 objective=objective,
             )
 
@@ -985,7 +988,7 @@ class _TreeOfAttacksNode:
             bool: True if no messages exist in the objective target conversation (first turn),
                 False if the conversation already contains messages (subsequent turns).
         """
-        target_messages = self._memory.get_conversation(conversation_id=self.objective_target_conversation_id)
+        target_messages = self._memory.get_conversation_messages(conversation_id=self.objective_target_conversation_id)
         return not target_messages
 
     async def _generate_first_turn_prompt_async(self, objective: str) -> str:
@@ -1021,7 +1024,6 @@ class _TreeOfAttacksNode:
         self._adversarial_chat.set_system_prompt(
             system_prompt=system_prompt,
             conversation_id=self.adversarial_chat_conversation_id,
-            attack_identifier=self._attack_id,
             labels=self._memory_labels,  # deprecated
         )
 
@@ -1058,7 +1060,7 @@ class _TreeOfAttacksNode:
                 one prior exchange.
         """
         # Get conversation history
-        target_messages = self._memory.get_conversation(conversation_id=self.objective_target_conversation_id)
+        target_messages = self._memory.get_conversation_messages(conversation_id=self.objective_target_conversation_id)
 
         # Extract the last assistant response
         assistant_responses = [r for r in target_messages if r.get_piece().api_role == "assistant"]
@@ -1102,9 +1104,9 @@ class _TreeOfAttacksNode:
             list. It takes the first score if multiple scores are associated with the response,
             which is typically the objective score in the TAP algorithm context.
         """
-        pieces = self._memory.get_message_pieces(prompt_ids=[str(response_id)])
-        if pieces and pieces[0].scores:
-            return str(normalize_score_to_float(pieces[0].scores[0]))
+        scores = self._memory.get_prompt_scores(prompt_ids=[str(response_id)])
+        if scores:
+            return str(normalize_score_to_float(scores[0]))
         return "unavailable"
 
     async def _send_to_adversarial_chat_async(self, prompt_text: str) -> str:
@@ -1127,18 +1129,24 @@ class _TreeOfAttacksNode:
 
         Returns:
             str: The raw response from the adversarial chat, expected to be JSON formatted.
-                This response should contain at least a "prompt" field with the generated
+                This response should contain at least a "next_message" field with the generated
                 attack prompt.
         """
         # Configure for JSON response
         message = Message.from_prompt(prompt=prompt_text, role="user")
-        message.message_pieces[0].prompt_metadata = {"response_format": "json"}
+        prompt_metadata: dict[str, Any] = {"response_format": "json"}
+        # Forward the shared adversarial-chat JSON schema when present so schema-aware
+        # targets can natively constrain the response shape; non-enforcing targets
+        # ignore it and rely on the prompt's formatting instructions.
+        response_json_schema = self._adversarial_chat_system_seed_prompt.response_json_schema
+        if response_json_schema is not None:
+            prompt_metadata[JSON_SCHEMA_METADATA_KEY] = response_json_schema
+        message.message_pieces[0].prompt_metadata = prompt_metadata
 
         # Send and get response
         with execution_context(
             component_role=ComponentRole.ADVERSARIAL_CHAT,
             attack_strategy_name=self._attack_strategy_name,
-            attack_identifier=self._attack_id,
             component_identifier=self._adversarial_chat.get_identifier(),
             objective_target_conversation_id=self.objective_target_conversation_id,
             objective=self._objective,
@@ -1148,7 +1156,6 @@ class _TreeOfAttacksNode:
                 conversation_id=self.adversarial_chat_conversation_id,
                 target=self._adversarial_chat,
                 labels=self._memory_labels,
-                attack_identifier=self._attack_id,
             )
 
         return response.get_value()
@@ -1159,17 +1166,17 @@ class _TreeOfAttacksNode:
 
         This method parses the structured response from the adversarial chat to extract
         the generated attack prompt. The adversarial chat is expected to return JSON with
-        at least a "prompt" field containing the attack text. The method handles common
+        at least a "next_message" field containing the attack text. The method handles common
         formatting issues like markdown wrappers that LLMs sometimes add around JSON.
 
         The parsing is strict - the response must be valid JSON and must contain the
-        required "prompt" field. This ensures the TAP algorithm receives well-formed
+        required "next_message" field. This ensures the TAP algorithm receives well-formed
         prompts for attacking the objective target.
 
         Args:
             red_teaming_response (str): The raw response from the red teaming chat, expected
                 to be JSON formatted (possibly wrapped in markdown). Should contain at
-                least {"prompt": "attack text"}.
+                least {"next_message": "attack text"}.
 
         Returns:
             str: The prompt extracted from the JSON response. This is the actual attack
@@ -1177,7 +1184,7 @@ class _TreeOfAttacksNode:
 
         Raises:
             InvalidJsonException: If the response is not valid JSON after removing markdown
-                formatting, or if the parsed JSON does not contain a "prompt" field.
+                formatting, or if the parsed JSON does not contain a "next_message" field.
         """
         # Remove markdown formatting if present
         red_teaming_response = remove_markdown_json(red_teaming_response)
@@ -1191,11 +1198,13 @@ class _TreeOfAttacksNode:
             ) from None
 
         try:
-            return cast("str", red_teaming_response_dict["prompt"])
+            return cast("str", red_teaming_response_dict["next_message"])
         except KeyError:
-            logger.error(f"The response from the red teaming chat does not contain a prompt: {red_teaming_response}")
+            logger.error(
+                f"The response from the red teaming chat does not contain next_message: {red_teaming_response}"
+            )
             raise InvalidJsonException(
-                message="The response from the red teaming chat does not contain a prompt."
+                message="The response from the red teaming chat does not contain a next_message."
             ) from None
 
     def __str__(self) -> str:
@@ -1383,12 +1392,13 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
         except ValueError as exc:
             raise ValueError(f"TreeOfAttacksWithPruningAttack {exc}") from exc
 
-        # Load system prompts
-        self._adversarial_chat_system_prompt_path = (
-            attack_adversarial_config.system_prompt_path
-            or
-            # default to the predefined system prompt path
-            TreeOfAttacksWithPruningAttack.DEFAULT_ADVERSARIAL_SYSTEM_PROMPT_PATH
+        # Load system prompts. The adversarial system prompt may be supplied inline (string or
+        # SeedPrompt) via the config, or fall back to the configured/default YAML path.
+        self._adversarial_chat_system_seed_prompt = resolve_adversarial_system_prompt(
+            config=attack_adversarial_config,
+            default_system_prompt_path=TreeOfAttacksWithPruningAttack.DEFAULT_ADVERSARIAL_SYSTEM_PROMPT_PATH,
+            required_parameters=["desired_prefix"],
+            error_message="Adversarial seed prompt must have a desired_prefix",
         )
         self._load_adversarial_prompts()
 
@@ -1464,16 +1474,7 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
         self._prepended_conversation_config = prepended_conversation_config
 
     def _load_adversarial_prompts(self) -> None:
-        """Load the adversarial chat prompts from the configured paths."""
-        # Load system prompt
-        self._adversarial_chat_system_seed_prompt = SeedPrompt.from_yaml_with_required_parameters(
-            template_path=self._adversarial_chat_system_prompt_path,
-            required_parameters=["desired_prefix"],
-            error_message=(
-                f"Adversarial seed prompt must have a desired_prefix: '{self._adversarial_chat_system_prompt_path}'"
-            ),
-        )
-
+        """Load the adversarial chat prompt template and seed prompt from the default paths."""
         # Load prompt template
         self._adversarial_chat_prompt_template = SeedPrompt.from_yaml_file(
             TreeOfAttacksWithPruningAttack.DEFAULT_ADVERSARIAL_PROMPT_TEMPLATE_PATH
@@ -1492,6 +1493,23 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
             TAPAttackScoringConfig: The TAP-specific scoring configuration.
         """
         return self._attack_scoring_config
+
+    def get_attack_adversarial_config(self) -> AttackAdversarialConfig | None:
+        """
+        Get the effective adversarial configuration used by this strategy.
+
+        Returns:
+            AttackAdversarialConfig | None: The adversarial target with its resolved system prompt.
+                The first-message seed prompt is a fixed default and is not part of the identity.
+        """
+        adversarial_chat = getattr(self, "_adversarial_chat", None)
+        if adversarial_chat is None:
+            return None
+        return AttackAdversarialConfig(
+            target=adversarial_chat,
+            system_prompt=self._adversarial_chat_system_seed_prompt,
+            seed_prompt=None,
+        )
 
     def _validate_context(self, *, context: TAPAttackContext) -> None:
         """
@@ -1925,8 +1943,8 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
         self,
         *,
         context: TAPAttackContext,
-        parent_id: Optional[str] = None,
-        initial_prompt: Optional[Message] = None,
+        parent_id: str | None = None,
+        initial_prompt: Message | None = None,
     ) -> _TreeOfAttacksNode:
         """
         Create a new attack node with the configured settings.
@@ -1937,9 +1955,9 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
 
         Args:
             context (TAPAttackContext): The attack context containing the objective and other configuration.
-            parent_id (Optional[str]): The ID of the parent node in the tree, if any. If None,
+            parent_id (str | None): The ID of the parent node in the tree, if any. If None,
                 the node will be a root-level node.
-            initial_prompt (Optional[Message]): Initial message for first turn, bypassing
+            initial_prompt (Message | None): Initial message for first turn, bypassing
                 adversarial chat generation. Supports multimodal messages. "next_message" in multiturncontext
 
         Returns:
@@ -1986,11 +2004,11 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
         have identical scores.
 
         Args:
-            nodes (List[_TreeOfAttacksNode]): List of nodes to filter and sort. May
+            nodes (list[_TreeOfAttacksNode]): List of nodes to filter and sort. May
                 contain nodes in various states (completed, off-topic, errored, etc.)
 
         Returns:
-            List[_TreeOfAttacksNode]: A list of nodes that are completed, on-topic,
+            list[_TreeOfAttacksNode]: A list of nodes that are completed, on-topic,
                 and have valid objective scores, sorted by score in descending order.
         """
         completed_nodes = [
@@ -2037,7 +2055,7 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
         unnormalized_score = round(1 + normalized_score * 9)
         return f"Score: {unnormalized_score}/10"
 
-    def _create_on_topic_scorer(self, objective: str) -> Optional[Scorer]:
+    def _create_on_topic_scorer(self, objective: str) -> Scorer | None:
         """
         Create an on-topic scorer if enabled, configured for the specific objective.
 
@@ -2051,7 +2069,7 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
                 relevant to the original goal.
 
         Returns:
-            Optional[Scorer]:
+            Scorer | None:
                 - `SelfAskTrueFalseScorer` instance configured with the objective if
                 `on_topic_checking_enabled` is `True` and scoring_target exists
                 - `None` if `on_topic_checking_enabled` is `False` or no scoring_target
@@ -2165,7 +2183,7 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
 
         # Create the result with basic information
         result = TAPAttackResult(
-            atomic_attack_identifier=build_atomic_attack_identifier(attack_identifier=self.get_identifier()),
+            atomic_attack_identifier=AtomicAttackIdentifier.build(attack_identifier=self.get_identifier()),
             conversation_id=context.best_conversation_id or "",
             objective=context.objective,
             outcome=outcome,
@@ -2187,7 +2205,7 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
 
         return result
 
-    def _get_last_response_from_conversation(self, conversation_id: Optional[str]) -> Optional[MessagePiece]:
+    def _get_last_response_from_conversation(self, conversation_id: str | None) -> MessagePiece | None:
         """
         Retrieve the last response from a conversation.
 
@@ -2196,11 +2214,11 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
         response from the best performing conversation for inclusion in the attack result.
 
         Args:
-            conversation_id (Optional[str]): The conversation ID to retrieve from. May be
+            conversation_id (str | None): The conversation ID to retrieve from. May be
                 None if no successful conversations were found during the attack.
 
         Returns:
-            Optional[MessagePiece]: The last response piece from the conversation,
+            MessagePiece | None: The last response piece from the conversation,
                 or None if no conversation ID was provided or no responses exist.
         """
         if not conversation_id:
@@ -2218,10 +2236,10 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
         beyond the objective score that may be useful for analysis.
 
         Args:
-            nodes (List[TreeOfAttacksNode]): List of nodes to extract auxiliary scores from.
+            nodes (list[TreeOfAttacksNode]): List of nodes to extract auxiliary scores from.
 
         Returns:
-            Dict[str, float]: A dictionary mapping auxiliary score names to their
+            dict[str, float]: A dictionary mapping auxiliary score names to their
                 float values, or an empty dictionary if no auxiliary scores are available.
         """
         if not nodes or not nodes[0].auxiliary_scores:
@@ -2243,7 +2261,7 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
                 if it was removed from consideration.
 
         Returns:
-            Dict[str, int]: A dictionary with the following keys:
+            dict[str, int]: A dictionary with the following keys:
                 - "nodes_explored": Total number of nodes explored (excluding root)
                 - "nodes_pruned": Total number of nodes that were pruned during execution
         """
@@ -2261,7 +2279,7 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
         self,
         *,
         objective: str,
-        memory_labels: Optional[dict[str, str]] = None,
+        memory_labels: dict[str, str] | None = None,
         **kwargs: Any,
     ) -> TAPAttackResult: ...
 
@@ -2280,7 +2298,7 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
 
         Args:
             objective (str): The objective of the attack.
-            memory_labels (Optional[Dict[str, str]]): Memory labels for the attack context.
+            memory_labels (dict[str, str] | None): Memory labels for the attack context.
             **kwargs: Additional parameters for the attack.
 
         Returns:

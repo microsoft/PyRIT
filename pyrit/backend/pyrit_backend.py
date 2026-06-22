@@ -17,12 +17,11 @@ import os
 import sys
 from argparse import ArgumentParser, Namespace, RawDescriptionHelpFormatter
 from pathlib import Path
-from typing import Optional
 
 from pyrit.common.cli_helpers import CONFIG_FILE_HELP, validate_log_level_argparse
 
 
-def parse_args(*, args: Optional[list[str]] = None) -> Namespace:
+def parse_args(*, args: list[str] | None = None) -> Namespace:
     """
     Parse command-line arguments for the PyRIT backend server.
 
@@ -88,7 +87,7 @@ Examples:
     return parser.parse_args(args)
 
 
-def main(*, args: Optional[list[str]] = None) -> int:
+def main(*, args: list[str] | None = None) -> int:
     """
     Start the PyRIT backend server.
 

@@ -53,7 +53,7 @@ async def test_pretty_blurs_image_bytes_before_display(tmp_path, patch_central_d
     with (
         patch("pyrit.common.notebook_utils.is_in_ipython_session", return_value=True),
         patch(
-            "pyrit.models.data_type_serializer.ImagePathDataTypeSerializer",
+            "pyrit.memory.storage.serializers.ImagePathDataTypeSerializer",
             return_value=fake_serializer,
         ),
         patch(
@@ -93,7 +93,7 @@ async def test_pretty_does_not_blur_by_default(tmp_path, patch_central_database)
     with (
         patch("pyrit.common.notebook_utils.is_in_ipython_session", return_value=True),
         patch(
-            "pyrit.models.data_type_serializer.ImagePathDataTypeSerializer",
+            "pyrit.memory.storage.serializers.ImagePathDataTypeSerializer",
             return_value=fake_serializer,
         ),
         patch(

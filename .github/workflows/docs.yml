@@ -113,7 +113,7 @@ jobs:
         # miss -> we do a fresh build and actions/cache saves the result on
         # job success, so the next run with the same SHA hits.
         id: cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: doc/_build/html
           key: docs-${{ env.CACHE_VERSION }}-${{ matrix.slug }}-${{ steps.sha.outputs.sha }}
@@ -180,7 +180,7 @@ jobs:
           jupyter-book build --all --html
 
       - name: Upload built site
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: site-${{ matrix.slug }}
           path: doc/_build/html
@@ -223,7 +223,7 @@ jobs:
         run: pip install --quiet "pyyaml>=6.0"
 
       - name: Download all version artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: artifacts
           pattern: site-*

@@ -7,6 +7,7 @@ from pyrit.executor.attack.core.attack_config import (
     AttackAdversarialConfig,
     AttackConverterConfig,
     AttackScoringConfig,
+    resolve_adversarial_system_prompt,
 )
 from pyrit.executor.attack.core.attack_executor import AttackExecutor, AttackExecutorResult
 from pyrit.executor.attack.core.attack_parameters import (
@@ -32,4 +33,5 @@ __all__ = [
     "AttackStrategyResultT",
     "AttackExecutor",
     "AttackExecutorResult",
+    "resolve_adversarial_system_prompt",
 ]

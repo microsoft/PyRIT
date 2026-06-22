@@ -19,6 +19,7 @@ from pyrit.prompt_converter.add_image_to_video_converter import AddImageVideoCon
 from pyrit.prompt_converter.add_text_image_converter import AddTextImageConverter
 from pyrit.prompt_converter.ansi_escape.ansi_attack_converter import AnsiAttackConverter
 from pyrit.prompt_converter.arabic_presentation_form_converter import ArabicPresentationFormConverter
+from pyrit.prompt_converter.arabizi_converter import ArabiziConverter
 from pyrit.prompt_converter.ascii_art_converter import AsciiArtConverter
 from pyrit.prompt_converter.ask_to_decode_converter import AskToDecodeConverter
 from pyrit.prompt_converter.atbash_converter import AtbashConverter
@@ -35,6 +36,7 @@ from pyrit.prompt_converter.character_space_converter import CharacterSpaceConve
 from pyrit.prompt_converter.charswap_attack_converter import CharSwapConverter
 from pyrit.prompt_converter.codechameleon_converter import CodeChameleonConverter
 from pyrit.prompt_converter.colloquial_wordswap_converter import ColloquialWordswapConverter
+from pyrit.prompt_converter.decomposition_converter import DecompositionConverter
 from pyrit.prompt_converter.denylist_converter import DenylistConverter
 from pyrit.prompt_converter.diacritic_converter import DiacriticConverter
 from pyrit.prompt_converter.ecoji_converter import EcojiConverter
@@ -147,6 +149,7 @@ __all__ = [
     "AllWordsSelectionStrategy",
     "AnsiAttackConverter",
     "ArabicPresentationFormConverter",
+    "ArabiziConverter",
     "AsciiArtConverter",
     "AsciiSmugglerConverter",
     "AskToDecodeConverter",
@@ -170,6 +173,7 @@ __all__ = [
     "CodeChameleonConverter",
     "ColloquialWordswapConverter",
     "ConverterResult",
+    "DecompositionConverter",
     "DenylistConverter",
     "DiacriticConverter",
     "EcojiConverter",

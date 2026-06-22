@@ -18,6 +18,11 @@ class DiacriticConverter(PromptConverter):
     SUPPORTED_INPUT_TYPES = ("text",)
     SUPPORTED_OUTPUT_TYPES = ("text",)
 
+    # Grandfathered: ``target_chars`` and ``accent`` are part of the public
+    # positional API.
+    # TODO: remove this opt-out and insert ``*,`` after ``self`` in 0.16.0.
+    _brick_legacy_init = True
+
     def __init__(self, target_chars: str = "aeiou", accent: str = "acute") -> None:
         """
         Initialize the converter with specified target characters and diacritic accent.

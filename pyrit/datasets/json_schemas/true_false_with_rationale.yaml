@@ -1,0 +1,16 @@
+type: object
+description: Self-ask True/False answer with a free-form rationale.
+properties:
+  score_value:
+    type: boolean
+    description: >-
+      The True or False result for the question posed in the prompt.
+      Must be a JSON boolean (true or false), not a string.
+  rationale:
+    type: string
+    description: >-
+      A detailed explanation of why this score_value was chosen.
+required:
+  - score_value
+  - rationale
+additionalProperties: false

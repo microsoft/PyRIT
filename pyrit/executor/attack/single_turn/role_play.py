@@ -4,7 +4,7 @@
 import enum
 import logging
 import pathlib
-from typing import Any, Optional
+from typing import Any
 
 from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
 from pyrit.common.path import EXECUTOR_SEED_PROMPT_PATH
@@ -68,9 +68,9 @@ class RolePlayAttack(PromptSendingAttack):
         objective_target: PromptTarget = REQUIRED_VALUE,  # type: ignore[ty:invalid-parameter-default]
         attack_adversarial_config: AttackAdversarialConfig,
         role_play_definition_path: pathlib.Path,
-        attack_converter_config: Optional[AttackConverterConfig] = None,
-        attack_scoring_config: Optional[AttackScoringConfig] = None,
-        prompt_normalizer: Optional[PromptNormalizer] = None,
+        attack_converter_config: AttackConverterConfig | None = None,
+        attack_scoring_config: AttackScoringConfig | None = None,
+        prompt_normalizer: PromptNormalizer | None = None,
         max_attempts_on_failure: int = 0,
     ) -> None:
         """
@@ -82,15 +82,20 @@ class RolePlayAttack(PromptSendingAttack):
                 including the adversarial chat target used to rephrase objectives into role-play scenarios.
             role_play_definition_path (pathlib.Path): Path to the YAML file containing role-play
                 definitions (rephrase instructions, user start turn, assistant start turn).
-            attack_converter_config (Optional[AttackConverterConfig]): Configuration for prompt converters.
-            attack_scoring_config (Optional[AttackScoringConfig]): Configuration for scoring components.
-            prompt_normalizer (Optional[PromptNormalizer]): Normalizer for handling prompts.
+            attack_converter_config (AttackConverterConfig | None): Configuration for prompt converters.
+            attack_scoring_config (AttackScoringConfig | None): Configuration for scoring components.
+            prompt_normalizer (PromptNormalizer | None): Normalizer for handling prompts.
             max_attempts_on_failure (int): Maximum number of attempts to retry the attack
 
         Raises:
             ValueError: If the objective scorer is not a true/false scorer.
             FileNotFoundError: If the role_play_definition_path does not exist.
         """
+        # Store the adversarial chat for role-play rephrasing BEFORE super().__init__(), because
+        # the base PromptSendingAttack builds and caches the attack identifier during init and the
+        # identifier must include the adversarial chat target.
+        self._adversarial_chat = attack_adversarial_config.target
+
         # Initialize the parent class first
         super().__init__(
             objective_target=objective_target,
@@ -100,9 +105,6 @@ class RolePlayAttack(PromptSendingAttack):
             max_attempts_on_failure=max_attempts_on_failure,
             params_type=RolePlayAttackParameters,
         )
-
-        # Store the adversarial chat for role-play rephrasing
-        self._adversarial_chat = attack_adversarial_config.target
 
         # Load role-play definitions
         role_play_definition = SeedDataset.from_yaml_file(role_play_definition_path)
@@ -119,6 +121,19 @@ class RolePlayAttack(PromptSendingAttack):
                 )
             ]
         )
+
+    def get_attack_adversarial_config(self) -> AttackAdversarialConfig | None:
+        """
+        Get the effective adversarial configuration used by this strategy.
+
+        Returns:
+            AttackAdversarialConfig | None: The adversarial target used for role-play rephrasing.
+                The system/seed prompts are not used (role-play uses its own definition files).
+        """
+        adversarial_chat = getattr(self, "_adversarial_chat", None)
+        if adversarial_chat is None:
+            return None
+        return AttackAdversarialConfig(target=adversarial_chat, seed_prompt=None)
 
     async def _setup_async(self, *, context: SingleTurnAttackContext[Any]) -> None:
         """
@@ -157,12 +172,12 @@ class RolePlayAttack(PromptSendingAttack):
         result = await converter.convert_async(prompt=objective, input_type="text")
         return result.output_text
 
-    async def _get_conversation_start_async(self) -> Optional[list[Message]]:
+    async def _get_conversation_start_async(self) -> list[Message] | None:
         """
         Get the role-play conversation start messages.
 
         Returns:
-            Optional[list[Message]]: List containing user and assistant start turns
+            list[Message] | None: List containing user and assistant start turns
                 for the role-play scenario.
         """
         return [

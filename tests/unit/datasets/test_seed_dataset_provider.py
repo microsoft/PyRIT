@@ -332,7 +332,6 @@ class TestDarkBenchDataset:
         loader = _DarkBenchDataset(
             dataset_name="custom/darkbench",
             config="custom_config",
-            split="test",
         )
 
         with patch.object(loader, "_fetch_from_huggingface_async", return_value=mock_darkbench_data) as mock_fetch:
@@ -343,7 +342,9 @@ class TestDarkBenchDataset:
             call_kwargs = mock_fetch.call_args.kwargs
             assert call_kwargs["dataset_name"] == "custom/darkbench"
             assert call_kwargs["config"] == "custom_config"
-            assert call_kwargs["split"] == "test"
+            # split is hardcoded at the call site since upstream apart/darkbench
+            # publishes only the "train" split (constructor kwarg is deprecated)
+            assert call_kwargs["split"] == "train"
 
 
 class TestMetadataParsingRemote:

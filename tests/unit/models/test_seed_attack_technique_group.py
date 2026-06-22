@@ -148,7 +148,7 @@ class TestSeedAttackTechniqueGroupValidation:
             ]
         )
         # Should not raise
-        group.validate()
+        group._check_invariants()
 
     def test_error_message_includes_non_general_types(self):
         """Test that error message lists the types of non-general seeds."""

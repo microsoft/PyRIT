@@ -4,7 +4,7 @@ PyRIT (Python Risk Identification Tool for generative AI) is an open-source fram
 
 ## Architecture
 
-PyRIT uses a modular "Lego brick" design. The main extensibility points are:
+PyRIT uses a modular pluggable-brick design. The main extensibility points are:
 
 - **Prompt Converters** (`pyrit/prompt_converter/`) — Transform prompts (70+ implementations). Base: `PromptConverter`.
 - **Scorers** (`pyrit/score/`) — Evaluate responses. Base: `Scorer`.

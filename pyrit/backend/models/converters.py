@@ -7,7 +7,7 @@ Converter-related request and response models.
 This module defines the Instance models and preview functionality.
 """
 
-from typing import Any, Optional
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -38,9 +38,9 @@ class ConverterParameterSchema(BaseModel):
     name: str = Field(..., description="Parameter name")
     type_name: str = Field(..., description="Human-readable type (e.g. 'str', 'int', 'Literal[...]')")
     required: bool = Field(..., description="Whether the parameter must be provided")
-    default_value: Optional[str] = Field(None, description="String representation of default value, if any")
-    choices: Optional[list[str]] = Field(None, description="Allowed values for Literal types")
-    description: Optional[str] = Field(None, description="Parameter description from docstring")
+    default_value: str | None = Field(None, description="String representation of default value, if any")
+    choices: list[str] | None = Field(None, description="Allowed values for Literal types")
+    description: str | None = Field(None, description="Parameter description from docstring")
 
 
 class ConverterCatalogEntry(BaseModel):
@@ -57,7 +57,7 @@ class ConverterCatalogEntry(BaseModel):
         default_factory=list, description="Constructor parameters for dynamic form generation"
     )
     is_llm_based: bool = Field(False, description="Whether this converter requires an LLM target")
-    description: Optional[str] = Field(None, description="Short description of the converter from its docstring")
+    description: str | None = Field(None, description="Short description of the converter from its docstring")
 
 
 class ConverterCatalogResponse(BaseModel):
@@ -76,17 +76,17 @@ class ConverterInstance(BaseModel):
 
     converter_id: str = Field(..., description="Unique converter instance identifier")
     converter_type: str = Field(..., description="Converter class name (e.g., 'Base64Converter')")
-    display_name: Optional[str] = Field(None, description="Human-readable display name")
+    display_name: str | None = Field(None, description="Human-readable display name")
     supported_input_types: list[str] = Field(
         default_factory=list, description="Input data types supported by this converter"
     )
     supported_output_types: list[str] = Field(
         default_factory=list, description="Output data types produced by this converter"
     )
-    converter_specific_params: Optional[dict[str, Any]] = Field(
+    converter_specific_params: dict[str, Any] | None = Field(
         None, description="Additional converter-specific parameters"
     )
-    sub_converter_ids: Optional[list[str]] = Field(
+    sub_converter_ids: list[str] | None = Field(
         None, description="Converter IDs of sub-converters (for pipelines/composites)"
     )
 
@@ -101,7 +101,7 @@ class CreateConverterRequest(BaseModel):
     """Request to create a new converter instance."""
 
     type: str = Field(..., description="Converter type (e.g., 'Base64Converter')")
-    display_name: Optional[str] = Field(None, description="Human-readable display name")
+    display_name: str | None = Field(None, description="Human-readable display name")
     params: dict[str, Any] = Field(
         default_factory=dict,
         description="Converter constructor parameters",
@@ -113,7 +113,7 @@ class CreateConverterResponse(BaseModel):
 
     converter_id: str = Field(..., description="Unique converter instance identifier")
     converter_type: str = Field(..., description="Converter class name")
-    display_name: Optional[str] = Field(None, description="Human-readable display name")
+    display_name: str | None = Field(None, description="Human-readable display name")
 
 
 # ============================================================================

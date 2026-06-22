@@ -111,6 +111,19 @@ operation: op_trash_panda
 #   - /path/to/.env
 #   - /path/to/.env.local
 
+# Azure Key Vault Environment References
+# ---------------------------------------
+# List of AKV secret URLs to load during initialization.
+# Each secret's value must be the full contents of a .env file.
+# Loaded after env_files, so AKV secrets take precedence.
+# Authentication uses DefaultAzureCredential (managed identity, Azure CLI, etc.).
+#
+# Requires: pip install azure-keyvault-secrets
+#
+# Example:
+# env_akv_ref:
+#   - https://my-vault.vault.azure.net/secrets/my-pyrit-env
+
 # Max Concurrent Scenario Runs
 # ----------------------------
 # Maximum number of scenario runs that can execute concurrently in the backend.

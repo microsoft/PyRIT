@@ -2,11 +2,17 @@
 # Licensed under the MIT license.
 
 import logging
+from typing import TYPE_CHECKING
+
+from typing_extensions import override
 
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
 from pyrit.models import Modality, SeedDataset, SeedPrompt
+
+if TYPE_CHECKING:
+    from pyrit.models.seeds.seed_group import SeedUnion
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +26,32 @@ class _LLMLatentAdversarialTrainingDataset(_RemoteDatasetLoader):
 
     Reference: [@sheshadri2024lat]
     """
+
+    _AUTHORS = [
+        "Abhay Sheshadri",
+        "Aidan Ewart",
+        "Phillip Guo",
+        "Aengus Lynch",
+        "Cindy Wu",
+        "Vivek Hebbar",
+        "Henry Sleight",
+        "Asa Cooper Stickland",
+        "Ethan Perez",
+        "Dylan Hadfield-Menell",
+        "Stephen Casper",
+    ]
+
+    _GROUPS = [
+        "Georgia Institute of Technology",
+        "University of Bristol",
+        "University of Maryland",
+        "University College London",
+        "MATS",
+        "Astra",
+        "New York University",
+        "Anthropic",
+        "MIT CSAIL",
+    ]
 
     # Metadata
     modalities: tuple[Modality, ...] = (Modality.TEXT,)
@@ -40,10 +72,12 @@ class _LLMLatentAdversarialTrainingDataset(_RemoteDatasetLoader):
         self.source = source
 
     @property
+    @override
     def dataset_name(self) -> str:
         """Return the dataset name."""
         return "llm_lat_harmful"
 
+    @override
     async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch LLM-LAT harmful dataset and return as SeedDataset.
@@ -63,13 +97,15 @@ class _LLMLatentAdversarialTrainingDataset(_RemoteDatasetLoader):
             cache=cache,
         )
 
-        seed_prompts = [
+        seed_prompts: list[SeedUnion] = [
             SeedPrompt(
                 value=item["prompt"],
                 data_type="text",
                 dataset_name=self.dataset_name,
                 description="This dataset contains prompts used to assess and analyze harmful behaviors in llm",
                 source=f"https://huggingface.co/datasets/{self.source}",
+                authors=self._AUTHORS,
+                groups=self._GROUPS,
             )
             for item in data
         ]

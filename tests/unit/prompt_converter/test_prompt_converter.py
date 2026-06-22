@@ -180,7 +180,7 @@ async def test_str_join_converter_none_raises() -> None:
 async def test_str_join_converter_invalid_type_raises() -> None:
     converter = StringJoinConverter()
     with pytest.raises(ValueError):
-        assert await converter.convert_async(prompt="test", input_type="invalid")  # type: ignore[arg-type] # noqa: PGH003
+        assert await converter.convert_async(prompt="test", input_type="invalid")  # type: ignore[arg-type]
 
 
 async def test_str_join_converter_unsupported_type_raises() -> None:

@@ -13,7 +13,7 @@ from pyrit.executor.attack.single_turn.many_shot_jailbreak import ManyShotJailbr
 from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
 from pyrit.executor.attack.single_turn.role_play import RolePlayAttack
 from pyrit.executor.attack.single_turn.skeleton_key import SkeletonKeyAttack
-from pyrit.models import ComponentIdentifier, SeedGroup, SeedObjective
+from pyrit.models import ComponentIdentifier, SeedAttackGroup, SeedObjective
 from pyrit.prompt_target import PromptTarget
 from pyrit.scenario.core import BaselineAttackPolicy
 from pyrit.scenario.scenarios.airt.jailbreak import Jailbreak, JailbreakStrategy
@@ -44,10 +44,10 @@ def mock_scenario_result_id() -> str:
 
 
 @pytest.fixture
-def mock_memory_seed_groups() -> list[SeedGroup]:
+def mock_memory_seed_groups() -> list[SeedAttackGroup]:
     """Create mock seed groups that _get_default_seed_groups() would return."""
     return [
-        SeedGroup(seeds=[SeedObjective(value=prompt)])
+        SeedAttackGroup(seeds=[SeedObjective(value=prompt)])
         for prompt in [
             "sample objective 1",
             "sample objective 2",
@@ -396,7 +396,7 @@ class TestJailbreakLifecycle:
         *,
         mock_objective_target: PromptTarget,
         mock_objective_scorer: TrueFalseInverterScorer,
-        mock_memory_seed_groups: list[SeedGroup],
+        mock_memory_seed_groups: list[SeedAttackGroup],
     ) -> None:
         """Test initialization with custom max_concurrency."""
         with patch.object(Jailbreak, "_resolve_seed_groups", return_value=mock_memory_seed_groups):
@@ -409,7 +409,7 @@ class TestJailbreakLifecycle:
         *,
         mock_objective_target: PromptTarget,
         mock_objective_scorer: TrueFalseInverterScorer,
-        mock_memory_seed_groups: list[SeedGroup],
+        mock_memory_seed_groups: list[SeedAttackGroup],
     ) -> None:
         """Test initialization with memory labels."""
         memory_labels = {"type": "jailbreak", "category": "scenario"}
@@ -445,7 +445,7 @@ class TestJailbreakProperties:
         assert Jailbreak.required_datasets() == ["airt_harms"]
 
     async def test_no_target_duplication_async(
-        self, *, mock_objective_target: PromptTarget, mock_memory_seed_groups: list[SeedGroup]
+        self, *, mock_objective_target: PromptTarget, mock_memory_seed_groups: list[SeedAttackGroup]
     ) -> None:
         """Test that all three targets (adversarial, object, scorer) are distinct."""
         with patch.object(Jailbreak, "_resolve_seed_groups", return_value=mock_memory_seed_groups):
@@ -489,7 +489,7 @@ class TestJailbreakAdversarialTarget:
         *,
         mock_objective_target: PromptTarget,
         mock_objective_scorer: TrueFalseInverterScorer,
-        mock_memory_seed_groups: list[SeedGroup],
+        mock_memory_seed_groups: list[SeedAttackGroup],
         roleplay_jailbreak_strategy: JailbreakStrategy,
     ) -> None:
         """Test that multiple role-play attacks share the same adversarial target instance."""

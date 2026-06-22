@@ -3,14 +3,20 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 from pyrit.prompt_target import CHAT_TARGET_REQUIREMENTS
 from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 
 if TYPE_CHECKING:
-    from pyrit.models import ComponentIdentifier, MessagePiece, Score, UnvalidatedScore
+    from pyrit.models import (
+        ComponentIdentifier,
+        JsonSchemaDefinition,
+        MessagePiece,
+        Score,
+        UnvalidatedScore,
+    )
     from pyrit.prompt_target import PromptTarget
 
 
@@ -31,16 +37,17 @@ class SelfAskGeneralFloatScaleScorer(FloatScaleScorer):
         *,
         chat_target: PromptTarget,
         system_prompt_format_string: str,
-        prompt_format_string: Optional[str] = None,
-        category: Optional[str] = None,
+        prompt_format_string: str | None = None,
+        category: str | None = None,
         min_value: int = 0,
         max_value: int = 100,
-        validator: Optional[ScorerPromptValidator] = None,
+        validator: ScorerPromptValidator | None = None,
         score_value_output_key: str = "score_value",
         rationale_output_key: str = "rationale",
         description_output_key: str = "description",
         metadata_output_key: str = "metadata",
         category_output_key: str = "category",
+        response_json_schema: JsonSchemaDefinition | None = None,
     ) -> None:
         """
         Initialize the SelfAskGeneralFloatScaleScorer.
@@ -58,17 +65,20 @@ class SelfAskGeneralFloatScaleScorer(FloatScaleScorer):
                 possibly via normalization-pipeline adaptation).
             system_prompt_format_string (str): System prompt template with placeholders for
                 objective, prompt, and message_piece.
-            prompt_format_string (Optional[str]): User prompt template with the same placeholders.
-            category (Optional[str]): Category for the score.
+            prompt_format_string (str | None): User prompt template with the same placeholders.
+            category (str | None): Category for the score.
             min_value (int): Minimum of the model's native scale. Defaults to 0.
             max_value (int): Maximum of the model's native scale. Defaults to 100.
-            validator (Optional[ScorerPromptValidator]): Custom validator. If omitted, a default
+            validator (ScorerPromptValidator | None): Custom validator. If omitted, a default
                 validator will be used requiring text input and an objective.
             score_value_output_key (str): JSON key for the score value. Defaults to "score_value".
             rationale_output_key (str): JSON key for the rationale. Defaults to "rationale".
             description_output_key (str): JSON key for the description. Defaults to "description".
             metadata_output_key (str): JSON key for the metadata. Defaults to "metadata".
             category_output_key (str): JSON key for the category. Defaults to "category".
+            response_json_schema (JsonSchemaDefinition | None): An optional JSON schema constraining
+                the scoring response. When provided, it is forwarded to the scoring target, which
+                enforces it natively when supported or omits it via normalization. Defaults to None.
 
         Raises:
             ValueError: If system_prompt_format_string is not provided or empty.
@@ -92,6 +102,7 @@ class SelfAskGeneralFloatScaleScorer(FloatScaleScorer):
         self._description_output_key = description_output_key
         self._metadata_output_key = metadata_output_key
         self._category_output_key = category_output_key
+        self._response_json_schema = response_json_schema
 
     def _build_identifier(self) -> ComponentIdentifier:
         """
@@ -106,13 +117,12 @@ class SelfAskGeneralFloatScaleScorer(FloatScaleScorer):
                 "user_prompt_template": self._prompt_format_string,
                 "min_value": self._min_value,
                 "max_value": self._max_value,
+                "response_json_schema": self._response_json_schema,
             },
-            children={
-                "prompt_target": self._prompt_target.get_identifier(),
-            },
+            prompt_target=self._prompt_target.get_identifier(),
         )
 
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: Optional[str] = None) -> list[Score]:
+    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
         """
         Score a single message piece using the configured prompts and scale to [0, 1].
 
@@ -148,12 +158,12 @@ class SelfAskGeneralFloatScaleScorer(FloatScaleScorer):
             scored_prompt_id=message_piece.id,
             category=self._score_category,
             objective=objective,
-            attack_identifier=message_piece.attack_identifier,
             score_value_output_key=self._score_value_output_key,
             rationale_output_key=self._rationale_output_key,
             description_output_key=self._description_output_key,
             metadata_output_key=self._metadata_output_key,
             category_output_key=self._category_output_key,
+            response_json_schema=self._response_json_schema,
         )
 
         score = unvalidated.to_score(

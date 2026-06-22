@@ -1,11 +1,11 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from typing import Optional
 
 import segno
 
-from pyrit.models import ComponentIdentifier, PromptDataType, data_serializer_factory
+from pyrit.memory import data_serializer_factory
+from pyrit.models import ComponentIdentifier, PromptDataType
 from pyrit.prompt_converter.prompt_converter import ConverterResult, PromptConverter
 
 
@@ -15,17 +15,21 @@ class QRCodeConverter(PromptConverter):
     SUPPORTED_INPUT_TYPES = ("text",)
     SUPPORTED_OUTPUT_TYPES = ("image_path",)
 
+    # Grandfathered: all parameters are part of the public positional API.
+    # TODO: remove this opt-out and insert ``*,`` after ``self`` in 0.16.0.
+    _brick_legacy_init = True
+
     def __init__(
         self,
         scale: int = 3,
         border: int = 4,
         dark_color: tuple[int, int, int] = (0, 0, 0),
         light_color: tuple[int, int, int] = (255, 255, 255),
-        data_dark_color: Optional[tuple[int, int, int]] = None,
-        data_light_color: Optional[tuple[int, int, int]] = None,
-        finder_dark_color: Optional[tuple[int, int, int]] = None,
-        finder_light_color: Optional[tuple[int, int, int]] = None,
-        border_color: Optional[tuple[int, int, int]] = None,
+        data_dark_color: tuple[int, int, int] | None = None,
+        data_light_color: tuple[int, int, int] | None = None,
+        finder_dark_color: tuple[int, int, int] | None = None,
+        finder_light_color: tuple[int, int, int] | None = None,
+        border_color: tuple[int, int, int] | None = None,
     ) -> None:
         """
         Initialize the converter with specified parameters for QR code generation.

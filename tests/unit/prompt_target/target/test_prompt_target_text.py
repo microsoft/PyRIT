@@ -4,6 +4,7 @@
 import io
 import os
 from collections.abc import MutableSequence
+from pathlib import Path
 from tempfile import NamedTemporaryFile
 
 import pytest
@@ -52,3 +53,28 @@ async def test_send_prompt_stream(sample_entries: MutableSequence[MessagePiece])
     os.remove(tmp_file.name)
 
     assert prompt in content, "The prompt was not found in the temporary file content."
+
+
+@pytest.mark.usefixtures("patch_central_database")
+def test_import_scores_from_csv_missing_conversation_id_raises(tmp_path: Path):
+    csv_path = tmp_path / "scores.csv"
+    csv_path.write_text("role,value\nassistant,hello\n", encoding="utf-8")
+
+    no_op = TextTarget()
+    with pytest.raises(ValueError, match="conversation_id"):
+        no_op.import_scores_from_csv(csv_file_path=csv_path)
+
+
+@pytest.mark.usefixtures("patch_central_database")
+def test_import_scores_from_csv_with_conversation_id_succeeds(tmp_path: Path):
+    csv_path = tmp_path / "scores.csv"
+    csv_path.write_text(
+        "role,value,data_type,response_error,labels,conversation_id\nassistant,hello,text,none,{},conv-1\n",
+        encoding="utf-8",
+    )
+
+    no_op = TextTarget()
+    pieces = no_op.import_scores_from_csv(csv_file_path=csv_path)
+
+    assert len(pieces) == 1
+    assert pieces[0].conversation_id == "conv-1"

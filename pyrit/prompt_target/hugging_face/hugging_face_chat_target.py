@@ -9,8 +9,8 @@ from pathlib import Path
 from typing import Any, cast
 
 from transformers import (
-    AutoModelForCausalLM,
-    AutoTokenizer,
+    AutoModelForCausalLM,  # type: ignore[ty:possibly-missing-import]
+    AutoTokenizer,  # type: ignore[ty:possibly-missing-import]
     BatchEncoding,
     PretrainedConfig,
 )
@@ -46,6 +46,11 @@ class HuggingFaceChatTarget(PromptTarget):
     _cached_model: Any = None
     _cached_tokenizer: Any = None
     _cached_model_id: str | None = None
+
+    # Instance attributes populated lazily by ``load_model_and_tokenizer_async``. Typed as
+    # ``Any`` because the concrete model class comes from ``transformers`` factory methods
+    # whose return types ty cannot statically resolve.
+    model: Any
 
     # Class-level flag to enable or disable cache
     _cache_enabled = True
@@ -143,7 +148,7 @@ class HuggingFaceChatTarget(PromptTarget):
             self.huggingface_token = None
 
         try:
-            import torch
+            import torch  # type: ignore[ty:unresolved-import]
         except ModuleNotFoundError as e:
             raise RuntimeError("Could not import torch. You may need to install it via 'pip install pyrit[all]'") from e
 
@@ -304,7 +309,7 @@ class HuggingFaceChatTarget(PromptTarget):
                 )
 
             # Move the model to the correct device
-            self.model = self.model.to(self.device)
+            self.model = cast("Any", self.model).to(self.device)
 
             # Debug prints to check types
             logger.info(f"Model loaded: {type(self.model)}")
@@ -383,7 +388,7 @@ class HuggingFaceChatTarget(PromptTarget):
 
             assistant_response = cast(
                 "str",
-                self.tokenizer.decode(generated_tokens, skip_special_tokens=self.skip_special_tokens),
+                self.tokenizer.decode(generated_tokens, skip_special_tokens=self.skip_special_tokens),  # type: ignore[ty:unresolved-attribute]
             ).strip()
 
             if not assistant_response:
@@ -481,7 +486,7 @@ class HuggingFaceChatTarget(PromptTarget):
             the same process may interfere with determinism.
         """
         if self._random_seed is not None:
-            import torch
+            import torch  # type: ignore[ty:unresolved-import]
 
             torch.manual_seed(self._random_seed)
             if self.use_cuda:

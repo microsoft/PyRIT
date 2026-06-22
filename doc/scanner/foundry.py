@@ -25,7 +25,7 @@ from pathlib import Path
 from pyrit.output import output_scenario_async
 from pyrit.registry import TargetRegistry
 from pyrit.scenario import DatasetConfiguration
-from pyrit.scenario.scenarios.foundry import FoundryStrategy, RedTeamAgent
+from pyrit.scenario.foundry import FoundryStrategy, RedTeamAgent
 from pyrit.setup import initialize_from_config_async
 
 await initialize_from_config_async(config_path=Path("pyrit_conf.yaml"))  # type: ignore
@@ -77,13 +77,13 @@ await output_scenario_async(scenario_result)
 # Each converter in the composite is applied in sequence before the attack runs.
 #
 # ```python
-# from pyrit.scenario.scenarios.foundry import FoundryComposite
+# from pyrit.scenario.foundry import FoundryComposite
 #
 # composed = FoundryComposite(attack=FoundryStrategy.Crescendo, converters=[FoundryStrategy.Caesar, FoundryStrategy.CharSwap])
 # ```
 
 # %%
-# from pyrit.scenario.scenarios.foundry import FoundryComposite
+# from pyrit.scenario.foundry import FoundryComposite
 # composed = FoundryComposite(attack=FoundryStrategy.Crescendo, converters=[FoundryStrategy.Caesar, FoundryStrategy.CharSwap])
 # scenario_strategies = [FoundryStrategy.Base64, composed]
 

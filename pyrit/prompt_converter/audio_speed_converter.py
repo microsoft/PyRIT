@@ -9,7 +9,8 @@ import numpy as np
 from scipy.interpolate import interp1d
 from scipy.io import wavfile
 
-from pyrit.models import PromptDataType, data_serializer_factory
+from pyrit.memory import data_serializer_factory
+from pyrit.models import PromptDataType
 from pyrit.prompt_converter.prompt_converter import ConverterResult, PromptConverter
 
 logger = logging.getLogger(__name__)

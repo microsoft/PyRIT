@@ -108,7 +108,47 @@ ALTER ROLE db_datawriter ADD MEMBER [user@domain.com];
 
 ## 6. Configure Local Environment
 
-Connecting PyRIT to an Azure SQL Server database requires ODBC, PyODBC and Microsoft's [ODBC Driver for SQL Server](https://learn.microsoft.com/en-us/sql/connect/odbc/download-odbc-driver-for-sql-server?view=sql-server-ver16) to be installed in your local environment. Consult PyODBC's [documentation](https://github.com/mkleehammer/pyodbc/wiki) for detailed instruction on.
+Connecting PyRIT to an Azure SQL Server database requires the **Microsoft ODBC Driver 18 for SQL Server**, which on macOS and Linux depends on **unixODBC**. The `pyodbc` Python package is already installed as a PyRIT dependency.
+
+Install the driver for your OS:
+
+::::{tab-set}
+
+:::{tab-item} Windows
+Download and install the [Microsoft ODBC Driver 18 for SQL Server](https://learn.microsoft.com/en-us/sql/connect/odbc/download-odbc-driver-for-sql-server) MSI from Microsoft.
+:::
+
+:::{tab-item} macOS
+Install via [Homebrew](https://brew.sh):
+
+```bash
+brew tap microsoft/mssql-release https://github.com/Microsoft/homebrew-mssql-release
+brew install msodbcsql18 mssql-tools18
+```
+:::
+
+:::{tab-item} Linux (Ubuntu / Debian)
+```bash
+# Install unixODBC
+sudo apt-get update
+sudo apt-get install -y unixodbc unixodbc-dev
+
+# Add the Microsoft package repository
+curl -sSL -O https://packages.microsoft.com/config/ubuntu/$(grep VERSION_ID /etc/os-release | cut -d '"' -f 2)/packages-microsoft-prod.deb
+sudo dpkg -i packages-microsoft-prod.deb
+rm packages-microsoft-prod.deb
+
+# Install the driver
+sudo apt-get update
+sudo ACCEPT_EULA=Y apt-get install -y msodbcsql18
+```
+
+For other Linux distributions (RHEL, SUSE, Alpine), see [Microsoft's installation guide](https://learn.microsoft.com/en-us/sql/connect/odbc/linux-mac/installing-the-microsoft-odbc-driver-for-sql-server).
+:::
+
+::::
+
+See [PyODBC's documentation](https://github.com/mkleehammer/pyodbc/wiki) for further details.
 
 ## 7. Testing
 

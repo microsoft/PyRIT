@@ -15,7 +15,7 @@ import logging
 import pkgutil
 from collections.abc import Callable, Iterator
 from pathlib import Path
-from typing import Optional, TypeVar
+from typing import TypeVar
 
 logger = logging.getLogger(__name__)
 
@@ -92,7 +92,7 @@ def discover_in_package(
     package_name: str,
     base_class: type[T],
     recursive: bool = True,
-    name_builder: Optional[Callable[[str, str], str]] = None,
+    name_builder: Callable[[str, str], str] | None = None,
     _prefix: str = "",
 ) -> Iterator[tuple[str, type[T]]]:
     """
@@ -156,7 +156,7 @@ def discover_in_package(
 def discover_subclasses_in_loaded_modules(
     *,
     base_class: type[T],
-    exclude_module_prefixes: Optional[tuple[str, ...]] = None,
+    exclude_module_prefixes: tuple[str, ...] | None = None,
 ) -> Iterator[tuple[str, type[T]]]:
     """
     Discover subclasses of a base class from already-loaded modules.

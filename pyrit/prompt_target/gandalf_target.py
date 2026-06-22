@@ -4,7 +4,6 @@
 import enum
 import json
 import logging
-from typing import Optional
 
 from pyrit.common import net_utility
 from pyrit.common.deprecation import print_deprecation_message
@@ -43,8 +42,8 @@ class GandalfTarget(PromptTarget):
         self,
         *,
         level: GandalfLevel,
-        max_requests_per_minute: Optional[int] = None,
-        custom_configuration: Optional[TargetConfiguration] = None,
+        max_requests_per_minute: int | None = None,
+        custom_configuration: TargetConfiguration | None = None,
     ) -> None:
         """
         Initialize the Gandalf target.

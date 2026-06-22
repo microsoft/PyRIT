@@ -1,7 +1,6 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from typing import Optional
 
 from datasets import load_dataset
 
@@ -12,7 +11,7 @@ from pyrit.models import (
 )
 
 
-def fetch_wmdp_dataset(category: Optional[str] = None) -> QuestionAnsweringDataset:
+def fetch_wmdp_dataset(category: str | None = None) -> QuestionAnsweringDataset:
     """
     Fetch WMDP examples and create a QuestionAnsweringDataset.
 
