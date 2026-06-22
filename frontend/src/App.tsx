@@ -183,16 +183,9 @@ function App() {
     setIsDarkMode(!isDarkMode)
   }
 
-  // Onboarding tour — pass setCurrentView so the tour can switch views between steps
-  const { startTour, hasCompletedTour, tourProps } = useTour(setCurrentView, isDarkMode, currentView)
-
-  // Auto-start the tour on first visit
-  useEffect(() => {
-    if (!hasCompletedTour) {
-      startTour()
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  // Onboarding tour — pass setCurrentView so the tour can switch views between steps.
+  // The tour does not auto-start; users launch it from the "Take a tour" button in the top bar.
+  const { startTour, tourProps } = useTour(setCurrentView, isDarkMode, currentView)
 
   return (
     <ErrorBoundary>
