@@ -10,7 +10,7 @@ registered initializer, a runtime target instance, a scenario run summary)
 and are imported by both the backend (as response/request payloads) and the
 CLI (and any future external REST client). REST framing types (pagination
 envelopes, RFC 7807 problem details, GUI-only request bodies) stay in
-``pyrit.backend.models``; see the §2.1 rule of thumb in the migration plan.
+``pyrit.backend.models``
 """
 
 from pyrit.models.catalog.initializer import (
