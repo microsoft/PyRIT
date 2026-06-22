@@ -54,20 +54,20 @@ class ModalityFeedbackRouter:
     def __init__(
         self,
         *,
-        adversarial_target: PromptTarget,
+        adversarial_chat: PromptTarget,
         objective_target: PromptTarget,
     ) -> None:
         """
         Build a router for a specific adversarial/objective target pair.
 
         Args:
-            adversarial_target: The chat target that generates adversarial prompts.
+            adversarial_chat: The chat target that generates adversarial prompts.
             objective_target: The target being attacked.
         """
-        self._adversarial_target = adversarial_target
+        self._adversarial_chat = adversarial_chat
         self._objective_target = objective_target
 
-        adv_input = adversarial_target.configuration.capabilities.input_modalities
+        adv_input = adversarial_chat.configuration.capabilities.input_modalities
         # Data types the adversarial target accepts alongside text in a single
         # input combo. Used to gate whether to attach prior objective media to
         # the adversarial feedback message.
@@ -75,19 +75,24 @@ class ModalityFeedbackRouter:
             data_type for combo in adv_input if "text" in combo for data_type in combo if data_type != "text"
         )
 
-        obj_input = objective_target.configuration.capabilities.input_modalities
         # Convenience caches keyed off the objective target's input modalities.
-        self._objective_input_modalities: frozenset[frozenset[PromptDataType]] = obj_input
-        self._objective_text_only_allowed: bool = frozenset({"text"}) in obj_input
+        self._objective_input_modalities: frozenset[frozenset[PromptDataType]] = (
+            objective_target.configuration.capabilities.input_modalities
+        )
+        self._objective_text_only_allowed: bool = frozenset({"text"}) in self._objective_input_modalities
         self._objective_media_types_with_text: frozenset[PromptDataType] = frozenset(
-            data_type for combo in obj_input if "text" in combo for data_type in combo if data_type != "text"
+            data_type
+            for combo in self._objective_input_modalities
+            if "text" in combo
+            for data_type in combo
+            if data_type != "text"
         )
 
     # ------------------------------------------------------------------ #
     # Properties
     # ------------------------------------------------------------------ #
     @property
-    def objective_requires_media_on_first_turn(self) -> bool:
+    def objective_target_requires_media_on_first_turn(self) -> bool:
         """``True`` iff no advertised objective input combo is exactly ``{text}``."""
         return not self._objective_text_only_allowed
 
@@ -111,7 +116,7 @@ class ModalityFeedbackRouter:
                 input combo and ``next_message`` does not supply at least one
                 non-text piece to serve as the seed.
         """
-        if not self.objective_requires_media_on_first_turn:
+        if not self.objective_target_requires_media_on_first_turn:
             return
 
         seed_pieces = self._extract_seed_media_pieces(next_message)

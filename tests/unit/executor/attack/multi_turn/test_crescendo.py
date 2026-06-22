@@ -2554,6 +2554,8 @@ class TestModalityRouterIntegration:
 
         with pytest.raises(ValueError, match="seed"):
             attack._validate_context(context=context)
+
+
 class TestCrescendoAdversarialIdentity:
     """Tests for adversarial config in the Crescendo attack identity and inline system prompt."""
 

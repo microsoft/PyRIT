@@ -409,7 +409,7 @@ class TestTAPNodeDuplicateSystemMessages:
             attack_id=MagicMock(),
             attack_strategy_name="TAP",
             modality_router=ModalityFeedbackRouter(
-                adversarial_target=adversarial_chat,
+                adversarial_chat=adversarial_chat,
                 objective_target=target,
             ),
         )
@@ -792,7 +792,7 @@ class TestTAPBranchingPreservesSystemPrompts:
             attack_id=MagicMock(),
             attack_strategy_name="TAP",
             modality_router=ModalityFeedbackRouter(
-                adversarial_target=adversarial_chat,
+                adversarial_chat=adversarial_chat,
                 objective_target=target,
             ),
         )

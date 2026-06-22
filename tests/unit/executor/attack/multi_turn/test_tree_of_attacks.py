@@ -962,7 +962,7 @@ class TestBlockedScoringDefaults:
             attack_id=ComponentIdentifier(class_name="Test", class_module="test"),
             attack_strategy_name="TreeOfAttacksWithPruningAttack",
             modality_router=ModalityFeedbackRouter(
-                adversarial_target=builder.adversarial_chat,
+                adversarial_chat=builder.adversarial_chat,
                 objective_target=builder.objective_target,
             ),
             desired_response_prefix="Sure, here is",
@@ -1030,7 +1030,7 @@ class TestBlockedScoringDefaults:
             attack_id=ComponentIdentifier(class_name="Test", class_module="test"),
             attack_strategy_name="TreeOfAttacksWithPruningAttack",
             modality_router=ModalityFeedbackRouter(
-                adversarial_target=builder.adversarial_chat,
+                adversarial_chat=builder.adversarial_chat,
                 objective_target=builder.objective_target,
             ),
             desired_response_prefix="Sure, here is",
@@ -1423,7 +1423,7 @@ class TestTreeOfAttacksNode:
         builder.adversarial_chat.configuration.capabilities.input_modalities = frozenset({frozenset({"text"})})
         builder.adversarial_chat.configuration.capabilities.output_modalities = frozenset({frozenset({"text"})})
         modality_router = ModalityFeedbackRouter(
-            adversarial_target=builder.adversarial_chat,
+            adversarial_chat=builder.adversarial_chat,
             objective_target=builder.objective_target,
         )
 
@@ -2551,7 +2551,7 @@ class TestModalityRouterIntegration:
         prompt_normalizer.send_prompt_async = AsyncMock(return_value=None)
 
         modality_router = ModalityFeedbackRouter(
-            adversarial_target=builder.adversarial_chat,
+            adversarial_chat=builder.adversarial_chat,
             objective_target=builder.objective_target,
         )
 
@@ -2600,7 +2600,7 @@ class TestModalityRouterIntegration:
             {frozenset({"image_path"})}
         )
         node_components["modality_router"] = ModalityFeedbackRouter(
-            adversarial_target=node_components["adversarial_chat"],
+            adversarial_chat=node_components["adversarial_chat"],
             objective_target=node_components["objective_target"],
         )
 
@@ -2671,7 +2671,7 @@ class TestModalityRouterIntegration:
             {frozenset({"text", "image_path"})}
         )
         node_components["modality_router"] = ModalityFeedbackRouter(
-            adversarial_target=node_components["adversarial_chat"],
+            adversarial_chat=node_components["adversarial_chat"],
             objective_target=node_components["objective_target"],
         )
 
@@ -2737,6 +2737,8 @@ class TestModalityRouterIntegration:
 
         with pytest.raises(ValueError, match="seed"):
             attack._validate_context(context=context)
+
+
 class TestTAPAdversarialIdentity:
     """Tests for adversarial config in the TAP attack identity and inline system prompt."""
 

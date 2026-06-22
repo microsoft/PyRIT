@@ -1431,7 +1431,7 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
         # placeholders when ``next_message`` carries seed media. Shared across
         # all nodes of the tree.
         self._modality_router = ModalityFeedbackRouter(
-            adversarial_target=self._adversarial_chat,
+            adversarial_chat=self._adversarial_chat,
             objective_target=objective_target,
         )
 

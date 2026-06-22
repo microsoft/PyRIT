@@ -162,7 +162,7 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
         # forward to the objective target, and that fills in adversarial
         # placeholders when ``next_message`` carries seed media.
         self._modality_router = ModalityFeedbackRouter(
-            adversarial_target=self._adversarial_chat,
+            adversarial_chat=self._adversarial_chat,
             objective_target=objective_target,
         )
 

@@ -54,7 +54,7 @@ def _make_response(*, data_type: PromptDataType, value: str = "some-value") -> M
 class TestValidateFirstTurnSeed:
     def test_text_only_target_no_seed_required(self):
         router = ModalityFeedbackRouter(
-            adversarial_target=_build_target(input_modalities=[{"text"}]),
+            adversarial_chat=_build_target(input_modalities=[{"text"}]),
             objective_target=_build_target(input_modalities=[{"text"}]),
         )
 
@@ -62,7 +62,7 @@ class TestValidateFirstTurnSeed:
 
     def test_multimodal_target_with_text_allowed_no_seed_required(self):
         router = ModalityFeedbackRouter(
-            adversarial_target=_build_target(input_modalities=[{"text"}]),
+            adversarial_chat=_build_target(input_modalities=[{"text"}]),
             objective_target=_build_target(input_modalities=[{"text"}, {"text", "image_path"}]),
         )
 
@@ -70,7 +70,7 @@ class TestValidateFirstTurnSeed:
 
     def test_edit_only_target_without_next_message_raises(self):
         router = ModalityFeedbackRouter(
-            adversarial_target=_build_target(input_modalities=[{"text"}]),
+            adversarial_chat=_build_target(input_modalities=[{"text"}]),
             objective_target=_build_target(input_modalities=[{"text", "image_path"}]),
         )
 
@@ -79,7 +79,7 @@ class TestValidateFirstTurnSeed:
 
     def test_edit_only_target_with_text_only_next_message_raises(self):
         router = ModalityFeedbackRouter(
-            adversarial_target=_build_target(input_modalities=[{"text"}]),
+            adversarial_chat=_build_target(input_modalities=[{"text"}]),
             objective_target=_build_target(input_modalities=[{"text", "image_path"}]),
         )
         next_message = Message.from_prompt(prompt="just text", role="user")
@@ -89,7 +89,7 @@ class TestValidateFirstTurnSeed:
 
     def test_edit_only_target_with_media_seed_passes(self):
         router = ModalityFeedbackRouter(
-            adversarial_target=_build_target(input_modalities=[{"text"}]),
+            adversarial_chat=_build_target(input_modalities=[{"text"}]),
             objective_target=_build_target(input_modalities=[{"text", "image_path"}]),
         )
         shared_conv = "edit-only-conv"
@@ -121,7 +121,7 @@ class TestBuildAdversarialInputMessage:
     @pytest.mark.parametrize("media_type", ["image_path", "audio_path", "video_path"])
     def test_text_only_adversarial_falls_back_to_text(self, media_type):
         router = ModalityFeedbackRouter(
-            adversarial_target=_build_target(input_modalities=[{"text"}]),
+            adversarial_chat=_build_target(input_modalities=[{"text"}]),
             objective_target=_build_target(input_modalities=[{"text"}, {"text", media_type}]),
         )
         last_response = _make_response(data_type=media_type, value="/tmp/output.bin")
@@ -138,7 +138,7 @@ class TestBuildAdversarialInputMessage:
     @pytest.mark.parametrize("media_type", ["image_path", "audio_path", "video_path"])
     def test_multimodal_adversarial_attaches_media(self, media_type):
         router = ModalityFeedbackRouter(
-            adversarial_target=_build_target(input_modalities=[{"text"}, {"text", media_type}]),
+            adversarial_chat=_build_target(input_modalities=[{"text"}, {"text", media_type}]),
             objective_target=_build_target(input_modalities=[{"text"}]),
         )
         last_response = _make_response(data_type=media_type, value="/tmp/output.bin")
@@ -158,7 +158,7 @@ class TestBuildAdversarialInputMessage:
 
     def test_no_last_response_returns_text_only(self):
         router = ModalityFeedbackRouter(
-            adversarial_target=_build_target(input_modalities=[{"text"}, {"text", "image_path"}]),
+            adversarial_chat=_build_target(input_modalities=[{"text"}, {"text", "image_path"}]),
             objective_target=_build_target(input_modalities=[{"text"}]),
         )
 
@@ -173,7 +173,7 @@ class TestBuildAdversarialInputMessage:
     def test_response_media_type_not_supported_falls_back(self):
         # Adversarial accepts {text, image_path} but the response is audio_path.
         router = ModalityFeedbackRouter(
-            adversarial_target=_build_target(input_modalities=[{"text"}, {"text", "image_path"}]),
+            adversarial_chat=_build_target(input_modalities=[{"text"}, {"text", "image_path"}]),
             objective_target=_build_target(input_modalities=[{"text"}, {"text", "audio_path"}]),
         )
         last_response = _make_response(data_type="audio_path", value="/tmp/out.wav")
@@ -214,7 +214,7 @@ class TestFillAdversarialPlaceholders:
 
     def test_replaces_placeholder_only(self):
         router = ModalityFeedbackRouter(
-            adversarial_target=_build_target(input_modalities=[{"text"}]),
+            adversarial_chat=_build_target(input_modalities=[{"text"}]),
             objective_target=_build_target(input_modalities=[{"text", "image_path"}]),
         )
         message = self._make_placeholder_message()
@@ -233,7 +233,7 @@ class TestFillAdversarialPlaceholders:
 
     def test_does_not_mutate_input_message(self):
         router = ModalityFeedbackRouter(
-            adversarial_target=_build_target(input_modalities=[{"text"}]),
+            adversarial_chat=_build_target(input_modalities=[{"text"}]),
             objective_target=_build_target(input_modalities=[{"text", "image_path"}]),
         )
         message = self._make_placeholder_message()
@@ -249,7 +249,7 @@ class TestFillAdversarialPlaceholders:
 
     def test_filled_pieces_share_conversation_id(self):
         router = ModalityFeedbackRouter(
-            adversarial_target=_build_target(input_modalities=[{"text"}]),
+            adversarial_chat=_build_target(input_modalities=[{"text"}]),
             objective_target=_build_target(input_modalities=[{"text", "image_path"}]),
         )
         message = self._make_placeholder_message()
@@ -269,7 +269,7 @@ class TestFillAdversarialPlaceholders:
 class TestBuildObjectiveInputMessage:
     def test_turn_zero_text_only_target(self):
         router = ModalityFeedbackRouter(
-            adversarial_target=_build_target(input_modalities=[{"text"}]),
+            adversarial_chat=_build_target(input_modalities=[{"text"}]),
             objective_target=_build_target(input_modalities=[{"text"}]),
         )
 
@@ -284,7 +284,7 @@ class TestBuildObjectiveInputMessage:
 
     def test_turn_zero_edit_only_target_raises_defensive(self):
         router = ModalityFeedbackRouter(
-            adversarial_target=_build_target(input_modalities=[{"text"}]),
+            adversarial_chat=_build_target(input_modalities=[{"text"}]),
             objective_target=_build_target(input_modalities=[{"text", "image_path"}]),
         )
 
@@ -297,7 +297,7 @@ class TestBuildObjectiveInputMessage:
 
     def test_turn_n_attaches_prev_media_when_supported(self):
         router = ModalityFeedbackRouter(
-            adversarial_target=_build_target(input_modalities=[{"text"}]),
+            adversarial_chat=_build_target(input_modalities=[{"text"}]),
             objective_target=_build_target(input_modalities=[{"text"}, {"text", "image_path"}]),
         )
         last_response = _make_response(data_type="image_path", value="/tmp/prev.png")
@@ -315,7 +315,7 @@ class TestBuildObjectiveInputMessage:
 
     def test_turn_n_text_only_target_drops_media(self):
         router = ModalityFeedbackRouter(
-            adversarial_target=_build_target(input_modalities=[{"text"}]),
+            adversarial_chat=_build_target(input_modalities=[{"text"}]),
             objective_target=_build_target(input_modalities=[{"text"}]),
         )
         last_response = _make_response(data_type="image_path", value="/tmp/prev.png")
@@ -331,7 +331,7 @@ class TestBuildObjectiveInputMessage:
 
     def test_turn_n_no_prev_response_returns_text_only(self):
         router = ModalityFeedbackRouter(
-            adversarial_target=_build_target(input_modalities=[{"text"}]),
+            adversarial_chat=_build_target(input_modalities=[{"text"}]),
             objective_target=_build_target(input_modalities=[{"text"}, {"text", "image_path"}]),
         )
 
@@ -347,7 +347,7 @@ class TestBuildObjectiveInputMessage:
     @pytest.mark.parametrize("media_type", ["image_path", "audio_path", "video_path"])
     def test_turn_n_generic_media_types(self, media_type):
         router = ModalityFeedbackRouter(
-            adversarial_target=_build_target(input_modalities=[{"text"}]),
+            adversarial_chat=_build_target(input_modalities=[{"text"}]),
             objective_target=_build_target(input_modalities=[{"text"}, {"text", media_type}]),
         )
         last_response = _make_response(data_type=media_type, value=f"/tmp/prev.{media_type}")
@@ -366,18 +366,18 @@ class TestBuildObjectiveInputMessage:
 # properties / construction
 # ---------------------------------------------------------------------------
 class TestProperties:
-    def test_objective_requires_media_on_first_turn_when_text_excluded(self):
+    def test_objective_target_requires_media_on_first_turn_when_text_excluded(self):
         router = ModalityFeedbackRouter(
-            adversarial_target=_build_target(input_modalities=[{"text"}]),
+            adversarial_chat=_build_target(input_modalities=[{"text"}]),
             objective_target=_build_target(input_modalities=[{"text", "image_path"}]),
         )
 
-        assert router.objective_requires_media_on_first_turn is True
+        assert router.objective_target_requires_media_on_first_turn is True
 
     def test_objective_does_not_require_media_when_text_allowed(self):
         router = ModalityFeedbackRouter(
-            adversarial_target=_build_target(input_modalities=[{"text"}]),
+            adversarial_chat=_build_target(input_modalities=[{"text"}]),
             objective_target=_build_target(input_modalities=[{"text"}, {"text", "image_path"}]),
         )
 
-        assert router.objective_requires_media_on_first_turn is False
+        assert router.objective_target_requires_media_on_first_turn is False
