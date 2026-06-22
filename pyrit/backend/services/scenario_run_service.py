@@ -24,7 +24,7 @@ from pyrit.memory import CentralMemory
 from pyrit.models import AttackOutcome, ScenarioResult
 from pyrit.registry import InitializerRegistry, ScenarioRegistry, TargetRegistry
 from pyrit.scenario import Scenario
-from pyrit.scenario.core import DatasetConfiguration
+from pyrit.scenario.core import DatasetAttackConfiguration
 
 if TYPE_CHECKING:
     from pyrit.prompt_target import PromptTarget
@@ -266,11 +266,11 @@ class ScenarioRunService:
         Resolves strategies and dataset configuration from the request.
 
         Dataset configuration is built so that the scenario's default
-        ``DatasetConfiguration`` *subclass* (e.g. ``EncodingDatasetConfiguration``)
+        ``DatasetAttackConfiguration`` *subclass* (e.g. ``EncodingDatasetConfiguration``)
         is preserved when the caller overrides ``dataset_names`` or
         ``max_dataset_size``. Subclasses commonly override
-        ``get_all_seed_attack_groups()`` or ``_load_seed_groups_for_dataset()``
-        to shape seeds into scenario-appropriate ``SeedAttackGroup`` objects.
+        ``_build_attack_groups()`` to shape seeds into scenario-appropriate
+        ``SeedAttackGroup`` objects.
 
         Args:
             request: The run request.
@@ -345,18 +345,18 @@ class ScenarioRunService:
                 except TypeError as exc:
                     # The subclass __init__ takes extra required kwargs we cannot
                     # supply from a backend request. Fall back to the base
-                    # DatasetConfiguration so the run can still proceed; downstream
+                    # DatasetAttackConfiguration so the run can still proceed; downstream
                     # scenarios that strictly require the subclass should either
                     # define a no-extra-required-args constructor or surface the
                     # incompatibility through their own initialize_async validation.
                     logger.warning(
                         "Cannot construct %s(dataset_names=..., max_dataset_size=...) (%s). "
-                        "Falling back to a generic DatasetConfiguration; scenario-specific "
+                        "Falling back to a generic DatasetAttackConfiguration; scenario-specific "
                         "dataset-config behavior may be lost.",
                         default_config_class.__name__,
                         exc,
                     )
-                    init_kwargs["dataset_config"] = DatasetConfiguration(
+                    init_kwargs["dataset_config"] = DatasetAttackConfiguration(
                         dataset_names=request.dataset_names,
                         max_dataset_size=request.max_dataset_size,
                     )

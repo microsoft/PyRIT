@@ -62,7 +62,7 @@ from pyrit.prompt_normalizer.prompt_converter_configuration import (
 from pyrit.prompt_target import PromptTarget
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
-from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
+from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
 from pyrit.scenario.core.scenario import Scenario
 from pyrit.scenario.core.scenario_strategy import ScenarioCompositeStrategy, ScenarioStrategy
 from pyrit.scenario.core.scenario_target_defaults import get_default_adversarial_target
@@ -258,7 +258,7 @@ class RedTeamAgent(Scenario):
             version=self.VERSION,
             strategy_class=FoundryStrategy,
             default_strategy=FoundryStrategy.EASY,
-            default_dataset_config=DatasetConfiguration(dataset_names=["harmbench"], max_dataset_size=4),
+            default_dataset_config=DatasetAttackConfiguration(dataset_names=["harmbench"], max_dataset_size=4),
             objective_scorer=objective_scorer,
             scenario_result_id=scenario_result_id,
         )
@@ -281,7 +281,7 @@ class RedTeamAgent(Scenario):
         *,
         objective_target: PromptTarget = REQUIRED_VALUE,  # type: ignore[ty:invalid-parameter-default]
         scenario_strategies: Sequence["FoundryStrategy | FoundryComposite | ScenarioCompositeStrategy"] | None = None,
-        dataset_config: DatasetConfiguration | None = None,
+        dataset_config: DatasetAttackConfiguration | None = None,
         max_concurrency: int = 4,
         max_retries: int = 0,
         memory_labels: dict[str, str] | None = None,
@@ -297,7 +297,7 @@ class RedTeamAgent(Scenario):
                 objects (for pairing an attack with converters), or a mix of both. Passing
                 ScenarioCompositeStrategy is deprecated — use FoundryComposite instead.
                 If None, uses the default aggregate (EASY).
-            dataset_config (DatasetConfiguration | None): Configuration for the dataset source.
+            dataset_config (DatasetAttackConfiguration | None): Configuration for the dataset source.
             max_concurrency (int): Maximum number of concurrent attack executions. Defaults to 4.
             max_retries (int): Maximum number of retries on failure. Defaults to 0.
             memory_labels (dict[str, str] | None): Labels to attach to all memory entries.
@@ -389,14 +389,14 @@ class RedTeamAgent(Scenario):
             return FoundryComposite(attack=strategy)
         return FoundryComposite(attack=None, converters=[strategy])
 
-    def _resolve_seed_groups(self) -> list[SeedAttackGroup]:
+    async def _resolve_seed_groups_async(self) -> list[SeedAttackGroup]:
         """
         Resolve seed groups from the dataset configuration.
 
         Returns:
             list[SeedGroup]: The resolved seed groups.
         """
-        return self._dataset_config.get_all_seed_attack_groups()
+        return await self._dataset_config.get_seed_attack_groups_async()
 
     async def _get_atomic_attacks_async(self) -> list[AtomicAttack]:
         """
@@ -406,7 +406,7 @@ class RedTeamAgent(Scenario):
             list[AtomicAttack]: The list of AtomicAttack instances in this scenario.
         """
         # Resolve seed groups now that initialize_async has been called
-        self._seed_groups = self._resolve_seed_groups()
+        self._seed_groups = await self._resolve_seed_groups_async()
 
         atomic_attacks = [self._get_attack_from_strategy(composition) for composition in self._scenario_composites]
 

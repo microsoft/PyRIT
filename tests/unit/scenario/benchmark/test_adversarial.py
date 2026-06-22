@@ -432,7 +432,7 @@ class TestGetAtomicAttacksCrossProduct:
         # Dataset config: one dataset with one real seed group (AtomicAttack hashes objectives).
         seed_group = SeedAttackGroup(seeds=[SeedObjective(value="benchmark_objective_1")])
         bench._dataset_config = MagicMock()
-        bench._dataset_config.get_seed_attack_groups.return_value = {"harmbench": [seed_group]}
+        bench._dataset_config.get_attack_groups_by_dataset_async = AsyncMock(return_value={"harmbench": [seed_group]})
 
         return bench
 
@@ -479,7 +479,7 @@ class TestGetAtomicAttacksCrossProduct:
 
         seed_group = SeedAttackGroup(seeds=[SeedObjective(value="display_group_regression_objective")])
         bench._dataset_config = MagicMock()
-        bench._dataset_config.get_seed_attack_groups.return_value = {"harmbench": [seed_group]}
+        bench._dataset_config.get_attack_groups_by_dataset_async = AsyncMock(return_value={"harmbench": [seed_group]})
 
         result = await bench._get_atomic_attacks_async()
 
@@ -766,7 +766,7 @@ class TestSkipCachedFilter:
 
         seed_group = SeedAttackGroup(seeds=[SeedObjective(value="skip_cached_objective")])
         bench._dataset_config = MagicMock()
-        bench._dataset_config.get_seed_attack_groups.return_value = {"harmbench": [seed_group]}
+        bench._dataset_config.get_attack_groups_by_dataset_async = AsyncMock(return_value={"harmbench": [seed_group]})
 
         return bench
 

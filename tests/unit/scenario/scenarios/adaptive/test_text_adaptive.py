@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import uuid
 import warnings
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -15,7 +15,10 @@ from pyrit.models import SeedAttackGroup, SeedObjective
 from pyrit.models.identifiers import ComponentIdentifier
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry.object_registries.attack_technique_registry import AttackTechniqueRegistry
-from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
+from pyrit.scenario.core.dataset_configuration import (
+    DatasetAttackConfiguration,
+    DatasetConfiguration,
+)
 from pyrit.scenario.core.scenario import BaselineAttackPolicy
 from pyrit.scenario.scenarios.adaptive.dispatcher import (
     AdaptiveTechniqueDispatcher,
@@ -164,7 +167,12 @@ class TestTextAdaptiveAtomicAttacks:
         seed_groups: dict[str, list[SeedAttackGroup]],
         **scenario_kwargs,
     ):
-        with patch.object(DatasetConfiguration, "get_seed_attack_groups", return_value=seed_groups):
+        with patch.object(
+            DatasetAttackConfiguration,
+            "get_attack_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value=seed_groups,
+        ):
             scenario = TextAdaptive(
                 objective_scorer=mock_objective_scorer,
                 **scenario_kwargs,
@@ -211,7 +219,12 @@ class TestTextAdaptiveAtomicAttacks:
             "violence": [_make_seed_group(value="obj-v1", harm_categories=["violence"])],
             "hate": [_make_seed_group(value="obj-h1", harm_categories=["hate"])],
         }
-        with patch.object(DatasetConfiguration, "get_seed_attack_groups", return_value=groups):
+        with patch.object(
+            DatasetAttackConfiguration,
+            "get_attack_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value=groups,
+        ):
             scenario = TextAdaptive(objective_scorer=mock_objective_scorer)
             await scenario.initialize_async(
                 objective_target=mock_objective_target,
@@ -257,7 +270,12 @@ class TestTextAdaptiveAtomicAttacks:
 
     async def test_no_usable_techniques_raises(self, mock_objective_target, mock_objective_scorer):
         groups = {"violence": [_make_seed_group(value="obj")]}
-        with patch.object(DatasetConfiguration, "get_seed_attack_groups", return_value=groups):
+        with patch.object(
+            DatasetAttackConfiguration,
+            "get_attack_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value=groups,
+        ):
             scenario = TextAdaptive(objective_scorer=mock_objective_scorer)
             await scenario.initialize_async(
                 objective_target=mock_objective_target,
@@ -277,7 +295,12 @@ class TestTextAdaptiveAtomicAttacks:
         seeded_factory = _make_fake_factory(seed_technique=MagicMock(name="seed_technique"))
 
         with (
-            patch.object(DatasetConfiguration, "get_seed_attack_groups", return_value=groups),
+            patch.object(
+                DatasetAttackConfiguration,
+                "get_attack_groups_by_dataset_async",
+                new_callable=AsyncMock,
+                return_value=groups,
+            ),
             patch.object(SeedAttackGroup, "is_compatible_with_technique", return_value=True),
         ):
             scenario = TextAdaptive(objective_scorer=mock_objective_scorer)
@@ -313,7 +336,12 @@ class TestTextAdaptiveAtomicAttacks:
 
         # Only the plain factory (no seed_technique) is compatible.
         with (
-            patch.object(DatasetConfiguration, "get_seed_attack_groups", return_value=groups),
+            patch.object(
+                DatasetAttackConfiguration,
+                "get_attack_groups_by_dataset_async",
+                new_callable=AsyncMock,
+                return_value=groups,
+            ),
             patch.object(SeedAttackGroup, "is_compatible_with_technique", return_value=False),
         ):
             scenario = TextAdaptive(objective_scorer=mock_objective_scorer)
@@ -356,7 +384,12 @@ class TestTextAdaptiveAtomicAttacks:
             return self_group.objective.value == "obj-keep"
 
         with (
-            patch.object(DatasetConfiguration, "get_seed_attack_groups", return_value=groups),
+            patch.object(
+                DatasetAttackConfiguration,
+                "get_attack_groups_by_dataset_async",
+                new_callable=AsyncMock,
+                return_value=groups,
+            ),
             patch.object(SeedAttackGroup, "is_compatible_with_technique", _selective_compat),
         ):
             scenario = TextAdaptive(objective_scorer=mock_objective_scorer)
@@ -394,7 +427,12 @@ class TestTextAdaptiveAtomicAttacks:
         groups = {"violence": [_make_seed_group(value="obj")]}
         narrow_factory = _make_fake_factory(scoring_config_type=NarrowScoringConfig)
         with (
-            patch.object(DatasetConfiguration, "get_seed_attack_groups", return_value=groups),
+            patch.object(
+                DatasetAttackConfiguration,
+                "get_attack_groups_by_dataset_async",
+                new_callable=AsyncMock,
+                return_value=groups,
+            ),
             patch.object(SeedAttackGroup, "is_compatible_with_technique", return_value=True),
         ):
             scenario = TextAdaptive(objective_scorer=mock_objective_scorer)
@@ -436,7 +474,12 @@ class TestTextAdaptiveAtomicAttacks:
         strict_factory = _make_fake_factory(scoring_config_type=StrictScoringConfig)
 
         with (
-            patch.object(DatasetConfiguration, "get_seed_attack_groups", return_value=groups),
+            patch.object(
+                DatasetAttackConfiguration,
+                "get_attack_groups_by_dataset_async",
+                new_callable=AsyncMock,
+                return_value=groups,
+            ),
             patch.object(SeedAttackGroup, "is_compatible_with_technique", return_value=True),
         ):
             scenario = TextAdaptive(objective_scorer=mock_objective_scorer)
@@ -474,7 +517,12 @@ class TestTextAdaptiveAtomicAttacks:
         bad_factory.create.side_effect = ValueError("requires FloatScaleThresholdScorer")
 
         with (
-            patch.object(DatasetConfiguration, "get_seed_attack_groups", return_value=groups),
+            patch.object(
+                DatasetAttackConfiguration,
+                "get_attack_groups_by_dataset_async",
+                new_callable=AsyncMock,
+                return_value=groups,
+            ),
             patch.object(SeedAttackGroup, "is_compatible_with_technique", return_value=True),
         ):
             scenario = TextAdaptive(objective_scorer=mock_objective_scorer)
@@ -503,7 +551,12 @@ class TestTextAdaptiveAtomicAttacks:
         bad_factory.create.side_effect = ValueError("requires FloatScaleThresholdScorer")
 
         with (
-            patch.object(DatasetConfiguration, "get_seed_attack_groups", return_value=groups),
+            patch.object(
+                DatasetAttackConfiguration,
+                "get_attack_groups_by_dataset_async",
+                new_callable=AsyncMock,
+                return_value=groups,
+            ),
             patch.object(SeedAttackGroup, "is_compatible_with_technique", return_value=True),
         ):
             scenario = TextAdaptive(objective_scorer=mock_objective_scorer)
@@ -525,7 +578,12 @@ class TestTextAdaptiveAtomicAttacks:
 class TestTextAdaptiveBaselinePolicy:
     async def test_initialize_async_accepts_explicit_baseline(self, mock_objective_target, mock_objective_scorer):
         groups = {"violence": [_make_seed_group(value="obj", harm_categories=["violence"])]}
-        with patch.object(DatasetConfiguration, "get_seed_attack_groups", return_value=groups):
+        with patch.object(
+            DatasetAttackConfiguration,
+            "get_attack_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value=groups,
+        ):
             scenario = TextAdaptive(objective_scorer=mock_objective_scorer)
             # Baseline is Enabled by default, so explicit include_baseline=True must not raise.
             await scenario.initialize_async(
@@ -541,7 +599,12 @@ class TestTextAdaptiveBaselinePolicy:
         for removal in 0.16.0) is bypassed and no DeprecationWarning fires.
         """
         groups = {"violence": [_make_seed_group(value="obj", harm_categories=["violence"])]}
-        with patch.object(DatasetConfiguration, "get_seed_attack_groups", return_value=groups):
+        with patch.object(
+            DatasetAttackConfiguration,
+            "get_attack_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value=groups,
+        ):
             scenario = TextAdaptive(objective_scorer=mock_objective_scorer)
             with warnings.catch_warnings():
                 warnings.simplefilter("error", DeprecationWarning)

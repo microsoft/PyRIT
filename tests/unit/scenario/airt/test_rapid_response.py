@@ -4,7 +4,7 @@
 """Tests for the RapidResponse scenario (refactored from ContentHarms)."""
 
 import pathlib
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -21,7 +21,10 @@ from pyrit.prompt_target import PromptTarget
 from pyrit.registry import TargetRegistry
 from pyrit.registry.object_registries.attack_technique_registry import AttackTechniqueRegistry
 from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
-from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
+from pyrit.scenario.core.dataset_configuration import (
+    DatasetAttackConfiguration,
+    DatasetConfiguration,
+)
 from pyrit.scenario.scenarios.airt.rapid_response import (
     RapidResponse,
 )
@@ -176,7 +179,7 @@ class TestRapidResponseBasic:
         ):
             config = RapidResponse()._default_dataset_config
         assert isinstance(config, DatasetConfiguration)
-        names = config.get_default_dataset_names()
+        names = config.dataset_names
         expected = [f"airt_{cat}" for cat in ALL_HARM_CATEGORIES]
         for name in expected:
             assert name in names
@@ -202,7 +205,12 @@ class TestRapidResponseBasic:
         assert scenario._objective_scorer == mock_objective_scorer
 
     @patch("pyrit.scenario.core.scenario.Scenario._get_default_objective_scorer")
-    @patch.object(DatasetConfiguration, "get_seed_attack_groups", return_value=ALL_HARM_SEED_GROUPS)
+    @patch.object(
+        DatasetAttackConfiguration,
+        "get_attack_groups_by_dataset_async",
+        new_callable=AsyncMock,
+        return_value=ALL_HARM_SEED_GROUPS,
+    )
     async def test_initialization_defaults_to_default_strategy(
         self,
         _mock_groups,
@@ -221,11 +229,22 @@ class TestRapidResponseBasic:
         scenario = RapidResponse(
             objective_scorer=mock_objective_scorer,
         )
-        with pytest.raises(ValueError, match="DatasetConfiguration has no seed_groups"):
-            await scenario.initialize_async(objective_target=mock_objective_target)
+        # Neutralize the provider fetch so the empty-memory path raises loudly instead of fetching
+        # the real default dataset from the provider.
+        with patch(
+            "pyrit.scenario.core.dataset_configuration.DatasetConfiguration._fetch_dataset_async",
+            new_callable=AsyncMock,
+        ):
+            with pytest.raises(ValueError, match="could not be loaded"):
+                await scenario.initialize_async(objective_target=mock_objective_target)
 
     @patch("pyrit.scenario.core.scenario.Scenario._get_default_objective_scorer")
-    @patch.object(DatasetConfiguration, "get_seed_attack_groups", return_value=ALL_HARM_SEED_GROUPS)
+    @patch.object(
+        DatasetAttackConfiguration,
+        "get_attack_groups_by_dataset_async",
+        new_callable=AsyncMock,
+        return_value=ALL_HARM_SEED_GROUPS,
+    )
     async def test_memory_labels_stored(
         self,
         _mock_groups,
@@ -264,7 +283,12 @@ class TestRapidResponseAttackGeneration:
     ):
         """Helper: initialize scenario and return atomic attacks."""
         groups = seed_groups or {"hate": _make_seed_groups("hate")}
-        with patch.object(DatasetConfiguration, "get_seed_attack_groups", return_value=groups):
+        with patch.object(
+            DatasetAttackConfiguration,
+            "get_attack_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value=groups,
+        ):
             scenario = RapidResponse(
                 objective_scorer=mock_objective_scorer,
             )
@@ -413,7 +437,12 @@ class TestRapidResponseAttackGeneration:
             tags=["core", "single_turn"],
         )
 
-        with patch.object(DatasetConfiguration, "get_seed_attack_groups", return_value=groups):
+        with patch.object(
+            DatasetAttackConfiguration,
+            "get_attack_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value=groups,
+        ):
             scenario = RapidResponse(
                 objective_scorer=mock_objective_scorer,
             )

@@ -4,7 +4,7 @@
 """Tests for the Leakage class."""
 
 import pathlib
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -13,7 +13,7 @@ from pyrit.models import ComponentIdentifier, SeedAttackGroup, SeedDataset, Seed
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry import TargetRegistry
 from pyrit.registry.object_registries.attack_technique_registry import AttackTechniqueRegistry
-from pyrit.scenario import DatasetConfiguration
+from pyrit.scenario import DatasetAttackConfiguration
 from pyrit.scenario.airt import Leakage  # type: ignore[ty:unresolved-import]
 from pyrit.scenario.core import BaselineAttackPolicy
 from pyrit.scenario.scenarios.airt.leakage import _build_leakage_strategy
@@ -48,11 +48,9 @@ def mock_memory_seeds():
 def mock_dataset_config(mock_memory_seeds):
     """Create a mock dataset config that returns the seed groups."""
     seed_groups = [SeedAttackGroup(seeds=[seed]) for seed in mock_memory_seeds]
-    mock_config = MagicMock(spec=DatasetConfiguration)
-    mock_config.get_all_seed_attack_groups.return_value = seed_groups
-    mock_config.get_seed_attack_groups.return_value = {"airt_leakage": seed_groups}
-    mock_config.get_default_dataset_names.return_value = ["airt_leakage"]
-    mock_config.has_data_source.return_value = True
+    mock_config = MagicMock(spec=DatasetAttackConfiguration)
+    mock_config.get_attack_groups_by_dataset_async = AsyncMock(return_value={"airt_leakage": seed_groups})
+    mock_config.dataset_names = ["airt_leakage"]
     return mock_config
 
 

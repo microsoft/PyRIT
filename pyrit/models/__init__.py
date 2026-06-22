@@ -107,6 +107,7 @@ from pyrit.models.seeds import (
     SeedSimulatedConversation,
     SeedUnion,
     SimulatedTargetSystemPromptPaths,
+    group_seeds_into_attack_groups,
 )
 from pyrit.models.target_capabilities import CapabilityName, TargetCapabilities
 
@@ -153,6 +154,7 @@ __all__ = [
     "get_all_values",
     "group_conversation_message_pieces_by_sequence",
     "group_message_pieces_into_conversations",
+    "group_seeds_into_attack_groups",
     "HarmDefinition",
     "Identifiable",
     "IdentifierFilter",

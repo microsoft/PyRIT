@@ -21,7 +21,7 @@ from pyrit.backend.services.scenario_run_service import (
     ScenarioRunService,
 )
 from pyrit.models import AttackOutcome
-from pyrit.scenario.core import DatasetConfiguration
+from pyrit.scenario.core import DatasetAttackConfiguration, DatasetConfiguration
 
 _REGISTRY_PATCH_BASE = "pyrit.registry"
 _MEMORY_PATCH = "pyrit.memory.CentralMemory.get_memory_instance"
@@ -308,10 +308,10 @@ class TestScenarioRunServiceStartRun:
         # Type is preserved (this is the regression assertion)
         assert type(built_config) is _MarkerDatasetConfiguration
         # And carries the caller-supplied values, not the scenario defaults
-        assert built_config.get_default_dataset_names() == ["custom_a", "custom_b"]
+        assert built_config.dataset_names == ["custom_a", "custom_b"]
         assert built_config.max_dataset_size == 3
         # The original default config is not mutated when a fresh dataset_names is supplied
-        assert default_config.get_default_dataset_names() == ["original"]
+        assert default_config.dataset_names == ["original"]
         assert default_config.max_dataset_size == 100
 
     async def test_start_run_dataset_names_without_max_dataset_size_preserves_subclass(
@@ -331,7 +331,7 @@ class TestScenarioRunServiceStartRun:
         init_call = scenario_instance.initialize_async.await_args
         built_config = init_call.kwargs["dataset_config"]
         assert type(built_config) is _MarkerDatasetConfiguration
-        assert built_config.get_default_dataset_names() == ["only_this"]
+        assert built_config.dataset_names == ["only_this"]
         assert built_config.max_dataset_size is None
 
     async def test_start_run_dataset_names_falls_back_when_subclass_constructor_incompatible(
@@ -358,12 +358,12 @@ class TestScenarioRunServiceStartRun:
         built_config = init_call.kwargs["dataset_config"]
 
         # Fallback is the generic base class, not the subclass
-        assert type(built_config) is DatasetConfiguration
-        assert built_config.get_default_dataset_names() == ["custom"]
+        assert type(built_config) is DatasetAttackConfiguration
+        assert built_config.dataset_names == ["custom"]
         # Warning was logged so the operator can see the silent degradation
         assert any(
             "_RequiresExtraArgConfiguration" in record.message
-            and "Falling back to a generic DatasetConfiguration" in record.message
+            and "Falling back to a generic DatasetAttackConfiguration" in record.message
             for record in caplog.records
         )
 
@@ -412,7 +412,7 @@ class TestScenarioRunServiceStartRun:
 
         built_config = scenario_instance.initialize_async.await_args.kwargs["dataset_config"]
         assert type(built_config) is _MarkerDatasetConfiguration
-        assert built_config.get_default_dataset_names() == ["a", "b"]
+        assert built_config.dataset_names == ["a", "b"]
         assert built_config.max_dataset_size == 7
 
     async def test_start_run_exceeds_concurrent_limit(self, mock_all_registries) -> None:

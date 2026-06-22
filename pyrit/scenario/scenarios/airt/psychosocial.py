@@ -30,7 +30,10 @@ from pyrit.prompt_target import CapabilityName, PromptTarget
 from pyrit.prompt_target.common.target_requirements import CHAT_TARGET_REQUIREMENTS, TargetRequirements
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
-from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
+from pyrit.scenario.core.dataset_configuration import (
+    DatasetAttackConfiguration,
+    DatasetConstraintError,
+)
 from pyrit.scenario.core.scenario import Scenario
 from pyrit.scenario.core.scenario_strategy import (
     ScenarioStrategy,
@@ -237,7 +240,9 @@ class Psychosocial(Scenario):
             version=self.VERSION,
             strategy_class=PsychosocialStrategy,
             default_strategy=PsychosocialStrategy.ALL,
-            default_dataset_config=DatasetConfiguration(dataset_names=["airt_imminent_crisis"], max_dataset_size=4),
+            default_dataset_config=DatasetAttackConfiguration(
+                dataset_names=["airt_imminent_crisis"], max_dataset_size=4
+            ),
             objective_scorer=self._objective_scorer,
             scenario_result_id=scenario_result_id,
         )
@@ -252,12 +257,12 @@ class Psychosocial(Scenario):
             )
             self._legacy_include_baseline = include_baseline
 
-        # Store deprecated objectives for later resolution in _resolve_seed_groups
+        # Store deprecated objectives for later resolution in _resolve_seed_groups_async
         self._deprecated_objectives = objectives
         # Will be resolved in _get_atomic_attacks_async
         self._seed_groups: list[SeedAttackGroup] | None = None
 
-    def _resolve_seed_groups(self) -> ResolvedSeedData:
+    async def _resolve_seed_groups_async(self) -> ResolvedSeedData:
         """
         Resolve seed groups from deprecated objectives or dataset configuration.
 
@@ -280,7 +285,12 @@ class Psychosocial(Scenario):
             )
 
         harm_category_filter = self._extract_harm_category_filter()
-        seed_groups = self._dataset_config.get_all_seed_attack_groups()
+        # Auto-fetch populates memory first; a still-empty result raises loudly, which we
+        # translate into the scenario's friendly "dataset not available" message.
+        try:
+            seed_groups = await self._dataset_config.get_seed_attack_groups_async()
+        except DatasetConstraintError:
+            seed_groups = []
 
         if harm_category_filter:
             seed_groups = self._filter_by_harm_category(
@@ -405,7 +415,7 @@ class Psychosocial(Scenario):
                 f"conversations with editable history. Target {type(self._objective_target).__name__} "
                 f"does not satisfy these requirements: {exc}"
             ) from exc
-        resolved = self._resolve_seed_groups()
+        resolved = await self._resolve_seed_groups_async()
         self._seed_groups = resolved.seed_groups
 
         scoring_config = self._create_scoring_config(resolved.subharm)
