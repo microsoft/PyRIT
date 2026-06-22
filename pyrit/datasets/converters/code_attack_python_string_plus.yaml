@@ -7,14 +7,13 @@ description: |
 authors:
   - Qibing Ren
   - Chang Gao
-  - Jing Liu
-  - Wenqi Fan
-  - Li Chen
-  - Ruizhe Zhong
-  - Chaochao Lu
-  - Qingsong Wen
+  - Jing Shao
+  - Junchi Yan
+  - Xin Tan
+  - Wai Lam
+  - Lizhuang Ma
 groups:
-  - Nanyang Technological University
+  - Shanghai Jiao Tong University
 source: https://github.com/renqibing/CodeAttack
 parameters:
   - wrapped_input
