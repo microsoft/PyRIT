@@ -21,7 +21,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from pyrit.models.scenario_result import ScenarioRunState
+from pyrit.models.results.scenario_result import ScenarioRunState
 
 
 class ScenarioParameterSummary(BaseModel):

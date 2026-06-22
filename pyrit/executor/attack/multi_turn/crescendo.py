@@ -37,6 +37,7 @@ from pyrit.executor.attack.multi_turn.multi_turn_attack_strategy import (
 from pyrit.memory.central_memory import CentralMemory
 from pyrit.message_normalizer import ConversationContextNormalizer
 from pyrit.models import (
+    JSON_SCHEMA_METADATA_KEY,
     AtomicAttackIdentifier,
     AttackOutcome,
     AttackResult,
@@ -548,7 +549,13 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
             ValueError: If no response is received from the adversarial chat.
         """
         # Set JSON format in metadata
-        prompt_metadata: dict[str, str | int] = {"response_format": "json"}
+        prompt_metadata: dict[str, Any] = {"response_format": "json"}
+        # Forward the shared adversarial-chat JSON schema when present so schema-aware
+        # targets can natively constrain the response shape; non-enforcing targets
+        # ignore it and rely on the prompt's formatting instructions.
+        response_json_schema = self._adversarial_chat_system_prompt_template.response_json_schema
+        if response_json_schema is not None:
+            prompt_metadata[JSON_SCHEMA_METADATA_KEY] = response_json_schema
         message = Message.from_prompt(
             prompt=prompt_text,
             role="user",
@@ -580,7 +587,7 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
         Parse and validate the JSON response from the adversarial chat.
 
         Keys are normalized from camelCase to snake_case before validation, so
-        backends that drift to ``generatedQuestion`` still parse correctly
+        backends that drift to ``nextMessage`` still parse correctly
         without burning retries on a casing mismatch.
 
         Args:
@@ -592,7 +599,7 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
         Raises:
             InvalidJsonException: If the response is not valid JSON or missing required keys.
         """
-        expected_keys = {"generated_question", "rationale_behind_jailbreak", "last_response_summary"}
+        expected_keys = {"next_message", "rationale", "last_response_summary"}
 
         try:
             parsed_output = json.loads(response_text)
@@ -611,7 +618,7 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
                     message=f"Unexpected keys {extra_keys} found in JSON response: {response_text}"
                 )
 
-            return str(normalized_output["generated_question"])
+            return str(normalized_output["next_message"])
 
         except json.JSONDecodeError as e:
             raise InvalidJsonException(message=f"Invalid JSON encountered: {response_text}") from e

@@ -201,10 +201,10 @@ class TestSeedPromptResponseJsonSchemaResolution:
 
     def test_name_resolution_is_deep_copy(self):
         sp_a = SeedPrompt(value="a", data_type="text", response_json_schema_name="true_false_with_rationale")
-        sp_a.response_json_schema["properties"]["score_value"]["enum"].append("Maybe")
+        sp_a.response_json_schema["properties"]["score_value"]["type"] = "string"
 
         sp_b = SeedPrompt(value="b", data_type="text", response_json_schema_name="true_false_with_rationale")
-        assert sp_b.response_json_schema["properties"]["score_value"]["enum"] == ["True", "False"]
+        assert sp_b.response_json_schema["properties"]["score_value"]["type"] == "boolean"
 
     def test_setting_both_inline_and_name_raises(self):
         with pytest.raises(ValueError, match="Set only one of response_json_schema"):

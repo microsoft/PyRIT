@@ -419,8 +419,13 @@ async def test_print_scenario_result_async_uses_pretty_printer():
 
 async def test_print_scenario_result_async_accepts_real_scenario_result():
     """A real ``ScenarioResult`` instance flows through ``print_scenario_result_async``."""
-    from pyrit.models import AttackOutcome, AttackResult, ComponentIdentifier
-    from pyrit.models.scenario_result import ScenarioIdentifier, ScenarioResult
+    from pyrit.models import (
+        AttackOutcome,
+        AttackResult,
+        ComponentIdentifier,
+        ScenarioIdentifier,
+        ScenarioResult,
+    )
 
     identifier = ScenarioIdentifier(name="test.scenario", description="A test")
     target_identifier = ComponentIdentifier.model_validate(

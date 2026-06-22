@@ -427,8 +427,7 @@ class TestDoRun:
     @staticmethod
     def _empty_scenario_result():
         """Build a minimal ScenarioResult for use as get_scenario_run_results_async return."""
-        from pyrit.models import ScenarioRunState
-        from pyrit.models.scenario_result import ScenarioIdentifier, ScenarioResult
+        from pyrit.models import ScenarioIdentifier, ScenarioResult, ScenarioRunState
 
         return ScenarioResult(
             scenario_identifier=ScenarioIdentifier(name="foo"),
@@ -588,8 +587,7 @@ class TestListErrors:
 
 class TestPrintScenarioAndHelp:
     def test_print_scenario_success(self, shell):
-        from pyrit.models import ScenarioRunState
-        from pyrit.models.scenario_result import ScenarioIdentifier, ScenarioResult
+        from pyrit.models import ScenarioIdentifier, ScenarioResult, ScenarioRunState
 
         s, client = shell
         empty_result = ScenarioResult(

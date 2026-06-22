@@ -1757,7 +1757,7 @@ class TestGetConversations:
 
     async def test_returns_main_and_related_conversations(self, attack_service, mock_memory):
         """Should return main and PRUNED conversations sorted by timestamp."""
-        from pyrit.models.conversation_reference import ConversationReference, ConversationType
+        from pyrit.models import ConversationReference, ConversationType
 
         ar = make_attack_result(conversation_id="attack-1")
         ar.related_conversations.add(
@@ -1910,7 +1910,7 @@ class TestUpdateMainConversation:
 
     async def test_swaps_main_conversation(self, attack_service, mock_memory):
         """Changing the main to a related conversation should swap it with the main."""
-        from pyrit.models.conversation_reference import ConversationReference, ConversationType
+        from pyrit.models import ConversationReference, ConversationType
 
         ar = make_attack_result(conversation_id="attack-1")
         ar.related_conversations = {
@@ -1950,7 +1950,7 @@ class TestAddMessageTargetConversation:
     async def test_stores_message_in_target_conversation(self, attack_service, mock_memory):
         """When target_conversation_id is set, messages should go to that conversation."""
         from pyrit.backend.models.attacks import AttackSummary, ConversationMessagesResponse
-        from pyrit.models.conversation_reference import ConversationReference, ConversationType
+        from pyrit.models import ConversationReference, ConversationType
 
         ar = make_attack_result(conversation_id="attack-1")
         ar.related_conversations = {
@@ -2017,7 +2017,7 @@ class TestConversationCount:
 
     async def test_list_attacks_includes_related_conversation_ids(self, attack_service, mock_memory):
         """Attacks with related conversations should expose them in the summary."""
-        from pyrit.models.conversation_reference import ConversationReference, ConversationType
+        from pyrit.models import ConversationReference, ConversationType
 
         ar = make_attack_result(conversation_id="attack-1")
         ar.related_conversations = {
@@ -2069,7 +2069,7 @@ class TestConversationCount:
     async def test_create_second_conversation_preserves_first(self, attack_service, mock_memory):
         """Creating a second related conversation should keep the first one."""
         from pyrit.backend.models.attacks import CreateConversationRequest
-        from pyrit.models.conversation_reference import ConversationReference, ConversationType
+        from pyrit.models import ConversationReference, ConversationType
 
         ar = make_attack_result(conversation_id="attack-1")
         ar.related_conversations = {
@@ -2099,7 +2099,7 @@ class TestConversationSorting:
 
     async def test_conversations_sorted_by_created_at_earliest_first(self, attack_service, mock_memory):
         """Conversations should be sorted by created_at with earliest first."""
-        from pyrit.models.conversation_reference import ConversationReference, ConversationType
+        from pyrit.models import ConversationReference, ConversationType
 
         ar = make_attack_result(conversation_id="attack-1")
         ar.related_conversations = {
@@ -2127,7 +2127,7 @@ class TestConversationSorting:
 
     async def test_empty_conversations_sorted_last(self, attack_service, mock_memory):
         """Conversations with no timestamp should appear at the bottom."""
-        from pyrit.models.conversation_reference import ConversationReference, ConversationType
+        from pyrit.models import ConversationReference, ConversationType
 
         ar = make_attack_result(conversation_id="attack-1")
         ar.related_conversations = {
@@ -2153,7 +2153,7 @@ class TestConversationSorting:
 
     async def test_empty_conversations_all_sort_last(self, attack_service, mock_memory):
         """Multiple empty conversations should all have created_at=None."""
-        from pyrit.models.conversation_reference import ConversationReference, ConversationType
+        from pyrit.models import ConversationReference, ConversationType
 
         ar = make_attack_result(conversation_id="attack-1")
         ar.related_conversations = {

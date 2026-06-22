@@ -18,7 +18,6 @@ from pyrit.memory.memory_models import (
     ScoreEntry,
     SeedEntry,
     UTCDateTime,
-    _dump_identifier,
     _load_identifier,
 )
 from pyrit.models import (
@@ -140,10 +139,6 @@ def test_utcdatetime_passes_through_none():
 # ---------------------------------------------------------------------------
 
 
-def test_dump_identifier_returns_none_for_none():
-    assert _dump_identifier(None) is None
-
-
 def test_load_identifier_returns_none_for_falsy():
     assert _load_identifier(None) is None
     assert _load_identifier({}) is None
@@ -151,7 +146,7 @@ def test_load_identifier_returns_none_for_falsy():
 
 def test_dump_then_load_identifier_round_trips():
     identifier = ComponentIdentifier(class_name="MyConverter", class_module="pyrit.converters", pyrit_version="0.1.0")
-    stored = _dump_identifier(identifier)
+    stored = identifier.model_dump()
     assert stored is not None
     loaded = _load_identifier(stored)
     assert loaded is not None
@@ -161,7 +156,7 @@ def test_dump_then_load_identifier_round_trips():
 
 def test_load_identifier_injects_pyrit_version():
     identifier = ComponentIdentifier(class_name="MyConverter", class_module="pyrit.converters", pyrit_version="0.1.0")
-    stored = _dump_identifier(identifier)
+    stored = identifier.model_dump()
     loaded = _load_identifier(stored, pyrit_version="9.9.9")
     assert loaded is not None
     assert loaded.pyrit_version == "9.9.9"

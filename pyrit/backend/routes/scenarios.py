@@ -21,12 +21,12 @@ from pyrit.backend.models.scenarios import (
 )
 from pyrit.backend.services.scenario_run_service import get_scenario_run_service
 from pyrit.backend.services.scenario_service import get_scenario_service
+from pyrit.models import ScenarioResult
 from pyrit.models.catalog.scenario import (
     RegisteredScenario,
     RunScenarioRequest,
     ScenarioRunSummary,
 )
-from pyrit.models.scenario_result import ScenarioResult
 
 router = APIRouter(prefix="/scenarios", tags=["scenarios"])
 

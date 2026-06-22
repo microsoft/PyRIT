@@ -36,6 +36,7 @@ from pyrit.prompt_converter.character_space_converter import CharacterSpaceConve
 from pyrit.prompt_converter.charswap_attack_converter import CharSwapConverter
 from pyrit.prompt_converter.codechameleon_converter import CodeChameleonConverter
 from pyrit.prompt_converter.colloquial_wordswap_converter import ColloquialWordswapConverter
+from pyrit.prompt_converter.decomposition_converter import DecompositionConverter
 from pyrit.prompt_converter.denylist_converter import DenylistConverter
 from pyrit.prompt_converter.diacritic_converter import DiacriticConverter
 from pyrit.prompt_converter.ecoji_converter import EcojiConverter
@@ -172,6 +173,7 @@ __all__ = [
     "CodeChameleonConverter",
     "ColloquialWordswapConverter",
     "ConverterResult",
+    "DecompositionConverter",
     "DenylistConverter",
     "DiacriticConverter",
     "EcojiConverter",

@@ -228,7 +228,19 @@ class TestAtomicAttackEvaluationIdentifier:
     def test_scorer_only_keys_absent(self):
         """Scorer-specific keys should not appear in attack rules."""
         assert "prompt_target" not in AtomicAttackEvaluationIdentifier.CHILD_EVAL_RULES
-        assert "converter_target" not in AtomicAttackEvaluationIdentifier.CHILD_EVAL_RULES
+
+    def test_converter_target_restricted_to_behavioral_params(self):
+        """A converter's LLM target is projected to behavioral params for the eval hash.
+
+        Derived from ``ConverterIdentifier.converter_target`` referencing
+        ``TargetIdentifier``, whose operational params (endpoint, model_name,
+        max_requests_per_minute) are excluded.
+        """
+        rule = AtomicAttackEvaluationIdentifier.CHILD_EVAL_RULES["converter_target"]
+        assert rule.included_params == frozenset({"underlying_model_name", "temperature", "top_p"})
+        assert rule.param_fallbacks == {"underlying_model_name": "model_name"}
+        assert rule.inner_child_name == "targets"
+        assert not rule.exclude
 
     def test_objective_scorer_excluded(self):
         rule = AtomicAttackEvaluationIdentifier.CHILD_EVAL_RULES["objective_scorer"]

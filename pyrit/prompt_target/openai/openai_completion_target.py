@@ -140,7 +140,7 @@ class OpenAICompletionTarget(OpenAITarget):
         logger.info(f"Sending the following prompt to the prompt target: {message_piece.converted_value}")
 
         # Build request parameters
-        body_parameters = {
+        body_parameters: dict[str, Any] = {
             "model": self._model_name,
             "prompt": message_piece.converted_value,
             "top_p": self._top_p,
@@ -152,7 +152,7 @@ class OpenAICompletionTarget(OpenAITarget):
         }
 
         # Filter out None values
-        request_params = {k: v for k, v in body_parameters.items() if v is not None}
+        request_params: dict[str, Any] = {k: v for k, v in body_parameters.items() if v is not None}
 
         # Use unified error handler - automatically detects Completion and validates
         response = await self._handle_openai_request_async(

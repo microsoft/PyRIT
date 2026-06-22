@@ -12,7 +12,7 @@ import random
 import uuid
 from collections import defaultdict
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -361,10 +361,10 @@ class SeedDataset(BaseModel):
 
             # Try to create a SeedAttackGroup first; fall back to SeedGroup if validation fails
             try:
-                attack_group = SeedAttackGroup(seeds=group_seeds)
+                attack_group = SeedAttackGroup(seeds=cast("list[SeedUnion]", group_seeds))
                 seed_groups.append(attack_group)
             except ValueError:
-                seed_groups.append(SeedGroup(seeds=group_seeds))
+                seed_groups.append(SeedGroup(seeds=cast("list[SeedUnion]", group_seeds)))
 
         return seed_groups
 

@@ -11,11 +11,10 @@ Targets have two concepts:
 
 The ``TargetInstance`` model is the wire-format snapshot for a runtime
 target, used by both the backend (as a REST response payload) and external
-REST clients (the CLI today, future external clients tomorrow).
-
-Per-field documentation strings (``Field(..., description=...)``) deliberately
-live in the backend layer rather than here — see ``pyrit.models.MessagePiece``
-vs ``pyrit.backend.models.attacks.MessagePieceView`` for the same split.
+REST clients (the CLI today, future external clients tomorrow). Because it
+*is* the REST response model (FastAPI serves it directly), per-field
+``Field(..., description=...)`` strings live here so they surface in the
+generated OpenAPI schema.
 """
 
 from typing import Any
@@ -33,14 +32,23 @@ class TargetCapabilitiesInfo(BaseModel):
     them only for per-piece modality checks.
     """
 
-    supports_multi_turn: bool = False
-    supports_multi_message_pieces: bool = False
-    supports_json_schema: bool = False
-    supports_json_output: bool = False
-    supports_editable_history: bool = False
-    supports_system_prompt: bool = False
-    supported_input_modalities: list[str] = Field(default_factory=lambda: ["text"])
-    supported_output_modalities: list[str] = Field(default_factory=lambda: ["text"])
+    supports_multi_turn: bool = Field(False, description="Target natively supports multi-turn conversations")
+    supports_multi_message_pieces: bool = Field(
+        False, description="Target supports multiple message pieces in a single request"
+    )
+    supports_json_schema: bool = Field(False, description="Target can constrain output to a provided JSON schema")
+    supports_json_output: bool = Field(False, description="Target supports JSON output mode")
+    supports_editable_history: bool = Field(False, description="Target allows attack history to be modified")
+    supports_system_prompt: bool = Field(False, description="Target natively supports system prompts")
+    supports_streaming_audio: bool = Field(False, description="Target supports streaming audio input/output")
+    supported_input_modalities: list[str] = Field(
+        default_factory=lambda: ["text"],
+        description="Sorted unique input modality data types the target accepts (e.g., ['image_path', 'text'])",
+    )
+    supported_output_modalities: list[str] = Field(
+        default_factory=lambda: ["text"],
+        description="Sorted unique output modality data types the target produces (e.g., ['audio_path', 'text'])",
+    )
 
 
 class TargetInstance(BaseModel):
@@ -51,15 +59,17 @@ class TargetInstance(BaseModel):
     Also used as the create-target response (same shape as GET).
     """
 
-    target_registry_name: str
-    target_type: str
-    endpoint: str | None = None
-    model_name: str | None = None
-    underlying_model_name: str | None = None
-    temperature: float | None = None
-    top_p: float | None = None
-    max_requests_per_minute: int | None = None
-    capabilities: TargetCapabilitiesInfo
-    target_specific_params: dict[str, Any] | None = None
-    inner_targets: list["TargetInstance"] | None = None
-    identifier_hash: str | None = None
+    target_registry_name: str = Field(..., description="Target registry key (e.g., 'azure_openai_chat')")
+    target_type: str = Field(..., description="Target class name (e.g., 'OpenAIChatTarget')")
+    endpoint: str | None = Field(None, description="Target endpoint URL")
+    model_name: str | None = Field(None, description="Model or deployment name used in API calls")
+    underlying_model_name: str | None = Field(None, description="Underlying model name if different (e.g., 'gpt-4o')")
+    temperature: float | None = Field(None, description="Temperature parameter for generation")
+    top_p: float | None = Field(None, description="Top-p parameter for generation")
+    max_requests_per_minute: int | None = Field(None, description="Maximum requests per minute")
+    capabilities: TargetCapabilitiesInfo = Field(..., description="Structured snapshot of target capabilities")
+    target_specific_params: dict[str, Any] | None = Field(None, description="Additional target-specific parameters")
+    inner_targets: list["TargetInstance"] | None = Field(
+        None, description="Inner targets for composite targets like RoundRobinTarget"
+    )
+    identifier_hash: str | None = Field(None, description="ComponentIdentifier content hash for duplicate detection")
