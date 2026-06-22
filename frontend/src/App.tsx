@@ -1,8 +1,8 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react'
 import { Routes, Route, Navigate, useNavigate, useLocation, useSearchParams, matchPath } from 'react-router-dom'
-import { FluentProvider, webLightTheme, webDarkTheme } from '@fluentui/react-components'
 import { useMsal } from '@azure/msal-react'
 import { Joyride } from 'react-joyride'
+import { useTheme } from './hooks/useTheme'
 import MainLayout from './components/Layout/MainLayout'
 import ChatWindow from './components/Chat/ChatWindow'
 import AttackNotFound from './components/Chat/AttackNotFound'
@@ -94,7 +94,6 @@ function App() {
   const routeConversationId = conversationMatch?.params.conversationId ?? null
   const currentView: ViewName = routeAttackId !== null ? 'chat' : viewFromPath(location.pathname)
 
-  const [isDarkMode, setIsDarkMode] = useState(true)
   const [activeTarget, setActiveTarget] = useState<TargetInstance | null>(null)
   const [globalLabels, setGlobalLabels] = useState<Record<string, string>>({ ...DEFAULT_GLOBAL_LABELS })
 
@@ -310,10 +309,6 @@ function App() {
     navigate(attackPath(openAttackResultId))
   }, [navigate])
 
-  const toggleTheme = () => {
-    setIsDarkMode(!isDarkMode)
-  }
-
   const chatElement = isAttackNotFound || isAttackError ? (
     <AttackNotFound
       attackId={routeAttackId ?? ''}
@@ -341,7 +336,8 @@ function App() {
   )
 
   // Onboarding tour — pass handleNavigate so the tour can switch views between steps
-  const { startTour, hasCompletedTour, tourProps } = useTour(handleNavigate, isDarkMode, currentView)
+  const { resolved } = useTheme()
+  const { startTour, hasCompletedTour, tourProps } = useTour(handleNavigate, resolved === 'dark', currentView)
 
   // Auto-start the tour on first visit
   useEffect(() => {
@@ -354,14 +350,11 @@ function App() {
   return (
     <ErrorBoundary>
       <ConnectionHealthProvider>
-        <FluentProvider theme={isDarkMode ? webDarkTheme : webLightTheme}>
           <Joyride {...tourProps} />
           <ConnectionBannerContainer />
           <MainLayout
             currentView={currentView}
             onNavigate={handleNavigate}
-            onToggleTheme={toggleTheme}
-            isDarkMode={isDarkMode}
             onOpenFeedback={() => setFeedbackOpen(true)}
             onStartTour={startTour}
           >
@@ -423,7 +416,6 @@ function App() {
               }}
             />
           )}
-        </FluentProvider>
       </ConnectionHealthProvider>
     </ErrorBoundary>
   )

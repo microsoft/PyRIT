@@ -319,9 +319,7 @@ async def test_print_scenario_result_async_uses_pretty_printer():
     fake_printer.write_async = AsyncMock()
 
     with (
-        patch(
-            "pyrit.models.scenario_result.ScenarioResult.model_validate", return_value=fake_scenario
-        ) as model_validate_mock,
+        patch("pyrit.models.ScenarioResult.model_validate", return_value=fake_scenario) as model_validate_mock,
         patch(
             "pyrit.output.scenario_result.pretty.PrettyScenarioResultMemoryPrinter", return_value=fake_printer
         ) as printer_cls,
@@ -342,8 +340,7 @@ async def test_print_scenario_result_async_roundtrip_with_real_payload():
     """
     from datetime import datetime, timezone
 
-    from pyrit.models import AttackOutcome, AttackResult, ComponentIdentifier
-    from pyrit.models.scenario_result import ScenarioIdentifier, ScenarioResult
+    from pyrit.models import AttackOutcome, AttackResult, ComponentIdentifier, ScenarioIdentifier, ScenarioResult
 
     identifier = ScenarioIdentifier(name="test.scenario", description="A test")
     target_identifier = ComponentIdentifier.from_dict(

@@ -3,85 +3,85 @@
  * Licensed under the MIT license.
  */
 
-import { render, screen, fireEvent } from "@testing-library/react";
-import { FluentProvider, webLightTheme } from "@fluentui/react-components";
+import { fireEvent, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { ThemeProvider, useTheme } from "../../hooks/useTheme";
 import Navigation from "./Navigation";
 
-const renderWithProvider = (ui: React.ReactElement) => {
-  return render(<FluentProvider theme={webLightTheme}>{ui}</FluentProvider>);
-};
+const STORAGE_KEY = "pyrit.themeMode";
+
+const renderWithProvider = (ui: React.ReactElement) =>
+  render(<ThemeProvider>{ui}</ThemeProvider>);
 
 describe("Navigation", () => {
   const defaultProps = {
     currentView: "chat" as const,
     onNavigate: jest.fn(),
-    onToggleTheme: jest.fn(),
-    isDarkMode: false,
     onOpenFeedback: jest.fn(),
   };
 
   beforeEach(() => {
     jest.clearAllMocks();
+    window.localStorage.clear();
+    document.documentElement.removeAttribute("data-theme");
+    document.documentElement.style.removeProperty("color-scheme");
   });
 
   it("renders the home button", () => {
     renderWithProvider(<Navigation {...defaultProps} />);
-
-    const homeButton = screen.getByTitle("Home");
-    expect(homeButton).toBeInTheDocument();
-    expect(homeButton).not.toBeDisabled();
+    expect(screen.getByRole("button", { name: "Home" })).toBeInTheDocument();
   });
 
-  it("calls onNavigate with 'home' when home button is clicked", () => {
+  it("calls onNavigate with 'home' when home button is clicked", async () => {
+    const user = userEvent.setup();
     const onNavigate = jest.fn();
     renderWithProvider(
       <Navigation {...defaultProps} onNavigate={onNavigate} />
     );
 
-    fireEvent.click(screen.getByTitle("Home"));
+    await user.click(screen.getByRole("button", { name: "Home" }));
     expect(onNavigate).toHaveBeenCalledWith("home");
   });
 
   it("renders the chat button", () => {
     renderWithProvider(<Navigation {...defaultProps} />);
-
-    const chatButton = screen.getByTitle("Chat");
-    expect(chatButton).toBeInTheDocument();
-    expect(chatButton).not.toBeDisabled();
+    expect(screen.getByRole("button", { name: "Chat" })).toBeInTheDocument();
   });
 
   it("renders the configuration button", () => {
     renderWithProvider(<Navigation {...defaultProps} />);
-
-    const configButton = screen.getByTitle("Configuration");
-    expect(configButton).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Configuration" })
+    ).toBeInTheDocument();
   });
 
-  it("calls onNavigate with 'chat' when chat button is clicked", () => {
+  it("calls onNavigate with 'chat' when chat button is clicked", async () => {
+    const user = userEvent.setup();
     const onNavigate = jest.fn();
     renderWithProvider(
       <Navigation {...defaultProps} onNavigate={onNavigate} />
     );
 
-    fireEvent.click(screen.getByTitle("Chat"));
+    await user.click(screen.getByRole("button", { name: "Chat" }));
     expect(onNavigate).toHaveBeenCalledWith("chat");
   });
 
-  it("calls onNavigate with 'config' when config button is clicked", () => {
+  it("calls onNavigate with 'config' when config button is clicked", async () => {
+    const user = userEvent.setup();
     const onNavigate = jest.fn();
     renderWithProvider(
       <Navigation {...defaultProps} onNavigate={onNavigate} />
     );
 
-    fireEvent.click(screen.getByTitle("Configuration"));
+    await user.click(screen.getByRole("button", { name: "Configuration" }));
     expect(onNavigate).toHaveBeenCalledWith("config");
   });
 
   it("renders the attack history button", () => {
     renderWithProvider(<Navigation {...defaultProps} />);
-
-    const historyButton = screen.getByTitle("Attack History");
-    expect(historyButton).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Attack History" })
+    ).toBeInTheDocument();
   });
 
   it("renders the feedback button and forwards clicks to onOpenFeedback", () => {
@@ -96,50 +96,70 @@ describe("Navigation", () => {
     expect(onOpenFeedback).toHaveBeenCalledTimes(1);
   });
 
-  it("calls onNavigate with 'history' when history button is clicked", () => {
+  it("calls onNavigate with 'history' when history button is clicked", async () => {
+    const user = userEvent.setup();
     const onNavigate = jest.fn();
     renderWithProvider(
       <Navigation {...defaultProps} onNavigate={onNavigate} />
     );
 
-    fireEvent.click(screen.getByTitle("Attack History"));
+    await user.click(screen.getByRole("button", { name: "Attack History" }));
     expect(onNavigate).toHaveBeenCalledWith("history");
   });
 
-  it("renders theme toggle button with light mode title when in dark mode", () => {
-    renderWithProvider(
-      <Navigation {...defaultProps} isDarkMode={true} />
-    );
-
-    const themeButton = screen.getByTitle("Light Mode");
-    expect(themeButton).toBeInTheDocument();
+  it("renders the theme picker labelled with the current mode", () => {
+    renderWithProvider(<Navigation {...defaultProps} />);
+    expect(
+      screen.getByRole("button", { name: "Theme: System" })
+    ).toBeInTheDocument();
   });
 
-  it("renders theme toggle button with dark mode title when in light mode", () => {
-    renderWithProvider(
-      <Navigation {...defaultProps} isDarkMode={false} />
-    );
-
-    const themeButton = screen.getByTitle("Dark Mode");
-    expect(themeButton).toBeInTheDocument();
-  });
-
-  it("calls onToggleTheme when theme button is clicked", () => {
-    const mockToggleTheme = jest.fn();
-    renderWithProvider(
-      <Navigation {...defaultProps} onToggleTheme={mockToggleTheme} />
-    );
-
-    const themeButton = screen.getByTitle("Dark Mode");
-    fireEvent.click(themeButton);
-
-    expect(mockToggleTheme).toHaveBeenCalledTimes(1);
-  });
-
-  it("theme button is not disabled", () => {
+  it("opens the theme menu and exposes all three modes", async () => {
+    const user = userEvent.setup();
     renderWithProvider(<Navigation {...defaultProps} />);
 
-    const themeButton = screen.getByTitle("Dark Mode");
-    expect(themeButton).not.toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "Theme: System" }));
+
+    expect(
+      screen.getByRole("menuitemradio", { name: "System" })
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("menuitemradio", { name: "Light" })
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("menuitemradio", { name: "Dark" })
+    ).toBeInTheDocument();
+  });
+
+  it("changes the theme mode when a menu item is selected", async () => {
+    const user = userEvent.setup();
+
+    function Reader() {
+      const { mode } = useTheme();
+      return <span data-testid="mode">{mode}</span>;
+    }
+
+    render(
+      <ThemeProvider>
+        <Navigation {...defaultProps} />
+        <Reader />
+      </ThemeProvider>
+    );
+
+    expect(screen.getByTestId("mode")).toHaveTextContent("system");
+
+    await user.click(screen.getByRole("button", { name: "Theme: System" }));
+    await user.click(screen.getByRole("menuitemradio", { name: "Dark" }));
+
+    expect(screen.getByTestId("mode")).toHaveTextContent("dark");
+    expect(window.localStorage.getItem(STORAGE_KEY)).toBe("dark");
+  });
+
+  it("reflects the persisted mode in the trigger label", () => {
+    window.localStorage.setItem(STORAGE_KEY, "light");
+    renderWithProvider(<Navigation {...defaultProps} />);
+    expect(
+      screen.getByRole("button", { name: "Theme: Light" })
+    ).toBeInTheDocument();
   });
 });

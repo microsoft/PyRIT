@@ -231,8 +231,7 @@ class TestGetScenarioRunResultsRoute:
 
     def test_get_results_returns_200(self, client: TestClient) -> None:
         """Test that getting results of a completed run returns 200."""
-        from pyrit.models import AttackOutcome, AttackResult, ComponentIdentifier
-        from pyrit.models.scenario_result import ScenarioIdentifier, ScenarioResult
+        from pyrit.models import AttackOutcome, AttackResult, ComponentIdentifier, ScenarioIdentifier, ScenarioResult
 
         attack = AttackResult(
             conversation_id="conv-1",

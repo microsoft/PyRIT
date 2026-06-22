@@ -11,12 +11,12 @@ from pyrit.models import (
     AttackOutcome,
     AttackResult,
     ComponentIdentifier,
+    ConversationReference,
     ConversationType,
     Message,
     MessagePiece,
     Score,
 )
-from pyrit.models.conversation_reference import ConversationReference
 from pyrit.output.attack_result.pretty import PrettyAttackResultMemoryPrinter
 
 
