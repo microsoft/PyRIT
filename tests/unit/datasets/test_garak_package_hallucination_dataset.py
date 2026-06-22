@@ -115,6 +115,25 @@ async def test_rows_missing_text_are_skipped():
     assert [s.value for s in dataset.seeds] == ["valid"]
 
 
+async def test_max_examples_caps_seed_count():
+    loader = _GarakNpmDataset(max_examples=2)
+    rows = [{"text": f"pkg{i}", "package_first_seen": "2010-01-01"} for i in range(10)]
+
+    with patch.object(loader, "_fetch_from_huggingface_async", new=AsyncMock(return_value=rows)):
+        dataset = await loader.fetch_dataset_async()
+
+    assert [s.value for s in dataset.seeds] == ["pkg0", "pkg1"]
+
+
+async def test_max_examples_none_loads_all(mock_npm_rows):
+    loader = _GarakNpmDataset(max_examples=None)
+
+    with patch.object(loader, "_fetch_from_huggingface_async", new=AsyncMock(return_value=mock_npm_rows)):
+        dataset = await loader.fetch_dataset_async()
+
+    assert len(dataset.seeds) == 2
+
+
 @pytest.mark.parametrize(
     "loader_cls, expected_name, expected_language",
     [

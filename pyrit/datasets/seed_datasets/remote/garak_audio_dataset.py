@@ -126,6 +126,9 @@ class _GarakAudioAchillesHeelDataset(_GarakRemoteDataset):
                 )
             )
 
+            if self._max_examples is not None and len(seeds) >= self._max_examples:
+                break
+
         if not seeds:
             raise ValueError("SeedDataset cannot be empty. Check your filter criteria.")
 

@@ -70,8 +70,18 @@ class _GarakRemoteDataset(_RemoteDatasetLoader, ABC):
     SOURCE_AUTHORS: ClassVar[list[str]] = ["garak Team", "NVIDIA"]
     SOURCE_GROUPS: ClassVar[list[str]] = ["NVIDIA"]
 
-    def __init__(self) -> None:
-        """Initialize the loader. Subclasses are no-arg for provider discovery."""
+    def __init__(self, *, max_examples: int | None = None) -> None:
+        """
+        Initialize the loader.
+
+        Args:
+            max_examples: Optional cap on the number of seeds to build. When
+                None (the default) the full dataset is loaded; attacks that need
+                the complete reference list rely on this. A small value is used
+                by the integration tests to keep the multi-million-row package
+                registries fast.
+        """
+        self._max_examples = max_examples
 
     @property
     def _source_url(self) -> str:
@@ -171,6 +181,8 @@ class _GarakRemoteDataset(_RemoteDatasetLoader, ABC):
             if not value:
                 continue
             seeds.append(self._build_seed(value=value, item=item))
+            if self._max_examples is not None and len(seeds) >= self._max_examples:
+                break
 
         if not seeds:
             raise ValueError("SeedDataset cannot be empty. Check your filter criteria.")

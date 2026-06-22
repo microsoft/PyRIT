@@ -81,6 +81,22 @@ async def test_empty_after_fetch_raises():
             await loader.fetch_dataset_async()
 
 
+async def test_max_examples_caps_audio_seeds(mock_audio_rows):
+    loader = _GarakAudioAchillesHeelDataset(max_examples=1)
+
+    with (
+        patch.object(loader, "_fetch_rows_async", new=AsyncMock(return_value=_make_data(mock_audio_rows))),
+        patch(
+            "pyrit.datasets.seed_datasets.remote.garak_audio_dataset.cache_audio_bytes_async",
+            new=AsyncMock(side_effect=lambda *, filename, audio_bytes, log_prefix: f"/cache/{filename}"),
+        ),
+    ):
+        dataset = await loader.fetch_dataset_async()
+
+    assert len(dataset.seeds) == 1
+    assert dataset.seeds[0].harm_categories == ["Malware_Generation"]
+
+
 @pytest.mark.parametrize(
     "path, expected",
     [
