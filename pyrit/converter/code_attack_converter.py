@@ -3,28 +3,15 @@
 
 import pathlib
 import re
-from typing import Literal
+from enum import Enum
+from typing import TYPE_CHECKING
 
 from pyrit.common.path import CONVERTER_SEED_PROMPT_PATH
-from pyrit.models import PromptDataType, SeedPrompt
 from pyrit.converter.converter import Converter, ConverterResult
+from pyrit.models import PromptDataType, SeedPrompt
 
-# Maps (language, verbose) to the YAML template filename stem.
-# C++ and Go have no separate verbose variant in the reference implementation.
-_TEMPLATE_NAMES: dict[tuple[str, bool], str] = {
-    ("python_stack", False): "code_attack_python_stack",
-    ("python_stack", True): "code_attack_python_stack_plus",
-    ("python_list", False): "code_attack_python_list",
-    ("python_list", True): "code_attack_python_list_plus",
-    ("python_string", False): "code_attack_python_string",
-    ("python_string", True): "code_attack_python_string_plus",
-    ("cpp", False): "code_attack_cpp",
-    ("cpp", True): "code_attack_cpp",
-    ("go", False): "code_attack_go",
-    ("go", True): "code_attack_go",
-}
-
-_VALID_LANGUAGES = frozenset({"python_stack", "python_list", "python_string", "cpp", "go"})
+if TYPE_CHECKING:
+    from pyrit.models import ComponentIdentifier
 
 
 class CodeAttackConverter(Converter):
@@ -47,31 +34,55 @@ class CodeAttackConverter(Converter):
     SUPPORTED_INPUT_TYPES = ("text",)
     SUPPORTED_OUTPUT_TYPES = ("text",)
 
+    class Template(Enum):
+        """
+        Built-in CodeAttack templates. The *_VERBOSE members use the _plus
+        variant (detailed paragraphs); the non-verbose members request numbered
+        steps. cpp and go have no verbose variant in the reference implementation.
+        """
+
+        PYTHON_STACK = "code_attack_python_stack"
+        PYTHON_STACK_VERBOSE = "code_attack_python_stack_plus"
+        PYTHON_LIST = "code_attack_python_list"
+        PYTHON_LIST_VERBOSE = "code_attack_python_list_plus"
+        PYTHON_STRING = "code_attack_python_string"
+        PYTHON_STRING_VERBOSE = "code_attack_python_string_plus"
+        CPP = "code_attack_cpp"
+        GO = "code_attack_go"
+
     def __init__(
         self,
         *,
-        language: Literal["python_stack", "python_list", "python_string", "cpp", "go"] = "python_stack",
-        verbose: bool = True,
+        template: "CodeAttackConverter.Template | pathlib.Path" = Template.PYTHON_STACK_VERBOSE,
     ) -> None:
         """
         Args:
-            language: Data-structure family to use for encoding. One of
-                ``"python_stack"``, ``"python_list"``, ``"python_string"``,
-                ``"cpp"``, ``"go"``.
-            verbose: When ``True`` (default) the ``_plus`` template variant is
-                used, which instructs the model to produce detailed paragraphs.
-                When ``False`` the standard variant requests numbered steps.
-                Intentionally a no-op for ``"cpp"`` and ``"go"``: the
-                reference implementation provides no plus-variant for those
-                languages, so both values resolve to the same template.
+            template: The encoding template to use. Pass a
+                ``CodeAttackConverter.Template`` member to use one of the
+                built-in templates, or a ``pathlib.Path`` to a custom YAML
+                file. When a custom path is supplied the encoder defaults to
+                the ``python_string`` structure because the language cannot be
+                inferred from the path.
 
         Raises:
-            ValueError: If ``language`` is not one of the supported values.
+            TypeError: If ``template`` is not a ``CodeAttackConverter.Template``
+                or a ``pathlib.Path``.
         """
-        if language not in _VALID_LANGUAGES:
-            raise ValueError(f"Invalid language {language!r}. Must be one of: {sorted(_VALID_LANGUAGES)}")
-        self._language = language
-        self._verbose = verbose
+        if isinstance(template, CodeAttackConverter.Template):
+            self._template_path = pathlib.Path(CONVERTER_SEED_PROMPT_PATH) / f"{template.value}.yaml"
+            self._language = _TEMPLATE_LANGUAGE[template]
+        elif isinstance(template, pathlib.Path):
+            # Custom template supplied by the caller. Encoder defaults to the
+            # python_string structure since the language cannot be inferred.
+            self._template_path = template
+            self._language = "python_string"
+        else:
+            raise TypeError("template must be a CodeAttackConverter.Template or a pathlib.Path.")
+
+    def _build_identifier(self) -> "ComponentIdentifier":
+        return self._create_identifier(
+            params={"template": str(self._template_path)},
+        )
 
     async def convert_async(self, *, prompt: str, input_type: PromptDataType = "text") -> ConverterResult:
         """
@@ -92,9 +103,7 @@ class CodeAttackConverter(Converter):
             raise ValueError("Input type not supported")
 
         wrapped_input = self._encode(prompt)
-
-        template_name = _TEMPLATE_NAMES[(self._language, self._verbose)]
-        seed_prompt = SeedPrompt.from_yaml_file(pathlib.Path(CONVERTER_SEED_PROMPT_PATH) / f"{template_name}.yaml")
+        seed_prompt = SeedPrompt.from_yaml_file(self._template_path)
         formatted = seed_prompt.render_template_value(wrapped_input=wrapped_input)
         return ConverterResult(output_text=formatted, output_type="text")
 
@@ -146,3 +155,17 @@ class CodeAttackConverter(Converter):
 
     def _encode_go(self, prompt: str) -> str:
         return f'        myQueue := "{prompt}"'
+
+
+# Maps each built-in Template to its encoding language.
+# Defined after the class so the Template enum members are in scope.
+_TEMPLATE_LANGUAGE: dict[CodeAttackConverter.Template, str] = {
+    CodeAttackConverter.Template.PYTHON_STACK: "python_stack",
+    CodeAttackConverter.Template.PYTHON_STACK_VERBOSE: "python_stack",
+    CodeAttackConverter.Template.PYTHON_LIST: "python_list",
+    CodeAttackConverter.Template.PYTHON_LIST_VERBOSE: "python_list",
+    CodeAttackConverter.Template.PYTHON_STRING: "python_string",
+    CodeAttackConverter.Template.PYTHON_STRING_VERBOSE: "python_string",
+    CodeAttackConverter.Template.CPP: "cpp",
+    CodeAttackConverter.Template.GO: "go",
+}

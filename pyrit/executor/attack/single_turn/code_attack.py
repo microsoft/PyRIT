@@ -4,27 +4,27 @@
 import logging
 import pathlib
 import uuid
-from typing import Any, Literal
+from typing import Any
 
 from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
 from pyrit.common.path import EXECUTOR_SEED_PROMPT_PATH
+from pyrit.converter.code_attack_converter import CodeAttackConverter
 from pyrit.executor.attack.core import AttackConverterConfig, AttackScoringConfig
 from pyrit.executor.attack.core.attack_parameters import AttackParameters
 from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
 from pyrit.executor.attack.single_turn.single_turn_attack_strategy import SingleTurnAttackContext
 from pyrit.models import Message, SeedPrompt
-from pyrit.converter.code_attack_converter import CodeAttackConverter
 from pyrit.prompt_normalizer import ConverterConfiguration, PromptNormalizer
 from pyrit.prompt_target import PromptTarget
 
 logger = logging.getLogger(__name__)
 
-# CodeAttackAttack builds its own system prompt and encodes the objective via
+# CodeAttack builds its own system prompt and encodes the objective via
 # the converter, so callers cannot inject prepended_conversation or next_message.
 CodeAttackParameters = AttackParameters.excluding("prepended_conversation", "next_message")
 
 
-class CodeAttackAttack(PromptSendingAttack):
+class CodeAttack(PromptSendingAttack):
     """
     Implement the CodeAttack method [@ren2024codeattack].
 
@@ -45,26 +45,20 @@ class CodeAttackAttack(PromptSendingAttack):
         attack_scoring_config: AttackScoringConfig | None = None,
         prompt_normalizer: PromptNormalizer | None = None,
         max_attempts_on_failure: int = 0,
-        language: Literal["python_stack", "python_list", "python_string", "cpp", "go"] = "python_stack",
-        verbose: bool = True,
+        template: "CodeAttackConverter.Template | pathlib.Path" = CodeAttackConverter.Template.PYTHON_STACK_VERBOSE,
     ) -> None:
         """
         Args:
-            objective_target: The target system to attack.
-            attack_converter_config: Optional additional converter configuration.
-                The CodeAttack converter is always prepended first.
-            attack_scoring_config: Configuration for scoring components.
-            prompt_normalizer: Optional normalizer override.
-            max_attempts_on_failure: Additional retry attempts after the first
-                failure.
-            language: Data-structure family to use for encoding. One of
-                ``"python_stack"``, ``"python_list"``, ``"python_string"``,
-                ``"cpp"``, ``"go"``.
-            verbose: When ``True`` (default) the ``_plus`` template variant is
-                used, requesting detailed paragraphs. When ``False`` the
-                standard variant requests numbered steps. Intentionally a
-                no-op for ``"cpp"`` and ``"go"`` (no plus variant exists
-                upstream); both values resolve to the same template.
+            objective_target (PromptTarget): The target system to attack.
+            attack_converter_config (AttackConverterConfig, Optional): Configuration for additional
+                prompt converters. The CodeAttack converter is always prepended first.
+            attack_scoring_config (AttackScoringConfig, Optional): Configuration for scoring components.
+            prompt_normalizer (PromptNormalizer, Optional): Normalizer for handling prompts.
+            max_attempts_on_failure (int, Optional): Maximum number of attempts to retry on failure.
+            template (CodeAttackConverter.Template | pathlib.Path, Optional): The encoding template
+                to use. Pass a ``CodeAttackConverter.Template`` member to use one of the built-in
+                templates, or a ``pathlib.Path`` to a custom YAML file. Defaults to
+                ``PYTHON_STACK_VERBOSE``.
         """
         super().__init__(
             objective_target=objective_target,
@@ -75,9 +69,7 @@ class CodeAttackAttack(PromptSendingAttack):
             params_type=CodeAttackParameters,
         )
 
-        code_converter = ConverterConfiguration.from_converters(
-            converters=[CodeAttackConverter(language=language, verbose=verbose)]
-        )
+        code_converter = ConverterConfiguration.from_converters(converters=[CodeAttackConverter(template=template)])
         self._request_converters = code_converter + self._request_converters
 
         system_prompt_path = pathlib.Path(EXECUTOR_SEED_PROMPT_PATH) / "code_attack.yaml"
@@ -92,7 +84,7 @@ class CodeAttackAttack(PromptSendingAttack):
         the target as a code-completion environment.
 
         Args:
-            context: The attack context for this execution.
+            context (SingleTurnAttackContext): The attack context for this execution.
         """
         context.conversation_id = str(uuid.uuid4())
         context.prepended_conversation = [self._system_prompt]

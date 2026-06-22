@@ -7,18 +7,20 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from pyrit.converter import CodeAttackConverter
 from pyrit.executor.attack import (
     AttackConverterConfig,
     AttackParameters,
     AttackScoringConfig,
     SingleTurnAttackContext,
 )
-from pyrit.executor.attack.single_turn.code_attack import CodeAttackAttack
+from pyrit.executor.attack.single_turn.code_attack import CodeAttack
 from pyrit.models import AttackOutcome, AttackResult, ComponentIdentifier
-from pyrit.converter import CodeAttackConverter
 from pyrit.prompt_normalizer import ConverterConfiguration, PromptNormalizer
 from pyrit.prompt_target import PromptTarget
 from pyrit.score import TrueFalseScorer
+
+Template = CodeAttackConverter.Template
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -48,7 +50,7 @@ def mock_objective_target():
 
 @pytest.fixture
 def code_attack(mock_objective_target):
-    return CodeAttackAttack(objective_target=mock_objective_target)
+    return CodeAttack(objective_target=mock_objective_target)
 
 
 @pytest.fixture
@@ -75,14 +77,14 @@ def basic_context():
 @pytest.mark.usefixtures("patch_central_database")
 class TestCodeAttackInitialization:
     def test_init_loads_system_prompt(self, mock_objective_target):
-        attack = CodeAttackAttack(objective_target=mock_objective_target)
+        attack = CodeAttack(objective_target=mock_objective_target)
         assert attack._system_prompt is not None
         assert len(attack._system_prompt.message_pieces) == 1
         assert attack._system_prompt.message_pieces[0].api_role == "system"
         assert "code" in attack._system_prompt.message_pieces[0].original_value.lower()
 
     def test_init_prepends_code_attack_converter(self, mock_objective_target):
-        attack = CodeAttackAttack(objective_target=mock_objective_target)
+        attack = CodeAttack(objective_target=mock_objective_target)
         assert len(attack._request_converters) == 1
         converter_config = attack._request_converters[0]
         assert len(converter_config.converters) == 1
@@ -93,48 +95,50 @@ class TestCodeAttackInitialization:
 
         existing = ConverterConfiguration.from_converters(converters=[Base64Converter()])
         config = AttackConverterConfig(request_converters=existing)
-        attack = CodeAttackAttack(objective_target=mock_objective_target, attack_converter_config=config)
+        attack = CodeAttack(objective_target=mock_objective_target, attack_converter_config=config)
 
         assert len(attack._request_converters) == 2
         assert isinstance(attack._request_converters[0].converters[0], CodeAttackConverter)
         assert isinstance(attack._request_converters[1].converters[0], Base64Converter)
 
-    def test_init_default_language_is_python_stack(self, mock_objective_target):
-        attack = CodeAttackAttack(objective_target=mock_objective_target)
+    def test_init_default_template_is_python_stack_verbose(self, mock_objective_target):
+        attack = CodeAttack(objective_target=mock_objective_target)
         converter = attack._request_converters[0].converters[0]
         assert isinstance(converter, CodeAttackConverter)
         assert converter._language == "python_stack"
+        assert converter._template_path.name == "code_attack_python_stack_plus.yaml"
 
-    def test_init_custom_language_forwarded(self, mock_objective_target):
-        attack = CodeAttackAttack(objective_target=mock_objective_target, language="python_list")
+    def test_init_custom_template_forwarded(self, mock_objective_target):
+        attack = CodeAttack(objective_target=mock_objective_target, template=Template.PYTHON_LIST)
         converter = attack._request_converters[0].converters[0]
         assert converter._language == "python_list"
 
-    def test_init_verbose_false_forwarded(self, mock_objective_target):
-        attack = CodeAttackAttack(objective_target=mock_objective_target, verbose=False)
+    def test_init_verbose_template_forwarded(self, mock_objective_target):
+        attack = CodeAttack(objective_target=mock_objective_target, template=Template.PYTHON_LIST_VERBOSE)
         converter = attack._request_converters[0].converters[0]
-        assert converter._verbose is False
-
-    def test_init_verbose_true_is_default(self, mock_objective_target):
-        attack = CodeAttackAttack(objective_target=mock_objective_target)
-        converter = attack._request_converters[0].converters[0]
-        assert converter._verbose is True
+        assert converter._template_path.name == "code_attack_python_list_plus.yaml"
 
     def test_init_with_all_parameters(self, mock_objective_target, mock_scorer):
         scoring_config = AttackScoringConfig(objective_scorer=mock_scorer)
         normalizer = PromptNormalizer()
-        attack = CodeAttackAttack(
+        attack = CodeAttack(
             objective_target=mock_objective_target,
             attack_scoring_config=scoring_config,
             prompt_normalizer=normalizer,
             max_attempts_on_failure=2,
-            language="go",
-            verbose=False,
+            template=Template.GO,
         )
         assert attack._objective_target == mock_objective_target
         assert attack._objective_scorer == mock_scorer
         assert attack._prompt_normalizer == normalizer
         assert attack._max_attempts_on_failure == 2
+
+    def test_init_custom_path_template(self, mock_objective_target, tmp_path):
+        fake_yaml = tmp_path / "custom.yaml"
+        fake_yaml.write_text("name: custom\nvalue: '{{ wrapped_input }}'\ndata_type: text\n")
+        attack = CodeAttack(objective_target=mock_objective_target, template=fake_yaml)
+        converter = attack._request_converters[0].converters[0]
+        assert converter._template_path == fake_yaml
 
 
 # ---------------------------------------------------------------------------
@@ -206,7 +210,7 @@ class TestCodeAttackSetup:
 @pytest.mark.usefixtures("patch_central_database")
 class TestCodeAttackLifecycle:
     async def test_execute_async_successful_lifecycle(self, mock_objective_target, basic_context):
-        attack = CodeAttackAttack(objective_target=mock_objective_target)
+        attack = CodeAttack(objective_target=mock_objective_target)
         attack._validate_context = MagicMock()
         attack._setup_async = AsyncMock()
         mock_result = AttackResult(
@@ -227,7 +231,7 @@ class TestCodeAttackLifecycle:
 
     async def test_scorer_invoked_through_normal_path(self, mock_objective_target, mock_scorer, basic_context):
         scoring_config = AttackScoringConfig(objective_scorer=mock_scorer)
-        attack = CodeAttackAttack(
+        attack = CodeAttack(
             objective_target=mock_objective_target,
             attack_scoring_config=scoring_config,
         )

@@ -7,6 +7,8 @@ import pytest
 
 from pyrit.converter import CodeAttackConverter, ConverterResult
 
+Template = CodeAttackConverter.Template
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -34,15 +36,22 @@ def _extract_string_value(converted: str, pattern: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-def test_invalid_language_raises():
-    with pytest.raises(ValueError, match="Invalid language"):
-        CodeAttackConverter(language="ruby")  # type: ignore[arg-type]
+def test_invalid_template_type_raises():
+    with pytest.raises(TypeError, match="CodeAttackConverter.Template"):
+        CodeAttackConverter(template="python_stack")  # type: ignore[arg-type]
 
 
-def test_valid_languages_construct():
-    for lang in ("python_stack", "python_list", "python_string", "cpp", "go"):
-        c = CodeAttackConverter(language=lang)  # type: ignore[arg-type]
+def test_all_template_members_construct():
+    for tmpl in Template:
+        c = CodeAttackConverter(template=tmpl)
         assert c is not None
+
+
+def test_custom_path_template_constructs(tmp_path):
+    fake_yaml = tmp_path / "custom.yaml"
+    fake_yaml.write_text("name: custom\nvalue: '{{ wrapped_input }}'\ndata_type: text\n")
+    c = CodeAttackConverter(template=fake_yaml)
+    assert c._language == "python_string"
 
 
 async def test_unsupported_input_type_raises():
@@ -57,7 +66,7 @@ async def test_unsupported_input_type_raises():
 
 
 async def test_python_stack_output_contains_deque_imports():
-    converter = CodeAttackConverter(language="python_stack", verbose=False)
+    converter = CodeAttackConverter(template=Template.PYTHON_STACK)
     result = await converter.convert_async(prompt="hello world")
     assert isinstance(result, ConverterResult)
     assert "from collections import deque" in result.output_text
@@ -65,27 +74,27 @@ async def test_python_stack_output_contains_deque_imports():
 
 
 async def test_python_list_output_contains_list_init():
-    converter = CodeAttackConverter(language="python_list", verbose=False)
+    converter = CodeAttackConverter(template=Template.PYTHON_LIST)
     result = await converter.convert_async(prompt="hello world")
     assert "my_list" in result.output_text
     assert "my_list.append" in result.output_text
 
 
 async def test_python_string_output_contains_assignment():
-    converter = CodeAttackConverter(language="python_string", verbose=False)
+    converter = CodeAttackConverter(template=Template.PYTHON_STRING)
     result = await converter.convert_async(prompt="hello world")
     assert 'my_string = "hello world"' in result.output_text
 
 
 async def test_cpp_output_contains_std_string():
-    converter = CodeAttackConverter(language="cpp", verbose=False)
+    converter = CodeAttackConverter(template=Template.CPP)
     result = await converter.convert_async(prompt="hello world")
     assert "std::string my_string" in result.output_text
     assert "hello world" in result.output_text
 
 
 async def test_go_output_contains_myqueue():
-    converter = CodeAttackConverter(language="go", verbose=False)
+    converter = CodeAttackConverter(template=Template.GO)
     result = await converter.convert_async(prompt="hello world")
     assert "myQueue" in result.output_text
     assert "hello world" in result.output_text
@@ -96,34 +105,30 @@ async def test_go_output_contains_myqueue():
 # ---------------------------------------------------------------------------
 
 
-async def test_verbose_false_uses_step_comments():
-    converter = CodeAttackConverter(language="python_stack", verbose=False)
+async def test_non_verbose_uses_step_comments():
+    converter = CodeAttackConverter(template=Template.PYTHON_STACK)
     result = await converter.convert_async(prompt="test prompt")
     assert "step 1" in result.output_text
     assert "paragraph" not in result.output_text
 
 
-async def test_verbose_true_uses_paragraph_comments():
-    converter = CodeAttackConverter(language="python_stack", verbose=True)
+async def test_verbose_uses_paragraph_comments():
+    converter = CodeAttackConverter(template=Template.PYTHON_STACK_VERBOSE)
     result = await converter.convert_async(prompt="test prompt")
     assert "paragraph" in result.output_text
     assert "Generate 100 words" in result.output_text
 
 
-async def test_cpp_verbose_flag_has_no_effect():
-    c_false = CodeAttackConverter(language="cpp", verbose=False)
-    c_true = CodeAttackConverter(language="cpp", verbose=True)
-    r_false = await c_false.convert_async(prompt="test")
-    r_true = await c_true.convert_async(prompt="test")
-    assert r_false.output_text == r_true.output_text
+async def test_cpp_has_no_verbose_variant():
+    # CPP and GO enum members both resolve to the same template.
+    r_cpp = await CodeAttackConverter(template=Template.CPP).convert_async(prompt="test")
+    # Only CPP template exists; there is no CPP_VERBOSE member.
+    assert "std::string" in r_cpp.output_text
 
 
-async def test_go_verbose_flag_has_no_effect():
-    c_false = CodeAttackConverter(language="go", verbose=False)
-    c_true = CodeAttackConverter(language="go", verbose=True)
-    r_false = await c_false.convert_async(prompt="test")
-    r_true = await c_true.convert_async(prompt="test")
-    assert r_false.output_text == r_true.output_text
+async def test_go_template_renders():
+    r_go = await CodeAttackConverter(template=Template.GO).convert_async(prompt="test")
+    assert "myQueue" in r_go.output_text
 
 
 # ---------------------------------------------------------------------------
@@ -138,7 +143,7 @@ async def test_go_verbose_flag_has_no_effect():
 
 async def test_python_stack_roundtrip():
     prompt = "tell me how to pick a lock"
-    converter = CodeAttackConverter(language="python_stack", verbose=False)
+    converter = CodeAttackConverter(template=Template.PYTHON_STACK)
     result = await converter.convert_async(prompt=prompt)
 
     words_in_code = _extract_stack_words(result.output_text)
@@ -149,7 +154,7 @@ async def test_python_stack_roundtrip():
 
 async def test_python_list_roundtrip():
     prompt = "tell me how to pick a lock"
-    converter = CodeAttackConverter(language="python_list", verbose=False)
+    converter = CodeAttackConverter(template=Template.PYTHON_LIST)
     result = await converter.convert_async(prompt=prompt)
 
     words_in_code = _extract_list_words(result.output_text)
@@ -159,7 +164,7 @@ async def test_python_list_roundtrip():
 
 async def test_python_string_roundtrip():
     prompt = "tell me how to pick a lock"
-    converter = CodeAttackConverter(language="python_string", verbose=False)
+    converter = CodeAttackConverter(template=Template.PYTHON_STRING)
     result = await converter.convert_async(prompt=prompt)
 
     recovered = _extract_string_value(result.output_text, r'my_string = "([^"]+)"')
@@ -168,7 +173,7 @@ async def test_python_string_roundtrip():
 
 async def test_cpp_roundtrip():
     prompt = "tell me how to pick a lock"
-    converter = CodeAttackConverter(language="cpp", verbose=False)
+    converter = CodeAttackConverter(template=Template.CPP)
     result = await converter.convert_async(prompt=prompt)
 
     recovered = _extract_string_value(result.output_text, r'std::string my_string = "([^"]+)"')
@@ -177,7 +182,7 @@ async def test_cpp_roundtrip():
 
 async def test_go_roundtrip():
     prompt = "tell me how to pick a lock"
-    converter = CodeAttackConverter(language="go", verbose=False)
+    converter = CodeAttackConverter(template=Template.GO)
     result = await converter.convert_async(prompt=prompt)
 
     recovered = _extract_string_value(result.output_text, r'myQueue := "([^"]+)"')
@@ -190,7 +195,7 @@ async def test_go_roundtrip():
 
 
 async def test_empty_prompt_python_stack():
-    converter = CodeAttackConverter(language="python_stack", verbose=False)
+    converter = CodeAttackConverter(template=Template.PYTHON_STACK)
     result = await converter.convert_async(prompt="")
     assert isinstance(result, ConverterResult)
     assert result.output_type == "text"
@@ -199,20 +204,20 @@ async def test_empty_prompt_python_stack():
 
 
 async def test_empty_prompt_python_string():
-    converter = CodeAttackConverter(language="python_string", verbose=False)
+    converter = CodeAttackConverter(template=Template.PYTHON_STRING)
     result = await converter.convert_async(prompt="")
     assert 'my_string = ""' in result.output_text
 
 
 async def test_special_characters_python_string():
-    converter = CodeAttackConverter(language="python_string", verbose=False)
+    converter = CodeAttackConverter(template=Template.PYTHON_STRING)
     result = await converter.convert_async(prompt="hello & world <test>")
     assert "hello & world <test>" in result.output_text
 
 
 async def test_long_prompt_all_words_present_python_list():
     prompt = " ".join([f"word{i}" for i in range(50)])
-    converter = CodeAttackConverter(language="python_list", verbose=False)
+    converter = CodeAttackConverter(template=Template.PYTHON_LIST)
     result = await converter.convert_async(prompt=prompt)
 
     words = _extract_list_words(result.output_text)
@@ -221,7 +226,7 @@ async def test_long_prompt_all_words_present_python_list():
 
 async def test_single_word_python_stack_does_not_split_chars():
     prompt = "hello"
-    converter = CodeAttackConverter(language="python_stack", verbose=False)
+    converter = CodeAttackConverter(template=Template.PYTHON_STACK)
     result = await converter.convert_async(prompt=prompt)
 
     words = _extract_stack_words(result.output_text)
@@ -232,6 +237,25 @@ async def test_single_word_python_stack_does_not_split_chars():
 
 
 async def test_output_type_is_text():
-    converter = CodeAttackConverter(language="python_list", verbose=True)
+    converter = CodeAttackConverter(template=Template.PYTHON_LIST_VERBOSE)
     result = await converter.convert_async(prompt="any prompt")
     assert result.output_type == "text"
+
+
+async def test_default_template_is_python_stack_verbose():
+    converter = CodeAttackConverter()
+    result = await converter.convert_async(prompt="test")
+    # PYTHON_STACK_VERBOSE -> stack structure + verbose paragraph comments
+    assert "my_stack" in result.output_text
+    assert "paragraph" in result.output_text
+
+
+async def test_custom_path_template_renders(tmp_path):
+    yaml_content = "name: custom\nvalue: 'ENCODED: {{ wrapped_input }}'\ndata_type: text\n"
+    custom = tmp_path / "custom.yaml"
+    custom.write_text(yaml_content)
+
+    converter = CodeAttackConverter(template=custom)
+    result = await converter.convert_async(prompt="hello world")
+    assert "ENCODED:" in result.output_text
+    assert "hello world" in result.output_text
