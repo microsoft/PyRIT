@@ -14,13 +14,14 @@ composite identifier has this shape::
       └── seed_identifiers      (list of ALL seed ComponentIdentifiers, for traceability)
 """
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Annotated
 
 from pydantic import Field
 
 from pyrit.models.identifiers.attack_identifier import AttackIdentifier
 from pyrit.models.identifiers.attack_technique_identifier import AttackTechniqueIdentifier
 from pyrit.models.identifiers.component_identifier import ComponentIdentifier
+from pyrit.models.identifiers.evaluation_markers import Evaluate
 from pyrit.models.identifiers.seed_identifier import SeedIdentifier
 
 if TYPE_CHECKING:
@@ -39,13 +40,14 @@ class AtomicAttackIdentifier(ComponentIdentifier):
     Strongly-typed projection of an atomic attack's ``ComponentIdentifier``.
 
     Promotes the attack technique (``attack_technique``) and all seed identifiers
-    from the dataset (``seed_identifiers``).
+    from the dataset (``seed_identifiers``). ``seed_identifiers`` is excluded from
+    the eval hash — it is present for traceability only.
     """
 
     #: The attack technique executed.
-    attack_technique: AttackTechniqueIdentifier | None = None
+    attack_technique: Annotated[AttackTechniqueIdentifier | None, Evaluate.Include()] = None
     #: All seed identifiers from the dataset, for traceability.
-    seed_identifiers: list[SeedIdentifier] = Field(default_factory=list)
+    seed_identifiers: Annotated[list[SeedIdentifier], Evaluate.Exclude()] = Field(default_factory=list)
 
     @classmethod
     def build(

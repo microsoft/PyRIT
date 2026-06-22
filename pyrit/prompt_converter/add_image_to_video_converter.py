@@ -98,7 +98,7 @@ class AddImageVideoConverter(PromptConverter):
             ValueError: If the image path is invalid or unsupported video format.
         """
         try:
-            import cv2  # type: ignore[ty:unresolved-import]  # noqa: F401
+            import cv2  # noqa: F401
         except ModuleNotFoundError as e:
             logger.error("Could not import opencv. You may need to install it via 'pip install pyrit[opencv]'")
             raise e

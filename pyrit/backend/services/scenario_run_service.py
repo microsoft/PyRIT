@@ -94,9 +94,7 @@ class ScenarioRunService:
             init_kwargs = self._build_init_kwargs(
                 request=request, scenario_class=scenario_class, objective_target=objective_target
             )
-            scenario = await self._initialize_scenario_async(
-                request=request, scenario_class=scenario_class, init_kwargs=init_kwargs
-            )
+            scenario = await self._initialize_scenario_async(request=request, init_kwargs=init_kwargs)
         except Exception:
             self._run_semaphore.release()
             raise
@@ -371,15 +369,13 @@ class ScenarioRunService:
 
         return init_kwargs
 
-    async def _initialize_scenario_async(
-        self, *, request: RunScenarioRequest, scenario_class: type[Scenario], init_kwargs: dict[str, Any]
-    ) -> Scenario:
+    async def _initialize_scenario_async(self, *, request: RunScenarioRequest, init_kwargs: dict[str, Any]) -> Scenario:
         """
         Instantiate the scenario and call initialize_async.
 
         Args:
-            request: The run request (for scenario_params and scenario_result_id).
-            scenario_class: The resolved scenario class.
+            request: The run request (for scenario_name, scenario_params, and
+                scenario_result_id).
             init_kwargs: The kwargs to pass to scenario.initialize_async.
 
         Returns:
@@ -388,7 +384,8 @@ class ScenarioRunService:
         constructor_kwargs: dict[str, Any] = {}
         if request.scenario_result_id:
             constructor_kwargs["scenario_result_id"] = request.scenario_result_id
-        scenario = scenario_class(**constructor_kwargs)  # type: ignore[call-arg]
+        scenario_registry = ScenarioRegistry.get_registry_singleton()
+        scenario = scenario_registry.create_instance(request.scenario_name, **constructor_kwargs)
         scenario.set_params_from_args(args=request.scenario_params or {})
         await scenario.initialize_async(**init_kwargs)
         return scenario
@@ -488,7 +485,7 @@ class ScenarioRunService:
             scenario_version=scenario_result.scenario_identifier.version,
             status=status,
             created_at=scenario_result.creation_time,
-            updated_at=scenario_result.completion_time,
+            updated_at=scenario_result.completion_time or scenario_result.creation_time,
             error=error,
             error_type=error_type,
             strategies_used=strategies_used,

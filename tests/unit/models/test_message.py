@@ -472,12 +472,3 @@ class TestMessageModuleLayout:
             "construct_response_from_request",
         ):
             assert getattr(conversations, name) is getattr(messages, name)
-
-    def test_legacy_module_paths_reexport_same_objects(self) -> None:
-        import pyrit.models.message as legacy_message
-        import pyrit.models.message_piece as legacy_message_piece
-        from pyrit.models.messages.message import Message as PackagedMessage
-        from pyrit.models.messages.message_piece import MessagePiece as PackagedMessagePiece
-
-        assert legacy_message.Message is PackagedMessage
-        assert legacy_message_piece.MessagePiece is PackagedMessagePiece

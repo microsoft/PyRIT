@@ -134,9 +134,8 @@ class Scorer(Identifiable, abc.ABC):
             ComponentIdentifier: The identity with ``eval_hash`` set.
         """
         identifier = super().get_identifier()
-        if identifier.eval_hash is None:
-            identifier = identifier.with_eval_hash(ScorerEvaluationIdentifier(identifier).eval_hash)
-            self._identifier = identifier
+        identifier = identifier.with_eval_hash(ScorerEvaluationIdentifier(identifier).eval_hash)
+        self._identifier = identifier
         return identifier
 
     @property

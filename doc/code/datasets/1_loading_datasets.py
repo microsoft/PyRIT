@@ -18,6 +18,7 @@
 # The following command lists all built-in datasets available in PyRIT. Some datasets are stored locally, while others are fetched remotely from sources like HuggingFace.
 #
 # Many of these datasets come from published research, including
+# 0DIN [@odin2024],
 # Aegis [@ghosh2025aegis],
 # Agent Threat Rules [@atr2026],
 # ALERT [@tedeschi2024alert],

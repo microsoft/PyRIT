@@ -175,21 +175,21 @@ test.describe("Theme Toggle", () => {
     await page.goto("/");
     await expect(page.getByTitle("Chat")).toBeVisible({ timeout: 10000 });
 
-    // The app defaults to dark mode, so the toggle button title should say "Light Mode"
-    const themeBtn = page.getByTitle("Light Mode");
+    // The app defaults to system mode, so the toggle button title should say "Theme: System"
+    const themeBtn = page.getByTitle("Theme: System");
     await expect(themeBtn).toBeVisible();
 
-    // Click to switch to light mode
+    // Open the theme menu and select Light
     await themeBtn.click();
+    await page.getByRole("menuitemradio", { name: "Light" }).click();
 
-    // Now the button title should change to "Dark Mode"
-    await expect(page.getByTitle("Dark Mode")).toBeVisible({ timeout: 5000 });
-    // The old title should no longer be present
-    await expect(page.getByTitle("Light Mode")).not.toBeVisible();
+    // Now the button title should say "Theme: Light"
+    await expect(page.getByTitle("Theme: Light")).toBeVisible({ timeout: 5000 });
 
-    // Click again to switch back to dark mode
-    await page.getByTitle("Dark Mode").click();
-    await expect(page.getByTitle("Light Mode")).toBeVisible({ timeout: 5000 });
+    // Open the menu again and select Dark
+    await page.getByTitle("Theme: Light").click();
+    await page.getByRole("menuitemradio", { name: "Dark" }).click();
+    await expect(page.getByTitle("Theme: Dark")).toBeVisible({ timeout: 5000 });
   });
 });
 

@@ -168,12 +168,9 @@ async def test_fetch_dataset_empty_after_filter_raises(mock_aegis_rows):
             await loader.fetch_dataset_async()
 
 
-async def test_fetch_dataset_empty_category_filter_raises(mock_aegis_rows):
-    loader = _AegisContentSafetyDataset(harm_categories=[])
-
-    with patch.object(loader, "_fetch_from_huggingface_async", new_callable=AsyncMock, return_value=mock_aegis_rows):
-        with pytest.raises(ValueError, match="SeedDataset cannot be empty"):
-            await loader.fetch_dataset_async()
+def test_init_empty_harm_categories_raises():
+    with pytest.raises(ValueError, match="`harm_categories` must be a non-empty list"):
+        _AegisContentSafetyDataset(harm_categories=[])
 
 
 def test_invalid_harm_category_raises():

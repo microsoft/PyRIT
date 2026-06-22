@@ -176,19 +176,31 @@ stages:
                     inlineScript: |
                       set -euo pipefail
 
-                      FQDN=$(az containerapp show \
-                        --name $(appName) \
-                        --resource-group $(resourceGroup) \
-                        --query "properties.configuration.ingress.fqdn" -o tsv)
+                      IMAGE="$(acrLoginServer)/$(imageName):$(Build.SourceVersion)"
+                      HEALTH=""
 
-                      echo "Testing https://$FQDN/api/health"
+                      for i in {1..5}; do
+                        HEALTH="$(az containerapp revision list \
+                          --resource-group "$(resourceGroup)" \
+                          --name "$(appName)" \
+                          --query "[?properties.template.containers[0].image=='$IMAGE'] | sort_by(@,&properties.createdTime)[-1].properties.healthState" \
+                          -o tsv)"
 
-                      curl --retry 5 --retry-delay 15 --retry-all-errors \
-                        --fail --max-time 10 \
-                        "https://$FQDN/api/health"
+                        echo "Attempt $i/5 - Image: $IMAGE - Health: ${HEALTH:-<not-found>}"
 
-                      echo ""
-                      echo "✅ Test environment health check passed"
+                        if [[ "$HEALTH" == "Healthy" ]]; then
+                          echo "✅ Test environment health check passed"
+                          exit 0
+                        fi
+
+                        if [[ "$i" -lt 5 ]]; then
+                          echo "Revision is not healthy yet. Waiting 2 minutes before retry..."
+                          sleep 120
+                        fi
+                      done
+
+                      echo "❌ Test environment health check failed after 5 attempts"
+                      exit 1
 
   # ──────────────────────────────────────────────
   # Stage 3: Deploy to production (manual trigger)
@@ -247,16 +259,28 @@ stages:
                     inlineScript: |
                       set -euo pipefail
 
-                      FQDN=$(az containerapp show \
-                        --name $(appName) \
-                        --resource-group $(resourceGroup) \
-                        --query "properties.configuration.ingress.fqdn" -o tsv)
+                      IMAGE="$(acrLoginServer)/$(imageName):$(Build.SourceVersion)"
+                      HEALTH=""
 
-                      echo "Testing https://$FQDN/api/health"
+                      for i in {1..5}; do
+                        HEALTH="$(az containerapp revision list \
+                          --resource-group "$(resourceGroup)" \
+                          --name "$(appName)" \
+                          --query "[?properties.template.containers[0].image=='$IMAGE'] | sort_by(@,&properties.createdTime)[-1].properties.healthState" \
+                          -o tsv)"
 
-                      curl --retry 5 --retry-delay 15 --retry-all-errors \
-                        --fail --max-time 10 \
-                        "https://$FQDN/api/health"
+                        echo "Attempt $i/5 - Image: $IMAGE - Health: ${HEALTH:-<not-found>}"
 
-                      echo ""
-                      echo "✅ Production health check passed"
+                        if [[ "$HEALTH" == "Healthy" ]]; then
+                          echo "✅ Production health check passed"
+                          exit 0
+                        fi
+
+                        if [[ "$i" -lt 5 ]]; then
+                          echo "Revision is not healthy yet. Waiting 2 minutes before retry..."
+                          sleep 120
+                        fi
+                      done
+
+                      echo "❌ Production health check failed after 5 attempts"
+                      exit 1

@@ -27,6 +27,7 @@ from pyrit.executor.attack.multi_turn.tree_of_attacks import (
     _TreeOfAttacksNode,
 )
 from pyrit.models import (
+    JSON_SCHEMA_METADATA_KEY,
     AttackOutcome,
     ComponentIdentifier,
     ConversationReference,
@@ -85,10 +86,10 @@ class MockNodeFactory:
         node.send_prompt_async = AsyncMock(return_value=None)
 
         node._generate_adversarial_prompt_async = AsyncMock(return_value="test prompt")
-        node._generate_red_teaming_prompt_async = AsyncMock(return_value='{"prompt": "test prompt"}')
+        node._generate_red_teaming_prompt_async = AsyncMock(return_value='{"next_message": "test prompt"}')
         node._send_prompt_to_target_async = AsyncMock(return_value=MagicMock())
         node._score_response_async = AsyncMock(return_value=None)
-        node._send_to_adversarial_chat_async = AsyncMock(return_value='{"prompt": "test prompt"}')
+        node._send_to_adversarial_chat_async = AsyncMock(return_value='{"next_message": "test prompt"}')
         node._check_on_topic_async = AsyncMock(return_value=True)
         node._execute_objective_prompt_async = AsyncMock(return_value=None)
 
@@ -1392,6 +1393,7 @@ class TestTreeOfAttacksNode:
 
         adversarial_chat_system_seed_prompt = MagicMock(spec=SeedPrompt)
         adversarial_chat_system_seed_prompt.render_template_value = MagicMock(return_value="rendered system prompt")
+        adversarial_chat_system_seed_prompt.response_json_schema = None
 
         adversarial_chat_prompt_template = MagicMock(spec=SeedPrompt)
         adversarial_chat_prompt_template.render_template_value = MagicMock(return_value="rendered template")
@@ -1465,7 +1467,26 @@ class TestTreeOfAttacksNode:
         assert node.error_message is not None
         assert "Error sending prompt with conversation ID" in node.error_message
 
-    async def test_node_send_prompt_unexpected_error_handling(self, node_components):
+    async def test_send_to_adversarial_chat_forwards_json_schema(self, node_components):
+        """The shared adversarial_chat JSON schema is forwarded to the target via metadata."""
+        prompt_normalizer = MagicMock(spec=PromptNormalizer)
+        components_with_normalizer = node_components.copy()
+        components_with_normalizer["prompt_normalizer"] = prompt_normalizer
+        node = _TreeOfAttacksNode(**components_with_normalizer)
+
+        schema = {"type": "object", "properties": {"next_message": {"type": "string"}}}
+        node._adversarial_chat_system_seed_prompt.response_json_schema = schema
+
+        prompt_normalizer.send_prompt_async = AsyncMock(
+            return_value=Message.from_prompt(prompt='{"next_message": "x"}', role="assistant")
+        )
+
+        await node._send_to_adversarial_chat_async(prompt_text="Test prompt")
+
+        sent_message = prompt_normalizer.send_prompt_async.call_args.kwargs["message"]
+        metadata = sent_message.message_pieces[0].prompt_metadata
+        assert metadata["response_format"] == "json"
+        assert metadata[JSON_SCHEMA_METADATA_KEY] == schema
         """Test handling of unexpected errors in send_prompt_async."""
         node = _TreeOfAttacksNode(**node_components)
 
@@ -1563,8 +1584,8 @@ class TestTreeOfAttacksNode:
                     message_pieces=[
                         MessagePiece(
                             role="assistant",
-                            original_value=json.dumps({"prompt": "test prompt", "improvement": "test"}),
-                            converted_value=json.dumps({"prompt": "test prompt", "improvement": "test"}),
+                            original_value=json.dumps({"next_message": "test prompt", "rationale": "test"}),
+                            converted_value=json.dumps({"next_message": "test prompt", "rationale": "test"}),
                             conversation_id=node.adversarial_chat_conversation_id,
                             id=str(uuid.uuid4()),
                         )

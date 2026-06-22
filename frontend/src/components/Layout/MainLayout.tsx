@@ -14,8 +14,7 @@ interface MainLayoutProps {
   children: React.ReactNode
   currentView: ViewName
   onNavigate: (view: ViewName) => void
-  onToggleTheme: () => void
-  isDarkMode: boolean
+  onOpenFeedback: () => void
   onStartTour?: () => void
 }
 
@@ -23,8 +22,7 @@ export default function MainLayout({
   children,
   currentView,
   onNavigate,
-  onToggleTheme,
-  isDarkMode,
+  onOpenFeedback,
   onStartTour,
 }: MainLayoutProps) {
   const styles = useMainLayoutStyles()
@@ -70,8 +68,7 @@ export default function MainLayout({
           <Navigation
             currentView={currentView}
             onNavigate={onNavigate}
-            onToggleTheme={onToggleTheme}
-            isDarkMode={isDarkMode}
+            onOpenFeedback={onOpenFeedback}
           />
         </aside>
         <main className={styles.main}>{children}</main>
