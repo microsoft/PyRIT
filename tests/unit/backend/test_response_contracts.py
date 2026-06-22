@@ -25,11 +25,12 @@ from pyrit.models import (
     AtomicAttackIdentifier,
     AttackResult,
     ComponentIdentifier,
+    ConversationReference,
+    ConversationType,
     MessagePiece,
     RetryEvent,
     Score,
 )
-from pyrit.models.conversation_reference import ConversationReference, ConversationType
 
 
 def _make_score() -> Score:

@@ -57,7 +57,7 @@ class TestScenarioResultContract:
 
     def test_scenario_result_importable(self):
         """ScenarioOrchestrator reads ScenarioResult."""
-        from pyrit.models.scenario_result import ScenarioResult
+        from pyrit.models import ScenarioResult
 
         assert ScenarioResult is not None
 
