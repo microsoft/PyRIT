@@ -46,8 +46,6 @@ from pyrit.executor.attack.multi_turn import (
     generate_simulated_conversation_async,
 )
 from pyrit.executor.attack.single_turn import (
-    CodeAttack,
-    CodeAttackParameters,
     ManyShotJailbreakAttack,
     PromptSendingAttack,
     SingleTurnAttackContext,
@@ -69,8 +67,6 @@ __all__ = [
     "BargeInAttackContext",
     "ChunkedRequestAttack",
     "ChunkedRequestAttackContext",
-    "CodeAttack",
-    "CodeAttackParameters",
     "ConversationManager",
     "ConversationSession",
     "ConversationState",
