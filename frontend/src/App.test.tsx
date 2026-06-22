@@ -6,6 +6,8 @@
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import App from "./App";
+import { ThemeProvider } from "./hooks/useTheme";
+
 import { attacksApi } from "./services/api";
 
 const mockGetActiveAccount = jest.fn();
@@ -80,22 +82,15 @@ jest.mock("./components/Labels/LabelsBar", () => {
 jest.mock("./components/Layout/MainLayout", () => {
   const MockMainLayout = ({
     children,
-    onToggleTheme,
-    isDarkMode,
     currentView,
     onNavigate,
   }: {
     children: React.ReactNode;
-    onToggleTheme: () => void;
-    isDarkMode: boolean;
     currentView: string;
     onNavigate: (view: string) => void;
   }) => {
     return (
-      <div data-testid="main-layout" data-dark-mode={isDarkMode} data-current-view={currentView}>
-        <button onClick={onToggleTheme} data-testid="toggle-theme">
-          Toggle Theme
-        </button>
+      <div data-testid="main-layout" data-current-view={currentView}>
         <button onClick={() => onNavigate("home")} data-testid="nav-home">
           Home
         </button>
@@ -289,50 +284,24 @@ describe("App", () => {
   // initialPath lets a test deep-link straight to a view (e.g. "/config").
   function renderApp(initialPath = "/") {
     return render(
-      <MemoryRouter initialEntries={[initialPath]}>
-        <App />
-      </MemoryRouter>
+      <ThemeProvider>
+        <MemoryRouter initialEntries={[initialPath]}>
+          <App />
+        </MemoryRouter>
+      </ThemeProvider>
     );
   }
 
   beforeEach(() => {
     jest.clearAllMocks();
     mockGetActiveAccount.mockReturnValue(null);
+    window.localStorage.clear();
   });
 
   it("renders with FluentProvider and MainLayout", () => {
     renderApp();
     expect(screen.getByTestId("main-layout")).toBeInTheDocument();
     expect(screen.getByTestId("home-view")).toBeInTheDocument();
-  });
-
-  it("starts in dark mode", () => {
-    renderApp();
-    expect(screen.getByTestId("main-layout")).toHaveAttribute(
-      "data-dark-mode",
-      "true"
-    );
-  });
-
-  it("toggles theme when onToggleTheme is called", () => {
-    renderApp();
-
-    expect(screen.getByTestId("main-layout")).toHaveAttribute(
-      "data-dark-mode",
-      "true"
-    );
-
-    fireEvent.click(screen.getByTestId("toggle-theme"));
-    expect(screen.getByTestId("main-layout")).toHaveAttribute(
-      "data-dark-mode",
-      "false"
-    );
-
-    fireEvent.click(screen.getByTestId("toggle-theme"));
-    expect(screen.getByTestId("main-layout")).toHaveAttribute(
-      "data-dark-mode",
-      "true"
-    );
   });
 
   it("starts in home view", () => {

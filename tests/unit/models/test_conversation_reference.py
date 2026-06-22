@@ -4,7 +4,7 @@
 import pytest
 from pydantic import ValidationError
 
-from pyrit.models.conversation_reference import ConversationReference, ConversationType
+from pyrit.models import ConversationReference, ConversationType
 
 
 def test_conversation_type_values():

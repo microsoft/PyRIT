@@ -183,8 +183,8 @@ def test_self_ask_true_false_get_identifier_type(patch_central_database):
     assert "system_prompt_template" in identifier.params
 
 
-def test_self_ask_true_false_get_identifier_long_prompt_hashed(patch_central_database):
-    """Test that long system prompts are truncated when serialized via to_dict()."""
+def test_self_ask_true_false_get_identifier_long_prompt_stored_in_full(patch_central_database):
+    """Test that long system prompts are stored in full (no truncation) via to_dict()."""
     chat_target = MagicMock()
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
 
@@ -194,17 +194,14 @@ def test_self_ask_true_false_get_identifier_long_prompt_hashed(patch_central_dat
 
     identifier = scorer.get_identifier()
 
-    # The identifier object itself stores the full prompt in params
-    assert identifier.params["system_prompt_template"] is not None
-    assert len(identifier.params["system_prompt_template"]) > 100  # GROUNDED prompt is long
+    # The identifier object stores the full prompt in params
+    full_prompt = identifier.params["system_prompt_template"]
+    assert full_prompt is not None
+    assert len(full_prompt) > 100  # GROUNDED prompt is long
 
-    # But when serialized via to_dict(), long prompts are truncated
-    # Format: "<first 100 chars>... [sha256:<hash[:16]>]"  # noqa: ERA001
+    # to_dict() flattens params and stores the full value (no truncation)
     id_dict = identifier.to_dict()
-    sys_prompt_in_dict = id_dict.get("params", {}).get("system_prompt_template", "")
-    if sys_prompt_in_dict:
-        # If it's truncated, it will contain "... [sha256:"
-        assert "[sha256:" in sys_prompt_in_dict or len(sys_prompt_in_dict) <= 100
+    assert id_dict["system_prompt_template"] == full_prompt
 
 
 def test_self_ask_true_false_no_path_no_question(patch_central_database):

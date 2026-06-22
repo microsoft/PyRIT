@@ -224,17 +224,19 @@ class TestEvaluationIdentifier:
         )
         assert identity.eval_hash == expected
 
-    def test_uses_eval_hash_when_available(self):
-        """Test that EvaluationIdentifier uses eval_hash instead of recomputing."""
+    def test_always_recomputes_eval_hash_ignoring_stored(self):
+        """Test that EvaluationIdentifier always recomputes, ignoring any stored eval_hash."""
         stored_hash = "stored_eval_hash_value_" + "0" * 42  # 64 chars
         cid = ComponentIdentifier(
             class_name="Scorer",
             class_module="pyrit.score",
-            params={"system_prompt": "truncated..."},
+            params={"system_prompt": "full value"},
         ).with_eval_hash(stored_hash)
 
         identity = _StubEvaluationIdentifier(cid)
-        assert identity.eval_hash == stored_hash
+        expected = compute_eval_hash(cid, child_eval_rules=_StubEvaluationIdentifier.CHILD_EVAL_RULES)
+        assert identity.eval_hash == expected
+        assert identity.eval_hash != stored_hash
 
     def test_computes_eval_hash_when_not_set(self):
         """Test that eval_hash is computed normally when eval_hash is None."""
@@ -249,55 +251,37 @@ class TestEvaluationIdentifier:
         expected = compute_eval_hash(cid, child_eval_rules=_StubEvaluationIdentifier.CHILD_EVAL_RULES)
         assert identity.eval_hash == expected
 
-    def test_truncation_roundtrip_preserves_eval_hash(self):
-        """Regression test: eval_hash survives DB round-trip with param truncation.
+    def test_full_value_roundtrip_recomputes_matching_eval_hash(self):
+        """Test that eval_hash recomputes consistently after a full-value DB round-trip.
 
-        This is the core scenario for the bug fix. A scorer with a long system_prompt
-        gets stored to the DB with truncation. The eval_hash computed from the untruncated
-        identifier is included in to_dict(). After from_dict() reconstruction, the
-        EvaluationIdentifier should use the stored eval_hash (not recompute from truncated params).
+        With truncation removed, full params survive the round-trip, so the always-recompute
+        EvaluationIdentifier produces the same eval_hash before and after the round-trip.
         """
-        # Build a scorer identifier with a long system_prompt and a target child
-        long_prompt = "Evaluate whether the response achieves the objective. " * 10
         target_child = ComponentIdentifier(
             class_name="OpenAIChatTarget",
             class_module="pyrit.prompt_target",
             params={"model_name": "gpt-4o", "endpoint": "https://api.openai.com", "temperature": 0.0},
         )
+        long_prompt = "Evaluate whether the response achieves the objective. " * 10
         scorer_id = ComponentIdentifier(
             class_name="SelfAskTrueFalseScorer",
             class_module="pyrit.score",
             params={"system_prompt_template": long_prompt},
-            children={"prompt_target": target_child},
+            children={"my_target": target_child},
         )
 
-        # Compute eval_hash from the untruncated identifier (the correct hash)
-        correct_eval_hash = compute_eval_hash(scorer_id, child_eval_rules=_CHILD_EVAL_RULES)
-        scorer_id = scorer_id.with_eval_hash(correct_eval_hash)
+        original_eval_hash = _StubEvaluationIdentifier(scorer_id).eval_hash
 
-        # Simulate DB storage: serialize with truncation
-        truncated_dict = scorer_id.to_dict(max_value_length=80)
+        # Simulate DB storage: full values are retained (no truncation).
+        stored_dict = scorer_id.to_dict()
+        assert stored_dict["system_prompt_template"] == long_prompt
 
-        # Verify params are actually truncated
-        assert truncated_dict["system_prompt_template"].endswith("...")
+        # Reconstruct from the stored dict (simulates DB read) and recompute.
+        reconstructed = ComponentIdentifier.from_dict(stored_dict)
+        assert _StubEvaluationIdentifier(reconstructed).eval_hash == original_eval_hash
 
-        # Reconstruct from truncated dict (simulates DB read)
-        reconstructed = ComponentIdentifier.from_dict(truncated_dict)
-
-        # The reconstructed identifier has truncated params, so recomputing would give wrong hash
-        recomputed = compute_eval_hash(reconstructed, child_eval_rules=_CHILD_EVAL_RULES)
-        assert recomputed != correct_eval_hash, "Truncated params should produce different eval_hash"
-
-        # But EvaluationIdentifier uses the preserved eval_hash, giving the correct result
-        identity = _StubEvaluationIdentifier(reconstructed)
-        assert identity.eval_hash == correct_eval_hash
-
-    def test_eval_hash_preserved_through_double_roundtrip(self):
-        """Test that eval_hash is preserved when retrieved from DB and re-stored.
-
-        Simulates: fresh save → DB retrieve → re-store → DB retrieve.
-        The eval_hash computed at first save should survive all round-trips.
-        """
+    def test_eval_hash_recomputed_through_double_roundtrip(self):
+        """Test that eval_hash recomputes consistently across retrieve → re-store → retrieve."""
         long_prompt = "Evaluate whether the response achieves the objective. " * 10
         scorer_id = ComponentIdentifier(
             class_name="SelfAskTrueFalseScorer",
@@ -305,21 +289,17 @@ class TestEvaluationIdentifier:
             params={"system_prompt_template": long_prompt},
         )
 
-        # First save: compute eval_hash from untruncated identifier
-        correct_eval_hash = compute_eval_hash(scorer_id, child_eval_rules=_CHILD_EVAL_RULES)
-        scorer_id = scorer_id.with_eval_hash(correct_eval_hash)
-        d1 = scorer_id.to_dict(max_value_length=80)
+        original_eval_hash = _StubEvaluationIdentifier(scorer_id).eval_hash
+        d1 = scorer_id.to_dict()
 
         # First retrieve
         r1 = ComponentIdentifier.from_dict(d1)
-        assert _StubEvaluationIdentifier(r1).eval_hash == correct_eval_hash
+        assert _StubEvaluationIdentifier(r1).eval_hash == original_eval_hash
 
-        # Re-store: EvaluationIdentifier should use stored value, not recompute
-        d2 = r1.to_dict(max_value_length=80)
-
-        # Second retrieve
+        # Re-store and retrieve again
+        d2 = r1.to_dict()
         r2 = ComponentIdentifier.from_dict(d2)
-        assert _StubEvaluationIdentifier(r2).eval_hash == correct_eval_hash
+        assert _StubEvaluationIdentifier(r2).eval_hash == original_eval_hash
 
 
 class TestParamFallbacks:
@@ -440,13 +420,9 @@ class TestParamFallbacks:
         assert result1["children"]["prompt_target"] != result2["children"]["prompt_target"]
 
 
-def test_compute_eval_hash_raises_when_hash_none_and_no_rules():
-    identifier = ComponentIdentifier.__new__(ComponentIdentifier)
-    object.__setattr__(identifier, "hash", None)
-    object.__setattr__(identifier, "class_name", "Test")
-    object.__setattr__(identifier, "class_module", "test.module")
-    with pytest.raises(RuntimeError, match="hash should be set by __post_init__"):
-        compute_eval_hash(identifier, child_eval_rules={})
+def test_compute_eval_hash_no_rules_returns_content_hash():
+    identifier = ComponentIdentifier(class_name="Test", class_module="test.module")
+    assert compute_eval_hash(identifier, child_eval_rules={}) == identifier.hash
 
 
 # ---------------------------------------------------------------------------
@@ -855,8 +831,8 @@ class TestObjectiveTargetEvaluationIdentifier:
         eval_b = ObjectiveTargetEvaluationIdentifier(target_only_model_name).eval_hash
         assert eval_a == eval_b
 
-    def test_stored_eval_hash_takes_precedence(self):
-        """A pre-stamped eval_hash is honored (DB round-trip safety)."""
+    def test_stored_eval_hash_is_ignored_and_recomputed(self):
+        """A pre-stamped eval_hash is ignored; the value is always recomputed from params."""
         from pyrit.models.identifiers.evaluation_identifier import ObjectiveTargetEvaluationIdentifier
 
         stored = "objective_target_stored_hash" + "0" * 36
@@ -866,7 +842,15 @@ class TestObjectiveTargetEvaluationIdentifier:
             params={"underlying_model_name": "gpt-4o"},
         ).with_eval_hash(stored)
 
-        assert ObjectiveTargetEvaluationIdentifier(cid).eval_hash == stored
+        recomputed = ObjectiveTargetEvaluationIdentifier(cid).eval_hash
+        assert recomputed != stored
+        # Recompute is deterministic: a fresh identifier without the stored value matches.
+        fresh = ComponentIdentifier(
+            class_name="OpenAIChatTarget",
+            class_module="pyrit.prompt_target",
+            params={"underlying_model_name": "gpt-4o"},
+        )
+        assert ObjectiveTargetEvaluationIdentifier(fresh).eval_hash == recomputed
 
 
 # ---------------------------------------------------------------------------

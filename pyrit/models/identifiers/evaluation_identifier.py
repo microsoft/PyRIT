@@ -241,8 +241,6 @@ def compute_eval_hash(
             identifier = inner[0]
 
     if not child_eval_rules and own_rule is None:
-        if identifier.hash is None:
-            raise RuntimeError("hash should be set by __post_init__")
         return identifier.hash
 
     eval_dict = _build_eval_dict(
@@ -465,24 +463,20 @@ class EvaluationIdentifier:
 
     def __init__(self, identifier: ComponentIdentifier) -> None:
         """
-        Wrap a ComponentIdentifier and resolve its eval hash.
+        Wrap a ComponentIdentifier and compute its eval hash.
 
-        If the identifier carries an ``eval_hash`` (preserved from a prior
-        DB round-trip or set by the scorer), that value is used directly.
-        Otherwise the eval hash is computed from the identifier's params
-        and children using the subclass's ``CHILD_EVAL_RULES``, ``OWN_RULE``,
-        and ``ROOT_UNWRAP_CHILD``.
+        The eval hash is always computed fresh from the identifier's params and
+        children using the subclass's ``CHILD_EVAL_RULES``, ``OWN_RULE``, and
+        ``ROOT_UNWRAP_CHILD`` — any ``eval_hash`` already carried on the
+        identifier (e.g. a value read back from storage) is never trusted.
         """
         self._identifier = identifier
-        if identifier.eval_hash is not None:
-            self._eval_hash = identifier.eval_hash
-        else:
-            self._eval_hash = compute_eval_hash(
-                identifier,
-                child_eval_rules=self.CHILD_EVAL_RULES,
-                own_rule=self.OWN_RULE,
-                root_unwrap_child=self.ROOT_UNWRAP_CHILD,
-            )
+        self._eval_hash = compute_eval_hash(
+            identifier,
+            child_eval_rules=self.CHILD_EVAL_RULES,
+            own_rule=self.OWN_RULE,
+            root_unwrap_child=self.ROOT_UNWRAP_CHILD,
+        )
 
     @property
     def identifier(self) -> ComponentIdentifier:

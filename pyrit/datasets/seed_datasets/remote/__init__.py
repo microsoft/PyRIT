@@ -119,6 +119,12 @@ from pyrit.datasets.seed_datasets.remote.msts_dataset import (
 from pyrit.datasets.seed_datasets.remote.multilingual_vulnerability_dataset import (
     _MultilingualVulnerabilityDataset,
 )
+from pyrit.datasets.seed_datasets.remote.odin_dataset import (
+    ODINSecurityBoundary,
+    ODINSeverity,
+    ODINTaxonomyCategory,
+    _ODINDataset,
+)
 from pyrit.datasets.seed_datasets.remote.or_bench_dataset import (
     _ORBench80KDataset,
     _ORBenchHardDataset,
@@ -199,6 +205,9 @@ __all__ = [
     "MMSafetyBenchCategory",
     "MMSafetyBenchVariant",
     "MossBenchOversensitivityType",
+    "ODINSecurityBoundary",
+    "ODINSeverity",
+    "ODINTaxonomyCategory",
     "PromptIntelCategory",
     "PromptIntelSeverity",
     "SGXSTestLabel",
@@ -244,6 +253,7 @@ __all__ = [
     "_MossBenchDataset",
     "_MSTSDataset",
     "_MultilingualVulnerabilityDataset",
+    "_ODINDataset",
     "_ORBench80KDataset",
     "_ORBenchHardDataset",
     "_ORBenchToxicDataset",

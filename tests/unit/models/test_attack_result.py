@@ -8,10 +8,8 @@ from datetime import datetime, timezone
 import pytest
 
 from pyrit.memory.memory_models import AttackResultEntry
-from pyrit.models import ComponentIdentifier
-from pyrit.models.conversation_reference import ConversationReference, ConversationType
+from pyrit.models import AttackOutcome, AttackResult, ComponentIdentifier, ConversationReference, ConversationType
 from pyrit.models.messages.message_piece import MessagePiece
-from pyrit.models.results.attack_result import AttackOutcome, AttackResult
 from pyrit.models.retry_event import RetryEvent
 from pyrit.models.score import Score
 
@@ -394,24 +392,3 @@ class TestAttackResultDuplicate:
         assert copy.backtrack_count == 3
         copy.backtrack_count = 9
         assert original.backtrack_count == 3
-
-
-class TestAttackResultShim:
-    """The relocated module must be importable from the legacy path silently."""
-
-    def test_shim_reexports_same_classes_silently(self) -> None:
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            from pyrit.models.attack_result import AttackOutcome as ShimOutcome
-            from pyrit.models.attack_result import AttackResult as ShimResult
-
-        assert ShimResult is AttackResult
-        assert ShimOutcome is AttackOutcome
-        deprecation_warnings = [w for w in caught if issubclass(w.category, DeprecationWarning)]
-        assert len(deprecation_warnings) == 0, "Shim import must be silent"
-
-    def test_shim_getattr_reexports_dynamic_names(self) -> None:
-        """The module __getattr__ falls through to the relocated module."""
-        import pyrit.models.attack_result as shim
-
-        assert shim.AttackResultT is not None
