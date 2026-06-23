@@ -400,7 +400,7 @@ class TestEncodingDatasetConfigurationBuildAttackGroups:
         config = EncodingDatasetConfiguration(dataset_names=["garak_slur_terms_en"], auto_fetch=False)
         with patch.object(
             EncodingDatasetConfiguration,
-            "_collect_seeds_by_dataset_async",
+            "_collect_named_seeds_async",
             new_callable=AsyncMock,
             return_value={"garak_slur_terms_en": mock_memory_seeds},
         ):

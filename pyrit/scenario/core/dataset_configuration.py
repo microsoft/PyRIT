@@ -18,8 +18,10 @@ Constraints are expressed through a single mechanism: ``validators``. Each valid
 A typed subclass preloads its type check via ``_default_validators`` rather than overriding
 ``validate``. Validators run against the fully resolved dataset (before ``max_dataset_size``
 sampling), so they describe the dataset itself, not the sampled subset. The ``ResolvedDataset``
-they receive also carries the ``DatasetSourceKind`` (inline vs from memory), which lets a
-scenario require or forbid inline seeds -- useful for CLI flags such as ``--objectives``.
+they receive also carries the ``DatasetSourceKind`` (inline vs from memory) and the contributing
+``dataset_names``, which lets a scenario require or forbid inline seeds -- useful for CLI flags
+such as ``--objectives`` -- and restrict which datasets it will resolve from (e.g. a scenario
+that pairs techniques with a fixed set of datasets).
 
 Memory is the source of truth. When a configured dataset name is not yet in memory and
 ``auto_fetch`` is enabled (the default), the resolver transparently fetches the dataset
@@ -52,8 +54,10 @@ if TYPE_CHECKING:
 
     from pyrit.memory import MemoryInterface
 
-# Key used when seed_groups are provided directly (not from a named dataset)
-EXPLICIT_SEED_GROUPS_KEY = "_explicit_seed_groups"
+# Dataset-name label that inline ``seeds`` / ``seed_groups`` carry in by-dataset views, since
+# they have no real dataset name. Inline and named sources are mutually exclusive, so this
+# never collides with a configured dataset name.
+INLINE_DATASET_NAME = "inline"
 
 # Version in which the deprecated legacy getters will be removed (current ver: 0.15.0.dev0).
 _LEGACY_REMOVED_IN = "0.17.0"
@@ -84,16 +88,19 @@ class ResolvedDataset:
     """
     The fully resolved seeds plus the source they came from.
 
-    Passed to every validator so a constraint can inspect both the seeds and how they
-    were supplied (inline vs named dataset).
+    Passed to every validator so a constraint can inspect the seeds, how they were
+    supplied (inline vs named dataset), and which dataset names contributed.
 
     Args:
         seeds (Sequence[Seed]): The resolved seeds (before ``max_dataset_size`` sampling).
         source_kind (DatasetSourceKind): How the configuration was sourced.
+        dataset_names (tuple[str, ...]): The configured dataset names that contributed
+            seeds, in configuration order. Empty for inline ``seeds`` / ``seed_groups``.
     """
 
     seeds: Sequence[Seed]
     source_kind: DatasetSourceKind
+    dataset_names: tuple[str, ...] = ()
 
     @property
     def is_inline(self) -> bool:
@@ -225,6 +232,34 @@ def forbid_inline_seeds() -> Callable[[ResolvedDataset], None]:
     def _validate(resolved: ResolvedDataset) -> None:
         if resolved.is_inline:
             raise DatasetConstraintError("This configuration does not allow inline seeds; use 'dataset_names' instead.")
+
+    return _validate
+
+
+def restrict_dataset_names(allowed: set[str]) -> Callable[[ResolvedDataset], None]:
+    """
+    Build a validator that requires every contributing dataset name to be in ``allowed``.
+
+    Use when a scenario only knows how to handle a fixed set of datasets -- for example,
+    one that pairs techniques with specific datasets -- so a caller-supplied
+    ``--dataset-names`` outside that set is rejected loudly. Inline seeds carry no dataset
+    name and therefore pass; compose with ``forbid_inline_seeds`` to also require named
+    datasets.
+
+    Args:
+        allowed (set[str]): The dataset names the configuration may resolve from.
+
+    Returns:
+        Callable[[ResolvedDataset], None]: A validator usable in ``validators=[...]``.
+    """
+
+    def _validate(resolved: ResolvedDataset) -> None:
+        disallowed = sorted(set(resolved.dataset_names) - allowed)
+        if disallowed:
+            raise DatasetConstraintError(
+                f"Datasets {disallowed} are not allowed for this configuration; "
+                f"permitted datasets are {sorted(allowed)}."
+            )
 
     return _validate
 
@@ -383,11 +418,32 @@ class DatasetConfiguration(Generic[SeedT]):
             DatasetConstraintError: If a configured dataset yields no seeds, or the
                 resolved dataset fails validation.
         """
-        by_dataset = await self._collect_seeds_by_dataset_async()
-        seeds: list[Seed] = [seed for group in by_dataset.values() for seed in group]
-        self.validate(ResolvedDataset(seeds=seeds, source_kind=self.source_kind))
-        seeds = self._apply_max_dataset_size(seeds)
-        return cast("list[SeedT]", seeds)
+        seeds, dataset_names = await self._resolve_seeds_async()
+        resolved = ResolvedDataset(seeds=seeds, source_kind=self.source_kind, dataset_names=dataset_names)
+        self.validate(resolved)
+        return cast("list[SeedT]", self._apply_max_dataset_size(seeds))
+
+    async def _resolve_seeds_async(self) -> tuple[list[Seed], tuple[str, ...]]:
+        """
+        Resolve the configuration into a flat seed list plus its contributing dataset names.
+
+        Inline ``seeds`` / ``seed_groups`` resolve directly and report no dataset names. Named
+        configurations load each dataset (auto-fetching when missing) and report the names in
+        configuration order.
+
+        Returns:
+            tuple[list[Seed], tuple[str, ...]]: The resolved seeds and the dataset names that
+                contributed them (empty for inline sources).
+
+        Raises:
+            DatasetConstraintError: If any configured dataset yields no seeds.
+        """
+        inline = self._inline_seeds()
+        if inline is not None:
+            return inline, ()
+        by_dataset = await self._collect_named_seeds_async()
+        seeds = [seed for group in by_dataset.values() for seed in group]
+        return seeds, tuple(by_dataset)
 
     def _inline_seeds(self) -> list[Seed] | None:
         """
@@ -403,32 +459,22 @@ class DatasetConfiguration(Generic[SeedT]):
             return [seed for group in self._seed_groups for seed in group.seeds]
         return None
 
-    async def _collect_seeds_by_dataset_async(self) -> dict[str, list[Seed]]:
+    async def _collect_named_seeds_async(self) -> dict[str, list[Seed]]:
         """
-        Collect seeds keyed by dataset name (inline data collapses to a single reserved key).
+        Collect seeds for each configured dataset name, keyed by name.
 
-        Inline configs resolve under ``EXPLICIT_SEED_GROUPS_KEY``. For named datasets, each
-        name is read from memory and -- when empty and ``auto_fetch`` is set -- fetched from
-        the provider; a name that still yields nothing raises loudly.
+        Each name is read from memory and -- when empty and ``auto_fetch`` is set -- fetched
+        from the provider; a name that still yields nothing raises loudly.
 
         Returns:
-            dict[str, list[Seed]]: Dataset name -> seeds (every value is non-empty).
+            dict[str, list[Seed]]: Dataset name -> seeds, in configuration order (every value
+                is non-empty).
 
         Raises:
             DatasetConstraintError: If any configured dataset yields no seeds.
-            ValueError: If a configured dataset name collides with the reserved key.
         """
-        inline = self._inline_seeds()
-        if inline is not None:
-            return {EXPLICIT_SEED_GROUPS_KEY: inline}
-
         result: dict[str, list[Seed]] = {}
         for name in self._dataset_names or []:
-            if name == EXPLICIT_SEED_GROUPS_KEY:
-                raise ValueError(
-                    f"Dataset name '{EXPLICIT_SEED_GROUPS_KEY}' is reserved for internal use. "
-                    "Please rename your dataset."
-                )
             result[name] = await self._collect_seeds_for_dataset_async(dataset_name=name)
         return result
 
@@ -556,14 +602,9 @@ class DatasetConfiguration(Generic[SeedT]):
         if self._seed_groups is not None:
             sampled = self._apply_max_dataset_size(list(self._seed_groups))
             if sampled:
-                result[EXPLICIT_SEED_GROUPS_KEY] = sampled
+                result[INLINE_DATASET_NAME] = sampled
         elif self._dataset_names is not None:
             for name in self._dataset_names:
-                if name == EXPLICIT_SEED_GROUPS_KEY:
-                    raise ValueError(
-                        f"Dataset name '{EXPLICIT_SEED_GROUPS_KEY}' is reserved for internal use. "
-                        "Please rename your dataset."
-                    )
                 loaded = self._load_seed_groups_for_dataset(dataset_name=name)
                 if loaded:
                     result[name] = self._apply_max_dataset_size(loaded)
@@ -776,10 +817,10 @@ class DatasetAttackConfiguration(DatasetConfiguration[Seed]):
         """
         Build attack groups keyed by dataset, plus the resolved seed set for validation.
 
-        Inline configs preserve their explicit grouping under ``EXPLICIT_SEED_GROUPS_KEY``
-        (they are not flattened and regrouped). Named datasets reuse
-        ``_collect_seeds_by_dataset_async`` (auto-fetch + loud empty handling) and run each
-        dataset's seeds through ``_build_attack_groups``.
+        Inline configs preserve their explicit grouping under the ``INLINE_DATASET_NAME`` label
+        (they are not flattened and regrouped). Named datasets reuse ``_collect_named_seeds_async``
+        (auto-fetch + loud empty handling) and run each dataset's seeds through
+        ``_build_attack_groups``.
 
         Returns:
             tuple[dict[str, list[SeedAttackGroup]], ResolvedDataset]: Groups keyed by
@@ -787,17 +828,22 @@ class DatasetAttackConfiguration(DatasetConfiguration[Seed]):
 
         Raises:
             DatasetConstraintError: If a configured dataset yields no seeds.
-            ValueError: If a configured dataset name collides with the reserved key.
         """
         inline = self._inline_attack_groups()
         if inline is not None:
             flattened = [seed for group in inline for seed in group.seeds]
-            return {EXPLICIT_SEED_GROUPS_KEY: inline}, ResolvedDataset(seeds=flattened, source_kind=self.source_kind)
+            resolved = ResolvedDataset(seeds=flattened, source_kind=self.source_kind, dataset_names=())
+            return {INLINE_DATASET_NAME: inline}, resolved
 
-        seeds_by_dataset = await self._collect_seeds_by_dataset_async()
+        seeds_by_dataset = await self._collect_named_seeds_async()
         groups_by_dataset = {name: self._build_attack_groups(seeds) for name, seeds in seeds_by_dataset.items()}
         all_seeds = [seed for seeds in seeds_by_dataset.values() for seed in seeds]
-        return groups_by_dataset, ResolvedDataset(seeds=all_seeds, source_kind=self.source_kind)
+        resolved = ResolvedDataset(
+            seeds=all_seeds,
+            source_kind=self.source_kind,
+            dataset_names=tuple(seeds_by_dataset),
+        )
+        return groups_by_dataset, resolved
 
     async def get_seed_attack_groups_async(self) -> list[SeedAttackGroup]:
         """
@@ -827,7 +873,7 @@ class DatasetAttackConfiguration(DatasetConfiguration[Seed]):
         """
         Resolve attack groups keyed by dataset name, sampled per dataset.
 
-        Inline configs resolve under the ``EXPLICIT_SEED_GROUPS_KEY`` key. Builds attack
+        Inline configs resolve under the ``INLINE_DATASET_NAME`` label. Builds attack
         groups (auto-fetching missing datasets), validates the full resolved seed set, then
         samples ``max_dataset_size`` per dataset independently.
 
