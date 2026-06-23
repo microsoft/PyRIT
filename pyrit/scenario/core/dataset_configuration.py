@@ -5,23 +5,18 @@
 Dataset configuration for scenarios.
 
 ``DatasetConfiguration`` is the object a scenario uses to say "where do my seeds come
-from." The base class is generic in its seed type and resolves to a flat ``list[SeedT]``
-via ``get_seeds_async``. Subclasses narrow or reshape that result:
-
-- ``DatasetObjectiveConfiguration`` -- requires every seed to be a ``SeedObjective``.
-- ``DatasetPromptConfiguration`` -- requires every seed to be a ``SeedPrompt``.
-- ``DatasetAttackConfiguration`` -- groups seeds into ``SeedAttackGroup`` s (the
-  default most scenarios use).
+from." ``DatasetAttackConfiguration`` -- the configuration most scenarios use -- groups
+the resolved seeds into ``SeedAttackGroup`` s (each carrying exactly one objective plus
+optional prompts).
 
 Constraints are expressed through a single mechanism: ``validators``. Each validator is a
 ``Callable[[ResolvedDataset], None]`` that raises ``DatasetConstraintError`` on violation.
-A typed subclass preloads its type check via ``_default_validators`` rather than overriding
-``validate``. Validators run against the fully resolved dataset (before ``max_dataset_size``
-sampling), so they describe the dataset itself, not the sampled subset. The ``ResolvedDataset``
-they receive also carries the ``DatasetSourceKind`` (inline vs from memory) and the contributing
-``dataset_names``, which lets a scenario require or forbid inline seeds -- useful for CLI flags
-such as ``--objectives`` -- and restrict which datasets it will resolve from (e.g. a scenario
-that pairs techniques with a fixed set of datasets).
+Validators run against the fully resolved dataset (before ``max_dataset_size`` sampling),
+so they describe the dataset itself, not the sampled subset. The ``ResolvedDataset`` they
+receive also carries the ``DatasetSourceKind`` (inline vs from memory) and the contributing
+``dataset_names``, which lets a scenario require or forbid inline seeds -- useful for CLI
+flags such as ``--objectives`` -- restrict which datasets it will resolve from, or require a
+particular seed type (e.g. ``require_seed_type(SeedObjective)``).
 
 Memory is the source of truth. When a configured dataset name is not yet in memory and
 ``auto_fetch`` is enabled (the default), the resolver transparently fetches the dataset
@@ -36,7 +31,7 @@ import random
 from dataclasses import dataclass
 from enum import Enum
 from functools import cached_property
-from typing import TYPE_CHECKING, Generic, TypeVar, cast
+from typing import TYPE_CHECKING, TypeVar
 
 from pyrit.common.deprecation import print_deprecation_message
 from pyrit.memory import CentralMemory
@@ -44,8 +39,6 @@ from pyrit.models import (
     Seed,
     SeedAttackGroup,
     SeedGroup,
-    SeedObjective,
-    SeedPrompt,
     group_seeds_into_attack_groups,
 )
 
@@ -64,9 +57,6 @@ _LEGACY_REMOVED_IN = "0.17.0"
 
 # Internal helper TypeVar for size-capping any homogeneous list.
 _ItemT = TypeVar("_ItemT")
-
-# The seed type a configuration resolves to (objective, prompt, or the base ``Seed``).
-SeedT = TypeVar("SeedT", bound=Seed)
 
 
 class DatasetSourceKind(Enum):
@@ -264,12 +254,14 @@ def restrict_dataset_names(allowed: set[str]) -> Callable[[ResolvedDataset], Non
     return _validate
 
 
-class DatasetConfiguration(Generic[SeedT]):
+class DatasetConfiguration:
     """
     Configuration describing where a scenario's seeds come from.
 
-    The base class is generic in its seed type and resolves to a flat ``list[SeedT]`` via
-    ``get_seeds_async``. A configuration draws from exactly one source:
+    This base class handles resolution, fetching, validation, and sampling.
+    ``DatasetAttackConfiguration`` is the concrete subclass most scenarios use; it groups
+    the resolved seeds into ``SeedAttackGroup`` s. A configuration draws from exactly one
+    source:
 
     - ``seeds`` -- an explicit, inline list of seeds (never touches memory).
     - ``seed_groups`` -- explicit, inline seed groups (never touches memory).
@@ -291,8 +283,7 @@ class DatasetConfiguration(Generic[SeedT]):
       richer filters).
 
     The legacy getters (``get_seed_groups`` / ``get_all_seed_attack_groups`` / ...) are
-    deprecated and will be removed in 0.17.0; prefer ``get_seeds_async`` and the
-    typed subclasses.
+    deprecated and will be removed in 0.17.0; prefer ``DatasetAttackConfiguration``.
     """
 
     def __init__(
@@ -350,9 +341,9 @@ class DatasetConfiguration(Generic[SeedT]):
         """
         Return validators a subclass always applies, prepended to user-supplied ``validators``.
 
-        The base requires a non-empty resolved dataset. Typed subclasses extend this to
-        enforce a seed type (e.g. ``require_seed_type(SeedObjective)``) -- they should call
-        ``super()._default_validators()`` rather than overriding ``validate``.
+        The base requires a non-empty resolved dataset. A subclass can extend this to enforce
+        an additional constraint (e.g. ``require_seed_type(SeedObjective)``) by returning
+        ``[*super()._default_validators(), ...]`` rather than overriding ``validate``.
 
         Returns:
             list[Callable[[ResolvedDataset], None]]: The default validators.
@@ -399,65 +390,8 @@ class DatasetConfiguration(Generic[SeedT]):
         return DatasetSourceKind.MEMORY
 
     # =========================================================================
-    # Resolver pipeline (the public entry point)
+    # Resolution helpers
     # =========================================================================
-
-    async def get_seeds_async(self) -> list[SeedT]:
-        """
-        Resolve the configured dataset into a flat ``list[SeedT]``.
-
-        Pipeline: collect seeds by dataset (inline data, or from memory -- fetching missing
-        datasets from the provider when ``auto_fetch`` is set), flatten, validate the full
-        resolved dataset, then sample (``max_dataset_size``). Validation runs before
-        sampling so validators describe the dataset itself, not the sampled subset.
-
-        Returns:
-            list[SeedT]: The resolved, validated, sampled seeds.
-
-        Raises:
-            DatasetConstraintError: If a configured dataset yields no seeds, or the
-                resolved dataset fails validation.
-        """
-        seeds, dataset_names = await self._resolve_seeds_async()
-        resolved = ResolvedDataset(seeds=seeds, source_kind=self.source_kind, dataset_names=dataset_names)
-        self.validate(resolved)
-        return cast("list[SeedT]", self._apply_max_dataset_size(seeds))
-
-    async def _resolve_seeds_async(self) -> tuple[list[Seed], tuple[str, ...]]:
-        """
-        Resolve the configuration into a flat seed list plus its contributing dataset names.
-
-        Inline ``seeds`` / ``seed_groups`` resolve directly and report no dataset names. Named
-        configurations load each dataset (auto-fetching when missing) and report the names in
-        configuration order.
-
-        Returns:
-            tuple[list[Seed], tuple[str, ...]]: The resolved seeds and the dataset names that
-                contributed them (empty for inline sources).
-
-        Raises:
-            DatasetConstraintError: If any configured dataset yields no seeds.
-        """
-        inline = self._inline_seeds()
-        if inline is not None:
-            return inline, ()
-        by_dataset = await self._collect_named_seeds_async()
-        seeds = [seed for group in by_dataset.values() for seed in group]
-        return seeds, tuple(by_dataset)
-
-    def _inline_seeds(self) -> list[Seed] | None:
-        """
-        Return inline seeds when the configuration was built from explicit data.
-
-        Returns:
-            list[Seed] | None: The inline seeds (flattening ``seed_groups`` when present),
-                or None when the configuration draws from ``dataset_names``.
-        """
-        if self._seeds is not None:
-            return list(self._seeds)
-        if self._seed_groups is not None:
-            return [seed for group in self._seed_groups for seed in group.seeds]
-        return None
 
     async def _collect_named_seeds_async(self) -> dict[str, list[Seed]]:
         """
@@ -582,7 +516,7 @@ class DatasetConfiguration(Generic[SeedT]):
         """
         print_deprecation_message(
             old_item="DatasetConfiguration.get_seed_groups",
-            new_item="DatasetConfiguration.get_seeds_async",
+            new_item="DatasetAttackConfiguration.get_attack_groups_by_dataset_async",
             removed_in=_LEGACY_REMOVED_IN,
         )
         return self._get_seed_groups()
@@ -635,7 +569,7 @@ class DatasetConfiguration(Generic[SeedT]):
         """
         print_deprecation_message(
             old_item="DatasetConfiguration.get_all_seed_groups",
-            new_item="DatasetConfiguration.get_seeds_async",
+            new_item="DatasetAttackConfiguration.get_seed_attack_groups_async",
             removed_in=_LEGACY_REMOVED_IN,
         )
         all_groups: list[SeedGroup] = []
@@ -712,7 +646,7 @@ class DatasetConfiguration(Generic[SeedT]):
         """
         print_deprecation_message(
             old_item="DatasetConfiguration.get_all_seeds",
-            new_item="DatasetConfiguration.get_seeds_async",
+            new_item="DatasetAttackConfiguration.get_seed_attack_groups_async",
             removed_in=_LEGACY_REMOVED_IN,
         )
         if self._dataset_names is None:
@@ -725,43 +659,7 @@ class DatasetConfiguration(Generic[SeedT]):
         return all_seeds
 
 
-class DatasetObjectiveConfiguration(DatasetConfiguration[SeedObjective]):
-    """
-    A ``DatasetConfiguration`` that requires every resolved seed to be an objective.
-
-    Use when a scenario consumes objectives directly. ``get_seeds_async`` returns the
-    seeds as usual; a default ``require_seed_type(SeedObjective)`` validator enforces the type.
-    """
-
-    def _default_validators(self) -> list[Callable[[ResolvedDataset], None]]:
-        """
-        Require a non-empty dataset of ``SeedObjective`` items.
-
-        Returns:
-            list[Callable[[ResolvedDataset], None]]: The base defaults plus the seed-type validator.
-        """
-        return [*super()._default_validators(), require_seed_type(SeedObjective)]
-
-
-class DatasetPromptConfiguration(DatasetConfiguration[SeedPrompt]):
-    """
-    A ``DatasetConfiguration`` that requires every resolved seed to be a prompt.
-
-    Use when a scenario consumes prompts directly. ``get_seeds_async`` returns the
-    seeds as usual; a default ``require_seed_type(SeedPrompt)`` validator enforces the type.
-    """
-
-    def _default_validators(self) -> list[Callable[[ResolvedDataset], None]]:
-        """
-        Require a non-empty dataset of ``SeedPrompt`` items.
-
-        Returns:
-            list[Callable[[ResolvedDataset], None]]: The base defaults plus the seed-type validator.
-        """
-        return [*super()._default_validators(), require_seed_type(SeedPrompt)]
-
-
-class DatasetAttackConfiguration(DatasetConfiguration[Seed]):
+class DatasetAttackConfiguration(DatasetConfiguration):
     """
     A ``DatasetConfiguration`` that groups resolved seeds into attack groups.
 

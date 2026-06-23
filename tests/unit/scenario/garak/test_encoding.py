@@ -63,7 +63,6 @@ def mock_dataset_config(mock_seed_attack_groups):
     """Create a mock dataset config that returns the seed attack groups."""
     mock_config = MagicMock(spec=EncodingDatasetConfiguration)
     mock_config.get_seed_attack_groups_async = AsyncMock(return_value=mock_seed_attack_groups)
-    mock_config.get_seeds_async = AsyncMock(return_value=mock_seed_attack_groups)
     mock_config.dataset_names = ["garak_slur_terms_en", "garak_web_html_js"]
     return mock_config
 

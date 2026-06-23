@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-"""Tests for the DatasetConfiguration base class and its typed subclasses."""
+"""Tests for the DatasetConfiguration base class and DatasetAttackConfiguration."""
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -13,8 +13,6 @@ from pyrit.scenario.core.dataset_configuration import (
     DatasetAttackConfiguration,
     DatasetConfiguration,
     DatasetConstraintError,
-    DatasetObjectiveConfiguration,
-    DatasetPromptConfiguration,
     DatasetSourceKind,
     ResolvedDataset,
     forbid_inline_seeds,
@@ -172,111 +170,29 @@ class TestDatasetNamesProperty:
         assert DatasetConfiguration().dataset_names == []
 
 
-class TestGetSeedsAsync:
-    """The base resolver: inline data, memory collection, sampling, validation."""
-
-    async def test_inline_seeds_returned(self) -> None:
-        seeds = make_objectives("a", "b")
-        config = DatasetConfiguration(seeds=seeds)
-        assert await config.get_seeds_async() == seeds
-
-    async def test_inline_seed_groups_flattened(self, sample_seed_group: SeedGroup) -> None:
-        config = DatasetConfiguration(seed_groups=[sample_seed_group])
-        result = await config.get_seeds_async()
-        assert result == list(sample_seed_group.seeds)
-
-    async def test_collects_from_memory(self, mock_memory: MagicMock) -> None:
-        seeds = make_objectives("a", "b")
-        mock_memory.get_seeds.return_value = seeds
-        config = DatasetConfiguration(dataset_names=["d1"])
-        result = await config.get_seeds_async()
-        assert result == seeds
-        mock_memory.get_seeds.assert_called_with(dataset_name="d1")
-
-    async def test_aggregates_multiple_datasets(self, mock_memory: MagicMock) -> None:
-        mock_memory.get_seeds.side_effect = [make_objectives("a"), make_objectives("b", "c")]
-        config = DatasetConfiguration(dataset_names=["d1", "d2"])
-        result = await config.get_seeds_async()
-        assert [s.value for s in result] == ["a", "b", "c"]
-
-    async def test_applies_max_dataset_size_globally(self, mock_memory: MagicMock) -> None:
-        mock_memory.get_seeds.return_value = make_objectives("a", "b", "c", "d", "e")
-        config = DatasetConfiguration(dataset_names=["d1"], max_dataset_size=2)
-        result = await config.get_seeds_async()
-        assert len(result) == 2
+class TestResolutionErrors:
+    """Loud failure branches in base resolution, reached via ``DatasetAttackConfiguration``."""
 
     async def test_empty_inline_raises(self) -> None:
-        config = DatasetConfiguration(seeds=[])
+        config = DatasetAttackConfiguration(seeds=[])
         with pytest.raises(DatasetConstraintError, match="empty"):
-            await config.get_seeds_async()
-
-    async def test_validators_run(self, mock_memory: MagicMock) -> None:
-        mock_memory.get_seeds.return_value = make_objectives("a")
-        config = DatasetConfiguration(dataset_names=["d1"], validators=[require_min_size(2)])
-        with pytest.raises(DatasetConstraintError):
-            await config.get_seeds_async()
-
-    async def test_auto_fetch_when_memory_empty(self, mock_memory: MagicMock) -> None:
-        fetched = make_objectives("a", "b")
-        mock_memory.get_seeds.side_effect = [[], fetched]
-        config = DatasetConfiguration(dataset_names=["d1"])
-        with patch.object(config, "_fetch_dataset_async", new=AsyncMock()) as mock_fetch:
-            result = await config.get_seeds_async()
-        assert result == fetched
-        mock_fetch.assert_awaited_once_with(dataset_name="d1")
+            await config.get_seed_attack_groups_async()
 
     async def test_raises_loudly_when_still_empty_after_fetch(self) -> None:
-        config = DatasetConfiguration(dataset_names=["d1"])
+        config = DatasetAttackConfiguration(dataset_names=["d1"])
         with patch.object(config, "_fetch_dataset_async", new=AsyncMock()):
             with pytest.raises(DatasetConstraintError, match="could not be loaded"):
-                await config.get_seeds_async()
+                await config.get_seed_attack_groups_async()
 
     async def test_raises_when_empty_and_auto_fetch_disabled(self) -> None:
-        config = DatasetConfiguration(dataset_names=["d1"], auto_fetch=False)
+        config = DatasetAttackConfiguration(dataset_names=["d1"], auto_fetch=False)
         with pytest.raises(DatasetConstraintError, match="auto_fetch is disabled"):
-            await config.get_seeds_async()
+            await config.get_seed_attack_groups_async()
 
     async def test_dataset_constraint_error_is_value_error(self) -> None:
-        config = DatasetConfiguration(dataset_names=["d1"], auto_fetch=False)
+        config = DatasetAttackConfiguration(dataset_names=["d1"], auto_fetch=False)
         with pytest.raises(ValueError):
-            await config.get_seeds_async()
-
-
-class TestDatasetObjectiveConfiguration:
-    """The objective-typed subclass enforces ``SeedObjective`` via a default validator."""
-
-    async def test_passes_when_all_objectives(self, mock_memory: MagicMock) -> None:
-        objectives = make_objectives("a", "b")
-        mock_memory.get_seeds.return_value = objectives
-        config = DatasetObjectiveConfiguration(dataset_names=["d1"])
-        assert await config.get_seeds_async() == objectives
-
-    async def test_raises_when_a_prompt_present(self, mock_memory: MagicMock) -> None:
-        mock_memory.get_seeds.return_value = [SeedObjective(value="a"), SeedPrompt(value="p")]
-        config = DatasetObjectiveConfiguration(dataset_names=["d1"])
-        with pytest.raises(DatasetConstraintError, match="SeedObjective"):
-            await config.get_seeds_async()
-
-    def test_validate_raises_directly(self) -> None:
-        config = DatasetObjectiveConfiguration(dataset_names=["d1"])
-        with pytest.raises(DatasetConstraintError, match="SeedObjective"):
-            config.validate(resolved(SeedPrompt(value="p")))
-
-
-class TestDatasetPromptConfiguration:
-    """The prompt-typed subclass enforces ``SeedPrompt`` via a default validator."""
-
-    async def test_passes_when_all_prompts(self, mock_memory: MagicMock) -> None:
-        prompts = [SeedPrompt(value="p1"), SeedPrompt(value="p2")]
-        mock_memory.get_seeds.return_value = prompts
-        config = DatasetPromptConfiguration(dataset_names=["d1"])
-        assert await config.get_seeds_async() == prompts
-
-    async def test_raises_when_an_objective_present(self, mock_memory: MagicMock) -> None:
-        mock_memory.get_seeds.return_value = [SeedPrompt(value="p"), SeedObjective(value="o")]
-        config = DatasetPromptConfiguration(dataset_names=["d1"])
-        with pytest.raises(DatasetConstraintError, match="SeedPrompt"):
-            await config.get_seeds_async()
+            await config.get_seed_attack_groups_async()
 
 
 class TestGetSeedAttackGroupsAsync:
@@ -403,11 +319,11 @@ class TestFetchDatasetAsync:
         mock_memory.add_seed_datasets_to_memory_async.assert_not_called()
 
     async def test_fetch_failure_chains_root_cause(self, mock_memory: MagicMock) -> None:
-        config = DatasetConfiguration(dataset_names=["d1"])
+        config = DatasetAttackConfiguration(dataset_names=["d1"])
         with patch(PROVIDER_PATCH_TARGET) as provider:
             provider.get_all_dataset_names_async = AsyncMock(side_effect=RuntimeError("boom"))
             with pytest.raises(DatasetConstraintError, match="auto-fetch") as exc_info:
-                await config.get_seeds_async()
+                await config.get_seed_attack_groups_async()
         assert isinstance(exc_info.value.__cause__, RuntimeError)
 
 
@@ -546,56 +462,56 @@ class TestSourceKind:
 
 
 class TestSourceValidatorsEndToEnd:
-    """Source-kind validators wired through ``get_seeds_async``."""
+    """Source-kind validators wired through ``DatasetAttackConfiguration`` resolution."""
 
     async def test_require_inline_seeds_raises_for_dataset_names(self, mock_memory: MagicMock) -> None:
         mock_memory.get_seeds.return_value = make_objectives("a")
-        config = DatasetConfiguration(dataset_names=["d1"], validators=[require_inline_seeds()])
+        config = DatasetAttackConfiguration(dataset_names=["d1"], validators=[require_inline_seeds()])
         with pytest.raises(DatasetConstraintError, match="inline"):
-            await config.get_seeds_async()
+            await config.get_seed_attack_groups_async()
 
     async def test_require_inline_seeds_passes_for_inline(self) -> None:
         seeds = make_objectives("a", "b")
-        config = DatasetConfiguration(seeds=seeds, validators=[require_inline_seeds()])
-        assert await config.get_seeds_async() == seeds
+        config = DatasetAttackConfiguration(seeds=seeds, validators=[require_inline_seeds()])
+        assert len(await config.get_seed_attack_groups_async()) == 2
 
     async def test_forbid_inline_seeds_raises_for_inline(self) -> None:
-        config = DatasetConfiguration(seeds=make_objectives("a"), validators=[forbid_inline_seeds()])
+        config = DatasetAttackConfiguration(seeds=make_objectives("a"), validators=[forbid_inline_seeds()])
         with pytest.raises(DatasetConstraintError, match="inline"):
-            await config.get_seeds_async()
+            await config.get_seed_attack_groups_async()
 
 
 class TestResolvedDatasetNames:
     """``ResolvedDataset.dataset_names`` carries the contributing dataset names to validators."""
 
-    async def test_get_seeds_async_exposes_contributing_names(self, mock_memory: MagicMock) -> None:
-        mock_memory.get_seeds.side_effect = [make_objectives("a"), make_objectives("b")]
-        seen: list[ResolvedDataset] = []
-        config = DatasetConfiguration(dataset_names=["d1", "d2"], validators=[seen.append])
-        await config.get_seeds_async()
-        assert seen[0].dataset_names == ("d1", "d2")
-
-    async def test_inline_reports_no_dataset_names(self) -> None:
-        seen: list[ResolvedDataset] = []
-        config = DatasetConfiguration(seeds=make_objectives("a"), validators=[seen.append])
-        await config.get_seeds_async()
-        assert seen[0].dataset_names == ()
-
-    async def test_attack_groups_async_exposes_contributing_names(self, mock_memory: MagicMock) -> None:
+    async def test_resolution_exposes_contributing_names(self, mock_memory: MagicMock) -> None:
         mock_memory.get_seeds.side_effect = [make_objectives("a"), make_objectives("b")]
         seen: list[ResolvedDataset] = []
         config = DatasetAttackConfiguration(dataset_names=["d1", "d2"], validators=[seen.append])
         await config.get_seed_attack_groups_async()
         assert seen[0].dataset_names == ("d1", "d2")
 
+    async def test_inline_reports_no_dataset_names(self) -> None:
+        seen: list[ResolvedDataset] = []
+        config = DatasetAttackConfiguration(seeds=make_objectives("a"), validators=[seen.append])
+        await config.get_seed_attack_groups_async()
+        assert seen[0].dataset_names == ()
+
+    async def test_attack_groups_by_dataset_exposes_contributing_names(self, mock_memory: MagicMock) -> None:
+        mock_memory.get_seeds.side_effect = [make_objectives("a"), make_objectives("b")]
+        seen: list[ResolvedDataset] = []
+        config = DatasetAttackConfiguration(dataset_names=["d1", "d2"], validators=[seen.append])
+        await config.get_attack_groups_by_dataset_async()
+        assert seen[0].dataset_names == ("d1", "d2")
+
     async def test_restrict_dataset_names_raises_for_rogue_dataset(self, mock_memory: MagicMock) -> None:
         mock_memory.get_seeds.return_value = make_objectives("a")
-        config = DatasetConfiguration(dataset_names=["rogue"], validators=[restrict_dataset_names({"d1", "d2"})])
+        config = DatasetAttackConfiguration(dataset_names=["rogue"], validators=[restrict_dataset_names({"d1", "d2"})])
         with pytest.raises(DatasetConstraintError, match="not allowed"):
-            await config.get_seeds_async()
+            await config.get_seed_attack_groups_async()
 
     async def test_restrict_dataset_names_passes_for_allowed_dataset(self, mock_memory: MagicMock) -> None:
         mock_memory.get_seeds.return_value = make_objectives("a")
-        config = DatasetConfiguration(dataset_names=["d1"], validators=[restrict_dataset_names({"d1", "d2"})])
-        result = await config.get_seeds_async()
-        assert [s.value for s in result] == ["a"]
+        config = DatasetAttackConfiguration(dataset_names=["d1"], validators=[restrict_dataset_names({"d1", "d2"})])
+        groups = await config.get_seed_attack_groups_async()
+        assert [g.objective.value for g in groups] == ["a"]
