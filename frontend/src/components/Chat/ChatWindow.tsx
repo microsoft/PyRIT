@@ -211,6 +211,8 @@ export default function ChatWindow({
     }
   }, [attackResultId, activeConversationId, onSelectConversation, loadConversation])
 
+  const supportsSystemPrompt = activeTarget?.capabilities?.supports_system_prompt === true
+
   const handleSend = async (originalValue: string, convertedValue: string | undefined, attachments: MessageAttachment[]) => {
     if (!activeTarget) { return }
 
@@ -292,7 +294,7 @@ export default function ChatWindow({
         const createResponse = await attacksApi.createAttack({
           target_registry_name: activeTarget.target_registry_name,
           labels: labels,
-          prepended_conversation: activeTarget.capabilities?.supports_system_prompt
+          prepended_conversation: supportsSystemPrompt
             ? buildSystemPrompt(systemPrompt)
             : undefined,
         })
@@ -637,6 +639,7 @@ export default function ChatWindow({
           ref={inputBoxRef}
           onSend={handleSend}
           showSystemPrompt={!attackResultId}
+          supportsSystemPrompt={supportsSystemPrompt}
           systemPrompt={systemPrompt}
           onSystemPromptChange={setSystemPrompt}
           disabled={isSending || !activeTarget || singleTurnLimitReached || isOperatorLocked || isCrossTargetLocked}

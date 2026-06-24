@@ -9,10 +9,9 @@ interface SystemPromptSetupProps {
   value: string
   onChange: (value: string) => void
   disabled?: boolean
-  disabledReason?: string
 }
 
-export default function SystemPromptSetup({ value, onChange, disabled = false, disabledReason }: SystemPromptSetupProps) {
+export default function SystemPromptSetup({ value, onChange, disabled = false }: SystemPromptSetupProps) {
   const styles = useSystemPromptSetupStyles()
   const [expanded, setExpanded] = useState(false)
   const overLimit = value.length > SYSTEM_PROMPT_SOFT_LIMIT
@@ -32,10 +31,10 @@ export default function SystemPromptSetup({ value, onChange, disabled = false, d
         >
           System Prompt
         </Button>
-        {disabled && disabledReason && (
+        {disabled && (
           <span className={styles.reason} data-testid="system-prompt-reason">
             <WarningRegular fontSize={14} />
-            <Caption1>{disabledReason}</Caption1>
+            <Caption1>This target does not support system prompts.</Caption1>
           </span>
         )}
       </div>

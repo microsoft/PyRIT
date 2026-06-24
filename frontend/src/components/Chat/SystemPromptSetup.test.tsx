@@ -12,11 +12,9 @@ const TestWrapper: React.FC<{ children: React.ReactNode }> = ({ children }) => (
 function Harness({
   initial = '',
   disabled = false,
-  disabledReason,
 }: {
   initial?: string
   disabled?: boolean
-  disabledReason?: string
 }) {
   const [value, setValue] = useState(initial)
   return (
@@ -25,7 +23,6 @@ function Harness({
         value={value}
         onChange={setValue}
         disabled={disabled}
-        disabledReason={disabledReason}
       />
     </TestWrapper>
   )
@@ -87,7 +84,7 @@ describe('SystemPromptSetup', () => {
     const disabledReason = 'This target does not support system prompts.'
 
     it('disables the toggle and shows the reason', () => {
-      render(<Harness disabled disabledReason={disabledReason} />)
+      render(<Harness disabled />)
 
       expect(screen.getByRole('button', { name: /system prompt/i })).toBeDisabled()
       expect(screen.getByText(disabledReason)).toBeInTheDocument()
@@ -95,7 +92,7 @@ describe('SystemPromptSetup', () => {
 
     it('does not expand when the disabled toggle is clicked', async () => {
       const user = userEvent.setup()
-      render(<Harness disabled disabledReason={disabledReason} />)
+      render(<Harness disabled />)
 
       await user.click(screen.getByRole('button', { name: /system prompt/i }))
 

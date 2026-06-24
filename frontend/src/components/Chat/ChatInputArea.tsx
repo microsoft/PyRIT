@@ -332,11 +332,13 @@ interface ChatInputAreaProps {
   onClearConvertedFileChip?: () => void
   /** Whether to show the system-prompt setup (only for a brand-new conversation). */
   showSystemPrompt?: boolean
+  /** Whether the active target supports system prompts (gates the setup's enabled state). */
+  supportsSystemPrompt?: boolean
   systemPrompt?: string
   onSystemPromptChange?: (value: string) => void
 }
 
-const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(function ChatInputArea({ onSend, disabled = false, activeTarget, singleTurnLimitReached = false, onNewConversation, operatorLocked = false, crossTargetLocked = false, onUseAsTemplate, attackOperator, noTargetSelected = false, onConfigureTarget, onToggleConverterPanel, isConverterPanelOpen = false, onInputChange, onAttachmentsChange, convertedValue, originalValue: _originalValue, onClearConversion, onConvertedValueChange, converterOutputDataTypes = [], mediaConversions = [], onClearMediaConversion, convertedFileChip, onClearConvertedFileChip, showSystemPrompt = false, systemPrompt = '', onSystemPromptChange }, ref) {
+const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(function ChatInputArea({ onSend, disabled = false, activeTarget, singleTurnLimitReached = false, onNewConversation, operatorLocked = false, crossTargetLocked = false, onUseAsTemplate, attackOperator, noTargetSelected = false, onConfigureTarget, onToggleConverterPanel, isConverterPanelOpen = false, onInputChange, onAttachmentsChange, convertedValue, originalValue: _originalValue, onClearConversion, onConvertedValueChange, converterOutputDataTypes = [], mediaConversions = [], onClearMediaConversion, convertedFileChip, onClearConvertedFileChip, showSystemPrompt = false, supportsSystemPrompt = false, systemPrompt = '', onSystemPromptChange }, ref) {
   const styles = useChatInputAreaStyles()
   const [input, setInput] = useState('')
   const [attachments, setAttachments] = useState<MessageAttachment[]>([])
@@ -546,8 +548,7 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
             <SystemPromptSetup
               value={systemPrompt}
               onChange={onSystemPromptChange}
-              disabled={!!activeTarget && activeTarget.capabilities?.supports_system_prompt !== true}
-              disabledReason="This target does not support system prompts."
+              disabled={!!activeTarget && !supportsSystemPrompt}
             />
           )}
           <input
