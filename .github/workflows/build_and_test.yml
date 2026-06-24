@@ -32,7 +32,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           # Full history is required so pre-commit hooks (notably
           # enforce_alembic_revision_immutability) can compute merge-bases and
@@ -100,7 +100,7 @@ jobs:
       checks: write
       pull-requests: write
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       # Set up Python
       - uses: actions/setup-python@v6
