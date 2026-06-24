@@ -26,7 +26,7 @@ from pyrit.prompt_target import PromptTarget
 logger = logging.getLogger(__name__)
 
 # FlipAttack generates prepended_conversation internally from its system prompt.
-FlipAttackParameters = AttackParameters.excluding("prepended_conversation", "next_message", "system_prompt")
+FlipAttackParameters = AttackParameters.excluding("prepended_conversation", "next_message")
 
 
 class FlipAttack(PromptSendingAttack):

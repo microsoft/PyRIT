@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 import logging
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -277,76 +277,6 @@ class TestAttackStrategyExecution:
         )
 
         assert result is not None
-
-
-@pytest.mark.usefixtures("patch_central_database")
-class TestExecuteAsyncSystemPromptLowering:
-    """Tests for lowering the system_prompt= argument at the execute_with_context_async chokepoint.
-
-    Lowering lives in ``AttackStrategy.execute_with_context_async``, so these tests patch the
-    base ``Strategy.execute_with_context_async`` (the ``super()`` call) to skip the lifecycle
-    while still running the override that performs the lowering.
-    """
-
-    _SUPER = "pyrit.executor.core.strategy.Strategy.execute_with_context_async"
-
-    async def test_system_prompt_lowered_to_single_system_message(self, mock_attack_strategy):
-        with patch(self._SUPER, new_callable=AsyncMock) as mock_super:
-            await mock_attack_strategy.execute_async(
-                objective="Test objective",
-                system_prompt="You are a helpful assistant.",
-            )
-
-        prepended = mock_super.call_args.kwargs["context"].prepended_conversation
-        assert len(prepended) == 1
-        assert prepended[0].api_role == "system"
-        assert prepended[0].get_value() == "You are a helpful assistant."
-
-    async def test_system_prompt_prepended_before_existing_conversation(self, mock_attack_strategy):
-        assistant_message = Message.from_prompt(prompt="Earlier reply", role="assistant")
-        with patch(self._SUPER, new_callable=AsyncMock) as mock_super:
-            await mock_attack_strategy.execute_async(
-                objective="Test objective",
-                system_prompt="You are a helpful assistant.",
-                prepended_conversation=[assistant_message],
-            )
-
-        prepended = mock_super.call_args.kwargs["context"].prepended_conversation
-        assert [message.api_role for message in prepended] == ["system", "assistant"]
-        assert prepended[0].get_value() == "You are a helpful assistant."
-
-    async def test_system_prompt_conflict_with_existing_system_message_raises(self, mock_attack_strategy):
-        existing_system = Message.from_system_prompt("Existing system message")
-        with pytest.raises(ValueError, match="Cannot supply both system_prompt="):
-            await mock_attack_strategy.execute_async(
-                objective="Test objective",
-                system_prompt="You are a helpful assistant.",
-                prepended_conversation=[existing_system],
-            )
-
-    async def test_no_system_prompt_leaves_prepended_conversation_unchanged(self, mock_attack_strategy):
-        user_message = Message.from_prompt(prompt="Hello", role="user")
-        with patch(self._SUPER, new_callable=AsyncMock) as mock_super:
-            await mock_attack_strategy.execute_async(
-                objective="Test objective",
-                prepended_conversation=[user_message],
-            )
-
-        prepended = mock_super.call_args.kwargs["context"].prepended_conversation
-        assert len(prepended) == 1
-        assert prepended[0].api_role == "user"
-
-    async def test_lowering_happens_when_context_passed_directly(self, mock_attack_strategy):
-        # Simulates the AttackExecutor path: a context is built externally and handed
-        # straight to execute_with_context_async, bypassing execute_async.
-        params = AttackParameters(objective="Test objective", system_prompt="You are a helpful assistant.")
-        context = mock_attack_strategy._context_type(params=params)
-
-        with patch(self._SUPER, new_callable=AsyncMock):
-            await mock_attack_strategy.execute_with_context_async(context=context)
-
-        assert [message.api_role for message in context.prepended_conversation] == ["system"]
-        assert context.prepended_conversation[0].get_value() == "You are a helpful assistant."
 
 
 @pytest.mark.usefixtures("patch_central_database")

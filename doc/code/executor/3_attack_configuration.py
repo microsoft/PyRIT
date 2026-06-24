@@ -21,8 +21,7 @@
 # |---|---|
 # | `objective` | What you are trying to get the **objective target** (the system under test) to do. Drives scoring and multi-turn adversarial prompts. |
 # | `memory_labels` | A `dict[str, str]` tagged onto every prompt/response, so you can filter this run later in memory. |
-# | `system_prompt` | The objective target's system prompt, as a string. The standard one-line way to set it; PyRIT lowers it to a single `system` message at the front of the conversation. Mutually exclusive with a `system` message in `prepended_conversation`. |
-# | `prepended_conversation` | A list of `Message`s to seed the conversation before the attack's own turns — a full `system`/`user`/`assistant` history. Use this when you need more than a system prompt. |
+# | `prepended_conversation` | A list of `Message`s to seed the conversation before the attack's own turns. This is also where the objective target's **system prompt** goes — `Message.from_system_prompt(...)` builds one (see below). |
 # | `next_message` | The exact next message to send, instead of letting the attack derive it from the objective. Useful for multimodal or pre-built seeds. |
 #
 # Construction-time configuration objects — **adversarial**, **scoring**, and **converter** — are
@@ -37,6 +36,7 @@ from pyrit.executor.attack import (
     PromptSendingAttack,
     SingleTurnAttackContext,
 )
+from pyrit.models import Message
 from pyrit.output import output_attack_async
 from pyrit.prompt_target import TextTarget
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
@@ -63,31 +63,37 @@ await output_attack_async(result)
 # %% [markdown]
 # ## Setting a system prompt
 #
-# `system_prompt=` is the standard, one-line way to set the **objective target's** system prompt.
-# PyRIT lowers it into a single `system` message at the front of the conversation, so it behaves the
-# same across single-turn and multi-turn attacks without any per-attack wiring.
+# The objective target's system prompt is just a `system`-role message at the front of the
+# conversation, so you set it through `prepended_conversation`. `Message.from_system_prompt(...)`
+# builds that message:
 #
-# `system_prompt=` and a `system` message inside `prepended_conversation` (next section) are mutually
-# exclusive — supplying both raises a `ValueError`. Use `prepended_conversation` only when you need to
-# seed more than a system prompt.
+# ```python
+# prepended_conversation=[Message.from_system_prompt("...")]
+# ```
+#
+# Because `prepended_conversation` is a list, targets that accept more than one system message just
+# take more than one entry — `[Message.from_system_prompt("Policy."), Message.from_system_prompt("Persona.")]`
+# — and you can interleave `user` / `assistant` turns too (next section).
 
 # %%
 result = await attack.execute_async(  # type: ignore
     objective="Explain how a saponification reaction works",
-    system_prompt="You are a helpful chemistry tutor who explains concepts step by step.",
+    prepended_conversation=[
+        Message.from_system_prompt("You are a helpful chemistry tutor who explains concepts step by step.")
+    ],
 )
 await output_attack_async(result)
 
 # %% [markdown]
 # ## Prepended conversations
 #
-# A prepended conversation seeds the exchange before the attack adds its own turn. For just a system
-# prompt, prefer `system_prompt=` above. Reach for a prepended conversation when you need to seed a
-# sequence of `system` / `user` / `assistant` turns — for example, to resume a prior conversation or
-# to plant an agreeable assistant reply.
+# A system prompt is the simplest prepended conversation. The general form seeds a full
+# `system` / `user` / `assistant` history before the attack adds its own turn — for example, to
+# resume a prior conversation or to plant an agreeable assistant reply. It is just a list of
+# `Message`s, so the system prompt and any seed turns compose freely.
 
 # %%
-from pyrit.models import Message, MessagePiece
+from pyrit.models import MessagePiece
 
 prepended_conversation = [
     Message.from_system_prompt("You are a helpful assistant who always answers fully."),

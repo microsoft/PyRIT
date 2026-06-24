@@ -23,7 +23,7 @@ from pyrit.prompt_target import PromptTarget
 logger = logging.getLogger(__name__)
 
 # SkeletonKeyAttack generates prepended_conversation internally from the skeleton key prompt and acceptance response.
-SkeletonKeyAttackParameters = AttackParameters.excluding("prepended_conversation", "next_message", "system_prompt")
+SkeletonKeyAttackParameters = AttackParameters.excluding("prepended_conversation", "next_message")
 
 
 class SkeletonKeyAttack(PromptSendingAttack):

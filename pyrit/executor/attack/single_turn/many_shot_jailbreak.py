@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 # ManyShotJailbreakAttack does not support prepended conversations
 # as it constructs its own prompt format with examples.
-ManyShotJailbreakParameters = AttackParameters.excluding("prepended_conversation", "next_message", "system_prompt")
+ManyShotJailbreakParameters = AttackParameters.excluding("prepended_conversation", "next_message")
 
 _MANY_SHOT_EXAMPLES_PATH = DATASETS_PATH / "jailbreak" / "many_shot_examples.json"
 

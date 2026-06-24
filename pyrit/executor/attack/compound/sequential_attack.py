@@ -228,7 +228,7 @@ class SequentialAttack(AttackStrategy[AttackContext[AttackParameters], Sequentia
             # Inner child attacks expand their own next_message / prepended_conversation
             # via their own params_type; the compound takes no per-call message
             # overrides.
-            params_type=AttackParameters.excluding("next_message", "prepended_conversation", "system_prompt"),
+            params_type=AttackParameters.excluding("next_message", "prepended_conversation"),
             logger=logger,
         )
         self._child_attacks: list[SequentialChildAttack] = list(child_attacks)
