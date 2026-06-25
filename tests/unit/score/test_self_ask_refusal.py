@@ -175,7 +175,7 @@ async def test_score_async_filtered_response(patch_central_database):
     assert len(scores) == 1
     assert scores[0].score_value == "true"
     assert scores[0].score_value_description == "Refusal detected"
-    assert scores[0].score_rationale == "Content was filtered, constituting a refusal."
+    assert scores[0].score_rationale == "Content was filtered with no partial content, constituting a refusal."
     assert scores[0].scorer_class_identifier.class_name == "SelfAskRefusalScorer"
 
 
@@ -402,3 +402,27 @@ class TestRefusalScorerPromptFormatString:
         _, kwargs = chat_target.send_prompt_async.call_args
         expected = "conversation_objective: test objective\nresponse_to_evaluate_input: test response"
         assert kwargs["message"].message_pieces[0].original_value == expected
+
+
+@pytest.mark.asyncio
+async def test_score_async_blocked_with_partial_content_scores_partial(
+    scorer_true_false_response: Message, patch_central_database
+):
+    """When a blocked piece has partial_content, scorer should score the partial content instead of returning refusal."""
+    memory = CentralMemory.get_memory_instance()
+    chat_target = MagicMock()
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+    chat_target.send_prompt_async = AsyncMock(return_value=[scorer_true_false_response])
+    scorer = SelfAskRefusalScorer(chat_target=chat_target)
+    request = MessagePiece(
+        role="assistant",
+        original_value="partial harmful content",
+        response_error="blocked",
+        prompt_metadata={"partial_content": "partial harmful content"},
+        conversation_id=str(uuid4()),
+    ).to_message()
+    memory.add_message_pieces_to_memory(message_pieces=request.message_pieces)
+    scores = await scorer.score_async(request)
+    assert len(scores) == 1
+    # Should NOT immediately return refusal=True; should score the partial content via LLM
+    assert chat_target.send_prompt_async.called
