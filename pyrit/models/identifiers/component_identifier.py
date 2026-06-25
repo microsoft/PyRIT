@@ -580,10 +580,10 @@ class ComponentIdentifier(BaseModel):
         Content-addressed SHA256 hash, derived from this identifier's content.
 
         Computed once by the after-validator from ``class_name`` /
-        ``class_module`` / ``params`` / ``children`` and cached in ``_hash``. It
-        is a read-only computed field: nothing can set it, and any ``hash`` value
-        supplied at construction (a kwarg, or one read back from the flat storage
-        form) is dropped before validation.
+        ``class_module`` / ``params`` / ``children`` / ``attributes`` and cached
+        in ``_hash``. It is a read-only computed field: nothing can set it, and
+        any ``hash`` value supplied at construction (a kwarg, or one read back
+        from the flat storage form) is dropped before validation.
 
         Returns:
             The SHA256 content hash.
