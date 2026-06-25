@@ -36,9 +36,15 @@ from pyrit.executor.attack import AttackExecutor
 from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
 from pyrit.memory import CentralMemory
 from pyrit.memory.memory_models import ScenarioResultEntry
-from pyrit.models import AttackOutcome, AttackResult, SeedAttackGroup
+from pyrit.models import (
+    AttackOutcome,
+    AttackResult,
+    ScenarioIdentifier,
+    ScenarioResult,
+    ScenarioRunState,
+    SeedAttackGroup,
+)
 from pyrit.models.parameter import Parameter
-from pyrit.models.scenario_result import ScenarioIdentifier, ScenarioResult, ScenarioRunState
 from pyrit.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_requirements import TargetRequirements
 from pyrit.registry import ScorerRegistry
@@ -282,12 +288,12 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
 
     @property
     def name(self) -> str:
-        """Get the name of the scenario."""
+        """The name of the scenario."""
         return self._name
 
     @property
     def atomic_attack_count(self) -> int:
-        """Get the number of atomic attacks in this scenario."""
+        """The number of atomic attacks in this scenario."""
         return len(self._atomic_attacks)
 
     @classmethod

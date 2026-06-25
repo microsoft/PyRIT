@@ -32,7 +32,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           # Full history is required so pre-commit hooks (notably
           # enforce_alembic_revision_immutability) can compute merge-bases and
@@ -44,7 +44,7 @@ jobs:
           python-version: ${{ env.PRE_COMMIT_PYTHON_VERSION }}
 
       - name: Cache pre-commit environments
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ~/.cache/pre-commit
           key: pre-commit-${{ runner.os }}-${{ hashFiles('.pre-commit-config.yaml') }}
@@ -100,7 +100,7 @@ jobs:
       checks: write
       pull-requests: write
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       # Set up Python
       - uses: actions/setup-python@v6

@@ -21,12 +21,6 @@ import importlib
 from typing import Any
 
 from pyrit.common.deprecation import print_deprecation_message
-from pyrit.models.chat_message import (
-    ALLOWED_CHAT_MESSAGE_ROLES,
-    ChatMessage,
-    ChatMessagesDataset,
-)
-from pyrit.models.conversation_reference import ConversationReference, ConversationType
 from pyrit.models.conversation_stats import ConversationStats
 from pyrit.models.embeddings import EmbeddingData, EmbeddingResponse, EmbeddingSupport, EmbeddingUsageInformation
 from pyrit.models.harm_definition import HarmDefinition, ScaleDescription, get_all_harm_definitions
@@ -85,6 +79,13 @@ from pyrit.models.messages import (
     group_message_pieces_into_conversations,
     sort_message_pieces,
 )
+from pyrit.models.messages.chat_message import (
+    ALLOWED_CHAT_MESSAGE_ROLES,
+    ChatMessage,
+    ChatMessagesDataset,
+    ToolCall,
+)
+from pyrit.models.messages.conversation_reference import ConversationReference, ConversationType
 from pyrit.models.parameter import (
     ComponentType,
     Parameter,
@@ -93,9 +94,9 @@ from pyrit.models.parameter import (
 )
 from pyrit.models.question_answering import QuestionAnsweringDataset, QuestionAnsweringEntry, QuestionChoice
 from pyrit.models.results.attack_result import AttackOutcome, AttackResult, AttackResultT
+from pyrit.models.results.scenario_result import ScenarioIdentifier, ScenarioResult, ScenarioRunState
 from pyrit.models.results.strategy_result import StrategyResult, StrategyResultT
 from pyrit.models.retry_event import RetryEvent
-from pyrit.models.scenario_result import ScenarioIdentifier, ScenarioResult, ScenarioRunState
 from pyrit.models.score import Score, ScoreType, UnvalidatedScore
 
 # Seeds - import from new seeds submodule for forward compatibility
@@ -216,6 +217,7 @@ __all__ = [
     "TargetCapabilities",
     "TargetIdentifier",
     "TextDataTypeSerializer",
+    "ToolCall",
     "UnvalidatedScore",
     "validate_registry_name",
     "VideoPathDataTypeSerializer",
