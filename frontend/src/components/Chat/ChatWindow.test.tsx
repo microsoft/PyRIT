@@ -637,6 +637,104 @@ describe("ChatWindow Integration", () => {
         );
       });
     });
+
+    it("clears a retained system prompt when switching to an unsupported target", async () => {
+      const user = userEvent.setup();
+      primeSendMocks();
+      mockedMapper.buildSystemPrompt.mockReturnValue(sentinelPrepended as never);
+
+      const supportedA: TargetInstance = {
+        ...mockTarget,
+        target_registry_name: "supports_a",
+        capabilities: buildCapabilities({ supports_system_prompt: true }),
+      };
+      const unsupportedB: TargetInstance = {
+        ...mockTarget,
+        target_registry_name: "no_support_b",
+        capabilities: buildCapabilities({ supports_system_prompt: false }),
+      };
+      const supportedC: TargetInstance = {
+        ...mockTarget,
+        target_registry_name: "supports_c",
+        capabilities: buildCapabilities({ supports_system_prompt: true }),
+      };
+
+      const { rerender } = render(
+        <TestWrapper>
+          <ChatWindow {...defaultProps} activeTarget={supportedA} />
+        </TestWrapper>
+      );
+
+      await user.click(screen.getByRole("button", { name: /system prompt/i }));
+      await user.type(
+        screen.getByRole("textbox", { name: /system prompt/i }),
+        "You are helpful"
+      );
+
+      // Switch to an unsupported target (should clear), then to another
+      // supporting one so the cleared value is observable on send.
+      rerender(
+        <TestWrapper>
+          <ChatWindow {...defaultProps} activeTarget={unsupportedB} />
+        </TestWrapper>
+      );
+      rerender(
+        <TestWrapper>
+          <ChatWindow {...defaultProps} activeTarget={supportedC} />
+        </TestWrapper>
+      );
+
+      await user.type(screen.getByPlaceholderText("Type prompt here"), "Hello");
+      await user.click(screen.getByRole("button", { name: /send/i }));
+
+      await waitFor(() => {
+        expect(mockedMapper.buildSystemPrompt).toHaveBeenCalledWith("");
+      });
+    });
+
+    it("preserves the system prompt across supporting targets", async () => {
+      const user = userEvent.setup();
+      primeSendMocks();
+      mockedMapper.buildSystemPrompt.mockReturnValue(sentinelPrepended as never);
+
+      const supportedA: TargetInstance = {
+        ...mockTarget,
+        target_registry_name: "supports_a",
+        capabilities: buildCapabilities({ supports_system_prompt: true }),
+      };
+      const supportedB: TargetInstance = {
+        ...mockTarget,
+        target_registry_name: "supports_b",
+        capabilities: buildCapabilities({ supports_system_prompt: true }),
+      };
+
+      const { rerender } = render(
+        <TestWrapper>
+          <ChatWindow {...defaultProps} activeTarget={supportedA} />
+        </TestWrapper>
+      );
+
+      await user.click(screen.getByRole("button", { name: /system prompt/i }));
+      await user.type(
+        screen.getByRole("textbox", { name: /system prompt/i }),
+        "You are helpful"
+      );
+
+      rerender(
+        <TestWrapper>
+          <ChatWindow {...defaultProps} activeTarget={supportedB} />
+        </TestWrapper>
+      );
+
+      await user.type(screen.getByPlaceholderText("Type prompt here"), "Hello");
+      await user.click(screen.getByRole("button", { name: /send/i }));
+
+      await waitFor(() => {
+        expect(mockedMapper.buildSystemPrompt).toHaveBeenCalledWith(
+          "You are helpful"
+        );
+      });
+    });
   });
 
   // -----------------------------------------------------------------------
