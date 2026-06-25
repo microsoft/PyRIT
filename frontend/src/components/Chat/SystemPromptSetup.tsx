@@ -54,7 +54,7 @@ export default function SystemPromptSetup({ value, onChange, disabled = false }:
             className={mergeClasses(styles.counter, overLimit && styles.counterOver)}
             data-testid="system-prompt-counter"
           >
-            {value.length.toLocaleString()} characters
+            {value.length} characters
           </Caption1>
         </div>
       )}
