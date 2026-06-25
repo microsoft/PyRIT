@@ -79,6 +79,8 @@ Requirements:
   ``prepended_conversation``.
 - ``prepended_conversation`` is a plain list, so multiple system prompts and
   interleaved seed turns compose: ``[Message.from_system_prompt("a"),
-  Message.from_system_prompt("b"), user_msg, assistant_msg]``.
+  Message.from_system_prompt("b"), user_msg, assistant_msg]``. For the
+  system-prompts-only case, ``Message.from_system_prompts("a", "b")`` is a
+  shorthand that returns that list.
 - ``SingleTurnAttackContext.system_prompt`` is **deprecated** (non-functional;
   removed in 0.17.0). Never read it or wire new behavior to it.

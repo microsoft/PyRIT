@@ -72,8 +72,10 @@ await output_attack_async(result)
 # ```
 #
 # Because `prepended_conversation` is a list, targets that accept more than one system message just
-# take more than one entry — `[Message.from_system_prompt("Policy."), Message.from_system_prompt("Persona.")]`
-# — and you can interleave `user` / `assistant` turns too (next section).
+# take more than one entry. `Message.from_system_prompts(...)` is a shorthand that builds the list for
+# you — `Message.from_system_prompts("Policy.", "Persona.")` is the same as
+# `[Message.from_system_prompt("Policy."), Message.from_system_prompt("Persona.")]` — and you can
+# interleave `user` / `assistant` turns too (next section).
 
 # %%
 result = await attack.execute_async(  # type: ignore
