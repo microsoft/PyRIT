@@ -155,7 +155,7 @@ class ScorerInitializer(PyRITInitializer):
 
     @property
     def supported_parameters(self) -> list[Parameter]:
-        """Get the list of parameters this initializer accepts."""
+        """The list of parameters this initializer accepts."""
         return [
             Parameter(
                 name="tags",
@@ -167,7 +167,7 @@ class ScorerInitializer(PyRITInitializer):
     @property
     def required_env_vars(self) -> list[str]:
         """
-        Get list of required environment variables.
+        Required environment variables.
 
         Returns empty list since this initializer handles missing targets
         gracefully by skipping individual scorers with a warning.

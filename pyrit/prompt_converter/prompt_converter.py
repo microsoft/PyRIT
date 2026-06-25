@@ -240,7 +240,7 @@ class PromptConverter(Identifiable):
     @property
     def supported_input_types(self) -> list[PromptDataType]:
         """
-        Returns a list of supported input types for the converter.
+        A list of supported input types for the converter.
 
         Returns:
             list[PromptDataType]: A list of supported input types.
@@ -250,7 +250,7 @@ class PromptConverter(Identifiable):
     @property
     def supported_output_types(self) -> list[PromptDataType]:
         """
-        Returns a list of supported output types for the converter.
+        A list of supported output types for the converter.
 
         Returns:
             list[PromptDataType]: A list of supported output types.
