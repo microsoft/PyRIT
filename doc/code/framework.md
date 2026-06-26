@@ -69,63 +69,146 @@ The main components of PyRIT are prompts, attacks, converters, targets, and scor
 
 As much as possible, each component is a pluggable brick of functionality. Prompts from one attack can be used in another. An attack for one scenario can use multiple targets. And sometimes you completely skip components (e.g. almost every component can be a NoOp also, you can have a NoOp converter that doesn't convert, or a NoOp target that just prints the prompts).
 
-If you are contributing to PyRIT, that work will most likely land in one of these buckets and be as self-contained as possible. It isn't always this clean, but when an attack scenario doesn't quite fit (and that's okay!) it's good to brainstorm with the maintainers about how we can modify our architecture.
+If you are contributing to PyRIT, that work will most likely land in one of the core components buckets and be as self-contained as possible. It isn't always this clean, but when an attack scenario doesn't quite fit (and that's okay!) it's good to brainstorm with the maintainers about how we can modify our architecture. Also, if our **Framework Plans** would be helpful, please open issues!
 
-The remainder of this document talks about the different components, how they work, what their responsibilities are, and ways to contribute.
+# Core Components
 
+## [Datasets](./datasets/0_dataset)
 
-## Datasets: Prompts, Jailbreak Templates, Source Images, Attack Strategies, etc.
+**Responsibility**: Create a single place to manage prompts
 
-The first piece of an attack is often a dataset piece, like a prompt. "Tell me how to create a Molotov cocktail" is an example of a prompt. PyRIT is a good place to have a library of things to check for.
+- New Datasets can be added in the dataset module.
+- Datasets should never be retrieved from DatasetProviders; DatasetProviders should load into memory, and then components retireve from memory
+- Most components should always work with seeds passed directly in (except scenarios which may package them from memory). Never use DatasetProfiders, file paths, etc. Either pass the seed as an argument or retrieve from memory.
 
-Ways to contribute: Check out our documentation on [seed datasets](./datasets/0_dataset.md); are there more prompts and jailbreak templates you can add that include scenarios you're testing for?
+**Framework Plans**:
 
-## Attacks
+- There is some churn here. We haven't managed these much at scale, and we may have to redefine how it works.
+- We want more investment in managing datasets and loading them more intelligently
+- We need to more consistently pass seeds or use memory
 
-Attacks are responsible for putting all the other pieces together. They make use of all other components in PyRIT to execute an attack technique end-to-end.
-PyRIT supports single-turn (e.g. Many Shot Jailbreaks [@anthropic2024manyshot], Role Play, Skeleton Key [@microsoft2024skeletonkey]) and multi-turn attack strategies (e.g. Tree of Attacks [@mehrotra2023tap], Crescendo [@russinovich2024crescendo]), and compound strategies (e.g. `SequentialAttack`) for chaining several techniques against a single objective.
+**Contributing (difficulty easy)**: Are there more prompts and jailbreak templates you can add that include scenarios you're testing for? It is easy to add new dataset providers.
 
-Ways to contribute: Check out our [attack docs](./executor/0_executor.md). There are hundreds of attacks outlined in research papers. A lot of these can be captured within PyRIT. If you find an attack that doesn't fit the attack model please notify the team. Are there scenarios you can write attack modules for?
+## [Attacks](./executor/0_executor)
 
-## Converters
+**Responsibility**: Manage conversations between objective targets and adversarial targets; using datasets, scorers, and converters to achieve an objective.
 
-Converters are a powerful component that converts prompts to something else. They can be stacked and combined. They can be as varied as translating a text prompt into a Word document, rephrasing a prompt in 100 different ways, or adding a text overlay to an image.
+- Any branching decision (e.g. the next thing(s) to do is based on a previous result) should be an attack.
+- Attacks should always make use of other component's responsibilities. An attack should alwways branch based on a scorer and NOT a direct response. (e.g. was this prompt blocked? is a scorer responsibility, not an attack responsibility)
+- Attacks should use scoring and target capabilities implicitly. Attacks should support multi-modal.
+- Compound attacks are possible, combining different attacks in different ways.
 
-Ways to contribute: Check out our [converter docs](./converters/0_converters.ipynb). Are there ways prompts can be converted that would be useful for an attack?
+**Rough Framework Plans**:
 
-## Target
+- We need to move some older attacks that don't belong here. Many (FlipAttack) should just be attack techniques
+- There are potential ways we could combine different algorithms. Are Crescendo and TAP ultimately the same?
+- We need to support target capabilities more implicitly
+- Other executors, like benchmarks, need better end-to-end support; potentially including an `ExpectedResult` seed and associated scorers.
+- More flexible compound attacks should continue to be added
 
-A Prompt Target can be thought of as "the thing we're sending the prompt to".
+**Contributing (difficulty high)**: The best way to contribute is likely opening issues if you run into limitations.
 
-This is often an LLM, but it doesn't have to be. For Cross-Domain Prompt Injection Attacks, the Prompt Target might be a Storage Account that a later Prompt Target has a reference to.
+## [Attack Technique]
 
-One attack can have many Prompt Targets (and in fact, converters and Scoring Engine can also use Prompt Targets to convert/score the prompt).
+**Responsibility**: An attack technique packages an executor, converters, datasets, and strategies into a single attack. The goal is that any attack (something trying to achieve an objective) can be defined as an attack technique.
 
-Ways to contribute: Check out our [target docs](./targets/0_prompt_targets.md). Are there models you want to use at any stage or for different attacks?
+**Rough Framework Plans**:
 
+- Managing these better, so scenarios can more easily select or build the attack techniques to use
 
-## Scoring Engine
+**Contributing (difficulty easy)**: Simply add the attack technique to one of the initializers.
 
-The scoring engine is a component that gives feedback to the attack on what happened with the prompt. This could be as simple as "Was this prompt blocked?" or "Was our objective achieved?"
+## [Scenarios](./scenarios/0_scenarios)
 
-Ways to contribute: Check out our [scoring docs](./scoring/0_scoring.ipynb). Is there data you want to use to make decisions or analyze?
+**Responsibility**: This is the avenue to "run PyRIT against something". What does that look like?
 
-## Memory
+- A scenario takes user input and uses it to package datasets with attack techniques
+- A scenario orchestrates resiliency and parallelism from a high level
+- No result should depend on previous results (that is an attack's job)
+
+**Rough Framework Plans**:
+
+- Scenarios are new enough that we are still discovering patterns and limitations. So they will regularly be refactored
+
+**Contributing (difficulty medium)**: Is there a scanner that does something PyRIT doesn't? Add it as a scenario. But because we're changing how things are done rapidly, it is not as well-defined as other areas.
+
+## [Converters](./converters/0_converters)
+
+**Responsibility**: Converters are a component that converts prompts to something else. They can be stacked and combined. They can be as varied as translating a text prompt into a Word document, rephrasing a prompt, or adding a text overlay to an image.
+
+**Rough Framework Plans**:
+
+- We want to refactor our converter pipeline, so there are currently some things that should be converters that we may want to postpone (e.g. partial converting). This is supported but could be much more dynamic.
+
+**Contributing (difficulty low)**: The existing pattern is well-defined. Are there ways prompts can be converted that would be useful for an attack?
+
+## [Target](./targets/0_prompt_targets.md)
+
+**Responsibility**: A Prompt Target can be thought of as "the thing we're sending the prompt to". Many other components use it, including scorers, attacks, and converters.
+
+- This is often an LLM, but it doesn't have to be. For Cross-Domain Prompt Injection Attacks, the Prompt Target might be a Storage Account that a later Prompt Target has a reference to. Message and conversation should be generic enough to handle this extra data.
+- Prompt Target capabilities should be used to see if a target is compatible with the capabilities that the other components want to use.
+- Targets should use message_normalizer along with PromptCapabilities to transorm `Messages` into formats that target supports.
+- Because targets are so varied, it is reasonable to return multiple tool calls, or none at all.
+- One attack can have many Prompt Targets (and in fact, converters and Scoring Engine can also use Prompt Targets to convert/score the prompt).
+
+**Rough Framework Plans**:
+
+- Better agent support may require extra pieces attached to a Message
+- Better surface support may require expanding the return types
+
+**Contributing (difficulty low)**: 
+
+- The pattern is well-defined.
+- Are there models you want to use at any stage or for different attacks? But also, can your model just be one of the existing targets?
+
+## [Scoring](./scoring/0_scoring.ipynb)
+
+**Responsibility**: The scoring engine is a component that gives feedback to the attack on what happened with the prompt. This could be as simple as "Was this prompt blocked?" or "Was our objective achieved?"
+
+- Any decision an attack makes should be based on a scorer result
+
+**Contributing (difficulty low)**:  
+
+- The pattern is well-defined.
+- You can evaluate how accurate probabalistic scorers are and likely make them more accurate.
+- Is there data you want to use to make decisions or analyze?
+
+**Framework Plans**:
+
+- Scorers will be refactored to be more generic, so they can determine more general results (does a file exist? Was a tool called?)
+
+# Core library
+
+The below talks about responsibilities of several modules in the PyRIT library
+
+## [Registry](./registry/0_registry)
+
+**Responsibility**: The registry is used to build and store the core components. 
+
+- If you are creating a component with user input (e.g. via config, REST, or automatically) it should always use the registry
+- If you are storing an instance of a component, it should always use the registry
+
+## [Models]
+
+**Responsibility**: pyrit.models is a lightweight module where core types are defined. These should always be used where possible to prevent drift.
+
+- If you are creating a class that has a lot of overlap with another class, or using a dict to serialize across boundaries, consider if you can use/move pyrit.models
+- Models includes `identifiers` which are descriptions of the core components. And along with the registry, can often recreate those components.
+- Models includes types passed around between components, and should be prefered in REST
+- models should never include any dependencies outside of pyrit.common (which shouldn't depend on anything)
+
+## Output
+
+**Responsibility**: The Output module is responsible for writing different components in different formats to different places.
+
+## [Memory](./memory/0_memory.md)
 
 One important thing to remember about this architecture is its swappable nature. Prompts and targets and converters and attacks and scorers should all be swappable. But sometimes one of these components needs additional information. If the target is an LLM, we need a way to look up previous messages sent to that session so we can properly construct the new message. If the target is a blob store, we need to know the URL to use for a future attack.
 
-For more details about memory configuration, please follow the guide in [memory](./memory/0_memory.md).
+## Framework Component Documentation
 
-Memory modifications and contributions should usually be designed with the maintainers.
+**Responsibility** Show how the framework is used in a concise way
 
-## The Flow
-
-To some extent, the ordering in this diagram matters. In the simplest cases, you have a prompt, an attack takes the prompt, uses prompt normalizer to run it through converters and send to a target, and the result is scored.
-
-But this simple view is complicated by the fact that an attack can have multiple targets, converters can be stacked, scorers can use targets to score, etc.
-
-Sometimes, if a scenario requires specific data, we may need to modify the architecture. This happened recently when we thought a single target may take multiple prompts separately in a single request. Any time we need to modify the architecture like this, that's something that needs to be designed with the maintainers so we can consolidate our other supported scenarios and future plans.
-
-## Notebooks
-
-For all their power, attacks should still be generic. A lot of our front-end code and operators use Notebooks to interact with PyRIT. This is fantastic, but most new logic should not be notebooks. Notebooks should mostly be used for attack setup and documentation. For example, configuring the components and putting them together is a good use of a notebook, but new logic for an attack should be moved to one or more components.
+- Notebooks that contain code should be notebooks that can execute
+- Notebooks should execute quickly
