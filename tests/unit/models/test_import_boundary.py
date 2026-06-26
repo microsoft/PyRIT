@@ -19,7 +19,8 @@ imports that exist today and are expected to disappear in a later phase. The
 lists must shrink monotonically — if a known violation is no longer in source,
 this test fails and the entry must be removed.
 
-See plan.md / ``.github/instructions/models.instructions.md`` for context.
+See plan.md / the ``models-guidelines`` skill
+(``.github/skills/models-guidelines/SKILL.md``) for context.
 """
 
 from __future__ import annotations

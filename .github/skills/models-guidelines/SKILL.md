@@ -1,6 +1,9 @@
 ---
-applyTo: "pyrit/models/**"
+name: models-guidelines
+description: Guidelines for pyrit.models types and import boundaries (code under pyrit/models/). Use when creating, modifying, or reviewing PyRIT model and dataclass types.
 ---
+
+> Applies to `pyrit/models/**`.
 
 # `pyrit.models` Guidelines
 

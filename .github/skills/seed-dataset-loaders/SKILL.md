@@ -1,6 +1,9 @@
 ---
-applyTo: "pyrit/datasets/seed_datasets/**"
+name: seed-dataset-loaders
+description: PyRIT seed dataset loader guidelines for code under pyrit/datasets/seed_datasets/. Use when creating, modifying, or reviewing a seed dataset loader.
 ---
+
+> Applies to `pyrit/datasets/seed_datasets/**`.
 
 # Seed Dataset Loader Guidelines
 
@@ -99,7 +102,7 @@ Add the loader and any new public enums to `pyrit/datasets/seed_datasets/remote/
 The rendered datasets notebook drives the public list of built-in datasets on the docs site, so every new loader must touch it:
 
 - Add the new dataset and its cite key to the prose paragraph at the top of `doc/code/datasets/1_loading_datasets.py` (alphabetical with the rest), and add the matching entry to `doc/code/datasets/1_loading_datasets.ipynb`.
-- Regenerate the notebook so the `SeedDatasetProvider.get_all_dataset_names_async()` output cell picks up the new loader: `jupytext --to ipynb --execute doc/code/datasets/1_loading_datasets.py`. Inline edits to both files are also acceptable per `docs.instructions.md`, but executed regeneration is the only way the rendered dataset-name list stays in sync.
+- Regenerate the notebook so the `SeedDatasetProvider.get_all_dataset_names_async()` output cell picks up the new loader: `jupytext --to ipynb --execute doc/code/datasets/1_loading_datasets.py`. Inline edits to both files are also acceptable per the `docs-sync` skill, but executed regeneration is the only way the rendered dataset-name list stays in sync.
 
 ## Test loaders against mocked HF data
 

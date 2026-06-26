@@ -151,8 +151,8 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
 
     Subclasses must use the keyword-only constructor shape (``def __init__(self, *, ...)``);
     the contract is enforced at class-definition time via
-    ``enforce_keyword_only_init``. See
-    ``.github/instructions/scenarios.instructions.md`` for the full contract.
+    ``enforce_keyword_only_init``. See the ``scenario-development`` skill
+    (``.github/skills/scenario-development/SKILL.md``) for the full contract.
     """
 
     #: Capability requirements placed on ``objective_target``. Subclasses override to declare
@@ -171,7 +171,8 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
         """
         Enforce the keyword-only constructor contract on subclasses.
 
-        See ``.github/instructions/scenarios.instructions.md`` for the contract.
+        See the ``scenario-development`` skill
+        (``.github/skills/scenario-development/SKILL.md``) for the contract.
         """
         super().__init_subclass__(**kwargs)
         # Local import to avoid a circular dependency at package init time.

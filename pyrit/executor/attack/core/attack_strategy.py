@@ -385,8 +385,9 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
 
     Subclasses must use the keyword-only constructor shape
     (``def __init__(self, *, ...)``); the contract is enforced at class
-    definition time via ``enforce_keyword_only_init``. See
-    ``.github/instructions/attacks.instructions.md`` for the full contract.
+    definition time via ``enforce_keyword_only_init``. See the
+    ``attack-strategy-development`` skill
+    (``.github/skills/attack-strategy-development/SKILL.md``) for the full contract.
     """
 
     #: Capability requirements placed on ``objective_target``. Subclasses
@@ -397,7 +398,8 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
         """
         Enforce the keyword-only constructor contract on subclasses.
 
-        See ``.github/instructions/attacks.instructions.md`` for the contract.
+        See the ``attack-strategy-development`` skill
+        (``.github/skills/attack-strategy-development/SKILL.md``) for the contract.
         """
         super().__init_subclass__(**kwargs)
         # Local import to avoid a circular dependency at package init time.

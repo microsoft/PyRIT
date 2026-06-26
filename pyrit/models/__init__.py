@@ -8,7 +8,8 @@ Public model exports for PyRIT core data structures and helpers.
 import only from the standard library, ``pydantic``,
 ``pyrit.common.deprecation``, and other ``pyrit.models.*`` submodules. The
 CI test ``tests/unit/models/test_import_boundary.py`` enforces this. See
-``.github/instructions/models.instructions.md`` for the rule.
+the ``models-guidelines`` skill (``.github/skills/models-guidelines/SKILL.md``)
+for the rule.
 
 Identifier types and helpers live in the ``pyrit.models.identifiers``
 sub-package but are re-exported here, so external callers should import them

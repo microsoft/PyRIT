@@ -1,6 +1,9 @@
 ---
-applyTo: "pyrit/prompt_converter/**"
+name: prompt-converter-development
+description: PyRIT prompt converter development contract and conventions for code under pyrit/prompt_converter/. Use when creating, modifying, or reviewing a PromptConverter, including SUPPORTED_INPUT_TYPES/OUTPUT_TYPES, ConverterResult, keyword-only __init__, and __init__.py exports.
 ---
+
+> Applies to `pyrit/prompt_converter/**`.
 
 # Prompt Converter Development Guidelines
 
@@ -80,41 +83,17 @@ class MyConverter(PromptConverter):
         ...
 ```
 
-### Keyword-only ``__init__`` is enforced
+### Keyword-only `__init__` is enforced
 
-Every ``PromptConverter`` subclass MUST make all ``__init__`` parameters
-keyword-only (i.e., place ``*`` as the first parameter after ``self``).
-``PromptConverter.__init_subclass__`` validates this at class-definition
-time via ``enforce_keyword_only_init`` and raises ``TypeError`` on
-violations.
-
-The check is satisfied by either of:
+Every `PromptConverter` subclass MUST make all `__init__` parameters keyword-only — place `*` as the first parameter after `self`. `PromptConverter.__init_subclass__` validates this via `enforce_keyword_only_init` and raises `TypeError` at class-definition time.
 
 ```python
-def __init__(self, *, foo: str, bar: int = 0) -> None: ...
-
-def __init__(self, *args: str, foo: str = "") -> None: ...  # *args after self
+def __init__(self, *, foo: str, bar: int = 0) -> None: ...   # OK
+def __init__(self, *args: str, foo: str = "") -> None: ...   # OK (*args after self)
+def __init__(self, foo: str, bar: int = 0) -> None: ...      # rejected — missing *
 ```
 
-It rejects:
-
-```python
-def __init__(self, foo: str, bar: int = 0) -> None: ...    # missing *
-```
-
-### Temporary opt-out: ``_brick_legacy_init``
-
-A handful of legacy converters whose positional ``__init__`` is part of the
-public API are grandfathered with ``_brick_legacy_init = True``. They
-emit a ``DeprecationWarning`` at import time and the opt-out is scheduled
-for removal in **0.16.0**. Do not set this flag on new converters; new
-converters MUST follow the keyword-only contract.
-
-Currently grandfathered (slated for cleanup in 0.16.0):
-``AddImageVideoConverter``, ``AnsiAttackConverter``, ``AsciiArtConverter``,
-``AskToDecodeConverter``, ``DiacriticConverter``, ``InsertPunctuationConverter``,
-``PDFConverter``, ``QRCodeConverter``, ``RandomCapitalLettersConverter``,
-``SearchReplaceConverter``, ``SmugglerConverter`` (and its three subclasses).
+A few legacy converters whose positional `__init__` is public API opt out with `_brick_legacy_init = True` (emits a `DeprecationWarning`; removed in **0.16.0**). Find the current set with `grep -rl "_brick_legacy_init = True" pyrit/prompt_converter/`. Do not add new converters to it.
 
 ## Exports and External Updates
 

@@ -61,8 +61,9 @@ class Scorer(Identifiable, abc.ABC):
 
     Subclasses must use the keyword-only constructor shape
     (``def __init__(self, *, ...)``); the contract is enforced at class
-    definition time via ``enforce_keyword_only_init``. See
-    ``.github/instructions/scorers.instructions.md`` for the full contract.
+    definition time via ``enforce_keyword_only_init``. See the
+    ``scorer-development`` skill (``.github/skills/scorer-development/SKILL.md``)
+    for the full contract.
     """
 
     # Evaluation configuration - maps input dataset files to a result file.
@@ -90,7 +91,8 @@ class Scorer(Identifiable, abc.ABC):
         """
         Enforce the keyword-only constructor contract on subclasses.
 
-        See ``.github/instructions/scorers.instructions.md`` for the contract.
+        See the ``scorer-development`` skill
+        (``.github/skills/scorer-development/SKILL.md``) for the contract.
         """
         super().__init_subclass__(**kwargs)
         # Local import to avoid a circular dependency at package init time.

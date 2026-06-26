@@ -1,6 +1,9 @@
 ---
-applyTo: "pyrit/scenario/**"
+name: scenario-development
+description: PyRIT scenario development contract and conventions for code under pyrit/scenario/. Use when creating, modifying, or reviewing a Scenario.
 ---
+
+> Applies to `pyrit/scenario/**`.
 
 # PyRIT Scenario Development Guidelines
 
@@ -14,24 +17,7 @@ All scenarios inherit from `Scenario` (ABC) and must:
 2. **Optionally declare `BASELINE_ATTACK_POLICY`** (defaults to `BaselineAttackPolicy.Enabled` — a baseline `PromptSendingAttack` is prepended and callers can opt out per run via `initialize_async(include_baseline=False)`):
    - `BaselineAttackPolicy.Disabled` — baseline supported but off by default (e.g. `Jailbreak`, where templates dominate the run).
    - `BaselineAttackPolicy.Forbidden` — baseline is meaningless for this scenario's comparison axis (e.g. `AdversarialBenchmark`, which compares against gold-standard answers). Explicit `include_baseline=True` raises `ValueError`.
-3. **Pass `strategy_class`, `default_strategy`, and `default_dataset_config` to `super().__init__()`:**
-
-```python
-class MyScenario(Scenario):
-    VERSION: int = 1
-    BASELINE_ATTACK_POLICY: ClassVar[BaselineAttackPolicy] = BaselineAttackPolicy.Enabled
-
-    @apply_defaults
-    def __init__(self, *, objective_scorer=None, scenario_result_id=None) -> None:
-        super().__init__(
-            version=self.VERSION,
-            strategy_class=MyStrategy,
-            default_strategy=MyStrategy.ALL,
-            default_dataset_config=DatasetConfiguration(dataset_names=["my_dataset"]),
-            objective_scorer=objective_scorer or self._get_default_objective_scorer(),
-            scenario_result_id=scenario_result_id,
-        )
-```
+3. **Pass `strategy_class`, `default_strategy`, and `default_dataset_config` to `super().__init__()`** (see the canonical example under "Constructor Pattern" below).
 
 For scenarios whose strategy enum is built dynamically (RapidResponse pattern), build the
 strategy class in a module-level `@cache`-decorated function and pass the result through

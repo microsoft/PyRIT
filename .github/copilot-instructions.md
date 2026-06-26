@@ -28,15 +28,29 @@ Do NOT leave comments about:
 
 Aim for fewer, higher-signal comments. A review with 2-3 important comments is better than 15 trivial ones.
 
-## Instruction Files
+## Skills
 
-BEFORE editing or code-reviewing any file, you MUST read the `.github/instructions/` files whose `applyTo` patterns match the files you are about to edit. For example:
-- Editing/code-reviewing `pyrit/**/*.py` → read `style-guide.instructions.md` and `user-custom.instructions.md`
-- Editing/code-reviewing `pyrit/scenario/**` → also read `scenarios.instructions.md`
-- Editing/code-reviewing `pyrit/prompt_converter/**` → also read `converters.instructions.md`
-- Editing/code-reviewing `tests/**` → also read `test.instructions.md`
-- Editing/code-reviewing `doc/**/*.py` or `doc/**/*.ipynb` → also read `docs.instructions.md`
-- Editing/code-reviewing `frontend/**/*.{ts,tsx}` → also read `frontend-style-guide.instructions.md`
-- Editing/code-reviewing `frontend/**/*.test.{ts,tsx}` → also read `frontend-test.instructions.md`
+PyRIT ships subsystem-specific **skills** under `.github/skills/`. BEFORE you create, modify, or **review** code in one of these areas, invoke the matching skill and follow its contract:
 
-Follow every rule in the applicable instruction files. Do not skip this step.
+| Area (path) | Skill |
+| --- | --- |
+| `pyrit/prompt_converter/**` | `prompt-converter-development` |
+| `pyrit/prompt_target/**` | `prompt-target-development` |
+| `pyrit/score/**` | `scorer-development` |
+| `pyrit/scenario/**` | `scenario-development` |
+| `pyrit/executor/attack/**` | `attack-strategy-development` |
+| `pyrit/models/**` | `models-guidelines` |
+| `pyrit/output/**` | `output-module` |
+| `pyrit/datasets/seed_datasets/**` | `seed-dataset-loaders` |
+| `doc/**/*.{py,ipynb}` | `docs-sync` |
+| `frontend/**/*.test.{ts,tsx}` | `frontend-testing` |
+
+Do not skip this step. If a skill's guidance and these repository instructions ever conflict, follow the skill for that subsystem.
+
+## Instructions
+
+These always-on instructions apply automatically by file path — no skill invocation needed:
+
+- `.github/instructions/style-guide.instructions.md` — all Python (`**/*.py`)
+- `.github/instructions/frontend-style-guide.instructions.md` — frontend TypeScript/React (`frontend/**/*.{ts,tsx}`)
+- `.github/instructions/test.instructions.md` — all tests (`**/tests/**`)

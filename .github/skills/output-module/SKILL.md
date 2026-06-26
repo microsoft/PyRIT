@@ -1,6 +1,9 @@
 ---
-applyTo: "pyrit/output/**"
+name: output-module
+description: PyRIT output module coding and review guidelines for code under pyrit/output/. Use when creating, modifying, or reviewing output module code.
 ---
+
+> Applies to `pyrit/output/**`.
 
 # PyRIT Output Module — Coding & Review Guidelines
 
