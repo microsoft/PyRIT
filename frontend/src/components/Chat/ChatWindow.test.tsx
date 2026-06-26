@@ -532,6 +532,29 @@ describe("ChatWindow Integration", () => {
       ).not.toBeInTheDocument();
     });
 
+    it("renders a system prompt banner when the loaded conversation has a system message", async () => {
+      mockedAttacksApi.getMessages.mockResolvedValue({ messages: [] });
+      mockedMapper.backendMessagesToFrontend.mockReturnValue([
+        { role: "system", content: "You are a pirate.", timestamp: "2026-01-01T00:00:00Z" },
+        { role: "user", content: "Ahoy", timestamp: "2026-01-01T00:00:01Z" },
+      ]);
+
+      render(
+        <TestWrapper>
+          <ChatWindow
+            {...defaultProps}
+            activeTarget={supportedTarget}
+            attackResultId="ar-existing"
+            conversationId="conv-existing"
+            activeConversationId="conv-existing"
+          />
+        </TestWrapper>
+      );
+
+      expect(await screen.findByTestId("system-prompt-banner")).toBeInTheDocument();
+      expect(screen.getByText("You are a pirate.")).toBeInTheDocument();
+    });
+
     it("forwards the typed system prompt when the target supports it", async () => {
       const user = userEvent.setup();
       primeSendMocks();

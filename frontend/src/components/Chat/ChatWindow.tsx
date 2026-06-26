@@ -6,6 +6,7 @@ import {
 } from '@fluentui/react-components'
 import { AddRegular, PanelRightRegular } from '@fluentui/react-icons'
 import MessageList from './MessageList'
+import SystemPromptBanner from './SystemPromptBanner'
 import ChatInputArea from './ChatInputArea'
 import ConversationPanel from './ConversationPanel'
 import ConverterPanel from './ConverterPanel'
@@ -579,6 +580,8 @@ export default function ChatWindow({
     }
   }, [attackResultId, activeTarget, activeConversationId, messages, labels, onConversationCreated])
 
+  const systemMessage = messages.find(message => message.role === 'system')
+
   return (
     <div className={styles.root}>
       {isConverterPanelOpen && (
@@ -632,6 +635,7 @@ export default function ChatWindow({
             </Tooltip>
           </div>
         </div>
+        {systemMessage && <SystemPromptBanner content={systemMessage.content} />}
         <MessageList
           messages={messages}
           onCopyToInput={handleCopyToInput}
