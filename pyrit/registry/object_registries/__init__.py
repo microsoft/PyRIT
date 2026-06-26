@@ -18,14 +18,10 @@ from pyrit.registry.object_registries.base_instance_registry import (
     BaseInstanceRegistry,
     RegistryEntry,
 )
-from pyrit.registry.object_registries.retrievable_instance_registry import (
-    RetrievableInstanceRegistry,
-)
 
 __all__ = [
     # Base classes
     "BaseInstanceRegistry",
-    "RetrievableInstanceRegistry",
     "RegistryEntry",
     # Concrete registries
     "AttackTechniqueRegistry",

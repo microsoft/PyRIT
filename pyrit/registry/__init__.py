@@ -35,7 +35,6 @@ from pyrit.registry.object_registries import (
     AttackTechniqueRegistry,
     BaseInstanceRegistry,
     RegistryEntry,
-    RetrievableInstanceRegistry,
 )
 from pyrit.registry.registry import Registry
 from pyrit.registry.tag_query import TagQuery
@@ -49,7 +48,6 @@ __all__ = [
     "DefaultInstanceRegistry",
     "InstanceRegistry",
     "Registry",
-    "RetrievableInstanceRegistry",
     "SupportsInstances",
     "ClassEntry",
     "discover_in_directory",
