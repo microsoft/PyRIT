@@ -5,12 +5,16 @@
 
 from __future__ import annotations
 
+from typing import Annotated, ClassVar
+
 from pydantic import Field
 
 from pyrit.models.identifiers.component_identifier import ComponentIdentifier
+from pyrit.models.identifiers.evaluation_markers import Evaluate
 from pyrit.models.identifiers.target_identifier import (  # noqa: TC001
     TargetIdentifier,  # runtime-required by Pydantic field annotations
 )
+from pyrit.models.parameter import ComponentType
 
 
 class ScorerIdentifier(ComponentIdentifier):
@@ -22,11 +26,13 @@ class ScorerIdentifier(ComponentIdentifier):
     ``sub_scorers`` (nested scorers).
     """
 
+    component_type: ClassVar[ComponentType] = ComponentType.SCORER
+
     #: The scorer category (e.g., ``"true_false"`` or ``"float_scale"``).
-    scorer_type: str | None = None
+    scorer_type: Annotated[str | None, Evaluate.Include()] = None
     #: Name of the aggregator function combining sub-scores (e.g., ``"AND_"``).
-    score_aggregator: str | None = None
+    score_aggregator: Annotated[str | None, Evaluate.Include()] = None
     #: Target an LLM-backed scorer calls (e.g., ``SelfAskScaleScorer``).
-    prompt_target: TargetIdentifier | None = None
+    prompt_target: Annotated[TargetIdentifier | None, Evaluate.Include()] = None
     #: Nested scorers a composite wraps, typed recursively.
-    sub_scorers: list[ScorerIdentifier] = Field(default_factory=list)
+    sub_scorers: Annotated[list[ScorerIdentifier], Evaluate.Include()] = Field(default_factory=list)

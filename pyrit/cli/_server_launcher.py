@@ -129,7 +129,7 @@ class ServerLauncher:
     """
 
     def __init__(self) -> None:
-        self._process: subprocess.Popen | None = None  # type: ignore[type-arg]
+        self._process: subprocess.Popen[bytes] | None = None
         self._pid: int | None = None
 
     # ------------------------------------------------------------------

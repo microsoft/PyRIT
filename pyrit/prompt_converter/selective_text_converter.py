@@ -31,7 +31,7 @@ class SelectiveTextConverter(PromptConverter):
         >>> # Convert only words matching a pattern
         >>> strategy = WordRegexSelectionStrategy(pattern=r"\\d+")
         >>> converter = SelectiveTextConverter(
-        ...     converter=Base64Converter(),
+        ...     sub_converter=Base64Converter(),
         ...     selection_strategy=strategy,
         ...     preserve_tokens=True
         ... )
@@ -47,7 +47,7 @@ class SelectiveTextConverter(PromptConverter):
     def __init__(
         self,
         *,
-        converter: PromptConverter,
+        sub_converter: PromptConverter,
         selection_strategy: TextSelectionStrategy,
         preserve_tokens: bool = False,
         start_token: str = "⟪",
@@ -58,7 +58,7 @@ class SelectiveTextConverter(PromptConverter):
         Initialize the selective text converter.
 
         Args:
-            converter (PromptConverter): The converter to apply to the selected text.
+            sub_converter (PromptConverter): The converter to apply to the selected text.
             selection_strategy (TextSelectionStrategy): The strategy for selecting which text to convert.
                 Can be character-level or word-level strategy.
             preserve_tokens (bool): If True, wraps converted text with start/end tokens.
@@ -78,9 +78,9 @@ class SelectiveTextConverter(PromptConverter):
         """
         super().__init__()
 
-        self._validate_converter(converter=converter, selection_strategy=selection_strategy)
+        self._validate_converter(sub_converter=sub_converter, selection_strategy=selection_strategy)
 
-        self._converter = converter
+        self._sub_converter = sub_converter
         self._selection_strategy = selection_strategy
         self._preserve_tokens = preserve_tokens
         self._start_token = start_token
@@ -103,20 +103,20 @@ class SelectiveTextConverter(PromptConverter):
                 "start_token": self._start_token,
                 "end_token": self._end_token,
             },
-            sub_converters=[self._converter.get_identifier()],
+            sub_converter=self._sub_converter.get_identifier(),
         )
 
     def _validate_converter(
         self,
         *,
-        converter: PromptConverter,
+        sub_converter: PromptConverter,
         selection_strategy: TextSelectionStrategy,
     ) -> None:
         """
         Validate the converter and selection strategy combination.
 
         Args:
-            converter (PromptConverter): The converter to validate.
+            sub_converter (PromptConverter): The converter to validate.
             selection_strategy (TextSelectionStrategy): The selection strategy to validate against.
 
         Raises:
@@ -124,18 +124,18 @@ class SelectiveTextConverter(PromptConverter):
             ValueError: If a word-level selection strategy is used with a WordLevelConverter
                 that has a non-default word_selection_strategy.
         """
-        if not converter.input_supported("text"):
-            raise ValueError(f"The converter {converter.__class__.__name__} does not support text input")
-        if not converter.output_supported("text"):
-            raise ValueError(f"The converter {converter.__class__.__name__} does not support text output")
+        if not sub_converter.input_supported("text"):
+            raise ValueError(f"The converter {sub_converter.__class__.__name__} does not support text input")
+        if not sub_converter.output_supported("text"):
+            raise ValueError(f"The converter {sub_converter.__class__.__name__} does not support text output")
 
         # Check for conflicting word selection strategies
         is_word_level_selection = isinstance(selection_strategy, WordSelectionStrategy)
-        if is_word_level_selection and isinstance(converter, WordLevelConverter):
-            has_non_default_strategy = not isinstance(converter._word_selection_strategy, AllWordsSelectionStrategy)
+        if is_word_level_selection and isinstance(sub_converter, WordLevelConverter):
+            has_non_default_strategy = not isinstance(sub_converter._word_selection_strategy, AllWordsSelectionStrategy)
             if has_non_default_strategy:
                 raise ValueError(
-                    f"Cannot use a WordSelectionStrategy with a {converter.__class__.__name__} that has a "
+                    f"Cannot use a WordSelectionStrategy with a {sub_converter.__class__.__name__} that has a "
                     f"non-default word_selection_strategy. When SelectiveTextConverter uses a word-level "
                     f"strategy, it passes individual words to the wrapped converter, making the wrapped "
                     f"converter's word selection strategy meaningless. Either use a character-level "
@@ -161,7 +161,7 @@ class SelectiveTextConverter(PromptConverter):
 
         # If using TokenSelectionStrategy, delegate to convert_tokens_async
         if self._is_token_based:
-            result = await self._converter.convert_tokens_async(
+            result = await self._sub_converter.convert_tokens_async(
                 prompt=prompt,
                 input_type="text",
                 start_token=self._start_token,
@@ -201,7 +201,7 @@ class SelectiveTextConverter(PromptConverter):
 
         # Convert selected words
         for idx in selected_indices:
-            conversion_result = await self._converter.convert_async(prompt=words[idx], input_type="text")
+            conversion_result = await self._sub_converter.convert_async(prompt=words[idx], input_type="text")
             converted_word = conversion_result.output_text
 
             if self._preserve_tokens:
@@ -234,7 +234,7 @@ class SelectiveTextConverter(PromptConverter):
         after_text = prompt[end_idx:]
 
         # Convert the selected region
-        conversion_result = await self._converter.convert_async(prompt=selected_text, input_type="text")
+        conversion_result = await self._sub_converter.convert_async(prompt=selected_text, input_type="text")
         converted_text = conversion_result.output_text
 
         if self._preserve_tokens:

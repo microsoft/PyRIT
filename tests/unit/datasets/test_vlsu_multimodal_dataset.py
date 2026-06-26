@@ -47,6 +47,11 @@ class TestVLSUMultimodalDataset:
         with pytest.raises(ValueError, match="Expected VLSUCategory"):
             _VLSUMultimodalDataset(categories=["C1: Slurs, Hate Speech, Hate Symbols"])
 
+    def test_init_with_empty_categories_raises(self):
+        """Test that an empty categories list raises ValueError."""
+        with pytest.raises(ValueError, match="`categories` must be a non-empty list"):
+            _VLSUMultimodalDataset(categories=[])
+
     def test_init_with_unsafe_grades(self):
         """Test initialization with custom unsafe grades."""
         dataset = _VLSUMultimodalDataset(unsafe_grades=["unsafe"])

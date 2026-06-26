@@ -284,7 +284,7 @@ async def print_scenario_result_async(*, result_dict: dict[str, Any]) -> None:
     Args:
         result_dict: ``ScenarioResult.model_dump(mode="json", by_alias=True)`` payload from the REST API.
     """
-    from pyrit.models.scenario_result import ScenarioResult
+    from pyrit.models import ScenarioResult
     from pyrit.output.scenario_result.pretty import PrettyScenarioResultMemoryPrinter
 
     scenario_result = ScenarioResult.model_validate(result_dict)

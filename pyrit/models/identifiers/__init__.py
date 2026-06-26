@@ -26,8 +26,11 @@ from pyrit.models.identifiers.evaluation_identifier import (
     ScorerEvaluationIdentifier,
     compute_eval_hash,
     compute_inner_attack_eval_hash,
+    derive_eval_config,
 )
+from pyrit.models.identifiers.evaluation_markers import EvalMarker, Evaluate, Exclude, Include, Unwrap
 from pyrit.models.identifiers.identifier_filters import IdentifierFilter, IdentifierType
+from pyrit.models.identifiers.param_markers import Param, ParamMarker
 from pyrit.models.identifiers.scorer_identifier import ScorerIdentifier
 from pyrit.models.identifiers.seed_identifier import SeedIdentifier
 from pyrit.models.identifiers.target_identifier import TargetIdentifier
@@ -43,10 +46,17 @@ __all__ = [
     "compute_eval_hash",
     "compute_inner_attack_eval_hash",
     "ConverterIdentifier",
+    "derive_eval_config",
+    "EvalMarker",
+    "Evaluate",
     "EvaluationIdentifier",
+    "Exclude",
     "Identifiable",
+    "Include",
     "ObjectiveTargetEvaluationIdentifier",
     "REGISTRY_NAME_PATTERN",
+    "Param",
+    "ParamMarker",
     "ScorerEvaluationIdentifier",
     "ScorerIdentifier",
     "SeedIdentifier",
@@ -54,6 +64,7 @@ __all__ = [
     "TARGET_EVAL_PARAM_FALLBACKS",
     "TARGET_EVAL_PARAMS",
     "TargetIdentifier",
+    "Unwrap",
     "validate_registry_name",
     "config_hash",
     "IdentifierFilter",

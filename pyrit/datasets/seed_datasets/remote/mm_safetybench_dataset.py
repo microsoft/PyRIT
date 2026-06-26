@@ -13,7 +13,7 @@ from pyrit.datasets.seed_datasets.remote._image_cache import (
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import Seed, SeedDataset, SeedObjective, SeedPrompt
+from pyrit.models import SeedDataset, SeedObjective, SeedPrompt, SeedUnion
 
 logger = logging.getLogger(__name__)
 
@@ -203,6 +203,8 @@ class _MMSafetyBenchDataset(_RemoteDatasetLoader):
         """
         self._validate_enum(variant, MMSafetyBenchVariant, "variant")
         if categories is not None:
+            if not categories:
+                raise ValueError("`categories` must be a non-empty list (pass None to include all categories)")
             self._validate_enums(categories, MMSafetyBenchCategory, "category")
 
         self.variant = variant
@@ -234,7 +236,7 @@ class _MMSafetyBenchDataset(_RemoteDatasetLoader):
         tiny_id_map = self._load_tiny_id_map(cache=cache) if self.use_tiny else None
         selected_categories = list(self.categories) if self.categories is not None else list(MMSafetyBenchCategory)
 
-        seeds: list[Seed] = []
+        seeds: list[SeedUnion] = []
         group_count = 0
         failed_image_count = 0
 
@@ -399,7 +401,7 @@ class _MMSafetyBenchDataset(_RemoteDatasetLoader):
         objective_text: str,
         rephrased_text: str,
         local_image_path: str,
-    ) -> list[Seed]:
+    ) -> list[SeedUnion]:
         """
         Build a ``SeedObjective`` + image ``SeedPrompt`` + text ``SeedPrompt`` group for one row.
 

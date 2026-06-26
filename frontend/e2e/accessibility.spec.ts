@@ -55,8 +55,8 @@ test.describe("Accessibility", () => {
     const configBtn = page.getByTitle("Configuration");
     await expect(configBtn).toBeVisible();
 
-    // Theme toggle button
-    const themeBtn = page.getByTitle(/light mode|dark mode/i);
+    // Theme toggle button (now a menu trigger with "Theme: <mode>" title)
+    const themeBtn = page.getByTitle(/^Theme:/);
     await expect(themeBtn).toBeVisible();
   });
 

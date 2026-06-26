@@ -58,7 +58,7 @@ jobs:
       stable: ${{ steps.matrix.outputs.stable }}
       versions_json: ${{ steps.matrix.outputs.versions_json }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           sparse-checkout: |
             .github/docs-versions.yml
@@ -94,7 +94,7 @@ jobs:
       BASE_URL: ${{ format('/{0}/{1}', github.event.repository.name, matrix.slug) }}
     steps:
       - name: Checkout ${{ matrix.ref }}
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: ${{ matrix.ref }}
 
@@ -113,7 +113,7 @@ jobs:
         # miss -> we do a fresh build and actions/cache saves the result on
         # job success, so the next run with the same SHA hits.
         id: cache
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: doc/_build/html
           key: docs-${{ env.CACHE_VERSION }}-${{ matrix.slug }}-${{ steps.sha.outputs.sha }}
@@ -204,7 +204,7 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           sparse-checkout: |
             .github/docs-versions.yml

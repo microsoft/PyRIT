@@ -13,7 +13,7 @@ per-row ``prompt_target_identifier`` and ``attack_identifier`` columns from
 ``PromptMemoryEntries``.
 
 Revision ID: b2f4c6a8d1e3
-Revises: 9c8b7a6d5e4f
+Revises: f1a2b3c4d5e6
 Create Date: 2026-05-20 12:00:00.000000
 """
 
@@ -39,7 +39,7 @@ def upgrade() -> None:
     """Apply this schema upgrade."""
     op.create_table(
         "Conversations",
-        sa.Column("conversation_id", sa.String(), primary_key=True, nullable=False),
+        sa.Column("conversation_id", sa.String(length=36), primary_key=True, nullable=False),
         sa.Column("target_identifier", sa.JSON(), nullable=True),
         sa.Column("pyrit_version", sa.String(), nullable=True),
     )

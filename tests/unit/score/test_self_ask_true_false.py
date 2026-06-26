@@ -51,6 +51,27 @@ async def test_true_false_scorer_score(patch_central_database, scorer_true_false
     assert score[0].scorer_class_identifier.class_name == "SelfAskTrueFalseScorer"
 
 
+@pytest.mark.parametrize("bool_value, expected", [(True, True), (False, False)])
+async def test_true_false_scorer_parses_json_boolean(patch_central_database, bool_value: bool, expected: bool):
+    # The true/false schema declares score_value as a JSON boolean; ensure the scorer
+    # parses a real boolean (not the string "True"/"False") into the correct score.
+    json_response = '{"score_value": ' + ("true" if bool_value else "false") + ', "description": "d", "rationale": "r"}'
+    response = Message(message_pieces=[MessagePiece(role="assistant", original_value=json_response)])
+
+    chat_target = MagicMock()
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+    chat_target.send_prompt_async = AsyncMock(return_value=[response])
+    scorer = SelfAskTrueFalseScorer(
+        chat_target=chat_target, true_false_question_path=TrueFalseQuestionPaths.GROUNDED.value
+    )
+
+    score = await scorer.score_text_async("true false")
+
+    assert len(score) == 1
+    assert score[0].get_value() is expected
+    assert score[0].score_value in ("true", "false")
+
+
 async def test_true_false_scorer_set_system_prompt(patch_central_database, scorer_true_false_response: Message):
     chat_target = MagicMock()
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
@@ -162,8 +183,8 @@ def test_self_ask_true_false_get_identifier_type(patch_central_database):
     assert "system_prompt_template" in identifier.params
 
 
-def test_self_ask_true_false_get_identifier_long_prompt_hashed(patch_central_database):
-    """Test that long system prompts are truncated when serialized via to_dict()."""
+def test_self_ask_true_false_get_identifier_long_prompt_stored_in_full(patch_central_database):
+    """Test that long system prompts are stored in full (no truncation) via to_dict()."""
     chat_target = MagicMock()
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
 
@@ -173,17 +194,14 @@ def test_self_ask_true_false_get_identifier_long_prompt_hashed(patch_central_dat
 
     identifier = scorer.get_identifier()
 
-    # The identifier object itself stores the full prompt in params
-    assert identifier.params["system_prompt_template"] is not None
-    assert len(identifier.params["system_prompt_template"]) > 100  # GROUNDED prompt is long
+    # The identifier object stores the full prompt in params
+    full_prompt = identifier.params["system_prompt_template"]
+    assert full_prompt is not None
+    assert len(full_prompt) > 100  # GROUNDED prompt is long
 
-    # But when serialized via to_dict(), long prompts are truncated
-    # Format: "<first 100 chars>... [sha256:<hash[:16]>]"  # noqa: ERA001
+    # to_dict() flattens params and stores the full value (no truncation)
     id_dict = identifier.to_dict()
-    sys_prompt_in_dict = id_dict.get("params", {}).get("system_prompt_template", "")
-    if sys_prompt_in_dict:
-        # If it's truncated, it will contain "... [sha256:"
-        assert "[sha256:" in sys_prompt_in_dict or len(sys_prompt_in_dict) <= 100
+    assert id_dict["system_prompt_template"] == full_prompt
 
 
 def test_self_ask_true_false_no_path_no_question(patch_central_database):

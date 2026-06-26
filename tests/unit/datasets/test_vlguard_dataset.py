@@ -88,6 +88,11 @@ class TestVLGuardDataset:
         with pytest.raises(ValueError, match="Invalid VLGuard categories"):
             _VLGuardDataset(categories=[invalid_cat])
 
+    def test_empty_categories_raises(self):
+        """Test that an empty categories list raises ValueError at construction."""
+        with pytest.raises(ValueError, match="`categories` must be a non-empty list"):
+            _VLGuardDataset(categories=[])
+
     def test_valid_categories_accepted(self):
         """Test that valid categories are accepted."""
         loader = _VLGuardDataset(categories=[VLGuardCategory.PRIVACY, VLGuardCategory.DECEPTION])

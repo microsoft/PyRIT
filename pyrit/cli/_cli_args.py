@@ -21,18 +21,18 @@ import json
 import logging
 import shlex
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, get_origin
+from typing import TYPE_CHECKING, Any, Literal, get_args, get_origin
 
 from pyrit.common.cli_helpers import (
     CONFIG_FILE_HELP,
     validate_log_level,
     validate_log_level_argparse,
 )
-from pyrit.common.parameter import Parameter, coerce_value
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from pyrit.models.parameter import Parameter
     from pyrit.setup.configuration_loader import ScenarioConfig
 
 # ---------------------------------------------------------------------------
@@ -569,20 +569,32 @@ def _arg_spec_from_parameter(*, param: Parameter) -> _ArgSpec:
 
     Returns:
         _ArgSpec: Spec with ``scenario__<name>`` result key and a parser
-            that routes through ``pyrit.common.parameter.coerce_value``.
+            that routes through ``pyrit.models.parameter.coerce_value``.
     """
+    from pyrit.models.parameter import Parameter
+
     multi = get_origin(param.param_type) is list
     parser: Callable[[str], Any] | None
     if multi:
-        # Per-element coercion; v1 only ships list[str].
-        parser = str
-    elif param.param_type is None or (param.param_type is str and param.choices is None):
-        # No coercion needed and no choices to enforce.
+        # Per-element coercion via a temporary scalar-typed Parameter.
+        type_args = get_args(param.param_type)
+        element_type = type_args[0] if type_args else str
+        element_param = Parameter(
+            name=param.name,
+            description=param.description,
+            param_type=element_type,
+        )
+
+        def parser(raw: str) -> Any:
+            return element_param.coerce_value(raw)
+
+    elif param.param_type is None or param.param_type is str:
+        # No coercion needed (plain str / untyped passthrough).
         parser = None
     else:
-        # Coerce + validate (handles ints/floats/bools AND str-with-choices).
+        # Coerce + validate (handles ints/floats/bools AND Literal/Enum membership).
         def parser(raw: str) -> Any:
-            return coerce_value(param=param, raw_value=raw)
+            return param.coerce_value(raw)
 
     return _ArgSpec(
         flags=[_normalize_scenario_flag(name=param.name)],
@@ -649,7 +661,9 @@ def build_parameters_from_api(*, api_params: list[dict[str, Any]]) -> list[Param
 
     Maps the display ``param_type`` string ("int", "float", "bool", "str",
     "list[...]", "any") back to a concrete ``param_type`` so the shell parser
-    can apply per-element coercion and treat list params as ``multi_value``.
+    can apply per-element coercion and treat list params as ``multi_value``. A
+    ``choices`` list is reconstructed into a ``Literal[...]`` (the single source
+    of truth for an allowed set) — typed by the same base scalar.
 
     Args:
         api_params: List of parameter dicts from ``GET /api/scenarios/catalog/{name}``.
@@ -657,26 +671,33 @@ def build_parameters_from_api(*, api_params: list[dict[str, Any]]) -> list[Param
     Returns:
         list[Parameter] | None: Parameter list when ``api_params`` is non-empty, else ``None``.
     """
+    from pyrit.models.parameter import Parameter
+
     if not api_params:
         return None
     type_map: dict[str, Any] = {"int": int, "float": float, "bool": bool, "str": str}
     parameters: list[Parameter] = []
     for p in api_params:
         type_display = p.get("param_type", "")
-        if p.get("is_list"):
-            element_type = type_map.get(type_display.removeprefix("list[").rstrip("]"), str)
-            resolved_type: Any = list[element_type]  # type: ignore[valid-type]
-        else:
-            resolved_type = type_map.get(type_display)
+        is_list = bool(p.get("is_list"))
+        base_name = type_display.removeprefix("list[").rstrip("]") if is_list else type_display
+        base_type = type_map.get(base_name, str)
+
         raw_choices = p.get("choices")
-        choices: tuple[Any, ...] | None = tuple(raw_choices) if raw_choices else None
+        if raw_choices:
+            choice_param = Parameter(name=p["name"], description="", param_type=base_type)
+            members = tuple(choice_param.coerce_value(c) for c in raw_choices)
+            element_type: Any = Literal[members]  # ty: ignore[invalid-type-form]
+        else:
+            element_type = type_map.get(base_name) if is_list else type_map.get(type_display)
+
+        resolved_type: Any = list[element_type] if is_list else element_type  # type: ignore[valid-type]
         parameters.append(
             Parameter(
                 name=p["name"],
                 description=p.get("description", ""),
                 param_type=resolved_type,
                 default=p.get("default"),
-                choices=choices,
             )
         )
     return parameters
