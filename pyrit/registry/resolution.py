@@ -274,6 +274,11 @@ def _resolve_registry_reference(
     built from a list of registry names. Each element is resolved by
     ``_resolve_single_reference`` (string → lookup, instance → passthrough).
 
+    The value's shape must match the reference's arity: a ``list[...]`` reference
+    requires a list and a scalar reference rejects one, so a shape mismatch fails
+    here with a clear message instead of constructing the component with the wrong
+    argument shape and erroring obscurely downstream.
+
     Args:
         value (Any): The raw value (a name, an instance, or a list of either).
         getter (Callable[[], _NamedInstanceRegistry]): Returns the instance registry.
@@ -286,10 +291,21 @@ def _resolve_registry_reference(
         Any: The resolved instance, or a list of resolved instances.
 
     Raises:
-        ValueError: If a name is not registered.
+        ValueError: If a name is not registered, or the value's shape (list vs.
+            scalar) does not match the reference's arity.
     """
-    if get_origin(annotation) is list and isinstance(value, list):
+    if get_origin(annotation) is list:
+        if not isinstance(value, list):
+            raise ValueError(
+                f"{owner}.{name}: expected a list of registry names or instances for this "
+                f'reference, but got {type(value).__name__}. Pass a list, e.g. {name}=["a", "b"].'
+            )
         return [_resolve_single_reference(value=item, getter=getter, owner=owner, name=name) for item in value]
+    if isinstance(value, list):
+        raise ValueError(
+            f"{owner}.{name}: expected a single registry name or instance for this reference, "
+            f'but got a list. Pass a single value, e.g. {name}="a".'
+        )
     return _resolve_single_reference(value=value, getter=getter, owner=owner, name=name)
 
 

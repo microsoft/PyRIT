@@ -253,6 +253,25 @@ class TestCreateInstance:
         with pytest.raises(ValueError, match="not found"):
             registry.create_instance("RoundRobinTarget", targets=["t1", "missing"])
 
+    def test_build_round_robin_resolves_prebuilt_instances_in_list(self, registry: TargetRegistry):
+        # Passthrough path inside a list: already-built instances are passed through
+        # unchanged rather than looked up by name.
+        t1 = MockPromptTarget(model_name="m", endpoint="http://a")
+        t2 = MockPromptTarget(model_name="m", endpoint="http://b")
+        rr = registry.create_instance("RoundRobinTarget", targets=[t1, t2])
+        assert isinstance(rr, RoundRobinTarget)
+
+    def test_build_round_robin_mixes_names_and_instances(self, registry: TargetRegistry):
+        registry.instances.register(MockPromptTarget(model_name="m", endpoint="http://a"), name="t1")
+        t2 = MockPromptTarget(model_name="m", endpoint="http://b")
+        rr = registry.create_instance("RoundRobinTarget", targets=["t1", t2])
+        assert isinstance(rr, RoundRobinTarget)
+
+    def test_build_round_robin_scalar_for_list_reference_raises(self, registry: TargetRegistry):
+        registry.instances.register(MockPromptTarget(model_name="m", endpoint="http://a"), name="t1")
+        with pytest.raises(ValueError, match="expected a list"):
+            registry.create_instance("RoundRobinTarget", targets="t1")
+
     def test_unknown_type_raises(self, registry: TargetRegistry):
         with pytest.raises(KeyError, match="not found"):
             registry.create_instance("NotARealTarget")

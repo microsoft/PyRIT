@@ -322,6 +322,11 @@ class TestCreateLLMScorer:
         finally:
             TargetRegistry.reset_registry_singleton()
 
+    def test_build_llm_scorer_list_for_scalar_reference_raises(self, registry: ScorerRegistry):
+        # A scalar reference (``chat_target``) must reject a list value.
+        with pytest.raises(ValueError, match="expected a single"):
+            registry.create_instance("SelfAskRefusalScorer", chat_target=["a", "b"])
+
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestCreateCompositeScorer:
@@ -344,6 +349,33 @@ class TestCreateCompositeScorer:
             registry.create_instance(
                 "TrueFalseCompositeScorer",
                 scorers=["s1", "missing"],
+                aggregator=TrueFalseScoreAggregator.OR,
+            )
+
+    def test_build_composite_resolves_prebuilt_scorers_in_list(self, registry: ScorerRegistry):
+        # Passthrough path inside a list: already-built scorers pass through unchanged.
+        composite = registry.create_instance(
+            "TrueFalseCompositeScorer",
+            scorers=[MockTrueFalseScorer(), MockTrueFalseScorer()],
+            aggregator=TrueFalseScoreAggregator.OR,
+        )
+        assert isinstance(composite, TrueFalseCompositeScorer)
+
+    def test_build_composite_mixes_names_and_instances(self, registry: ScorerRegistry):
+        registry.instances.register(MockTrueFalseScorer(), name="s1")
+        composite = registry.create_instance(
+            "TrueFalseCompositeScorer",
+            scorers=["s1", MockTrueFalseScorer()],
+            aggregator=TrueFalseScoreAggregator.OR,
+        )
+        assert isinstance(composite, TrueFalseCompositeScorer)
+
+    def test_build_composite_scalar_for_list_reference_raises(self, registry: ScorerRegistry):
+        registry.instances.register(MockTrueFalseScorer(), name="s1")
+        with pytest.raises(ValueError, match="expected a list"):
+            registry.create_instance(
+                "TrueFalseCompositeScorer",
+                scorers="s1",
                 aggregator=TrueFalseScoreAggregator.OR,
             )
 
