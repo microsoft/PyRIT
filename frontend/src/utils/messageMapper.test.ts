@@ -3,7 +3,6 @@ import {
   mimeTypeToDataType,
   dataTypeToAttachmentType,
   buildDataUri,
-  buildSystemPrompt,
   backendMessageToFrontend,
   backendMessagesToFrontend,
   attachmentToMessagePieceRequest,
@@ -92,33 +91,6 @@ describe("messageMapper", () => {
     it("should build audio data URI", () => {
       const result = buildDataUri("YXVkaW8=", "audio/wav");
       expect(result).toBe("data:audio/wav;base64,YXVkaW8=");
-    });
-  });
-
-  describe("buildSystemPrompt", () => {
-    it("should return undefined for an empty string", () => {
-      expect(buildSystemPrompt("")).toBeUndefined();
-    });
-
-    it("should return undefined for whitespace only", () => {
-      expect(buildSystemPrompt("   \n\t ")).toBeUndefined();
-    });
-
-    it("should build a prepended system message for non-blank text", () => {
-      const result = buildSystemPrompt("You are a helpful assistant.");
-      expect(result).toEqual([
-        {
-          role: "system",
-          pieces: [
-            { data_type: "text", original_value: "You are a helpful assistant." },
-          ],
-        },
-      ]);
-    });
-
-    it("should trim surrounding whitespace from the value", () => {
-      const result = buildSystemPrompt("  be concise  ");
-      expect(result?.[0].pieces[0].original_value).toBe("be concise");
     });
   });
 

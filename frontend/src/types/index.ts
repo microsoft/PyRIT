@@ -194,6 +194,7 @@ export interface CreateAttackRequest {
   labels?: Record<string, string>
   source_conversation_id?: string
   cutoff_index?: number
+  system_prompt?: string
   prepended_conversation?: PrependedMessageRequest[]
 }
 

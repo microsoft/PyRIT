@@ -16,7 +16,7 @@ import LabelsBar from '../Labels/LabelsBar'
 import type { ChatInputAreaHandle } from './ChatInputArea'
 import { attacksApi } from '../../services/api'
 import { toApiError } from '../../services/errors'
-import { buildMessagePieces, backendMessagesToFrontend, buildSystemPrompt } from '../../utils/messageMapper'
+import { buildMessagePieces, backendMessagesToFrontend } from '../../utils/messageMapper'
 import type { Message, MessageAttachment, TargetInstance, TargetInfo } from '../../types'
 import { targetEndpoint, targetModelName, targetType } from '../../utils/targetIdentity'
 import type { ViewName } from '../Sidebar/Navigation'
@@ -305,9 +305,7 @@ export default function ChatWindow({
         const createResponse = await attacksApi.createAttack({
           target_registry_name: activeTarget.target_registry_name,
           labels: labels,
-          prepended_conversation: supportsSystemPrompt
-            ? buildSystemPrompt(systemPrompt)
-            : undefined,
+          system_prompt: supportsSystemPrompt ? systemPrompt.trim() || undefined : undefined,
         })
         currentAttackResultId = createResponse.attack_result_id
         currentConversationId = createResponse.conversation_id

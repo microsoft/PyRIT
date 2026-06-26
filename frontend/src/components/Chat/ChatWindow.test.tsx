@@ -49,7 +49,6 @@ jest.mock("../../services/api", () => ({
 jest.mock("../../utils/messageMapper", () => ({
   buildMessagePieces: jest.fn(),
   backendMessagesToFrontend: jest.fn(),
-  buildSystemPrompt: jest.fn(),
 }));
 
 const mockedAttacksApi = attacksApi as jest.Mocked<typeof attacksApi>;
@@ -471,7 +470,7 @@ describe("ChatWindow Integration", () => {
   });
 
   // -----------------------------------------------------------------------
-  // System prompt (prepended_conversation) wiring
+  // System prompt (system_prompt) wiring
   // -----------------------------------------------------------------------
 
   describe("system prompt", () => {
@@ -479,10 +478,6 @@ describe("ChatWindow Integration", () => {
       ...mockTarget,
       capabilities: buildCapabilities({ supports_system_prompt: true }),
     };
-
-    const sentinelPrepended = [
-      { role: "system", pieces: [{ data_type: "text", original_value: "SYS" }] },
-    ];
 
     function primeSendMocks() {
       mockedMapper.buildMessagePieces.mockResolvedValue([
@@ -537,10 +532,9 @@ describe("ChatWindow Integration", () => {
       ).not.toBeInTheDocument();
     });
 
-    it("forwards the built prepended_conversation when the target supports it", async () => {
+    it("forwards the typed system prompt when the target supports it", async () => {
       const user = userEvent.setup();
       primeSendMocks();
-      mockedMapper.buildSystemPrompt.mockReturnValue(sentinelPrepended as never);
 
       render(
         <TestWrapper>
@@ -548,21 +542,24 @@ describe("ChatWindow Integration", () => {
         </TestWrapper>
       );
 
-      await user.type(screen.getByRole("textbox"), "Hello");
+      await user.click(screen.getByRole("button", { name: /system prompt/i }));
+      await user.type(
+        screen.getByRole("textbox", { name: /system prompt/i }),
+        "You are helpful"
+      );
+      await user.type(screen.getByPlaceholderText("Type prompt here"), "Hello");
       await user.click(screen.getByRole("button", { name: /send/i }));
 
       await waitFor(() => {
-        expect(mockedMapper.buildSystemPrompt).toHaveBeenCalled();
         expect(mockedAttacksApi.createAttack).toHaveBeenCalledWith(
-          expect.objectContaining({ prepended_conversation: sentinelPrepended })
+          expect.objectContaining({ system_prompt: "You are helpful" })
         );
       });
     });
 
-    it("never builds a system prompt when the target does not support it", async () => {
+    it("omits the system prompt when the target does not support it", async () => {
       const user = userEvent.setup();
       primeSendMocks();
-      mockedMapper.buildSystemPrompt.mockReturnValue(sentinelPrepended as never);
 
       render(
         <TestWrapper>
@@ -570,21 +567,19 @@ describe("ChatWindow Integration", () => {
         </TestWrapper>
       );
 
-      await user.type(screen.getByRole("textbox"), "Hello");
+      await user.type(screen.getByPlaceholderText("Type prompt here"), "Hello");
       await user.click(screen.getByRole("button", { name: /send/i }));
 
       await waitFor(() => {
         expect(mockedAttacksApi.createAttack).toHaveBeenCalled();
       });
-      expect(mockedMapper.buildSystemPrompt).not.toHaveBeenCalled();
       const createArgs = mockedAttacksApi.createAttack.mock.calls[0][0];
-      expect(createArgs.prepended_conversation).toBeUndefined();
+      expect(createArgs.system_prompt).toBeUndefined();
     });
 
     it("disables the toggle and drops the prompt for an explicitly unsupported target", async () => {
       const user = userEvent.setup();
       primeSendMocks();
-      mockedMapper.buildSystemPrompt.mockReturnValue(sentinelPrepended as never);
 
       const unsupportedTarget: TargetInstance = {
         ...mockTarget,
@@ -607,15 +602,13 @@ describe("ChatWindow Integration", () => {
       await waitFor(() => {
         expect(mockedAttacksApi.createAttack).toHaveBeenCalled();
       });
-      expect(mockedMapper.buildSystemPrompt).not.toHaveBeenCalled();
       const createArgs = mockedAttacksApi.createAttack.mock.calls[0][0];
-      expect(createArgs.prepended_conversation).toBeUndefined();
+      expect(createArgs.system_prompt).toBeUndefined();
     });
 
-    it("passes the operator's typed system prompt through to buildSystemPrompt", async () => {
+    it("omits the system prompt when left blank on a supporting target", async () => {
       const user = userEvent.setup();
       primeSendMocks();
-      mockedMapper.buildSystemPrompt.mockReturnValue(sentinelPrepended as never);
 
       render(
         <TestWrapper>
@@ -623,25 +616,19 @@ describe("ChatWindow Integration", () => {
         </TestWrapper>
       );
 
-      await user.click(screen.getByRole("button", { name: /system prompt/i }));
-      await user.type(
-        screen.getByRole("textbox", { name: /system prompt/i }),
-        "You are helpful"
-      );
       await user.type(screen.getByPlaceholderText("Type prompt here"), "Hello");
       await user.click(screen.getByRole("button", { name: /send/i }));
 
       await waitFor(() => {
-        expect(mockedMapper.buildSystemPrompt).toHaveBeenCalledWith(
-          "You are helpful"
-        );
+        expect(mockedAttacksApi.createAttack).toHaveBeenCalled();
       });
+      const createArgs = mockedAttacksApi.createAttack.mock.calls[0][0];
+      expect(createArgs.system_prompt).toBeUndefined();
     });
 
     it("clears a retained system prompt when switching to an unsupported target", async () => {
       const user = userEvent.setup();
       primeSendMocks();
-      mockedMapper.buildSystemPrompt.mockReturnValue(sentinelPrepended as never);
 
       const supportedA: TargetInstance = {
         ...mockTarget,
@@ -688,14 +675,15 @@ describe("ChatWindow Integration", () => {
       await user.click(screen.getByRole("button", { name: /send/i }));
 
       await waitFor(() => {
-        expect(mockedMapper.buildSystemPrompt).toHaveBeenCalledWith("");
+        expect(mockedAttacksApi.createAttack).toHaveBeenCalled();
       });
+      const createArgs = mockedAttacksApi.createAttack.mock.calls[0][0];
+      expect(createArgs.system_prompt).toBeUndefined();
     });
 
     it("preserves the system prompt across supporting targets", async () => {
       const user = userEvent.setup();
       primeSendMocks();
-      mockedMapper.buildSystemPrompt.mockReturnValue(sentinelPrepended as never);
 
       const supportedA: TargetInstance = {
         ...mockTarget,
@@ -730,8 +718,8 @@ describe("ChatWindow Integration", () => {
       await user.click(screen.getByRole("button", { name: /send/i }));
 
       await waitFor(() => {
-        expect(mockedMapper.buildSystemPrompt).toHaveBeenCalledWith(
-          "You are helpful"
+        expect(mockedAttacksApi.createAttack).toHaveBeenCalledWith(
+          expect.objectContaining({ system_prompt: "You are helpful" })
         );
       });
     });
