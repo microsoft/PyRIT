@@ -89,18 +89,18 @@ def reset_technique_registry():
     from pyrit.scenario.scenarios.airt.rapid_response import _build_rapid_response_strategy
 
     AttackTechniqueRegistry.reset_instance()
-    TargetRegistry.reset_instance()
+    TargetRegistry.reset_registry_singleton()
     _build_rapid_response_strategy.cache_clear()
 
     adv_target = MagicMock(spec=PromptTarget)
     adv_target.capabilities.includes.return_value = True
-    TargetRegistry.get_registry_singleton().register_instance(adv_target, name="adversarial_chat")
+    TargetRegistry.get_registry_singleton().instances.register(adv_target, name="adversarial_chat")
 
     technique_registry = AttackTechniqueRegistry.get_registry_singleton()
     technique_registry.register_from_factories(build_scenario_technique_factories())
     yield
     AttackTechniqueRegistry.reset_instance()
-    TargetRegistry.reset_instance()
+    TargetRegistry.reset_registry_singleton()
     _build_rapid_response_strategy.cache_clear()
 
 

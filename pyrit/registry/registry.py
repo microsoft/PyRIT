@@ -33,7 +33,6 @@ from pyrit.models import class_name_to_snake_case
 from pyrit.registry.base import ClassRegistryEntry
 from pyrit.registry.resolution import (
     derive_parameters,
-    is_component_type_resolvable,
     resolve_constructor_args,
 )
 
@@ -43,7 +42,7 @@ if TYPE_CHECKING:
     from typing_extensions import Self
 
     from pyrit.models.identifiers.component_identifier import ComponentIdentifier
-    from pyrit.models.parameter import Parameter
+    from pyrit.models.parameter import ComponentType, Parameter
 
 T = TypeVar("T")
 MetadataT = TypeVar("MetadataT", bound=ClassRegistryEntry)
@@ -326,11 +325,30 @@ class Registry(ABC, Generic[T, MetadataT]):
         # cheap, so the small duplication is deliberate rather than worth caching.
         parameters = self._derive_parameters(cls)
         for param in parameters:
-            if param.reference is not None and not is_component_type_resolvable(param.reference.component_type):
+            if param.reference is not None and not self._is_component_type_resolvable(param.reference.component_type):
                 raise ValueError(
                     f"{cls.__name__}: reference parameter '{param.name}' has no registry wired for component type "
                     f"'{param.reference.component_type}'."
                 )
+
+    @staticmethod
+    def _is_component_type_resolvable(component_type: ComponentType) -> bool:
+        """
+        Return whether a registry is wired to resolve references of ``component_type``.
+
+        This is the registration-time gate: a reference parameter whose component
+        type has no paired registry can never be resolved by name and should fail
+        fast at ``register_class`` time instead of erroring only at build time.
+
+        Args:
+            component_type (ComponentType): The referenced component family.
+
+        Returns:
+            bool: True when references of ``component_type`` can be resolved by name.
+        """
+        from pyrit.registry.resolution import _registry_getter_for_component_type
+
+        return _registry_getter_for_component_type(component_type) is not None
 
     def register_class(self, cls: type[T], *, name: str | None = None) -> None:
         """

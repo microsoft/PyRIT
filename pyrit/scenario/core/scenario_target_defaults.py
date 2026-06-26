@@ -76,7 +76,7 @@ def _get_default_chat_target(
         ValueError: If the registry entry exists but is not a PromptTarget.
     """
     registry = TargetRegistry.get_registry_singleton()
-    target = registry.get(preferred_target_key)
+    target = registry.instances.get(preferred_target_key)
     if target is not None:
         # Check required capabilities first (fail fast)
         if required_capabilities:

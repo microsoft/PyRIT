@@ -31,7 +31,7 @@ from pyrit.prompt_target import PromptTarget
 from pyrit.prompt_target.azure_ml_chat_target import AzureMLChatTarget
 from pyrit.prompt_target.openai.openai_target import OpenAITarget
 from pyrit.prompt_target.round_robin_target import RoundRobinTarget
-from pyrit.registry.object_registries import TargetRegistry
+from pyrit.registry import TargetRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -192,7 +192,7 @@ class TargetService:
         """
         items = [
             self._build_instance_from_object(target_registry_name=entry.name, target_obj=entry.instance)
-            for entry in self._registry.get_all_instances()
+            for entry in self._registry.instances.get_all_instances()
         ]
         page, has_more = self._paginate(items=items, cursor=cursor, limit=limit)
         next_cursor = page[-1].target_registry_name if has_more and page else None
@@ -227,7 +227,7 @@ class TargetService:
         Returns:
             TargetInstance if found, None otherwise.
         """
-        obj = self._registry.get_instance_by_name(target_registry_name)
+        obj = self._registry.instances.get(target_registry_name)
         if obj is None:
             return None
         return self._build_instance_from_object(target_registry_name=target_registry_name, target_obj=obj)
@@ -239,7 +239,7 @@ class TargetService:
         Returns:
             The PromptTarget object if found, None otherwise.
         """
-        return self._registry.get_instance_by_name(target_registry_name)
+        return self._registry.instances.get(target_registry_name)
 
     async def create_target_async(self, *, request: CreateTargetRequest) -> TargetInstance:
         """
@@ -281,7 +281,7 @@ class TargetService:
 
             target_obj = target_class(**params)
 
-        self._registry.register_instance(target_obj)
+        self._registry.instances.register(target_obj)
 
         target_registry_name = target_obj.get_identifier().unique_name
         return self._build_instance_from_object(target_registry_name=target_registry_name, target_obj=target_obj)
@@ -334,7 +334,7 @@ class TargetService:
         resolved_weights: list[int] = []
         duplicates: list[str] = []
         for idx, name in enumerate(registry_names):
-            target_obj = self._registry.get_instance_by_name(name)
+            target_obj = self._registry.instances.get(name)
             if target_obj is None:
                 raise ValueError(f"Target '{name}' not found in the registry.")
             target_hash = target_obj.get_identifier().hash

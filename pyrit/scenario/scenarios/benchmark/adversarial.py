@@ -83,7 +83,7 @@ class AdversarialBenchmark(Scenario):
     parameter (declared in ``supported_parameters``). Each target must
     already be registered in ``TargetRegistry`` — typically by
     ``TargetInitializer`` from ``ADVERSARIAL_CHAT_*`` env vars, or
-    programmatically via ``TargetRegistry.register_instance``.
+    programmatically via ``TargetRegistry.get_registry_singleton().instances.register``.
 
     At run time, ``_get_atomic_attacks_async`` performs the
     ``(technique × adversarial_target × dataset)`` cross-product: for each
@@ -130,7 +130,7 @@ class AdversarialBenchmark(Scenario):
                 description=(
                     "Registry names of adversarial chat targets to benchmark. "
                     "Each name must already be registered in TargetRegistry "
-                    "(via TargetInitializer or TargetRegistry.register_instance). "
+                    "(via TargetInitializer or TargetRegistry instance registration). "
                     "Use 'pyrit_scan list-targets' to see registered targets. "
                     "Settable via --adversarial-targets <name> [<name> ...] on the CLI, "
                     "or scenario.args.adversarial_targets in .pyrit_conf."
@@ -333,14 +333,14 @@ class AdversarialBenchmark(Scenario):
         resolved: list[tuple[str, PromptTarget]] = []
         unknown: list[str] = []
         for name in target_names:
-            instance = target_registry.get_instance_by_name(name)
+            instance = target_registry.instances.get(name)
             if instance is None:
                 unknown.append(name)
             else:
                 resolved.append((name, instance))
 
         if unknown:
-            available = sorted(target_registry.get_names())
+            available = sorted(target_registry.instances.get_names())
             raise ValueError(
                 f"AdversarialBenchmark: adversarial_targets {sorted(unknown)} not found in TargetRegistry. "
                 f"Available targets: {available}."

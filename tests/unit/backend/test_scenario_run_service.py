@@ -113,8 +113,8 @@ def mock_all_registries(mock_memory):
     mock_sr.create_instance.return_value = mock_scenario_instance
 
     mock_tr = MagicMock()
-    mock_tr.get_instance_by_name.return_value = MagicMock()
-    mock_tr.get_names.return_value = ["my_target"]
+    mock_tr.instances.get.return_value = MagicMock()
+    mock_tr.instances.get_names.return_value = ["my_target"]
 
     mock_ir = MagicMock()
     mock_ir.get_class.return_value = MagicMock(return_value=MagicMock(initialize_async=AsyncMock()))
@@ -174,8 +174,8 @@ class TestScenarioRunServiceStartRun:
         mock_sr.get_class.return_value = MagicMock()
 
         mock_tr = MagicMock()
-        mock_tr.get_instance_by_name.return_value = None
-        mock_tr.get_names.return_value = ["other_target"]
+        mock_tr.instances.get.return_value = None
+        mock_tr.instances.get_names.return_value = ["other_target"]
 
         with (
             patch(f"{_REGISTRY_PATCH_BASE}.ScenarioRegistry.get_registry_singleton", return_value=mock_sr),
@@ -217,7 +217,7 @@ class TestScenarioRunServiceStartRun:
         mock_sr.get_class.return_value = mock_scenario_class
 
         mock_tr = MagicMock()
-        mock_tr.get_instance_by_name.return_value = MagicMock()
+        mock_tr.instances.get.return_value = MagicMock()
 
         with (
             patch(f"{_REGISTRY_PATCH_BASE}.ScenarioRegistry.get_registry_singleton", return_value=mock_sr),
@@ -238,7 +238,7 @@ class TestScenarioRunServiceStartRun:
         mock_sr.get_class.return_value = mock_scenario_class
 
         mock_tr = MagicMock()
-        mock_tr.get_instance_by_name.return_value = MagicMock()
+        mock_tr.instances.get.return_value = MagicMock()
 
         with (
             patch(f"{_REGISTRY_PATCH_BASE}.ScenarioRegistry.get_registry_singleton", return_value=mock_sr),
@@ -379,8 +379,8 @@ class TestScenarioRunServiceStartRun:
         mock_sr.get_class.return_value = mock_scenario_class
 
         mock_tr = MagicMock()
-        mock_tr.get_instance_by_name.return_value = MagicMock()
-        mock_tr.get_names.return_value = ["my_target"]
+        mock_tr.instances.get.return_value = MagicMock()
+        mock_tr.instances.get_names.return_value = ["my_target"]
 
         mock_ir = MagicMock()
 

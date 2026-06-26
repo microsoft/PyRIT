@@ -4,11 +4,11 @@
 """
 Object registries package.
 
-This package contains registries that store pre-configured instances (not classes).
-Examples include ScorerRegistry which stores Scorer instances that have been
-initialized with their required parameters (e.g., chat_target).
-
-For registries that store classes (type[T]), see class_registries/.
+This package contains the legacy instance-only registry stack still used by
+``AttackTechniqueRegistry``. Component registries that hold pre-configured
+instances (converters, scorers, targets) now live in ``registry/components/`` as
+``Registry`` subclasses that expose their instances via the ``.instances``
+property.
 """
 
 from pyrit.registry.object_registries.attack_technique_registry import (
@@ -21,12 +21,6 @@ from pyrit.registry.object_registries.base_instance_registry import (
 from pyrit.registry.object_registries.retrievable_instance_registry import (
     RetrievableInstanceRegistry,
 )
-from pyrit.registry.object_registries.scorer_registry import (
-    ScorerRegistry,
-)
-from pyrit.registry.object_registries.target_registry import (
-    TargetRegistry,
-)
 
 __all__ = [
     # Base classes
@@ -35,6 +29,4 @@ __all__ = [
     "RegistryEntry",
     # Concrete registries
     "AttackTechniqueRegistry",
-    "ScorerRegistry",
-    "TargetRegistry",
 ]
