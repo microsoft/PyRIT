@@ -24,6 +24,7 @@ from pyrit.executor.attack import (
     CrescendoAttackResult,
 )
 from pyrit.models import (
+    JSON_SCHEMA_METADATA_KEY,
     AttackOutcome,
     ChatMessageRole,
     ComponentIdentifier,
@@ -138,9 +139,7 @@ def create_adversarial_json_response(
     The Crescendo attack expects the adversarial chat to return JSON with specific fields.
     This helper creates properly formatted responses for testing.
     """
-    return json.dumps(
-        {"generated_question": question, "last_response_summary": summary, "rationale_behind_jailbreak": rationale}
-    )
+    return json.dumps({"next_message": question, "last_response_summary": summary, "rationale": rationale})
 
 
 @pytest.fixture
@@ -877,16 +876,44 @@ class TestPromptGeneration:
         with pytest.raises(ValueError, match="No response received from adversarial chat"):
             await attack._send_prompt_to_adversarial_chat_async(prompt_text="Test prompt", context=basic_context)
 
+    async def test_send_prompt_to_adversarial_chat_forwards_json_schema(
+        self,
+        mock_objective_target: MagicMock,
+        mock_adversarial_chat: MagicMock,
+        mock_prompt_normalizer: MagicMock,
+        basic_context: CrescendoAttackContext,
+    ):
+        """The shared adversarial_chat JSON schema is forwarded to the target via metadata."""
+        attack = CrescendoTestHelper.create_attack(
+            objective_target=mock_objective_target,
+            adversarial_chat=mock_adversarial_chat,
+            prompt_normalizer=mock_prompt_normalizer,
+        )
+
+        schema = attack._adversarial_chat_system_prompt_template.response_json_schema
+        assert schema is not None
+
+        mock_prompt_normalizer.send_prompt_async.return_value = create_prompt_response(
+            text=create_adversarial_json_response()
+        )
+
+        await attack._send_prompt_to_adversarial_chat_async(prompt_text="Test prompt", context=basic_context)
+
+        sent_message = mock_prompt_normalizer.send_prompt_async.call_args.kwargs["message"]
+        metadata = sent_message.message_pieces[0].prompt_metadata
+        assert metadata["response_format"] == "json"
+        assert metadata[JSON_SCHEMA_METADATA_KEY] == schema
+
     @pytest.mark.parametrize(
         "response_json,expected_error",
         [
             # Missing required keys - the attack expects all three fields
-            ('{"generated_question": "Attack"}', "Missing required keys"),
+            ('{"next_message": "Attack"}', "Missing required keys"),
             # Extra keys are not allowed - strict JSON validation prevents unexpected data
             (
                 (
-                    '{"generated_question": "Attack", "last_response_summary": "Summary", '
-                    '"rationale_behind_jailbreak": "Rationale", "extra_key": "value"}'
+                    '{"next_message": "Attack", "last_response_summary": "Summary", '
+                    '"rationale": "Rationale", "extra_key": "value"}'
                 ),
                 "Unexpected keys",
             ),
@@ -896,10 +923,7 @@ class TestPromptGeneration:
             ('{"wrong_key": "value"}', "Missing required keys"),
             # Empty question is valid - the attack can handle empty strings
             (
-                (
-                    '{"generated_question": "", "last_response_summary": "Summary", '
-                    '"rationale_behind_jailbreak": "Rationale"}'
-                ),
+                ('{"next_message": "", "last_response_summary": "Summary", "rationale": "Rationale"}'),
                 None,
             ),
         ],
@@ -934,10 +958,10 @@ class TestPromptGeneration:
     @pytest.mark.parametrize(
         "raw,expected",
         [
-            ("generated_question", "generated_question"),
-            ("generatedQuestion", "generated_question"),
-            ("GeneratedQuestion", "generated_question"),
-            ("rationaleBehindJailbreak", "rationale_behind_jailbreak"),
+            ("next_message", "next_message"),
+            ("nextMessage", "next_message"),
+            ("NextMessage", "next_message"),
+            ("rationale", "rationale"),
             ("lastResponseSummary", "last_response_summary"),
             ("", ""),
         ],
@@ -955,7 +979,7 @@ class TestPromptGeneration:
 
         Regression test for the Azure DevOps Integration Tests failure on
         ``4_sequential_attack.ipynb``, where the adversarial model returned
-        ``generatedQuestion`` / ``rationaleBehindJailbreak`` /
+        ``nextMessage`` / ``rationale`` /
         ``lastResponseSummary`` for three retries straight and the strict
         snake_case-only parser tore down the run.
         """
@@ -964,9 +988,7 @@ class TestPromptGeneration:
             adversarial_chat=mock_adversarial_chat,
         )
         camel_case_response = (
-            '{"generatedQuestion": "Attack question", '
-            '"lastResponseSummary": "Summary text", '
-            '"rationaleBehindJailbreak": "Why this works"}'
+            '{"nextMessage": "Attack question", "lastResponseSummary": "Summary text", "rationale": "Why this works"}'
         )
 
         result = attack._parse_adversarial_response(camel_case_response)
@@ -989,9 +1011,9 @@ class TestPromptGeneration:
             adversarial_chat=mock_adversarial_chat,
         )
         response_with_extra = (
-            '{"generatedQuestion": "Attack", '
+            '{"nextMessage": "Attack", '
             '"lastResponseSummary": "Summary", '
-            '"rationaleBehindJailbreak": "Rationale", '
+            '"rationale": "Rationale", '
             '"unexpectedKey": "value"}'
         )
 

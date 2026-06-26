@@ -75,7 +75,7 @@ def warn_on_client_ignored_blocks(*, config_file: Path | None = None) -> None:
 
     for p in paths:
         try:
-            with open(p) as fh:
+            with open(p, encoding="utf-8") as fh:
                 data = yaml.safe_load(fh)
         except Exception:
             continue
@@ -103,7 +103,7 @@ def _extract_server_url(*, path: Path, yaml_module: Any) -> str | None:
         str | None: The URL string, or ``None`` if absent/malformed.
     """
     try:
-        with open(path) as fh:
+        with open(path, encoding="utf-8") as fh:
             data = yaml_module.safe_load(fh)
         if isinstance(data, dict):
             server_block = data.get("server")

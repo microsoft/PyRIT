@@ -86,6 +86,7 @@ dev = [
     "pandas>=2.2.0",
     "pre-commit>=4.2.0",
     "pytest>=9.0.3",
+    "pytest-rerunfailures>=15.1",
     "pytest-asyncio>=1.0.0",
     "diff-cover>=9.0.0",
     "pytest-cov>=6.1.1",

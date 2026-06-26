@@ -10,13 +10,16 @@ and object registries (which store T instances).
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import inspect
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol, TypeVar, runtime_checkable
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Iterator, Mapping
 
     from typing_extensions import Self
+
+    from pyrit.models.parameter import Parameter
 
 # Type variable for metadata (invariant for Protocol compatibility)
 MetadataT = TypeVar("MetadataT")
@@ -36,12 +39,22 @@ class ClassRegistryEntry:
         class_description (str): Human-readable description, typically from the class docstring.
         registry_name (str): The suffix-stripped snake_case key used in the registry
             (e.g., "content_harms" for ContentHarmsScenario).
+        parameters (tuple[Parameter, ...]): The derived build contract for the class.
+            Buildable registries (e.g. converters) populate this from the constructor
+            signature; scenarios/initializers use their own ``supported_parameters``
+            today and will migrate to this unified shape.
+        class_attributes (Mapping[str, Any]): Values sourced from class attributes
+            (declared on the identifier via ``Param.ClassAttr``), letting the entry
+            describe class-level facts — e.g. a converter's supported input/output
+            types — without constructing an instance. Empty for entries with none.
     """
 
     class_name: str
     class_module: str
     class_description: str = ""
     registry_name: str = ""
+    parameters: tuple[Parameter, ...] = field(kw_only=True, default=())
+    class_attributes: Mapping[str, Any] = field(kw_only=True, default_factory=dict)
 
     @staticmethod
     def description_from_docstring(cls: type, *, fallback: str = "") -> str:
@@ -57,6 +70,27 @@ class ClassRegistryEntry:
         doc = cls.__doc__ or ""
         cleaned = " ".join(doc.split())
         return cleaned or fallback
+
+    @staticmethod
+    def summary_from_docstring(cls: type) -> str:
+        """
+        Extract a short summary from the first paragraph of a class docstring.
+
+        Uses the class's own docstring only (never an inherited one), normalizes
+        indentation, and collapses the first paragraph's whitespace onto one line.
+        Empty when the class has no docstring. This is the catalog-display
+        counterpart to ``description_from_docstring`` (which collapses the whole
+        docstring); buildable registries populate ``class_description`` from this
+        first-paragraph form.
+
+        Returns:
+            str: The first-paragraph summary, or "" when there is no docstring.
+        """
+        raw = cls.__doc__
+        if not raw:
+            return ""
+        first_paragraph = inspect.cleandoc(raw).split("\n\n", 1)[0]
+        return " ".join(first_paragraph.split())
 
 
 @runtime_checkable

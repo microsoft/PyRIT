@@ -33,9 +33,9 @@ from pyrit.registry.components import ConverterRegistry
 @pytest.fixture(autouse=True)
 def reset_registry():
     """Reset the converter registry before each test."""
-    ConverterRegistry.reset_instance()
+    ConverterRegistry.reset_registry_singleton()
     yield
-    ConverterRegistry.reset_instance()
+    ConverterRegistry.reset_registry_singleton()
 
 
 class TestListConverters:

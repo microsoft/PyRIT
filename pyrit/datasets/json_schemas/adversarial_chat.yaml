@@ -1,0 +1,29 @@
+type: object
+description: >-
+  Structured response from a multi-turn adversarial-chat attacker (e.g.
+  Crescendo, TAP, PAIR). The attacker proposes the next message to send to the
+  target along with its reasoning and a summary of the target's previous reply.
+  Sharing one schema across these attacks lets their adversarial-chat prompts be
+  swapped interchangeably.
+properties:
+  next_message:
+    type: string
+    description: >-
+      The next adversarial prompt to send to the target model. This is the only
+      field consumed by the attack loop; the others support the attacker's own
+      reasoning.
+  rationale:
+    type: string
+    description: >-
+      The attacker's reasoning for this message: how it interprets the target's
+      last response and how the message advances the objective.
+  last_response_summary:
+    type: string
+    description: >-
+      A concise summary of the target's most recent response. Empty string when
+      there is no prior response.
+required:
+  - next_message
+  - rationale
+  - last_response_summary
+additionalProperties: false

@@ -7,7 +7,7 @@ Retrievable instance registry for PyRIT.
 .. note::
 
     **Legacy stack — do not build new registries on this.** New component
-    registries subclass ``BuildableRegistry`` and retain instances via the
+    registries subclass ``Registry`` and retain instances via the
     ``.instances`` property (``DefaultInstanceRegistry``), which already
     provides ``get``/``get_entry``/``get_all_instances``. See
     ``ConverterRegistry`` for the target shape. This class remains only for the
@@ -42,7 +42,7 @@ class RetrievableInstanceRegistry(BaseInstanceRegistry[T]):
     .. note::
 
         **Legacy — do not subclass for new registries.** Use
-        ``BuildableRegistry`` + the ``.instances`` property
+        ``Registry`` + the ``.instances`` property
         (``DefaultInstanceRegistry``), which already exposes
         ``get``/``get_entry``/``get_all_instances``. Retained only for the
         not-yet-migrated ``ScorerRegistry`` and ``TargetRegistry``.

@@ -8,7 +8,7 @@ Unit tests for pyrit.cli._config_reader.
 from unittest.mock import patch
 
 from pyrit.cli import _config_reader
-from pyrit.cli._config_reader import DEFAULT_SERVER_URL, read_server_url
+from pyrit.cli._config_reader import DEFAULT_SERVER_URL, read_server_url, warn_on_client_ignored_blocks
 
 
 def test_default_server_url_constant():
@@ -80,3 +80,11 @@ def test_read_server_url_empty_string_treated_as_missing(tmp_path):
     empty.write_text("server:\n  url: ''\n")
     with patch.object(_config_reader, "_DEFAULT_CONFIG_FILE", tmp_path / "missing.yaml"):
         assert read_server_url(config_file=empty) is None
+
+
+def test_warn_on_client_ignored_blocks_prints_deprecation(tmp_path, capsys):
+    cfg = tmp_path / "conf.yaml"
+    cfg.write_text("scenario:\n  name: test\n", encoding="utf-8")
+    with patch.object(_config_reader, "_DEFAULT_CONFIG_FILE", tmp_path / "missing.yaml"):
+        warn_on_client_ignored_blocks(config_file=cfg)
+    assert "Deprecation" in capsys.readouterr().out
