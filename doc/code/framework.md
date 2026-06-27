@@ -111,6 +111,7 @@ Each section below states what a component **owns** and, just as importantly, wh
 - Any branching decision (i.e. the next step depends on a previous result) belongs in an attack.
 - An attack should branch based on a **scorer result**, never on a raw target response directly (e.g. "was this prompt blocked?" is a scorer's job, not an attack's).
 - Attacks use scoring and target capabilities implicitly, and should support multi-modal.
+- An attack may ship with sensible **defaults**, but it should always **accept** (never hard-code) the pieces a technique configures: scorers, datasets/seeds (fed to the objective target as `prepended_conversation` and `next_message`), targets (objective and adversarial), and converters. Exposing these as parameters is what lets the attack be packaged as an Attack Technique.
 - Compound attacks are possible, combining different attacks in different ways.
 
 **Does NOT own**:
