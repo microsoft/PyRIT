@@ -60,6 +60,11 @@ Track conversations, scores, and attack results with SQLite or Azure SQL.
 Initialize PyRIT, configure defaults, and manage resiliency settings.
 ::::
 
+::::{card} 📓 Framework Documentation
+:link: ../contributing/7_notebooks
+Keep the component notebooks concise and executable, showing how the framework is used.
+::::
+
 :::::
 
 ---
@@ -269,7 +274,7 @@ One important thing to remember about this architecture is its swappable nature.
 
 - Setup wires up the environment a run depends on; it does not implement attack behavior.
 
-## Framework Component Documentation
+## [Framework Documentation](../contributing/7_notebooks.md)
 
 **Responsibility**: Show how the framework is used, concisely.
 
