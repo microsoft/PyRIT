@@ -24,8 +24,6 @@ is the buildable class catalog. Pre-configured instances live under the
 
 from __future__ import annotations
 
-import inspect
-import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -36,25 +34,9 @@ from pyrit.registry.instance_registry import DefaultInstanceRegistry, InstanceRe
 from pyrit.registry.registry import Registry
 
 if TYPE_CHECKING:
+    from types import ModuleType
+
     from pyrit.score.scorer import Scorer
-
-logger = logging.getLogger(__name__)
-
-
-def _scorer_type() -> type[Scorer]:
-    """
-    Return the ``Scorer`` base class, importing it lazily.
-
-    Used as the ``instance_type`` for the registry's ``instances`` container so a
-    non-scorer cannot be registered, without importing the score package at module
-    load (which would defeat lazy discovery).
-
-    Returns:
-        type[Scorer]: The ``Scorer`` base class.
-    """
-    from pyrit.score.scorer import Scorer
-
-    return Scorer
 
 
 @dataclass(frozen=True)
@@ -94,44 +76,30 @@ class ScorerRegistry(Registry["Scorer", ScorerMetadata]):
 
     def __init__(self, *, lazy_discovery: bool = True) -> None:
         """
-        Initialize the registry.
+        Initialize the registry and its typed ``instances`` container.
 
         Args:
             lazy_discovery (bool): If True, class discovery is deferred until first
                 access. If False, discovery runs immediately.
         """
         super().__init__(lazy_discovery=lazy_discovery)
-        self.instances: InstanceRegistry[Scorer] = DefaultInstanceRegistry(instance_type=_scorer_type)
+        self.instances: InstanceRegistry[Scorer] = DefaultInstanceRegistry(instance_type=self._base_type)
+
+    def _base_type(self) -> type[Scorer]:
+        """Return the ``Scorer`` base class, imported lazily."""
+        from pyrit.score.scorer import Scorer
+
+        return Scorer
+
+    def _discovery_package(self) -> ModuleType:
+        """Return the ``pyrit.score`` package scanned for scorer classes."""
+        from pyrit import score
+
+        return score
 
     def _identifier_type(self) -> type[ScorerIdentifier]:
         """Return ``ScorerIdentifier`` so its ``Param.*`` markers drive derivation."""
         return ScorerIdentifier
-
-    def _get_registry_name(self, cls: type[Scorer]) -> str:
-        """
-        Use the exact class name as the catalog key.
-
-        Scorers are referenced by their class name (e.g. ``"SelfAskRefusalScorer"``)
-        rather than the snake_case default used by other class registries.
-
-        Returns:
-            str: The class name.
-        """
-        return cls.__name__
-
-    def _discover(self) -> None:
-        """Discover all concrete ``Scorer`` subclasses from ``pyrit.score``."""
-        from pyrit import score
-        from pyrit.score.scorer import Scorer
-
-        for name in score.__all__:
-            cls = getattr(score, name, None)
-            if cls is None or not isinstance(cls, type):
-                continue
-            if not issubclass(cls, Scorer) or cls is Scorer or inspect.isabstract(cls):
-                continue
-            self.register_class(cls)
-            logger.debug(f"Registered scorer class: {cls.__name__}")
 
     def _metadata_class(self) -> type[ScorerMetadata]:
         """Return ``ScorerMetadata``; the base populates it from the common fields."""

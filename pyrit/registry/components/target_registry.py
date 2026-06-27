@@ -23,8 +23,6 @@ is the buildable class catalog. Pre-configured instances live under the
 
 from __future__ import annotations
 
-import inspect
-import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -34,25 +32,9 @@ from pyrit.registry.instance_registry import DefaultInstanceRegistry, InstanceRe
 from pyrit.registry.registry import Registry
 
 if TYPE_CHECKING:
+    from types import ModuleType
+
     from pyrit.prompt_target import PromptTarget
-
-logger = logging.getLogger(__name__)
-
-
-def _prompt_target_type() -> type[PromptTarget]:
-    """
-    Return the ``PromptTarget`` base class, importing it lazily.
-
-    Used as the ``instance_type`` for the registry's ``instances`` container so a
-    non-target cannot be registered, without importing the target package at module
-    load (which would defeat lazy discovery).
-
-    Returns:
-        type[PromptTarget]: The ``PromptTarget`` base class.
-    """
-    from pyrit.prompt_target import PromptTarget
-
-    return PromptTarget
 
 
 @dataclass(frozen=True)
@@ -83,44 +65,30 @@ class TargetRegistry(Registry["PromptTarget", TargetMetadata]):
 
     def __init__(self, *, lazy_discovery: bool = True) -> None:
         """
-        Initialize the registry.
+        Initialize the registry and its typed ``instances`` container.
 
         Args:
             lazy_discovery (bool): If True, class discovery is deferred until first
                 access. If False, discovery runs immediately.
         """
         super().__init__(lazy_discovery=lazy_discovery)
-        self.instances: InstanceRegistry[PromptTarget] = DefaultInstanceRegistry(instance_type=_prompt_target_type)
+        self.instances: InstanceRegistry[PromptTarget] = DefaultInstanceRegistry(instance_type=self._base_type)
+
+    def _base_type(self) -> type[PromptTarget]:
+        """Return the ``PromptTarget`` base class, imported lazily."""
+        from pyrit.prompt_target import PromptTarget
+
+        return PromptTarget
+
+    def _discovery_package(self) -> ModuleType:
+        """Return the ``pyrit.prompt_target`` package scanned for target classes."""
+        from pyrit import prompt_target
+
+        return prompt_target
 
     def _identifier_type(self) -> type[TargetIdentifier]:
         """Return ``TargetIdentifier`` so its ``Param.*`` markers drive derivation."""
         return TargetIdentifier
-
-    def _get_registry_name(self, cls: type[PromptTarget]) -> str:
-        """
-        Use the exact class name as the catalog key.
-
-        Targets are referenced by their class name (e.g. ``"OpenAIChatTarget"``)
-        rather than the snake_case default used by other class registries.
-
-        Returns:
-            str: The class name.
-        """
-        return cls.__name__
-
-    def _discover(self) -> None:
-        """Discover all concrete ``PromptTarget`` subclasses from ``pyrit.prompt_target``."""
-        from pyrit import prompt_target
-        from pyrit.prompt_target import PromptTarget
-
-        for name in prompt_target.__all__:
-            cls = getattr(prompt_target, name, None)
-            if cls is None or not isinstance(cls, type):
-                continue
-            if not issubclass(cls, PromptTarget) or cls is PromptTarget or inspect.isabstract(cls):
-                continue
-            self.register_class(cls)
-            logger.debug(f"Registered target class: {cls.__name__}")
 
     def _metadata_class(self) -> type[TargetMetadata]:
         """Return ``TargetMetadata``; the base populates it from the common fields."""

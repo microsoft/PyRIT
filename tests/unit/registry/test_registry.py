@@ -4,9 +4,9 @@
 """
 Unit tests for the standalone ``Registry`` base.
 
-``ConverterRegistry`` overrides ``_get_registry_name`` and ``_identifier_type``, so
+``ConverterRegistry`` overrides ``_identifier_type`` and supplies discovery hooks, so
 exercising the base only through it leaves the base's own defaults uncovered:
-snake_case naming, the no-identifier path, eager vs. lazy discovery, the metadata
+class-name keying, the no-identifier path, eager vs. lazy discovery, the metadata
 accessors, and the filter wiring. These tests drive a minimal subclass that keeps
 every base default.
 """
@@ -62,16 +62,16 @@ class _TaggedMetadata(ClassRegistryEntry):
     tags: tuple[str, ...] = field(kw_only=True, default=())
 
 
-def test_get_registry_name_defaults_to_snake_case():
+def test_get_registry_name_defaults_to_class_name():
     registry = WidgetRegistry()
 
-    assert registry.get_class_names() == ["sample_widget", "undocumented_widget"]
+    assert registry.get_class_names() == ["SampleWidget", "UndocumentedWidget"]
 
 
 def test_build_metadata_uses_first_paragraph_summary():
     registry = WidgetRegistry()
 
-    meta = registry.get_registered_class_metadata("sample_widget")
+    meta = registry.get_registered_class_metadata("SampleWidget")
 
     assert meta is not None
     assert meta.class_description == "A sample widget."
@@ -82,7 +82,7 @@ def test_build_metadata_uses_first_paragraph_summary():
 def test_build_metadata_empty_description_without_docstring():
     registry = WidgetRegistry()
 
-    meta = registry.get_registered_class_metadata("undocumented_widget")
+    meta = registry.get_registered_class_metadata("UndocumentedWidget")
 
     assert meta is not None
     assert meta.class_description == ""
@@ -91,7 +91,7 @@ def test_build_metadata_empty_description_without_docstring():
 def test_class_attributes_empty_without_identifier_type():
     registry = WidgetRegistry()
 
-    meta = registry.get_registered_class_metadata("sample_widget")
+    meta = registry.get_registered_class_metadata("SampleWidget")
 
     assert meta is not None
     assert meta.class_attributes == {}
@@ -100,7 +100,7 @@ def test_class_attributes_empty_without_identifier_type():
 def test_parameters_have_no_references_without_identifier_type():
     registry = WidgetRegistry()
 
-    meta = registry.get_registered_class_metadata("sample_widget")
+    meta = registry.get_registered_class_metadata("SampleWidget")
 
     assert meta is not None
     assert all(p.reference is None for p in meta.parameters)
@@ -109,7 +109,7 @@ def test_parameters_have_no_references_without_identifier_type():
 def test_create_instance_builds_object():
     registry = WidgetRegistry()
 
-    widget = registry.create_instance("sample_widget", size=3)
+    widget = registry.create_instance("SampleWidget", size=3)
 
     assert isinstance(widget, SampleWidget)
     assert widget.size == 3
@@ -141,8 +141,8 @@ def test_get_class_metadata_builds_for_unregistered_class():
     meta = registry.get_class_metadata(UnregisteredWidget)
 
     assert meta.class_name == "UnregisteredWidget"
-    assert meta.registry_name == "unregistered_widget"
-    assert "unregistered_widget" not in registry.get_class_names()
+    assert meta.registry_name == "UnregisteredWidget"
+    assert "UnregisteredWidget" not in registry.get_class_names()
 
 
 def test_get_class_unknown_name_raises():
@@ -156,8 +156,8 @@ def test_iter_and_contains_and_len():
     registry = WidgetRegistry()
 
     assert len(registry) == 2
-    assert "sample_widget" in registry
-    assert list(registry) == ["sample_widget", "undocumented_widget"]
+    assert "SampleWidget" in registry
+    assert list(registry) == ["SampleWidget", "UndocumentedWidget"]
 
 
 def test_get_all_metadata_no_filters_returns_all():
@@ -165,23 +165,23 @@ def test_get_all_metadata_no_filters_returns_all():
 
     all_meta = registry.get_all_registered_class_metadata()
 
-    assert {m.registry_name for m in all_meta} == {"sample_widget", "undocumented_widget"}
+    assert {m.registry_name for m in all_meta} == {"SampleWidget", "UndocumentedWidget"}
 
 
 def test_get_all_metadata_include_filter_matches_subset():
     registry = WidgetRegistry()
 
-    result = registry.get_all_registered_class_metadata(include_filters={"registry_name": "sample_widget"})
+    result = registry.get_all_registered_class_metadata(include_filters={"registry_name": "SampleWidget"})
 
-    assert [m.registry_name for m in result] == ["sample_widget"]
+    assert [m.registry_name for m in result] == ["SampleWidget"]
 
 
 def test_get_all_metadata_exclude_filter_removes_match():
     registry = WidgetRegistry()
 
-    result = registry.get_all_registered_class_metadata(exclude_filters={"registry_name": "sample_widget"})
+    result = registry.get_all_registered_class_metadata(exclude_filters={"registry_name": "SampleWidget"})
 
-    assert [m.registry_name for m in result] == ["undocumented_widget"]
+    assert [m.registry_name for m in result] == ["UndocumentedWidget"]
 
 
 def test_matches_filters_list_containment():
