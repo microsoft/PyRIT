@@ -85,6 +85,8 @@ Each section below states what a component **owns** and, just as importantly, wh
 
 ## [Datasets](./datasets/0_dataset)
 
+**Source**: `pyrit/datasets/` (providers); seed/prompt types in `pyrit/models/seeds/`.
+
 **Responsibility**: Provide a single place to define and manage the inputs to an attack — prompts, jailbreak templates, source images, attack strategies, and similar seeds.
 
 - New datasets can be added in the dataset module.
@@ -105,6 +107,8 @@ Each section below states what a component **owns** and, just as importantly, wh
 **Contributing (difficulty: easy)**: Are there more prompts and jailbreak templates you can add for scenarios you're testing for? It is easy to add new dataset providers.
 
 ## [Attacks](./executor/0_executor)
+
+**Source**: `pyrit/executor/attack/`.
 
 **Responsibility**: Own the *algorithm and control flow* of achieving a single objective — managing the conversation between objective and adversarial targets, and using datasets, converters, and scorers along the way.
 
@@ -131,6 +135,8 @@ Each section below states what a component **owns** and, just as importantly, wh
 **Contributing (difficulty: hard)**: The best way to contribute is likely opening issues if you run into limitations.
 
 ## Attack Technique
+
+**Source**: `pyrit/scenario/core/attack_technique.py` and `attack_technique_factory.py`; built-in registrations in `pyrit/setup/initializers/components/`.
 
 **Responsibility**: A single, declarative **configuration** of an attack — no new logic. It bundles an existing attack class with the strategy, converters, datasets, and prompts that define one named technique.
 
@@ -162,6 +168,8 @@ AttackTechniqueFactory(
 
 ## [Scenarios](./scenarios/0_scenarios)
 
+**Source**: `pyrit/scenario/`.
+
 **Responsibility**: The avenue to "run PyRIT against something" — **select** which attack techniques and datasets to run, then orchestrate them at scale.
 
 - A scenario takes user input and uses it to package datasets with attack techniques.
@@ -181,6 +189,8 @@ AttackTechniqueFactory(
 
 ## [Converters](./converters/0_converters)
 
+**Source**: `pyrit/prompt_converter/`.
+
 **Responsibility**: Convert a prompt into something else. Converters can be stacked and combined, and can be as varied as translating a text prompt into a Word document, rephrasing a prompt, or adding a text overlay to an image.
 
 **Does NOT own**:
@@ -194,6 +204,8 @@ AttackTechniqueFactory(
 **Contributing (difficulty: easy)**: The existing pattern is well-defined. Are there ways prompts can be converted that would be useful for an attack?
 
 ## [Target](./targets/0_prompt_targets.md)
+
+**Source**: `pyrit/prompt_target/`; message shaping in `pyrit/message_normalizer/`.
 
 **Responsibility**: "The thing we're sending the prompt to." Many other components use it, including scorers, attacks, and converters.
 
@@ -214,6 +226,8 @@ AttackTechniqueFactory(
 - Are there models you want to use at any stage or for different attacks? And could your model simply be one of the existing targets?
 
 ## [Scoring](./scoring/0_scoring.ipynb)
+
+**Source**: `pyrit/score/`.
 
 **Responsibility**: Give feedback to the attack on what happened with a prompt — from "was this prompt blocked?" to "was our objective achieved?". Scoring owns the *interpretation* of a response; every decision an attack makes is based on a scorer result.
 
@@ -237,6 +251,8 @@ The modules below are the supporting library the core components are built on.
 
 ## [Registry](./registry/0_registry)
 
+**Source**: `pyrit/registry/`.
+
 **Responsibility**: Build and store the core components — the **construction** side of the framework.
 
 - If you are creating a component from user input (e.g. via config, REST, or automatically), it should go through the registry.
@@ -248,6 +264,8 @@ The modules below are the supporting library the core components are built on.
 
 ## Models
 
+**Source**: `pyrit/models/` (including `pyrit/models/identifiers/`).
+
 **Responsibility**: A lightweight module where core types are defined — the **description** side of the framework. These types should be used wherever possible to prevent drift.
 
 - If you are creating a class that overlaps heavily with another, or using a dict to serialize across boundaries, consider whether you can use or move it into `pyrit.models`.
@@ -257,13 +275,31 @@ The modules below are the supporting library the core components are built on.
 
 ## [Output](./output/0_output)
 
+**Source**: `pyrit/output/`.
+
 **Responsibility**: Render finished components — attack results, scenario results, conversations, and scores — to different surfaces (terminal, files, Jupyter). Output is invoked directly by the CLI and in notebooks; the components it renders do not call into it.
 
 **Does NOT own**:
 
 - Live, in-run progress printing — that belongs to the scenario's own printer.
 
+## Backend
+
+**Source**: `pyrit/backend/`.
+
+**Responsibility**: Expose PyRIT through a REST API for the frontend and other clients. The backend owns presentation-specific logic and models — request/response shapes, mapping, and HTTP concerns — but should still use `pyrit.models` and the registry wherever it can.
+
+- The backend may define its own presentation models, but where a `pyrit.models` type already exists it should reuse that type rather than redefine it.
+- Components should be constructed through the registry, not built directly in the backend.
+
+**Does NOT own**:
+
+- The shape of core types — that is Models.
+- Constructing or storing components — that is the Registry.
+
 ## [Memory](./memory/0_memory.md)
+
+**Source**: `pyrit/memory/`.
 
 **Responsibility**: The canonical store that components read from and write to — seeds, conversations, scores, and attack results. When a component needs more than what is passed in, it goes through memory.
 
@@ -271,11 +307,15 @@ One important thing to remember about this architecture is its swappable nature.
 
 ## [Setup](./setup/0_setup)
 
+**Source**: `pyrit/setup/`.
+
 **Responsibility**: Initialize PyRIT and configure framework-wide defaults — memory selection, default targets, and resiliency settings.
 
 - Setup wires up the environment a run depends on; it does not implement attack behavior.
 
 ## [Framework Documentation](../contributing/7_notebooks.md)
+
+**Source**: `doc/` (component notebooks, e.g. `doc/code/`).
 
 **Responsibility**: Show how the framework is used, concisely.
 
