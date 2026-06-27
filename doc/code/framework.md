@@ -10,14 +10,19 @@ Learn how to use PyRIT's components to build red teaming workflows.
 Load, create, and manage seed datasets for red teaming campaigns.
 ::::
 
-::::{card} ⚔️ Attacks & Executors
+::::{card} ⚔️ Attacks
 :link: ./executor/0_executor
 Run single-turn and multi-turn attacks — Crescendo, TAP, Skeleton Key, and more.
 ::::
 
-::::{card} 🔌 Targets
-:link: ./targets/0_prompt_targets
-Connect to OpenAI, Azure, Anthropic, HuggingFace, HTTP endpoints, and custom targets.
+::::{card} 🧩 Attack Techniques
+:link: ./scenarios/0_attack_techniques
+Package a configured attack — role-play, many-shot, crescendo, a jailbreak template — as a reusable, named recipe.
+::::
+
+::::{card} 📋 Scenarios
+:link: ./scenarios/0_scenarios
+Run standardized evaluation scenarios at scale across harm categories.
 ::::
 
 ::::{card} 🔄 Converters
@@ -25,24 +30,14 @@ Connect to OpenAI, Azure, Anthropic, HuggingFace, HTTP endpoints, and custom tar
 Transform prompts with text, audio, image, and video converters.
 ::::
 
+::::{card} 🔌 Targets
+:link: ./targets/0_prompt_targets
+Connect to OpenAI, Azure, Anthropic, HuggingFace, HTTP endpoints, and custom targets.
+::::
+
 ::::{card} 📊 Scoring
 :link: ./scoring/0_scoring
 Evaluate AI responses with true/false, Likert, classification, and custom scorers.
-::::
-
-::::{card} 💾 Memory
-:link: ./memory/0_memory
-Track conversations, scores, and attack results with SQLite or Azure SQL.
-::::
-
-::::{card} ⚙️ Setup & Configuration
-:link: ./setup/0_setup
-Initialize PyRIT, configure defaults, and manage resiliency settings.
-::::
-
-::::{card} 📋 Scenarios
-:link: ./scenarios/0_scenarios
-Run standardized evaluation scenarios at scale across harm categories.
 ::::
 
 ::::{card} 🗂️ Registry
@@ -53,6 +48,16 @@ Register and discover targets, scorers, and converters via class and instance re
 ::::{card} 🖨️ Output
 :link: ./output/0_output
 Render attack results, scenario results, conversations, and scores to terminal, files, or Jupyter.
+::::
+
+::::{card} 💾 Memory
+:link: ./memory/0_memory
+Track conversations, scores, and attack results with SQLite or Azure SQL.
+::::
+
+::::{card} ⚙️ Setup
+:link: ./setup/0_setup
+Initialize PyRIT, configure defaults, and manage resiliency settings.
 ::::
 
 :::::
