@@ -335,17 +335,10 @@ function App() {
     />
   )
 
-  // Onboarding tour — pass handleNavigate so the tour can switch views between steps
+  // Onboarding tour — pass handleNavigate so the tour can switch views between steps.
+  // The tour does not auto-start; users launch it from the "Take a tour" button in the top bar.
   const { resolved } = useTheme()
-  const { startTour, hasCompletedTour, tourProps } = useTour(handleNavigate, resolved === 'dark', currentView)
-
-  // Auto-start the tour on first visit
-  useEffect(() => {
-    if (!hasCompletedTour) {
-      startTour()
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  const { startTour, tourProps } = useTour(handleNavigate, resolved === 'dark', currentView)
 
   return (
     <ErrorBoundary>

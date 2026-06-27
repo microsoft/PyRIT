@@ -15,6 +15,7 @@ Converters can be:
 import base64
 import inspect
 import mimetypes
+import types
 import uuid
 from functools import lru_cache
 from pathlib import Path
@@ -34,15 +35,12 @@ from pyrit.backend.models.converters import (
     CreateConverterResponse,
     PreviewStep,
 )
+from pyrit.common import REQUIRED_VALUE
 from pyrit.memory import data_serializer_factory
 from pyrit.models import PromptDataType
-
-# ``get_union_non_none_args`` is a general type-introspection utility used here to
-# render parameter types for the catalog (a presentation concern owned by this
-# service).
+from pyrit.models.parameter import Parameter
 from pyrit.registry.components import ConverterRegistry
-from pyrit.registry.components.converter_registry import _ConverterParameterMetadata
-from pyrit.registry.resolution import get_union_non_none_args
+from pyrit.registry.resolution import display_choices
 
 
 def _serialize_type(annotation: Any) -> str:
@@ -60,11 +58,14 @@ def _serialize_type(annotation: Any) -> str:
     if get_origin(annotation) is Literal:
         args = get_args(annotation)
         return f"Literal[{', '.join(repr(a) for a in args)}]"
-    non_none = get_union_non_none_args(annotation)
-    if non_none is not None and len(non_none) == 1:
-        inner = _serialize_type(non_none[0])
-        has_none = type(None) in get_args(annotation)
-        return f"Optional[{inner}]" if has_none else inner
+    origin = get_origin(annotation)
+    if origin is Union or origin is types.UnionType:
+        args = get_args(annotation)
+        non_none = [a for a in args if a is not type(None)]
+        if len(non_none) == 1:
+            inner = _serialize_type(non_none[0])
+            has_none = type(None) in args
+            return f"Optional[{inner}]" if has_none else inner
     if hasattr(annotation, "__name__"):
         return str(annotation.__name__)
     return str(annotation)
@@ -133,33 +134,37 @@ class ConverterService:
                 converter_type=metadata.class_name,
                 supported_input_types=list(metadata.supported_input_types),
                 supported_output_types=list(metadata.supported_output_types),
-                parameters=[self._build_parameter_schema(p) for p in metadata.parameters if p.coercible_from_string],
+                parameters=[self._build_parameter_schema(p) for p in metadata.parameters if p.is_string_coercible],
                 is_llm_based=metadata.is_llm_based,
                 description=metadata.class_description or None,
             )
-            for metadata in self._registry.list_class_metadata()
+            for metadata in self._registry.get_all_registered_class_metadata()
         ]
 
         return ConverterCatalogResponse(items=items)
 
     @staticmethod
-    def _build_parameter_schema(parameter: _ConverterParameterMetadata) -> ConverterParameterSchema:
+    def _build_parameter_schema(parameter: Parameter) -> ConverterParameterSchema:
         """
-        Map registry parameter metadata to the catalog DTO.
+        Map a derived ``Parameter`` to the catalog DTO.
 
-        Renders the raw annotation to a human-readable ``type_name`` for the
-        frontend (presentation concern owned by this service).
+        Renders the parameter's ``param_type`` to a human-readable ``type_name`` and
+        projects its allowed values (presentation concerns owned by this service).
+        Required-ness is read from the ``REQUIRED_VALUE`` sentinel default.
 
         Returns:
             ConverterParameterSchema: The parameter schema for the catalog entry.
         """
+        required = parameter.default is REQUIRED_VALUE
+        default_value = None if required or parameter.default is None else str(parameter.default)
+        choices = display_choices(parameter.param_type)
         return ConverterParameterSchema(
             name=parameter.name,
-            type_name=_serialize_type(parameter.annotation),
-            required=parameter.required,
-            default_value=parameter.default_value,
-            choices=list(parameter.choices) if parameter.choices is not None else None,
-            description=parameter.description,
+            type_name=_serialize_type(parameter.param_type),
+            required=required,
+            default_value=default_value,
+            choices=[str(c) for c in choices] if choices is not None else None,
+            description=parameter.description or None,
         )
 
     async def get_converter_async(self, *, converter_id: str) -> ConverterInstance | None:

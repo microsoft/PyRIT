@@ -7,7 +7,7 @@ Base instance registry for PyRIT.
 .. note::
 
     **Legacy stack — do not build new registries on this.** New component
-    registries should subclass ``BuildableRegistry`` (a class catalog that can
+    registries should subclass ``Registry`` (a class catalog that can
     build instances by name) and hold pre-configured instances via the
     ``.instances`` property (a ``DefaultInstanceRegistry``). See
     ``ConverterRegistry`` for the target shape. This class and
@@ -55,7 +55,7 @@ class BaseInstanceRegistry(ABC, RegistryProtocol[ComponentIdentifier], Generic[T
     .. note::
 
         **Legacy — do not subclass for new registries.** New component
-        registries subclass ``BuildableRegistry`` and expose retained instances
+        registries subclass ``Registry`` and expose retained instances
         via the ``.instances`` property (``DefaultInstanceRegistry``), which
         carries this same surface (``register``/``get``/``get_by_tag``/
         ``add_tags``/``find_dependents_of_tag``/``list_metadata``). This class

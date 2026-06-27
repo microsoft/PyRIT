@@ -18,7 +18,7 @@ from abc import ABC
 from collections.abc import Sequence
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, cast, get_origin
+from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 try:
     # Built-in on Python 3.11+. Fall back to the ``exceptiongroup`` backport on 3.10
@@ -29,9 +29,8 @@ except ImportError:  # pragma: no cover - exercised only on 3.10
 
 from tqdm.auto import tqdm
 
-from pyrit.common import REQUIRED_VALUE, Parameter, apply_defaults
+from pyrit.common import REQUIRED_VALUE, apply_defaults
 from pyrit.common.deprecation import print_deprecation_message
-from pyrit.common.parameter import coerce_value, validate_param_type
 from pyrit.common.utils import to_sha256
 from pyrit.executor.attack import AttackExecutor
 from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
@@ -45,6 +44,7 @@ from pyrit.models import (
     ScenarioRunState,
     SeedAttackGroup,
 )
+from pyrit.models.parameter import Parameter
 from pyrit.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_requirements import TargetRequirements
 from pyrit.registry import ScorerRegistry
@@ -288,12 +288,12 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
 
     @property
     def name(self) -> str:
-        """Get the name of the scenario."""
+        """The name of the scenario."""
         return self._name
 
     @property
     def atomic_attack_count(self) -> int:
-        """Get the number of atomic attacks in this scenario."""
+        """The number of atomic attacks in this scenario."""
         return len(self._atomic_attacks)
 
     @classmethod
@@ -457,7 +457,7 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
                 # Stash unknowns so _validate_params can list them all at once.
                 coerced[name] = raw_value
                 continue
-            coerced[name] = coerce_value(param=param, raw_value=raw_value)
+            coerced[name] = param.coerce_value(raw_value)
 
         self._validate_params(params=coerced, declared=declared)
 
@@ -469,7 +469,7 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
             # without an explicit default land as None, and the scenario raises
             # a domain-specific error at run time if it cannot proceed.
             coerced[param.name] = (
-                copy.deepcopy(coerce_value(param=param, raw_value=param.default)) if param.default is not None else None
+                copy.deepcopy(param.coerce_value(param.default)) if param.default is not None else None
             )
 
         self.params = coerced
@@ -483,9 +483,8 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
 
         Raises:
             ValueError: If declarations contain duplicate names, an
-                unsupported ``param_type``, ``choices`` not coercible to
-                ``param_type``, or a default that fails coercion / is not
-                in ``choices``.
+                unsupported ``param_type``, or a default that fails coercion
+                (including membership for a constrained scalar).
         """
         seen: set[str] = set()
         for param in declared:
@@ -494,43 +493,17 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
             seen.add(param.name)
 
             try:
-                validate_param_type(param=param)
+                param.validate()
             except ValueError as exc:
                 raise ValueError(f"Scenario '{type(self).__name__}' {exc}") from exc
 
-            if param.choices is not None and get_origin(param.param_type) is list:
-                # argparse `nargs='+'` applies choices per-item; core checks the whole list.
-                # Reject the combination until we reconcile the semantics.
-                raise ValueError(
-                    f"Scenario '{type(self).__name__}' parameter '{param.name}' declares choices on a list "
-                    f"param_type ({param.param_type!r}); this combination is not supported. "
-                    f"Use a scalar param_type with choices, or omit choices on list params."
-                )
-
-            if param.choices is not None and param.param_type is not None:
-                # Each choice must be coercible — fail at declaration time, not user time.
-                for choice in param.choices:
-                    try:
-                        coerce_value(param=param, raw_value=choice)
-                    except ValueError as exc:
-                        raise ValueError(
-                            f"Scenario '{type(self).__name__}' parameter '{param.name}' choice "
-                            f"{choice!r} is not coercible to {param.param_type!r}: {exc}"
-                        ) from exc
-
             if param.default is not None:
                 try:
-                    coerced_default = coerce_value(param=param, raw_value=param.default)
+                    param.coerce_value(param.default)
                 except ValueError as exc:
                     raise ValueError(
                         f"Scenario '{type(self).__name__}' parameter '{param.name}' has an invalid default: {exc}"
                     ) from exc
-
-                if param.choices is not None and coerced_default not in param.choices:
-                    raise ValueError(
-                        f"Scenario '{type(self).__name__}' parameter '{param.name}' default "
-                        f"{param.default!r} is not in declared choices {param.choices!r}."
-                    )
 
     def _validate_params(self, *, params: dict[str, Any], declared: list[Parameter]) -> None:
         """

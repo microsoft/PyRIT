@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, ClassVar
 
 from pydantic import Field
 
@@ -14,6 +14,7 @@ from pyrit.models.identifiers.evaluation_markers import Evaluate
 from pyrit.models.identifiers.target_identifier import (  # noqa: TC001
     TargetIdentifier,  # runtime-required by Pydantic field annotations
 )
+from pyrit.models.parameter import ComponentType
 
 
 class ScorerIdentifier(ComponentIdentifier):
@@ -24,6 +25,8 @@ class ScorerIdentifier(ComponentIdentifier):
     the scorer's own child slots — ``prompt_target`` (an LLM target) and
     ``sub_scorers`` (nested scorers).
     """
+
+    component_type: ClassVar[ComponentType] = ComponentType.SCORER
 
     #: The scorer category (e.g., ``"true_false"`` or ``"float_scale"``).
     scorer_type: Annotated[str | None, Evaluate.Include()] = None
