@@ -73,6 +73,13 @@ class AttackService:
     Uses PyRIT memory (database) as the source of truth via AttackResult.
     """
 
+    _DATA_TYPE_EXTENSION = {
+        "image_path": ".png",
+        "audio_path": ".wav",
+        "video_path": ".mp4",
+        "binary_path": ".bin",
+    }
+
     def __init__(self) -> None:
         """Initialize the attack service."""
         self._memory = CentralMemory.get_memory_instance()
@@ -935,21 +942,25 @@ class AttackService:
             except (OSError, ValueError):
                 pass
 
-            # Derive file extension from the MIME type sent by the frontend
-            ext = None
-            if piece.mime_type:
-                ext = mimetypes.guess_extension(piece.mime_type, strict=False)
-            if not ext:
-                ext = ".bin"
-
             # Strip data URI prefix if present (e.g. "data:image/png;base64,...")
             # The backend itself returns data URIs from pyrit_messages_to_dto_async,
             # so the client may echo them back.
             value = piece.original_value
+            data_uri_mime_type = None
             if value.startswith("data:"):
                 # Format: data:<mime>;base64,<payload>
-                _, _, payload = value.partition(",")
+                header, _, payload = value.partition(",")
+                data_uri_mime_type = header.split(":", 1)[1].split(";", 1)[0] if ":" in header else None
                 value = payload
+
+            # Derive file extension from MIME metadata, then fall back to data_type.
+            ext = None
+            if piece.mime_type:
+                ext = mimetypes.guess_extension(piece.mime_type, strict=False)
+            if not ext and data_uri_mime_type:
+                ext = mimetypes.guess_extension(data_uri_mime_type, strict=False)
+            if not ext:
+                ext = AttackService._DATA_TYPE_EXTENSION.get(piece.data_type, ".bin")
 
             serializer = data_serializer_factory(
                 category="prompt-memory-entries",
