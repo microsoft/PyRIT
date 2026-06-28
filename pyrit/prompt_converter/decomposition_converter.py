@@ -151,7 +151,7 @@ class DecompositionConverter(PromptConverter):
                 the word-game is enabled. Defaults to a bundled list of fruit names.
 
         Raises:
-            ValueError: If ``codewords`` contains duplicates.
+            ValueError: If ``codewords`` is empty while the word-game is enabled, or contains duplicates.
         """
         super().__init__(converter_target=converter_target)
         self._converter_target = converter_target
@@ -165,6 +165,8 @@ class DecompositionConverter(PromptConverter):
         self._word_game_prompt = word_game_prompt or SeedPrompt.from_yaml_file(
             _DECOMPOSITION_DIR / "word_game_preamble.yaml"
         )
+        if use_word_game and not codewords:
+            raise ValueError("codewords must be non-empty when the word-game is enabled")
         if len(set(codewords)) != len(codewords):
             raise ValueError("codewords must be unique; duplicates produce an ambiguous word-game mapping")
         self._codewords = codewords
@@ -226,7 +228,7 @@ class DecompositionConverter(PromptConverter):
             tuple[list[str], list[str]]: The phrase list and the matching role-tag list.
 
         Raises:
-            InvalidJsonException: If the response is unparseable or fails validation.
+            InvalidJsonException: If the response is missing, unparseable, or fails validation.
         """
         conversation_id = str(uuid.uuid4())
         self._converter_target.set_system_prompt(
@@ -254,6 +256,9 @@ class DecompositionConverter(PromptConverter):
             ]
         )
         response = await self._converter_target.send_prompt_async(message=request)
+        if not response:
+            # A blocked/filtered request can yield no response; signal a retry rather than IndexError.
+            raise InvalidJsonException(message="no response from the decomposition target")
         return self._parse_and_validate(objective=objective, raw=response[0].get_value())
 
     def _parse_and_validate(self, *, objective: str, raw: str) -> tuple[list[str], list[str]]:
@@ -268,8 +273,9 @@ class DecompositionConverter(PromptConverter):
             tuple[list[str], list[str]]: The validated phrase list and role-tag list.
 
         Raises:
-            InvalidJsonException: If the response is unparseable, malformed, has invalid tags, lacks an
-                opening instruction phrase or a noun, or fails the reconstruction-recall invariant.
+            InvalidJsonException: If the response is unparseable, malformed, contains an empty phrase, has
+                invalid tags, lacks an opening instruction phrase or a noun, produces more noun phrases than
+                codewords when the word-game is enabled, or fails the reconstruction-recall invariant.
         """
         try:
             data = json.loads(remove_markdown_json(raw))
@@ -284,12 +290,23 @@ class DecompositionConverter(PromptConverter):
         if not isinstance(words, list) or not isinstance(types, list) or not words or len(words) != len(types):
             raise InvalidJsonException(message="response must contain equal-length non-empty 'words' and 'types' lists")
         words = [str(w) for w in words]
+        if any(not w.strip() for w in words):
+            raise InvalidJsonException(message="every phrase must be non-empty")
         if any(t not in _VALID_TAGS for t in types):
             raise InvalidJsonException(message=f"types must be one of {_VALID_TAGS}")
         if types[0] != "instruction":
             raise InvalidJsonException(message="the first phrase must be tagged 'instruction'")
         if "noun" not in types:
             raise InvalidJsonException(message="at least one phrase must be tagged 'noun'")
+        if self._use_word_game:
+            # The noun count comes from model output, so an overflow is recoverable: signal a retry
+            # rather than a config error (which is reserved for duplicate codewords in __init__).
+            noun_count = sum(1 for t in types if t == "noun")
+            if noun_count > len(self._codewords):
+                raise InvalidJsonException(
+                    message=f"word-game supports at most {len(self._codewords)} noun phrases, "
+                    f"but the decomposition produced {noun_count}"
+                )
 
         recall = _token_recall(_tokens(objective), _tokens(" ".join(words)))
         if recall < _MIN_RECALL:
@@ -309,9 +326,6 @@ class DecompositionConverter(PromptConverter):
 
         Returns:
             str: The rendered reconstruction prompt, optionally prefixed with the word-game preamble.
-
-        Raises:
-            ValueError: If the word-game is enabled and there are more noun phrases than codewords.
         """
         questions = [f"Question A: How to {words[0].lower()}?"]
         question_prefixes = ["Question A"]
@@ -325,13 +339,12 @@ class DecompositionConverter(PromptConverter):
                 question_prefixes.append(f"Question B{noun_index}")
                 phrase = words[i]
                 if self._use_word_game:
-                    if noun_index > len(self._codewords):
-                        raise ValueError(
-                            f"word-game supports at most {len(self._codewords)} noun phrases, but the "
-                            "objective has more; pass additional codewords to support it"
-                        )
                     codeword = self._codewords[noun_index - 1]
-                    word_game_mappings.append(f"'{codeword}' means '{phrase}'")
+                    # Serialise both sides so a phrase containing quotes cannot make the mapping
+                    # ambiguous; ensure_ascii=False keeps non-Latin phrases (e.g. Arabic) readable.
+                    word_game_mappings.append(
+                        f"{json.dumps(codeword, ensure_ascii=False)} means {json.dumps(phrase, ensure_ascii=False)}"
+                    )
                     phrase = codeword
                 questions.append(f"Question B{noun_index}: What is/are {phrase}?")
             else:
