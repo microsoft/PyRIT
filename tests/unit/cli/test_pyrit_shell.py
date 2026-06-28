@@ -358,6 +358,28 @@ class TestDoAddInitializer:
         assert "Registered initializer 'my_init'" in capsys.readouterr().out
         client.register_initializer_async.assert_awaited_once()
 
+    def test_success_with_quoted_path_containing_spaces(self, shell, tmp_path, capsys):
+        s, client = shell
+        script_dir = tmp_path / "initializer scripts"
+        script_dir.mkdir()
+        script = script_dir / "my_init.py"
+        script.write_text("def init(): pass")
+        client.register_initializer_async = AsyncMock(return_value={"status": "ok"})
+
+        s.do_add_initializer(f'"{script}"')
+
+        assert "Registered initializer 'my_init'" in capsys.readouterr().out
+        client.register_initializer_async.assert_awaited_once_with(name="my_init", script_content="def init(): pass")
+
+    def test_malformed_path_quote(self, shell, capsys):
+        s, client = shell
+        client.register_initializer_async = AsyncMock(return_value={"status": "ok"})
+
+        s.do_add_initializer('"unterminated')
+
+        assert "Error parsing initializer paths" in capsys.readouterr().out
+        client.register_initializer_async.assert_not_called()
+
     def test_server_not_available_error(self, shell, tmp_path, capsys):
         from pyrit.cli.api_client import ServerNotAvailableError
 

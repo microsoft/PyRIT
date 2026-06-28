@@ -15,6 +15,7 @@ import cmd
 import concurrent.futures
 import contextlib
 import logging
+import shlex
 import sys
 import threading
 from pathlib import Path
@@ -249,7 +250,13 @@ class PyRITShell(cmd.Cmd):
 
         from pyrit.cli.api_client import ServerNotAvailableError
 
-        for script_path_str in arg.split():
+        try:
+            script_path_strings = shlex.split(arg)
+        except ValueError as exc:
+            print(f"Error parsing initializer paths: {exc}")
+            return
+
+        for script_path_str in script_path_strings:
             script_path = Path(script_path_str).resolve()
             if not script_path.exists():
                 print(f"Error: File not found: {script_path}")
