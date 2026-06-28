@@ -248,12 +248,43 @@ def _build_base_parser(*, add_help: bool = True) -> ArgumentParser:
 _SCENARIO_DEST_PREFIX = "scenario__"
 
 
+def _coerce_bool(raw: Any) -> bool:
+    """
+    Parse a command-line boolean token without silently treating typos as false.
+
+    Args:
+        raw: Raw command-line value.
+
+    Returns:
+        bool: The parsed boolean value.
+
+    Raises:
+        ValueError: If ``raw`` is not a recognized boolean token.
+    """
+    if isinstance(raw, bool):
+        return raw
+    normalized = str(raw).strip().lower()
+    if normalized in ("1", "true", "yes", "y", "on"):
+        return True
+    if normalized in ("0", "false", "no", "n", "off"):
+        return False
+    raise ValueError(f"expected a boolean value (accepted: true/false, 1/0, yes/no, y/n, on/off), got {raw!r}")
+
+
 _SCALAR_TYPE_COERCERS: dict[str, Any] = {
     "int": int,
     "float": float,
-    "bool": lambda v: str(v).strip().lower() in ("1", "true", "yes", "y", "on"),
+    "bool": _coerce_bool,
     "str": str,
 }
+
+
+def _get_scenario_param_type_name(*, param: dict[str, Any]) -> str:
+    """Return the scalar type name for a scenario parameter, unwrapping list[...] when needed."""
+    param_type = str(param.get("param_type", ""))
+    if param.get("is_list") and param_type.startswith("list[") and param_type.endswith("]"):
+        return param_type.removeprefix("list[").removesuffix("]")
+    return param_type
 
 
 def _scenario_param_kwargs(*, param: dict[str, Any]) -> dict[str, Any]:
@@ -275,25 +306,30 @@ def _scenario_param_kwargs(*, param: dict[str, Any]) -> dict[str, Any]:
         "default": argparse.SUPPRESS,
         "help": param.get("description", ""),
     }
+    type_name = _get_scenario_param_type_name(param=param)
+    coercer = _SCALAR_TYPE_COERCERS.get(type_name)
+
+    typed_parser = None
+    if coercer is not None and coercer is not str:
+        param_name = param.get("name", "")
+
+        def _typed(raw: Any) -> Any:
+            try:
+                return coercer(raw)
+            except (ValueError, TypeError) as exc:
+                raise argparse.ArgumentTypeError(
+                    f"--{param_name.replace('_', '-')}: invalid value {raw!r} ({exc})"
+                ) from exc
+
+        typed_parser = _typed
+
     if param.get("is_list"):
         kwargs["nargs"] = "+"
-    else:
-        coercer = _SCALAR_TYPE_COERCERS.get(param.get("param_type", ""))
-        if coercer is not None and coercer is not str:
-            param_name = param.get("name", "")
-
-            def _typed(raw: str) -> Any:
-                try:
-                    return coercer(raw)
-                except (ValueError, TypeError) as exc:
-                    raise argparse.ArgumentTypeError(
-                        f"--{param_name.replace('_', '-')}: invalid value {raw!r} ({exc})"
-                    ) from exc
-
-            kwargs["type"] = _typed
+    if typed_parser is not None:
+        kwargs["type"] = typed_parser
     choices = param.get("choices")
     if choices:
-        kwargs["choices"] = list(choices)
+        kwargs["choices"] = [typed_parser(choice) if typed_parser is not None else choice for choice in choices]
     return kwargs
 
 
