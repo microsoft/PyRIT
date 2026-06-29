@@ -31,6 +31,7 @@ from pyrit.backend.mappers import (
     request_piece_to_pyrit_message_piece,
     request_to_pyrit_message,
 )
+from pyrit.backend.models import DEFAULT_MEDIA_EXTENSIONS
 from pyrit.backend.models.attacks import (
     AddMessageRequest,
     AddMessageResponse,
@@ -72,13 +73,6 @@ class AttackService:
 
     Uses PyRIT memory (database) as the source of truth via AttackResult.
     """
-
-    _DATA_TYPE_EXTENSION = {
-        "image_path": ".png",
-        "audio_path": ".wav",
-        "video_path": ".mp4",
-        "binary_path": ".bin",
-    }
 
     def __init__(self) -> None:
         """Initialize the attack service."""
@@ -960,7 +954,7 @@ class AttackService:
             if not ext and data_uri_mime_type:
                 ext = mimetypes.guess_extension(data_uri_mime_type, strict=False)
             if not ext:
-                ext = AttackService._DATA_TYPE_EXTENSION.get(piece.data_type, ".bin")
+                ext = DEFAULT_MEDIA_EXTENSIONS.get(piece.data_type, ".bin")
 
             serializer = data_serializer_factory(
                 category="prompt-memory-entries",
