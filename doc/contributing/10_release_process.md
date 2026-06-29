@@ -220,27 +220,18 @@ uv sync --frozen
 python -c "import pyrit; print(pyrit.__version__)"  # verify: x.y.z (no .dev0)
 ```
 
-**Identify the target revision** — the Alembic head on this branch. We use an explicit
-revision (not `head`) so the migration is deterministic and tied to this exact release.
-
-```bash
-python build_scripts/memory_migrations.py head
-```
-
-This prints the revision ID (e.g., `c3d5e7f9a1b2`) to use as `<revision_id>` below.
-
 **Run the migration** (reads `AZURE_SQL_DB_CONNECTION_STRING_PROD` from `~/.pyrit/.env`):
 
 ```bash
-python build_scripts/migrate_prod_memory_schema.py --target-revision <revision_id>
+python build_scripts/migrate_prod_memory_schema.py
 ```
 
 The script validates the environment (release branch, clean tree, no `.dev` version),
-confirms the target revision exists, applies migrations, and verifies the schema matches
-models. It exits non-zero on any failure, and migrations roll back automatically.
+constructs an `AzureSQLMemory` pointed at prod, and runs `_run_schema_migration()` which
+upgrades to head and verifies the schema matches models. Since you're on the release branch,
+head is the release revision.
 
-**Verify prod is usable after migration.** This connects to prod using the check-only
-path (no schema modification) and confirms compatibility:
+**Verify prod is usable after migration:**
 
 ```bash
 python -c "from pyrit.memory import AzureSQLMemory; AzureSQLMemory()"
@@ -248,8 +239,8 @@ python -c "from pyrit.memory import AzureSQLMemory; AzureSQLMemory()"
 
 If it exits without error, prod is ready.
 
-If no schema changes landed in this release, the script reports "already at target revision"
-and exits cleanly. Still run it as confirmation.
+If no schema changes landed in this release, `_run_schema_migration` is a no-op.
+Still run it as confirmation.
 
 **Rollback policy:** forward-fix only. Ship a new corrective migration rather than downgrading,
 since `downgrade()` risks data loss.
