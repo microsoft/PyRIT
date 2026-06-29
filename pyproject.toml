@@ -209,6 +209,23 @@ include = ["pyrit/prompt_target/hugging_face/**"]
 [tool.ty.overrides.rules]
 invalid-argument-type = "ignore"
 
+# Unit tests intentionally exercise runtime validation failures, mutable test doubles,
+# and optional fields after fixtures have populated them. Keep library code strict while
+# avoiding hundreds of per-assertion ignores in tests.
+[[tool.ty.overrides]]
+include = ["tests/unit/**"]
+[tool.ty.overrides.rules]
+call-non-callable = "ignore"
+invalid-assignment = "ignore"
+invalid-await = "ignore"
+invalid-parameter-default = "ignore"
+invalid-type-arguments = "ignore"
+invalid-yield = "ignore"
+missing-argument = "ignore"
+not-subscriptable = "ignore"
+unknown-argument = "ignore"
+unsupported-operator = "ignore"
+
 [tool.uv]
 constraint-dependencies = [
     "aiohttp>=3.13.4",
