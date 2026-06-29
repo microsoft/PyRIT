@@ -111,7 +111,7 @@ class FoundryComposite:
 
     @property
     def name(self) -> str:
-        """Return a human-readable name for this composite."""
+        """A human-readable name for this composite."""
         if not self.converters:
             return self.attack.value if self.attack else "baseline"
         if self.attack is None and len(self.converters) == 1:
