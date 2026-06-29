@@ -165,12 +165,6 @@ all = "error"
 # Most rules under `all = "error"` are already clean for pyrit/. A few remain
 # suppressed below; the remaining finding counts are noted so they can be
 # re-enabled as the code is cleaned up.
-#
-# Each currently has a single false-positive-style finding in pyrit/:
-#   possibly-missing-attribute -> transformers.AutoTokenizer (optional dep)
-#   invalid-argument-type      -> list invariance in seed dataset construction
-possibly-missing-attribute = "ignore"
-invalid-argument-type = "ignore"
 # Existing `# type: ignore` comments that are defensive for environments where
 # optional dependencies are installed (unused in the default env -> 8 findings).
 unused-type-ignore-comment = "ignore"
@@ -222,6 +216,7 @@ unsupported-operator = "ignore"
 # Re-enabled repo-wide so pyrit/ is checked (production is clean) but still
 # relaxed here: tests read private/mock attributes, use bare generics, and
 # subclass library types with loosened signatures.
+invalid-argument-type = "ignore"
 invalid-method-override = "ignore"
 missing-type-argument = "ignore"
 no-matching-overload = "ignore"
