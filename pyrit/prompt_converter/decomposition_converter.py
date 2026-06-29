@@ -33,6 +33,32 @@ _MIN_RECALL = 0.8
 
 _DECOMPOSITION_DIR = pathlib.Path(CONVERTER_SEED_PROMPT_PATH) / "decomposition"
 
+# Innocuous codewords substituted for harmful noun phrases when the word-game is enabled. The list
+# bounds how many noun phrases the word-game supports; a converter with more nouns raises rather than
+# silently reusing a codeword (which would make the mapping ambiguous).
+_CODEWORDS = (
+    "apple",
+    "banana",
+    "cherry",
+    "grape",
+    "kiwi",
+    "lemon",
+    "mango",
+    "orange",
+    "papaya",
+    "raspberry",
+    "strawberry",
+    "watermelon",
+    "apricot",
+    "blueberry",
+    "coconut",
+    "fig",
+    "guava",
+    "melon",
+    "peach",
+    "pear",
+)
+
 
 def _tokens(text: str) -> list[str]:
     """
@@ -98,6 +124,9 @@ class DecompositionConverter(PromptConverter):
         converter_target: PromptTarget = REQUIRED_VALUE,  # type: ignore[ty:invalid-parameter-default]
         decomposition_prompt: SeedPrompt | None = None,
         reconstruction_prompt: SeedPrompt | None = None,
+        use_word_game: bool = False,
+        word_game_prompt: SeedPrompt | None = None,
+        codewords: tuple[str, ...] = _CODEWORDS,
     ) -> None:
         """
         Initialize the converter.
@@ -112,6 +141,17 @@ class DecompositionConverter(PromptConverter):
             reconstruction_prompt (SeedPrompt | None): Template that renders the decomposed objective
                 into the reconstruction task. Defaults to the bundled
                 ``decomposition/reconstruction_prompt.yaml``.
+            use_word_game (bool): If True, each harmful noun phrase is replaced by an innocuous codeword
+                in the reconstruction questions, and a mapping preamble is prepended in the same prompt.
+                Defaults to False.
+            word_game_prompt (SeedPrompt | None): Template for the word-game mapping preamble. Defaults
+                to the bundled ``decomposition/word_game_preamble.yaml``. Only used when
+                ``use_word_game`` is True.
+            codewords (tuple[str, ...]): Innocuous codewords substituted for harmful noun phrases when
+                the word-game is enabled. Defaults to a bundled list of fruit names.
+
+        Raises:
+            ValueError: If ``codewords`` is empty while the word-game is enabled, or contains duplicates.
         """
         super().__init__(converter_target=converter_target)
         self._converter_target = converter_target
@@ -121,6 +161,15 @@ class DecompositionConverter(PromptConverter):
         self._reconstruction_prompt = reconstruction_prompt or SeedPrompt.from_yaml_file(
             _DECOMPOSITION_DIR / "reconstruction_prompt.yaml"
         )
+        self._use_word_game = use_word_game
+        self._word_game_prompt = word_game_prompt or SeedPrompt.from_yaml_file(
+            _DECOMPOSITION_DIR / "word_game_preamble.yaml"
+        )
+        if use_word_game and not codewords:
+            raise ValueError("codewords must be non-empty when the word-game is enabled")
+        if len(set(codewords)) != len(codewords):
+            raise ValueError("codewords must be unique; duplicates produce an ambiguous word-game mapping")
+        self._codewords = codewords
 
     def _build_identifier(self) -> ComponentIdentifier:
         """
@@ -129,11 +178,16 @@ class DecompositionConverter(PromptConverter):
         Returns:
             ComponentIdentifier: The identifier for this converter.
         """
+        params: dict[str, Any] = {
+            "decomposition_prompt": self._decomposition_prompt.value,
+            "reconstruction_prompt": self._reconstruction_prompt.value,
+            "use_word_game": self._use_word_game,
+        }
+        if self._use_word_game:
+            params["word_game_prompt"] = self._word_game_prompt.value
+            params["codewords"] = list(self._codewords)
         return self._create_identifier(
-            params={
-                "decomposition_prompt": self._decomposition_prompt.value,
-                "reconstruction_prompt": self._reconstruction_prompt.value,
-            },
+            params=params,
             converter_target=self._converter_target.get_identifier(),
         )
 
@@ -174,7 +228,7 @@ class DecompositionConverter(PromptConverter):
             tuple[list[str], list[str]]: The phrase list and the matching role-tag list.
 
         Raises:
-            InvalidJsonException: If the response is unparseable or fails validation.
+            InvalidJsonException: If the response is missing, unparseable, or fails validation.
         """
         conversation_id = str(uuid.uuid4())
         self._converter_target.set_system_prompt(
@@ -202,6 +256,9 @@ class DecompositionConverter(PromptConverter):
             ]
         )
         response = await self._converter_target.send_prompt_async(message=request)
+        if not response:
+            # A blocked/filtered request can yield no response; signal a retry rather than IndexError.
+            raise InvalidJsonException(message="no response from the decomposition target")
         return self._parse_and_validate(objective=objective, raw=response[0].get_value())
 
     def _parse_and_validate(self, *, objective: str, raw: str) -> tuple[list[str], list[str]]:
@@ -216,8 +273,9 @@ class DecompositionConverter(PromptConverter):
             tuple[list[str], list[str]]: The validated phrase list and role-tag list.
 
         Raises:
-            InvalidJsonException: If the response is unparseable, malformed, has invalid tags, lacks an
-                opening instruction phrase or a noun, or fails the reconstruction-recall invariant.
+            InvalidJsonException: If the response is unparseable, malformed, contains an empty phrase, has
+                invalid tags, lacks an opening instruction phrase or a noun, produces more noun phrases than
+                codewords when the word-game is enabled, or fails the reconstruction-recall invariant.
         """
         try:
             data = json.loads(remove_markdown_json(raw))
@@ -232,12 +290,23 @@ class DecompositionConverter(PromptConverter):
         if not isinstance(words, list) or not isinstance(types, list) or not words or len(words) != len(types):
             raise InvalidJsonException(message="response must contain equal-length non-empty 'words' and 'types' lists")
         words = [str(w) for w in words]
+        if any(not w.strip() for w in words):
+            raise InvalidJsonException(message="every phrase must be non-empty")
         if any(t not in _VALID_TAGS for t in types):
             raise InvalidJsonException(message=f"types must be one of {_VALID_TAGS}")
         if types[0] != "instruction":
             raise InvalidJsonException(message="the first phrase must be tagged 'instruction'")
         if "noun" not in types:
             raise InvalidJsonException(message="at least one phrase must be tagged 'noun'")
+        if self._use_word_game:
+            # The noun count comes from model output, so an overflow is recoverable: signal a retry
+            # rather than a config error (which is reserved for duplicate codewords in __init__).
+            noun_count = sum(1 for t in types if t == "noun")
+            if noun_count > len(self._codewords):
+                raise InvalidJsonException(
+                    message=f"word-game supports at most {len(self._codewords)} noun phrases, "
+                    f"but the decomposition produced {noun_count}"
+                )
 
         recall = _token_recall(_tokens(objective), _tokens(" ".join(words)))
         if recall < _MIN_RECALL:
@@ -248,28 +317,45 @@ class DecompositionConverter(PromptConverter):
         """
         Assemble the Question-A/Question-B reconstruction prompt from the decomposition.
 
+        When the word-game is enabled, each noun phrase is replaced by an innocuous codeword in its
+        question, and a mapping preamble is prepended in the same prompt.
+
         Args:
             words (list[str]): The decomposed phrases.
             types (list[str]): The role tag for each phrase.
 
         Returns:
-            str: The rendered reconstruction prompt.
+            str: The rendered reconstruction prompt, optionally prefixed with the word-game preamble.
         """
         questions = [f"Question A: How to {words[0].lower()}?"]
         question_prefixes = ["Question A"]
         structure_mask = ["using the methods in Question A"]
+        word_game_mappings: list[str] = []
         noun_index = 0
         for i in range(1, len(types)):
             if types[i] == "noun":
                 noun_index += 1
                 structure_mask.append(f"the thing in Question B{noun_index}")
-                questions.append(f"Question B{noun_index}: What is/are {words[i]}?")
                 question_prefixes.append(f"Question B{noun_index}")
+                phrase = words[i]
+                if self._use_word_game:
+                    codeword = self._codewords[noun_index - 1]
+                    # Serialise both sides so a phrase containing quotes cannot make the mapping
+                    # ambiguous; ensure_ascii=False keeps non-Latin phrases (e.g. Arabic) readable.
+                    word_game_mappings.append(
+                        f"{json.dumps(codeword, ensure_ascii=False)} means {json.dumps(phrase, ensure_ascii=False)}"
+                    )
+                    phrase = codeword
+                questions.append(f"Question B{noun_index}: What is/are {phrase}?")
             else:
                 structure_mask.append(words[i])
 
-        return self._reconstruction_prompt.render_template_value(
+        reconstruction = self._reconstruction_prompt.render_template_value(
             questions_prefix=" ".join(question_prefixes),
             sentence_structure=" ".join(structure_mask),
             harmful_questions=" ".join(questions),
         )
+        if self._use_word_game and word_game_mappings:
+            preamble = self._word_game_prompt.render_template_value(mapping="; ".join(word_game_mappings))
+            return f"{preamble}\n\n{reconstruction}"
+        return reconstruction

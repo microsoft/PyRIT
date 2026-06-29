@@ -41,11 +41,28 @@ STANDARD_DATA_TYPE_COL = HumanLabeledDataset.STANDARD_DATA_TYPE_COL
 VALID_DATA_TYPES = set(PromptDataType.__args__)  # type: ignore[attr-defined]
 
 # Collect all CSV paths once for cross-cutting tests
-ALL_CSV_FILES = (
-    list(Path(SCORER_EVALS_OBJECTIVE_PATH).glob("*.csv"))
-    + list(Path(SCORER_EVALS_HARM_PATH).glob("*.csv"))
-    + list(Path(SCORER_EVALS_REFUSAL_SCORER_PATH).glob("*.csv"))
-)
+OBJECTIVE_CSV_FILES = list(Path(SCORER_EVALS_OBJECTIVE_PATH).glob("*.csv"))
+HARM_CSV_FILES = list(Path(SCORER_EVALS_HARM_PATH).glob("*.csv"))
+REFUSAL_CSV_FILES = list(Path(SCORER_EVALS_REFUSAL_SCORER_PATH).glob("*.csv"))
+ALL_CSV_FILES = OBJECTIVE_CSV_FILES + HARM_CSV_FILES + REFUSAL_CSV_FILES
+
+
+@pytest.fixture(scope="class")
+def objective_csv_files() -> list[Path]:
+    """Get all CSV files in the objective scorer evals directory."""
+    return OBJECTIVE_CSV_FILES
+
+
+@pytest.fixture(scope="class")
+def harm_csv_files() -> list[Path]:
+    """Get all CSV files in the harm scorer evals directory."""
+    return HARM_CSV_FILES
+
+
+@pytest.fixture(scope="class")
+def refusal_csv_files() -> list[Path]:
+    """Get all CSV files in the refusal scorer evals directory."""
+    return REFUSAL_CSV_FILES
 
 
 def _skip_comment_lines(f) -> None:
@@ -89,18 +106,13 @@ def _read_csv_as_dataframe(csv_file: Path) -> pd.DataFrame:
 class TestObjectiveScorerEvalCSVSchema:
     """Test that all objective scorer evaluation CSVs have the correct schema."""
 
-    @pytest.fixture(scope="class")
-    def objective_csv_files(self) -> list[Path]:
-        """Get all CSV files in the objective scorer evals directory."""
-        return list(Path(SCORER_EVALS_OBJECTIVE_PATH).glob("*.csv"))
-
     def test_objective_csv_files_exist(self, objective_csv_files: list[Path]) -> None:
         """Verify that objective CSV files exist."""
         assert len(objective_csv_files) > 0, "No objective CSV files found"
 
     @pytest.mark.parametrize(
         "csv_file",
-        list(Path(SCORER_EVALS_OBJECTIVE_PATH).glob("*.csv")),
+        OBJECTIVE_CSV_FILES,
         ids=lambda p: p.name,
     )
     def test_objective_csv_has_required_columns(self, csv_file: Path) -> None:
@@ -133,7 +145,7 @@ class TestObjectiveScorerEvalCSVSchema:
 
     @pytest.mark.parametrize(
         "csv_file",
-        list(Path(SCORER_EVALS_OBJECTIVE_PATH).glob("*.csv")),
+        OBJECTIVE_CSV_FILES,
         ids=lambda p: p.name,
     )
     def test_objective_csv_column_names_exact(self, csv_file: Path) -> None:
@@ -164,7 +176,7 @@ class TestObjectiveScorerEvalCSVSchema:
 
     @pytest.mark.parametrize(
         "csv_file",
-        list(Path(SCORER_EVALS_OBJECTIVE_PATH).glob("*.csv")),
+        OBJECTIVE_CSV_FILES,
         ids=lambda p: p.name,
     )
     def test_objective_csv_scores_are_binary(self, csv_file: Path) -> None:
@@ -187,7 +199,7 @@ class TestObjectiveScorerEvalCSVSchema:
 
     @pytest.mark.parametrize(
         "csv_file",
-        list(Path(SCORER_EVALS_OBJECTIVE_PATH).glob("*.csv")),
+        OBJECTIVE_CSV_FILES,
         ids=lambda p: p.name,
     )
     def test_objective_csv_loads_via_from_csv(self, csv_file: Path) -> None:
@@ -213,18 +225,13 @@ class TestObjectiveScorerEvalCSVSchema:
 class TestHarmScorerEvalCSVSchema:
     """Test that all harm scorer evaluation CSVs have the correct schema."""
 
-    @pytest.fixture(scope="class")
-    def harm_csv_files(self) -> list[Path]:
-        """Get all CSV files in the harm scorer evals directory."""
-        return list(Path(SCORER_EVALS_HARM_PATH).glob("*.csv"))
-
     def test_harm_csv_files_exist(self, harm_csv_files: list[Path]) -> None:
         """Verify that harm CSV files exist."""
         assert len(harm_csv_files) > 0, "No harm CSV files found"
 
     @pytest.mark.parametrize(
         "csv_file",
-        list(Path(SCORER_EVALS_HARM_PATH).glob("*.csv")),
+        HARM_CSV_FILES,
         ids=lambda p: p.name,
     )
     def test_harm_csv_has_required_columns(self, csv_file: Path) -> None:
@@ -269,7 +276,7 @@ class TestHarmScorerEvalCSVSchema:
 
     @pytest.mark.parametrize(
         "csv_file",
-        list(Path(SCORER_EVALS_HARM_PATH).glob("*.csv")),
+        HARM_CSV_FILES,
         ids=lambda p: p.name,
     )
     def test_harm_csv_has_human_score_columns(self, csv_file: Path) -> None:
@@ -296,7 +303,7 @@ class TestHarmScorerEvalCSVSchema:
 
     @pytest.mark.parametrize(
         "csv_file",
-        list(Path(SCORER_EVALS_HARM_PATH).glob("*.csv")),
+        HARM_CSV_FILES,
         ids=lambda p: p.name,
     )
     def test_harm_csv_has_harm_definition(self, csv_file: Path) -> None:
@@ -317,7 +324,7 @@ class TestHarmScorerEvalCSVSchema:
 
     @pytest.mark.parametrize(
         "csv_file",
-        list(Path(SCORER_EVALS_HARM_PATH).glob("*.csv")),
+        HARM_CSV_FILES,
         ids=lambda p: p.name,
     )
     def test_harm_definition_file_exists_and_is_valid(self, csv_file: Path) -> None:
@@ -365,7 +372,7 @@ class TestHarmScorerEvalCSVSchema:
 
     @pytest.mark.parametrize(
         "csv_file",
-        list(Path(SCORER_EVALS_HARM_PATH).glob("*.csv")),
+        HARM_CSV_FILES,
         ids=lambda p: p.name,
     )
     def test_harm_csv_scores_in_valid_range(self, csv_file: Path) -> None:
@@ -387,7 +394,7 @@ class TestHarmScorerEvalCSVSchema:
 
     @pytest.mark.parametrize(
         "csv_file",
-        list(Path(SCORER_EVALS_HARM_PATH).glob("*.csv")),
+        HARM_CSV_FILES,
         ids=lambda p: p.name,
     )
     def test_harm_csv_single_harm_category(self, csv_file: Path) -> None:
@@ -409,7 +416,7 @@ class TestHarmScorerEvalCSVSchema:
 
     @pytest.mark.parametrize(
         "csv_file",
-        list(Path(SCORER_EVALS_HARM_PATH).glob("*.csv")),
+        HARM_CSV_FILES,
         ids=lambda p: p.name,
     )
     def test_harm_csv_definition_version_matches_yaml(self, csv_file: Path) -> None:
@@ -459,7 +466,7 @@ class TestHarmScorerEvalCSVSchema:
 
     @pytest.mark.parametrize(
         "csv_file",
-        list(Path(SCORER_EVALS_HARM_PATH).glob("*.csv")),
+        HARM_CSV_FILES,
         ids=lambda p: p.name,
     )
     def test_harm_csv_loads_via_from_csv(self, csv_file: Path) -> None:
@@ -485,18 +492,13 @@ class TestHarmScorerEvalCSVSchema:
 class TestRefusalScorerEvalCSVSchema:
     """Test that all refusal scorer evaluation CSVs have the correct schema."""
 
-    @pytest.fixture(scope="class")
-    def refusal_csv_files(self) -> list[Path]:
-        """Get all CSV files in the refusal scorer evals directory."""
-        return list(Path(SCORER_EVALS_REFUSAL_SCORER_PATH).glob("*.csv"))
-
     def test_refusal_csv_files_exist(self, refusal_csv_files: list[Path]) -> None:
         """Verify that refusal CSV files exist."""
         assert len(refusal_csv_files) > 0, "No refusal CSV files found"
 
     @pytest.mark.parametrize(
         "csv_file",
-        list(Path(SCORER_EVALS_REFUSAL_SCORER_PATH).glob("*.csv")),
+        REFUSAL_CSV_FILES,
         ids=lambda p: p.name,
     )
     def test_refusal_csv_has_required_columns(self, csv_file: Path) -> None:
@@ -529,7 +531,7 @@ class TestRefusalScorerEvalCSVSchema:
 
     @pytest.mark.parametrize(
         "csv_file",
-        list(Path(SCORER_EVALS_REFUSAL_SCORER_PATH).glob("*.csv")),
+        REFUSAL_CSV_FILES,
         ids=lambda p: p.name,
     )
     def test_refusal_csv_column_names_exact(self, csv_file: Path) -> None:
@@ -558,7 +560,7 @@ class TestRefusalScorerEvalCSVSchema:
 
     @pytest.mark.parametrize(
         "csv_file",
-        list(Path(SCORER_EVALS_REFUSAL_SCORER_PATH).glob("*.csv")),
+        REFUSAL_CSV_FILES,
         ids=lambda p: p.name,
     )
     def test_refusal_csv_scores_are_binary(self, csv_file: Path) -> None:
@@ -581,7 +583,7 @@ class TestRefusalScorerEvalCSVSchema:
 
     @pytest.mark.parametrize(
         "csv_file",
-        list(Path(SCORER_EVALS_REFUSAL_SCORER_PATH).glob("*.csv")),
+        REFUSAL_CSV_FILES,
         ids=lambda p: p.name,
     )
     def test_refusal_csv_loads_via_from_csv(self, csv_file: Path) -> None:
@@ -614,9 +616,7 @@ class TestCSVVersionMetadata:
 
     @pytest.mark.parametrize(
         "csv_file",
-        list(Path(SCORER_EVALS_OBJECTIVE_PATH).glob("*.csv"))
-        + list(Path(SCORER_EVALS_HARM_PATH).glob("*.csv"))
-        + list(Path(SCORER_EVALS_REFUSAL_SCORER_PATH).glob("*.csv")),
+        ALL_CSV_FILES,
         ids=lambda p: f"{p.parent.name}/{p.name}",
     )
     def test_csv_has_dataset_version_line(self, csv_file: Path) -> None:
