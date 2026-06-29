@@ -162,29 +162,23 @@ asyncio_mode = "auto"
 [tool.ty]
 [tool.ty.rules]
 all = "error"
-# The baseline repository contains many dynamic typing patterns that ty flags
-# as false positives (optional runtime deps, pandas/NumPy generics, and
-# Pydantic/OpenAI wrappers). Keep the type check useful without turning every
-# existing file into a blocker.
+# Most rules under `all = "error"` are already clean for pyrit/. A few remain
+# suppressed below; the remaining finding counts are noted so they can be
+# re-enabled as the code is cleaned up.
+#
+# Each currently has a single false-positive-style finding in pyrit/:
+#   possibly-missing-attribute -> transformers.AutoTokenizer (optional dep)
+#   invalid-argument-type      -> list invariance in seed dataset construction
 possibly-missing-attribute = "ignore"
 invalid-argument-type = "ignore"
-invalid-method-override = "ignore"
-invalid-return-type = "ignore"
-missing-type-argument = "ignore"
-no-matching-overload = "ignore"
-possibly-missing-import = "ignore"
-unresolved-attribute = "ignore"
-unresolved-import = "ignore"
-# Allow existing type: ignore comments without matching errors
-unused-ignore-comment = "ignore"
+# Existing `# type: ignore` comments that are defensive for environments where
+# optional dependencies are installed (unused in the default env -> 8 findings).
 unused-type-ignore-comment = "ignore"
-# Allow empty function bodies during development
-empty-body = "ignore"
 # ty 0.0.43 (bumped from 0.0.32 in #1919) activated this rule under
-# [tool.ty.rules] all = "error". Adopting @override across pyrit/ would require
-# the typing_extensions backport on Python 3.10/3.11 (typing.override is 3.12+),
-# which adds a direct dep and ongoing import-path friction. Suppressing the
-# rule keeps the codebase consistent with the existing pragmatic ignores above.
+# [tool.ty.rules] all = "error". Adopting @override across pyrit/ (~695 methods)
+# would require the typing_extensions backport on Python 3.10/3.11
+# (typing.override is 3.12+), which adds a direct dep and ongoing import-path
+# friction. Suppressing the rule keeps the codebase consistent for now.
 missing-override-decorator = "ignore"
 
 [tool.ty.analysis]
@@ -225,6 +219,13 @@ missing-argument = "ignore"
 not-subscriptable = "ignore"
 unknown-argument = "ignore"
 unsupported-operator = "ignore"
+# Re-enabled repo-wide so pyrit/ is checked (production is clean) but still
+# relaxed here: tests read private/mock attributes, use bare generics, and
+# subclass library types with loosened signatures.
+invalid-method-override = "ignore"
+missing-type-argument = "ignore"
+no-matching-overload = "ignore"
+unresolved-attribute = "ignore"
 
 [tool.uv]
 constraint-dependencies = [
