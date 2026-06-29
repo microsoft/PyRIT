@@ -165,6 +165,13 @@ all = "error"
 # Most rules under `all = "error"` are already clean for pyrit/. A few remain
 # suppressed below; the remaining finding counts are noted so they can be
 # re-enabled as the code is cleaned up.
+# missing-type-argument is clean under numpy>=2.4 (Python 3.14) but flags 38
+# bare `np.ndarray` generics under numpy 2.2.6 -- the version the lock pins for
+# Python 3.10-3.13, i.e. CI's 3.11 -- across 5 files (analytics/conversation_analytics,
+# prompt_converter/transparency_attack_converter, score/scorer_evaluation/*).
+# Annotating those generics is real code work, so keep the rule deferred until
+# that numpy-generics debt is addressed.
+missing-type-argument = "ignore"
 # ty 0.0.43 (bumped from 0.0.32 in #1919) activated this rule under
 # [tool.ty.rules] all = "error". Adopting @override across pyrit/ (~695 methods)
 # would require the typing_extensions backport on Python 3.10/3.11
@@ -211,11 +218,10 @@ not-subscriptable = "ignore"
 unknown-argument = "ignore"
 unsupported-operator = "ignore"
 # Re-enabled repo-wide so pyrit/ is checked (production is clean) but still
-# relaxed here: tests read private/mock attributes, use bare generics, and
-# subclass library types with loosened signatures.
+# relaxed here: tests read private/mock attributes and subclass library types
+# with loosened signatures / runtime-validation-failure arguments.
 invalid-argument-type = "ignore"
 invalid-method-override = "ignore"
-missing-type-argument = "ignore"
 no-matching-overload = "ignore"
 unresolved-attribute = "ignore"
 # tests/unit carries `# type: ignore` directives that are unused in this env;
