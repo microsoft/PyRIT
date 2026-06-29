@@ -165,9 +165,6 @@ all = "error"
 # Most rules under `all = "error"` are already clean for pyrit/. A few remain
 # suppressed below; the remaining finding counts are noted so they can be
 # re-enabled as the code is cleaned up.
-# Existing `# type: ignore` comments that are defensive for environments where
-# optional dependencies are installed (unused in the default env -> 8 findings).
-unused-type-ignore-comment = "ignore"
 # ty 0.0.43 (bumped from 0.0.32 in #1919) activated this rule under
 # [tool.ty.rules] all = "error". Adopting @override across pyrit/ (~695 methods)
 # would require the typing_extensions backport on Python 3.10/3.11
@@ -221,6 +218,9 @@ invalid-method-override = "ignore"
 missing-type-argument = "ignore"
 no-matching-overload = "ignore"
 unresolved-attribute = "ignore"
+# tests/unit carries `# type: ignore` directives that are unused in this env;
+# test files are intentionally not edited in this cleanup, so the rule stays relaxed here.
+unused-type-ignore-comment = "ignore"
 
 [tool.uv]
 constraint-dependencies = [
