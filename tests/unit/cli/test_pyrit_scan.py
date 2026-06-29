@@ -653,6 +653,13 @@ class TestScenarioParamCoercion:
             parser.parse_args(["--dry-run", "maybe"])
         assert "invalid value" in capsys.readouterr().err
 
+        # "on"/"y" are NOT part of the canonical boolean vocabulary the shell and
+        # backend accept (true/false, 1/0, yes/no); scan must reject them too so
+        # the same flag never behaves differently depending on the entry point.
+        with pytest.raises(SystemExit):
+            parser.parse_args(["--dry-run", "on"])
+        assert "invalid value" in capsys.readouterr().err
+
     def test_list_int_param_coerces_each_value(self):
         from argparse import ArgumentParser
 
@@ -690,7 +697,7 @@ class TestScenarioParamCoercion:
 
         with pytest.raises(SystemExit):
             parser.parse_args(["--mode", "warp"])
-        assert "invalid choice" in capsys.readouterr().err
+        assert "invalid value" in capsys.readouterr().err
 
 
 class TestMainExtraPaths:
