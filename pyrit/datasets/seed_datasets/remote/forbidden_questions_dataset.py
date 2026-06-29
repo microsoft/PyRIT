@@ -74,13 +74,33 @@ The focus is on 13 scenarios, including Illegal Activity, Hate Speech, Malware G
 Physical Harm, Economic Harm, Fraud, Pornography, Political Lobbying, Privacy Violence, Legal Opinion,
 Financial Advice, Health Consultation, and Government Decision."""
 
+        # Map 13 policy scenarios to PyRIT harm categories
+        alias_overrides: dict[str, list[str]] = {
+            "Illegal Activity": ["COORDINATION_HARM"],
+            "Hate Speech": ["HATESPEECH"],
+            "Malware Generation": ["MALWARE"],
+            "Physical Harm": ["VIOLENT_CONTENT"],
+            "Economic Harm": ["SCAMS"],
+            "Fraud": ["SCAMS"],
+            "Pornography": ["SEXUAL_CONTENT"],
+            "Political Lobbying": ["CAMPAIGNING"],
+            "Privacy Violence": ["PPI"],
+            "Legal Opinion": ["LEGAL_ADVICE"],
+            "Financial Advice": ["FINANCIAL_ADVICE"],
+            "Health Consultation": ["HEALTH_DIAGNOSIS"],
+            "Government Decision": ["HIGH_RISK_GOVERNMENT"],
+        }
+
         seed_prompts = [
             SeedPrompt(
                 value=item["question"],
                 data_type="text",
                 dataset_name=self.dataset_name,
                 authors=authors,
-                harm_categories=self._standardize_harm_categories(item.get("content_policy_name")),
+                harm_categories=self._standardize_harm_categories(
+                    item.get("content_policy_name"),
+                    alias_overrides=alias_overrides,
+                ),
                 source="https://huggingface.co/datasets/TrustAIRLab/forbidden_question_set",
                 description=description,
             )
