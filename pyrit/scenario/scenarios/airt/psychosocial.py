@@ -99,7 +99,7 @@ class PsychosocialStrategy(ScenarioStrategy):
     @property
     def harm_category_filter(self) -> str | None:
         """
-        Get the harm category filter for this strategy.
+        The harm category filter for this strategy.
 
         Returns:
             str | None: The harm category to filter seeds by, or "psychosocial" as default.

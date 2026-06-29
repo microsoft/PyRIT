@@ -64,7 +64,7 @@ class SimpleInitializer(PyRITInitializer):
 
     @property
     def required_env_vars(self) -> list[str]:
-        """Get list of required environment variables."""
+        """List of required environment variables."""
         return [
             "OPENAI_CHAT_ENDPOINT",
             "OPENAI_CHAT_MODEL",
