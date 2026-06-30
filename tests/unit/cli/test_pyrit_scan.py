@@ -149,6 +149,38 @@ class TestExtractScenarioArgs:
         assert result == {"max_turns": 10, "mode": "fast"}
 
 
+def _make_scenario_result():
+    """Build a minimal but valid ``ScenarioResult`` for the run-results happy path."""
+    from datetime import datetime, timezone
+
+    from pyrit.models import (
+        AttackOutcome,
+        AttackResult,
+        ComponentIdentifier,
+        ScenarioIdentifier,
+        ScenarioResult,
+        ScenarioRunState,
+    )
+
+    attack = AttackResult(
+        conversation_id="conv-1",
+        objective="extract data",
+        outcome=AttackOutcome.SUCCESS,
+        executed_turns=1,
+        execution_time_ms=10,
+        timestamp=datetime(2025, 1, 1, tzinfo=timezone.utc),
+    )
+    return ScenarioResult(
+        scenario_identifier=ScenarioIdentifier(name="test_scenario", description="A test"),
+        objective_target_identifier=ComponentIdentifier.model_validate(
+            {"__type__": "FakeTarget", "__module__": "test.mod", "params": {}}
+        ),
+        objective_scorer_identifier=None,
+        attack_results={"strat_a": [attack]},
+        scenario_run_state=ScenarioRunState.COMPLETED,
+    )
+
+
 def _mock_api_client():
     """Create a mock PyRITApiClient with default response behaviors (typed wire-data)."""
     from datetime import datetime, timezone
@@ -203,9 +235,10 @@ def _mock_api_client():
         completed_attacks=5,
         objective_achieved_rate=40,
     )
-    # get_scenario_run_results_async returns ScenarioResult; tests that need
-    # a real one patch this individually. Default: raise so callers must opt-in.
-    client.get_scenario_run_results_async.side_effect = RuntimeError("results not configured")
+    # get_scenario_run_results_async returns a valid ScenarioResult by default so the
+    # run-results happy path is exercised. Tests covering the failure path override
+    # this with a side_effect.
+    client.get_scenario_run_results_async.return_value = _make_scenario_result()
     client.__aenter__ = AsyncMock(return_value=client)
     client.__aexit__ = AsyncMock(return_value=None)
     # Marker so tests that re-shape the mock can find the unused TargetInstance helper.
@@ -259,7 +292,8 @@ class TestMain:
 
     @patch("pyrit.cli._server_launcher.ServerLauncher.probe_health_async", new_callable=AsyncMock, return_value=True)
     @patch("pyrit.cli.api_client.PyRITApiClient")
-    def test_main_run_scenario(self, mock_client_class, mock_probe):
+    @patch("pyrit.cli._output.print_scenario_result_async", new_callable=AsyncMock)
+    def test_main_run_scenario(self, _mock_print, mock_client_class, mock_probe):
         """Test main running a scenario."""
         mock_client = _mock_api_client()
         mock_client_class.return_value = mock_client
@@ -272,7 +306,8 @@ class TestMain:
 
     @patch("pyrit.cli._server_launcher.ServerLauncher.probe_health_async", new_callable=AsyncMock, return_value=True)
     @patch("pyrit.cli.api_client.PyRITApiClient")
-    def test_main_run_scenario_with_initializers(self, mock_client_class, mock_probe):
+    @patch("pyrit.cli._output.print_scenario_result_async", new_callable=AsyncMock)
+    def test_main_run_scenario_with_initializers(self, _mock_print, mock_client_class, mock_probe):
         """Test main maps --initializers to request format."""
         mock_client = _mock_api_client()
         mock_client_class.return_value = mock_client
@@ -759,18 +794,19 @@ class TestMainExtraPaths:
 
     @patch("pyrit.cli._server_launcher.ServerLauncher.probe_health_async", new_callable=AsyncMock, return_value=True)
     @patch("pyrit.cli.api_client.PyRITApiClient")
-    def test_main_run_results_fallback_to_summary(self, mock_client_class, _mock_probe, capsys):
+    def test_main_run_results_failure_is_hard_error(self, mock_client_class, _mock_probe, capsys):
         mock_client = _mock_api_client()
         mock_client.get_scenario_run_results_async.side_effect = RuntimeError("nope")
         mock_client_class.return_value = mock_client
 
         result = pyrit_scan.main(["test_scenario", "--target", "t"])
-        assert result == 0
+        # A completed run whose results can't be fetched/parsed is a hard CLI failure.
+        assert result == 1
         captured = capsys.readouterr()
         # The error must be surfaced loudly (not swallowed) and include the exception detail.
         assert "ERROR: The scenario completed" in captured.out
         assert "nope" in captured.out
-        # The summary printer should still be used as a fallback.
+        # The summary printer should still be used as a fallback for context.
         assert "test_scenario" in captured.out
 
     @patch("pyrit.cli._server_launcher.ServerLauncher.probe_health_async", new_callable=AsyncMock, return_value=True)
@@ -919,8 +955,8 @@ class TestScenarioParamFlow:
             created_at=now,
             updated_at=now,
         )
-        # Default: get_scenario_run_results_async raises so the summary fallback path runs.
-        client.get_scenario_run_results_async.side_effect = RuntimeError("results not configured")
+        # Default: get_scenario_run_results_async returns a valid result (happy path).
+        client.get_scenario_run_results_async.return_value = _make_scenario_result()
         client.close_async = AsyncMock()
         client.__aenter__ = AsyncMock(return_value=client)
         client.__aexit__ = AsyncMock(return_value=None)

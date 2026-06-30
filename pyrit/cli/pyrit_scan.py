@@ -680,6 +680,7 @@ async def _run_scenario_async(
             )
             _print_cli_exception(exc=exc)
             _output.print_scenario_run_summary(run=run)
+            return 1
         return 0
 
     _output.print_scenario_run_summary(run=run)
