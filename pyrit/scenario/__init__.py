@@ -18,8 +18,8 @@ import pkgutil
 import sys
 from types import ModuleType
 
-from pyrit.common.parameter import Parameter
 from pyrit.models import ScenarioIdentifier, ScenarioResult
+from pyrit.models.parameter import Parameter
 from pyrit.scenario.core import (
     AtomicAttack,
     AttackTechnique,

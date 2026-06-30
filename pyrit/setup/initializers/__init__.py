@@ -4,7 +4,7 @@
 """PyRIT initializers package."""
 
 from pyrit.common.deprecation import print_deprecation_message
-from pyrit.common.parameter import Parameter
+from pyrit.models.parameter import Parameter
 from pyrit.setup.initializers.airt import AIRTInitializer
 from pyrit.setup.initializers.components.scenario_techniques import ScenarioTechniqueInitializer
 from pyrit.setup.initializers.components.scorers import ScorerInitializer

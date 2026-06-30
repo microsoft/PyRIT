@@ -42,6 +42,11 @@ Run standardized evaluation scenarios at large scale — covering content harms,
 A graphical user interface for human-led red teaming. Interact with AI systems directly, track findings, and collaborate with your team — all from a modern web UI.
 ::::
 
+```{image} roakey_peek.png
+:alt: Roakey peeking in
+:class: roakey-peek roakey-peek-left
+```
+
 ::::{card}
 🔌 **Any Target**
 
@@ -106,6 +111,11 @@ initializers:
 ::::
 
 :::::
+
+```{image} roakey_tail.png
+:alt: Roakey's tail peeking in
+:class: roakey-peek roakey-peek-tail
+```
 
 3. Use PyRIT in any mode that best fits your use case: Scanner, GUI, or Framework.
 

@@ -153,12 +153,12 @@ class LikertScalePaths(enum.Enum):
 
     @property
     def path(self) -> Path:
-        """Get the path to the Likert scale YAML file."""
+        """The path to the Likert scale YAML file."""
         return self.value[0]
 
     @property
     def evaluation_files(self) -> LikertScaleEvalFiles | None:
-        """Get the evaluation file configuration, or None if no evaluation dataset exists."""
+        """The evaluation file configuration, or None if no evaluation dataset exists."""
         return self.value[1]
 
 

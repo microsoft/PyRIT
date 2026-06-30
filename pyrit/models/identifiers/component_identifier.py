@@ -12,6 +12,8 @@ Design principles:
     2. Hash is content-addressed from behavioral params only.
     3. Children carry their own hashes.
     4. Adding optional params with None default is backward-compatible (None values excluded).
+    5. Attributes are identity-bearing state: hashed like params, but excluded from
+       the eval hash and never passed to a constructor.
 """
 
 from __future__ import annotations
@@ -20,7 +22,7 @@ import hashlib
 import json
 import logging
 from abc import ABC, abstractmethod
-from typing import Any, ClassVar, get_args, get_origin
+from typing import TYPE_CHECKING, Any, ClassVar, get_args, get_origin
 
 from pydantic import (
     BaseModel,
@@ -36,6 +38,9 @@ from typing_extensions import Self, TypeAliasType
 
 import pyrit
 from pyrit.common.deprecation import print_deprecation_message
+
+if TYPE_CHECKING:
+    from pyrit.models.parameter import ComponentType
 
 #: The set of value types allowed inside ``ComponentIdentifier.params``. Params
 #: must be JSON-serializable scalars (``str`` / ``int`` / ``float`` / ``bool`` /
@@ -60,6 +65,7 @@ RESERVED_PARAM_NAMES: frozenset[str] = frozenset(
         "eval_hash",
         "children",
         "params",
+        "attributes",
         "__type__",
         "__module__",
     }
@@ -95,6 +101,7 @@ def _build_hash_dict(
     class_module: str,
     params: dict[str, JSONValue],
     children: dict[str, ComponentIdentifier | list[ComponentIdentifier]],
+    attributes: dict[str, JSONValue] | None = None,
 ) -> dict[str, Any]:
     """
     Build the canonical dictionary used for hash computation.
@@ -109,6 +116,8 @@ def _build_hash_dict(
         params (dict[str, JSONValue]): Behavioral parameters (non-None values only).
         children (dict[str, ComponentIdentifier | list[ComponentIdentifier]]): Child name to
             ComponentIdentifier or list of ComponentIdentifier.
+        attributes (dict[str, JSONValue] | None): Identity-bearing state (non-None values
+            only). Hashed like params but excluded from the eval hash.
 
     Returns:
         dict[str, Any]: The canonical dictionary for hashing.
@@ -121,6 +130,14 @@ def _build_hash_dict(
     # Only include non-None params — adding an optional param with None default
     # won't change existing hashes, making the schema backward-compatible.
     hash_dict.update({key: value for key, value in sorted(params.items()) if value is not None})
+
+    # Attributes sit under their own key (never inlined alongside params) and,
+    # like params, only contribute non-None values so an optional attribute with
+    # a None default stays hash-compatible.
+    if attributes:
+        attr_dict = {key: value for key, value in sorted(attributes.items()) if value is not None}
+        if attr_dict:
+            hash_dict[ComponentIdentifier.KEY_ATTRIBUTES] = attr_dict
 
     # Children contribute their hashes, not their full structure.
     if children:
@@ -183,13 +200,22 @@ class ComponentIdentifier(BaseModel):
     serializes and hashes identically to a plain ``ComponentIdentifier`` built with the
     same params/children. Non-promoted members simply stay in ``params`` / ``children``.
 
+    Attributes: a third bucket alongside ``params`` and ``children`` for
+    identity-bearing **state** that is neither behavioral nor a constructor input —
+    e.g. a deployment / model version observed at runtime. Like params it feeds the
+    content hash, but it is excluded from the eval hash and is never used to build
+    the component. No identifier promotes attributes to a typed field today; they are
+    populated explicitly through the ``attributes`` dict.
+
     Serialization: ``model_dump()`` returns a flat dict where reserved keys
     (``class_name``, ``class_module``, ``hash``, ``pyrit_version``, ``eval_hash``,
-    ``children``) sit at the top level alongside the inlined param values. This shape is
-    also the storage / REST format. Param values are stored in full (no truncation).
-    ``model_validate()`` accepts the same flat shape (plus a structured form with an
-    explicit ``params`` dict); the content ``hash`` is always recomputed on validation,
-    so any stored ``hash`` is ignored.
+    Serialization: ``model_dump()`` returns a flat dict where reserved keys
+    (``class_name``, ``class_module``, ``hash``, ``pyrit_version``, ``eval_hash``,
+    ``children``, ``attributes``) sit at the top level alongside the inlined param
+    values. This shape is also the storage / REST format. Param values are stored
+    in full (no truncation). ``model_validate()`` accepts the same flat shape (plus
+    a structured form with an explicit ``params`` dict); the content ``hash`` is
+    always recomputed on validation, so any stored ``hash`` is ignored.
 
     Mutability: the model is frozen, but ``params`` and ``children`` are dicts whose
     contents are not deep-frozen — mutating them after construction creates an
@@ -205,6 +231,7 @@ class ComponentIdentifier(BaseModel):
     KEY_EVAL_HASH: ClassVar[str] = "eval_hash"
     KEY_PYRIT_VERSION: ClassVar[str] = "pyrit_version"
     KEY_CHILDREN: ClassVar[str] = "children"
+    KEY_ATTRIBUTES: ClassVar[str] = "attributes"
     LEGACY_KEY_TYPE: ClassVar[str] = "__type__"
     LEGACY_KEY_MODULE: ClassVar[str] = "__module__"
 
@@ -218,6 +245,10 @@ class ComponentIdentifier(BaseModel):
     params: dict[str, JSONValue] = Field(default_factory=dict)
     #: Named child identifiers for compositional identity (e.g., a scorer's target).
     children: dict[str, ComponentIdentifier | list[ComponentIdentifier]] = Field(default_factory=dict)
+    #: Identity-bearing state that is hashed (like ``params``) but excluded from the
+    #: eval hash and never passed to a constructor — e.g. a runtime-resolved model
+    #: version. Same value rules as ``params`` (see ``JSONValue``).
+    attributes: dict[str, JSONValue] = Field(default_factory=dict)
     #: Version tag for storage. Not included in the content hash.
     pyrit_version: str = Field(default=pyrit.__version__)
     #: Evaluation hash. The base identifier cannot compute it (the eval rules live
@@ -226,6 +257,13 @@ class ComponentIdentifier(BaseModel):
     #: so it lands in the stored JSON for DB-level filtering.
     eval_hash: str | None = None
 
+    #: The registry family this identifier type builds. ``None`` on the base means
+    #: a plain ``ComponentIdentifier`` is never a buildable/resolvable reference;
+    #: each concrete leaf identifier (``TargetIdentifier`` / ``ConverterIdentifier``
+    #: / ``ScorerIdentifier``) overrides it with its own ``ComponentType`` so a
+    #: child-identifier-typed field self-reports which registry resolves it.
+    component_type: ClassVar[ComponentType | None] = None
+
     #: Cache backing the read-only ``hash`` computed field. Populated once by the
     #: after-validator from the identifier's content; never set externally.
     _hash: str = PrivateAttr(default="")
@@ -233,6 +271,32 @@ class ComponentIdentifier(BaseModel):
     # ------------------------------------------------------------------
     # Promotion (typed projection — derived from the subclass's own fields)
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _child_identifier_type(annotation: Any) -> type[ComponentIdentifier] | None:
+        """
+        Return the ``ComponentIdentifier`` subclass a field annotation denotes, if any.
+
+        Handles a direct subclass, an ``Optional`` wrapper, and a ``list[...]`` of
+        subclasses (the two shapes promoted fields use for children).
+
+        Args:
+            annotation (Any): The resolved field annotation (from
+                ``model_fields[name].annotation``).
+
+        Returns:
+            type[ComponentIdentifier] | None: The child identifier subclass, or
+            ``None`` for a scalar (param) field.
+        """
+        if get_origin(annotation) is list:
+            args = get_args(annotation)
+            inner = args[0] if args else None
+            return inner if isinstance(inner, type) and issubclass(inner, ComponentIdentifier) else None
+
+        for candidate in get_args(annotation) or (annotation,):
+            if isinstance(candidate, type) and issubclass(candidate, ComponentIdentifier):
+                return candidate
+        return None
 
     @staticmethod
     def _is_child_field(annotation: Any) -> bool:
@@ -248,13 +312,7 @@ class ComponentIdentifier(BaseModel):
             or a ``list`` thereof (optionally wrapped in ``| None``); ``False`` for
             scalar (param) fields.
         """
-        if get_origin(annotation) is list:
-            args = get_args(annotation)
-            inner = args[0] if args else None
-            return isinstance(inner, type) and issubclass(inner, ComponentIdentifier)
-
-        candidates: tuple[Any, ...] = get_args(annotation) or (annotation,)
-        return any(isinstance(c, type) and issubclass(c, ComponentIdentifier) for c in candidates)
+        return ComponentIdentifier._child_identifier_type(annotation) is not None
 
     @classmethod
     def _promoted_fields(cls) -> tuple[str, ...]:
@@ -287,6 +345,71 @@ class ComponentIdentifier(BaseModel):
             tuple[str, ...]: Promoted child field names, in field-definition order.
         """
         return tuple(n for n in cls._promoted_fields() if cls._is_child_field(cls.model_fields[n].annotation))
+
+    @classmethod
+    def get_reference_component_types(cls) -> dict[str, ComponentType]:
+        """
+        Map constructor-arg names to the component family each reference resolves to.
+
+        A promoted field that is an included constructor parameter (explicit
+        ``Param.Include`` or unmarked) and is typed as a child identifier
+        contributes ``{arg_name: component_type}``, where ``arg_name`` is the marker
+        alias or the field name and ``component_type`` is the child identifier
+        type's own ``component_type``. ``Param.Exclude()`` fields, plain-value
+        fields, and any field typed as a base ``ComponentIdentifier`` (whose
+        ``component_type`` is ``None`` and is therefore not buildable) contribute
+        nothing.
+
+        Returns:
+            dict[str, ComponentType]: Constructor-arg-name → referenced component type.
+        """
+        from pyrit.models.identifiers.param_markers import ClassAttrMarker, ExcludeMarker, IncludeMarker, ParamMarker
+
+        references: dict[str, ComponentType] = {}
+        for field_name in cls._promoted_fields():
+            field = cls.model_fields[field_name]
+            marker = next((m for m in field.metadata if isinstance(m, ParamMarker)), None)
+            if isinstance(marker, (ExcludeMarker, ClassAttrMarker)):
+                continue
+
+            child_type = cls._child_identifier_type(field.annotation)
+            if child_type is None or child_type.component_type is None:
+                continue
+
+            arg_name = marker.alias if isinstance(marker, IncludeMarker) and marker.alias else field_name
+            references[arg_name] = child_type.component_type
+
+        return references
+
+    @classmethod
+    def get_class_attribute_values(cls, target_cls: type) -> dict[str, Any]:
+        """
+        Read each ``Param.ClassAttr``-marked field's value off a target class.
+
+        Lets a registry describe a *class* (with no configured instance) by
+        sourcing the marked fields directly from class attributes. For every
+        promoted field carrying a ``ClassAttrMarker``, reads the named class
+        attribute (defaulting to the field name upper-cased) from ``target_cls``.
+
+        Args:
+            target_cls (type): The component class to read class attributes from.
+
+        Returns:
+            dict[str, Any]: Field-name → class-attribute value, for each
+            ``Param.ClassAttr`` field. Missing attributes map to ``None``.
+        """
+        from pyrit.models.identifiers.param_markers import ClassAttrMarker
+
+        values: dict[str, Any] = {}
+        for field_name in cls._promoted_fields():
+            field = cls.model_fields[field_name]
+            marker = next((m for m in field.metadata if isinstance(m, ClassAttrMarker)), None)
+            if marker is None:
+                continue
+            attr_name = marker.attr_name or field_name.upper()
+            values[field_name] = getattr(target_cls, attr_name, None)
+
+        return values
 
     # ------------------------------------------------------------------
     # Validators
@@ -356,6 +479,7 @@ class ComponentIdentifier(BaseModel):
             cls.KEY_PYRIT_VERSION,
             cls.KEY_EVAL_HASH,
             cls.KEY_CHILDREN,
+            cls.KEY_ATTRIBUTES,
             *promoted_fields,
         }
 
@@ -444,6 +568,7 @@ class ComponentIdentifier(BaseModel):
             class_module=self.class_module,
             params=self.params,
             children=self.children,
+            attributes=self.attributes,
         )
         object.__setattr__(self, "_hash", config_hash(hash_dict))
         return self
@@ -455,10 +580,10 @@ class ComponentIdentifier(BaseModel):
         Content-addressed SHA256 hash, derived from this identifier's content.
 
         Computed once by the after-validator from ``class_name`` /
-        ``class_module`` / ``params`` / ``children`` and cached in ``_hash``. It
-        is a read-only computed field: nothing can set it, and any ``hash`` value
-        supplied at construction (a kwarg, or one read back from the flat storage
-        form) is dropped before validation.
+        ``class_module`` / ``params`` / ``children`` / ``attributes`` and cached
+        in ``_hash``. It is a read-only computed field: nothing can set it, and
+        any ``hash`` value supplied at construction (a kwarg, or one read back
+        from the flat storage form) is dropped before validation.
 
         Returns:
             The SHA256 content hash.
@@ -502,6 +627,9 @@ class ComponentIdentifier(BaseModel):
                 elif isinstance(child, list):
                     serialized_children[name] = [c.model_dump(mode=mode) for c in child]
             result[self.KEY_CHILDREN] = serialized_children
+
+        if self.attributes:
+            result[self.KEY_ATTRIBUTES] = dict(self.attributes)
 
         return result
 
@@ -555,6 +683,7 @@ class ComponentIdentifier(BaseModel):
             class_module=self.class_module,
             params=self.params,
             children=self.children,
+            attributes=self.attributes,
             pyrit_version=self.pyrit_version,
             eval_hash=eval_hash,
         )
@@ -566,7 +695,7 @@ class ComponentIdentifier(BaseModel):
     @property
     def short_hash(self) -> str:
         """
-        Return the first 8 characters of the hash for display and logging.
+        The first 8 characters of the hash, for display and logging.
         """
         return self.hash[:8]
 
@@ -593,11 +722,14 @@ class ComponentIdentifier(BaseModel):
         """
         params_str = ", ".join(f"{k}={v!r}" for k, v in sorted(self.params.items()))
         children_str = ", ".join(f"{k}={v}" for k, v in sorted(self.children.items()))
+        attributes_str = ", ".join(f"{k}={v!r}" for k, v in sorted(self.attributes.items()))
         parts = [f"class={self.class_name}"]
         if params_str:
             parts.append(f"params=({params_str})")
         if children_str:
             parts.append(f"children=({children_str})")
+        if attributes_str:
+            parts.append(f"attributes=({attributes_str})")
         parts.append(f"hash={self.short_hash}")
         return f"ComponentIdentifier({', '.join(parts)})"
 
@@ -612,6 +744,7 @@ class ComponentIdentifier(BaseModel):
         *,
         params: dict[str, Any] | None = None,
         children: dict[str, ComponentIdentifier | list[ComponentIdentifier]] | None = None,
+        attributes: dict[str, Any] | None = None,
         **promoted: Any,
     ) -> Self:
         """
@@ -626,6 +759,8 @@ class ComponentIdentifier(BaseModel):
                 identifier.
             params: Optional behavioral params.
             children: Optional child identifiers.
+            attributes: Optional identity-bearing state (hashed, but excluded from
+                the eval hash and not a constructor input). ``None`` values dropped.
             **promoted: Optional promoted typed fields (for subclasses). Passed
                 by name; ``None`` values are dropped. These are mirrored back
                 into ``params`` / ``children`` automatically.
@@ -635,6 +770,7 @@ class ComponentIdentifier(BaseModel):
         """
         clean_params = {k: v for k, v in (params or {}).items() if v is not None}
         clean_children = {k: v for k, v in (children or {}).items() if v is not None}
+        clean_attributes = {k: v for k, v in (attributes or {}).items() if v is not None}
         clean_promoted = {k: v for k, v in promoted.items() if v is not None}
 
         return cls(
@@ -642,6 +778,7 @@ class ComponentIdentifier(BaseModel):
             class_module=obj.__class__.__module__,
             params=clean_params,
             children=clean_children,
+            attributes=clean_attributes,
             **clean_promoted,
         )
 
@@ -705,7 +842,7 @@ class ComponentIdentifier(BaseModel):
 
     def _collect_child_eval_hashes(self) -> set[str]:
         """
-        Recursively collect all eval_hash values from child identifiers.
+        Recursively collect all eval_hash values from descendant identifiers.
 
         Returns:
             The set of non-empty eval_hash strings found in descendants.

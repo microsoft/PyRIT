@@ -20,17 +20,17 @@ class ScenarioObjectiveListInitializer(PyRITInitializer):
 
     @property
     def name(self) -> str:
-        """Return the display name of this initializer."""
+        """The display name of this initializer."""
         return "Simple Objective List Configuration for Scenarios"
 
     @property
     def execution_order(self) -> int:
-        """Return the execution order, ensuring this initializer runs after most others."""
+        """The execution order, ensuring this initializer runs after most others."""
         return 10
 
     @property
     def required_env_vars(self) -> list[str]:
-        """Return an empty list because this initializer requires no environment variables."""
+        """An empty list because this initializer requires no environment variables."""
         return []
 
     async def initialize_async(self) -> None:

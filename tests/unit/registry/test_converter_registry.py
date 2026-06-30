@@ -10,7 +10,9 @@ from typing import Literal
 
 import pytest
 
+from pyrit.common import REQUIRED_VALUE
 from pyrit.models import ComponentIdentifier, Message, MessagePiece, PromptDataType
+from pyrit.models.parameter import ComponentType
 from pyrit.prompt_converter import (
     Base64Converter,
     CaesarConverter,
@@ -29,13 +31,10 @@ from pyrit.registry.components import (
     ConverterMetadata,
     ConverterRegistry,
 )
-from pyrit.registry.components.converter_registry import (
-    _extract_parameters,
-    _requires_llm_target,
-)
 from pyrit.registry.object_registries import (
     TargetRegistry,
 )
+from pyrit.registry.resolution import derive_parameters
 
 
 class MockPromptTarget(PromptTarget):
@@ -108,10 +107,10 @@ class MockMultiModalConverter(PromptConverter):
 @pytest.fixture
 def registry():
     """Provide a fresh ``ConverterRegistry`` singleton, reset around each test."""
-    ConverterRegistry.reset_instance()
+    ConverterRegistry.reset_registry_singleton()
     instance = ConverterRegistry.get_registry_singleton()
     yield instance
-    ConverterRegistry.reset_instance()
+    ConverterRegistry.reset_registry_singleton()
 
 
 # ---------------------------------------------------------------------------
@@ -123,10 +122,10 @@ class TestConverterRegistrySingleton:
     """Tests for the singleton pattern in ConverterRegistry."""
 
     def setup_method(self):
-        ConverterRegistry.reset_instance()
+        ConverterRegistry.reset_registry_singleton()
 
     def teardown_method(self):
-        ConverterRegistry.reset_instance()
+        ConverterRegistry.reset_registry_singleton()
 
     def test_get_registry_singleton_returns_same_instance(self):
         assert ConverterRegistry.get_registry_singleton() is ConverterRegistry.get_registry_singleton()
@@ -134,9 +133,9 @@ class TestConverterRegistrySingleton:
     def test_get_registry_singleton_returns_converter_registry_type(self):
         assert isinstance(ConverterRegistry.get_registry_singleton(), ConverterRegistry)
 
-    def test_reset_instance_clears_singleton(self):
+    def test_reset_registry_singleton_clears_singleton(self):
         instance1 = ConverterRegistry.get_registry_singleton()
-        ConverterRegistry.reset_instance()
+        ConverterRegistry.reset_registry_singleton()
         assert ConverterRegistry.get_registry_singleton() is not instance1
 
 
@@ -308,16 +307,6 @@ class TestCreateInstance:
         registry.create_instance("Base64Converter")
         assert len(registry.instances) == 0
 
-    def test_honors_registered_default_kwargs(self, registry: ConverterRegistry):
-        registry.register(CaesarConverter, name="CaesarDefault", default_kwargs={"caesar_offset": 5})
-        converter = registry.create_instance("CaesarDefault")
-        assert converter.get_identifier().params.get("caesar_offset") == 5
-
-    def test_uses_registered_factory(self, registry: ConverterRegistry):
-        sentinel = Base64Converter()
-        registry.register(Base64Converter, name="B64Factory", factory=lambda **kwargs: sentinel)
-        assert registry.create_instance("B64Factory") is sentinel
-
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestCreateLLMConverter:
@@ -347,12 +336,19 @@ class TestClassMetadata:
     """Tests for converter class-catalog metadata building."""
 
     def _metadata_for(self, registry: ConverterRegistry, name: str) -> ConverterMetadata:
-        return next(m for m in registry.list_class_metadata() if m.class_name == name)
+        return next(m for m in registry.get_all_registered_class_metadata() if m.class_name == name)
 
     def test_metadata_includes_supported_types(self, registry: ConverterRegistry):
         meta = self._metadata_for(registry, "Base64Converter")
         assert "text" in meta.supported_input_types
         assert "text" in meta.supported_output_types
+
+    def test_metadata_carries_class_attributes(self, registry: ConverterRegistry):
+        meta = self._metadata_for(registry, "Base64Converter")
+        # Supported types are sourced from class attributes via Param.ClassAttr,
+        # not from a fabricated instance identifier.
+        assert "supported_input_types" in meta.class_attributes
+        assert "text" in [str(dt) for dt in meta.class_attributes["supported_input_types"]]
 
     def test_metadata_has_no_catalog_visible_field(self, registry: ConverterRegistry):
         # catalog_visible is a presentation concern owned by the backend/frontend.
@@ -377,16 +373,18 @@ class TestClassMetadata:
     def test_parameters_extracted(self, registry: ConverterRegistry):
         meta = self._metadata_for(registry, "CaesarConverter")
         caesar_param = next(p for p in meta.parameters if p.name == "caesar_offset")
-        assert caesar_param.required is True
-        assert caesar_param.annotation is int
-        assert caesar_param.coercible_from_string is True
+        assert caesar_param.default is REQUIRED_VALUE
+        assert caesar_param.param_type is int
+        assert caesar_param.reference is None
+        assert caesar_param.is_string_coercible is True
 
     def test_surfaces_non_coercible_params(self, registry: ConverterRegistry):
-        # An LLM-based converter exposes its target parameter for dynamic
-        # construction even though it cannot be coerced from a string.
+        # An LLM-based converter exposes its target parameter (a registry reference)
+        # for dynamic construction even though it cannot be coerced from a string.
         meta = self._metadata_for(registry, "PersuasionConverter")
-        non_coercible = [p for p in meta.parameters if not p.coercible_from_string]
-        assert non_coercible, "expected at least one non-coercible parameter (the LLM target)"
+        references = [p for p in meta.parameters if p.reference is not None]
+        assert references, "expected at least one reference parameter (the LLM target)"
+        assert any(p.is_reference_to(ComponentType.TARGET) for p in meta.parameters)
 
 
 # ---------------------------------------------------------------------------
@@ -397,8 +395,8 @@ class TestClassMetadata:
 class _UnionTargetConverter:
     """Helper with a PEP 604 unioned target parameter for introspection tests."""
 
-    def __init__(self, *, target: PromptTarget | None = None, offset: int | None = None) -> None:
-        self.target = target
+    def __init__(self, *, converter_target: PromptTarget | None = None, offset: int | None = None) -> None:
+        self.converter_target = converter_target
         self.offset = offset
 
 
@@ -409,42 +407,32 @@ class _OptionalLiteralConverter:
         self.fmt = fmt
 
 
-class TestExtractParameters:
-    """Tests for the converter-parameter introspection helper."""
+class TestDeriveParameters:
+    """Tests for the converter-parameter derivation into the ``Parameter`` contract."""
 
-    def test_exposes_raw_annotation(self) -> None:
-        offset_param = next(p for p in _extract_parameters(_UnionTargetConverter) if p.name == "offset")
-        assert offset_param.annotation == (int | None)
-        assert offset_param.coercible_from_string is True
+    def test_unwraps_optional_into_param_type(self) -> None:
+        from pyrit.models.identifiers import ConverterIdentifier
 
-    def test_includes_non_coercible(self) -> None:
-        target_param = next(p for p in _extract_parameters(_UnionTargetConverter) if p.name == "target")
-        assert target_param.coercible_from_string is False
+        params = derive_parameters(cls=_UnionTargetConverter, identifier_type=ConverterIdentifier)
+        offset_param = next(p for p in params if p.name == "offset")
+        assert offset_param.param_type is int
+        assert offset_param.reference is None
+        assert offset_param.is_string_coercible is True
+
+    def test_target_becomes_reference(self) -> None:
+        from pyrit.models.identifiers import ConverterIdentifier
+
+        params = derive_parameters(cls=_UnionTargetConverter, identifier_type=ConverterIdentifier)
+        target_param = next(p for p in params if p.name == "converter_target")
+        assert target_param.reference is not None
+        assert target_param.reference.component_type is ComponentType.TARGET
+        assert target_param.param_type is None
 
     def test_optional_literal_choices(self) -> None:
-        fmt_param = next(p for p in _extract_parameters(_OptionalLiteralConverter) if p.name == "fmt")
-        assert fmt_param.choices == ("A", "B")
+        from pyrit.registry.resolution import display_choices
 
-    def test_sets_requires_llm(self) -> None:
-        params = _extract_parameters(_UnionTargetConverter)
-        target_param = next(p for p in params if p.name == "target")
-        offset_param = next(p for p in params if p.name == "offset")
-        assert target_param.requires_llm is True
-        assert offset_param.requires_llm is False
-
-
-class TestRequiresLlmTarget:
-    """Tests for the _requires_llm_target helper."""
-
-    def test_plain_target(self) -> None:
-        assert _requires_llm_target(PromptTarget) is True
-
-    def test_optional_target(self) -> None:
-        assert _requires_llm_target(PromptTarget | None) is True
-
-    def test_non_target(self) -> None:
-        assert _requires_llm_target(int) is False
-        assert _requires_llm_target(str | None) is False
+        fmt_param = next(p for p in derive_parameters(cls=_OptionalLiteralConverter) if p.name == "fmt")
+        assert display_choices(fmt_param.param_type) == ("A", "B")
 
 
 class TestNoBackendDependency:
@@ -464,3 +452,58 @@ class TestNoBackendDependency:
             elif isinstance(node, ast.ImportFrom) and node.module:
                 imported_modules.append(node.module)
         assert not any(name.startswith("pyrit.backend") for name in imported_modules)
+
+
+class TestRegistrationGate:
+    """The identifier blueprint must line up with a resolvable contract for every converter."""
+
+    def test_discovery_validates_all_converters(self, registry: ConverterRegistry) -> None:
+        # Discovery registers every converter through ``register_class``, which
+        # validates each class. Accessing the catalog therefore proves every
+        # discovered converter is describable and buildable (all reference params
+        # map to a wired registry); otherwise discovery would have raised.
+        names = registry.get_class_names()
+        assert names
+        assert "Base64Converter" in names
+
+    def test_every_converter_derives_a_contract(self, registry: ConverterRegistry) -> None:
+        from pyrit.models.identifiers import ConverterIdentifier
+
+        for name in registry.get_class_names():
+            cls = registry.get_class(name)
+            parameters = derive_parameters(cls=cls, identifier_type=ConverterIdentifier)
+            # Reference params only ever carry a component type the resolver can map.
+            for param in parameters:
+                if param.reference is not None:
+                    assert param.reference.component_type in (
+                        ComponentType.TARGET,
+                        ComponentType.CONVERTER,
+                        ComponentType.SCORER,
+                    )
+
+    def test_is_llm_based_matches_target_reference(self, registry: ConverterRegistry) -> None:
+        from pyrit.models.identifiers import ConverterIdentifier
+
+        for meta in registry.get_all_registered_class_metadata():
+            parameters = derive_parameters(cls=registry.get_class(meta.class_name), identifier_type=ConverterIdentifier)
+            has_target = any(p.is_reference_to(ComponentType.TARGET) for p in parameters)
+            assert meta.is_llm_based is has_target, f"is_llm_based mismatch for {meta.class_name}"
+
+    def test_register_class_raises_for_unresolvable_reference(self, registry: ConverterRegistry) -> None:
+        from unittest.mock import patch
+
+        from pyrit.models.parameter import Parameter, RegistryReference
+
+        target_ref = Parameter(
+            name="converter_target",
+            description="",
+            reference=RegistryReference(component_type=ComponentType.TARGET, annotation=object),
+        )
+        # A class whose reference parameter has no wired registry must fail the
+        # registration gate (validation runs at register_class time).
+        with (
+            patch("pyrit.registry.registry.derive_parameters", return_value=[target_ref]),
+            patch("pyrit.registry.resolution._registry_getter_for_component_type", return_value=None),
+        ):
+            with pytest.raises(ValueError, match="no registry wired"):
+                registry.register_class(Base64Converter)

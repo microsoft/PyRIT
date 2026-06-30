@@ -5,12 +5,13 @@
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, ClassVar
 
 from pydantic import Field
 
 from pyrit.models.identifiers.component_identifier import ComponentIdentifier
 from pyrit.models.identifiers.evaluation_markers import Evaluate
+from pyrit.models.parameter import ComponentType
 
 
 class TargetIdentifier(ComponentIdentifier):
@@ -30,6 +31,8 @@ class TargetIdentifier(ComponentIdentifier):
     back to ``model_name``, and ``targets`` is a wrapper passthrough that is
     unwrapped so a multi-target hashes the same as its inner target.
     """
+
+    component_type: ClassVar[ComponentType] = ComponentType.TARGET
 
     #: Target endpoint URL.
     endpoint: Annotated[str | None, Evaluate.Exclude()] = None

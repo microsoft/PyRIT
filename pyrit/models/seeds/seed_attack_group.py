@@ -67,7 +67,7 @@ class SeedAttackGroup(SeedGroup):
     @property
     def objective(self) -> SeedObjective:
         """
-        Get the objective for this attack group.
+        The objective for this attack group.
 
         Unlike SeedGroup.objective which may return None, SeedAttackGroup
         guarantees exactly one objective exists.

@@ -152,7 +152,7 @@ class GlobalDefaultValues:
 
     @property
     def all_defaults(self) -> dict[DefaultValueScope, Any]:
-        """Get a copy of all current default values."""
+        """A copy of all current default values."""
         return self._default_values.copy()
 
 
