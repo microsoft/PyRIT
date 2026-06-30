@@ -106,7 +106,7 @@ class ScenarioStrategy(Enum, metaclass=_DeprecatedEnumMeta):
     @property
     def tags(self) -> set[str]:
         """
-        Get the tags for this attack strategy.
+        The tags for this attack strategy.
 
         Tags provide a flexible categorization system, allowing strategies
         to be classified along multiple dimensions (e.g., by complexity, type, or technique).
@@ -326,12 +326,12 @@ class ScenarioCompositeStrategy:
 
     @property
     def name(self) -> str:
-        """Get the name of the composite strategy."""
+        """The name of the composite strategy."""
         return self._name
 
     @property
     def strategies(self) -> list[ScenarioStrategy]:
-        """Get the list of strategies in this composition."""
+        """The list of strategies in this composition."""
         return self._strategies
 
     @property

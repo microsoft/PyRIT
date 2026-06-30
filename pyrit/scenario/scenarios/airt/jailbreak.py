@@ -22,7 +22,9 @@ from pyrit.prompt_normalizer import PromptConverterConfiguration
 from pyrit.prompt_target.common.prompt_target import PromptTarget
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
-from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
+from pyrit.scenario.core.dataset_configuration import (
+    DatasetAttackConfiguration,
+)
 from pyrit.scenario.core.scenario import Scenario
 from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
 from pyrit.scenario.core.scenario_target_defaults import get_default_adversarial_target
@@ -154,7 +156,7 @@ class Jailbreak(Scenario):
             version=self.VERSION,
             strategy_class=JailbreakStrategy,
             default_strategy=JailbreakStrategy.SIMPLE,
-            default_dataset_config=DatasetConfiguration(dataset_names=["airt_harms"], max_dataset_size=4),
+            default_dataset_config=DatasetAttackConfiguration(dataset_names=["airt_harms"], max_dataset_size=4),
             objective_scorer=self._objective_scorer,
             scenario_result_id=scenario_result_id,
         )
@@ -186,20 +188,17 @@ class Jailbreak(Scenario):
             self._adversarial_target = get_default_adversarial_target()
         return self._adversarial_target
 
-    def _resolve_seed_groups(self) -> list[SeedAttackGroup]:
+    async def _resolve_seed_groups_async(self) -> list[SeedAttackGroup]:
         """
         Resolve seed groups from dataset configuration.
 
         Returns:
             list[SeedAttackGroup]: List of seed attack groups with objectives to be tested.
         """
-        # Use dataset_config (guaranteed to be set by initialize_async)
-        seed_groups = self._dataset_config.get_all_seed_attack_groups()
-
-        if not seed_groups:
-            self._raise_dataset_exception()
-
-        return list(seed_groups)
+        # Use dataset_config (guaranteed to be set by initialize_async). Auto-fetch
+        # populates memory first; a still-empty result raises a DatasetConstraintError
+        # naming the offending dataset, which we let propagate.
+        return list(await self._dataset_config.get_seed_attack_groups_async())
 
     async def _get_atomic_attack_from_strategy_async(
         self, *, strategy: str, jailbreak_template_name: str
@@ -279,7 +278,7 @@ class Jailbreak(Scenario):
         atomic_attacks: list[AtomicAttack] = []
 
         # Retrieve seed prompts based on selected strategies
-        self._seed_groups = self._resolve_seed_groups()
+        self._seed_groups = await self._resolve_seed_groups_async()
 
         strategies = {s.value for s in self._scenario_strategies}
 
