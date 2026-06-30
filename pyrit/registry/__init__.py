@@ -15,6 +15,10 @@ from pyrit.registry.class_registries import (
 from pyrit.registry.components import (
     ConverterMetadata,
     ConverterRegistry,
+    ScorerMetadata,
+    ScorerRegistry,
+    TargetMetadata,
+    TargetRegistry,
 )
 from pyrit.registry.discovery import (
     discover_in_directory,
@@ -30,9 +34,6 @@ from pyrit.registry.object_registries import (
     AttackTechniqueRegistry,
     BaseInstanceRegistry,
     RegistryEntry,
-    RetrievableInstanceRegistry,
-    ScorerRegistry,
-    TargetRegistry,
 )
 from pyrit.registry.registry import Registry
 from pyrit.registry.tag_query import TagQuery
@@ -46,7 +47,6 @@ __all__ = [
     "DefaultInstanceRegistry",
     "InstanceRegistry",
     "Registry",
-    "RetrievableInstanceRegistry",
     "SupportsInstances",
     "ClassEntry",
     "discover_in_directory",
@@ -59,6 +59,8 @@ __all__ = [
     "ScenarioMetadata",
     "ScenarioRegistry",
     "ScorerRegistry",
+    "ScorerMetadata",
     "TargetRegistry",
+    "TargetMetadata",
     "TagQuery",
 ]

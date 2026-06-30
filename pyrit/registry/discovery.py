@@ -15,45 +15,11 @@ import logging
 import pkgutil
 from collections.abc import Callable, Iterator
 from pathlib import Path
-from types import ModuleType
 from typing import TypeVar
 
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
-
-
-def discover_exported_subclasses(
-    *,
-    module: ModuleType,
-    base_class: type[T],
-) -> Iterator[type[T]]:
-    """
-    Discover concrete subclasses of ``base_class`` exported by a package's ``__all__``.
-
-    Iterates the names listed in ``module.__all__`` (falling back to ``dir(module)``
-    when ``__all__`` is absent) and yields each attribute that is a concrete subclass
-    of ``base_class``. Unlike ``discover_in_package``, this honors the package's public
-    export list, so classes re-exported from subpackages (e.g. a converter that lives
-    in an ``ansi_escape/`` subpackage) are included rather than silently dropped.
-
-    Args:
-        module (ModuleType): The package/module to inspect (e.g. ``pyrit.prompt_converter``).
-        base_class (type[T]): The base class to filter subclasses of.
-
-    Yields:
-        type[T]: Each concrete subclass of ``base_class`` exported by the module.
-    """
-    names = getattr(module, "__all__", None) or dir(module)
-    for name in names:
-        obj = getattr(module, name, None)
-        if not inspect.isclass(obj):
-            continue
-        if not issubclass(obj, base_class) or obj is base_class:
-            continue
-        if inspect.isabstract(obj):
-            continue
-        yield obj
 
 
 def discover_in_directory(

@@ -1,9 +1,31 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+"""
+Tests for the merged ``ScorerRegistry`` (buildable catalog + instance container)
+and its introspection helpers.
+"""
+
+import pytest
 
 from pyrit.models import ComponentIdentifier, Message, MessagePiece, Score
-from pyrit.registry.object_registries.scorer_registry import ScorerRegistry
+from pyrit.models.parameter import ComponentType
+from pyrit.prompt_target import (
+    PromptTarget,
+    TargetCapabilities,
+    TargetConfiguration,
+)
+from pyrit.registry.components import (
+    ScorerMetadata,
+    ScorerRegistry,
+    TargetRegistry,
+)
+from pyrit.registry.resolution import derive_parameters
+from pyrit.score import (
+    SelfAskRefusalScorer,
+    TrueFalseCompositeScorer,
+    TrueFalseScoreAggregator,
+)
 from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
 from pyrit.score.scorer import Scorer
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
@@ -68,332 +90,329 @@ class MockFloatScaleScorer(FloatScaleScorer):
         pass
 
 
-class MockGenericScorer(Scorer):
-    """Mock generic Scorer (not TrueFalse or FloatScale) for testing."""
+class MockChatTarget(PromptTarget):
+    """Minimal multi-turn capable target so LLM scorers can be built by name."""
 
-    def __init__(self):
-        super().__init__(validator=DummyValidator())
+    _DEFAULT_CONFIGURATION: TargetConfiguration = TargetConfiguration(
+        capabilities=TargetCapabilities(
+            supports_multi_turn=True,
+            supports_multi_message_pieces=True,
+            supports_system_prompt=True,
+            supports_editable_history=True,
+        )
+    )
 
-    def _build_identifier(self) -> ComponentIdentifier:
-        """Build the scorer evaluation identifier for this mock scorer.
+    def __init__(self, *, model_name: str = "mock_model") -> None:
+        super().__init__(model_name=model_name)
 
-        Returns:
-            ComponentIdentifier: The identifier for this scorer.
-        """
-        return self._create_identifier()
+    async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
+        return [MessagePiece(role="assistant", original_value="mock response").to_message()]
 
-    async def _score_async(self, message: Message, *, objective: str | None = None) -> list[Score]:
-        return []
-
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
-        return []
-
-    def validate_return_scores(self, scores: list[Score]):
+    def _validate_request(self, *, normalized_conversation: list[Message]) -> None:
         pass
 
-    def _build_fallback_score(self, *, message: Message, objective: str | None) -> list[Score]:
-        return [
-            Score(
-                score_value="false",
-                score_value_description="Mock fallback",
-                score_type="true_false",
-                score_category=None,
-                score_metadata=None,
-                score_rationale="Mock fallback",
-                scorer_class_identifier=self.get_identifier(),
-                message_piece_id=message.message_pieces[0].id or "test-id",
-                objective=objective,
-            )
-        ]
 
-    def get_scorer_metrics(self):
-        return None
+@pytest.fixture
+def registry():
+    """Provide a fresh ``ScorerRegistry`` singleton, reset around each test."""
+    ScorerRegistry.reset_registry_singleton()
+    instance = ScorerRegistry.get_registry_singleton()
+    yield instance
+    ScorerRegistry.reset_registry_singleton()
+
+
+# ---------------------------------------------------------------------------
+# Instance container (reached via the ``instances`` property)
+# ---------------------------------------------------------------------------
 
 
 class TestScorerRegistrySingleton:
     """Tests for the singleton pattern in ScorerRegistry."""
 
     def setup_method(self):
-        """Reset the singleton before each test."""
-        ScorerRegistry.reset_instance()
+        ScorerRegistry.reset_registry_singleton()
 
     def teardown_method(self):
-        """Reset the singleton after each test."""
-        ScorerRegistry.reset_instance()
+        ScorerRegistry.reset_registry_singleton()
 
     def test_get_registry_singleton_returns_same_instance(self):
-        """Test that get_registry_singleton returns the same singleton each time."""
-        instance1 = ScorerRegistry.get_registry_singleton()
-        instance2 = ScorerRegistry.get_registry_singleton()
-
-        assert instance1 is instance2
+        assert ScorerRegistry.get_registry_singleton() is ScorerRegistry.get_registry_singleton()
 
     def test_get_registry_singleton_returns_scorer_registry_type(self):
-        """Test that get_registry_singleton returns a ScorerRegistry instance."""
-        instance = ScorerRegistry.get_registry_singleton()
-        assert isinstance(instance, ScorerRegistry)
+        assert isinstance(ScorerRegistry.get_registry_singleton(), ScorerRegistry)
 
-    def test_reset_instance_clears_singleton(self):
-        """Test that reset_instance clears the singleton."""
+    def test_reset_registry_singleton_clears_singleton(self):
         instance1 = ScorerRegistry.get_registry_singleton()
-        ScorerRegistry.reset_instance()
-        instance2 = ScorerRegistry.get_registry_singleton()
-
-        assert instance1 is not instance2
+        ScorerRegistry.reset_registry_singleton()
+        assert ScorerRegistry.get_registry_singleton() is not instance1
 
 
+@pytest.mark.usefixtures("patch_central_database")
 class TestScorerRegistryRegisterInstance:
-    """Tests for register_instance functionality in ScorerRegistry."""
+    """Tests for instance registration via the ``instances`` property."""
 
-    def setup_method(self):
-        """Reset and get a fresh registry for each test."""
-        ScorerRegistry.reset_instance()
-        self.registry = ScorerRegistry.get_registry_singleton()
-
-    def teardown_method(self):
-        """Reset the singleton after each test."""
-        ScorerRegistry.reset_instance()
-
-    def test_register_instance_with_custom_name(self):
-        """Test registering a scorer with a custom name."""
+    def test_register_instance_with_custom_name(self, registry: ScorerRegistry):
         scorer = MockTrueFalseScorer()
-        self.registry.register_instance(scorer, name="custom_scorer")
+        registry.instances.register(scorer, name="custom_scorer")
 
-        assert "custom_scorer" in self.registry
-        assert self.registry.get("custom_scorer") is scorer
+        assert "custom_scorer" in registry.instances
+        assert registry.instances.get("custom_scorer") is scorer
 
-    def test_register_instance_generates_name_from_class(self):
-        """Test that register_instance generates a name from class name when not provided."""
+    def test_register_instance_generates_name_from_class(self, registry: ScorerRegistry):
         scorer = MockTrueFalseScorer()
-        self.registry.register_instance(scorer)
+        registry.instances.register(scorer)
 
-        # Name should be derived from class name with hash suffix
-        names = self.registry.get_names()
+        names = registry.instances.get_names()
         assert len(names) == 1
         assert names[0].startswith("MockTrueFalseScorer::")
 
-    def test_register_instance_multiple_scorers_unique_names(self):
-        """Test registering multiple scorers generates unique names."""
-        scorer1 = MockTrueFalseScorer()
-        scorer2 = MockFloatScaleScorer()
+    def test_register_instance_multiple_scorers_unique_names(self, registry: ScorerRegistry):
+        registry.instances.register(MockTrueFalseScorer())
+        registry.instances.register(MockFloatScaleScorer())
 
-        self.registry.register_instance(scorer1)
-        self.registry.register_instance(scorer2)
+        assert len(registry.instances) == 2
 
-        assert len(self.registry) == 2
+    def test_register_instance_duplicate_name_overwrites(self, registry: ScorerRegistry):
+        first = MockTrueFalseScorer()
+        second = MockTrueFalseScorer()
 
-    def test_register_instance_same_scorer_type_different_hash(self):
-        """Test that same scorer class can be registered with different identifiers."""
-        scorer1 = MockTrueFalseScorer()
-        scorer2 = MockTrueFalseScorer()
+        registry.instances.register(first, name="same_name")
+        registry.instances.register(second, name="same_name")
 
-        # Register with explicit names since scorers may have same hash
-        self.registry.register_instance(scorer1, name="scorer_1")
-        self.registry.register_instance(scorer2, name="scorer_2")
+        assert len(registry.instances) == 1
+        assert registry.instances.get("same_name") is second
 
-        assert len(self.registry) == 2
+    def test_register_instance_rejects_non_scorer(self, registry: ScorerRegistry):
+        class NotAScorer:
+            pass
+
+        with pytest.raises(TypeError, match="Scorer"):
+            registry.instances.register(NotAScorer())  # type: ignore[arg-type]
+
+        assert len(registry.instances) == 0
 
 
+@pytest.mark.usefixtures("patch_central_database")
 class TestScorerRegistryGetInstanceByName:
-    """Tests for get_instance_by_name functionality in ScorerRegistry."""
+    """Tests for instance lookup via ``instances.get``."""
 
-    def setup_method(self):
-        """Reset and get a fresh registry for each test."""
-        ScorerRegistry.reset_instance()
-        self.registry = ScorerRegistry.get_registry_singleton()
-        self.scorer = MockTrueFalseScorer()
-        self.registry.register_instance(self.scorer, name="test_scorer")
-
-    def teardown_method(self):
-        """Reset the singleton after each test."""
-        ScorerRegistry.reset_instance()
-
-    def test_get_instance_by_name_returns_scorer(self):
-        """Test getting a registered scorer by name."""
-        result = self.registry.get_instance_by_name("test_scorer")
-        assert result is self.scorer
-
-    def test_get_instance_by_name_nonexistent_returns_none(self):
-        """Test that getting a non-existent scorer returns None."""
-        result = self.registry.get_instance_by_name("nonexistent")
-        assert result is None
-
-
-class TestScorerRegistryBuildMetadata:
-    """Tests for _build_metadata functionality in ScorerRegistry."""
-
-    def setup_method(self):
-        """Reset and get a fresh registry for each test."""
-        ScorerRegistry.reset_instance()
-        self.registry = ScorerRegistry.get_registry_singleton()
-
-    def teardown_method(self):
-        """Reset the singleton after each test."""
-        ScorerRegistry.reset_instance()
-
-    def test_build_metadata_true_false_scorer(self):
-        """Test that metadata correctly identifies TrueFalseScorer type."""
+    def test_get_instance_by_name_returns_scorer(self, registry: ScorerRegistry):
         scorer = MockTrueFalseScorer()
-        self.registry.register_instance(scorer, name="tf_scorer")
+        registry.instances.register(scorer, name="test_scorer")
+        assert registry.instances.get("test_scorer") is scorer
 
-        metadata = self.registry.list_metadata()
-        assert len(metadata) == 1
-        assert metadata[0].params["scorer_type"] == "true_false"
-        assert metadata[0].class_name == "MockTrueFalseScorer"
-        # unique_name is auto-computed from class_name, not the registry key
-        assert "MockTrueFalseScorer::" in metadata[0].unique_name
+    def test_get_instance_by_name_nonexistent_returns_none(self, registry: ScorerRegistry):
+        assert registry.instances.get("nonexistent") is None
 
-    def test_build_metadata_float_scale_scorer(self):
-        """Test that metadata correctly identifies FloatScaleScorer type."""
-        scorer = MockFloatScaleScorer()
-        self.registry.register_instance(scorer, name="fs_scorer")
 
-        metadata = self.registry.list_metadata()
-        assert len(metadata) == 1
-        assert metadata[0].params["scorer_type"] == "float_scale"
-        assert metadata[0].class_name == "MockFloatScaleScorer"
+@pytest.mark.usefixtures("patch_central_database")
+class TestScorerRegistryInstanceMetadata:
+    """Tests for instance-level metadata (``instances.list_metadata``)."""
 
-    def test_build_metadata_unknown_scorer_type(self):
-        """Test that non-standard scorers get 'unknown' scorer_type."""
-        scorer = MockGenericScorer()
-        self.registry.register_instance(scorer, name="generic_scorer")
-
-        metadata = self.registry.list_metadata()
-        assert len(metadata) == 1
-        assert metadata[0].params["scorer_type"] == "unknown"
-
-    def test_build_metadata_is_component_identifier(self):
-        """Test that metadata is the scorer's ComponentIdentifier."""
+    def test_instance_metadata_is_component_identifier(self, registry: ScorerRegistry):
         scorer = MockTrueFalseScorer()
-        self.registry.register_instance(scorer, name="tf_scorer")
+        registry.instances.register(scorer, name="tf_scorer")
 
-        metadata = self.registry.list_metadata()
+        metadata = registry.instances.list_metadata()
+        assert len(metadata) == 1
         assert isinstance(metadata[0], ComponentIdentifier)
-        assert metadata[0] == scorer.get_identifier()
+        assert metadata[0].class_name == "MockTrueFalseScorer"
 
+    def test_instance_metadata_filter_by_class_name(self, registry: ScorerRegistry):
+        registry.instances.register(MockTrueFalseScorer(), name="tf1")
+        registry.instances.register(MockTrueFalseScorer(), name="tf2")
+        registry.instances.register(MockFloatScaleScorer(), name="fs1")
 
-class TestScorerRegistryListMetadataFiltering:
-    """Tests for list_metadata filtering in ScorerRegistry."""
-
-    def setup_method(self):
-        """Reset and get a fresh registry with multiple scorers."""
-        ScorerRegistry.reset_instance()
-        self.registry = ScorerRegistry.get_registry_singleton()
-
-        self.tf_scorer1 = MockTrueFalseScorer()
-        self.tf_scorer2 = MockTrueFalseScorer()
-        self.fs_scorer = MockFloatScaleScorer()
-
-        self.registry.register_instance(self.tf_scorer1, name="tf_scorer_1")
-        self.registry.register_instance(self.tf_scorer2, name="tf_scorer_2")
-        self.registry.register_instance(self.fs_scorer, name="fs_scorer")
-
-    def teardown_method(self):
-        """Reset the singleton after each test."""
-        ScorerRegistry.reset_instance()
-
-    def test_list_metadata_filter_by_scorer_type(self):
-        """Test filtering metadata by scorer_type."""
-        tf_metadata = self.registry.list_metadata(include_filters={"scorer_type": "true_false"})
+        tf_metadata = registry.instances.list_metadata(include_filters={"class_name": "MockTrueFalseScorer"})
         assert len(tf_metadata) == 2
-        assert all(m.params["scorer_type"] == "true_false" for m in tf_metadata)
+        assert all(m.class_name == "MockTrueFalseScorer" for m in tf_metadata)
 
-        fs_metadata = self.registry.list_metadata(include_filters={"scorer_type": "float_scale"})
-        assert len(fs_metadata) == 1
-        assert fs_metadata[0].params["scorer_type"] == "float_scale"
 
-    def test_list_metadata_filter_by_class_name(self):
-        """Test filtering metadata by class_name."""
-        metadata = self.registry.list_metadata(include_filters={"class_name": "MockTrueFalseScorer"})
-        assert len(metadata) == 2
-        assert all(m.class_name == "MockTrueFalseScorer" for m in metadata)
+@pytest.mark.usefixtures("patch_central_database")
+class TestScorerRegistryContainerProtocol:
+    """Tests for the ``instances`` container protocol surface."""
 
-    def test_list_metadata_no_filter_returns_all(self):
-        """Test that list_metadata without filters returns all items."""
-        metadata = self.registry.list_metadata()
-        assert len(metadata) == 3
+    def test_contains_and_len_and_iter(self, registry: ScorerRegistry):
+        registry.instances.register(MockTrueFalseScorer(), name="test_scorer")
+        assert "test_scorer" in registry.instances
+        assert "unknown_scorer" not in registry.instances
+        assert len(registry.instances) == 1
+        assert "test_scorer" in list(registry.instances)
 
-    def test_list_metadata_exclude_by_scorer_type(self):
-        """Test excluding metadata by scorer_type."""
-        metadata = self.registry.list_metadata(exclude_filters={"scorer_type": "true_false"})
-        assert len(metadata) == 1
-        assert metadata[0].params["scorer_type"] == "float_scale"
+    def test_get_names_returns_sorted_list(self, registry: ScorerRegistry):
+        registry.instances.register(MockFloatScaleScorer(), name="zeta_scorer")
+        registry.instances.register(MockFloatScaleScorer(), name="alpha_scorer")
+        assert registry.instances.get_names() == ["alpha_scorer", "zeta_scorer"]
 
-    def test_list_metadata_combined_include_and_exclude(self):
-        """Test combined include and exclude filters."""
-        # Filter to include true_false scorers, exclude float_scale
-        # This tests that both filters work together
-        metadata = self.registry.list_metadata(
-            include_filters={"scorer_type": "true_false"},
-            exclude_filters={"scorer_type": "float_scale"},
+    def test_get_all_instances_returns_all(self, registry: ScorerRegistry):
+        tf = MockTrueFalseScorer()
+        fs = MockFloatScaleScorer()
+        registry.instances.register(tf, name="tf")
+        registry.instances.register(fs, name="fs")
+
+        entry_map = {e.name: e for e in registry.instances.get_all_instances()}
+        assert entry_map["tf"].instance is tf
+        assert entry_map["fs"].instance is fs
+
+    def test_get_by_tag_returns_tagged_entries(self, registry: ScorerRegistry):
+        registry.instances.register(MockTrueFalseScorer(), name="tagged", tags=["best"])
+        registry.instances.register(MockTrueFalseScorer(), name="untagged")
+
+        entries = registry.instances.get_by_tag(tag="best")
+        assert [e.name for e in entries] == ["tagged"]
+
+
+# ---------------------------------------------------------------------------
+# Buildable class catalog (discovery + introspection + build)
+# ---------------------------------------------------------------------------
+
+
+class TestDiscovery:
+    """Tests for scorer class discovery."""
+
+    def test_discovers_known_scorers(self, registry: ScorerRegistry):
+        names = registry.get_class_names()
+        assert "SelfAskRefusalScorer" in names
+        assert "TrueFalseCompositeScorer" in names
+
+    def test_does_not_register_base_class(self, registry: ScorerRegistry):
+        assert "Scorer" not in registry.get_class_names()
+        assert "TrueFalseScorer" not in registry.get_class_names()
+
+    def test_keyed_by_exact_class_name(self, registry: ScorerRegistry):
+        names = registry.get_class_names()
+        assert "SelfAskRefusalScorer" in names
+        assert "self_ask_refusal_scorer" not in names
+
+
+class TestGetClass:
+    """Tests for get_class (the inherited class-catalog accessor)."""
+
+    def test_returns_class(self, registry: ScorerRegistry):
+        assert registry.get_class("SelfAskRefusalScorer") is SelfAskRefusalScorer
+
+    def test_unknown_type_raises(self, registry: ScorerRegistry):
+        with pytest.raises(KeyError, match="not found"):
+            registry.get_class("NotARealScorer")
+
+    def test_is_subclass_relationship(self, registry: ScorerRegistry):
+        assert issubclass(registry.get_class("SelfAskRefusalScorer"), Scorer)
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestCreateLLMScorer:
+    """Tests that LLM scorers are buildable by resolving a target by name."""
+
+    def test_build_llm_scorer_resolves_chat_target_by_name(self, registry: ScorerRegistry):
+        target = MockChatTarget()
+        TargetRegistry.reset_registry_singleton()
+        TargetRegistry.get_registry_singleton().instances.register(target, name="scorer_target")
+        try:
+            scorer = registry.create_instance("SelfAskRefusalScorer", chat_target="scorer_target")
+            assert isinstance(scorer, SelfAskRefusalScorer)
+            assert scorer.get_chat_target() is target
+        finally:
+            TargetRegistry.reset_registry_singleton()
+
+    def test_build_llm_scorer_unknown_target_raises(self, registry: ScorerRegistry):
+        TargetRegistry.reset_registry_singleton()
+        try:
+            with pytest.raises(ValueError, match="not found"):
+                registry.create_instance("SelfAskRefusalScorer", chat_target="missing")
+        finally:
+            TargetRegistry.reset_registry_singleton()
+
+    def test_build_llm_scorer_list_for_scalar_reference_raises(self, registry: ScorerRegistry):
+        # A scalar reference (``chat_target``) must reject a list value.
+        with pytest.raises(ValueError, match="expected a single"):
+            registry.create_instance("SelfAskRefusalScorer", chat_target=["a", "b"])
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestCreateCompositeScorer:
+    """Tests the list-aware SCORER reference path (composite from a list of names)."""
+
+    def test_build_composite_resolves_sub_scorers_by_name(self, registry: ScorerRegistry):
+        registry.instances.register(MockTrueFalseScorer(), name="s1")
+        registry.instances.register(MockTrueFalseScorer(), name="s2")
+
+        composite = registry.create_instance(
+            "TrueFalseCompositeScorer",
+            scorers=["s1", "s2"],
+            aggregator=TrueFalseScoreAggregator.OR,
         )
-        # Should return both true_false scorers (exclude filter doesn't match any of them)
-        assert len(metadata) == 2
-        assert all(m.params["scorer_type"] == "true_false" for m in metadata)
+        assert isinstance(composite, TrueFalseCompositeScorer)
 
-        # Test excluding by class_name
-        metadata = self.registry.list_metadata(
-            include_filters={"scorer_type": "true_false"},
-            exclude_filters={"class_name": "MockTrueFalseScorer"},
+    def test_build_composite_unknown_sub_scorer_raises(self, registry: ScorerRegistry):
+        registry.instances.register(MockTrueFalseScorer(), name="s1")
+        with pytest.raises(ValueError, match="not found"):
+            registry.create_instance(
+                "TrueFalseCompositeScorer",
+                scorers=["s1", "missing"],
+                aggregator=TrueFalseScoreAggregator.OR,
+            )
+
+    def test_build_composite_resolves_prebuilt_scorers_in_list(self, registry: ScorerRegistry):
+        # Passthrough path inside a list: already-built scorers pass through unchanged.
+        composite = registry.create_instance(
+            "TrueFalseCompositeScorer",
+            scorers=[MockTrueFalseScorer(), MockTrueFalseScorer()],
+            aggregator=TrueFalseScoreAggregator.OR,
         )
-        # Should return 0 since all true_false scorers are MockTrueFalseScorer
-        assert len(metadata) == 0
+        assert isinstance(composite, TrueFalseCompositeScorer)
 
-
-class TestScorerRegistryInheritedMethods:
-    """Tests for inherited methods from RetrievableInstanceRegistry."""
-
-    def setup_method(self):
-        """Reset and get a fresh registry."""
-        ScorerRegistry.reset_instance()
-        self.registry = ScorerRegistry.get_registry_singleton()
-        self.scorer = MockTrueFalseScorer()
-        self.registry.register_instance(self.scorer, name="test_scorer")
-
-    def teardown_method(self):
-        """Reset the singleton after each test."""
-        ScorerRegistry.reset_instance()
-
-    def test_contains_registered_name(self):
-        """Test __contains__ for registered name."""
-        assert "test_scorer" in self.registry
-
-    def test_contains_unregistered_name(self):
-        """Test __contains__ for unregistered name."""
-        assert "unknown_scorer" not in self.registry
-
-    def test_len_returns_count(self):
-        """Test __len__ returns correct count."""
-        assert len(self.registry) == 1
-
-    def test_iter_yields_names(self):
-        """Test __iter__ yields registered names."""
-        names = list(self.registry)
-        assert "test_scorer" in names
-
-    def test_get_names_returns_sorted_list(self):
-        """Test get_names returns sorted list of names."""
-        self.registry.register_instance(MockFloatScaleScorer(), name="alpha_scorer")
-        self.registry.register_instance(MockFloatScaleScorer(), name="zeta_scorer")
-
-        names = self.registry.get_names()
-        assert names == ["alpha_scorer", "test_scorer", "zeta_scorer"]
-
-
-class TestComponentIdentifierInRegistry:
-    """Tests for ComponentIdentifier usage in scorer registry."""
-
-    def test_component_identifier_has_scorer_type_in_params(self):
-        """Test that ComponentIdentifier includes scorer_type in params."""
-        identifier = ComponentIdentifier(
-            class_name="TestScorer",
-            class_module="test.module",
-            params={"scorer_type": "true_false"},
+    def test_build_composite_mixes_names_and_instances(self, registry: ScorerRegistry):
+        registry.instances.register(MockTrueFalseScorer(), name="s1")
+        composite = registry.create_instance(
+            "TrueFalseCompositeScorer",
+            scorers=["s1", MockTrueFalseScorer()],
+            aggregator=TrueFalseScoreAggregator.OR,
         )
+        assert isinstance(composite, TrueFalseCompositeScorer)
 
-        assert identifier.class_name == "TestScorer"
-        assert identifier.class_module == "test.module"
-        assert identifier.params["scorer_type"] == "true_false"
-        # unique_name is auto-computed
-        assert identifier.unique_name is not None
-        assert identifier.hash is not None
+    def test_build_composite_scalar_for_list_reference_raises(self, registry: ScorerRegistry):
+        registry.instances.register(MockTrueFalseScorer(), name="s1")
+        with pytest.raises(ValueError, match="expected a list"):
+            registry.create_instance(
+                "TrueFalseCompositeScorer",
+                scorers="s1",
+                aggregator=TrueFalseScoreAggregator.OR,
+            )
+
+
+class TestClassMetadata:
+    """Tests for scorer class-catalog metadata building."""
+
+    def _metadata_for(self, registry: ScorerRegistry, name: str) -> ScorerMetadata:
+        return next(m for m in registry.get_all_registered_class_metadata() if m.class_name == name)
+
+    def test_metadata_is_scorer_metadata(self, registry: ScorerRegistry):
+        meta = self._metadata_for(registry, "SelfAskRefusalScorer")
+        assert isinstance(meta, ScorerMetadata)
+        assert meta.class_name == "SelfAskRefusalScorer"
+
+    def test_is_llm_based_flag(self, registry: ScorerRegistry):
+        # An LLM scorer takes a ``chat_target`` (TARGET reference); a composite does not.
+        assert self._metadata_for(registry, "SelfAskRefusalScorer").is_llm_based is True
+        assert self._metadata_for(registry, "TrueFalseCompositeScorer").is_llm_based is False
+
+    def test_composite_scorers_param_is_reference(self, registry: ScorerRegistry):
+        meta = self._metadata_for(registry, "TrueFalseCompositeScorer")
+        assert any(p.is_reference_to(ComponentType.SCORER) for p in meta.parameters)
+
+
+class TestRegistrationGate:
+    """The identifier blueprint must line up with a resolvable contract for every scorer."""
+
+    def test_discovery_validates_all_scorers(self, registry: ScorerRegistry) -> None:
+        names = registry.get_class_names()
+        assert names
+        assert "SelfAskRefusalScorer" in names
+
+    def test_is_llm_based_matches_target_reference(self, registry: ScorerRegistry) -> None:
+        from pyrit.models.identifiers import ScorerIdentifier
+
+        for meta in registry.get_all_registered_class_metadata():
+            parameters = derive_parameters(cls=registry.get_class(meta.class_name), identifier_type=ScorerIdentifier)
+            has_target = any(p.is_reference_to(ComponentType.TARGET) for p in parameters)
+            assert meta.is_llm_based is has_target, f"is_llm_based mismatch for {meta.class_name}"

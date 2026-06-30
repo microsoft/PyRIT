@@ -243,9 +243,9 @@ class ScenarioRunService:
             ValueError: If the target is not found in the registry.
         """
         target_registry = TargetRegistry.get_registry_singleton()
-        objective_target = target_registry.get_instance_by_name(request.target_name)
+        objective_target = target_registry.instances.get(request.target_name)
         if objective_target is None:
-            available_names = target_registry.get_names()
+            available_names = target_registry.instances.get_names()
             if not available_names:
                 raise ValueError(
                     f"Target '{request.target_name}' not found. The target registry is empty. "

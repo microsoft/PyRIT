@@ -379,7 +379,9 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
         # if available either itself, or its chat target will be used
         chat_target: PromptTarget | None = None
         registry_default_scorer: TrueFalseScorer | None = None
-        entries = ScorerRegistry.get_registry_singleton().get_by_tag(tag=ScorerInitializerTags.DEFAULT_OBJECTIVE_SCORER)
+        entries = ScorerRegistry.get_registry_singleton().instances.get_by_tag(
+            tag=ScorerInitializerTags.DEFAULT_OBJECTIVE_SCORER
+        )
         if entries and isinstance(entries[0].instance, TrueFalseScorer):
             registry_default_scorer = entries[0].instance
             chat_target = registry_default_scorer.get_chat_target()
