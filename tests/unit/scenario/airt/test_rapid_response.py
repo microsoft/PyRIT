@@ -19,7 +19,7 @@ from pyrit.executor.attack import (
 from pyrit.models import ComponentIdentifier, SeedAttackGroup, SeedObjective, SeedPrompt
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry import TargetRegistry
-from pyrit.registry.object_registries.attack_technique_registry import AttackTechniqueRegistry
+from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
 from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
 from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
 from pyrit.scenario.scenarios.airt.rapid_response import (
@@ -88,7 +88,7 @@ def reset_technique_registry():
     """
     from pyrit.scenario.scenarios.airt.rapid_response import _build_rapid_response_strategy
 
-    AttackTechniqueRegistry.reset_instance()
+    AttackTechniqueRegistry.reset_registry_singleton()
     TargetRegistry.reset_instance()
     _build_rapid_response_strategy.cache_clear()
 
@@ -99,7 +99,7 @@ def reset_technique_registry():
     technique_registry = AttackTechniqueRegistry.get_registry_singleton()
     technique_registry.register_from_factories(build_scenario_technique_factories())
     yield
-    AttackTechniqueRegistry.reset_instance()
+    AttackTechniqueRegistry.reset_registry_singleton()
     TargetRegistry.reset_instance()
     _build_rapid_response_strategy.cache_clear()
 
@@ -400,7 +400,7 @@ class TestRapidResponseAttackGeneration:
 
         # Reset the registry and register only prompt_sending — the other techniques
         # (role_play, many_shot, tap) won't have factories.
-        AttackTechniqueRegistry.reset_instance()
+        AttackTechniqueRegistry.reset_registry_singleton()
         RapidResponse._cached_strategy_class = None
         registry = AttackTechniqueRegistry.get_registry_singleton()
         registry.register_technique(
@@ -514,7 +514,7 @@ class TestRegistryIntegration:
     def test_registry_populated_by_autouse_fixture(self):
         """The autouse fixture registers all canonical scenario techniques."""
         registry = AttackTechniqueRegistry.get_registry_singleton()
-        names = set(registry.get_names())
+        names = set(registry.instances.get_names())
         assert {"role_play", "many_shot", "tap"} <= names
 
     def test_register_from_factories_idempotent(self):
@@ -522,7 +522,7 @@ class TestRegistryIntegration:
         registry = AttackTechniqueRegistry.get_registry_singleton()
         expected = len(build_scenario_technique_factories())
         registry.register_from_factories(build_scenario_technique_factories())
-        assert len(registry) == expected
+        assert len(registry.instances) == expected
 
     def test_register_preserves_custom_preregistered(self):
         """Pre-registered custom techniques are not overwritten by re-registration."""
@@ -548,8 +548,8 @@ class TestRegistryIntegration:
 
     def test_tags_assigned_correctly(self):
         registry = AttackTechniqueRegistry.get_registry_singleton()
-        single_turn = {e.name for e in registry.get_by_tag(tag="single_turn")}
-        multi_turn = {e.name for e in registry.get_by_tag(tag="multi_turn")}
+        single_turn = {e.name for e in registry.instances.get_by_tag(tag="single_turn")}
+        multi_turn = {e.name for e in registry.instances.get_by_tag(tag="multi_turn")}
         assert {"role_play"} <= single_turn
         assert {"many_shot", "tap"} <= multi_turn
 

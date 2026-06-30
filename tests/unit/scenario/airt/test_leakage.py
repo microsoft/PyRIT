@@ -12,7 +12,7 @@ from pyrit.common.path import DATASETS_PATH
 from pyrit.models import ComponentIdentifier, SeedAttackGroup, SeedDataset, SeedObjective
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry import TargetRegistry
-from pyrit.registry.object_registries.attack_technique_registry import AttackTechniqueRegistry
+from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
 from pyrit.scenario import DatasetConfiguration
 from pyrit.scenario.airt import Leakage  # type: ignore[ty:unresolved-import]
 from pyrit.scenario.core import BaselineAttackPolicy
@@ -89,7 +89,7 @@ FIXTURES = ["patch_central_database", "mock_runtime_env"]
 @pytest.fixture(autouse=True)
 def reset_technique_registry():
     """Reset registries and populate scenario factories for each test."""
-    AttackTechniqueRegistry.reset_instance()
+    AttackTechniqueRegistry.reset_registry_singleton()
     TargetRegistry.reset_instance()
     _build_leakage_strategy.cache_clear()
 
@@ -100,7 +100,7 @@ def reset_technique_registry():
     technique_registry = AttackTechniqueRegistry.get_registry_singleton()
     technique_registry.register_from_factories(build_scenario_technique_factories())
     yield
-    AttackTechniqueRegistry.reset_instance()
+    AttackTechniqueRegistry.reset_registry_singleton()
     TargetRegistry.reset_instance()
     _build_leakage_strategy.cache_clear()
 

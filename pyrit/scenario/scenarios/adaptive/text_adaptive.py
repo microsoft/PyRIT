@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, ClassVar
 
 from pyrit.common import apply_defaults
 from pyrit.models.parameter import Parameter
-from pyrit.registry.object_registries.attack_technique_registry import (
+from pyrit.registry.components.attack_technique_registry import (
     AttackTechniqueRegistry,
 )
 from pyrit.registry.tag_query import TagQuery

@@ -10,7 +10,7 @@ import pytest
 from pyrit.executor.attack import RedTeamingAttack
 from pyrit.models import ComponentIdentifier, SeedAttackGroup, SeedObjective, SeedPrompt
 from pyrit.prompt_target import PromptTarget
-from pyrit.registry.object_registries.attack_technique_registry import AttackTechniqueRegistry
+from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
 from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
 from pyrit.scenario.scenarios.airt.cyber import Cyber
 from pyrit.score import TrueFalseScorer
@@ -72,7 +72,7 @@ def reset_technique_registry():
     from pyrit.registry import TargetRegistry
     from pyrit.scenario.scenarios.airt.cyber import _build_cyber_strategy
 
-    AttackTechniqueRegistry.reset_instance()
+    AttackTechniqueRegistry.reset_registry_singleton()
     TargetRegistry.reset_instance()
     _build_cyber_strategy.cache_clear()
 
@@ -84,7 +84,7 @@ def reset_technique_registry():
     technique_registry = AttackTechniqueRegistry.get_registry_singleton()
     technique_registry.register_from_factories(build_scenario_technique_factories())
     yield
-    AttackTechniqueRegistry.reset_instance()
+    AttackTechniqueRegistry.reset_registry_singleton()
     TargetRegistry.reset_instance()
     _build_cyber_strategy.cache_clear()
 
@@ -345,4 +345,4 @@ class TestCyberRegistryIntegration:
         registry = AttackTechniqueRegistry.get_registry_singleton()
         registry.register_from_factories(build_scenario_technique_factories())
         registry.register_from_factories(build_scenario_technique_factories())
-        assert len([n for n in registry.get_names() if n == "red_teaming"]) == 1
+        assert len([n for n in registry.instances.get_names() if n == "red_teaming"]) == 1

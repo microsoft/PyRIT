@@ -13,7 +13,7 @@ from unittest.mock import patch
 
 import pytest
 
-from pyrit.registry.object_registries.attack_technique_registry import AttackTechniqueRegistry
+from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
 from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
 
 # ---------------------------------------------------------------------------
@@ -38,7 +38,7 @@ def _reset_registries():
     from pyrit.scenario.scenarios.airt.rapid_response import RapidResponse
     from pyrit.setup.initializers.components.scenario_techniques import build_scenario_technique_factories
 
-    AttackTechniqueRegistry.reset_instance()
+    AttackTechniqueRegistry.reset_registry_singleton()
     TargetRegistry.reset_instance()
     Cyber._cached_strategy_class = None
     RapidResponse._cached_strategy_class = None
@@ -48,7 +48,7 @@ def _reset_registries():
     TargetRegistry.get_registry_singleton().register_instance(adv_target, name="adversarial_chat")
     AttackTechniqueRegistry.get_registry_singleton().register_from_factories(build_scenario_technique_factories())
     yield
-    AttackTechniqueRegistry.reset_instance()
+    AttackTechniqueRegistry.reset_registry_singleton()
     TargetRegistry.reset_instance()
     Cyber._cached_strategy_class = None
     RapidResponse._cached_strategy_class = None

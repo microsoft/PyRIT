@@ -14,6 +14,8 @@ from pyrit.registry.class_registries import (
     ScenarioRegistry,
 )
 from pyrit.registry.components import (
+    AttackTechniqueMetadata,
+    AttackTechniqueRegistry,
     ConverterMetadata,
     ConverterRegistry,
 )
@@ -28,7 +30,6 @@ from pyrit.registry.instance_registry import (
     SupportsInstances,
 )
 from pyrit.registry.object_registries import (
-    AttackTechniqueRegistry,
     BaseInstanceRegistry,
     RegistryEntry,
     RetrievableInstanceRegistry,
@@ -40,6 +41,7 @@ from pyrit.registry.tag_query import TagQuery
 
 __all__ = [
     "AttackTechniqueRegistry",
+    "AttackTechniqueMetadata",
     "BaseClassRegistry",
     "BaseInstanceRegistry",
     "ConverterRegistry",

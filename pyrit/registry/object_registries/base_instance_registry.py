@@ -11,18 +11,17 @@ Base instance registry for PyRIT.
     build instances by name) and hold pre-configured instances via the
     ``.instances`` property (a ``DefaultInstanceRegistry``). See
     ``ConverterRegistry`` for the target shape. This class and
-    ``RetrievableInstanceRegistry`` remain only because ``TargetRegistry``,
-    ``ScorerRegistry``, and ``AttackTechniqueRegistry`` still subclass them;
-    the whole stack is removed once those migrate.
+    ``RetrievableInstanceRegistry`` remain only because ``TargetRegistry`` and
+    ``ScorerRegistry`` still subclass them; the whole stack is removed once
+    those migrate.
 
 This module provides ``BaseInstanceRegistry``, the shared infrastructure for
 registries that store ``Identifiable`` objects (not classes): singleton
 lifecycle, registration, tags, metadata, container protocol.
 
 Subclass directly for registries that store factories or other
-non-retrievable items (e.g., ``AttackTechniqueRegistry``).  For registries
-where callers retrieve stored objects directly, subclass
-``RetrievableInstanceRegistry`` instead.
+non-retrievable items.  For registries where callers retrieve stored objects
+directly, subclass ``RetrievableInstanceRegistry`` instead.
 
 For registries that store classes (type[T]), see ``class_registries/``.
 """
@@ -59,9 +58,8 @@ class BaseInstanceRegistry(ABC, RegistryProtocol[ComponentIdentifier], Generic[T
         via the ``.instances`` property (``DefaultInstanceRegistry``), which
         carries this same surface (``register``/``get``/``get_by_tag``/
         ``add_tags``/``find_dependents_of_tag``/``list_metadata``). This class
-        survives only for the not-yet-migrated ``TargetRegistry``,
-        ``ScorerRegistry``, and ``AttackTechniqueRegistry`` and is removed once
-        they move to ``.instances``.
+        survives only for the not-yet-migrated ``TargetRegistry`` and
+        ``ScorerRegistry`` and is removed once they move to ``.instances``.
 
     Provides singleton lifecycle, registration, tag-based lookup, metadata
     filtering, and the standard container protocol (``__contains__``,

@@ -48,7 +48,7 @@ from pyrit.models import (
 )
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry import TargetRegistry
-from pyrit.registry.object_registries.attack_technique_registry import AttackTechniqueRegistry
+from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
 from pyrit.scenario.core import BaselineAttackPolicy
 from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
 from pyrit.scenario.core.scenario import Scenario
@@ -101,7 +101,7 @@ def reset_technique_registry():
     resolves without depending on environment variables. Uses ``_build_benchmark_strategy.cache_clear()``
     because our implementation uses ``@cache`` (not ``_cached_strategy_class``).
     """
-    AttackTechniqueRegistry.reset_instance()
+    AttackTechniqueRegistry.reset_registry_singleton()
     TargetRegistry.reset_instance()
     _build_benchmark_strategy.cache_clear()
 
@@ -111,7 +111,7 @@ def reset_technique_registry():
 
     AttackTechniqueRegistry.get_registry_singleton().register_from_factories(build_scenario_technique_factories())
     yield
-    AttackTechniqueRegistry.reset_instance()
+    AttackTechniqueRegistry.reset_registry_singleton()
     TargetRegistry.reset_instance()
     _build_benchmark_strategy.cache_clear()
 
@@ -418,7 +418,7 @@ class TestGetAtomicAttacksCrossProduct:
             _register_adversarial_target(name=name)
         # Reset the technique registry so we can register a controllable mock factory
         # whose create() return value we can inspect.
-        AttackTechniqueRegistry.reset_instance()
+        AttackTechniqueRegistry.reset_registry_singleton()
         _build_benchmark_strategy.cache_clear()
         _register_mock_factory(name="red_teaming", tags=["core", "light"])
         bench = AdversarialBenchmark(objective_scorer=MagicMock(spec=TrueFalseScorer))
@@ -465,7 +465,7 @@ class TestGetAtomicAttacksCrossProduct:
         target.name = "name-attribute-that-must-not-leak"
         TargetRegistry.get_registry_singleton().register_instance(target, name="adv_a")
         # Reset the technique registry to get a controllable mock factory
-        AttackTechniqueRegistry.reset_instance()
+        AttackTechniqueRegistry.reset_registry_singleton()
         _build_benchmark_strategy.cache_clear()
         _register_mock_factory(name="red_teaming", tags=["core", "light"])
 
@@ -749,7 +749,7 @@ class TestSkipCachedFilter:
     def _make_bench(self, *, use_cached: bool) -> AdversarialBenchmark:
         _register_adversarial_target(name="adv_a")
         # Reset the technique registry to get a controllable mock factory
-        AttackTechniqueRegistry.reset_instance()
+        AttackTechniqueRegistry.reset_registry_singleton()
         _build_benchmark_strategy.cache_clear()
         _register_mock_factory(name="red_teaming", tags=["core", "light"])
         bench = AdversarialBenchmark(
