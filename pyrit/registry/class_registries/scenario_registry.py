@@ -244,7 +244,7 @@ class ScenarioRegistry(BaseClassRegistry["Scenario", ScenarioMetadata]):
         default_strategy_value = instance._default_strategy.value
         all_strategies = tuple(s.value for s in strategy_class.get_all_strategies())
         aggregate_strategies = tuple(s.value for s in strategy_class.get_aggregate_strategies())
-        default_datasets = tuple(instance._default_dataset_config.get_default_dataset_names())
+        default_datasets = tuple(instance._default_dataset_config.dataset_names)
         max_dataset_size = instance._default_dataset_config.max_dataset_size
 
         return ScenarioMetadata(

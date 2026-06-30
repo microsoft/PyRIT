@@ -30,8 +30,6 @@ from pyrit.prompt_target import PromptTarget, TargetCapabilities, TargetConfigur
 from pyrit.registry.components import (
     ConverterMetadata,
     ConverterRegistry,
-)
-from pyrit.registry.object_registries import (
     TargetRegistry,
 )
 from pyrit.registry.resolution import derive_parameters
@@ -314,22 +312,22 @@ class TestCreateLLMConverter:
 
     def test_build_llm_converter_resolves_target_by_name(self, registry: ConverterRegistry):
         target = MockPromptTarget()
-        TargetRegistry.reset_instance()
-        TargetRegistry.get_registry_singleton().register_instance(target, name="my_target")
+        TargetRegistry.reset_registry_singleton()
+        TargetRegistry.get_registry_singleton().instances.register(target, name="my_target")
         try:
             converter = registry.create_instance("TenseConverter", converter_target="my_target", tense="past")
             assert isinstance(converter, TenseConverter)
             assert converter._converter_target is target
         finally:
-            TargetRegistry.reset_instance()
+            TargetRegistry.reset_registry_singleton()
 
     def test_build_llm_converter_unknown_target_raises(self, registry: ConverterRegistry):
-        TargetRegistry.reset_instance()
+        TargetRegistry.reset_registry_singleton()
         try:
             with pytest.raises(ValueError, match="not found"):
                 registry.create_instance("TenseConverter", converter_target="missing", tense="past")
         finally:
-            TargetRegistry.reset_instance()
+            TargetRegistry.reset_registry_singleton()
 
 
 class TestClassMetadata:

@@ -186,7 +186,7 @@ class ScorerInitializer(PyRITInitializer):
         """
         target_registry = TargetRegistry.get_registry_singleton()
 
-        if len(target_registry) == 0:
+        if len(target_registry.instances) == 0:
             raise RuntimeError(
                 "TargetRegistry is empty. TargetInitializer must run before ScorerInitializer. "
                 "Ensure TargetInitializer is included in the initializers list."
@@ -464,16 +464,16 @@ class ScorerInitializer(PyRITInitializer):
         scorer_registry = self._get_scorer_registry()
 
         for best_tag, (preferred_name, category_tag) in self._PREFERRED_BEST.items():
-            entry = scorer_registry.get_entry(preferred_name)
+            entry = scorer_registry.instances.get_entry(preferred_name)
             if entry is not None:
-                scorer_registry.add_tags(name=preferred_name, tags=[best_tag])
+                scorer_registry.instances.add_tags(name=preferred_name, tags=[best_tag])
                 logger.info(f"Tagged {preferred_name} as {best_tag}")
                 continue
 
             # Fallback: first registered scorer in this category
-            entries = scorer_registry.get_by_tag(tag=category_tag)
+            entries = scorer_registry.instances.get_by_tag(tag=category_tag)
             if entries:
-                scorer_registry.add_tags(name=entries[0].name, tags=[best_tag])
+                scorer_registry.instances.add_tags(name=entries[0].name, tags=[best_tag])
                 logger.info(f"Tagged {entries[0].name} as {best_tag} (fallback)")
             else:
                 logger.warning(f"No scorers in category {category_tag}; skipping {best_tag} tagging.")
@@ -557,7 +557,7 @@ class ScorerInitializer(PyRITInitializer):
         best_name: str | None = None
         best_f1: float = -1.0
 
-        for entry in scorer_registry.get_all_instances():
+        for entry in scorer_registry.instances.get_all_instances():
             eval_hash = entry.instance.get_identifier().eval_hash
             if not eval_hash:
                 continue
@@ -567,7 +567,7 @@ class ScorerInitializer(PyRITInitializer):
                 best_name = entry.name
 
         if best_name is not None:
-            scorer_registry.add_tags(
+            scorer_registry.instances.add_tags(
                 name=best_name,
                 tags=[ScorerInitializerTags.BEST_OBJECTIVE, ScorerInitializerTags.DEFAULT_OBJECTIVE_SCORER],
             )
@@ -576,13 +576,13 @@ class ScorerInitializer(PyRITInitializer):
 
         # Fall back: prefer scale_and_refusal, then first composite
         best_tags: list[str] = [ScorerInitializerTags.BEST_OBJECTIVE, ScorerInitializerTags.DEFAULT_OBJECTIVE_SCORER]
-        if scorer_registry.get_entry(self.SCALE_AND_REFUSAL):
-            scorer_registry.add_tags(name=self.SCALE_AND_REFUSAL, tags=best_tags)
+        if scorer_registry.instances.get_entry(self.SCALE_AND_REFUSAL):
+            scorer_registry.instances.add_tags(name=self.SCALE_AND_REFUSAL, tags=best_tags)
             logger.info(f"Tagged {self.SCALE_AND_REFUSAL} as {ScorerInitializerTags.BEST_OBJECTIVE} (default)")
         else:
-            composites = scorer_registry.get_by_tag(tag=ScorerInitializerTags.OBJECTIVE_COMPOSITE)
+            composites = scorer_registry.instances.get_by_tag(tag=ScorerInitializerTags.OBJECTIVE_COMPOSITE)
             if composites:
-                scorer_registry.add_tags(name=composites[0].name, tags=best_tags)
+                scorer_registry.instances.add_tags(name=composites[0].name, tags=best_tags)
                 logger.info(f"Tagged {composites[0].name} as {ScorerInitializerTags.BEST_OBJECTIVE} (fallback)")
             else:
                 logger.warning("No composite scorers available; skipping best objective tagging.")
@@ -598,7 +598,7 @@ class ScorerInitializer(PyRITInitializer):
         Returns:
             Scorer | None: The scorer instance if found, otherwise None.
         """
-        entries = self._get_scorer_registry().get_by_tag(tag=best_tag)
+        entries = self._get_scorer_registry().instances.get_by_tag(tag=best_tag)
         return entries[0].instance if entries else None
 
     def _get_registered_scorer(self, name: str) -> Scorer | None:
@@ -608,7 +608,7 @@ class ScorerInitializer(PyRITInitializer):
         Returns:
             Scorer | None: The scorer instance if found, otherwise None.
         """
-        entry = self._get_scorer_registry().get_entry(name)
+        entry = self._get_scorer_registry().instances.get_entry(name)
         return entry.instance if entry else None
 
     def _get_scorer_registry(self) -> ScorerRegistry:
@@ -628,7 +628,7 @@ class ScorerInitializer(PyRITInitializer):
             PromptTarget | None: The chat target instance if found, otherwise None.
         """
         target_registry = TargetRegistry.get_registry_singleton()
-        return target_registry.get_instance_by_name(target_name)
+        return target_registry.instances.get(target_name)
 
     def _get_chat_target_prefer_rr(self, target_name: str) -> "PromptTarget | None":
         """
@@ -650,12 +650,12 @@ class ScorerInitializer(PyRITInitializer):
         from pyrit.setup.initializers.components.targets import generate_rr_name, get_behavioral_key
 
         target_registry = TargetRegistry.get_registry_singleton()
-        individual = target_registry.get_instance_by_name(target_name)
+        individual = target_registry.instances.get(target_name)
         if individual is None:
             return None
 
         rr_name = generate_rr_name(get_behavioral_key(individual))
-        rr_target = target_registry.get_instance_by_name(rr_name)
+        rr_target = target_registry.instances.get(rr_name)
         if rr_target is not None:
             return rr_target
 
@@ -700,7 +700,7 @@ class ScorerInitializer(PyRITInitializer):
 
         try:
             scorer = factory()
-            scorer_registry.register_instance(scorer, name=name, tags=list(tags) if tags else None)
+            scorer_registry.instances.register(scorer, name=name, tags=list(tags) if tags else None)
             logger.info(f"Registered scorer: {name}")
         except (ValueError, TypeError, KeyError) as e:
             logger.warning(f"Skipping scorer {name}: {e}")

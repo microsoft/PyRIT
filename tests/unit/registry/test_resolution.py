@@ -12,10 +12,10 @@ import pytest
 from pyrit.common import REQUIRED_VALUE
 from pyrit.common.apply_defaults import _RequiredValueSentinel
 from pyrit.models import Message, MessagePiece
-from pyrit.models.identifiers import ConverterIdentifier
+from pyrit.models.identifiers import ConverterIdentifier, TargetIdentifier
 from pyrit.models.parameter import ComponentType
 from pyrit.prompt_target import PromptTarget
-from pyrit.registry.object_registries import TargetRegistry
+from pyrit.registry.components import TargetRegistry
 from pyrit.registry.resolution import (
     derive_parameters,
     display_choices,
@@ -92,6 +92,13 @@ class _StrTargetArg:
         self.converter_target = converter_target
 
 
+class _NeedsTargets:
+    """Helper whose constructor takes a list-typed registry reference."""
+
+    def __init__(self, *, targets: list[PromptTarget]) -> None:
+        self.targets = targets
+
+
 def _resolve(cls: type, raw_args: dict[str, object], *, identifier_type: type | None = None) -> dict[str, object]:
     """Resolve ``raw_args`` against the derived parameter contract for ``cls``."""
     return resolve_constructor_args(cls=cls, raw_args=raw_args, identifier_type=identifier_type)
@@ -100,20 +107,20 @@ def _resolve(cls: type, raw_args: dict[str, object], *, identifier_type: type | 
 @pytest.fixture
 def target_registry():
     """Provide a fresh TargetRegistry singleton with one registered target."""
-    TargetRegistry.reset_instance()
+    TargetRegistry.reset_registry_singleton()
     registry = TargetRegistry.get_registry_singleton()
-    registry.register_instance(MockPromptTarget(), name="my_target")
+    registry.instances.register(MockPromptTarget(), name="my_target")
     yield registry
-    TargetRegistry.reset_instance()
+    TargetRegistry.reset_registry_singleton()
 
 
 @pytest.fixture
 def empty_target_registry():
     """Provide a fresh, empty TargetRegistry singleton."""
-    TargetRegistry.reset_instance()
+    TargetRegistry.reset_registry_singleton()
     registry = TargetRegistry.get_registry_singleton()
     yield registry
-    TargetRegistry.reset_instance()
+    TargetRegistry.reset_registry_singleton()
 
 
 class TestDisplayChoices:
@@ -161,8 +168,32 @@ class TestResolveConstructorArgs:
         resolved = _resolve(
             _NeedsTarget, {"converter_target": "my_target", "offset": "5"}, identifier_type=ConverterIdentifier
         )
-        assert resolved["converter_target"] is target_registry.get_instance_by_name("my_target")
+        assert resolved["converter_target"] is target_registry.instances.get("my_target")
         assert resolved["offset"] == 5
+
+    def test_resolves_list_registry_reference_by_name(self, target_registry: TargetRegistry) -> None:
+        # A ``list[...]`` reference resolves each element by name (the list-aware path
+        # used by RoundRobinTarget and composite scorers).
+        target_registry.instances.register(MockPromptTarget(), name="second_target")
+        resolved = _resolve(
+            _NeedsTargets, {"targets": ["my_target", "second_target"]}, identifier_type=TargetIdentifier
+        )
+        assert resolved["targets"] == [
+            target_registry.instances.get("my_target"),
+            target_registry.instances.get("second_target"),
+        ]
+
+    def test_list_registry_reference_instance_passthrough(self, target_registry: TargetRegistry) -> None:
+        # Non-string elements (already-built instances) pass through unchanged,
+        # interleaved with names that are looked up.
+        instance = MockPromptTarget()
+        resolved = _resolve(_NeedsTargets, {"targets": ["my_target", instance]}, identifier_type=TargetIdentifier)
+        assert resolved["targets"][0] is target_registry.instances.get("my_target")
+        assert resolved["targets"][1] is instance
+
+    def test_list_registry_reference_unknown_name_raises(self, target_registry: TargetRegistry) -> None:
+        with pytest.raises(ValueError, match="missing"):
+            _resolve(_NeedsTargets, {"targets": ["my_target", "missing"]}, identifier_type=TargetIdentifier)
 
     def test_registry_reference_instance_passthrough(self, target_registry: TargetRegistry) -> None:
         instance = MockPromptTarget()
