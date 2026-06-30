@@ -34,6 +34,7 @@ if TYPE_CHECKING:
     from pyrit.prompt_target import PromptTarget
     from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
     from pyrit.score import Scorer
+    from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
 
 logger = logging.getLogger(__name__)
 
@@ -124,7 +125,7 @@ class MatrixAtomicAttackBuilder:
     Build ``AtomicAttack`` instances from a technique × dataset (× target) cross-product.
 
     Construct once with the shared run inputs (target, scorer, labels), then call
-    :meth:`build` with the per-run grid. The builder owns:
+    ``build`` with the per-run grid. The builder owns:
 
     - seed-technique compatibility filtering (``SeedAttackGroup.filter_compatible``),
     - the ``factory.create(...)`` call, forwarding an adversarial target when the
