@@ -11,9 +11,10 @@ import {
   Badge,
   mergeClasses,
 } from '@fluentui/react-components'
-import { ArrowDownloadRegular, ArrowReplyRegular, ArrowForwardRegular, ChatAddRegular, BranchForkRegular, OpenRegular, DataBarVerticalRegular } from '@fluentui/react-icons'
-import { Message, MessageAttachment } from '../../types'
+import { ArrowDownloadRegular, ArrowReplyRegular, ArrowForwardRegular, ChatAddRegular, BranchForkRegular, OpenRegular, DataBarVerticalRegular, EditRegular } from '@fluentui/react-icons'
+import { BackendScore, Message, MessageAttachment } from '../../types'
 import { useMessageListStyles } from './MessageList.styles'
+import ScoreActionsPopover from './ScoreActionsPopover'
 
 interface MessageListProps {
   messages: Message[]
@@ -27,6 +28,8 @@ interface MessageListProps {
   onBranchAttack?: (messageIndex: number) => void
   /** Score a single assistant message. Only enabled when provided. */
   onScoreMessage?: (messageIndex: number) => void
+  /** Refresh callback used when a score chip reruns or edits a score. */
+  onScoreChanged?: () => void
   /** True while loading a historical attack's messages */
   isLoading?: boolean
   /** True when the target is single-turn (disables copy-to-input) */
@@ -37,6 +40,24 @@ interface MessageListProps {
   isCrossTarget?: boolean
   /** True when no target is currently selected */
   noTargetSelected?: boolean
+}
+
+function groupScoresByScorer(scores: BackendScore[]): BackendScore[] {
+  const latestByScorer = new Map<string, BackendScore>()
+  for (const score of scores) {
+    const existing = latestByScorer.get(score.scorer_type)
+    if (!existing) {
+      latestByScorer.set(score.scorer_type, score)
+      continue
+    }
+
+    const existingTime = new Date(existing.scored_at).getTime()
+    const scoreTime = new Date(score.scored_at).getTime()
+    if (scoreTime >= existingTime) {
+      latestByScorer.set(score.scorer_type, score)
+    }
+  }
+  return Array.from(latestByScorer.values()).sort((a, b) => a.scorer_type.localeCompare(b.scorer_type))
 }
 
 /** Image that shows a spinner while loading. */
@@ -108,7 +129,7 @@ function tryFormatJson(text: string): string | null {
   }
 }
 
-export default function MessageList({ messages, onCopyToInput, onCopyToNewConversation, onBranchConversation, onBranchAttack, onScoreMessage, isLoading, isSingleTurn, isOperatorLocked, isCrossTarget, noTargetSelected }: MessageListProps) {
+export default function MessageList({ messages, onCopyToInput, onCopyToNewConversation, onBranchConversation, onBranchAttack, onScoreMessage, onScoreChanged, isLoading, isSingleTurn, isOperatorLocked, isCrossTarget, noTargetSelected }: MessageListProps) {
   const styles = useMessageListStyles()
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
@@ -471,20 +492,33 @@ export default function MessageList({ messages, onCopyToInput, onCopyToNewConver
                     marginTop: tokens.spacingVerticalXS,
                   }}
                 >
-                  {message.scores.map((s) => {
+                  {groupScoresByScorer(message.scores).map((s) => {
                     const label = `${s.scorer_type}: ${s.score_value}`
                     const tooltipBody = s.score_rationale
                       ? `${label}\n\n${s.score_rationale}`
                       : label
+                    const badge = (
+                      <Badge
+                        appearance="outline"
+                        size="small"
+                        data-testid={`message-score-${index}-${s.score_id}`}
+                      >
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: tokens.spacingHorizontalXXS }}>
+                          {s.is_manual_edit && <EditRegular fontSize={12} />}
+                          {label}
+                        </span>
+                      </Badge>
+                    )
+                    if (onScoreChanged) {
+                      return (
+                        <ScoreActionsPopover key={s.score_id} score={s} onScoresChanged={onScoreChanged}>
+                          {badge}
+                        </ScoreActionsPopover>
+                      )
+                    }
                     return (
                       <Tooltip key={s.score_id} content={tooltipBody} relationship="description">
-                        <Badge
-                          appearance="outline"
-                          size="small"
-                          data-testid={`message-score-${index}-${s.score_id}`}
-                        >
-                          {label}
-                        </Badge>
+                        {badge}
                       </Tooltip>
                     )
                   })}

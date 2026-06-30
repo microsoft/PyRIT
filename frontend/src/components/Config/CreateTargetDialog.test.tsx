@@ -307,6 +307,91 @@ describe("CreateTargetDialog", () => {
     });
   });
 
+  it("should send image_url_as_string=true when toggled on for OpenAIResponseTarget", async () => {
+    const onCreated = jest.fn();
+    const user = userEvent.setup();
+    mockedTargetsApi.createTarget.mockResolvedValue({
+      target_registry_name: "openai_response",
+      target_type: "OpenAIResponseTarget",
+    });
+
+    render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} onCreated={onCreated} />
+      </TestWrapper>
+    );
+
+    await selectTargetType(user, "OpenAIResponseTarget");
+
+    const endpointInput = screen.getByPlaceholderText(
+      "https://your-resource.openai.azure.com/"
+    );
+    fireEvent.change(endpointInput, { target: { value: "https://api.example.com" } });
+
+    await user.click(screen.getByRole("switch", { name: /image_url as bare string/i }));
+
+    await user.click(screen.getByText("Create Target"));
+
+    await waitFor(() => {
+      expect(mockedTargetsApi.createTarget).toHaveBeenCalledWith({
+        type: "OpenAIResponseTarget",
+        params: {
+          endpoint: "https://api.example.com",
+          image_url_as_string: true,
+        },
+      });
+      expect(onCreated).toHaveBeenCalled();
+    });
+  });
+
+  it("should not send image_url_as_string when toggle is off for OpenAIResponseTarget", async () => {
+    const user = userEvent.setup();
+    mockedTargetsApi.createTarget.mockResolvedValue({
+      target_registry_name: "openai_response_default",
+      target_type: "OpenAIResponseTarget",
+    });
+
+    render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} />
+      </TestWrapper>
+    );
+
+    await selectTargetType(user, "OpenAIResponseTarget");
+
+    const endpointInput = screen.getByPlaceholderText(
+      "https://your-resource.openai.azure.com/"
+    );
+    fireEvent.change(endpointInput, { target: { value: "https://api.openai.com" } });
+
+    await user.click(screen.getByText("Create Target"));
+
+    await waitFor(() => {
+      expect(mockedTargetsApi.createTarget).toHaveBeenCalledWith({
+        type: "OpenAIResponseTarget",
+        params: {
+          endpoint: "https://api.openai.com",
+        },
+      });
+    });
+  });
+
+  it("should not render image_url_as_string toggle for non-OpenAIResponseTarget types", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} />
+      </TestWrapper>
+    );
+
+    await selectTargetType(user, "OpenAIChatTarget");
+
+    expect(
+      screen.queryByRole("switch", { name: /image_url as bare string/i })
+    ).not.toBeInTheDocument();
+  });
+
   it("should show error when createTarget fails", async () => {
     const user = userEvent.setup();
     mockedTargetsApi.createTarget.mockRejectedValue(

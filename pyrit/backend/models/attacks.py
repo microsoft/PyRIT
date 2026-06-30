@@ -29,6 +29,9 @@ class Score(BaseModel):
     score_category: list[str] | None = Field(None, description="Harm categories (e.g., ['hate', 'violence'])")
     score_rationale: str | None = Field(None, description="Explanation for the score")
     scored_at: datetime = Field(..., description="When the score was generated")
+    score_metadata: dict[str, Any] | None = Field(None, description="Metadata (audit trail for edits/reruns)")
+    is_manual_edit: bool = Field(False, description="Whether this score was manually edited")
+    message_piece_id: str | None = Field(None, description="The piece this score is attached to")
 
 
 class MessagePiece(BaseModel):

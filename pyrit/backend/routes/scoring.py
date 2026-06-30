@@ -26,6 +26,7 @@ from pyrit.backend.models.common import ProblemDetail
 from pyrit.backend.models.scoring import (
     CreateCustomScorerRequest,
     CustomScorerResponse,
+    EditScoreRequest,
     ScoreConversationRequest,
     ScoreMessageRequest,
     ScoreResponse,
@@ -38,6 +39,7 @@ logger = logging.getLogger(__name__)
 
 scorers_router = APIRouter(prefix="/scorers", tags=["scorers"])
 attack_scoring_router = APIRouter(prefix="/attacks", tags=["attacks"])
+scores_router = APIRouter(prefix="/scores", tags=["scores"])
 
 
 @scorers_router.get(
@@ -241,3 +243,41 @@ async def score_message_piece(  # pyrit-async-suffix-exempt
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Internal server error. Check server logs for details.",
         ) from e
+
+
+@scores_router.post(
+    "/{score_id}/rerun",
+    response_model=ScoreResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def rerun_score(score_id: str) -> ScoreResponse:  # pyrit-async-suffix-exempt
+    """Re-run the scorer that produced an existing score."""
+    service = get_scoring_service()
+    try:
+        return await service.rerun_score_async(score_id=score_id)
+    except LookupError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+    except Exception as e:
+        logger.exception("Failed to rerun score '%s'", score_id)
+        raise HTTPException(status_code=500, detail="Internal server error.") from e
+
+
+@scores_router.post(
+    "/{score_id}/edit",
+    response_model=ScoreResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def edit_score(score_id: str, request: EditScoreRequest) -> ScoreResponse:  # pyrit-async-suffix-exempt
+    """Append a manual score override while preserving the original score row."""
+    service = get_scoring_service()
+    try:
+        return await service.edit_score_async(score_id=score_id, request=request)
+    except LookupError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+    except Exception as e:
+        logger.exception("Failed to edit score '%s'", score_id)
+        raise HTTPException(status_code=500, detail="Internal server error.") from e

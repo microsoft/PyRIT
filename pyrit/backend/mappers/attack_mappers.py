@@ -306,6 +306,9 @@ def pyrit_scores_to_dto(scores: list[PyritScore]) -> list[Score]:
             score_category=score.score_category,
             score_rationale=score.score_rationale,
             scored_at=score.timestamp,
+            score_metadata=score.score_metadata,
+            is_manual_edit=bool(score.score_metadata and score.score_metadata.get("manual_edit")),
+            message_piece_id=str(score.message_piece_id) if score.message_piece_id else None,
         )
         for score in scores
     ]

@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import logging
 from functools import lru_cache
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 from pyrit.backend.mappers import pyrit_scores_to_dto
@@ -29,6 +30,7 @@ from pyrit.backend.models.scoring import (
     CreateCustomScorerRequest,
     CustomScorerConfig,
     CustomScorerResponse,
+    EditScoreRequest,
     GeneralFloatScaleConfig,
     GeneralTrueFalseConfig,
     ScoreConversationMode,
@@ -41,6 +43,7 @@ from pyrit.backend.models.scoring import (
     UpdateCustomScorerRequest,
 )
 from pyrit.memory import CentralMemory
+from pyrit.models import Score as PyritScore
 from pyrit.registry import ScorerRegistry
 
 if TYPE_CHECKING:
@@ -238,6 +241,41 @@ class ScoringService:
 
         scores = await scorer.score_async(message=target_message, objective=request.objective)
         return ScoreResponse(scores=pyrit_scores_to_dto(list(scores)))
+
+    async def rerun_score_async(self, *, score_id: str) -> ScoreResponse:
+        """Re-run the same scorer on the same message and return the appended scores."""
+        score = self._get_score_by_id(score_id)
+        scorer = self._resolve_scorer_for_score(score)
+        message = self._build_message_for_piece(score)
+        new_scores = await scorer.score_async(message=message, objective=score.objective)
+        for rerun_score in new_scores:
+            rerun_score.score_metadata = rerun_score.score_metadata or {}
+            rerun_score.score_metadata["rerun_of"] = str(score.id)
+        return ScoreResponse(scores=pyrit_scores_to_dto(list(new_scores)))
+
+    async def edit_score_async(self, *, score_id: str, request: EditScoreRequest) -> ScoreResponse:
+        """Append a manual score override while preserving the original score row."""
+        original = self._get_score_by_id(score_id)
+        self._validate_score_value(score_type=original.score_type, value=request.score_value)
+
+        new_score = PyritScore(
+            scorer_class_identifier=original.scorer_class_identifier,
+            message_piece_id=original.message_piece_id,
+            score_type=original.score_type,
+            score_value=request.score_value,
+            score_rationale=request.score_rationale if request.score_rationale is not None else original.score_rationale,
+            score_category=original.score_category,
+            objective=original.objective,
+            score_metadata={
+                "manual_edit": 1,
+                "previous_score_id": str(original.id),
+                "previous_value": original.score_value,
+                "previous_rationale": original.score_rationale or "",
+                "edited_at": datetime.now(timezone.utc).isoformat(),
+            },
+        )
+        self._memory.add_scores_to_memory(scores=[new_score])
+        return ScoreResponse(scores=pyrit_scores_to_dto([new_score]))
 
     # ------------------------------------------------------------------
     # Custom (user-created) scorers
@@ -484,6 +522,66 @@ class ScoringService:
         if scorer is None:
             raise ValueError(f"Scorer '{scorer_registry_name}' is not registered")
         return scorer
+
+    def _get_score_by_id(self, score_id: str) -> PyritScore:
+        """Fetch a single score by id or raise ``LookupError`` when missing."""
+        scores = self._memory.get_scores(score_ids=[score_id])
+        if not scores:
+            raise LookupError(f"Score '{score_id}' not found")
+        return scores[0]
+
+    def _resolve_scorer_for_score(self, score: PyritScore) -> Scorer:
+        """Find the registered scorer instance that produced a score."""
+        scorer_identifier = score.scorer_class_identifier
+        scorer_class_name = scorer_identifier.class_name if scorer_identifier else None
+        if not scorer_class_name:
+            raise ValueError("Score has no scorer class identifier")
+
+        target_hash = scorer_identifier.eval_hash if scorer_identifier else None
+        if target_hash:
+            for entry in self._registry.get_all_instances():
+                if entry.instance.get_identifier().eval_hash == target_hash:
+                    return entry.instance
+
+        for entry in self._registry.get_all_instances():
+            if entry.instance.get_identifier().class_name == scorer_class_name:
+                return entry.instance
+
+        raise ValueError(f"No registered scorer matches '{scorer_class_name}'")
+
+    def _build_message_for_piece(self, score: PyritScore) -> Message:
+        """Reconstruct the message that contains the scored piece."""
+        if not score.message_piece_id:
+            raise ValueError("Score has no associated message piece")
+
+        pieces = self._memory.get_message_pieces(prompt_ids=[str(score.message_piece_id)])
+        if not pieces:
+            raise LookupError(f"Message piece '{score.message_piece_id}' not found in memory")
+
+        conversation = list(self._memory.get_conversation(conversation_id=pieces[0].conversation_id))
+        for message in conversation:
+            for piece in message.message_pieces:
+                if str(piece.id) == str(score.message_piece_id):
+                    return message
+
+        raise LookupError(f"Could not locate message containing piece '{score.message_piece_id}'")
+
+    @staticmethod
+    def _validate_score_value(*, score_type: str, value: str) -> None:
+        """Validate a score value against the score type used by the original score."""
+        normalized = value.strip().lower()
+        if score_type == "true_false":
+            if normalized not in ("true", "false"):
+                raise ValueError("Score value for true_false must be 'true' or 'false'")
+            return
+
+        if score_type == "float_scale":
+            try:
+                numeric = float(value)
+            except ValueError as e:
+                raise ValueError("Score value for float_scale must be a number") from e
+            if numeric < 0.0 or numeric > 1.0:
+                raise ValueError("Score value for float_scale must be between 0.0 and 1.0")
 
     @staticmethod
     def _select_message_for_scoring(*, conversation: list[Message], mode: ScoreConversationMode) -> Message:

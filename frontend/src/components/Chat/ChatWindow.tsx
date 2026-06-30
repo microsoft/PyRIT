@@ -654,6 +654,7 @@ export default function ChatWindow({
           onBranchConversation={attackResultId && activeConversationId ? handleBranchConversation : undefined}
           onBranchAttack={activeTarget && activeConversationId ? handleBranchAttack : undefined}
           onScoreMessage={attackResultId && activeConversationId ? handleScoreMessage : undefined}
+          onScoreChanged={attackResultId && activeConversationId ? handleScored : undefined}
           isLoading={isLoadingAttack || isLoadingMessages || awaitingConversationLoad}
           isSingleTurn={activeTarget?.capabilities?.supports_multi_turn === false}
           isOperatorLocked={isOperatorLocked}

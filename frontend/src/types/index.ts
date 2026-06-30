@@ -192,6 +192,9 @@ export interface BackendScore {
   score_category?: string[] | null
   score_rationale?: string | null
   scored_at: string
+  score_metadata?: Record<string, unknown> | null
+  is_manual_edit?: boolean
+  message_piece_id?: string | null
 }
 
 export interface BackendMessagePiece {
@@ -312,6 +315,11 @@ export interface ScoreConversationRequest {
 export interface ScoreMessageRequest {
   scorer_registry_name: string
   objective?: string
+}
+
+export interface EditScoreRequest {
+  score_value: string
+  score_rationale?: string | null
 }
 
 export interface ScoreResponse {

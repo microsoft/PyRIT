@@ -22,6 +22,7 @@ __all__ = [
     "ScoreConversationMode",
     "ScoreConversationRequest",
     "ScoreMessageRequest",
+    "EditScoreRequest",
     "ScoreResponse",
     "CustomScorerKind",
     "GeneralFloatScaleConfig",
@@ -195,6 +196,13 @@ class ScoreMessageRequest(BaseModel):
     objective: str | None = Field(
         None, description="Optional objective to pass to the scorer (only used by objective scorers)"
     )
+
+
+class EditScoreRequest(BaseModel):
+    """Request to manually edit/override a score's value and rationale."""
+
+    score_value: str = Field(..., min_length=1, description="New score value")
+    score_rationale: str | None = Field(None, description="New rationale (None keeps original)")
 
 
 class ScoreResponse(BaseModel):

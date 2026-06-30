@@ -24,6 +24,8 @@ import type {
   ScoreConversationRequest,
   ScoreMessageRequest,
   ScoreResponse,
+  EditScoreRequest,
+  BackendScore,
   CreateCustomScorerRequest,
   UpdateCustomScorerRequest,
   CustomScorerResponse,
@@ -335,6 +337,18 @@ export const scorersApi = {
 
   deleteCustomScorer: async (scorerId: string): Promise<void> => {
     await apiClient.delete(`/scorers/custom/${encodeURIComponent(scorerId)}`)
+  },
+}
+
+export const scoresApi = {
+  rerunScore: async (scoreId: string): Promise<{ scores: BackendScore[] }> => {
+    const response = await apiClient.post(`/scores/${encodeURIComponent(scoreId)}/rerun`)
+    return response.data
+  },
+
+  editScore: async (scoreId: string, request: EditScoreRequest): Promise<{ scores: BackendScore[] }> => {
+    const response = await apiClient.post(`/scores/${encodeURIComponent(scoreId)}/edit`, request)
+    return response.data
   },
 }
 
