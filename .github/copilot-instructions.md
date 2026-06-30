@@ -12,10 +12,13 @@ PyRIT uses a modular pluggable-brick design. The main extensibility points are:
 - **Executors / Scenarios** (`pyrit/executor/`, `pyrit/scenario/`) — Orchestrate multi-turn attacks.
 - **Memory** (`pyrit/memory/`) — `CentralMemory` for prompt/response persistence.
 
+**[`doc/code/framework.md`](../doc/code/framework.md) is the canonical reference for how these pieces fit together.** It defines each component's responsibilities — what it owns and, critically, what it *does not* own — and how scenarios, attack techniques, executors, and the core/shared layers relate. Read it before adding or reviewing components so new code lands in the right place.
+
 ## Code Review Guidelines
 
 When performing a code review, be selective. Only leave comments for issues that genuinely matter:
 
+- **Component responsibilities (prioritize this)** — Each component should do its job and *only* its job, per [`doc/code/framework.md`](../doc/code/framework.md). Flag responsibility bleed: e.g. an executor assembling prepended/system prompts or role-play framing (that's an attack technique), a converter or target making branching decisions (that's an attack/scorer), a scorer acting on its own result (the attack branches), or business logic living in memory/output. If logic belongs in a different brick, say so.
 - Bugs, logic errors, or security concerns
 - Unclear code that would benefit from refactoring for readability
 - Violations of the critical coding conventions above (async suffix, keyword-only args, type annotations)
