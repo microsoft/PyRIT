@@ -22,7 +22,7 @@ from pyrit.setup.initializers.components.scenario_techniques import build_scenar
 def populate_registries():
     """Populate the technique + target registries so lazy strategy builders succeed."""
     AttackTechniqueRegistry.reset_registry_singleton()
-    TargetRegistry.reset_instance()
+    TargetRegistry.reset_registry_singleton()
     _build_cyber_strategy.cache_clear()
     _build_leakage_strategy.cache_clear()
     _build_rapid_response_strategy.cache_clear()
@@ -30,12 +30,12 @@ def populate_registries():
 
     adv_target = MagicMock(spec=PromptTarget)
     adv_target.capabilities.includes.return_value = True
-    TargetRegistry.get_registry_singleton().register_instance(adv_target, name="adversarial_chat")
+    TargetRegistry.get_registry_singleton().instances.register(adv_target, name="adversarial_chat")
 
     AttackTechniqueRegistry.get_registry_singleton().register_from_factories(build_scenario_technique_factories())
     yield
     AttackTechniqueRegistry.reset_registry_singleton()
-    TargetRegistry.reset_instance()
+    TargetRegistry.reset_registry_singleton()
     _build_cyber_strategy.cache_clear()
     _build_leakage_strategy.cache_clear()
     _build_rapid_response_strategy.cache_clear()

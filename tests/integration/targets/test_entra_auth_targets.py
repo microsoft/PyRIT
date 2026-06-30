@@ -332,7 +332,7 @@ async def test_video_target_remix_entra_auth(sqlite_instance):
         original_value="A bird flying over a lake",
         converted_value="A bird flying over a lake",
     )
-    result = await target.send_prompt_async(message=Message([text_piece]))
+    result = await target.send_prompt_async(message=Message(message_pieces=[text_piece]))
     response_piece = result[0].message_pieces[0]
     assert response_piece.response_error == "none"
     video_id = response_piece.prompt_metadata.get("video_id")
@@ -345,7 +345,7 @@ async def test_video_target_remix_entra_auth(sqlite_instance):
         converted_value="Add a sunset",
         prompt_metadata={"video_id": video_id},
     )
-    remix_result = await target.send_prompt_async(message=Message([remix_piece]))
+    remix_result = await target.send_prompt_async(message=Message(message_pieces=[remix_piece]))
     assert remix_result[0].message_pieces[0].response_error == "none"
 
 

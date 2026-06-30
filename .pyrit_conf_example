@@ -26,7 +26,8 @@ memory_db_type: sqlite
 # - airt: AI Red Team setup with Azure OpenAI (requires AZURE_OPENAI_* env vars)
 # - target: Registers available prompt targets into the TargetRegistry
 # - scorer: Registers pre-configured scorers into the ScorerRegistry
-# - load_default_datasets: Loads default datasets for all registered scenarios
+# - load_default_datasets: Optional preload of default datasets for all registered
+#   scenarios (scenarios otherwise fetch their datasets on demand)
 # - objective_list: Sets default objectives for scenarios
 #
 # Each initializer can be specified as:
@@ -47,7 +48,6 @@ memory_db_type: sqlite
 initializers:
   - name: simple
   - name: scenario_technique
-  - name: load_default_datasets
   - name: target
     args:
       tags:

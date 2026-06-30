@@ -73,7 +73,7 @@ def test_get_pieces_by_type_returns_matching_pieces() -> None:
         converted_value_data_type="image_path",
         conversation_id=conversation_id,
     )
-    msg = Message([text_piece, image_piece])
+    msg = Message(message_pieces=[text_piece, image_piece])
 
     result = msg.get_pieces_by_type(data_type="text")
     assert len(result) == 1
@@ -86,7 +86,7 @@ def test_get_pieces_by_type_returns_matching_pieces() -> None:
 
 def test_get_pieces_by_type_returns_empty_for_no_match() -> None:
     piece = MessagePiece(role="user", original_value="hello", converted_value="hello")
-    msg = Message([piece])
+    msg = Message(message_pieces=[piece])
     assert msg.get_pieces_by_type(data_type="image_path") == []
 
 
@@ -94,13 +94,13 @@ def test_get_piece_by_type_returns_first_match() -> None:
     conversation_id = "test-conv"
     text1 = MessagePiece(role="user", original_value="a", converted_value="a", conversation_id=conversation_id)
     text2 = MessagePiece(role="user", original_value="b", converted_value="b", conversation_id=conversation_id)
-    msg = Message([text1, text2])
+    msg = Message(message_pieces=[text1, text2])
     assert msg.get_piece_by_type(data_type="text") is text1
 
 
 def test_get_piece_by_type_returns_none_for_no_match() -> None:
     piece = MessagePiece(role="user", original_value="hello", converted_value="hello")
-    msg = Message([piece])
+    msg = Message(message_pieces=[piece])
     assert msg.get_piece_by_type(data_type="image_path") is None
 
 

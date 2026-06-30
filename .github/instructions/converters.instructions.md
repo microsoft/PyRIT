@@ -4,6 +4,10 @@ applyTo: "pyrit/prompt_converter/**"
 
 # Prompt Converter Development Guidelines
 
+**Responsibility**: A converter transforms a prompt into something else (rephrasing, encoding, translating to a Word document, overlaying text on an image, ...). Converters can be stacked and combined, and any converter may also be a NoOp.
+
+**Does not own** (see [framework.md](../../doc/code/framework.md)): conversation state or attack decisions. A converter transforms input into output (and may call a target to do so); it must not branch on results, score, persist to memory itself, or decide when it runs — the attack/technique configures the stack. Flag such bleed in review.
+
 ## Base Class Contract
 
 All converters MUST inherit from `PromptConverter` and implement:

@@ -185,72 +185,48 @@ class _NamedInstanceRegistry(Protocol):
         ...
 
 
-# TODO (Phase 4 — Target/Scorer migration): this function is deliberately left
-# in its current, slightly awkward shape until Target/Scorer become unified
-# ``Registry`` instances. It wants to be a flat ``ComponentType -> Registry class``
-# mapping, but it can't be one yet because the three families don't share a uniform
-# name->instance surface: ``ConverterRegistry`` is a ``Registry`` whose instances
-# live under ``.instances``, while ``TargetRegistry``/``ScorerRegistry`` are still
-# legacy object registries whose singleton *is* the instance registry (hence the
-# ``.instances`` hop for converters but not the others). Once Target/Scorer migrate
-# onto ``Registry`` + ``.instances`` (Phase 4), collapse this into a single mapping
-# to the registry classes and fold ``is_component_type_resolvable`` into the base
-# ``Registry`` as a private method.
 def _registry_getter_for_component_type(component_type: ComponentType) -> Callable[[], _NamedInstanceRegistry] | None:
     """
-    Return the getter for the registry singleton that resolves a component family.
+    Return the getter for the instance registry that resolves a component family.
 
     This is the one place that must import the concrete registries, so it stays in
     the resolve layer (the derive layer never imports them). It is the inverse of
     the identifier's self-reported ``component_type``: given that family, return the
-    registry that resolves its references by name.
+    ``.instances`` container that resolves its references by name.
+
+    The three component registries share a uniform surface — each is a ``Registry``
+    whose pre-configured instances live under ``.instances`` — so the mapping is a
+    flat ``ComponentType -> Registry class`` lookup.
 
     Returns:
         Callable[[], _NamedInstanceRegistry] | None: The registry getter, or None
         when no registry is wired for ``component_type``.
     """
-    from pyrit.registry.components import ConverterRegistry
-    from pyrit.registry.object_registries import ScorerRegistry, TargetRegistry
+    from pyrit.registry.components import ConverterRegistry, ScorerRegistry, TargetRegistry
 
-    if component_type is ComponentType.TARGET:
-        return TargetRegistry.get_registry_singleton
-    if component_type is ComponentType.CONVERTER:
-        return lambda: ConverterRegistry.get_registry_singleton().instances
-    if component_type is ComponentType.SCORER:
-        return ScorerRegistry.get_registry_singleton
-    return None
-
-
-def is_component_type_resolvable(component_type: ComponentType) -> bool:
-    """
-    Return whether a registry is wired to resolve references of ``component_type``.
-
-    This is the registration-time gate used by buildable registries: a reference
-    parameter whose component type has no paired registry can never be resolved by
-    name and should fail fast instead of erroring only at build time.
-
-    NOTE: This belongs on the ``Registry`` base as a private method; it lives here
-    for now only because it wraps ``_registry_getter_for_component_type``. Both move
-    together in Phase 4 (see that function's note).
-
-    Returns:
-        bool: True when references of ``component_type`` can be resolved by name.
-    """
-    return _registry_getter_for_component_type(component_type) is not None
+    registry_classes = {
+        ComponentType.TARGET: TargetRegistry,
+        ComponentType.CONVERTER: ConverterRegistry,
+        ComponentType.SCORER: ScorerRegistry,
+    }
+    registry_class = registry_classes.get(component_type)
+    if registry_class is None:
+        return None
+    return lambda: registry_class.get_registry_singleton().instances
 
 
-def _resolve_registry_reference(
+def _resolve_single_reference(
     *, value: Any, getter: Callable[[], _NamedInstanceRegistry], owner: str, name: str
 ) -> Any:
     """
-    Resolve a registry-reference parameter value to a stored instance.
+    Resolve a single registry-reference value to a stored instance.
 
     A string value is looked up by name in the paired registry. An already-built
     instance passes through unchanged.
 
     Args:
         value (Any): The raw value (a registry name, or an instance to pass through).
-        getter (Callable[[], _NamedInstanceRegistry]): Returns the registry singleton.
+        getter (Callable[[], _NamedInstanceRegistry]): Returns the instance registry.
         owner (str): The owning class name, for error messages.
         name (str): The parameter name, for error messages.
 
@@ -279,6 +255,58 @@ def _resolve_registry_reference(
     raise ValueError(
         f"{owner}.{name}: '{value}' not found in {registry_label}. Available: {', '.join(available_names)}"
     )
+
+
+def _resolve_registry_reference(
+    *,
+    value: Any,
+    getter: Callable[[], _NamedInstanceRegistry],
+    owner: str,
+    name: str,
+    annotation: TypeAnnotation = None,
+) -> Any:
+    """
+    Resolve a registry-reference parameter value to stored instance(s).
+
+    A scalar reference resolves a single name (or instance). A reference whose
+    constructor annotation is a ``list[...]`` resolves a list of names element by
+    element, so a multi-target (``RoundRobinTarget``) or a composite scorer can be
+    built from a list of registry names. Each element is resolved by
+    ``_resolve_single_reference`` (string → lookup, instance → passthrough).
+
+    The value's shape must match the reference's arity: a ``list[...]`` reference
+    requires a list and a scalar reference rejects one, so a shape mismatch fails
+    here with a clear message instead of constructing the component with the wrong
+    argument shape and erroring obscurely downstream.
+
+    Args:
+        value (Any): The raw value (a name, an instance, or a list of either).
+        getter (Callable[[], _NamedInstanceRegistry]): Returns the instance registry.
+        owner (str): The owning class name, for error messages.
+        name (str): The parameter name, for error messages.
+        annotation (TypeAnnotation): The constructor parameter's type annotation,
+            used to detect a ``list[...]`` reference.
+
+    Returns:
+        Any: The resolved instance, or a list of resolved instances.
+
+    Raises:
+        ValueError: If a name is not registered, or the value's shape (list vs.
+            scalar) does not match the reference's arity.
+    """
+    if get_origin(annotation) is list:
+        if not isinstance(value, list):
+            raise ValueError(
+                f"{owner}.{name}: expected a list of registry names or instances for this "
+                f'reference, but got {type(value).__name__}. Pass a list, e.g. {name}=["a", "b"].'
+            )
+        return [_resolve_single_reference(value=item, getter=getter, owner=owner, name=name) for item in value]
+    if isinstance(value, list):
+        raise ValueError(
+            f"{owner}.{name}: expected a single registry name or instance for this reference, "
+            f'but got a list. Pass a single value, e.g. {name}="a".'
+        )
+    return _resolve_single_reference(value=value, getter=getter, owner=owner, name=name)
 
 
 def resolve_constructor_args(
@@ -324,7 +352,13 @@ def resolve_constructor_args(
                     f"{cls.__name__}.{name}: no registry is wired for component type "
                     f"'{param.reference.component_type}'."
                 )
-            resolved[name] = _resolve_registry_reference(value=value, getter=getter, owner=cls.__name__, name=name)
+            resolved[name] = _resolve_registry_reference(
+                value=value,
+                getter=getter,
+                owner=cls.__name__,
+                name=name,
+                annotation=param.reference.annotation,
+            )
         elif isinstance(value, str) and param.is_string_coercible:
             try:
                 resolved[name] = param.coerce_value(value)

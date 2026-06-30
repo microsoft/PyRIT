@@ -61,12 +61,12 @@ async def evaluate_scorers(tags: list[str] | None = None, max_concurrency: int =
     if tags:
         scorer_names: list[str] = []
         for tag in tags:
-            entries = registry.get_by_tag(tag=tag)
+            entries = registry.instances.get_by_tag(tag=tag)
             scorer_names.extend(entry.name for entry in entries if entry.name not in scorer_names)
         scorer_names.sort()
         print(f"\nFiltering by tags: {tags}")
     else:
-        scorer_names = registry.get_names()
+        scorer_names = registry.instances.get_names()
 
     if not scorer_names:
         print("No scorers registered. Check environment variable configuration.")
@@ -85,7 +85,7 @@ async def evaluate_scorers(tags: list[str] | None = None, max_concurrency: int =
 
     # Evaluate each scorer
     for i, scorer_name in scorer_iterator:
-        scorer = registry.get_instance_by_name(scorer_name)
+        scorer = registry.instances.get(scorer_name)
         print(f"\n[{i}/{len(scorer_names)}] Evaluating {scorer_name}...")
         print("  Status: Starting evaluation (this may take several minutes)...")
 

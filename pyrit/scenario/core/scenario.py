@@ -12,7 +12,6 @@ import asyncio
 import copy
 import json
 import logging
-import textwrap
 import uuid
 from abc import ABC
 from collections.abc import Sequence
@@ -50,7 +49,7 @@ from pyrit.prompt_target.common.target_requirements import TargetRequirements
 from pyrit.registry import ScorerRegistry
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
-from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
+from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
 from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
 from pyrit.scenario.core.scenario_target_defaults import get_default_scorer_target
 from pyrit.score import (
@@ -198,7 +197,7 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
         version: int,
         strategy_class: type[ScenarioStrategy],
         default_strategy: ScenarioStrategy,
-        default_dataset_config: DatasetConfiguration,
+        default_dataset_config: DatasetAttackConfiguration,
         objective_scorer: Scorer,
         scenario_result_id: uuid.UUID | str | None = None,
         include_default_baseline: bool | None = None,  # Deprecated. Will be removed in 0.16.0.
@@ -213,7 +212,7 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
             default_strategy (ScenarioStrategy): The default strategy member used when no
                 ``scenario_strategies`` are passed to ``initialize_async``. Usually an aggregate
                 member like ``MyStrategy.ALL`` or ``MyStrategy.DEFAULT``.
-            default_dataset_config (DatasetConfiguration): The default dataset configuration used
+            default_dataset_config (DatasetAttackConfiguration): The default dataset configuration used
                 when no ``dataset_config`` is passed to ``initialize_async``.
             objective_scorer (Scorer): The objective scorer used to evaluate attack results.
             scenario_result_id (uuid.UUID | str | None): Optional ID of an existing scenario result to resume.
@@ -359,7 +358,7 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
         - **Cross-product**: ``return f"{technique_name}_{seed_group_name}"``
 
         Note: ``seed_group_name`` is the dataset key from
-        ``DatasetConfiguration.get_seed_attack_groups()`` (e.g.
+        ``DatasetAttackConfiguration.get_attack_groups_by_dataset_async()`` (e.g.
         ``"airt_hate"``), not a ``SeedGroup`` object.
 
         Args:
@@ -379,7 +378,9 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
         # if available either itself, or its chat target will be used
         chat_target: PromptTarget | None = None
         registry_default_scorer: TrueFalseScorer | None = None
-        entries = ScorerRegistry.get_registry_singleton().get_by_tag(tag=ScorerInitializerTags.DEFAULT_OBJECTIVE_SCORER)
+        entries = ScorerRegistry.get_registry_singleton().instances.get_by_tag(
+            tag=ScorerInitializerTags.DEFAULT_OBJECTIVE_SCORER
+        )
         if entries and isinstance(entries[0].instance, TrueFalseScorer):
             registry_default_scorer = entries[0].instance
             chat_target = registry_default_scorer.get_chat_target()
@@ -555,7 +556,7 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
         *,
         objective_target: PromptTarget = REQUIRED_VALUE,  # type: ignore[ty:invalid-parameter-default]
         scenario_strategies: Sequence[ScenarioStrategy] | None = None,
-        dataset_config: DatasetConfiguration | None = None,
+        dataset_config: DatasetAttackConfiguration | None = None,
         max_concurrency: int = 4,
         max_retries: int = 0,
         memory_labels: dict[str, str] | None = None,
@@ -577,7 +578,7 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
             scenario_strategies (Sequence[ScenarioStrategy] | None): The strategies to execute.
                 Can be a list of ScenarioStrategy enum members. If None, uses the default aggregate
                 from the scenario's configuration.
-            dataset_config (DatasetConfiguration | None): Configuration for the dataset source.
+            dataset_config (DatasetAttackConfiguration | None): Configuration for the dataset source.
                 Use this to specify dataset names or maximum dataset size from the CLI.
                 If not provided, scenarios use their constructor-supplied default_dataset_config.
             max_concurrency (int): Maximum number of concurrent units of work for the scenario.
@@ -672,7 +673,7 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
             if self._atomic_attacks:
                 seed_groups = self._atomic_attacks[0].seed_groups
             else:
-                seed_groups = self._dataset_config.get_all_seed_attack_groups()
+                seed_groups = await self._dataset_config.get_seed_attack_groups_async()
             self._atomic_attacks.insert(0, self._build_baseline_atomic_attack(seed_groups=seed_groups))
 
         # Snapshot params onto the identifier before the resume branch so the identifier
@@ -828,19 +829,6 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
             seed_groups=seed_groups,
             memory_labels=self._memory_labels,
         )
-
-    def _raise_dataset_exception(self) -> None:
-        error_msg = textwrap.dedent(
-            f"""
-            Dataset is not available or failed to load.
-            Scenarios require datasets loaded in CentralMemory or to be passed explicitly.
-            Either load the datasets into the database before running the scenario, or for
-            example datasets, you can use the `load_default_datasets` initializer.
-
-            Required datasets: {", ".join(self._default_dataset_config.get_default_dataset_names())}
-            """
-        )
-        raise ValueError(error_msg)
 
     def _validate_stored_scenario(self, *, stored_result: ScenarioResult) -> None:
         """
@@ -1016,7 +1004,7 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
         selected_techniques = {s.value for s in self._scenario_strategies}
 
         factories = self._get_attack_technique_factories()
-        seed_groups_by_dataset = self._dataset_config.get_seed_attack_groups()
+        seed_groups_by_dataset = await self._dataset_config.get_attack_groups_by_dataset_async()
 
         scoring_config = AttackScoringConfig(objective_scorer=cast("TrueFalseScorer", self._objective_scorer))
 
