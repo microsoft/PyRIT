@@ -41,6 +41,7 @@ if TYPE_CHECKING:
     from pyrit.prompt_target import PromptTarget
     from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
     from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
+    from pyrit.scenario.core.scenario_context import ScenarioContext
     from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
     from pyrit.score import TrueFalseScorer
 
@@ -159,7 +160,7 @@ class AdaptiveScenario(Scenario):
             registry_overrides = {}
         return {**catalog, **registry_overrides}
 
-    async def _get_atomic_attacks_async(self) -> list[AtomicAttack]:
+    async def _build_atomic_attacks_async(self, *, context: ScenarioContext) -> list[AtomicAttack]:
         """
         Build one ``AtomicAttack`` per (dataset, compatible seed group) pair.
 
@@ -171,9 +172,12 @@ class AdaptiveScenario(Scenario):
         accumulates globally; selection is committed up-front during
         scenario initialization, before any execution starts.
 
-        When ``self._include_baseline`` is true (the default under
+        When ``context.include_baseline`` is true (the default under
         ``BASELINE_ATTACK_POLICY = Enabled``), a baseline ``AtomicAttack``
         named ``"baseline"`` is prepended at index 0.
+
+        Args:
+            context (ScenarioContext): The resolved runtime inputs for this run.
 
         Returns:
             list[AtomicAttack]: One ``AtomicAttack`` per compatible
@@ -181,15 +185,11 @@ class AdaptiveScenario(Scenario):
                 enabled) prepended at index 0.
 
         Raises:
-            ValueError: If ``self._objective_target`` is not set, or if
-                ``_build_techniques_dict`` finds no usable techniques.
+            ValueError: If ``_build_techniques_dict`` finds no usable techniques.
         """
-        if self._objective_target is None:
-            raise ValueError("objective_target must be set before creating attacks")
+        techniques = self._build_techniques_dict(objective_target=context.objective_target)
 
-        techniques = self._build_techniques_dict(objective_target=self._objective_target)
-
-        seed_groups_by_dataset = self._dataset_config.get_seed_attack_groups()
+        seed_groups_by_dataset = context.dataset_config.get_seed_attack_groups()
         atomic_attacks: list[AtomicAttack] = []
         for dataset_name, seed_groups in seed_groups_by_dataset.items():
             atomic_attacks.extend(
@@ -201,7 +201,7 @@ class AdaptiveScenario(Scenario):
                 )
             )
 
-        if self._include_baseline:
+        if context.include_baseline:
             all_seed_groups = [g for groups in seed_groups_by_dataset.values() for g in groups]
             atomic_attacks.insert(0, self._build_baseline_atomic_attack(seed_groups=all_seed_groups))
 

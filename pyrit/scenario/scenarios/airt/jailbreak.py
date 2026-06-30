@@ -24,6 +24,7 @@ from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
 from pyrit.scenario.core.scenario import Scenario
+from pyrit.scenario.core.scenario_context import ScenarioContext
 from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
 from pyrit.scenario.core.scenario_target_defaults import get_default_adversarial_target
 from pyrit.score import (
@@ -267,11 +268,14 @@ class Jailbreak(Scenario):
             seed_groups=self._seed_groups or [],
         )
 
-    async def _get_atomic_attacks_async(self) -> list[AtomicAttack]:
+    async def _build_atomic_attacks_async(self, *, context: ScenarioContext) -> list[AtomicAttack]:
         """
         Generate atomic attacks for each jailbreak template.
 
         This method creates an atomic attack for each retrieved jailbreak template.
+
+        Args:
+            context (ScenarioContext): The resolved runtime inputs for this run.
 
         Returns:
             list[AtomicAttack]: List of atomic attacks to execute, one per jailbreak template.
@@ -281,7 +285,7 @@ class Jailbreak(Scenario):
         # Retrieve seed prompts based on selected strategies
         self._seed_groups = self._resolve_seed_groups()
 
-        strategies = {s.value for s in self._scenario_strategies}
+        strategies = {s.value for s in context.scenario_strategies}
 
         for strategy in strategies:
             for template_name in self._jailbreaks:
@@ -291,7 +295,7 @@ class Jailbreak(Scenario):
                     )
                     atomic_attacks.append(atomic_attack)
 
-        if self._include_baseline:
+        if context.include_baseline:
             atomic_attacks.insert(0, self._build_baseline_atomic_attack(seed_groups=self._seed_groups or []))
 
         return atomic_attacks

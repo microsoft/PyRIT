@@ -64,6 +64,7 @@ from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
 from pyrit.scenario.core.scenario import Scenario
+from pyrit.scenario.core.scenario_context import ScenarioContext
 from pyrit.scenario.core.scenario_strategy import ScenarioCompositeStrategy, ScenarioStrategy
 from pyrit.scenario.core.scenario_target_defaults import get_default_adversarial_target
 
@@ -398,9 +399,12 @@ class RedTeamAgent(Scenario):
         """
         return self._dataset_config.get_all_seed_attack_groups()
 
-    async def _get_atomic_attacks_async(self) -> list[AtomicAttack]:
+    async def _build_atomic_attacks_async(self, *, context: ScenarioContext) -> list[AtomicAttack]:
         """
-        Retrieve the list of AtomicAttack instances in this scenario.
+        Build one ``AtomicAttack`` per resolved FoundryComposite.
+
+        Args:
+            context (ScenarioContext): The resolved runtime inputs for this run.
 
         Returns:
             list[AtomicAttack]: The list of AtomicAttack instances in this scenario.
@@ -410,7 +414,7 @@ class RedTeamAgent(Scenario):
 
         atomic_attacks = [self._get_attack_from_strategy(composition) for composition in self._scenario_composites]
 
-        if self._include_baseline:
+        if context.include_baseline:
             atomic_attacks.insert(0, self._build_baseline_atomic_attack(seed_groups=self._seed_groups))
 
         return atomic_attacks

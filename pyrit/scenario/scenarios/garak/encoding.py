@@ -36,6 +36,7 @@ from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
 from pyrit.scenario.core.scenario import Scenario
+from pyrit.scenario.core.scenario_context import ScenarioContext
 from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
 from pyrit.score import TrueFalseScorer
 from pyrit.score.true_false.decoding_scorer import DecodingScorer
@@ -182,7 +183,7 @@ class Encoding(Scenario):
             )
             self._legacy_include_baseline = include_baseline
 
-        # Will be resolved in _get_atomic_attacks_async
+        # Will be resolved in _build_atomic_attacks_async
         self._resolved_seed_groups: list[SeedAttackGroup] | None = None
 
     def _resolve_seed_groups(self) -> list[SeedAttackGroup]:
@@ -200,9 +201,16 @@ class Encoding(Scenario):
 
         return seed_groups
 
-    async def _get_atomic_attacks_async(self) -> list[AtomicAttack]:
+    async def _build_atomic_attacks_async(self, *, context: ScenarioContext) -> list[AtomicAttack]:
         """
-        Retrieve the list of AtomicAttack instances in this scenario.
+        Build the encoding atomic attacks for this run.
+
+        Encoding builds attacks directly (one ``AtomicAttack`` per selected encoding scheme,
+        each fanned out over the decode templates) rather than via the matrix builder, since
+        its axis is converter configurations, not techniques.
+
+        Args:
+            context (ScenarioContext): The resolved runtime inputs for this run.
 
         Returns:
             list[AtomicAttack]: The list of AtomicAttack instances in this scenario.
@@ -212,7 +220,7 @@ class Encoding(Scenario):
 
         atomic_attacks = self._get_converter_attacks()
 
-        if self._include_baseline:
+        if context.include_baseline:
             atomic_attacks.insert(0, self._build_baseline_atomic_attack(seed_groups=self._resolved_seed_groups or []))
 
         return atomic_attacks
