@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from pyrit.cli import _config_reader as pyrit_scan_config_reader
 from pyrit.cli import pyrit_scan
 
 
@@ -327,6 +328,16 @@ class TestMain:
         assert result == 1
         captured = capsys.readouterr()
         assert "Server not available" in captured.out
+
+    def test_main_malformed_config_is_hard_error(self, tmp_path, capsys):
+        """A malformed --config-file should fail loudly, not silently use defaults."""
+        bad = tmp_path / "bad.yaml"
+        bad.write_text(": :\nnot yaml: [unbalanced\n", encoding="utf-8")
+        with patch.object(pyrit_scan_config_reader, "_DEFAULT_CONFIG_FILE", tmp_path / "missing_default.yaml"):
+            result = pyrit_scan.main(["--list-scenarios", "--config-file", str(bad)])
+
+        assert result == 1
+        assert "not valid YAML" in capsys.readouterr().err
 
     @patch("pyrit.cli._server_launcher.ServerLauncher.probe_health_async", new_callable=AsyncMock, return_value=False)
     def test_main_stop_server(self, mock_probe, capsys):

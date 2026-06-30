@@ -138,7 +138,16 @@ class PyRITShell(cmd.Cmd):
         if self._api_client is not None:
             return True
 
-        base_url = self._base_url or self._resolve_base_url()
+        if self._base_url:
+            base_url = self._base_url
+        else:
+            from pyrit.cli._config_reader import ConfigError
+
+            try:
+                base_url = self._resolve_base_url()
+            except ConfigError as exc:
+                print(f"Error: {exc}")
+                return False
 
         # Check health
         from pyrit.cli._server_launcher import ServerLauncher
@@ -668,9 +677,13 @@ def main() -> int:
     logging.basicConfig(level=getattr(logging, args.log_level))
 
     # Surface a deprecation if the layered config has blocks the CLI ignores.
-    from pyrit.cli._config_reader import warn_on_client_ignored_blocks
+    from pyrit.cli._config_reader import ConfigError, warn_on_client_ignored_blocks
 
-    warn_on_client_ignored_blocks(config_file=args.config_file)
+    try:
+        warn_on_client_ignored_blocks(config_file=args.config_file)
+    except ConfigError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
 
     # Play banner immediately
     prev_disable = logging.root.manager.disable
