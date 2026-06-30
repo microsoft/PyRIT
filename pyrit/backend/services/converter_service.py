@@ -17,10 +17,11 @@ import mimetypes
 import uuid
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 from pyrit.backend.mappers.converter_mappers import converter_object_to_instance
+from pyrit.backend.models import DEFAULT_MEDIA_EXTENSIONS
 from pyrit.backend.models.converters import (
     ConverterCatalogEntry,
     ConverterCatalogResponse,
@@ -44,13 +45,6 @@ class ConverterService:
     Uses ConverterRegistry as the sole source of truth.
     API metadata is derived from the converter objects.
     """
-
-    _DATA_TYPE_EXTENSION: ClassVar[dict[str, str]] = {
-        "image_path": ".png",
-        "audio_path": ".wav",
-        "video_path": ".mp4",
-        "binary_path": ".bin",
-    }
 
     def __init__(self) -> None:
         """Initialize the converter service."""
@@ -193,7 +187,7 @@ class ConverterService:
             elif original_value.startswith("data:"):
                 _, _, value = original_value.partition(",")
 
-                ext = self._DATA_TYPE_EXTENSION.get(str(data_type), ".bin")
+                ext = DEFAULT_MEDIA_EXTENSIONS.get(str(data_type), ".bin")
 
                 serializer = data_serializer_factory(
                     category="prompt-memory-entries",
@@ -207,7 +201,7 @@ class ConverterService:
                 pass
             else:
                 # Treat as raw base64
-                ext = self._DATA_TYPE_EXTENSION.get(str(data_type), ".bin")
+                ext = DEFAULT_MEDIA_EXTENSIONS.get(str(data_type), ".bin")
 
                 serializer = data_serializer_factory(
                     category="prompt-memory-entries",

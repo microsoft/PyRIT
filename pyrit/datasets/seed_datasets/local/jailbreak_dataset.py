@@ -51,7 +51,7 @@ class _JailbreakTemplatesDataset(SeedDatasetProvider):
     @property
     @override
     def dataset_name(self) -> str:
-        """Return the dataset name."""
+        """The dataset name."""
         return "jailbreak_templates"
 
     @override

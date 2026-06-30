@@ -114,7 +114,7 @@ class _PromptIntelDataset(_RemoteDatasetLoader):
     @property
     @override
     def dataset_name(self) -> str:
-        """Return the dataset name."""
+        """The dataset name."""
         return "promptintel"
 
     def _fetch_all_prompts(self) -> list[dict[str, Any]]:

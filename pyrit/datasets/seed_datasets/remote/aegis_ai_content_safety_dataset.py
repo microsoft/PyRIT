@@ -115,7 +115,7 @@ class _AegisContentSafetyDataset(_RemoteDatasetLoader):
     @property
     @override
     def dataset_name(self) -> str:
-        """Return the dataset name."""
+        """The dataset name."""
         return "aegis_content_safety"
 
     @override

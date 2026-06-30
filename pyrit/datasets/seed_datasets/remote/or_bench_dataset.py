@@ -120,7 +120,7 @@ class _ORBench80KDataset(_ORBenchBaseDataset):
 
     @property
     def dataset_name(self) -> str:
-        """Return the dataset name."""
+        """The dataset name."""
         return "or_bench_80k"
 
 
@@ -142,7 +142,7 @@ class _ORBenchHardDataset(_ORBenchBaseDataset):
 
     @property
     def dataset_name(self) -> str:
-        """Return the dataset name."""
+        """The dataset name."""
         return "or_bench_hard"
 
 
@@ -165,5 +165,5 @@ class _ORBenchToxicDataset(_ORBenchBaseDataset):
 
     @property
     def dataset_name(self) -> str:
-        """Return the dataset name."""
+        """The dataset name."""
         return "or_bench_toxic"
