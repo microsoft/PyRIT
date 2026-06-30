@@ -376,7 +376,7 @@ class TestPreviewConversion:
         mock_converter2.convert_async.assert_called_with(prompt="step1_output", input_type="text")
 
     async def test_preview_conversion_persists_data_uri_for_image_path(self) -> None:
-        """Data URIs on *_path types are decoded via the _DATA_TYPE_EXTENSION map and persisted."""
+        """Data URIs on *_path types are decoded via the DEFAULT_MEDIA_EXTENSIONS map and persisted."""
         service = ConverterService()
 
         mock_converter = MagicMock(spec=prompt_converter.PromptConverter)
@@ -403,7 +403,7 @@ class TestPreviewConversion:
             await service.preview_conversion_async(request=request)
 
         mock_factory.assert_called_once()
-        # ext is the image_path mapping from _DATA_TYPE_EXTENSION
+        # ext is the image_path mapping from DEFAULT_MEDIA_EXTENSIONS
         assert mock_factory.call_args.kwargs["extension"] == ".png"
         assert mock_factory.call_args.kwargs["data_type"] == "image_path"
         mock_serializer.save_b64_image_async.assert_awaited_once_with(data="iVBORw0KGgo=")
@@ -437,7 +437,7 @@ class TestPreviewConversion:
             await service.preview_conversion_async(request=request)
 
         mock_factory.assert_called_once()
-        # ext is the audio_path mapping from _DATA_TYPE_EXTENSION
+        # ext is the audio_path mapping from DEFAULT_MEDIA_EXTENSIONS
         assert mock_factory.call_args.kwargs["extension"] == ".wav"
         assert mock_factory.call_args.kwargs["data_type"] == "audio_path"
         mock_serializer.save_b64_image_async.assert_awaited_once_with(data=raw_b64)

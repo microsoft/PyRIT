@@ -81,7 +81,7 @@ class AIRTInitializer(PyRITInitializer):
 
     @property
     def required_env_vars(self) -> list[str]:
-        """Get list of required environment variables."""
+        """List of required environment variables."""
         return [
             "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT",
             "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL",

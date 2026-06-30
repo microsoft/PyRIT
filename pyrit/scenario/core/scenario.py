@@ -334,7 +334,7 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
         Raises:
             RuntimeError: If the registry is empty (no initializer has run).
         """
-        from pyrit.registry.object_registries.attack_technique_registry import AttackTechniqueRegistry
+        from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
 
         registry = AttackTechniqueRegistry.get_registry_singleton()
         return registry.get_factories_or_raise()

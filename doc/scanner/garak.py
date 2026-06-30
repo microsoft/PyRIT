@@ -11,9 +11,11 @@
 # %% [markdown]
 # # Garak Scenarios
 #
-# The Garak scenario family implements encoding-based probes inspired by the
-# [Garak](https://github.com/NVIDIA/garak) framework. These test whether a target model can be
-# tricked into producing harmful content when prompts are encoded in various formats.
+# The Garak scenario family implements probes inspired by the
+# [Garak](https://github.com/NVIDIA/garak) framework. These include encoding-based probes (which
+# test whether a target can be tricked into producing harmful content when prompts are encoded in
+# various formats) and web-injection probes (which test whether a target emits markdown
+# data-exfiltration or cross-site-scripting payloads).
 #
 # For full programming details, see the
 # [Scenarios Programming Guide](../code/scenarios/0_scenarios.ipynb).
@@ -67,6 +69,27 @@ scenario_result = await scenario.run_async()  # type: ignore
 
 # %%
 await output_scenario_async(scenario_result)
+
+# %% [markdown]
+# ## WebInjection
+#
+# Ports Garak's `web_injection` probe family. Tests whether the target can be coaxed into emitting
+# web-injection payloads: markdown-image data exfiltration (CSRF-style) and cross-site-scripting
+# (XSS). Each strategy pairs a `SeedObjective` (the goal) with a `SeedPrompt` (the literal
+# injection prompt) and scores the response with the markdown-injection or XSS output scorer.
+#
+# **CLI example:**
+#
+# ```bash
+# pyrit_scan garak.web_injection --target openai_chat --strategies xss --max-dataset-size 1
+# ```
+#
+# **Available strategies** (8 probes): MarkdownImageExfil, ColabAIDataLeakage,
+# StringAssemblyDataExfil, PlaygroundMarkdownExfil, MarkdownURIImageExfilExtended,
+# MarkdownURINonImageExfilExtended, TaskXSS, MarkdownXSS.
+#
+# **Aggregate strategies:** `ALL` (all 8), `DEFAULT` (excludes the two combinatorial extended
+# probes), `EXFIL` (the 6 markdown-exfil probes), and `XSS` (TaskXSS + MarkdownXSS).
 
 # %% [markdown]
 # For more details, see the [Scenarios Programming Guide](../code/scenarios/0_scenarios.ipynb) and

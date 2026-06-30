@@ -358,6 +358,45 @@ class TestDoAddInitializer:
         assert "Registered initializer 'my_init'" in capsys.readouterr().out
         client.register_initializer_async.assert_awaited_once()
 
+    def test_success_with_quoted_path_containing_spaces(self, shell, tmp_path, capsys):
+        s, client = shell
+        script_dir = tmp_path / "initializer scripts"
+        script_dir.mkdir()
+        script = script_dir / "my_init.py"
+        script.write_text("def init(): pass")
+        client.register_initializer_async = AsyncMock(return_value={"status": "ok"})
+
+        s.do_add_initializer(f'"{script}"')
+
+        assert "Registered initializer 'my_init'" in capsys.readouterr().out
+        client.register_initializer_async.assert_awaited_once_with(name="my_init", script_content="def init(): pass")
+
+    def test_malformed_path_quote(self, shell, capsys):
+        s, client = shell
+        client.register_initializer_async = AsyncMock(return_value={"status": "ok"})
+
+        s.do_add_initializer('"unterminated')
+
+        assert "Error parsing initializer paths" in capsys.readouterr().out
+        client.register_initializer_async.assert_not_called()
+
+    def test_success_with_multiple_quoted_paths(self, shell, tmp_path, capsys):
+        s, client = shell
+        script_dir = tmp_path / "initializer scripts"
+        script_dir.mkdir()
+        first = script_dir / "first_init.py"
+        second = script_dir / "second_init.py"
+        first.write_text("def init(): pass")
+        second.write_text("def init(): pass")
+        client.register_initializer_async = AsyncMock(return_value={"status": "ok"})
+
+        s.do_add_initializer(f'"{first}" "{second}"')
+
+        out = capsys.readouterr().out
+        assert "Registered initializer 'first_init'" in out
+        assert "Registered initializer 'second_init'" in out
+        assert client.register_initializer_async.await_count == 2
+
     def test_server_not_available_error(self, shell, tmp_path, capsys):
         from pyrit.cli.api_client import ServerNotAvailableError
 
@@ -782,3 +821,32 @@ class TestScenarioParamCoercionInShell:
         # do_run surfaces these as "Error: ...".
         assert "Error" in out
         client.start_scenario_run_async.assert_not_called()
+
+
+class TestSplitInitializerPaths:
+    def test_posix_splits_on_whitespace(self):
+        with patch.object(pyrit_shell.os, "name", "posix"):
+            assert pyrit_shell._split_initializer_paths("/a/one.py /b/two.py") == ["/a/one.py", "/b/two.py"]
+
+    def test_posix_respects_quotes_with_spaces(self):
+        with patch.object(pyrit_shell.os, "name", "posix"):
+            assert pyrit_shell._split_initializer_paths('"/a b/one.py"') == ["/a b/one.py"]
+
+    def test_windows_preserves_unquoted_backslash_path(self):
+        with patch.object(pyrit_shell.os, "name", "nt"):
+            assert pyrit_shell._split_initializer_paths(r"C:\Users\me\init.py") == [r"C:\Users\me\init.py"]
+
+    def test_windows_quoted_path_with_spaces_strips_quotes(self):
+        with patch.object(pyrit_shell.os, "name", "nt"):
+            assert pyrit_shell._split_initializer_paths(r'"C:\a b\one.py"') == [r"C:\a b\one.py"]
+
+    def test_windows_multiple_paths(self):
+        with patch.object(pyrit_shell.os, "name", "nt"):
+            result = pyrit_shell._split_initializer_paths(r'"C:\a b\one.py" C:\c\two.py')
+            assert result == [r"C:\a b\one.py", r"C:\c\two.py"]
+
+    @pytest.mark.parametrize("os_name", ["posix", "nt"])
+    def test_unterminated_quote_raises(self, os_name):
+        with patch.object(pyrit_shell.os, "name", os_name):
+            with pytest.raises(ValueError):
+                pyrit_shell._split_initializer_paths('"unterminated')

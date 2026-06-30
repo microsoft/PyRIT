@@ -141,7 +141,7 @@ class Scorer(Identifiable, abc.ABC):
     @property
     def scorer_type(self) -> ScoreType:
         """
-        Get the scorer type based on class hierarchy.
+        The scorer type based on class hierarchy.
 
         Returns:
             ScoreType: "true_false" for TrueFalseScorer subclasses,
