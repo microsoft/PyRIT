@@ -3,7 +3,7 @@
 
 """Tests for the Psychosocial class."""
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -36,12 +36,11 @@ def mock_resolved_seed_data(mock_memory_seed_groups) -> ResolvedSeedData:
 @pytest.fixture
 def mock_dataset_config(mock_memory_seed_groups):
     """Create a mock dataset config that returns the seed groups."""
-    from pyrit.scenario import DatasetConfiguration
+    from pyrit.scenario import DatasetAttackConfiguration
 
-    mock_config = MagicMock(spec=DatasetConfiguration)
-    mock_config.get_all_seed_attack_groups.return_value = mock_memory_seed_groups
-    mock_config.get_default_dataset_names.return_value = ["airt_psychosocial"]
-    mock_config.has_data_source.return_value = True
+    mock_config = MagicMock(spec=DatasetAttackConfiguration)
+    mock_config.get_seed_attack_groups_async = AsyncMock(return_value=mock_memory_seed_groups)
+    mock_config.dataset_names = ["airt_psychosocial"]
     return mock_config
 
 
@@ -160,13 +159,20 @@ class TestPsychosocialInitialization:
     async def test_init_raises_exception_when_no_datasets_available_async(
         self, mock_objective_target, mock_objective_scorer
     ):
-        """Test that initialization raises ValueError when datasets are not available in memory."""
+        """Test that initialization raises DatasetConstraintError when datasets are not available in memory."""
+        from pyrit.scenario.core.dataset_configuration import DatasetConstraintError
+
         # Don't provide objectives, let it try to load from empty memory
         scenario = Psychosocial(objective_scorer=mock_objective_scorer)
 
-        # Error should occur during initialize_async when _get_atomic_attacks_async resolves seed groups
-        with pytest.raises(ValueError, match="DatasetConfiguration has no seed_groups"):
-            await scenario.initialize_async(objective_target=mock_objective_target)
+        # Error should occur during initialize_async when _get_atomic_attacks_async resolves seed groups.
+        # Neutralize the provider fetch so the empty-memory path raises loudly instead of fetching.
+        with patch(
+            "pyrit.scenario.core.dataset_configuration.DatasetConfiguration._fetch_dataset_async",
+            new_callable=AsyncMock,
+        ):
+            with pytest.raises(DatasetConstraintError, match="could not be loaded"):
+                await scenario.initialize_async(objective_target=mock_objective_target)
 
 
 @pytest.mark.usefixtures(*FIXTURES)
@@ -181,7 +187,9 @@ class TestPsychosocialAttackGeneration:
         mock_dataset_config,
     ):
         """Test that _get_atomic_attacks_async returns atomic attacks."""
-        with patch.object(Psychosocial, "_resolve_seed_groups", return_value=mock_resolved_seed_data):
+        with patch.object(
+            Psychosocial, "_resolve_seed_groups_async", new_callable=AsyncMock, return_value=mock_resolved_seed_data
+        ):
             scenario = Psychosocial(objective_scorer=mock_objective_scorer)
 
             await scenario.initialize_async(objective_target=mock_objective_target, dataset_config=mock_dataset_config)
@@ -199,7 +207,9 @@ class TestPsychosocialAttackGeneration:
         mock_dataset_config,
     ) -> None:
         """Test that attack runs include objectives for each seed prompt."""
-        with patch.object(Psychosocial, "_resolve_seed_groups", return_value=mock_resolved_seed_data):
+        with patch.object(
+            Psychosocial, "_resolve_seed_groups_async", new_callable=AsyncMock, return_value=mock_resolved_seed_data
+        ):
             scenario = Psychosocial(
                 objective_scorer=mock_objective_scorer,
             )
@@ -219,7 +229,9 @@ class TestPsychosocialAttackGeneration:
         mock_dataset_config,
     ) -> None:
         """Test that _get_atomic_attacks_async returns atomic attacks."""
-        with patch.object(Psychosocial, "_resolve_seed_groups", return_value=mock_resolved_seed_data):
+        with patch.object(
+            Psychosocial, "_resolve_seed_groups_async", new_callable=AsyncMock, return_value=mock_resolved_seed_data
+        ):
             scenario = Psychosocial(
                 objective_scorer=mock_objective_scorer,
             )
@@ -243,7 +255,9 @@ class TestPsychosocialHarmsLifecycle:
         mock_dataset_config,
     ) -> None:
         """Test initialization with custom max_concurrency."""
-        with patch.object(Psychosocial, "_resolve_seed_groups", return_value=mock_resolved_seed_data):
+        with patch.object(
+            Psychosocial, "_resolve_seed_groups_async", new_callable=AsyncMock, return_value=mock_resolved_seed_data
+        ):
             scenario = Psychosocial(objective_scorer=mock_objective_scorer)
             await scenario.initialize_async(
                 objective_target=mock_objective_target, max_concurrency=20, dataset_config=mock_dataset_config
@@ -261,7 +275,9 @@ class TestPsychosocialHarmsLifecycle:
         """Test initialization with memory labels."""
         memory_labels = {"type": "psychosocial", "category": "crisis"}
 
-        with patch.object(Psychosocial, "_resolve_seed_groups", return_value=mock_resolved_seed_data):
+        with patch.object(
+            Psychosocial, "_resolve_seed_groups_async", new_callable=AsyncMock, return_value=mock_resolved_seed_data
+        ):
             scenario = Psychosocial(objective_scorer=mock_objective_scorer)
             await scenario.initialize_async(
                 memory_labels=memory_labels,
@@ -305,7 +321,9 @@ class TestPsychosocialProperties:
         mock_dataset_config,
     ) -> None:
         """Test that all three targets (adversarial, objective, scorer) are distinct."""
-        with patch.object(Psychosocial, "_resolve_seed_groups", return_value=mock_resolved_seed_data):
+        with patch.object(
+            Psychosocial, "_resolve_seed_groups_async", new_callable=AsyncMock, return_value=mock_resolved_seed_data
+        ):
             scenario = Psychosocial()
             await scenario.initialize_async(objective_target=mock_objective_target, dataset_config=mock_dataset_config)
 
@@ -336,7 +354,9 @@ class TestPsychosocialTargetRequirements:
         mock_dataset_config,
     ):
         """initialize_async must delegate capability validation to TARGET_REQUIREMENTS.validate."""
-        with patch.object(Psychosocial, "_resolve_seed_groups", return_value=mock_resolved_seed_data):
+        with patch.object(
+            Psychosocial, "_resolve_seed_groups_async", new_callable=AsyncMock, return_value=mock_resolved_seed_data
+        ):
             scenario = Psychosocial(objective_scorer=mock_objective_scorer)
             with patch("pyrit.prompt_target.common.target_requirements.TargetRequirements.validate") as mock_validate:
                 await scenario.initialize_async(
@@ -369,7 +389,9 @@ class TestPsychosocialTargetRequirements:
             capability != CapabilityName.EDITABLE_HISTORY
         )
 
-        with patch.object(Psychosocial, "_resolve_seed_groups", return_value=mock_resolved_seed_data):
+        with patch.object(
+            Psychosocial, "_resolve_seed_groups_async", new_callable=AsyncMock, return_value=mock_resolved_seed_data
+        ):
             scenario = Psychosocial(objective_scorer=mock_objective_scorer)
             with pytest.raises(ValueError, match="editable_history"):
                 await scenario.initialize_async(
@@ -401,10 +423,10 @@ class TestPsychosocialBaselineUniformity:
     """ADO 9012 regression: baseline shares objectives with strategies under max_dataset_size."""
 
     async def test_one_resolution_call_baseline_matches_strategies(self, mock_objective_target, mock_objective_scorer):
-        from pyrit.scenario import DatasetConfiguration
+        from pyrit.scenario import DatasetAttackConfiguration
 
-        seed_groups = [SeedGroup(seeds=[SeedObjective(value=f"obj{i}")]) for i in range(10)]
-        config = DatasetConfiguration(seed_groups=seed_groups, max_dataset_size=3)
+        seed_groups = [SeedAttackGroup(seeds=[SeedObjective(value=f"obj{i}")]) for i in range(10)]
+        config = DatasetAttackConfiguration(seed_groups=seed_groups, max_dataset_size=3)
 
         first_sample = seed_groups[:3]
         second_sample = seed_groups[5:8]

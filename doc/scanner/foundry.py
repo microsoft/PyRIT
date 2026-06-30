@@ -30,7 +30,7 @@ from pyrit.setup import initialize_from_config_async
 
 await initialize_from_config_async(config_path=Path("pyrit_conf.yaml"))  # type: ignore
 
-objective_target = TargetRegistry.get_registry_singleton().get_instance_by_name("openai_chat")
+objective_target = TargetRegistry.get_registry_singleton().instances.get("openai_chat")
 # %% [markdown]
 # ## RedTeamAgent
 #

@@ -118,7 +118,7 @@ class XPIAResult(WorkflowResult):
     @property
     def status(self) -> XPIAStatus:
         """
-        Get the status of the attack result.
+        The status of the attack result.
 
         Returns:
             XPIAStatus: The status of the attack result.
