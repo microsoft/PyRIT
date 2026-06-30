@@ -9,11 +9,11 @@ from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory, ScorerOverridePolicy
 from pyrit.scenario.core.dataset_configuration import (
     INLINE_DATASET_NAME,
+    CompoundDatasetAttackConfiguration,
     DatasetAttackConfiguration,
     DatasetConfiguration,
     DatasetConstraintError,
     DatasetSourceKind,
-    MultiDatasetAttackConfiguration,
     ResolvedDataset,
     require_nonempty,
 )
@@ -26,12 +26,12 @@ __all__ = [
     "AttackTechnique",
     "AttackTechniqueFactory",
     "BaselineAttackPolicy",
+    "CompoundDatasetAttackConfiguration",
     "DatasetAttackConfiguration",
     "DatasetConfiguration",
     "DatasetConstraintError",
     "DatasetSourceKind",
     "INLINE_DATASET_NAME",
-    "MultiDatasetAttackConfiguration",
     "Parameter",
     "ResolvedDataset",
     "require_nonempty",

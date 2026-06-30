@@ -23,8 +23,8 @@ from pyrit.registry.object_registries.attack_technique_registry import (
 )
 from pyrit.registry.tag_query import TagQuery
 from pyrit.scenario.core.dataset_configuration import (
+    CompoundDatasetAttackConfiguration,
     DatasetAttackConfiguration,
-    MultiDatasetAttackConfiguration,
 )
 from pyrit.scenario.scenarios.adaptive.adaptive_scenario import AdaptiveScenario
 
@@ -133,7 +133,7 @@ class TextAdaptive(AdaptiveScenario):
     @classmethod
     def default_dataset_config(cls) -> DatasetAttackConfiguration:
         """Return the default dataset config (required datasets, capped at 4 per dataset)."""
-        return MultiDatasetAttackConfiguration.per_dataset(dataset_names=cls.required_datasets(), max_dataset_size=4)
+        return CompoundDatasetAttackConfiguration.per_dataset(dataset_names=cls.required_datasets(), max_dataset_size=4)
 
     @classmethod
     def supported_parameters(cls) -> list[Parameter]:

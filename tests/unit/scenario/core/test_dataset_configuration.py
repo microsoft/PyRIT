@@ -10,11 +10,11 @@ import pytest
 from pyrit.models import SeedAttackGroup, SeedGroup, SeedObjective, SeedPrompt
 from pyrit.scenario.core.dataset_configuration import (
     INLINE_DATASET_NAME,
+    CompoundDatasetAttackConfiguration,
     DatasetAttackConfiguration,
     DatasetConfiguration,
     DatasetConstraintError,
     DatasetSourceKind,
-    MultiDatasetAttackConfiguration,
     ResolvedDataset,
     forbid_inline_seeds,
     require_harm_categories,
@@ -518,25 +518,25 @@ class TestResolvedDatasetNames:
         assert [g.objective.value for g in groups] == ["a"]
 
 
-class TestMultiDatasetAttackConfiguration:
-    """``MultiDatasetAttackConfiguration`` composes child configs with independent budgets."""
+class TestCompoundDatasetAttackConfiguration:
+    """``CompoundDatasetAttackConfiguration`` composes child configs with independent budgets."""
 
     def test_empty_configurations_raises(self) -> None:
         with pytest.raises(ValueError, match="at least one child"):
-            MultiDatasetAttackConfiguration(configurations=[])
+            CompoundDatasetAttackConfiguration(configurations=[])
 
     def test_per_dataset_empty_names_raises(self) -> None:
         with pytest.raises(ValueError, match="at least one dataset"):
-            MultiDatasetAttackConfiguration.per_dataset(dataset_names=[])
+            CompoundDatasetAttackConfiguration.per_dataset(dataset_names=[])
 
     def test_per_dataset_builds_one_child_per_name(self) -> None:
-        config = MultiDatasetAttackConfiguration.per_dataset(dataset_names=["d1", "d2"], max_dataset_size=4)
+        config = CompoundDatasetAttackConfiguration.per_dataset(dataset_names=["d1", "d2"], max_dataset_size=4)
         assert len(config._configurations) == 2
         assert [child.dataset_names for child in config._configurations] == [["d1"], ["d2"]]
         assert all(child.max_dataset_size == 4 for child in config._configurations)
 
     def test_dataset_names_aggregates_and_dedups(self) -> None:
-        config = MultiDatasetAttackConfiguration(
+        config = CompoundDatasetAttackConfiguration(
             configurations=[
                 DatasetAttackConfiguration(dataset_names=["d1"]),
                 DatasetAttackConfiguration(dataset_names=["d1", "d2"]),
@@ -545,7 +545,7 @@ class TestMultiDatasetAttackConfiguration:
         assert config.dataset_names == ["d1", "d2"]
 
     def test_source_kind_inline_when_all_children_inline(self) -> None:
-        config = MultiDatasetAttackConfiguration(
+        config = CompoundDatasetAttackConfiguration(
             configurations=[
                 DatasetAttackConfiguration(seeds=make_objectives("a")),
                 DatasetAttackConfiguration(seeds=make_objectives("b")),
@@ -554,7 +554,7 @@ class TestMultiDatasetAttackConfiguration:
         assert config.source_kind is DatasetSourceKind.INLINE
 
     def test_source_kind_memory_when_any_child_from_memory(self) -> None:
-        config = MultiDatasetAttackConfiguration(
+        config = CompoundDatasetAttackConfiguration(
             configurations=[
                 DatasetAttackConfiguration(seeds=make_objectives("a")),
                 DatasetAttackConfiguration(dataset_names=["d1"]),
@@ -564,19 +564,19 @@ class TestMultiDatasetAttackConfiguration:
 
     async def test_flat_concatenates_children_with_per_child_budget(self, mock_memory: MagicMock) -> None:
         mock_memory.get_seeds.side_effect = [make_objectives("a", "b", "c", "d"), make_objectives("e", "f", "g", "h")]
-        config = MultiDatasetAttackConfiguration.per_dataset(dataset_names=["d1", "d2"], max_dataset_size=3)
+        config = CompoundDatasetAttackConfiguration.per_dataset(dataset_names=["d1", "d2"], max_dataset_size=3)
         groups = await config.get_seed_attack_groups_async()
         assert len(groups) == 6
 
     async def test_by_dataset_merges_children(self, mock_memory: MagicMock) -> None:
         mock_memory.get_seeds.side_effect = [make_objectives("a", "b", "c", "d"), make_objectives("e", "f", "g", "h")]
-        config = MultiDatasetAttackConfiguration.per_dataset(dataset_names=["d1", "d2"], max_dataset_size=3)
+        config = CompoundDatasetAttackConfiguration.per_dataset(dataset_names=["d1", "d2"], max_dataset_size=3)
         result = await config.get_attack_groups_by_dataset_async()
         assert {name: len(groups) for name, groups in result.items()} == {"d1": 3, "d2": 3}
 
     async def test_compound_max_caps_combined_result(self, mock_memory: MagicMock) -> None:
         mock_memory.get_seeds.side_effect = [make_objectives("a", "b", "c"), make_objectives("d", "e", "f")]
-        config = MultiDatasetAttackConfiguration(
+        config = CompoundDatasetAttackConfiguration(
             configurations=[
                 DatasetAttackConfiguration(dataset_names=["d1"]),
                 DatasetAttackConfiguration(dataset_names=["d2"]),
@@ -587,7 +587,7 @@ class TestMultiDatasetAttackConfiguration:
         assert len(groups) == 2
 
     async def test_inline_children_combine(self) -> None:
-        config = MultiDatasetAttackConfiguration(
+        config = CompoundDatasetAttackConfiguration(
             configurations=[
                 DatasetAttackConfiguration(seeds=make_objectives("a")),
                 DatasetAttackConfiguration(seeds=make_objectives("b")),

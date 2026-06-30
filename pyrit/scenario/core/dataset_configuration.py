@@ -673,8 +673,8 @@ class DatasetAttackConfiguration(DatasetConfiguration):
       dataset name, used when a scenario fans atomic attacks out per (technique, dataset).
 
     To draw an independent budget from *each* of several datasets (the old "N per dataset"
-    behavior), compose one child per dataset with ``MultiDatasetAttackConfiguration`` --
-    e.g. ``MultiDatasetAttackConfiguration.per_dataset(dataset_names=[...], max_dataset_size=4)``
+    behavior), compose one child per dataset with ``CompoundDatasetAttackConfiguration`` --
+    e.g. ``CompoundDatasetAttackConfiguration.per_dataset(dataset_names=[...], max_dataset_size=4)``
     -- rather than relying on a single config to special-case dataset names.
 
     Both run ``validators`` against the full resolved seed set before sampling.
@@ -780,7 +780,7 @@ class DatasetAttackConfiguration(DatasetConfiguration):
         (auto-fetching missing datasets), validates the full resolved seed set, then applies
         ``max_dataset_size`` as one global budget across all datasets -- the survivors stay
         keyed by their originating dataset. For an independent budget per dataset, compose
-        ``MultiDatasetAttackConfiguration.per_dataset(...)`` instead.
+        ``CompoundDatasetAttackConfiguration.per_dataset(...)`` instead.
 
         Returns:
             dict[str, list[SeedAttackGroup]]: Dataset name -> sampled attack groups.
@@ -819,7 +819,7 @@ class DatasetAttackConfiguration(DatasetConfiguration):
         return result
 
 
-class MultiDatasetAttackConfiguration(DatasetAttackConfiguration):
+class CompoundDatasetAttackConfiguration(DatasetAttackConfiguration):
     """
     A ``DatasetAttackConfiguration`` composed of child configurations.
 
@@ -856,7 +856,7 @@ class MultiDatasetAttackConfiguration(DatasetAttackConfiguration):
             ValueError: If ``configurations`` is empty.
         """
         if not configurations:
-            raise ValueError("MultiDatasetAttackConfiguration requires at least one child configuration.")
+            raise ValueError("CompoundDatasetAttackConfiguration requires at least one child configuration.")
         super().__init__(max_dataset_size=max_dataset_size, validators=validators)
         self._configurations = list(configurations)
 
@@ -868,7 +868,7 @@ class MultiDatasetAttackConfiguration(DatasetAttackConfiguration):
         max_dataset_size: int | None = None,
         auto_fetch: bool = True,
         validators: Sequence[Callable[[ResolvedDataset], None]] | None = None,
-    ) -> MultiDatasetAttackConfiguration:
+    ) -> CompoundDatasetAttackConfiguration:
         """
         Build a compound that draws up to ``max_dataset_size`` from *each* dataset name.
 
@@ -882,7 +882,7 @@ class MultiDatasetAttackConfiguration(DatasetAttackConfiguration):
             validators (Sequence[Callable[[ResolvedDataset], None]] | None): Applied to each child.
 
         Returns:
-            MultiDatasetAttackConfiguration: The composed configuration.
+            CompoundDatasetAttackConfiguration: The composed configuration.
 
         Raises:
             ValueError: If ``dataset_names`` is empty.

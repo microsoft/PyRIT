@@ -35,8 +35,8 @@ from pyrit.prompt_normalizer.prompt_converter_configuration import (
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.dataset_configuration import (
+    CompoundDatasetAttackConfiguration,
     DatasetAttackConfiguration,
-    MultiDatasetAttackConfiguration,
 )
 from pyrit.scenario.core.scenario import Scenario
 from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
@@ -166,7 +166,7 @@ class Encoding(Scenario):
             version=self.VERSION,
             strategy_class=EncodingStrategy,
             default_strategy=EncodingStrategy.ALL,
-            default_dataset_config=MultiDatasetAttackConfiguration(
+            default_dataset_config=CompoundDatasetAttackConfiguration(
                 configurations=[
                     EncodingDatasetConfiguration(dataset_names=["garak_slur_terms_en"], max_dataset_size=3),
                     EncodingDatasetConfiguration(dataset_names=["garak_web_html_js"], max_dataset_size=3),

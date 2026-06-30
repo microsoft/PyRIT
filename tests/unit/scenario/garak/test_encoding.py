@@ -12,9 +12,9 @@ from pyrit.models import ComponentIdentifier, SeedAttackGroup, SeedObjective, Se
 from pyrit.prompt_converter import Base64Converter
 from pyrit.prompt_target import PromptTarget
 from pyrit.scenario import (
+    CompoundDatasetAttackConfiguration,
     DatasetAttackConfiguration,
     DatasetConfiguration,
-    MultiDatasetAttackConfiguration,
 )
 from pyrit.scenario.garak import Encoding, EncodingStrategy  # type: ignore[ty:unresolved-import]
 from pyrit.scenario.scenarios.garak.encoding import EncodingDatasetConfiguration
@@ -358,7 +358,7 @@ class TestEncodingDatasetConfiguration:
     def test_default_dataset_config_returns_encoding_config(self, mock_objective_scorer):
         """Test that default_dataset_config is a compound of EncodingDatasetConfiguration children."""
         config = Encoding(objective_scorer=mock_objective_scorer)._default_dataset_config
-        assert isinstance(config, MultiDatasetAttackConfiguration)
+        assert isinstance(config, CompoundDatasetAttackConfiguration)
         assert all(isinstance(child, EncodingDatasetConfiguration) for child in config._configurations)
 
     def test_default_dataset_config_uses_garak_datasets(self, mock_objective_scorer):
