@@ -4,14 +4,25 @@
 """
 Console output formatting for the PyRIT CLI thin client.
 
-All functions accept plain ``dict`` payloads (deserialized JSON from the REST
-API) and print human-readable output to stdout.  No heavy pyrit imports.
+All public ``print_*`` functions accept typed ``pyrit.models`` objects
+(``RegisteredScenario``, ``RegisteredInitializer``, ``TargetInstance``,
+``ScenarioRunSummary``, ``ScenarioResult``). The heavy ``pyrit.models``
+import is deferred to each function so importing this module stays cheap.
 """
 
 from __future__ import annotations
 
 import sys
-from typing import Any
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pyrit.models import ScenarioResult
+    from pyrit.models.catalog import (
+        RegisteredInitializer,
+        RegisteredScenario,
+        ScenarioRunSummary,
+        TargetInstance,
+    )
 
 try:
     import termcolor
@@ -67,12 +78,12 @@ def _wrap(*, text: str, indent: str, width: int = 78) -> str:
 # ---------------------------------------------------------------------------
 
 
-def print_scenario_list(*, items: list[dict[str, Any]]) -> None:
+def print_scenario_list(*, items: list[RegisteredScenario]) -> None:
     """
     Print a formatted list of scenarios.
 
     Args:
-        items: List of scenario dicts from ``GET /api/scenarios/catalog``.
+        items: Scenarios from ``GET /api/scenarios/catalog``.
     """
     if not items:
         print("No scenarios found.")
@@ -81,39 +92,30 @@ def print_scenario_list(*, items: list[dict[str, Any]]) -> None:
     print("\nAvailable Scenarios:")
     print("=" * 80)
     for sc in items:
-        _header(sc.get("scenario_name", "unknown"))
-        print(f"    Class: {sc.get('scenario_type', '')}")
-        desc = sc.get("description", "")
-        if desc:
+        _header(sc.scenario_name)
+        print(f"    Class: {sc.scenario_type}")
+        if sc.description:
             print("    Description:")
-            print(_wrap(text=desc, indent="      "))
-        agg = sc.get("aggregate_strategies") or []
-        if agg:
+            print(_wrap(text=sc.description, indent="      "))
+        if sc.aggregate_strategies:
             print("    Aggregate Strategies:")
-            print(_wrap(text=", ".join(agg), indent="      - "))
-        strategies = sc.get("all_strategies") or []
-        if strategies:
-            print(f"    Available Strategies ({len(strategies)}):")
-            print(_wrap(text=", ".join(strategies), indent="      "))
-        default_strat = sc.get("default_strategy")
-        if default_strat:
-            print(f"    Default Strategy: {default_strat}")
-        datasets = sc.get("default_datasets") or []
-        max_ds = sc.get("max_dataset_size")
-        if datasets:
-            suffix = f", max {max_ds} per dataset" if max_ds else ""
-            print(f"    Default Datasets ({len(datasets)}{suffix}):")
-            print(_wrap(text=", ".join(datasets), indent="      "))
-        params = sc.get("supported_parameters") or []
-        if params:
+            print(_wrap(text=", ".join(sc.aggregate_strategies), indent="      - "))
+        if sc.all_strategies:
+            print(f"    Available Strategies ({len(sc.all_strategies)}):")
+            print(_wrap(text=", ".join(sc.all_strategies), indent="      "))
+        if sc.default_strategy:
+            print(f"    Default Strategy: {sc.default_strategy}")
+        if sc.default_datasets:
+            suffix = f", max {sc.max_dataset_size} per dataset" if sc.max_dataset_size else ""
+            print(f"    Default Datasets ({len(sc.default_datasets)}{suffix}):")
+            print(_wrap(text=", ".join(sc.default_datasets), indent="      "))
+        if sc.supported_parameters:
             print("    Supported Parameters:")
-            for p in params:
-                default_str = f" [default: {p.get('default')!r}]" if p.get("default") is not None else ""
-                type_str = f" ({p.get('param_type', '')})" if p.get("param_type") else ""
-                choices = p.get("choices")
-                choices_display = ", ".join(choices) if isinstance(choices, list) else choices
-                choices_str = f" [choices: {choices_display}]" if choices_display else ""
-                print(f"      - {p.get('name', '?')}{type_str}{default_str}{choices_str}: {p.get('description', '')}")
+            for p in sc.supported_parameters:
+                default_str = f" [default: {p.default!r}]" if p.default is not None else ""
+                type_str = f" ({p.param_type})" if p.param_type else ""
+                choices_str = f" [choices: {', '.join(p.choices)}]" if p.choices else ""
+                print(f"      - {p.name}{type_str}{default_str}{choices_str}: {p.description}")
     print("\n" + "=" * 80)
     print(f"\nTotal scenarios: {len(items)}")
 
@@ -123,12 +125,12 @@ def print_scenario_list(*, items: list[dict[str, Any]]) -> None:
 # ---------------------------------------------------------------------------
 
 
-def print_initializer_list(*, items: list[dict[str, Any]]) -> None:
+def print_initializer_list(*, items: list[RegisteredInitializer]) -> None:
     """
     Print a formatted list of initializers.
 
     Args:
-        items: List of initializer dicts from ``GET /api/initializers``.
+        items: Initializers from ``GET /api/initializers``.
     """
     if not items:
         print("No initializers found.")
@@ -137,25 +139,22 @@ def print_initializer_list(*, items: list[dict[str, Any]]) -> None:
     print("\nAvailable Initializers:")
     print("=" * 80)
     for init in items:
-        _header(init.get("initializer_name", "unknown"))
-        print(f"    Class: {init.get('initializer_type', '')}")
-        env_vars = init.get("required_env_vars") or []
-        if env_vars:
+        _header(init.initializer_name)
+        print(f"    Class: {init.initializer_type}")
+        if init.required_env_vars:
             print("    Required Environment Variables:")
-            for var in env_vars:
+            for var in init.required_env_vars:
                 print(f"      - {var}")
         else:
             print("    Required Environment Variables: None")
-        params = init.get("supported_parameters") or []
-        if params:
+        if init.supported_parameters:
             print("    Supported Parameters:")
-            for p in params:
-                default_str = f" [default: {p.get('default')}]" if p.get("default") else ""
-                print(f"      - {p.get('name', '?')}{default_str}: {p.get('description', '')}")
-        desc = init.get("description", "")
-        if desc:
+            for p in init.supported_parameters:
+                default_str = f" [default: {p.default}]" if p.default else ""
+                print(f"      - {p.name}{default_str}: {p.description}")
+        if init.description:
             print("    Description:")
-            print(_wrap(text=desc, indent="      "))
+            print(_wrap(text=init.description, indent="      "))
     print("\n" + "=" * 80)
     print(f"\nTotal initializers: {len(items)}")
 
@@ -165,12 +164,12 @@ def print_initializer_list(*, items: list[dict[str, Any]]) -> None:
 # ---------------------------------------------------------------------------
 
 
-def print_target_list(*, items: list[dict[str, Any]]) -> None:
+def print_target_list(*, items: list[TargetInstance]) -> None:
     """
     Print a formatted list of targets.
 
     Args:
-        items: List of target dicts from ``GET /api/targets``.
+        items: Targets from ``GET /api/targets``.
     """
     if not items:
         print("\nNo targets found in registry.")
@@ -183,14 +182,13 @@ def print_target_list(*, items: list[dict[str, Any]]) -> None:
     print("\nRegistered Targets:")
     print("=" * 80)
     for tgt in items:
-        _header(tgt.get("target_registry_name", "unknown"))
-        print(f"    Class: {tgt.get('target_type', '')}")
-        model = tgt.get("underlying_model_name") or tgt.get("model_name") or ""
+        _header(tgt.target_registry_name)
+        print(f"    Class: {tgt.target_type}")
+        model = tgt.underlying_model_name or tgt.model_name or ""
         if model:
             print(f"    Model: {model}")
-        endpoint = tgt.get("endpoint") or ""
-        if endpoint:
-            print(f"    Endpoint: {endpoint}")
+        if tgt.endpoint:
+            print(f"    Endpoint: {tgt.endpoint}")
     print("\n" + "=" * 80)
     print(f"\nTotal targets: {len(items)}")
 
@@ -200,19 +198,15 @@ def print_target_list(*, items: list[dict[str, Any]]) -> None:
 # ---------------------------------------------------------------------------
 
 
-def print_scenario_run_progress(*, run: dict[str, Any], total_strategies: int = 0) -> None:
+def print_scenario_run_progress(*, run: ScenarioRunSummary, total_strategies: int = 0) -> None:
     """
     Print a single-line progress update (overwrites the current line).
 
     Args:
-        run: ScenarioRunSummary dict from ``GET /api/scenarios/runs/{id}``.
+        run: ``ScenarioRunSummary`` from ``GET /api/scenarios/runs/{id}``.
         total_strategies: Total number of strategies expected (0 if unknown).
     """
-    run_status = run.get("status", "UNKNOWN")
-    total = run.get("total_attacks", 0)
-    completed = run.get("completed_attacks", 0)
-    rate = run.get("objective_achieved_rate", 0)
-    strategies_done = len(run.get("strategies_used") or [])
+    strategies_done = len(run.strategies_used)
     # Strategies the user passed may be aggregates that expand on the server
     # (e.g. `single_turn` -> N concrete strategies). Trust whichever count is larger.
     effective_total = max(total_strategies, strategies_done)
@@ -224,52 +218,43 @@ def print_scenario_run_progress(*, run: dict[str, Any], total_strategies: int = 
     elif strategies_done > 0:
         parts.append(f"strategies: {strategies_done}")
 
-    if total > 0:
-        pct = int((completed / total) * 100)
+    if run.total_attacks > 0:
+        pct = int((run.completed_attacks / run.total_attacks) * 100)
         bar_width = 30
-        filled = int(bar_width * completed / total)
+        filled = int(bar_width * run.completed_attacks / run.total_attacks)
         bar = "█" * filled + "░" * (bar_width - filled)
-        parts.append(f"[{bar}] {completed}/{total} attacks ({pct}%)")
+        parts.append(f"[{bar}] {run.completed_attacks}/{run.total_attacks} attacks ({pct}%)")
     else:
-        parts.append(f"attacks: {completed}")
+        parts.append(f"attacks: {run.completed_attacks}")
 
-    parts.append(f"success rate: {rate}%")
-    parts.append(run_status)
+    parts.append(f"success rate: {run.objective_achieved_rate}%")
+    parts.append(run.status.value)
 
     line = "\r  " + " | ".join(parts)
     sys.stdout.write(line)
     sys.stdout.flush()
 
 
-def print_scenario_run_summary(*, run: dict[str, Any]) -> None:
+def print_scenario_run_summary(*, run: ScenarioRunSummary) -> None:
     """
     Print a brief summary of a completed scenario run.
 
     Args:
-        run: ScenarioRunSummary dict.
+        run: ``ScenarioRunSummary``.
     """
     print()  # newline after progress bar
-    status = run.get("status", "UNKNOWN")
-    name = run.get("scenario_name", "unknown")
-    rid = run.get("scenario_result_id", "?")
-    total = run.get("total_attacks", 0)
-    completed = run.get("completed_attacks", 0)
-    rate = run.get("objective_achieved_rate", 0)
+    print(f"\nScenario: {run.scenario_name}")
+    print(f"  Result ID:      {run.scenario_result_id}")
+    print(f"  Status:         {run.status.value}")
+    print(f"  Total Attacks:  {run.total_attacks}")
+    print(f"  Completed:      {run.completed_attacks}")
+    print(f"  Success Rate:   {run.objective_achieved_rate}%")
 
-    print(f"\nScenario: {name}")
-    print(f"  Result ID:      {rid}")
-    print(f"  Status:         {status}")
-    print(f"  Total Attacks:  {total}")
-    print(f"  Completed:      {completed}")
-    print(f"  Success Rate:   {rate}%")
+    if run.error:
+        print(f"  Error:          {run.error}")
 
-    error = run.get("error")
-    if error:
-        print(f"  Error:          {error}")
-
-    strategies = run.get("strategies_used") or []
-    if strategies:
-        print(f"  Strategies:     {', '.join(strategies)}")
+    if run.strategies_used:
+        print(f"  Strategies:     {', '.join(run.strategies_used)}")
 
 
 # ---------------------------------------------------------------------------
@@ -277,19 +262,17 @@ def print_scenario_run_summary(*, run: dict[str, Any]) -> None:
 # ---------------------------------------------------------------------------
 
 
-async def print_scenario_result_async(*, result_dict: dict[str, Any]) -> None:
+async def print_scenario_result_async(*, result: ScenarioResult) -> None:
     """
     Print detailed scenario results using the output module.
 
     Args:
-        result_dict: ``ScenarioResult.model_dump(mode="json", by_alias=True)`` payload from the REST API.
+        result: Deserialized ``ScenarioResult`` from the REST API.
     """
-    from pyrit.models import ScenarioResult
     from pyrit.output.scenario_result.pretty import PrettyScenarioResultMemoryPrinter
 
-    scenario_result = ScenarioResult.model_validate(result_dict)
     printer = PrettyScenarioResultMemoryPrinter()
-    await printer.write_async(scenario_result)
+    await printer.write_async(result)
 
 
 # ---------------------------------------------------------------------------
@@ -297,12 +280,12 @@ async def print_scenario_result_async(*, result_dict: dict[str, Any]) -> None:
 # ---------------------------------------------------------------------------
 
 
-def print_scenario_runs_list(*, runs: list[dict[str, Any]]) -> None:
+def print_scenario_runs_list(*, runs: list[ScenarioRunSummary]) -> None:
     """
     Print a list of scenario run summaries.
 
     Args:
-        runs: List of ScenarioRunSummary dicts from ``GET /api/scenarios/runs``.
+        runs: Scenario runs from ``GET /api/scenarios/runs``.
     """
     if not runs:
         print("No scenario runs found.")
@@ -311,13 +294,12 @@ def print_scenario_runs_list(*, runs: list[dict[str, Any]]) -> None:
     print("\nScenario Run History:")
     print("=" * 80)
     for idx, run in enumerate(runs, start=1):
-        status = run.get("status", "?")
-        name = run.get("scenario_name", "unknown")
-        rid = run.get("scenario_result_id", "?")[:8]
-        total = run.get("total_attacks", 0)
-        rate = run.get("objective_achieved_rate", 0)
-        created = run.get("created_at", "?")
-        print(f"  {idx}) [{status}] {name} (id: {rid}…) — {total} attacks, {rate}% success — {created}")
+        rid = run.scenario_result_id[:8]
+        created = run.created_at.isoformat() if run.created_at else "?"
+        print(
+            f"  {idx}) [{run.status.value}] {run.scenario_name} (id: {rid}…) — "
+            f"{run.total_attacks} attacks, {run.objective_achieved_rate}% success — {created}"
+        )
     print("=" * 80)
     print(f"\nTotal runs: {len(runs)}")
 

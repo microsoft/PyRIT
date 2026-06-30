@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from pyrit.cli import _config_reader as pyrit_scan_config_reader
 from pyrit.cli import pyrit_scan
 
 
@@ -149,42 +150,100 @@ class TestExtractScenarioArgs:
         assert result == {"max_turns": 10, "mode": "fast"}
 
 
+def _make_scenario_result():
+    """Build a minimal but valid ``ScenarioResult`` for the run-results happy path."""
+    from datetime import datetime, timezone
+
+    from pyrit.models import (
+        AttackOutcome,
+        AttackResult,
+        ComponentIdentifier,
+        ScenarioIdentifier,
+        ScenarioResult,
+        ScenarioRunState,
+    )
+
+    attack = AttackResult(
+        conversation_id="conv-1",
+        objective="extract data",
+        outcome=AttackOutcome.SUCCESS,
+        executed_turns=1,
+        execution_time_ms=10,
+        timestamp=datetime(2025, 1, 1, tzinfo=timezone.utc),
+    )
+    return ScenarioResult(
+        scenario_identifier=ScenarioIdentifier(name="test_scenario", description="A test"),
+        objective_target_identifier=ComponentIdentifier.model_validate(
+            {"__type__": "FakeTarget", "__module__": "test.mod", "params": {}}
+        ),
+        objective_scorer_identifier=None,
+        attack_results={"strat_a": [attack]},
+        scenario_run_state=ScenarioRunState.COMPLETED,
+    )
+
+
 def _mock_api_client():
-    """Create a mock PyRITApiClient with default response behaviors."""
+    """Create a mock PyRITApiClient with default response behaviors (typed wire-data)."""
+    from datetime import datetime, timezone
+
+    from pyrit.models import ScenarioRunState
+    from pyrit.models.catalog import (
+        RegisteredScenario,
+        ScenarioRunSummary,
+        TargetCapabilitiesInfo,
+        TargetInstance,
+    )
+
+    now = datetime(2025, 1, 1, tzinfo=timezone.utc)
+
     client = AsyncMock()
     client.health_check_async.return_value = True
-    client.list_scenarios_async.return_value = {"items": [], "pagination": {"total": 0}}
-    client.list_initializers_async.return_value = {"items": [], "pagination": {"total": 0}}
-    client.list_targets_async.return_value = {"items": [], "pagination": {"total": 0}}
-    client.get_scenario_async.return_value = {
-        "scenario_name": "test_scenario",
-        "supported_parameters": [],
-    }
-    client.start_scenario_run_async.return_value = {
-        "scenario_result_id": "test-id-123",
-        "scenario_name": "test_scenario",
-        "status": "CREATED",
-    }
-    client.get_scenario_run_async.return_value = {
-        "scenario_result_id": "test-id-123",
-        "status": "COMPLETED",
-        "total_attacks": 5,
-        "completed_attacks": 5,
-        "objective_achieved_rate": 40,
-    }
-    client.get_scenario_run_results_async.return_value = {
-        "run": {
-            "scenario_result_id": "test-id-123",
-            "scenario_name": "test_scenario",
-            "status": "COMPLETED",
-            "total_attacks": 5,
-            "completed_attacks": 5,
-            "objective_achieved_rate": 40,
-        },
-        "attacks": [],
-    }
+    client.list_scenarios_async.return_value = []
+    client.list_initializers_async.return_value = []
+    client.list_targets_async.return_value = []
+    client.get_scenario_async.return_value = RegisteredScenario(
+        scenario_name="test_scenario",
+        scenario_type="X",
+        description="",
+        default_strategy="",
+        aggregate_strategies=[],
+        all_strategies=[],
+        default_datasets=[],
+        max_dataset_size=None,
+        supported_parameters=[],
+    )
+    client.start_scenario_run_async.return_value = ScenarioRunSummary(
+        scenario_result_id="test-id-123",
+        scenario_name="test_scenario",
+        scenario_version=0,
+        status=ScenarioRunState.CREATED,
+        created_at=now,
+        updated_at=now,
+        strategies_used=[],
+        total_attacks=0,
+        completed_attacks=0,
+        objective_achieved_rate=0,
+    )
+    client.get_scenario_run_async.return_value = ScenarioRunSummary(
+        scenario_result_id="test-id-123",
+        scenario_name="test_scenario",
+        scenario_version=0,
+        status=ScenarioRunState.COMPLETED,
+        created_at=now,
+        updated_at=now,
+        strategies_used=[],
+        total_attacks=5,
+        completed_attacks=5,
+        objective_achieved_rate=40,
+    )
+    # get_scenario_run_results_async returns a valid ScenarioResult by default so the
+    # run-results happy path is exercised. Tests covering the failure path override
+    # this with a side_effect.
+    client.get_scenario_run_results_async.return_value = _make_scenario_result()
     client.__aenter__ = AsyncMock(return_value=client)
     client.__aexit__ = AsyncMock(return_value=None)
+    # Marker so tests that re-shape the mock can find the unused TargetInstance helper.
+    _ = (TargetCapabilitiesInfo, TargetInstance)
     return client
 
 
@@ -234,7 +293,8 @@ class TestMain:
 
     @patch("pyrit.cli._server_launcher.ServerLauncher.probe_health_async", new_callable=AsyncMock, return_value=True)
     @patch("pyrit.cli.api_client.PyRITApiClient")
-    def test_main_run_scenario(self, mock_client_class, mock_probe):
+    @patch("pyrit.cli._output.print_scenario_result_async", new_callable=AsyncMock)
+    def test_main_run_scenario(self, _mock_print, mock_client_class, mock_probe):
         """Test main running a scenario."""
         mock_client = _mock_api_client()
         mock_client_class.return_value = mock_client
@@ -247,7 +307,8 @@ class TestMain:
 
     @patch("pyrit.cli._server_launcher.ServerLauncher.probe_health_async", new_callable=AsyncMock, return_value=True)
     @patch("pyrit.cli.api_client.PyRITApiClient")
-    def test_main_run_scenario_with_initializers(self, mock_client_class, mock_probe):
+    @patch("pyrit.cli._output.print_scenario_result_async", new_callable=AsyncMock)
+    def test_main_run_scenario_with_initializers(self, _mock_print, mock_client_class, mock_probe):
         """Test main maps --initializers to request format."""
         mock_client = _mock_api_client()
         mock_client_class.return_value = mock_client
@@ -257,7 +318,7 @@ class TestMain:
         assert result == 0
         call_kwargs = mock_client.start_scenario_run_async.call_args.kwargs
         request = call_kwargs["request"]
-        assert request["initializers"] == ["target", "datasets"]
+        assert request.initializers == ["target", "datasets"]
 
     @patch("pyrit.cli._server_launcher.ServerLauncher.probe_health_async", new_callable=AsyncMock, return_value=False)
     def test_main_server_not_available(self, mock_probe, capsys):
@@ -267,6 +328,16 @@ class TestMain:
         assert result == 1
         captured = capsys.readouterr()
         assert "Server not available" in captured.out
+
+    def test_main_malformed_config_is_hard_error(self, tmp_path, capsys):
+        """A malformed --config-file should fail loudly, not silently use defaults."""
+        bad = tmp_path / "bad.yaml"
+        bad.write_text(": :\nnot yaml: [unbalanced\n", encoding="utf-8")
+        with patch.object(pyrit_scan_config_reader, "_DEFAULT_CONFIG_FILE", tmp_path / "missing_default.yaml"):
+            result = pyrit_scan.main(["--list-scenarios", "--config-file", str(bad)])
+
+        assert result == 1
+        assert "not valid YAML" in capsys.readouterr().err
 
     @patch("pyrit.cli._server_launcher.ServerLauncher.probe_health_async", new_callable=AsyncMock, return_value=False)
     def test_main_stop_server(self, mock_probe, capsys):
@@ -295,15 +366,25 @@ class TestMain:
     @patch("pyrit.cli.api_client.PyRITApiClient")
     def test_main_failed_scenario(self, mock_client_class, mock_probe):
         """Test main when scenario run fails."""
+        from datetime import datetime, timezone
+
+        from pyrit.models import ScenarioRunState
+        from pyrit.models.catalog import ScenarioRunSummary
+
+        now = datetime(2025, 1, 1, tzinfo=timezone.utc)
         mock_client = _mock_api_client()
-        mock_client.get_scenario_run_async.return_value = {
-            "scenario_result_id": "test-id",
-            "status": "FAILED",
-            "total_attacks": 0,
-            "completed_attacks": 0,
-            "objective_achieved_rate": 0,
-            "error": "Something went wrong",
-        }
+        mock_client.get_scenario_run_async.return_value = ScenarioRunSummary(
+            scenario_result_id="test-id",
+            scenario_name="test_scenario",
+            scenario_version=0,
+            status=ScenarioRunState.FAILED,
+            created_at=now,
+            updated_at=now,
+            total_attacks=0,
+            completed_attacks=0,
+            objective_achieved_rate=0,
+            error="Something went wrong",
+        )
         mock_client_class.return_value = mock_client
 
         result = pyrit_scan.main(["test_scenario", "--target", "t"])
@@ -390,12 +471,14 @@ class TestAddScenarioParamsFromApi:
     def test_adds_unseen_params_as_optional_flags(self):
         from argparse import ArgumentParser
 
+        from pyrit.models.catalog import ScenarioParameterSummary
+
         parser = ArgumentParser()
         pyrit_scan._add_scenario_params_from_api(
             parser=parser,
             params=[
-                {"name": "max_turns", "description": "Max turns."},
-                {"name": "mode", "description": "Mode."},
+                ScenarioParameterSummary(name="max_turns", description="Max turns.", param_type="str"),
+                ScenarioParameterSummary(name="mode", description="Mode.", param_type="str"),
             ],
         )
         parsed = parser.parse_args(["--max-turns", "5", "--mode", "fast"])
@@ -405,11 +488,13 @@ class TestAddScenarioParamsFromApi:
     def test_skips_params_that_collide_with_existing_flags(self):
         from argparse import ArgumentParser
 
+        from pyrit.models.catalog import ScenarioParameterSummary
+
         parser = ArgumentParser()
         parser.add_argument("--target")
         pyrit_scan._add_scenario_params_from_api(
             parser=parser,
-            params=[{"name": "target", "description": "..."}],
+            params=[ScenarioParameterSummary(name="target", description="...", param_type="str")],
         )
         parsed = parser.parse_args(["--target", "x"])
         # Original --target wins; no scenario__target added.
@@ -432,8 +517,8 @@ class TestBuildRunRequest:
             memory_labels=None,
         )
         request = pyrit_scan._build_run_request(parsed_args=parsed, scenario_name="s")
-        assert request["initializers"] == ["openai_target", "datasets"]
-        assert request["initializer_args"] == {"openai_target": {"model": "gpt-4"}}
+        assert request.initializers == ["openai_target", "datasets"]
+        assert request.initializer_args == {"openai_target": {"model": "gpt-4"}}
 
     def test_populates_optional_fields(self):
         parsed = Namespace(
@@ -447,12 +532,12 @@ class TestBuildRunRequest:
             memory_labels='{"key":"value"}',
         )
         request = pyrit_scan._build_run_request(parsed_args=parsed, scenario_name="s")
-        assert request["strategies"] == ["s1"]
-        assert request["max_concurrency"] == 3
-        assert request["max_retries"] == 2
-        assert request["dataset_names"] == ["d1"]
-        assert request["max_dataset_size"] == 10
-        assert request["labels"] == {"key": "value"}
+        assert request.strategies == ["s1"]
+        assert request.max_concurrency == 3
+        assert request.max_retries == 2
+        assert request.dataset_names == ["d1"]
+        assert request.max_dataset_size == 10
+        assert request.labels == {"key": "value"}
 
     def test_includes_scenario_declared_params(self):
         parsed = Namespace(
@@ -467,7 +552,7 @@ class TestBuildRunRequest:
             scenario__max_turns="7",
         )
         request = pyrit_scan._build_run_request(parsed_args=parsed, scenario_name="s")
-        assert request["scenario_params"] == {"max_turns": "7"}
+        assert request.scenario_params == {"max_turns": "7"}
 
 
 class TestResolveServerUrl:
@@ -603,10 +688,12 @@ class TestScenarioParamCoercion:
     def test_list_param_uses_nargs_plus(self):
         from argparse import ArgumentParser
 
+        from pyrit.models.catalog import ScenarioParameterSummary
+
         parser = ArgumentParser()
         pyrit_scan._add_scenario_params_from_api(
             parser=parser,
-            params=[{"name": "items", "description": "...", "param_type": "list[str]", "is_list": True}],
+            params=[ScenarioParameterSummary(name="items", description="...", param_type="list[str]", is_list=True)],
         )
         parsed = parser.parse_args(["--items", "a", "b", "c"])
         assert parsed.scenario__items == ["a", "b", "c"]
@@ -614,10 +701,12 @@ class TestScenarioParamCoercion:
     def test_int_param_is_coerced(self):
         from argparse import ArgumentParser
 
+        from pyrit.models.catalog import ScenarioParameterSummary
+
         parser = ArgumentParser()
         pyrit_scan._add_scenario_params_from_api(
             parser=parser,
-            params=[{"name": "max_turns", "description": "...", "param_type": "int"}],
+            params=[ScenarioParameterSummary(name="max_turns", description="...", param_type="int")],
         )
         parsed = parser.parse_args(["--max-turns", "7"])
         assert parsed.scenario__max_turns == 7
@@ -625,10 +714,12 @@ class TestScenarioParamCoercion:
     def test_int_param_invalid_value_rejected_client_side(self, capsys):
         from argparse import ArgumentParser
 
+        from pyrit.models.catalog import ScenarioParameterSummary
+
         parser = ArgumentParser()
         pyrit_scan._add_scenario_params_from_api(
             parser=parser,
-            params=[{"name": "max_turns", "description": "...", "param_type": "int"}],
+            params=[ScenarioParameterSummary(name="max_turns", description="...", param_type="int")],
         )
         with pytest.raises(SystemExit):
             parser.parse_args(["--max-turns", "not-an-int"])
@@ -637,10 +728,12 @@ class TestScenarioParamCoercion:
     def test_bool_param_rejects_invalid_value_client_side(self, capsys):
         from argparse import ArgumentParser
 
+        from pyrit.models.catalog import ScenarioParameterSummary
+
         parser = ArgumentParser()
         pyrit_scan._add_scenario_params_from_api(
             parser=parser,
-            params=[{"name": "dry_run", "description": "...", "param_type": "bool"}],
+            params=[ScenarioParameterSummary(name="dry_run", description="...", param_type="bool")],
         )
 
         parsed = parser.parse_args(["--dry-run", "false"])
@@ -663,10 +756,14 @@ class TestScenarioParamCoercion:
     def test_list_int_param_coerces_each_value(self):
         from argparse import ArgumentParser
 
+        from pyrit.models.catalog import ScenarioParameterSummary
+
         parser = ArgumentParser()
         pyrit_scan._add_scenario_params_from_api(
             parser=parser,
-            params=[{"name": "sample_ids", "description": "...", "param_type": "list[int]", "is_list": True}],
+            params=[
+                ScenarioParameterSummary(name="sample_ids", description="...", param_type="list[int]", is_list=True)
+            ],
         )
 
         parsed = parser.parse_args(["--sample-ids", "1", "2", "3"])
@@ -675,10 +772,14 @@ class TestScenarioParamCoercion:
     def test_typed_choices_are_compared_after_coercion(self):
         from argparse import ArgumentParser
 
+        from pyrit.models.catalog import ScenarioParameterSummary
+
         parser = ArgumentParser()
         pyrit_scan._add_scenario_params_from_api(
             parser=parser,
-            params=[{"name": "max_turns", "description": "...", "param_type": "int", "choices": ["1", "2"]}],
+            params=[
+                ScenarioParameterSummary(name="max_turns", description="...", param_type="int", choices=["1", "2"])
+            ],
         )
 
         parsed = parser.parse_args(["--max-turns", "1"])
@@ -687,10 +788,14 @@ class TestScenarioParamCoercion:
     def test_choices_validated_client_side(self, capsys):
         from argparse import ArgumentParser
 
+        from pyrit.models.catalog import ScenarioParameterSummary
+
         parser = ArgumentParser()
         pyrit_scan._add_scenario_params_from_api(
             parser=parser,
-            params=[{"name": "mode", "description": "...", "param_type": "str", "choices": ["fast", "slow"]}],
+            params=[
+                ScenarioParameterSummary(name="mode", description="...", param_type="str", choices=["fast", "slow"])
+            ],
         )
         parsed = parser.parse_args(["--mode", "fast"])
         assert parsed.scenario__mode == "fast"
@@ -712,12 +817,32 @@ class TestMainExtraPaths:
     @patch("pyrit.cli._server_launcher.ServerLauncher.probe_health_async", new_callable=AsyncMock, return_value=True)
     @patch("pyrit.cli.api_client.PyRITApiClient")
     def test_main_scenario_not_found_lists_available(self, mock_client_class, _mock_probe, capsys):
+        from pyrit.models.catalog import RegisteredScenario
+
         mock_client = _mock_api_client()
         mock_client.get_scenario_async.return_value = None
-        mock_client.list_scenarios_async.return_value = {
-            "items": [{"scenario_name": "alt_a"}, {"scenario_name": "alt_b"}],
-            "pagination": {},
-        }
+        mock_client.list_scenarios_async.return_value = [
+            RegisteredScenario(
+                scenario_name="alt_a",
+                scenario_type="X",
+                description="",
+                default_strategy="",
+                aggregate_strategies=[],
+                all_strategies=[],
+                default_datasets=[],
+                max_dataset_size=None,
+            ),
+            RegisteredScenario(
+                scenario_name="alt_b",
+                scenario_type="X",
+                description="",
+                default_strategy="",
+                aggregate_strategies=[],
+                all_strategies=[],
+                default_datasets=[],
+                max_dataset_size=None,
+            ),
+        ]
         mock_client_class.return_value = mock_client
 
         result = pyrit_scan.main(["nonexistent", "--target", "t"])
@@ -740,15 +865,19 @@ class TestMainExtraPaths:
 
     @patch("pyrit.cli._server_launcher.ServerLauncher.probe_health_async", new_callable=AsyncMock, return_value=True)
     @patch("pyrit.cli.api_client.PyRITApiClient")
-    def test_main_run_results_fallback_to_summary(self, mock_client_class, _mock_probe, capsys):
+    def test_main_run_results_failure_is_hard_error(self, mock_client_class, _mock_probe, capsys):
         mock_client = _mock_api_client()
         mock_client.get_scenario_run_results_async.side_effect = RuntimeError("nope")
         mock_client_class.return_value = mock_client
 
         result = pyrit_scan.main(["test_scenario", "--target", "t"])
-        assert result == 0
+        # A completed run whose results can't be fetched/parsed is a hard CLI failure.
+        assert result == 1
         captured = capsys.readouterr()
-        # The summary printer should be used as a fallback.
+        # The error must be surfaced loudly (not swallowed) and include the exception detail.
+        assert "ERROR: The scenario completed" in captured.out
+        assert "nope" in captured.out
+        # The summary printer should still be used as a fallback for context.
         assert "test_scenario" in captured.out
 
     @patch("pyrit.cli._server_launcher.ServerLauncher.probe_health_async", new_callable=AsyncMock, return_value=True)
@@ -830,17 +959,75 @@ class TestScenarioParamFlow:
 
     @staticmethod
     def _build_mock_client(supported_params=None, status="COMPLETED"):
+        from datetime import datetime, timezone
         from unittest.mock import AsyncMock
 
+        from pyrit.models import ScenarioRunState
+        from pyrit.models.catalog import (
+            RegisteredScenario,
+            ScenarioParameterSummary,
+            ScenarioRunSummary,
+        )
+
+        now = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        typed_params: list[ScenarioParameterSummary] = []
+        for p in supported_params or []:
+            if isinstance(p, ScenarioParameterSummary):
+                typed_params.append(p)
+            else:
+                typed_params.append(
+                    ScenarioParameterSummary(
+                        name=p["name"],
+                        description=p.get("description", ""),
+                        default=p.get("default"),
+                        param_type=p.get("param_type", "str"),
+                        choices=p.get("choices"),
+                        is_list=p.get("is_list", False),
+                    )
+                )
+
         client = AsyncMock()
-        client.list_scenarios_async.return_value = {"items": [{"scenario_name": "foo"}]}
-        client.get_scenario_async.return_value = {
-            "scenario_name": "foo",
-            "supported_parameters": supported_params or [],
-        }
-        client.start_scenario_run_async.return_value = {"scenario_result_id": "rid", "status": "CREATED"}
-        client.get_scenario_run_async.return_value = {"scenario_result_id": "rid", "status": status}
-        client.get_scenario_run_results_async.return_value = {"items": []}
+        client.list_scenarios_async.return_value = [
+            RegisteredScenario(
+                scenario_name="foo",
+                scenario_type="X",
+                description="",
+                default_strategy="",
+                aggregate_strategies=[],
+                all_strategies=[],
+                default_datasets=[],
+                max_dataset_size=None,
+            )
+        ]
+        client.get_scenario_async.return_value = RegisteredScenario(
+            scenario_name="foo",
+            scenario_type="X",
+            description="",
+            default_strategy="",
+            aggregate_strategies=[],
+            all_strategies=[],
+            default_datasets=[],
+            max_dataset_size=None,
+            supported_parameters=typed_params,
+        )
+        client.start_scenario_run_async.return_value = ScenarioRunSummary(
+            scenario_result_id="rid",
+            scenario_name="foo",
+            scenario_version=0,
+            status=ScenarioRunState.CREATED,
+            created_at=now,
+            updated_at=now,
+        )
+        client.get_scenario_run_async.return_value = ScenarioRunSummary(
+            scenario_result_id="rid",
+            scenario_name="foo",
+            scenario_version=0,
+            status=ScenarioRunState(status),
+            created_at=now,
+            updated_at=now,
+        )
+        # Default: get_scenario_run_results_async returns a valid result (happy path).
+        client.get_scenario_run_results_async.return_value = _make_scenario_result()
         client.close_async = AsyncMock()
         client.__aenter__ = AsyncMock(return_value=client)
         client.__aexit__ = AsyncMock(return_value=None)
@@ -858,7 +1045,7 @@ class TestScenarioParamFlow:
 
         assert result == 0
         sent_request = client.start_scenario_run_async.call_args.kwargs["request"]
-        assert sent_request["scenario_params"] == {"max_turns": "7"}
+        assert sent_request.scenario_params == {"max_turns": "7"}
 
     @patch("pyrit.cli._server_launcher.ServerLauncher.probe_health_async", new_callable=AsyncMock, return_value=True)
     @patch("pyrit.cli.api_client.PyRITApiClient")
@@ -879,7 +1066,7 @@ class TestScenarioParamFlow:
 
         assert result == 0
         sent_request = client.start_scenario_run_async.call_args.kwargs["request"]
-        assert sent_request["scenario_params"] == {"dry_run": True, "sample_ids": [1, 2]}
+        assert sent_request.scenario_params == {"dry_run": True, "sample_ids": [1, 2]}
 
     @patch("pyrit.cli._server_launcher.ServerLauncher.probe_health_async", new_callable=AsyncMock, return_value=True)
     @patch("pyrit.cli.api_client.PyRITApiClient")
@@ -906,7 +1093,7 @@ class TestScenarioParamFlow:
 
         assert result == 0
         sent_request = client.start_scenario_run_async.call_args.kwargs["request"]
-        assert "scenario_params" not in sent_request
+        assert sent_request.scenario_params is None
 
     def test_parse_args_tolerates_scenario_specific_flags(self):
         # Pass 1 must not error on scenario-declared flags (they're recognized in pass 2).

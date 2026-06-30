@@ -24,9 +24,9 @@ from pyrit.backend.mappers.target_mappers import target_object_to_instance
 from pyrit.backend.models.common import PaginationInfo
 from pyrit.backend.models.targets import (
     CreateTargetRequest,
-    TargetInstance,
     TargetListResponse,
 )
+from pyrit.models.catalog.target import TargetInstance
 from pyrit.prompt_target import PromptTarget
 from pyrit.prompt_target.azure_ml_chat_target import AzureMLChatTarget
 from pyrit.prompt_target.openai.openai_target import OpenAITarget
