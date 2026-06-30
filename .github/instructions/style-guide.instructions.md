@@ -481,9 +481,18 @@ async def temporary_config(self, **kwargs):
 ### Property Decorators
 - Use @property for simple computed attributes
 - Use explicit getter/setter methods for complex logic
+- Property docstrings must be **noun phrases** describing the value (e.g.
+  `"""The display name."""`), not verb phrases (e.g. `"""Return the display
+  name."""`). This is enforced by Ruff `D421` (property-docstring-starts-with-verb).
 
 ```python
 # CORRECT
+@property
+def is_complete(self) -> bool:
+    """Whether the attack is complete."""
+    return self._status == AttackStatus.COMPLETE
+
+# INCORRECT - verb-phrase docstring, flagged by Ruff D421
 @property
 def is_complete(self) -> bool:
     """Check if the attack is complete."""

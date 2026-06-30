@@ -31,6 +31,7 @@ from pyrit.backend.mappers import (
     request_piece_to_pyrit_message_piece,
     request_to_pyrit_message,
 )
+from pyrit.backend.models import DEFAULT_MEDIA_EXTENSIONS
 from pyrit.backend.models.attacks import (
     AddMessageRequest,
     AddMessageResponse,
@@ -52,6 +53,8 @@ from pyrit.backend.services.converter_service import get_converter_service
 from pyrit.backend.services.target_service import get_target_service
 from pyrit.memory import CentralMemory, data_serializer_factory
 from pyrit.models import (
+    AtomicAttackIdentifier,
+    AttackIdentifier,
     AttackOutcome,
     AttackResult,
     ComponentIdentifier,
@@ -60,7 +63,6 @@ from pyrit.models import (
     ConversationType,
     MessagePiece,
     PromptDataType,
-    build_atomic_attack_identifier,
 )
 from pyrit.prompt_normalizer import PromptConverterConfiguration, PromptNormalizer
 
@@ -322,11 +324,11 @@ class AttackService:
         attack_result = AttackResult(
             conversation_id=conversation_id,
             objective=request.name or "Manual attack via GUI",
-            atomic_attack_identifier=build_atomic_attack_identifier(
-                attack_identifier=ComponentIdentifier(
+            atomic_attack_identifier=AtomicAttackIdentifier.build(
+                attack_identifier=AttackIdentifier(
                     class_name=request.name or "ManualAttack",
                     class_module="pyrit.backend",
-                    children={"objective_target": target_identifier} if target_identifier else {},
+                    objective_target=target_identifier,
                 ),
             ),
             outcome=AttackOutcome.UNDETERMINED,
@@ -934,21 +936,25 @@ class AttackService:
             except (OSError, ValueError):
                 pass
 
-            # Derive file extension from the MIME type sent by the frontend
-            ext = None
-            if piece.mime_type:
-                ext = mimetypes.guess_extension(piece.mime_type, strict=False)
-            if not ext:
-                ext = ".bin"
-
             # Strip data URI prefix if present (e.g. "data:image/png;base64,...")
             # The backend itself returns data URIs from pyrit_messages_to_dto_async,
             # so the client may echo them back.
             value = piece.original_value
+            data_uri_mime_type = None
             if value.startswith("data:"):
                 # Format: data:<mime>;base64,<payload>
-                _, _, payload = value.partition(",")
+                header, _, payload = value.partition(",")
+                data_uri_mime_type = header.split(":", 1)[1].split(";", 1)[0] if ":" in header else None
                 value = payload
+
+            # Derive file extension from MIME metadata, then fall back to data_type.
+            ext = None
+            if piece.mime_type:
+                ext = mimetypes.guess_extension(piece.mime_type, strict=False)
+            if not ext and data_uri_mime_type:
+                ext = mimetypes.guess_extension(data_uri_mime_type, strict=False)
+            if not ext:
+                ext = DEFAULT_MEDIA_EXTENSIONS.get(piece.data_type, ".bin")
 
             serializer = data_serializer_factory(
                 category="prompt-memory-entries",

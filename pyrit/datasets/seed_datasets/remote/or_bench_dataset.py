@@ -7,7 +7,7 @@ import warnings
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import Modality, SeedDataset, SeedPrompt
+from pyrit.models import Modality, SeedDataset, SeedPrompt, SeedUnion
 
 logger = logging.getLogger(__name__)
 
@@ -83,7 +83,7 @@ class _ORBenchBaseDataset(_RemoteDatasetLoader):
         source_url = f"https://huggingface.co/datasets/{self.HF_DATASET_NAME}"
         groups = ["UCLA", "UC Berkeley"]
 
-        seed_prompts = [
+        seed_prompts: list[SeedUnion] = [
             SeedPrompt(
                 value=item["prompt"],
                 data_type="text",
@@ -120,7 +120,7 @@ class _ORBench80KDataset(_ORBenchBaseDataset):
 
     @property
     def dataset_name(self) -> str:
-        """Return the dataset name."""
+        """The dataset name."""
         return "or_bench_80k"
 
 
@@ -142,7 +142,7 @@ class _ORBenchHardDataset(_ORBenchBaseDataset):
 
     @property
     def dataset_name(self) -> str:
-        """Return the dataset name."""
+        """The dataset name."""
         return "or_bench_hard"
 
 
@@ -165,5 +165,5 @@ class _ORBenchToxicDataset(_ORBenchBaseDataset):
 
     @property
     def dataset_name(self) -> str:
-        """Return the dataset name."""
+        """The dataset name."""
         return "or_bench_toxic"

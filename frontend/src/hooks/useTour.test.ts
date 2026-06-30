@@ -5,8 +5,6 @@ import { ACTIONS, LIFECYCLE, STATUS } from 'react-joyride'
 import { useTour } from './useTour'
 import { TOUR_STEPS } from '../components/Tour/tourSteps'
 
-const STORAGE_KEY = 'pyrit-tour-completed'
-
 // Minimal EventData shape — only fields our handler reads
 function makeEvent(overrides: Record<string, unknown> = {}) {
   return {
@@ -43,17 +41,6 @@ describe('useTour', () => {
 
   afterEach(() => {
     jest.restoreAllMocks()
-  })
-
-  it('returns hasCompletedTour=false when localStorage is empty', () => {
-    const { result } = renderHook(() => useTour(onNavigate, true, 'home'))
-    expect(result.current.hasCompletedTour).toBe(false)
-  })
-
-  it('returns hasCompletedTour=true when localStorage flag is set', () => {
-    localStorage.setItem(STORAGE_KEY, 'true')
-    const { result } = renderHook(() => useTour(onNavigate, true, 'home'))
-    expect(result.current.hasCompletedTour).toBe(true)
   })
 
   it('startTour sets run=true immediately when already on home', () => {
@@ -116,7 +103,7 @@ describe('useTour', () => {
     expect(result.current.tourProps.stepIndex).toBe(0)
   })
 
-  it('stops tour on ACTIONS.CLOSE and persists to localStorage', () => {
+  it('stops tour on ACTIONS.CLOSE', () => {
     const { result } = renderHook(() => useTour(onNavigate, true, 'home'))
 
     act(() => { result.current.startTour() })
@@ -125,9 +112,7 @@ describe('useTour', () => {
     act(() => {
       result.current.tourProps.onEvent(makeEvent({ action: ACTIONS.CLOSE }))
     })
-
     expect(result.current.tourProps.run).toBe(false)
-    expect(localStorage.getItem(STORAGE_KEY)).toBe('true')
   })
 
   it('stops tour on STATUS.SKIPPED', () => {
@@ -138,9 +123,7 @@ describe('useTour', () => {
     act(() => {
       result.current.tourProps.onEvent(makeEvent({ status: STATUS.SKIPPED }))
     })
-
     expect(result.current.tourProps.run).toBe(false)
-    expect(localStorage.getItem(STORAGE_KEY)).toBe('true')
   })
 
   it('stops tour on STATUS.FINISHED', () => {
@@ -257,9 +240,7 @@ describe('useTour', () => {
         index: lastIndex,
       }))
     })
-
     expect(result.current.tourProps.run).toBe(false)
-    expect(localStorage.getItem(STORAGE_KEY)).toBe('true')
   })
 
   it('clears pending step when tour is cancelled during view switch', () => {

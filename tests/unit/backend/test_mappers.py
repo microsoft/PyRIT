@@ -30,13 +30,13 @@ from pyrit.backend.mappers.target_mappers import target_object_to_instance
 from pyrit.backend.models._media import build_filename, infer_mime_type
 from pyrit.backend.models.attacks import ScoreView
 from pyrit.models import (
+    AtomicAttackIdentifier,
     AttackOutcome,
     AttackResult,
     ComponentIdentifier,
     Message,
     MessagePiece,
     Score,
-    build_atomic_attack_identifier,
 )
 from pyrit.models.conversation_stats import ConversationStats
 from pyrit.prompt_target import PromptTarget, TargetCapabilities
@@ -73,7 +73,7 @@ def _make_attack_result(
         conversation_id=conversation_id,
         objective="test",
         attack_result_id=str(uuid.uuid4()),
-        atomic_attack_identifier=build_atomic_attack_identifier(
+        atomic_attack_identifier=AtomicAttackIdentifier.build(
             attack_identifier=ComponentIdentifier(
                 class_name=name,
                 class_module="pyrit.backend",
@@ -276,7 +276,7 @@ class TestAttackResultToSummary:
             conversation_id="attack-conv",
             objective="test",
             attack_result_id=str(uuid.uuid4()),
-            atomic_attack_identifier=build_atomic_attack_identifier(
+            atomic_attack_identifier=AtomicAttackIdentifier.build(
                 attack_identifier=ComponentIdentifier(
                     class_name="TestAttack",
                     class_module="pyrit.backend",
@@ -322,7 +322,7 @@ class TestAttackResultToSummary:
 
     async def test_related_conversation_ids_from_related_conversations(self) -> None:
         """Test that related_conversation_ids includes all related conversation IDs."""
-        from pyrit.models.conversation_reference import ConversationReference, ConversationType
+        from pyrit.models import ConversationReference, ConversationType
 
         ar = _make_attack_result()
         ar.related_conversations = {

@@ -52,7 +52,7 @@ class _CCPSensitivePromptsDataset(_RemoteDatasetLoader):
     @property
     @override
     def dataset_name(self) -> str:
-        """Return the dataset name."""
+        """The dataset name."""
         return "ccp_sensitive_prompts"
 
     @override

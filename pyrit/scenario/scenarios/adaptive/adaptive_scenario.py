@@ -40,7 +40,7 @@ if TYPE_CHECKING:
     from pyrit.models import SeedAttackGroup
     from pyrit.prompt_target import PromptTarget
     from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
-    from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
+    from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
     from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
     from pyrit.score import TrueFalseScorer
 
@@ -84,8 +84,8 @@ class AdaptiveScenario(Scenario):
 
     @classmethod
     @abstractmethod
-    def default_dataset_config(cls) -> DatasetConfiguration:
-        """Return the scenario's default ``DatasetConfiguration`` (subclasses must override)."""
+    def default_dataset_config(cls) -> DatasetAttackConfiguration:
+        """Return the scenario's default ``DatasetAttackConfiguration`` (subclasses must override)."""
         raise NotImplementedError
 
     def __init__(
@@ -189,7 +189,7 @@ class AdaptiveScenario(Scenario):
 
         techniques = self._build_techniques_dict(objective_target=self._objective_target)
 
-        seed_groups_by_dataset = self._dataset_config.get_seed_attack_groups()
+        seed_groups_by_dataset = await self._dataset_config.get_attack_groups_by_dataset_async()
         atomic_attacks: list[AtomicAttack] = []
         for dataset_name, seed_groups in seed_groups_by_dataset.items():
             atomic_attacks.extend(

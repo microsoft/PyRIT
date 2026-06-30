@@ -14,6 +14,7 @@ from unit.mocks import get_mock_target
 from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
 from pyrit.memory import MemoryInterface, PromptMemoryEntry
 from pyrit.models import (
+    AtomicAttackIdentifier,
     AttackResult,
     ComponentIdentifier,
     Conversation,
@@ -23,7 +24,6 @@ from pyrit.models import (
     MessagePiece,
     Score,
     SeedPrompt,
-    build_atomic_attack_identifier,
 )
 
 
@@ -1015,12 +1015,12 @@ def test_get_message_pieces_attack(sqlite_instance: MemoryInterface):
             AttackResult(
                 conversation_id="c1",
                 objective="objective 1",
-                atomic_attack_identifier=build_atomic_attack_identifier(attack_identifier=attack1.get_identifier()),
+                atomic_attack_identifier=AtomicAttackIdentifier.build(attack_identifier=attack1.get_identifier()),
             ),
             AttackResult(
                 conversation_id="c2",
                 objective="objective 2",
-                atomic_attack_identifier=build_atomic_attack_identifier(attack_identifier=attack2.get_identifier()),
+                atomic_attack_identifier=AtomicAttackIdentifier.build(attack_identifier=attack2.get_identifier()),
             ),
         ]
     )

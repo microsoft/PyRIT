@@ -25,7 +25,7 @@ from pyrit.models import (
 )
 from pyrit.models.identifiers import (
     AtomicAttackEvaluationIdentifier,
-    build_atomic_attack_identifier,
+    AtomicAttackIdentifier,
 )
 from pyrit.models.retry_event import RetryEvent
 from pyrit.prompt_target import PromptTarget
@@ -896,7 +896,7 @@ class _IdentityTestStrategy(AttackStrategy):
 
 
 def _eval_hash(attack_identifier: ComponentIdentifier) -> str:
-    composite = build_atomic_attack_identifier(attack_identifier=attack_identifier)
+    composite = AtomicAttackIdentifier.build(attack_identifier=attack_identifier)
     return AtomicAttackEvaluationIdentifier(composite).eval_hash
 
 

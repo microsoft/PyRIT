@@ -202,6 +202,8 @@ class _FigStepDataset(_RemoteDatasetLoader):
         """
         self._validate_enum(variant, FigStepVariant, "variant")
         if categories is not None:
+            if not categories:
+                raise ValueError("`categories` must be a non-empty list (pass None to include all categories)")
             self._validate_enums(categories, FigStepCategory, "category")
 
         if variant == FigStepVariant.FIGSTEP_PRO and not use_tiny:
@@ -219,7 +221,7 @@ class _FigStepDataset(_RemoteDatasetLoader):
     @property
     @override
     def dataset_name(self) -> str:
-        """Return the dataset name."""
+        """The dataset name."""
         return "figstep"
 
     @override

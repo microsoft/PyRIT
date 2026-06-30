@@ -24,14 +24,14 @@ from pyrit.prompt_converter.text_selection_strategy import (
 class TestSelectiveTextConverter:
     async def test_initialization_valid(self):
         converter = SelectiveTextConverter(
-            converter=Base64Converter(),
+            sub_converter=Base64Converter(),
             selection_strategy=IndexSelectionStrategy(start=0, end=5),
         )
         assert converter is not None
 
     async def test_initialization_with_preserve_tokens(self):
         converter = SelectiveTextConverter(
-            converter=Base64Converter(),
+            sub_converter=Base64Converter(),
             selection_strategy=IndexSelectionStrategy(start=0, end=5),
             preserve_tokens=True,
             start_token="<<",
@@ -47,7 +47,7 @@ class TestSelectiveTextConverter:
 
         with pytest.raises(ValueError, match="does not support text input"):
             SelectiveTextConverter(
-                converter=NonTextConverter(),
+                sub_converter=NonTextConverter(),
                 selection_strategy=IndexSelectionStrategy(start=0, end=5),
             )
 
@@ -59,13 +59,13 @@ class TestSelectiveTextConverter:
 
         with pytest.raises(ValueError, match="does not support text output"):
             SelectiveTextConverter(
-                converter=NonTextConverter(),
+                sub_converter=NonTextConverter(),
                 selection_strategy=IndexSelectionStrategy(start=0, end=5),
             )
 
     async def test_convert_async_with_index_strategy(self):
         converter = SelectiveTextConverter(
-            converter=Base64Converter(),
+            sub_converter=Base64Converter(),
             selection_strategy=IndexSelectionStrategy(start=0, end=5),
         )
         result = await converter.convert_async(prompt="Hello World", input_type="text")
@@ -75,7 +75,7 @@ class TestSelectiveTextConverter:
 
     async def test_convert_async_with_regex_strategy(self):
         converter = SelectiveTextConverter(
-            converter=Base64Converter(),
+            sub_converter=Base64Converter(),
             selection_strategy=RegexSelectionStrategy(pattern=r"\d+"),
         )
         result = await converter.convert_async(prompt="The code is 12345 here", input_type="text")
@@ -85,7 +85,7 @@ class TestSelectiveTextConverter:
 
     async def test_convert_async_with_keyword_strategy(self):
         converter = SelectiveTextConverter(
-            converter=Base64Converter(),
+            sub_converter=Base64Converter(),
             selection_strategy=KeywordSelectionStrategy(keyword="secret"),
         )
         result = await converter.convert_async(prompt="The secret is here", input_type="text")
@@ -95,7 +95,7 @@ class TestSelectiveTextConverter:
 
     async def test_convert_async_with_position_strategy(self):
         converter = SelectiveTextConverter(
-            converter=Base64Converter(),
+            sub_converter=Base64Converter(),
             selection_strategy=PositionSelectionStrategy(start_proportion=0.0, end_proportion=0.5),
         )
         result = await converter.convert_async(prompt="0123456789", input_type="text")
@@ -105,7 +105,7 @@ class TestSelectiveTextConverter:
 
     async def test_convert_async_with_proportion_strategy(self):
         converter = SelectiveTextConverter(
-            converter=Base64Converter(),
+            sub_converter=Base64Converter(),
             selection_strategy=ProportionSelectionStrategy(proportion=0.5, anchor="start"),
         )
         result = await converter.convert_async(prompt="0123456789", input_type="text")
@@ -115,7 +115,7 @@ class TestSelectiveTextConverter:
 
     async def test_convert_async_with_range_strategy(self):
         converter = SelectiveTextConverter(
-            converter=Base64Converter(),
+            sub_converter=Base64Converter(),
             selection_strategy=RangeSelectionStrategy(start_proportion=0.0, end_proportion=0.5),
         )
         result = await converter.convert_async(prompt="0123456789", input_type="text")
@@ -125,7 +125,7 @@ class TestSelectiveTextConverter:
 
     async def test_convert_async_with_preserve_tokens(self):
         converter = SelectiveTextConverter(
-            converter=Base64Converter(),
+            sub_converter=Base64Converter(),
             selection_strategy=IndexSelectionStrategy(start=0, end=5),
             preserve_tokens=True,
         )
@@ -136,7 +136,7 @@ class TestSelectiveTextConverter:
 
     async def test_convert_async_with_custom_tokens(self):
         converter = SelectiveTextConverter(
-            converter=Base64Converter(),
+            sub_converter=Base64Converter(),
             selection_strategy=IndexSelectionStrategy(start=0, end=5),
             preserve_tokens=True,
             start_token="<<",
@@ -149,7 +149,7 @@ class TestSelectiveTextConverter:
 
     async def test_convert_async_no_match_returns_original(self):
         converter = SelectiveTextConverter(
-            converter=Base64Converter(),
+            sub_converter=Base64Converter(),
             selection_strategy=RegexSelectionStrategy(pattern=r"\d+"),
         )
         result = await converter.convert_async(prompt="No numbers here", input_type="text")
@@ -158,7 +158,7 @@ class TestSelectiveTextConverter:
 
     async def test_convert_async_invalid_input_type(self):
         converter = SelectiveTextConverter(
-            converter=Base64Converter(),
+            sub_converter=Base64Converter(),
             selection_strategy=IndexSelectionStrategy(start=0, end=5),
         )
         with pytest.raises(ValueError, match="only supports text input"):
@@ -167,7 +167,7 @@ class TestSelectiveTextConverter:
     async def test_convert_async_chaining_with_preserved_tokens(self):
         # First converter: convert first half with preserve_tokens
         converter1 = SelectiveTextConverter(
-            converter=Base64Converter(),
+            sub_converter=Base64Converter(),
             selection_strategy=PositionSelectionStrategy(start_proportion=0.0, end_proportion=0.5),
             preserve_tokens=True,
         )
@@ -175,7 +175,7 @@ class TestSelectiveTextConverter:
 
         # Second converter: convert second half with preserve_tokens
         converter2 = SelectiveTextConverter(
-            converter=ROT13Converter(),
+            sub_converter=ROT13Converter(),
             selection_strategy=PositionSelectionStrategy(start_proportion=0.5, end_proportion=1.0),
             preserve_tokens=True,
         )
@@ -189,7 +189,7 @@ class TestSelectiveTextConverter:
 
     async def test_convert_async_middle_section(self):
         converter = SelectiveTextConverter(
-            converter=Base64Converter(),
+            sub_converter=Base64Converter(),
             selection_strategy=IndexSelectionStrategy(start=4, end=10),
         )
         result = await converter.convert_async(prompt="The secret code", input_type="text")
@@ -199,7 +199,7 @@ class TestSelectiveTextConverter:
 
     async def test_convert_async_end_section(self):
         converter = SelectiveTextConverter(
-            converter=Base64Converter(),
+            sub_converter=Base64Converter(),
             selection_strategy=IndexSelectionStrategy(start=11, end=None),
         )
         result = await converter.convert_async(prompt="Hello World", input_type="text")
@@ -209,7 +209,7 @@ class TestSelectiveTextConverter:
 
     async def test_input_supported(self):
         converter = SelectiveTextConverter(
-            converter=Base64Converter(),
+            sub_converter=Base64Converter(),
             selection_strategy=IndexSelectionStrategy(start=0, end=5),
         )
         assert converter.input_supported("text") is True
@@ -217,7 +217,7 @@ class TestSelectiveTextConverter:
 
     async def test_output_supported(self):
         converter = SelectiveTextConverter(
-            converter=Base64Converter(),
+            sub_converter=Base64Converter(),
             selection_strategy=IndexSelectionStrategy(start=0, end=5),
         )
         assert converter.output_supported("text") is True
@@ -225,7 +225,7 @@ class TestSelectiveTextConverter:
 
     async def test_convert_async_with_keyword_and_context(self):
         converter = SelectiveTextConverter(
-            converter=Base64Converter(),
+            sub_converter=Base64Converter(),
             selection_strategy=KeywordSelectionStrategy(keyword="secret", context_before=4, context_after=3),
         )
         result = await converter.convert_async(prompt="The secret is here", input_type="text")
@@ -235,7 +235,7 @@ class TestSelectiveTextConverter:
 
     async def test_convert_async_entire_text_with_range(self):
         converter = SelectiveTextConverter(
-            converter=ROT13Converter(),
+            sub_converter=ROT13Converter(),
             selection_strategy=RangeSelectionStrategy(start_proportion=0.0, end_proportion=1.0),
         )
         result = await converter.convert_async(prompt="Hello", input_type="text")
@@ -247,7 +247,9 @@ class TestSelectiveTextConverter:
         that has a non-default word_selection_strategy raises ValueError."""
         with pytest.raises(ValueError, match="Cannot use a WordSelectionStrategy"):
             SelectiveTextConverter(
-                converter=LeetspeakConverter(word_selection_strategy=WordProportionSelectionStrategy(proportion=0.5)),
+                sub_converter=LeetspeakConverter(
+                    word_selection_strategy=WordProportionSelectionStrategy(proportion=0.5)
+                ),
                 selection_strategy=WordIndexSelectionStrategy(indices=[0, 1]),
             )
 
@@ -256,7 +258,7 @@ class TestSelectiveTextConverter:
         that has the default (AllWordsSelectionStrategy) is allowed."""
         # This should NOT raise - LeetspeakConverter with no explicit strategy uses AllWordsSelectionStrategy
         converter = SelectiveTextConverter(
-            converter=LeetspeakConverter(),
+            sub_converter=LeetspeakConverter(),
             selection_strategy=WordIndexSelectionStrategy(indices=[0]),
         )
         assert converter is not None
@@ -267,7 +269,7 @@ class TestSelectiveTextConverter:
         # This should NOT raise - character-level strategy passes a substring to the converter,
         # so the converter's word selection strategy can meaningfully operate on it
         converter = SelectiveTextConverter(
-            converter=LeetspeakConverter(word_selection_strategy=WordProportionSelectionStrategy(proportion=0.5)),
+            sub_converter=LeetspeakConverter(word_selection_strategy=WordProportionSelectionStrategy(proportion=0.5)),
             selection_strategy=IndexSelectionStrategy(start=0, end=20),
         )
         assert converter is not None

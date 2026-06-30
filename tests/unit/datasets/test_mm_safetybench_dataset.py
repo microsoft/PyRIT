@@ -116,6 +116,10 @@ class TestMMSafetyBenchDataset:
         with pytest.raises(ValueError, match="MMSafetyBenchCategory"):
             _MMSafetyBenchDataset(categories=cast("list[MMSafetyBenchCategory]", ["Illegal_Activitiy"]))
 
+    def test_init_empty_categories_raises(self):
+        with pytest.raises(ValueError, match="`categories` must be a non-empty list"):
+            _MMSafetyBenchDataset(categories=[])
+
     async def test_fetch_dataset_creates_objective_image_text_group(self):
         """Each variant row becomes a 3-seed group sharing prompt_group_id."""
         category = MMSafetyBenchCategory.ILLEGAL_ACTIVITY

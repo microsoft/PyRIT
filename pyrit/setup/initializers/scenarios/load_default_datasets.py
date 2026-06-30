@@ -24,7 +24,7 @@ class LoadDefaultDatasets(PyRITInitializer):
 
     @property
     def name(self) -> str:
-        """Return the name of this initializer."""
+        """The name of this initializer."""
         return "Default Dataset Loader for Scenarios"
 
     @property
@@ -34,7 +34,7 @@ class LoadDefaultDatasets(PyRITInitializer):
 
     @property
     def description(self) -> str:
-        """Return a description of this initializer."""
+        """A description of this initializer."""
         return textwrap.dedent(
             """
                 This configuration uses the DatasetLoader to load default datasets into memory.
@@ -47,7 +47,7 @@ class LoadDefaultDatasets(PyRITInitializer):
 
     @property
     def required_env_vars(self) -> list[str]:
-        """Return the list of required environment variables."""
+        """The list of required environment variables."""
         return []
 
     async def initialize_async(self) -> None:
