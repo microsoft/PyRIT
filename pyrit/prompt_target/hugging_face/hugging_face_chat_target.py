@@ -5,6 +5,7 @@ import asyncio
 import json
 import logging
 import warnings
+from importlib import import_module
 from pathlib import Path
 from typing import Any, cast
 
@@ -26,6 +27,13 @@ from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.prompt_target.common.utils import limit_requests_per_minute
 
 logger = logging.getLogger(__name__)
+
+
+def _import_torch() -> Any:
+    try:
+        return cast("Any", import_module("torch"))
+    except ModuleNotFoundError as e:
+        raise RuntimeError("Could not import torch. You may need to install it via 'pip install pyrit[all]'") from e
 
 
 class HuggingFaceChatTarget(PromptTarget):
@@ -147,10 +155,7 @@ class HuggingFaceChatTarget(PromptTarget):
         else:
             self.huggingface_token = None
 
-        try:
-            import torch  # type: ignore[ty:unresolved-import]
-        except ModuleNotFoundError as e:
-            raise RuntimeError("Could not import torch. You may need to install it via 'pip install pyrit[all]'") from e
+        torch = _import_torch()
 
         # Determine the device
         self.device = "cuda" if self.use_cuda and torch.cuda.is_available() else "cpu"
@@ -486,7 +491,7 @@ class HuggingFaceChatTarget(PromptTarget):
             the same process may interfere with determinism.
         """
         if self._random_seed is not None:
-            import torch  # type: ignore[ty:unresolved-import]
+            torch = _import_torch()
 
             torch.manual_seed(self._random_seed)
             if self.use_cuda:
