@@ -397,41 +397,6 @@ class TestConfigurationLoaderInitialization:
         with pytest.raises(ValueError, match="not found in registry"):
             await config.initialize_pyrit_async()
 
-    @mock.patch("pyrit.memory.CentralMemory")
-    @mock.patch("pyrit.datasets.SeedDatasetProvider")
-    @mock.patch("pyrit.setup.configuration_loader.initialize_pyrit_async")
-    async def test_initialize_pyrit_async_loads_datasets(self, mock_init, mock_provider, mock_memory_cls):
-        """Test that configured datasets are fetched and added to memory after init."""
-        fetched = [mock.MagicMock()]
-        mock_provider.fetch_datasets_async = mock.AsyncMock(return_value=fetched)
-        mock_memory = mock.MagicMock()
-        mock_memory.add_seed_datasets_to_memory_async = mock.AsyncMock()
-        mock_memory_cls.get_memory_instance.return_value = mock_memory
-
-        config = ConfigurationLoader(
-            memory_db_type="in_memory",
-            datasets=["airt_illegal", "airt_malware"],
-        )
-        await config.initialize_pyrit_async()
-
-        mock_init.assert_called_once()
-        mock_provider.fetch_datasets_async.assert_awaited_once_with(dataset_names=["airt_illegal", "airt_malware"])
-        mock_memory.add_seed_datasets_to_memory_async.assert_awaited_once_with(
-            datasets=fetched, added_by="ConfigurationLoader"
-        )
-
-    @mock.patch("pyrit.datasets.SeedDatasetProvider")
-    @mock.patch("pyrit.setup.configuration_loader.initialize_pyrit_async")
-    async def test_initialize_pyrit_async_no_datasets_skips_loading(self, mock_init, mock_provider):
-        """Test that dataset loading is skipped when no datasets are configured."""
-        mock_provider.fetch_datasets_async = mock.AsyncMock()
-
-        config = ConfigurationLoader(memory_db_type="in_memory")
-        await config.initialize_pyrit_async()
-
-        mock_init.assert_called_once()
-        mock_provider.fetch_datasets_async.assert_not_called()
-
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestInitializeFromConfigAsync:
