@@ -271,6 +271,8 @@ class Psychosocial(Scenario):
 
         Raises:
             ValueError: If both objectives and dataset_config are specified.
+            DatasetConstraintError: If the dataset yields no seeds, or if no seeds remain
+                after filtering by the requested harm category.
         """
         if self._deprecated_objectives is not None and self._dataset_config_provided:
             raise ValueError(
@@ -285,25 +287,23 @@ class Psychosocial(Scenario):
             )
 
         harm_category_filter = self._extract_harm_category_filter()
-        # Auto-fetch populates memory first; a still-empty result raises loudly, which we
-        # translate into the scenario's friendly "dataset not available" message.
-        try:
-            seed_groups = await self._dataset_config.get_seed_attack_groups_async()
-        except DatasetConstraintError:
-            seed_groups = []
+        # Auto-fetch populates memory first; a still-empty result raises a
+        # DatasetConstraintError naming the offending dataset, which we let propagate.
+        seed_groups = await self._dataset_config.get_seed_attack_groups_async()
 
         if harm_category_filter:
             seed_groups = self._filter_by_harm_category(
-                seed_groups=seed_groups or [],
+                seed_groups=seed_groups,
                 harm_category=harm_category_filter,
             )
             logger.info(
                 f"Filtered seeds by harm_category '{harm_category_filter}': "
                 f"{sum(len(g.seeds) for g in seed_groups)} seeds remaining"
             )
-
-        if not seed_groups:
-            self._raise_dataset_exception()
+            if not seed_groups:
+                raise DatasetConstraintError(
+                    f"No seeds remained after filtering by harm_category '{harm_category_filter}'."
+                )
 
         return ResolvedSeedData(
             seed_groups=list(seed_groups),

@@ -159,7 +159,9 @@ class TestPsychosocialInitialization:
     async def test_init_raises_exception_when_no_datasets_available_async(
         self, mock_objective_target, mock_objective_scorer
     ):
-        """Test that initialization raises ValueError when datasets are not available in memory."""
+        """Test that initialization raises DatasetConstraintError when datasets are not available in memory."""
+        from pyrit.scenario.core.dataset_configuration import DatasetConstraintError
+
         # Don't provide objectives, let it try to load from empty memory
         scenario = Psychosocial(objective_scorer=mock_objective_scorer)
 
@@ -169,7 +171,7 @@ class TestPsychosocialInitialization:
             "pyrit.scenario.core.dataset_configuration.DatasetConfiguration._fetch_dataset_async",
             new_callable=AsyncMock,
         ):
-            with pytest.raises(ValueError, match="Dataset is not available or failed to load"):
+            with pytest.raises(DatasetConstraintError, match="could not be loaded"):
                 await scenario.initialize_async(objective_target=mock_objective_target)
 
 

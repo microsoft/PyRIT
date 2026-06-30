@@ -12,7 +12,6 @@ import asyncio
 import copy
 import json
 import logging
-import textwrap
 import uuid
 from abc import ABC
 from collections.abc import Sequence
@@ -855,19 +854,6 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
             seed_groups=seed_groups,
             memory_labels=self._memory_labels,
         )
-
-    def _raise_dataset_exception(self) -> None:
-        error_msg = textwrap.dedent(
-            f"""
-            Dataset is not available or failed to load.
-            Scenarios require datasets loaded in CentralMemory or to be passed explicitly.
-            Either load the datasets into the database before running the scenario, or for
-            example datasets, you can use the `load_default_datasets` initializer.
-
-            Required datasets: {", ".join(self._default_dataset_config.dataset_names)}
-            """
-        )
-        raise ValueError(error_msg)
 
     def _validate_stored_scenario(self, *, stored_result: ScenarioResult) -> None:
         """

@@ -36,7 +36,6 @@ from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.dataset_configuration import (
     DatasetAttackConfiguration,
-    DatasetConstraintError,
     MultiDatasetAttackConfiguration,
 )
 from pyrit.scenario.core.scenario import Scenario
@@ -200,16 +199,9 @@ class Encoding(Scenario):
         # Use dataset_config (guaranteed to be set by initialize_async). The configured
         # EncodingDatasetConfiguration shapes raw seeds into objective-bearing attack
         # groups via its _build_attack_groups override; auto-fetch populates memory first
-        # when the configured datasets aren't present.
-        try:
-            seed_groups = await self._dataset_config.get_seed_attack_groups_async()
-        except DatasetConstraintError:
-            seed_groups = []
-
-        if not seed_groups:
-            self._raise_dataset_exception()
-
-        return seed_groups
+        # when the configured datasets aren't present. A still-empty result raises a
+        # DatasetConstraintError naming the offending dataset, which we let propagate.
+        return await self._dataset_config.get_seed_attack_groups_async()
 
     async def _get_atomic_attacks_async(self) -> list[AtomicAttack]:
         """

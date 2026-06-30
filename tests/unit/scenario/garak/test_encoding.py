@@ -132,8 +132,10 @@ class TestEncodingInitialization:
             assert isinstance(scenario._scorer_config.objective_scorer, DecodingScorer)
 
     async def test_init_raises_exception_when_no_datasets_available(self, mock_objective_target, mock_objective_scorer):
-        """Test that initialization raises ValueError when datasets are not available and auto-fetch finds nothing."""
+        """Test that initialization raises DatasetConstraintError when datasets are unavailable."""
         from unittest.mock import patch
+
+        from pyrit.scenario.core.dataset_configuration import DatasetConstraintError
 
         # Don't mock _resolve_seed_groups_async; let it try to load from empty memory.
         # Disable the provider fallback so memory stays empty and the scenario raises.
@@ -141,7 +143,7 @@ class TestEncodingInitialization:
 
         with patch.object(EncodingDatasetConfiguration, "_fetch_dataset_async", new_callable=AsyncMock):
             # Error should occur during initialize_async when _get_atomic_attacks_async resolves seed prompts
-            with pytest.raises(ValueError, match="Dataset is not available or failed to load"):
+            with pytest.raises(DatasetConstraintError, match="could not be loaded"):
                 await scenario.initialize_async(objective_target=mock_objective_target)
 
     def test_init_with_memory_labels(self, mock_objective_target, mock_objective_scorer, mock_memory_seeds):

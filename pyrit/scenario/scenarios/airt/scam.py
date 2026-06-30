@@ -27,7 +27,6 @@ from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.dataset_configuration import (
     DatasetAttackConfiguration,
-    DatasetConstraintError,
 )
 from pyrit.scenario.core.scenario import Scenario
 from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
@@ -179,17 +178,9 @@ class Scam(Scenario):
             list[SeedAttackGroup]: List of seed attack groups with objectives to be tested.
         """
         # Use dataset_config (guaranteed to be set by initialize_async). Auto-fetch
-        # populates memory first; a still-empty result raises loudly, which we translate
-        # into the scenario's friendly "dataset not available" message.
-        try:
-            seed_groups = await self._dataset_config.get_seed_attack_groups_async()
-        except DatasetConstraintError:
-            seed_groups = []
-
-        if not seed_groups:
-            self._raise_dataset_exception()
-
-        return list(seed_groups)
+        # populates memory first; a still-empty result raises a DatasetConstraintError
+        # naming the offending dataset, which we let propagate.
+        return list(await self._dataset_config.get_seed_attack_groups_async())
 
     def _get_atomic_attack_from_strategy(self, strategy: str) -> AtomicAttack:
         """
