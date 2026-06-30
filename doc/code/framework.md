@@ -96,7 +96,7 @@ flowchart TB
     REG -. builds .-> ATK
     ATK <-- reads / writes --> MEM
     core <--> MEM
-    SCEN --> OUT
+    entry --> OUT
     MEM -- reads --> OUT
     MODEL -. shared types .-> core
 
