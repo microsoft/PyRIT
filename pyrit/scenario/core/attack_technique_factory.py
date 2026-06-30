@@ -10,9 +10,8 @@ construction time. Scenarios produce fresh, fully-constructed attacks by calling
 ``create()`` with scenario-specific params (objective target, scorer).
 
 The canonical place to register factories is the
-``ScenarioTechniqueInitializer`` in
-``pyrit.setup.initializers.components.scenario_techniques``. New initializers
-register additional factories by calling
+``TechniqueInitializer`` in ``pyrit.setup.initializers.techniques``. New
+initializers register additional factories by calling
 ``AttackTechniqueRegistry.register_from_factories(...)``.
 """
 
@@ -370,6 +369,17 @@ class AttackTechniqueFactory(Identifiable):
     def tags(self) -> list[str]:
         """Alias for ``strategy_tags`` exposing the Taggable interface (used by ``TagQuery.filter``)."""
         return list(self._strategy_tags)
+
+    def add_strategy_tags(self, *tags: str) -> None:
+        """
+        Append strategy tags, skipping any already present.
+
+        Args:
+            *tags: Strategy tags to add to this factory.
+        """
+        for tag in tags:
+            if tag not in self._strategy_tags:
+                self._strategy_tags.append(tag)
 
     @property
     def attack_class(self) -> type[AttackStrategy[Any, Any]]:

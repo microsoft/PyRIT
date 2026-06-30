@@ -18,7 +18,7 @@ from pyrit.scenario.airt import Leakage  # type: ignore[ty:unresolved-import]
 from pyrit.scenario.core import BaselineAttackPolicy
 from pyrit.scenario.scenarios.airt.leakage import _build_leakage_strategy
 from pyrit.score import TrueFalseCompositeScorer
-from pyrit.setup.initializers.components.scenario_techniques import build_scenario_technique_factories
+from pyrit.setup.initializers.techniques import build_technique_factories
 
 
 def _mock_scorer_id(name: str = "MockObjectiveScorer") -> ComponentIdentifier:
@@ -98,7 +98,7 @@ def reset_technique_registry():
     TargetRegistry.get_registry_singleton().register_instance(adv_target, name="adversarial_chat")
 
     technique_registry = AttackTechniqueRegistry.get_registry_singleton()
-    technique_registry.register_from_factories(build_scenario_technique_factories())
+    technique_registry.register_from_factories(build_technique_factories())
     yield
     AttackTechniqueRegistry.reset_instance()
     TargetRegistry.reset_instance()

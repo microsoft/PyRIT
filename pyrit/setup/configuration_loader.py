@@ -24,7 +24,7 @@ from pyrit.setup.initialization import (
 )
 
 if TYPE_CHECKING:
-    from pyrit.setup.initializers.pyrit_initializer import PyRITInitializer
+    from pyrit.setup.pyrit_initializer import PyRITInitializer
 
 
 # Type alias for YAML-serializable values that can be passed as initializer args
@@ -111,10 +111,11 @@ class ConfigurationLoader(YamlLoadable):
         memory_db_type: sqlite
 
         initializers:
-          - simple
-          - name: airt
+          - scorer
+          - name: target
             args:
-              some_param: value
+              tags:
+                - default
 
         initialization_scripts:
           - /path/to/custom_initializer.py

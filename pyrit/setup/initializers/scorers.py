@@ -42,7 +42,7 @@ from pyrit.score import (
     TrueFalseScorer,
     find_objective_metrics_by_eval_hash,
 )
-from pyrit.setup.initializers.pyrit_initializer import PyRITInitializer
+from pyrit.setup.pyrit_initializer import PyRITInitializer
 
 if TYPE_CHECKING:
     from pyrit.prompt_target import PromptTarget
@@ -647,7 +647,7 @@ class ScorerInitializer(PyRITInitializer):
             PromptTarget | None: The wrapping RoundRobinTarget if found,
                 the individual target otherwise, or None if not registered.
         """
-        from pyrit.setup.initializers.components.targets import generate_rr_name, get_behavioral_key
+        from pyrit.setup.initializers.targets import generate_rr_name, get_behavioral_key
 
         target_registry = TargetRegistry.get_registry_singleton()
         individual = target_registry.get_instance_by_name(target_name)

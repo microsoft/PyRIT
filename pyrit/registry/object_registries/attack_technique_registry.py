@@ -99,8 +99,8 @@ class AttackTechniqueRegistry(BaseInstanceRegistry["AttackTechniqueFactory"]):
             raise RuntimeError(
                 "AttackTechniqueRegistry is empty. Register attack technique factories before "
                 "executing scenarios — for example by running the default "
-                "ScenarioTechniqueInitializer "
-                "(pyrit.setup.initializers.components.scenario_techniques), "
+                "TechniqueInitializer "
+                "(pyrit.setup.initializers.techniques), "
                 "running another initializer that calls "
                 "AttackTechniqueRegistry.register_from_factories(...), or registering "
                 "factories directly via AttackTechniqueRegistry.get_registry_singleton()."

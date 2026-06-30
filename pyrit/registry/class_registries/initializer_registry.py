@@ -30,7 +30,7 @@ from pyrit.registry.discovery import discover_in_directory
 PYRIT_PATH = Path(__file__).parent.parent.parent.resolve()
 
 if TYPE_CHECKING:
-    from pyrit.setup.initializers.pyrit_initializer import PyRITInitializer
+    from pyrit.setup.pyrit_initializer import PyRITInitializer
 
 logger = logging.getLogger(__name__)
 
@@ -100,7 +100,7 @@ class InitializerRegistry(BaseClassRegistry["PyRITInitializer", InitializerMetad
             return
 
         # Import base class for discovery
-        from pyrit.setup.initializers.pyrit_initializer import PyRITInitializer
+        from pyrit.setup.pyrit_initializer import PyRITInitializer
 
         if discovery_path.is_file():
             self._process_file(file_path=discovery_path, base_class=PyRITInitializer, builtin=True)
@@ -254,7 +254,7 @@ class InitializerRegistry(BaseClassRegistry["PyRITInitializer", InitializerMetad
             raise ValueError(f"Initializer '{name}' is already registered. Unregister it first to replace it.")
 
         # Deferred: importing pyrit.setup triggers heavy __init__.py chain
-        from pyrit.setup.initializers.pyrit_initializer import PyRITInitializer
+        from pyrit.setup.pyrit_initializer import PyRITInitializer
 
         # Write to a managed directory so importlib can load it
         managed_dir = self._get_custom_scripts_dir()

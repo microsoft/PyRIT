@@ -57,7 +57,7 @@ from pyrit.scenario.scenarios.benchmark.adversarial import (
     _build_benchmark_strategy,
 )
 from pyrit.score import TrueFalseScorer
-from pyrit.setup.initializers.components.scenario_techniques import build_scenario_technique_factories
+from pyrit.setup.initializers.techniques import build_technique_factories
 
 # ---------------------------------------------------------------------------
 # Module-level constants derived from the canonical factory catalog
@@ -76,7 +76,7 @@ def _build_benchmarkable_factories_snapshot() -> list:
     adv.capabilities.includes.return_value = True
     TargetRegistry.get_registry_singleton().register_instance(adv, name="adversarial_chat")
     try:
-        factories = build_scenario_technique_factories()
+        factories = build_technique_factories()
     finally:
         TargetRegistry.reset_instance()
     return [f for f in factories if f.uses_adversarial and "core" in f.strategy_tags]
@@ -97,7 +97,7 @@ _NUM_LIGHT_BENCHMARKABLE = len(_LIGHT_BENCHMARKABLE_FACTORIES)
 def reset_technique_registry():
     """Reset registries, register a mock adversarial target, and populate real factories.
 
-    Registers a mock ``adversarial_chat`` target so ``build_scenario_technique_factories``
+    Registers a mock ``adversarial_chat`` target so ``build_technique_factories``
     resolves without depending on environment variables. Uses ``_build_benchmark_strategy.cache_clear()``
     because our implementation uses ``@cache`` (not ``_cached_strategy_class``).
     """
@@ -109,7 +109,7 @@ def reset_technique_registry():
     adv_target.capabilities.includes.return_value = True
     TargetRegistry.get_registry_singleton().register_instance(adv_target, name="adversarial_chat")
 
-    AttackTechniqueRegistry.get_registry_singleton().register_from_factories(build_scenario_technique_factories())
+    AttackTechniqueRegistry.get_registry_singleton().register_from_factories(build_technique_factories())
     yield
     AttackTechniqueRegistry.reset_instance()
     TargetRegistry.reset_instance()

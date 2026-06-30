@@ -12,7 +12,7 @@ from pyrit.registry.class_registries.initializer_registry import (
     PYRIT_PATH,
     InitializerRegistry,
 )
-from pyrit.setup.initializers.pyrit_initializer import PyRITInitializer
+from pyrit.setup.pyrit_initializer import PyRITInitializer
 
 
 @pytest.fixture
@@ -60,7 +60,7 @@ def test_build_metadata_uses_docstring_description():
 # ============================================================================
 
 _VALID_SCRIPT = """
-from pyrit.setup.initializers.pyrit_initializer import PyRITInitializer
+from pyrit.setup.pyrit_initializer import PyRITInitializer
 
 class ScriptTestInitializer(PyRITInitializer):
     \"\"\"A test initializer from script.\"\"\"
@@ -143,8 +143,8 @@ def test_register_from_content_rejects_duplicate_name(lazy_registry):
 def test_register_from_content_ignores_imported_classes(lazy_registry):
     """Test that imported base classes are not registered."""
     script = """
-from pyrit.setup.initializers.simple import SimpleInitializer
-from pyrit.setup.initializers.pyrit_initializer import PyRITInitializer
+from pyrit.setup.initializers.targets import TargetInitializer
+from pyrit.setup.pyrit_initializer import PyRITInitializer
 
 class LocalOnlyInitializer(PyRITInitializer):
     \"\"\"Local only.\"\"\"

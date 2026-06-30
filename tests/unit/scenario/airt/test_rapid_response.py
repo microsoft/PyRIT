@@ -26,8 +26,8 @@ from pyrit.scenario.scenarios.airt.rapid_response import (
     RapidResponse,
 )
 from pyrit.score import TrueFalseScorer
-from pyrit.setup.initializers.components.scenario_techniques import (
-    build_scenario_technique_factories,
+from pyrit.setup.initializers.techniques import (
+    build_technique_factories,
 )
 
 # ---------------------------------------------------------------------------
@@ -83,7 +83,7 @@ def reset_technique_registry():
     """Reset registries, register a mock adversarial target, and populate factories.
 
     The mock target satisfies the ``adversarial_chat`` slot so
-    ``build_scenario_technique_factories`` does not fall back to
+    ``build_technique_factories`` does not fall back to
     ``OpenAIChatTarget``.
     """
     from pyrit.scenario.scenarios.airt.rapid_response import _build_rapid_response_strategy
@@ -97,7 +97,7 @@ def reset_technique_registry():
     TargetRegistry.get_registry_singleton().register_instance(adv_target, name="adversarial_chat")
 
     technique_registry = AttackTechniqueRegistry.get_registry_singleton()
-    technique_registry.register_from_factories(build_scenario_technique_factories())
+    technique_registry.register_from_factories(build_technique_factories())
     yield
     AttackTechniqueRegistry.reset_instance()
     TargetRegistry.reset_instance()
@@ -469,7 +469,7 @@ class TestBuildDisplayGroup:
 
 @pytest.mark.usefixtures(*FIXTURES)
 class TestCoreTechniques:
-    """Tests for shared AttackTechniqueFactory builders in scenario_techniques.py."""
+    """Tests for shared AttackTechniqueFactory builders in techniques/core.py."""
 
     def test_instance_returns_all_factories(self, mock_objective_scorer):
         scenario = RapidResponse(objective_scorer=mock_objective_scorer)
@@ -509,7 +509,7 @@ class TestCoreTechniques:
 
 @pytest.mark.usefixtures(*FIXTURES)
 class TestRegistryIntegration:
-    """Tests for AttackTechniqueRegistry wiring via build_scenario_technique_factories."""
+    """Tests for AttackTechniqueRegistry wiring via build_technique_factories."""
 
     def test_registry_populated_by_autouse_fixture(self):
         """The autouse fixture registers all canonical scenario techniques."""
@@ -520,8 +520,8 @@ class TestRegistryIntegration:
     def test_register_from_factories_idempotent(self):
         """Calling register_from_factories twice does not duplicate entries."""
         registry = AttackTechniqueRegistry.get_registry_singleton()
-        expected = len(build_scenario_technique_factories())
-        registry.register_from_factories(build_scenario_technique_factories())
+        expected = len(build_technique_factories())
+        registry.register_from_factories(build_technique_factories())
         assert len(registry) == expected
 
     def test_register_preserves_custom_preregistered(self):
@@ -530,7 +530,7 @@ class TestRegistryIntegration:
         custom_factory = AttackTechniqueFactory(name="role_play", attack_class=PromptSendingAttack)
         registry.register_technique(name="role_play", factory=custom_factory, tags=["custom"])
 
-        registry.register_from_factories(build_scenario_technique_factories())
+        registry.register_from_factories(build_technique_factories())
         assert registry.get_factories()["role_play"] is custom_factory
 
     def test_get_factories_returns_dict(self):
@@ -555,16 +555,16 @@ class TestRegistryIntegration:
 
 
 # ===========================================================================
-# build_scenario_technique_factories tests
+# build_technique_factories tests
 # ===========================================================================
 
 
 @pytest.mark.usefixtures(*FIXTURES)
 class TestBuildScenarioTechniqueFactories:
-    """Tests for build_scenario_technique_factories() — the canonical factory catalog."""
+    """Tests for build_technique_factories() — the canonical factory catalog."""
 
     def test_returns_nonempty_factory_list(self):
-        factories = build_scenario_technique_factories()
+        factories = build_technique_factories()
         assert len(factories) >= 4
         names = [f.name for f in factories]
         assert len(names) == len(set(names)), "Duplicate technique names"
@@ -574,26 +574,26 @@ class TestBuildScenarioTechniqueFactories:
 
         The config itself is resolved lazily at create()-time.
         """
-        by_name = {f.name: f for f in build_scenario_technique_factories()}
+        by_name = {f.name: f for f in build_technique_factories()}
         assert by_name["role_play"].uses_adversarial is True
         assert by_name["tap"].uses_adversarial is True
         assert by_name["role_play"]._adversarial_chat is None
         assert by_name["tap"]._adversarial_chat is None
 
     def test_non_adversarial_factories_have_no_adversarial_config(self):
-        by_name = {f.name: f for f in build_scenario_technique_factories()}
+        by_name = {f.name: f for f in build_technique_factories()}
         assert by_name["many_shot"]._adversarial_chat is None
 
     def test_crescendo_simulated_has_seed_technique(self):
-        by_name = {f.name: f for f in build_scenario_technique_factories()}
+        by_name = {f.name: f for f in build_technique_factories()}
         assert by_name["crescendo_simulated"].seed_technique is not None
 
     def test_crescendo_simulated_has_adversarial_chat(self):
-        by_name = {f.name: f for f in build_scenario_technique_factories()}
+        by_name = {f.name: f for f in build_technique_factories()}
         assert by_name["crescendo_simulated"].uses_adversarial is True
 
     def test_extra_kwargs_preserved_on_role_play(self):
-        by_name = {f.name: f for f in build_scenario_technique_factories()}
+        by_name = {f.name: f for f in build_technique_factories()}
         assert "role_play_definition_path" in (by_name["role_play"]._attack_kwargs or {})
 
 

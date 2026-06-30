@@ -36,7 +36,7 @@ from pyrit.prompt_target import (
     RoundRobinTarget,
 )
 from pyrit.registry import TargetRegistry
-from pyrit.setup.initializers.pyrit_initializer import PyRITInitializer
+from pyrit.setup.pyrit_initializer import PyRITInitializer
 
 logger = logging.getLogger(__name__)
 

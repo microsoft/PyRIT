@@ -168,8 +168,8 @@ The default implementation:
 
 Techniques are described by `AttackTechniqueFactory` instances rather than a separate spec
 dataclass.  The canonical catalog lives in
-`pyrit.setup.initializers.components.scenario_techniques` (`build_scenario_technique_factories()`)
-and is loaded into the registry by `ScenarioTechniqueInitializer`.
+`pyrit.setup.initializers.techniques` (`build_technique_factories()`)
+and is loaded into the registry by `TechniqueInitializer`.
 
 ```python
 from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
@@ -201,7 +201,7 @@ Key points:
 
 ```python
 registry = AttackTechniqueRegistry.get_registry_singleton()
-registry.register_from_factories(build_scenario_technique_factories())
+registry.register_from_factories(build_technique_factories())
 ```
 
 `register_from_factories` reads `factory.strategy_tags` to populate the per-entry tags used

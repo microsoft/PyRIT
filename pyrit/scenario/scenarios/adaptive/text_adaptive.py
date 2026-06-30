@@ -51,14 +51,12 @@ def _build_text_adaptive_strategy() -> type[ScenarioStrategy]:
     surface that so a stale entry in the exclusion list (or a renamed
     catalog entry) doesn't silently break the intended exclusion.
     """
-    # Local import: ``scenario_techniques`` imports ``pyrit.scenario.core``,
+    # Local import: ``techniques`` imports ``pyrit.scenario.core``,
     # which transitively re-imports this module, so a top-level import would
     # form a cycle during ``pyrit.scenario`` package initialization.
-    from pyrit.setup.initializers.components.scenario_techniques import (
-        build_scenario_technique_factories,
-    )
+    from pyrit.setup.initializers.techniques import build_technique_factories
 
-    all_factories = list(build_scenario_technique_factories())
+    all_factories = list(build_technique_factories())
     catalog_names = {factory.name for factory in all_factories}
     unmatched = _EXCLUDED_TECHNIQUES - catalog_names
     if unmatched:

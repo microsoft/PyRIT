@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-"""Tests for ScenarioTechniqueInitializer."""
+"""Tests for TechniqueInitializer and the technique group catalogs."""
 
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -9,22 +9,39 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from pyrit.common.path import EXECUTOR_RED_TEAM_PATH, EXECUTOR_SEED_PROMPT_PATH
-from pyrit.executor.attack import PromptSendingAttack, RedTeamingAttack
+from pyrit.executor.attack import PAIRAttack, PromptSendingAttack, RedTeamingAttack
 from pyrit.models import SeedPrompt
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry import TargetRegistry
 from pyrit.registry.object_registries.attack_technique_registry import AttackTechniqueRegistry
 from pyrit.score.true_false.self_ask_true_false_scorer import TrueFalseQuestionPaths
-from pyrit.setup.initializers import ScenarioTechniqueInitializer
-from pyrit.setup.initializers.components.scenario_techniques import (
-    build_scenario_technique_factories,
+from pyrit.setup.initializers import TechniqueInitializer
+from pyrit.setup.initializers.techniques import (
+    build_technique_factories,
+    core,
+    extra,
 )
+
+CORE_TECHNIQUE_NAMES: list[str] = [
+    "role_play",
+    "many_shot",
+    "tap",
+    "crescendo_simulated",
+    "red_teaming",
+    "context_compliance",
+    "crescendo_movie_director",
+    "crescendo_history_lecture",
+    "crescendo_journalist_interview",
+]
+
+EXTRA_TECHNIQUE_NAMES: list[str] = ["pair", "violent_durian"]
 
 PERSONA_CRESCENDO_TECHNIQUE_NAMES: list[str] = [
     "crescendo_movie_director",
     "crescendo_history_lecture",
     "crescendo_journalist_interview",
 ]
+
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -43,9 +60,8 @@ def reset_registries():
 
 @pytest.fixture
 def mock_adversarial_target():
-    """A mock adversarial target registered as 'adversarial_chat' so the initializer resolves cleanly."""
+    """A mock adversarial target registered as 'adversarial_chat' so resolution succeeds."""
     target = MagicMock(spec=PromptTarget)
-    # capabilities check inside get_default_adversarial_target requires multi_turn support
     target.capabilities.includes.return_value = True
     registry = TargetRegistry.get_registry_singleton()
     registry.register_instance(target, name="adversarial_chat")
@@ -53,90 +69,145 @@ def mock_adversarial_target():
 
 
 # ---------------------------------------------------------------------------
-# Initializer class metadata
+# Group catalogs (core.py / extra.py)
 # ---------------------------------------------------------------------------
 
 
-class TestScenarioTechniqueInitializerBasic:
-    """Tests for ScenarioTechniqueInitializer class metadata."""
+class TestCoreGroupCatalog:
+    """Tests for ``core.get_technique_factories()``."""
+
+    def test_returns_expected_names(self):
+        names = {f.name for f in core.get_technique_factories()}
+        assert names == set(CORE_TECHNIQUE_NAMES)
+
+    def test_factories_do_not_bake_in_group_tag(self):
+        """The ``core`` group tag is injected by build_technique_factories, not baked in here."""
+        for factory in core.get_technique_factories():
+            assert "core" not in factory.strategy_tags
+            assert "extra" not in factory.strategy_tags
+
+
+class TestExtraGroupCatalog:
+    """Tests for ``extra.get_technique_factories()``."""
+
+    def test_returns_expected_names(self):
+        names = {f.name for f in extra.get_technique_factories()}
+        assert names == set(EXTRA_TECHNIQUE_NAMES)
+
+    def test_factories_do_not_bake_in_group_tag(self):
+        for factory in extra.get_technique_factories():
+            assert "extra" not in factory.strategy_tags
+            assert "core" not in factory.strategy_tags
+
+    def test_violent_durian_has_max_turns_three(self):
+        factory = next(f for f in extra.get_technique_factories() if f.name == "violent_durian")
+        assert factory._attack_kwargs == {"max_turns": 3}
+
+    def test_pair_uses_pair_attack(self):
+        factory = next(f for f in extra.get_technique_factories() if f.name == "pair")
+        assert factory.attack_class is PAIRAttack
+
+
+# ---------------------------------------------------------------------------
+# build_technique_factories (the protocol aggregator)
+# ---------------------------------------------------------------------------
+
+
+class TestBuildTechniqueFactories:
+    """Tests for the group-selection and tag-injection behavior."""
+
+    def test_core_group_injects_core_tag(self):
+        factories = build_technique_factories(groups=["core"])
+        assert {f.name for f in factories} == set(CORE_TECHNIQUE_NAMES)
+        for factory in factories:
+            assert "core" in factory.strategy_tags
+
+    def test_extra_group_injects_extra_tag(self):
+        factories = build_technique_factories(groups=["extra"])
+        assert {f.name for f in factories} == set(EXTRA_TECHNIQUE_NAMES)
+        for factory in factories:
+            assert "extra" in factory.strategy_tags
+
+    def test_default_returns_all_groups(self):
+        names = {f.name for f in build_technique_factories()}
+        assert names == set(CORE_TECHNIQUE_NAMES) | set(EXTRA_TECHNIQUE_NAMES)
+
+    def test_unknown_group_raises(self):
+        with pytest.raises(ValueError, match="Unknown technique group"):
+            build_technique_factories(groups=["does_not_exist"])
+
+    def test_factory_names_are_unique(self):
+        names = [f.name for f in build_technique_factories()]
+        assert len(names) == len(set(names))
+
+
+# ---------------------------------------------------------------------------
+# TechniqueInitializer class metadata
+# ---------------------------------------------------------------------------
+
+
+class TestTechniqueInitializerBasic:
+    """Tests for TechniqueInitializer class metadata."""
 
     def test_can_be_created(self):
-        init = ScenarioTechniqueInitializer()
-        assert init is not None
+        assert TechniqueInitializer() is not None
 
     def test_required_env_vars_is_empty(self):
-        init = ScenarioTechniqueInitializer()
-        assert init.required_env_vars == []
+        assert TechniqueInitializer().required_env_vars == []
 
-    def test_description_from_docstring(self):
-        init = ScenarioTechniqueInitializer()
-        assert isinstance(init.description, str)
-        assert "persona-driven crescendo" in init.description
+    def test_description_is_nonempty_string(self):
+        description = TechniqueInitializer().description
+        assert isinstance(description, str)
+        assert description
+
+    def test_tags_parameter_defaults_to_core(self):
+        params = {p.name: p for p in TechniqueInitializer().supported_parameters}
+        assert "tags" in params
+        assert params["tags"].default == ["core"]
 
 
 # ---------------------------------------------------------------------------
-# Factory construction
+# Persona-driven crescendo factories (a subset of the core group)
 # ---------------------------------------------------------------------------
 
 
 class TestPersonaCrescendoFactories:
-    """Tests for the persona-driven crescendo entries in the canonical factory list."""
+    """Tests for the persona-driven crescendo entries in the core catalog."""
 
     @staticmethod
-    def _persona_factories(adversarial_target):
-        """Build the canonical catalog and pluck out the persona variants."""
-        all_factories = build_scenario_technique_factories()
+    def _persona_factories():
+        all_factories = build_technique_factories(groups=["core"])
         return [f for f in all_factories if f.name in PERSONA_CRESCENDO_TECHNIQUE_NAMES]
 
-    def test_returns_three_factories(self, mock_adversarial_target):
-        factories = self._persona_factories(mock_adversarial_target)
-        assert len(factories) == 3
+    def test_returns_three_factories(self):
+        assert len(self._persona_factories()) == 3
 
-    def test_names_are_persona_variants(self, mock_adversarial_target):
-        factories = self._persona_factories(mock_adversarial_target)
-        names = {f.name for f in factories}
-        assert names == {
-            "crescendo_movie_director",
-            "crescendo_history_lecture",
-            "crescendo_journalist_interview",
-        }
-
-    def test_all_use_prompt_sending_attack(self, mock_adversarial_target):
-        factories = self._persona_factories(mock_adversarial_target)
-        for f in factories:
+    def test_all_use_prompt_sending_attack(self):
+        for f in self._persona_factories():
             assert f.attack_class is PromptSendingAttack
 
-    def test_all_have_seed_technique_with_simulated_conversation(self, mock_adversarial_target):
-        factories = self._persona_factories(mock_adversarial_target)
-        for f in factories:
+    def test_all_have_seed_technique_with_simulated_conversation(self):
+        for f in self._persona_factories():
             assert f.seed_technique is not None
             assert f.seed_technique.has_simulated_conversation
 
-    def test_all_tagged_core_single_turn(self, mock_adversarial_target):
-        factories = self._persona_factories(mock_adversarial_target)
-        for f in factories:
+    def test_all_tagged_core_single_turn(self):
+        for f in self._persona_factories():
             assert "core" in f.strategy_tags
             assert "single_turn" in f.strategy_tags
 
-    def test_seed_technique_num_turns_matches_canonical_default(self, mock_adversarial_target):
+    def test_seed_technique_num_turns_matches_canonical_default(self):
         """Persona variants share the canonical num_turns=3 of crescendo_simulated."""
-        factories = self._persona_factories(mock_adversarial_target)
-        for f in factories:
+        for f in self._persona_factories():
             sim = f.seed_technique.simulated_conversation_config
             assert sim is not None
             assert sim.num_turns == 3
 
-    def test_seed_technique_yaml_path_resolves_to_existing_file(self, mock_adversarial_target):
-        factories = self._persona_factories(mock_adversarial_target)
-        for f in factories:
+    def test_seed_technique_yaml_path_resolves_to_existing_file(self):
+        for f in self._persona_factories():
             sim = f.seed_technique.simulated_conversation_config
             assert sim is not None
             assert sim.adversarial_chat_system_prompt_path.exists()
-
-
-# ---------------------------------------------------------------------------
-# YAML schema and rendering
-# ---------------------------------------------------------------------------
 
 
 class TestPersonaCrescendoYamls:
@@ -177,56 +248,52 @@ class TestPersonaCrescendoYamls:
 # ---------------------------------------------------------------------------
 
 
-class TestScenarioTechniqueInitializerRegistration:
-    """Tests that initialize_async wires persona variants into the registry."""
+class TestTechniqueInitializerRegistration:
+    """Tests that initialize_async wires factories into the registry per the tags param."""
 
-    @pytest.mark.asyncio
-    async def test_registers_all_three_persona_techniques(self, mock_adversarial_target):
-        init = ScenarioTechniqueInitializer()
+    async def test_default_registers_only_core(self, mock_adversarial_target):
+        init = TechniqueInitializer()
         await init.initialize_async()
 
-        registry = AttackTechniqueRegistry.get_registry_singleton()
-        names = set(registry.get_names())
-        assert "crescendo_movie_director" in names
-        assert "crescendo_history_lecture" in names
-        assert "crescendo_journalist_interview" in names
+        names = set(AttackTechniqueRegistry.get_registry_singleton().get_names())
+        assert set(CORE_TECHNIQUE_NAMES) <= names
+        assert "pair" not in names
+        assert "violent_durian" not in names
 
-    @pytest.mark.asyncio
-    async def test_also_registers_core_techniques(self, mock_adversarial_target):
-        """Initializer also registers the core factories alongside persona variants."""
-        init = ScenarioTechniqueInitializer()
+    async def test_registered_core_factory_carries_core_tag(self, mock_adversarial_target):
+        init = TechniqueInitializer()
         await init.initialize_async()
 
-        registry = AttackTechniqueRegistry.get_registry_singleton()
-        names = set(registry.get_names())
-        # Core factories from build_scenario_technique_factories()
-        assert {"role_play", "many_shot", "tap", "crescendo_simulated"} <= names
+        factory = AttackTechniqueRegistry.get_registry_singleton().get_factories()["role_play"]
+        assert "core" in factory.strategy_tags
 
-    @pytest.mark.asyncio
-    async def test_persona_factories_have_adversarial_config(self, mock_adversarial_target):
-        """Each persona factory marks itself as adversarial (lazy-resolves a chat in create())."""
-        init = ScenarioTechniqueInitializer()
+    async def test_extra_tag_registers_extra_techniques(self, mock_adversarial_target):
+        init = TechniqueInitializer()
+        init.params = {"tags": ["extra"]}
         await init.initialize_async()
 
-        registry = AttackTechniqueRegistry.get_registry_singleton()
-        factories = registry.get_factories()
-        for name in PERSONA_CRESCENDO_TECHNIQUE_NAMES:
-            assert factories[name].uses_adversarial is True
+        names = set(AttackTechniqueRegistry.get_registry_singleton().get_names())
+        assert {"pair", "violent_durian"} <= names
 
-    @pytest.mark.asyncio
+    async def test_all_tag_registers_everything(self, mock_adversarial_target):
+        init = TechniqueInitializer()
+        init.params = {"tags": ["all"]}
+        await init.initialize_async()
+
+        names = set(AttackTechniqueRegistry.get_registry_singleton().get_names())
+        assert (set(CORE_TECHNIQUE_NAMES) | set(EXTRA_TECHNIQUE_NAMES)) <= names
+
     async def test_persona_factories_carry_seed_technique(self, mock_adversarial_target):
-        init = ScenarioTechniqueInitializer()
+        init = TechniqueInitializer()
         await init.initialize_async()
 
-        registry = AttackTechniqueRegistry.get_registry_singleton()
-        factories = registry.get_factories()
+        factories = AttackTechniqueRegistry.get_registry_singleton().get_factories()
         for name in PERSONA_CRESCENDO_TECHNIQUE_NAMES:
             assert factories[name].seed_technique is not None
 
-    @pytest.mark.asyncio
     async def test_idempotent(self, mock_adversarial_target):
         """Calling initialize_async twice does not duplicate or overwrite entries."""
-        init = ScenarioTechniqueInitializer()
+        init = TechniqueInitializer()
         await init.initialize_async()
 
         registry = AttackTechniqueRegistry.get_registry_singleton()
@@ -238,10 +305,8 @@ class TestScenarioTechniqueInitializerRegistration:
         second_factory = registry.get_factories()["crescendo_movie_director"]
 
         assert first_names == second_names
-        # Per-name idempotency: existing factory is preserved.
         assert first_factory is second_factory
 
-    @pytest.mark.asyncio
     async def test_falls_back_to_default_target_when_registry_empty(self):
         """With no 'adversarial_chat' in TargetRegistry, lazy resolution at create()-time
         falls back to OpenAIChatTarget(temperature=1.2).
@@ -251,13 +316,11 @@ class TestScenarioTechniqueInitializerRegistration:
             "pyrit.scenario.core.scenario_target_defaults.OpenAIChatTarget",
             return_value=fallback_target,
         ) as mock_openai:
-            init = ScenarioTechniqueInitializer()
+            init = TechniqueInitializer()
             await init.initialize_async()
 
-            # Construction is now decoupled from adversarial resolution.
             mock_openai.assert_not_called()
 
-            # Trigger the lazy fallback path explicitly.
             registry = AttackTechniqueRegistry.get_registry_singleton()
             factories = registry.get_factories()
             for name in PERSONA_CRESCENDO_TECHNIQUE_NAMES:
@@ -268,32 +331,35 @@ class TestScenarioTechniqueInitializerRegistration:
 
 
 # ---------------------------------------------------------------------------
-# Violent Durian (opt-in technique in the catalog)
+# Violent Durian (opt-in extra technique)
 # ---------------------------------------------------------------------------
 
 
 class TestViolentDurianTechnique:
-    """Tests for the opt-in violent_durian entry in the canonical catalog."""
+    """Tests for the opt-in violent_durian entry in the extra catalog."""
 
     @staticmethod
     def _violent_durian_factory():
-        return next(f for f in build_scenario_technique_factories() if f.name == "violent_durian")
+        return next(f for f in build_technique_factories(groups=["extra"]) if f.name == "violent_durian")
 
-    def test_in_catalog(self):
-        names = {f.name for f in build_scenario_technique_factories()}
+    def test_in_extra_catalog(self):
+        names = {f.name for f in build_technique_factories(groups=["extra"])}
         assert "violent_durian" in names
 
-    def test_not_tagged_core_or_default(self):
-        """Tagged multi_turn only so it is never selected by core/default scenario aggregates."""
+    def test_tagged_extra_not_core_or_default(self):
         factory = self._violent_durian_factory()
         assert "core" not in factory.strategy_tags
         assert "default" not in factory.strategy_tags
-        assert factory.strategy_tags == ["multi_turn"]
+        assert set(factory.strategy_tags) == {"multi_turn", "extra"}
 
     def test_uses_red_teaming_attack_with_adversarial(self):
         factory = self._violent_durian_factory()
         assert factory.attack_class is RedTeamingAttack
         assert factory.uses_adversarial is True
+
+    def test_has_max_turns_three(self):
+        factory = self._violent_durian_factory()
+        assert factory._attack_kwargs == {"max_turns": 3}
 
     def test_data_paths_resolve_to_files(self):
         assert (EXECUTOR_RED_TEAM_PATH / "violent_durian.yaml").exists()
@@ -309,13 +375,12 @@ class TestViolentDurianTechnique:
     def test_criminal_persona_scorer_yaml_resolves(self):
         assert TrueFalseQuestionPaths.CRIMINAL_PERSONA.value.exists()
 
-    @pytest.mark.asyncio
-    async def test_registered_by_initializer(self, mock_adversarial_target):
-        init = ScenarioTechniqueInitializer()
+    async def test_registered_when_extra_selected(self, mock_adversarial_target):
+        init = TechniqueInitializer()
+        init.params = {"tags": ["extra"]}
         await init.initialize_async()
 
-        registry = AttackTechniqueRegistry.get_registry_singleton()
-        assert "violent_durian" in set(registry.get_names())
+        assert "violent_durian" in set(AttackTechniqueRegistry.get_registry_singleton().get_names())
 
 
 # ---------------------------------------------------------------------------
@@ -323,7 +388,7 @@ class TestViolentDurianTechnique:
 # ---------------------------------------------------------------------------
 
 
-class TestScenarioTechniqueInitializerDiscovery:
+class TestTechniqueInitializerDiscovery:
     """Tests that the initializer is auto-discovered by InitializerRegistry."""
 
     def test_initializer_is_discovered(self):
@@ -331,4 +396,4 @@ class TestScenarioTechniqueInitializerDiscovery:
 
         registry = InitializerRegistry()
         names = set(registry.get_names())
-        assert "scenario_technique" in names
+        assert "technique" in names

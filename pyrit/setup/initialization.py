@@ -18,7 +18,7 @@ from pyrit.memory import (
 )
 
 if TYPE_CHECKING:
-    from pyrit.setup.initializers.pyrit_initializer import PyRITInitializer
+    from pyrit.setup.pyrit_initializer import PyRITInitializer
 
 logger = logging.getLogger(__name__)
 
@@ -114,10 +114,10 @@ def _load_initializers_from_scripts(*, script_paths: Sequence[str | pathlib.Path
         ValueError: If a script path is not a Python file or doesn't contain valid initializers.
 
     Example:
-        Script content should be a subclass of PyRITInitializer e.g. like SimpleInitializer
+        Script content should be a subclass of PyRITInitializer e.g. like TargetInitializer
     """
     # Import here to avoid circular imports
-    from pyrit.setup.initializers.pyrit_initializer import PyRITInitializer
+    from pyrit.setup.pyrit_initializer import PyRITInitializer
 
     loaded_initializers = []
 
@@ -262,7 +262,7 @@ async def _execute_initializers_async(*, initializers: Sequence["PyRITInitialize
         Exception: If an initializer's validation or initialization fails.
     """
     # Import here to avoid circular imports
-    from pyrit.setup.initializers.pyrit_initializer import PyRITInitializer
+    from pyrit.setup.pyrit_initializer import PyRITInitializer
 
     # Validate all initializers first
     for initializer in initializers:

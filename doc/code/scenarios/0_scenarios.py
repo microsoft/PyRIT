@@ -104,10 +104,10 @@ from pyrit.scenario import (
 )
 from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
 from pyrit.setup import initialize_pyrit_async
-from pyrit.setup.initializers.components import ScenarioTechniqueInitializer
+from pyrit.setup.initializers.techniques import TechniqueInitializer
 
 await initialize_pyrit_async(memory_db_type="InMemory")  # type: ignore [top-level-await]
-await ScenarioTechniqueInitializer().initialize_async()  # type: ignore [top-level-await]
+await TechniqueInitializer().initialize_async()  # type: ignore [top-level-await]
 
 
 class MyStrategy(ScenarioStrategy):

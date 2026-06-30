@@ -22,7 +22,7 @@ from pyrit.models.parameter import Parameter
 def __getattr__(name: str) -> type:
     if name == "InitializerParameter":
         print_deprecation_message(
-            old_item="pyrit.setup.initializers.pyrit_initializer.InitializerParameter",
+            old_item="pyrit.setup.pyrit_initializer.InitializerParameter",
             new_item=Parameter,
             removed_in="0.16.0",
         )
@@ -331,7 +331,7 @@ class PyRITInitializer(ABC):
         Get information about this initializer class.
 
         This is a class method so it can be called without instantiating the class:
-        await SimpleInitializer.get_info_async() instead of SimpleInitializer().get_info_async()
+        await TargetInitializer.get_info_async() instead of TargetInitializer().get_info_async()
 
         Returns:
             dict[str, Any]: Dictionary containing name, description, class information, and default values.

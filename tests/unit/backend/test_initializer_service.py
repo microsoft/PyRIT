@@ -299,7 +299,7 @@ class TestInitializerRoutes:
 
 
 _SAMPLE_SCRIPT = """
-from pyrit.setup.initializers.pyrit_initializer import PyRITInitializer
+from pyrit.setup.pyrit_initializer import PyRITInitializer
 
 class MyCustomInitializer(PyRITInitializer):
     \"\"\"A custom test initializer.\"\"\"

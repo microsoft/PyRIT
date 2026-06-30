@@ -14,7 +14,7 @@ instantiation failures surface loudly here at startup rather than later.
 import logging
 
 from pyrit.registry import ScenarioRegistry
-from pyrit.setup.initializers.pyrit_initializer import PyRITInitializer
+from pyrit.setup.pyrit_initializer import PyRITInitializer
 
 logger = logging.getLogger(__name__)
 

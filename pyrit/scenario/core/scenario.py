@@ -323,8 +323,8 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
 
         The base implementation returns every factory currently registered in
         the ``AttackTechniqueRegistry`` singleton. The canonical scenario
-        techniques are populated by ``ScenarioTechniqueInitializer``
-        (``pyrit.setup.initializers.components.scenario_techniques``); ensure
+        techniques are populated by ``TechniqueInitializer``
+        (``pyrit.setup.initializers.techniques``); ensure
         that initializer has run before scenarios use this method.
         Subclasses may override to add, remove, or replace factories.
 
@@ -373,7 +373,7 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
 
     def _get_default_objective_scorer(self) -> TrueFalseScorer:
         # Deferred import to avoid circular dependency.
-        from pyrit.setup.initializers.components.scorers import ScorerInitializerTags
+        from pyrit.setup.initializers.scorers import ScorerInitializerTags
 
         # first check if the registry has a default objective scorer
         # if available either itself, or its chat target will be used
