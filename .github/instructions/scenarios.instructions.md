@@ -6,6 +6,8 @@ applyTo: "pyrit/scenario/**"
 
 Scenarios orchestrate multi-attack security testing campaigns. Each scenario groups `AtomicAttack` instances and executes them sequentially against a target.
 
+**Does not own** (see [framework.md](../../doc/code/framework.md)): the per-objective conversation logic. Branching, turn-by-turn adaptation, and scoring-based decisions belong to the attack — a scenario selects and packages existing attack techniques and owns parallelism/resiliency, not new attack algorithms or datasets. Flag such bleed in review.
+
 ## Base Class Contract
 
 All scenarios inherit from `Scenario` (ABC) and must:
