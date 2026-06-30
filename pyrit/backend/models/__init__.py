@@ -7,6 +7,7 @@ Backend models package.
 Pydantic models for API requests and responses.
 """
 
+from pyrit.backend.models._media import DEFAULT_MEDIA_EXTENSIONS
 from pyrit.backend.models.attacks import (
     AddMessageRequest,
     AddMessageResponse,
@@ -66,6 +67,8 @@ from pyrit.backend.models.targets import (
 )
 
 __all__ = [
+    # Media
+    "DEFAULT_MEDIA_EXTENSIONS",
     # Attacks
     "AddMessageRequest",
     "AddMessageResponse",

@@ -17,15 +17,21 @@ import logging
 import sys
 from argparse import ArgumentParser, Namespace, RawDescriptionHelpFormatter
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any, get_args, get_origin
 
 from pyrit.cli._cli_args import (
     ARG_HELP,
     _parse_initializer_arg,
+    build_parameters_from_api,
     non_negative_int,
     positive_int,
     validate_log_level_argparse,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from pyrit.models.parameter import Parameter
 
 _TERMINAL_STATUSES = {"COMPLETED", "FAILED", "CANCELLED"}
 
@@ -248,52 +254,73 @@ def _build_base_parser(*, add_help: bool = True) -> ArgumentParser:
 _SCENARIO_DEST_PREFIX = "scenario__"
 
 
-_SCALAR_TYPE_COERCERS: dict[str, Any] = {
-    "int": int,
-    "float": float,
-    "bool": lambda v: str(v).strip().lower() in ("1", "true", "yes", "y", "on"),
-    "str": str,
-}
-
-
-def _scenario_param_kwargs(*, param: dict[str, Any]) -> dict[str, Any]:
+def _scenario_value_coercer(*, name: str, annotation: Any) -> Callable[[Any], Any] | None:
     """
-    Build argparse ``add_argument`` kwargs for a scenario-declared parameter dict.
+    Build an argparse ``type=`` callable that coerces a single CLI token through
+    ``Parameter.coerce_value`` — the same coercion the shell and backend use.
 
-    Uses ``param_type``, ``is_list`` and ``choices`` from the catalog payload
-    so list params accept ``nargs='+'`` and scalar params get client-side
-    type coercion and choice validation.
+    Returns ``None`` when no coercion is needed (a plain ``str`` or an untyped
+    passthrough). Coercion/validation failures (including ``Literal`` choice
+    membership) are re-raised as ``argparse.ArgumentTypeError`` so argparse renders
+    them as a clean CLI error.
 
     Args:
-        param: Single entry from ``RegisteredScenario.supported_parameters``.
+        name: Scenario parameter name (used for the flag in error messages).
+        annotation: Scalar element type to coerce to (e.g. ``int``, ``bool``, or
+            ``Literal[...]`` for choices), or ``None`` / ``str`` for passthrough.
+
+    Returns:
+        Callable[[Any], Any] | None: The coercer, or ``None`` for passthrough.
+    """
+    if annotation is None or annotation is str:
+        return None
+
+    from pyrit.models.parameter import Parameter
+
+    element_param = Parameter(name=name, description="", param_type=annotation)
+
+    def _coerce(raw: Any) -> Any:
+        try:
+            return element_param.coerce_value(raw)
+        except (ValueError, TypeError) as exc:
+            raise argparse.ArgumentTypeError(f"--{name.replace('_', '-')}: invalid value {raw!r} ({exc})") from exc
+
+    return _coerce
+
+
+def _scenario_param_kwargs(*, parameter: Parameter) -> dict[str, Any]:
+    """
+    Build argparse ``add_argument`` kwargs for a scenario-declared ``Parameter``.
+
+    List params get ``nargs='+'`` and coerce per element; scalar params coerce the
+    single token. All coercion — including ``Literal`` choice membership — routes
+    through ``Parameter.coerce_value`` so scan, the shell, and the backend agree on
+    accepted values.
+
+    Args:
+        parameter: Scenario parameter built from the catalog payload via
+            ``build_parameters_from_api``.
 
     Returns:
         dict[str, Any]: kwargs ready to pass to ``ArgumentParser.add_argument``.
     """
     kwargs: dict[str, Any] = {
-        "dest": f"{_SCENARIO_DEST_PREFIX}{param.get('name', '')}",
+        "dest": f"{_SCENARIO_DEST_PREFIX}{parameter.name}",
         "default": argparse.SUPPRESS,
-        "help": param.get("description", ""),
+        "help": parameter.description,
     }
-    if param.get("is_list"):
+    param_type = parameter.param_type
+    element_type: Any
+    if get_origin(param_type) is list:
+        type_args = get_args(param_type)
+        element_type = type_args[0] if type_args else str
         kwargs["nargs"] = "+"
     else:
-        coercer = _SCALAR_TYPE_COERCERS.get(param.get("param_type", ""))
-        if coercer is not None and coercer is not str:
-            param_name = param.get("name", "")
+        element_type = param_type
 
-            def _typed(raw: str) -> Any:
-                try:
-                    return coercer(raw)
-                except (ValueError, TypeError) as exc:
-                    raise argparse.ArgumentTypeError(
-                        f"--{param_name.replace('_', '-')}: invalid value {raw!r} ({exc})"
-                    ) from exc
-
-            kwargs["type"] = _typed
-    choices = param.get("choices")
-    if choices:
-        kwargs["choices"] = list(choices)
+    coercer = _scenario_value_coercer(name=parameter.name, annotation=element_type)
+    if coercer is not None:
+        kwargs["type"] = coercer
     return kwargs
 
 
@@ -301,17 +328,20 @@ def _add_scenario_params_from_api(*, parser: ArgumentParser, params: list[dict[s
     """
     Add scenario-declared parameters (from the API response) as CLI flags.
 
+    Catalog payloads are converted to ``Parameter`` objects via
+    ``build_parameters_from_api`` (shared with the shell) so type coercion and
+    choice handling stay consistent across entry points.
+
     Args:
         parser: Parser to extend.
         params: List of parameter dicts from ``GET /api/scenarios/catalog/{name}``.
     """
     seen_flags: set[str] = set(parser._option_string_actions.keys())
-    for p in params:
-        name = p.get("name", "")
-        flag = f"--{name.replace('_', '-')}"
+    for parameter in build_parameters_from_api(api_params=params) or []:
+        flag = f"--{parameter.name.replace('_', '-')}"
         if flag in seen_flags:
             continue
-        parser.add_argument(flag, **_scenario_param_kwargs(param=p))
+        parser.add_argument(flag, **_scenario_param_kwargs(parameter=parameter))
         seen_flags.add(flag)
 
 

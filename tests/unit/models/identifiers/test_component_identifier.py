@@ -1395,7 +1395,7 @@ class TestComponentIdentifierWithEvalHash:
 class TestComponentIdentifierReservedKeyCollision:
     @pytest.mark.parametrize(
         "reserved",
-        ["class_name", "class_module", "hash", "pyrit_version", "eval_hash", "children", "params"],
+        ["class_name", "class_module", "hash", "pyrit_version", "eval_hash", "children", "params", "attributes"],
     )
     def test_reserved_param_name_rejected_in_normalized_shape(self, reserved):
         with pytest.raises(ValidationError, match="reserved names"):
@@ -1487,3 +1487,79 @@ class TestComponentIdentifierHashEquality:
         b = ComponentIdentifier(class_name="Foo", class_module="m", params={"a": 1})
         s = {a, b}
         assert len(s) == 1
+
+
+class TestComponentIdentifierAttributes:
+    """The ``attributes`` bucket: hashed identity state, excluded from the eval hash, never a constructor input."""
+
+    def test_attribute_is_part_of_identity_hash(self):
+        """Adding an attribute changes the content hash (it is part of identity)."""
+        base = ComponentIdentifier(class_name="Foo", class_module="m", params={"x": 1})
+        with_attr = ComponentIdentifier(
+            class_name="Foo", class_module="m", params={"x": 1}, attributes={"model_version": "v2"}
+        )
+        assert base.hash != with_attr.hash
+
+    def test_different_attributes_produce_different_hashes(self):
+        a = ComponentIdentifier(class_name="Foo", class_module="m", attributes={"model_version": "v1"})
+        b = ComponentIdentifier(class_name="Foo", class_module="m", attributes={"model_version": "v2"})
+        assert a.hash != b.hash
+
+    def test_empty_attributes_hash_matches_no_attributes(self):
+        base = ComponentIdentifier(class_name="Foo", class_module="m", params={"x": 1})
+        empty = ComponentIdentifier(class_name="Foo", class_module="m", params={"x": 1}, attributes={})
+        assert base.hash == empty.hash
+
+    def test_none_valued_attribute_excluded_from_hash(self):
+        """A None-valued attribute does not change the hash (backward-compatible additions)."""
+        base = ComponentIdentifier(class_name="Foo", class_module="m", params={"x": 1})
+        with_none = ComponentIdentifier(class_name="Foo", class_module="m", params={"x": 1}, attributes={"opt": None})
+        assert base.hash == with_none.hash
+
+    def test_attribute_excluded_from_eval_hash(self):
+        """Attributes feed the identity hash but not the eval hash."""
+        no_attr = ComponentIdentifier(class_name="Foo", class_module="m", params={"x": 1})
+        with_attr = ComponentIdentifier(
+            class_name="Foo", class_module="m", params={"x": 1}, attributes={"model_version": "v2"}
+        )
+        assert _build_eval_dict(no_attr, child_eval_rules={}) == _build_eval_dict(with_attr, child_eval_rules={})
+
+    def test_attribute_distinct_from_same_named_param(self):
+        """An ``attributes`` entry and a same-named ``params`` entry are not interchangeable."""
+        as_param = ComponentIdentifier(class_name="Foo", class_module="m", params={"version": "v2"})
+        as_attr = ComponentIdentifier(class_name="Foo", class_module="m", attributes={"version": "v2"})
+        assert as_param.hash != as_attr.hash
+
+    def test_serialize_nests_attributes_under_key(self):
+        ident = ComponentIdentifier(class_name="Foo", class_module="m", attributes={"region": "eastus"})
+        dumped = ident.model_dump()
+        assert dumped["attributes"] == {"region": "eastus"}
+
+    def test_serialize_omits_attributes_key_when_empty(self):
+        ident = ComponentIdentifier(class_name="Foo", class_module="m", params={"x": 1})
+        assert "attributes" not in ident.model_dump()
+
+    def test_roundtrip_preserves_attributes_and_hash(self):
+        ident = ComponentIdentifier(
+            class_name="Foo", class_module="m", params={"x": 1}, attributes={"region": "eastus"}
+        )
+        rebuilt = ComponentIdentifier.model_validate(ident.model_dump())
+        assert rebuilt.attributes == {"region": "eastus"}
+        assert rebuilt.hash == ident.hash
+
+    def test_of_factory_drops_none_attributes(self):
+        class _Dummy:
+            pass
+
+        ident = ComponentIdentifier.of(_Dummy(), attributes={"region": "eastus", "drop": None})
+        assert ident.attributes == {"region": "eastus"}
+
+    def test_with_eval_hash_preserves_attributes(self):
+        ident = ComponentIdentifier(class_name="Foo", class_module="m", attributes={"region": "eastus"})
+        updated = ident.with_eval_hash("abc123")
+        assert updated.attributes == {"region": "eastus"}
+        assert updated.hash == ident.hash
+
+    def test_repr_includes_attributes(self):
+        ident = ComponentIdentifier(class_name="Foo", class_module="m", attributes={"region": "eastus"})
+        assert "attributes=(region='eastus')" in repr(ident)

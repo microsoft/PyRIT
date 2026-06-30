@@ -5,7 +5,7 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from pyrit.common import Parameter, apply_defaults
+from pyrit.common import apply_defaults
 from pyrit.common.deprecation import print_deprecation_message  # Deprecated. Will be removed in 0.16.0.
 from pyrit.common.path import (
     EXECUTOR_RED_TEAM_PATH,
@@ -21,7 +21,7 @@ from pyrit.executor.attack.core.attack_config import (
     AttackAdversarialConfig,
     AttackScoringConfig,
 )
-from pyrit.models import SeedAttackGroup
+from pyrit.models import Parameter, SeedAttackGroup
 from pyrit.prompt_target import PromptTarget
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique

@@ -37,7 +37,7 @@ def _build_cyber_strategy() -> type[ScenarioStrategy]:
     Returns:
         type[ScenarioStrategy]: The dynamically generated strategy enum class.
     """
-    from pyrit.registry.object_registries.attack_technique_registry import AttackTechniqueRegistry
+    from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
     from pyrit.registry.tag_query import TagQuery
 
     registry = AttackTechniqueRegistry.get_registry_singleton()

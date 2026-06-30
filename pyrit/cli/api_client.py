@@ -153,7 +153,7 @@ class PyRITApiClient:
             json={"name": name, "script_content": script_content},
         )
         if resp.status_code == 403:
-            detail = resp.json().get("detail", "Custom initializer operations are disabled on the server.")
+            detail = self._response_detail(resp) or "Custom initializer operations are disabled on the server."
             raise ServerNotAvailableError(detail)
         self._raise_for_status(resp)
         return resp.json()
@@ -309,6 +309,39 @@ class PyRITApiClient:
         return resp.json()
 
     @staticmethod
+    def _response_detail(resp: Any) -> str | None:
+        """
+        Extract a user-facing error detail from a response body.
+
+        Prefer FastAPI-style JSON ``detail`` values, then fall back to a plain
+        text response body. Non-string mock/proxy attributes are ignored so
+        callers can still use their default error messages.
+
+        Returns:
+            str | None: Extracted detail text, or ``None`` if the body has no
+                usable error detail.
+        """
+        try:
+            payload = resp.json()
+        except Exception:
+            payload = None
+        if isinstance(payload, dict):
+            detail_value = payload.get("detail")
+            if isinstance(detail_value, str) and detail_value.strip():
+                return detail_value
+            if detail_value is not None:
+                return str(detail_value)
+
+        text = getattr(resp, "text", "")
+        if isinstance(text, bytes):
+            text = text.decode(errors="replace")
+        if isinstance(text, str):
+            text = text.strip()
+            if text:
+                return text
+        return None
+
+    @staticmethod
     def _raise_for_status(resp: Any) -> None:
         """
         Raise an HTTP error with the response body appended to the message.
@@ -327,22 +360,7 @@ class PyRITApiClient:
         try:
             resp.raise_for_status()
         except httpx.HTTPStatusError as exc:
-            detail: str | None = None
-            try:
-                payload = resp.json()
-            except Exception:
-                payload = None
-            if isinstance(payload, dict):
-                detail_value = payload.get("detail")
-                if isinstance(detail_value, str) and detail_value.strip():
-                    detail = detail_value
-                elif detail_value is not None:
-                    detail = str(detail_value)
-            if detail is None:
-                text = getattr(resp, "text", "") or ""
-                text = text.strip()
-                if text:
-                    detail = text
+            detail = PyRITApiClient._response_detail(resp)
             if detail is None:
                 raise
             message = f"{exc}: {detail}"

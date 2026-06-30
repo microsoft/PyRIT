@@ -15,6 +15,7 @@ from pyrit.models.identifiers import (
     SeedIdentifier,
     TargetIdentifier,
 )
+from pyrit.models.parameter import ComponentType
 
 
 def _target_identifier() -> ComponentIdentifier:
@@ -199,14 +200,13 @@ class TestConverterIdentifier:
             params={},
             children={
                 "converter_target": target_child,
-                "sub_converters": [sub_converter_child],
+                "sub_converter": sub_converter_child,
             },
         )
         cd = ConverterIdentifier.from_component_identifier(ci)
         assert isinstance(cd.converter_target, TargetIdentifier)
         assert cd.converter_target.endpoint == "https://obj"
-        assert isinstance(cd.sub_converters, list)
-        assert all(isinstance(c, ConverterIdentifier) for c in cd.sub_converters)
+        assert isinstance(cd.sub_converter, ConverterIdentifier)
         assert cd.hash == ci.hash
 
 
@@ -218,6 +218,61 @@ class TestScorerIdentifier:
         assert sd.scorer_type == "float_scale"
         assert isinstance(sd.prompt_target, TargetIdentifier)
         assert sd.prompt_target.endpoint == "https://c"
+
+
+class TestComponentType:
+    """Each leaf identifier self-reports its registry family; the base reports none."""
+
+    def test_base_is_not_buildable(self):
+        assert ComponentIdentifier.component_type is None
+
+    @pytest.mark.parametrize(
+        "identifier_type, expected",
+        [
+            (TargetIdentifier, ComponentType.TARGET),
+            (ConverterIdentifier, ComponentType.CONVERTER),
+            (ScorerIdentifier, ComponentType.SCORER),
+        ],
+    )
+    def test_leaf_component_type(self, identifier_type, expected):
+        assert identifier_type.component_type is expected
+
+    def test_converter_reference_args_map_to_target(self):
+        # converter_target (typed TargetIdentifier) and sub_converter (typed
+        # ConverterIdentifier) are both Param.Include buildable references; the
+        # Param.ClassAttr type lists are not.
+        assert ConverterIdentifier.get_reference_component_types() == {
+            "converter_target": ComponentType.TARGET,
+            "sub_converter": ComponentType.CONVERTER,
+        }
+
+    def test_base_identifier_has_no_reference_args(self):
+        assert ComponentIdentifier.get_reference_component_types() == {}
+
+
+class TestClassAttributeValues:
+    """``get_class_attribute_values`` reads Param.ClassAttr fields off a target class."""
+
+    def test_reads_converter_supported_types(self):
+        class _FakeConverter:
+            SUPPORTED_INPUT_TYPES = ["text"]
+            SUPPORTED_OUTPUT_TYPES = ["text", "image_path"]
+
+        values = ConverterIdentifier.get_class_attribute_values(_FakeConverter)
+        assert values == {
+            "supported_input_types": ["text"],
+            "supported_output_types": ["text", "image_path"],
+        }
+
+    def test_missing_attribute_maps_to_none(self):
+        class _NoTypes:
+            pass
+
+        values = ConverterIdentifier.get_class_attribute_values(_NoTypes)
+        assert values == {"supported_input_types": None, "supported_output_types": None}
+
+    def test_base_identifier_has_no_class_attributes(self):
+        assert ComponentIdentifier.get_class_attribute_values(object) == {}
 
 
 class TestDirectConstruction:

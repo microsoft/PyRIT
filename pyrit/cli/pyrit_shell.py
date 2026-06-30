@@ -15,6 +15,8 @@ import cmd
 import concurrent.futures
 import contextlib
 import logging
+import os
+import shlex
 import sys
 import threading
 from pathlib import Path
@@ -26,6 +28,38 @@ if TYPE_CHECKING:
     from collections.abc import Coroutine
 
 _T = TypeVar("_T")
+
+
+def _split_initializer_paths(arg: str) -> list[str]:
+    """
+    Split a command-line argument string into individual file paths.
+
+    Supports quoting paths that contain spaces. On Windows, backslashes are treated
+    as literal path separators (not escape characters) so that unquoted paths such as
+    ``C:\\Users\\me\\init.py`` are preserved; surrounding quotes are stripped from each
+    token. On POSIX systems, standard ``shlex`` parsing is used.
+
+    Args:
+        arg: The raw argument string passed to the ``add-initializer`` command.
+
+    Returns:
+        The list of individual file path strings parsed from ``arg``.
+
+    Raises:
+        ValueError: If the argument contains unbalanced quotes.
+    """
+    if os.name == "nt":
+        lexer = shlex.shlex(arg, posix=False)
+        lexer.whitespace_split = True
+        tokens = list(lexer)
+        return [_strip_surrounding_quotes(token) for token in tokens]
+    return shlex.split(arg)
+
+
+def _strip_surrounding_quotes(token: str) -> str:
+    if len(token) >= 2 and token[0] == token[-1] and token[0] in ("'", '"'):
+        return token[1:-1]
+    return token
 
 
 class PyRITShell(cmd.Cmd):
@@ -249,7 +283,13 @@ class PyRITShell(cmd.Cmd):
 
         from pyrit.cli.api_client import ServerNotAvailableError
 
-        for script_path_str in arg.split():
+        try:
+            script_path_strings = _split_initializer_paths(arg)
+        except ValueError as exc:
+            print(f"Error parsing initializer paths: {exc}")
+            return
+
+        for script_path_str in script_path_strings:
             script_path = Path(script_path_str).resolve()
             if not script_path.exists():
                 print(f"Error: File not found: {script_path}")

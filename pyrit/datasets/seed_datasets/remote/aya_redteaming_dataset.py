@@ -100,7 +100,7 @@ class _AyaRedteamingDataset(_RemoteDatasetLoader):
     @property
     @override
     def dataset_name(self) -> str:
-        """Return the dataset name."""
+        """The dataset name."""
         return "aya_redteaming"
 
     @override

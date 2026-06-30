@@ -634,6 +634,56 @@ class TestScenarioParamCoercion:
             parser.parse_args(["--max-turns", "not-an-int"])
         assert "invalid value" in capsys.readouterr().err
 
+    def test_bool_param_rejects_invalid_value_client_side(self, capsys):
+        from argparse import ArgumentParser
+
+        parser = ArgumentParser()
+        pyrit_scan._add_scenario_params_from_api(
+            parser=parser,
+            params=[{"name": "dry_run", "description": "...", "param_type": "bool"}],
+        )
+
+        parsed = parser.parse_args(["--dry-run", "false"])
+        assert parsed.scenario__dry_run is False
+
+        parsed = parser.parse_args(["--dry-run", "yes"])
+        assert parsed.scenario__dry_run is True
+
+        with pytest.raises(SystemExit):
+            parser.parse_args(["--dry-run", "maybe"])
+        assert "invalid value" in capsys.readouterr().err
+
+        # "on"/"y" are NOT part of the canonical boolean vocabulary the shell and
+        # backend accept (true/false, 1/0, yes/no); scan must reject them too so
+        # the same flag never behaves differently depending on the entry point.
+        with pytest.raises(SystemExit):
+            parser.parse_args(["--dry-run", "on"])
+        assert "invalid value" in capsys.readouterr().err
+
+    def test_list_int_param_coerces_each_value(self):
+        from argparse import ArgumentParser
+
+        parser = ArgumentParser()
+        pyrit_scan._add_scenario_params_from_api(
+            parser=parser,
+            params=[{"name": "sample_ids", "description": "...", "param_type": "list[int]", "is_list": True}],
+        )
+
+        parsed = parser.parse_args(["--sample-ids", "1", "2", "3"])
+        assert parsed.scenario__sample_ids == [1, 2, 3]
+
+    def test_typed_choices_are_compared_after_coercion(self):
+        from argparse import ArgumentParser
+
+        parser = ArgumentParser()
+        pyrit_scan._add_scenario_params_from_api(
+            parser=parser,
+            params=[{"name": "max_turns", "description": "...", "param_type": "int", "choices": ["1", "2"]}],
+        )
+
+        parsed = parser.parse_args(["--max-turns", "1"])
+        assert parsed.scenario__max_turns == 1
+
     def test_choices_validated_client_side(self, capsys):
         from argparse import ArgumentParser
 
@@ -647,7 +697,7 @@ class TestScenarioParamCoercion:
 
         with pytest.raises(SystemExit):
             parser.parse_args(["--mode", "warp"])
-        assert "invalid choice" in capsys.readouterr().err
+        assert "invalid value" in capsys.readouterr().err
 
 
 class TestMainExtraPaths:
@@ -809,6 +859,27 @@ class TestScenarioParamFlow:
         assert result == 0
         sent_request = client.start_scenario_run_async.call_args.kwargs["request"]
         assert sent_request["scenario_params"] == {"max_turns": "7"}
+
+    @patch("pyrit.cli._server_launcher.ServerLauncher.probe_health_async", new_callable=AsyncMock, return_value=True)
+    @patch("pyrit.cli.api_client.PyRITApiClient")
+    @patch("pyrit.cli._output.print_scenario_result_async", new_callable=AsyncMock)
+    @patch("pyrit.cli._output.print_scenario_run_progress")
+    def test_typed_scenario_flags_are_forwarded_as_typed_values(
+        self, _mock_prog, _mock_print, mock_client_class, _mock_probe
+    ):
+        client = self._build_mock_client(
+            supported_params=[
+                {"name": "dry_run", "description": "...", "param_type": "bool"},
+                {"name": "sample_ids", "description": "...", "param_type": "list[int]", "is_list": True},
+            ]
+        )
+        mock_client_class.return_value = client
+
+        result = pyrit_scan.main(["foo", "--target", "t", "--dry-run", "yes", "--sample-ids", "1", "2"])
+
+        assert result == 0
+        sent_request = client.start_scenario_run_async.call_args.kwargs["request"]
+        assert sent_request["scenario_params"] == {"dry_run": True, "sample_ids": [1, 2]}
 
     @patch("pyrit.cli._server_launcher.ServerLauncher.probe_health_async", new_callable=AsyncMock, return_value=True)
     @patch("pyrit.cli.api_client.PyRITApiClient")

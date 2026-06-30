@@ -157,7 +157,7 @@ class AzureContentFilterScorer(FloatScaleScorer):
 
     @property
     def _category_values(self) -> list[str]:
-        """Get the string values of the configured harm categories for API calls."""
+        """The string values of the configured harm categories for API calls."""
         return [category.value for category in self._harm_categories]
 
     def _build_identifier(self) -> ComponentIdentifier:

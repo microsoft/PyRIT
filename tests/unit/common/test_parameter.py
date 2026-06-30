@@ -1,115 +1,49 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-"""Unit tests for the unified Parameter dataclass."""
+"""The parameter contract moved to ``pyrit.models.parameter``.
+
+These tests pin the deprecation shims: importing ``Parameter`` (or the coercion
+helpers) from ``pyrit.common`` / ``pyrit.common.parameter`` must still resolve to
+the canonical object but emit a ``DeprecationWarning``.
+"""
+
+import importlib
 
 import pytest
 
-from pyrit.common import Parameter
+import pyrit.common
+import pyrit.common.parameter as common_parameter
+from pyrit.models.parameter import Parameter as CanonicalParameter
 
 
-class TestParameter:
-    """Tests for pyrit.common.Parameter."""
+def test_parameter_from_common_parameter_warns_and_resolves():
+    # Reload to reset the shim's one-time "already warned" state so the warning
+    # fires deterministically regardless of earlier imports in the session.
+    importlib.reload(common_parameter)
 
-    def test_minimal_construction(self) -> None:
-        """Parameter requires only name and description."""
-        p = Parameter(name="x", description="some param")
+    with pytest.warns(DeprecationWarning, match=r"pyrit\.models\.parameter\.Parameter"):
+        resolved = common_parameter.Parameter
 
-        assert p.name == "x"
-        assert p.description == "some param"
-        assert p.default is None
-        assert p.param_type is None
-        assert p.choices is None
-
-    def test_full_construction(self) -> None:
-        """All fields can be supplied."""
-        p = Parameter(
-            name="max_turns",
-            description="turn cap",
-            default=5,
-            param_type=int,
-            choices=(1, 5, 10),
-        )
-
-        assert p.default == 5
-        assert p.param_type is int
-        assert p.choices == (1, 5, 10)
-
-    def test_parameter_is_hashable(self) -> None:
-        """Frozen dataclass means Parameters can live in sets and dict keys."""
-        p = Parameter(name="x", description="d")
-
-        # If hash() raised, this set construction would fail.
-        assert {p} == {p}
-
-    def test_choices_list_is_normalized_to_tuple(self) -> None:
-        """A list passed for choices is coerced to a tuple to keep the dataclass hashable."""
-        p = Parameter(name="x", description="d", choices=["a", "b", "c"])
-
-        assert p.choices == ("a", "b", "c")
-        assert isinstance(p.choices, tuple)
-
-        # And the resulting Parameter is still hashable.
-        _ = hash(p)
-
-    def test_choices_none_stays_none(self) -> None:
-        """Default None choices is preserved (no spurious tuple coercion)."""
-        p = Parameter(name="x", description="d")
-
-        assert p.choices is None
-
-    def test_choices_coerced_to_int_param_type(self) -> None:
-        """Stringy int choices are coerced so argparse and runtime both see ints."""
-        p = Parameter(name="x", description="d", param_type=int, choices=("1", "5", "10"))
-
-        assert p.choices == (1, 5, 10)
-        assert all(isinstance(c, int) for c in p.choices)
-
-    def test_choices_coerced_to_bool_param_type(self) -> None:
-        p = Parameter(name="x", description="d", param_type=bool, choices=("true", "false"))
-
-        assert p.choices == (True, False)
-
-    def test_choices_uncoercible_left_unchanged(self) -> None:
-        """Uncoercible choices are left as-is so _validate_declarations can surface a clear error."""
-        p = Parameter(name="x", description="d", param_type=int, choices=("not-a-number", "5"))
-
-        # Original tuple preserved. The downstream validator emits the friendly
-        # "scenario X parameter Y choice Z is not coercible" error.
-        assert p.choices == ("not-a-number", "5")
-
-    def test_choices_skipped_for_none_param_type(self) -> None:
-        """When param_type is None (raw passthrough) choices stay as-declared."""
-        p = Parameter(name="x", description="d", choices=("a", "b"))
-
-        assert p.choices == ("a", "b")
-
-    def test_list_param_type_accepted(self) -> None:
-        """``param_type=list[str]`` is accepted (GenericAlias, not type)."""
-        p = Parameter(name="datasets", description="d", param_type=list[str])
-
-        assert p.param_type == list[str]
-
-    def test_parameter_is_immutable(self) -> None:
-        """Frozen dataclass rejects field assignment after construction."""
-        p = Parameter(name="x", description="d")
-
-        with pytest.raises((AttributeError, TypeError)):
-            p.name = "y"  # type: ignore[misc]
+    assert resolved is CanonicalParameter
 
 
-class TestCoerceValuePassthroughDeepcopy:
-    """``coerce_value`` deep-copies raw passthrough values for ``param_type=None``."""
+def test_parameter_from_common_package_warns_and_resolves():
+    importlib.reload(pyrit.common)
 
-    def test_param_type_none_returns_distinct_object(self) -> None:
-        """A mutable raw value must not share identity with the coerced result."""
-        from pyrit.common.parameter import coerce_value
+    with pytest.warns(DeprecationWarning, match=r"pyrit\.models\.Parameter"):
+        resolved = pyrit.common.Parameter
 
-        raw = ["a", "b"]
-        coerced = coerce_value(param=Parameter(name="opts", description="d"), raw_value=raw)
+    assert resolved is CanonicalParameter
 
-        assert coerced == raw
-        assert coerced is not raw
 
-        raw.append("c")
-        assert coerced == ["a", "b"]
+def test_common_parameter_unknown_name_raises_attribute_error():
+    importlib.reload(common_parameter)
+
+    missing_attr = "does_not_exist"
+    with pytest.raises(AttributeError):
+        getattr(common_parameter, missing_attr)
+
+
+def test_parameter_no_longer_in_common_all():
+    assert "Parameter" not in pyrit.common.__all__
