@@ -17,7 +17,7 @@ except ImportError:  # pragma: no cover - 3.10 only
 from pyrit.executor.attack.core import AttackExecutorResult
 from pyrit.memory import CentralMemory
 from pyrit.models import AttackOutcome, AttackResult, ComponentIdentifier
-from pyrit.scenario import DatasetConfiguration, ScenarioIdentifier, ScenarioResult
+from pyrit.scenario import DatasetAttackConfiguration, DatasetConfiguration, ScenarioIdentifier, ScenarioResult
 from pyrit.scenario.core import AtomicAttack, BaselineAttackPolicy, Scenario, ScenarioStrategy
 from pyrit.score import Scorer
 
@@ -1019,10 +1019,10 @@ class TestBaselineEmissionDeprecationRescue:
 
     @staticmethod
     def _dataset_config():
-        from pyrit.models import SeedGroup, SeedObjective
+        from pyrit.models import SeedAttackGroup, SeedObjective
 
-        return DatasetConfiguration(
-            seed_groups=[SeedGroup(seeds=[SeedObjective(value="x")])],
+        return DatasetAttackConfiguration(
+            seed_groups=[SeedAttackGroup(seeds=[SeedObjective(value="x")])],
         )
 
     async def test_rescue_emits_warning_and_injects_baseline(self, mock_objective_target):

@@ -14,6 +14,8 @@ from functools import lru_cache
 from pyrit.backend.models.common import PaginationInfo
 from pyrit.backend.models.initializers import (
     ListRegisteredInitializersResponse,
+)
+from pyrit.models.catalog.initializer import (
     RegisteredInitializer,
 )
 from pyrit.registry import InitializerMetadata, InitializerRegistry

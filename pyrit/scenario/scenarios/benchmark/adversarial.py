@@ -23,7 +23,7 @@ from pyrit.models.parameter import Parameter
 from pyrit.registry import AttackTechniqueRegistry, TargetRegistry
 from pyrit.registry.tag_query import TagQuery
 from pyrit.scenario.core.atomic_attack import AtomicAttack
-from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
+from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
 from pyrit.scenario.core.scenario import BaselineAttackPolicy, Scenario
 
 if TYPE_CHECKING:
@@ -187,7 +187,7 @@ class AdversarialBenchmark(Scenario):
             objective_scorer=self._objective_scorer,
             strategy_class=strategy_class,
             default_strategy=strategy_class("light"),
-            default_dataset_config=DatasetConfiguration(
+            default_dataset_config=DatasetAttackConfiguration(
                 dataset_names=["harmbench"],
                 max_dataset_size=8,
             ),
@@ -238,7 +238,7 @@ class AdversarialBenchmark(Scenario):
         selected_factories = [all_factories[s.value] for s in self._scenario_strategies if s.value in all_factories]
 
         scoring_config = AttackScoringConfig(objective_scorer=self._objective_scorer)
-        seed_groups_by_dataset = self._dataset_config.get_seed_attack_groups()
+        seed_groups_by_dataset = await self._dataset_config.get_attack_groups_by_dataset_async()
 
         atomic_attacks: list[AtomicAttack] = []
         for factory in selected_factories:

@@ -11,11 +11,12 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Literal, Union, get_args, get_origin
 
-from pydantic import BaseModel, ConfigDict, Field, computed_field, field_serializer
+from pydantic import BaseModel, ConfigDict, Field, computed_field, field_serializer, model_validator
 
 from pyrit.common.apply_defaults import REQUIRED_VALUE
 
 _SUPPORTED_SCALAR_TYPES: tuple[type, ...] = (str, int, float, bool)
+_SCALAR_NAME_TO_TYPE: dict[str, type] = {"int": int, "float": float, "bool": bool, "str": str}
 
 
 class ComponentType(str, Enum):
@@ -96,6 +97,36 @@ class Parameter(BaseModel):
         exclude=True,
         description="Where the parameter is consumed at build time; not serialized.",
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reconstruct_param_type_from_wire(cls, data: Any) -> Any:
+        """
+        Rebuild the live ``param_type`` when validating from a serialized payload.
+
+        Serialization drops the live ``param_type`` and projects it onto the
+        display fields ``type_name`` / ``choices`` / ``is_list``. A client that
+        deserializes the wire form (e.g. the CLI consuming the REST catalog) has
+        those fields but no live type; this reconstructs a coercion-capable
+        ``param_type`` from them so the round-tripped ``Parameter`` can still
+        coerce and validate values. In-process construction (which already
+        supplies a live ``param_type``, or supplies neither) is left untouched.
+
+        Returns:
+            Any: The input unchanged, or a copy with ``param_type`` reconstructed
+                from the serialized display fields.
+        """
+        if not isinstance(data, dict):
+            return data
+        if data.get("param_type") is not None or "type_name" not in data:
+            return data
+        data = dict(data)
+        data["param_type"] = _param_type_from_display(
+            type_name=data.get("type_name"),
+            choices=data.get("choices"),
+            is_list=bool(data.get("is_list")),
+        )
+        return data
 
     @computed_field
     @property
@@ -435,6 +466,37 @@ def _render_default_value(value: Any) -> str:
     if isinstance(value, Enum):
         return str(value.value)
     return str(value)
+
+
+def _param_type_from_display(*, type_name: str | None, choices: list[str] | None, is_list: bool) -> Any:
+    """
+    Reconstruct a coercion-capable ``param_type`` from serialized display fields.
+
+    Inverse of the ``type_name`` / ``choices`` / ``is_list`` projection: maps the
+    display base scalar name back to a concrete scalar type, rebuilds a
+    constrained set as ``Literal[...]`` from ``choices`` (typed by the base
+    scalar), and wraps the element type in ``list[...]`` for a list parameter.
+    The unconstrained ``"any"`` (or an absent name) maps back to ``None``.
+
+    Args:
+        type_name (str | None): Display type name (e.g. ``"int"``, ``"list[str]"``, ``"any"``).
+        choices (list[str] | None): Allowed values for a constrained scalar, or None.
+        is_list (bool): True when the parameter accepts a list of values.
+
+    Returns:
+        Any: The reconstructed ``param_type`` (a scalar type, a ``Literal[...]``, a
+            ``list[...]`` of either, or None for the unconstrained case).
+    """
+    if not type_name or type_name == "any":
+        return None
+    base_name = type_name.removeprefix("list[").rstrip("]") if is_list else type_name
+    base_type: type = _SCALAR_NAME_TO_TYPE.get(base_name, str)
+    if choices:
+        coerced = tuple(_coerce_simple_value(param_name="", annotation=base_type, raw_value=c) for c in choices)
+        element_type: Any = Literal[coerced]  # ty: ignore[invalid-type-form]
+    else:
+        element_type = base_type
+    return list[element_type] if is_list else element_type  # ty: ignore[invalid-type-form]
 
 
 def _render_type_name(param_type: Any) -> str:

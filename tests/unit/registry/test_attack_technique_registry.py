@@ -12,7 +12,7 @@ from pyrit.executor.attack.core.attack_config import AttackScoringConfig
 from pyrit.models import ComponentIdentifier
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry import TargetRegistry
-from pyrit.registry.object_registries.attack_technique_registry import AttackTechniqueRegistry
+from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
 from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory, ScorerOverridePolicy
 from pyrit.setup.initializers.components.scenario_techniques import build_scenario_technique_factories
 
@@ -51,10 +51,10 @@ class TestAttackTechniqueRegistrySingleton:
     """Tests for the singleton pattern."""
 
     def setup_method(self):
-        AttackTechniqueRegistry.reset_instance()
+        AttackTechniqueRegistry.reset_registry_singleton()
 
     def teardown_method(self):
-        AttackTechniqueRegistry.reset_instance()
+        AttackTechniqueRegistry.reset_registry_singleton()
 
     def test_get_registry_singleton_returns_same_instance(self):
         instance1 = AttackTechniqueRegistry.get_registry_singleton()
@@ -67,9 +67,9 @@ class TestAttackTechniqueRegistrySingleton:
 
         assert isinstance(instance, AttackTechniqueRegistry)
 
-    def test_reset_instance_clears_singleton(self):
+    def test_reset_registry_singleton_clears_singleton(self):
         instance1 = AttackTechniqueRegistry.get_registry_singleton()
-        AttackTechniqueRegistry.reset_instance()
+        AttackTechniqueRegistry.reset_registry_singleton()
         instance2 = AttackTechniqueRegistry.get_registry_singleton()
 
         assert instance1 is not instance2
@@ -79,19 +79,19 @@ class TestAttackTechniqueRegistryRegister:
     """Tests for registering technique factories."""
 
     def setup_method(self):
-        AttackTechniqueRegistry.reset_instance()
+        AttackTechniqueRegistry.reset_registry_singleton()
         self.registry = AttackTechniqueRegistry.get_registry_singleton()
 
     def teardown_method(self):
-        AttackTechniqueRegistry.reset_instance()
+        AttackTechniqueRegistry.reset_registry_singleton()
 
     def test_register_technique_stores_factory(self):
         factory = AttackTechniqueFactory(name="stub_attack", attack_class=_StubAttack)
 
         self.registry.register_technique(name="stub_attack", factory=factory)
 
-        assert "stub_attack" in self.registry
-        assert self.registry._registry_items["stub_attack"].instance is factory
+        assert "stub_attack" in self.registry.instances
+        assert self.registry.instances.get_entry("stub_attack").instance is factory
 
     def test_register_technique_with_tags(self):
         factory = AttackTechniqueFactory(name="stub_attack", attack_class=_StubAttack)
@@ -102,7 +102,7 @@ class TestAttackTechniqueRegistryRegister:
             tags=["single_turn", "encoding"],
         )
 
-        entries = self.registry.get_by_tag(tag="single_turn")
+        entries = self.registry.instances.get_by_tag(tag="single_turn")
         assert len(entries) == 1
         assert entries[0].name == "stub_attack"
 
@@ -117,25 +117,25 @@ class TestAttackTechniqueRegistryRegister:
         self.registry.register_technique(name="stub_5", factory=factory1)
         self.registry.register_technique(name="stub_20", factory=factory2)
 
-        assert len(self.registry) == 2
-        assert self.registry.get_names() == ["stub_20", "stub_5"]
+        assert len(self.registry.instances) == 2
+        assert self.registry.instances.get_names() == ["stub_20", "stub_5"]
 
 
 class TestAttackTechniqueRegistryMetadata:
     """Tests for metadata / list_metadata on the registry."""
 
     def setup_method(self):
-        AttackTechniqueRegistry.reset_instance()
+        AttackTechniqueRegistry.reset_registry_singleton()
         self.registry = AttackTechniqueRegistry.get_registry_singleton()
 
     def teardown_method(self):
-        AttackTechniqueRegistry.reset_instance()
+        AttackTechniqueRegistry.reset_registry_singleton()
 
     def test_build_metadata_returns_component_identifier(self):
         factory = AttackTechniqueFactory(name="stub", attack_class=_StubAttack)
         self.registry.register_technique(name="stub", factory=factory)
 
-        metadata = self.registry.list_metadata()
+        metadata = self.registry.instances.list_metadata()
 
         assert len(metadata) == 1
         assert isinstance(metadata[0], ComponentIdentifier)
@@ -145,35 +145,35 @@ class TestAttackTechniqueRegistryMetadata:
         factory = AttackTechniqueFactory(name="stub", attack_class=_StubAttack)
         self.registry.register_technique(name="stub", factory=factory)
 
-        metadata = self.registry.list_metadata()
+        metadata = self.registry.instances.list_metadata()
 
         assert metadata[0] == factory.get_identifier()
 
 
 class TestAttackTechniqueRegistryInherited:
-    """Tests for inherited BaseInstanceRegistry methods."""
+    """Tests for the registry's ``.instances`` surface."""
 
     def setup_method(self):
-        AttackTechniqueRegistry.reset_instance()
+        AttackTechniqueRegistry.reset_registry_singleton()
         self.registry = AttackTechniqueRegistry.get_registry_singleton()
 
     def teardown_method(self):
-        AttackTechniqueRegistry.reset_instance()
+        AttackTechniqueRegistry.reset_registry_singleton()
 
     def test_contains(self):
         factory = AttackTechniqueFactory(name="exists", attack_class=_StubAttack)
         self.registry.register_technique(name="exists", factory=factory)
 
-        assert "exists" in self.registry
-        assert "missing" not in self.registry
+        assert "exists" in self.registry.instances
+        assert "missing" not in self.registry.instances
 
     def test_len(self):
-        assert len(self.registry) == 0
+        assert len(self.registry.instances) == 0
 
         factory = AttackTechniqueFactory(name="a", attack_class=_StubAttack)
         self.registry.register_technique(name="a", factory=factory)
 
-        assert len(self.registry) == 1
+        assert len(self.registry.instances) == 1
 
     def test_get_names_returns_sorted(self):
         factory_zeta = AttackTechniqueFactory(name="zeta", attack_class=_StubAttack)
@@ -183,7 +183,7 @@ class TestAttackTechniqueRegistryInherited:
         self.registry.register_technique(name="alpha", factory=factory_alpha)
         self.registry.register_technique(name="beta", factory=factory_beta)
 
-        assert self.registry.get_names() == ["alpha", "beta", "zeta"]
+        assert self.registry.instances.get_names() == ["alpha", "beta", "zeta"]
 
     def test_tag_based_queries(self):
         factory1 = AttackTechniqueFactory(name="f1", attack_class=_StubAttack)
@@ -192,11 +192,11 @@ class TestAttackTechniqueRegistryInherited:
         self.registry.register_technique(name="f1", factory=factory1, tags=["multi_turn"])
         self.registry.register_technique(name="f2", factory=factory2, tags=["single_turn"])
 
-        multi = self.registry.get_by_tag(tag="multi_turn")
+        multi = self.registry.instances.get_by_tag(tag="multi_turn")
         assert len(multi) == 1
         assert multi[0].name == "f1"
 
-        single = self.registry.get_by_tag(tag="single_turn")
+        single = self.registry.instances.get_by_tag(tag="single_turn")
         assert len(single) == 1
         assert single[0].name == "f2"
 
@@ -206,7 +206,7 @@ class TestAttackTechniqueRegistryInherited:
         self.registry.register_technique(name="b", factory=factory_b)
         self.registry.register_technique(name="a", factory=factory_a)
 
-        assert list(self.registry) == ["a", "b"]
+        assert list(self.registry.instances) == ["a", "b"]
 
     def test_get_factories_returns_dict_mapping(self):
         factory_a = AttackTechniqueFactory(name="alpha", attack_class=_StubAttack)
@@ -246,11 +246,11 @@ class TestAttackTechniqueRegistryScorerOverridePolicy:
     """Tests for the scorer_override_policy property on the registry."""
 
     def setup_method(self):
-        AttackTechniqueRegistry.reset_instance()
+        AttackTechniqueRegistry.reset_registry_singleton()
         self.registry = AttackTechniqueRegistry.get_registry_singleton()
 
     def teardown_method(self):
-        AttackTechniqueRegistry.reset_instance()
+        AttackTechniqueRegistry.reset_registry_singleton()
 
     def test_default_policy_is_warn(self):
         """Registry defaults to WARN policy."""
@@ -266,7 +266,7 @@ class TestAttackTechniqueRegistryScorerOverridePolicy:
         factory = AttackTechniqueFactory(name="stub_policy", attack_class=_StubAttack, strategy_tags=["test"])
         self.registry.register_from_factories([factory])
 
-        stored = self.registry._registry_items["stub_policy"].instance
+        stored = self.registry.instances.get_entry("stub_policy").instance
         assert stored._scorer_override_policy == ScorerOverridePolicy.WARN
 
 

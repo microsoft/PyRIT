@@ -8,4 +8,3 @@ initializers:
         - scorer
   - name: scorer
   - name: scenario_technique
-  - name: load_default_datasets
