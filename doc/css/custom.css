@@ -81,3 +81,84 @@
   z-index: 0;
   pointer-events: none;
 }
+
+/* --- Roakey scroll peeks ---------------------------------------------------
+   Decorative mascots anchored at predefined points in the landing page. They
+   sit absolutely (out of flow, so they never shift content) and slide in from
+   the edge as you scroll past, stopping flush against the side. */
+.roakey-peek {
+  position: absolute;
+  height: auto;
+  margin: 0;
+  pointer-events: none;
+  user-select: none;
+  z-index: 5;
+}
+
+/* Off-screen peeks must not create horizontal scroll. */
+html, body {
+  overflow-x: clip;
+}
+
+/* Anchor the peeks to the full-width content column. The landing block that
+   wraps each directive is narrow and centered, so reaching the true screen
+   edge from it would require a viewport-based offset that overshoots past the
+   clip box (the vertical scrollbar makes the right side fall fully outside,
+   hiding the tail). Promoting `main` to the containing block lets us anchor
+   flush with a plain `left: 0` / `right: 0`, fully inside the clip box. */
+main:has(.roakey-peek) {
+  position: relative;
+}
+.myst-landing-block:has(.roakey-peek) {
+  position: static;
+}
+
+/* Head peeks in from the left edge */
+.roakey-peek-left {
+  left: 0;
+  width: 170px;
+  transform: translateX(-100%);
+}
+
+/* Tail peeks in from the right edge */
+.roakey-peek-tail {
+  right: 0;
+  width: 190px;
+  transform: translateX(100%);
+}
+
+/* Slide in as the peek scrolls through the viewport (Chromium/Edge). */
+@supports (animation-timeline: view()) {
+  /* Both peeks only reveal on wide viewports, where the gutters beside the
+     centered content column have room for them. On narrower screens they would
+     cover the content, so they stay hidden off-screen. */
+  @media (min-width: 1536px) {
+    .roakey-peek-left {
+      animation: roakey-peek-left linear both;
+      animation-timeline: view();
+      animation-range: entry 0% entry 100%;
+    }
+    .roakey-peek-tail {
+      animation: roakey-peek-tail linear both;
+      animation-timeline: view();
+      animation-range: entry 0% entry 100%;
+    }
+  }
+  @keyframes roakey-peek-left {
+    0%   { transform: translateX(-100%); }
+    100% { transform: translateX(0); }
+  }
+  /* Stop before the wooden board enters the viewport, so only the tail shows
+     (the board occupies the right ~10% of the image). */
+  @keyframes roakey-peek-tail {
+    0%   { transform: translateX(100%); }
+    100% { transform: translateX(13%); }
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .roakey-peek-left,
+  .roakey-peek-tail {
+    animation: none;
+  }
+}

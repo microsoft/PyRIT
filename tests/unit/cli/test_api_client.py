@@ -31,10 +31,11 @@ def client(mock_httpx_client):
     return c
 
 
-def _make_response(*, status_code=200, json_data=None):
+def _make_response(*, status_code=200, json_data=None, text_data=""):
     resp = MagicMock()
     resp.status_code = status_code
-    resp.json = MagicMock(return_value=json_data or {})
+    resp.json = MagicMock(return_value={} if json_data is None else json_data)
+    resp.text = text_data
     resp.raise_for_status = MagicMock()
     return resp
 
@@ -182,6 +183,15 @@ async def test_register_initializer_async_raises_on_403(client, mock_httpx_clien
     resp = _make_response(status_code=403, json_data={"detail": "Custom initializers disabled"})
     mock_httpx_client.post.return_value = resp
     with pytest.raises(ServerNotAvailableError, match="disabled"):
+        await client.register_initializer_async(name="x", script_content="...")
+
+
+async def test_register_initializer_async_raises_on_403_with_plain_text_body(client, mock_httpx_client):
+    resp = _make_response(status_code=403, text_data="Forbidden by proxy")
+    resp.json.side_effect = ValueError("not json")
+    mock_httpx_client.post.return_value = resp
+
+    with pytest.raises(ServerNotAvailableError, match="Forbidden by proxy"):
         await client.register_initializer_async(name="x", script_content="...")
 
 
