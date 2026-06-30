@@ -553,7 +553,7 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
     @property
     def params_type(self) -> type[AttackParameters]:
         """
-        Get the parameters type for this attack strategy.
+        The parameters type for this attack strategy.
 
         Returns:
             type[AttackParameters]: The parameters type this strategy accepts.

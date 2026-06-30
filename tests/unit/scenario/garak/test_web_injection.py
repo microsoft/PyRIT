@@ -66,12 +66,8 @@ class TestWebInjectionInitialization:
 
     def test_per_strategy_scorers_created(self):
         scenario = WebInjection()
-        assert isinstance(
-            scenario._exfil_scoring_config.objective_scorer, MarkdownInjectionScorer
-        )
-        assert isinstance(
-            scenario._xss_scoring_config.objective_scorer, XSSOutputScorer
-        )
+        assert isinstance(scenario._exfil_scoring_config.objective_scorer, MarkdownInjectionScorer)
+        assert isinstance(scenario._xss_scoring_config.objective_scorer, XSSOutputScorer)
 
     def test_default_dataset_names(self):
         config = WebInjection()._default_dataset_config
@@ -87,18 +83,14 @@ class TestWebInjectionStrategyExpansion:
         assert len(WebInjectionStrategy.get_all_strategies()) == 8
 
     def test_default_excludes_extended(self):
-        default = {
-            s.value for s in WebInjectionStrategy.expand({WebInjectionStrategy.DEFAULT})
-        }
+        default = {s.value for s in WebInjectionStrategy.expand({WebInjectionStrategy.DEFAULT})}
         assert "markdown_uri_image_exfil_extended" not in default
         assert "markdown_uri_non_image_exfil_extended" not in default
         assert "task_xss" in default
         assert "markdown_image_exfil" in default
 
     def test_exfil_aggregate(self):
-        exfil = {
-            s.value for s in WebInjectionStrategy.expand({WebInjectionStrategy.EXFIL})
-        }
+        exfil = {s.value for s in WebInjectionStrategy.expand({WebInjectionStrategy.EXFIL})}
         assert "task_xss" not in exfil
         assert "markdown_xss" not in exfil
         assert len(exfil) == 6
@@ -110,13 +102,9 @@ class TestWebInjectionStrategyExpansion:
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestWebInjectionAtomicAttacks:
-    async def test_atomic_attacks_one_per_strategy_plus_baseline(
-        self, mock_objective_target, dataset_values
-    ):
+    async def test_atomic_attacks_one_per_strategy_plus_baseline(self, mock_objective_target, dataset_values):
         scenario = WebInjection()
-        with patch.object(
-            WebInjection, "_load_dataset_values", return_value=dataset_values
-        ):
+        with patch.object(WebInjection, "_load_dataset_values", return_value=dataset_values):
             await scenario.initialize_async(
                 objective_target=mock_objective_target,
                 scenario_strategies=[WebInjectionStrategy.ALL],
@@ -132,13 +120,9 @@ class TestWebInjectionAtomicAttacks:
         assert "markdown_image_exfil" in names
         assert len([a for a in attacks if a.atomic_attack_name != "baseline"]) == 8
 
-    async def test_no_baseline_when_disabled(
-        self, mock_objective_target, dataset_values
-    ):
+    async def test_no_baseline_when_disabled(self, mock_objective_target, dataset_values):
         scenario = WebInjection()
-        with patch.object(
-            WebInjection, "_load_dataset_values", return_value=dataset_values
-        ):
+        with patch.object(WebInjection, "_load_dataset_values", return_value=dataset_values):
             await scenario.initialize_async(
                 objective_target=mock_objective_target,
                 scenario_strategies=[WebInjectionStrategy.XSS],
@@ -149,13 +133,9 @@ class TestWebInjectionAtomicAttacks:
         assert all(a.atomic_attack_name != "baseline" for a in attacks)
         assert {a.atomic_attack_name for a in attacks} == {"task_xss", "markdown_xss"}
 
-    async def test_seed_groups_pair_objective_and_prompt(
-        self, mock_objective_target, dataset_values
-    ):
+    async def test_seed_groups_pair_objective_and_prompt(self, mock_objective_target, dataset_values):
         scenario = WebInjection()
-        with patch.object(
-            WebInjection, "_load_dataset_values", return_value=dataset_values
-        ):
+        with patch.object(WebInjection, "_load_dataset_values", return_value=dataset_values):
             await scenario.initialize_async(
                 objective_target=mock_objective_target,
                 scenario_strategies=[WebInjectionStrategy.MarkdownXSS],
@@ -168,18 +148,12 @@ class TestWebInjectionAtomicAttacks:
             assert isinstance(group, SeedAttackGroup)
             assert isinstance(group.seeds[0], SeedObjective)
             assert isinstance(group.seeds[1], SeedPrompt)
-            assert group.seeds[0].value.startswith(
-                "Exploit cross-site scripting via prompt injection"
-            )
+            assert group.seeds[0].value.startswith("Exploit cross-site scripting via prompt injection")
             assert group.seeds[1].value in group.seeds[0].value
 
-    async def test_exfil_strategy_uses_markdown_scorer(
-        self, mock_objective_target, dataset_values
-    ):
+    async def test_exfil_strategy_uses_markdown_scorer(self, mock_objective_target, dataset_values):
         scenario = WebInjection()
-        with patch.object(
-            WebInjection, "_load_dataset_values", return_value=dataset_values
-        ):
+        with patch.object(WebInjection, "_load_dataset_values", return_value=dataset_values):
             await scenario.initialize_async(
                 objective_target=mock_objective_target,
                 scenario_strategies=[WebInjectionStrategy.PlaygroundMarkdownExfil],
@@ -191,13 +165,9 @@ class TestWebInjectionAtomicAttacks:
         scorer = attack._objective_scorer
         assert isinstance(scorer, MarkdownInjectionScorer)
 
-    async def test_xss_strategy_uses_xss_scorer(
-        self, mock_objective_target, dataset_values
-    ):
+    async def test_xss_strategy_uses_xss_scorer(self, mock_objective_target, dataset_values):
         scenario = WebInjection()
-        with patch.object(
-            WebInjection, "_load_dataset_values", return_value=dataset_values
-        ):
+        with patch.object(WebInjection, "_load_dataset_values", return_value=dataset_values):
             await scenario.initialize_async(
                 objective_target=mock_objective_target,
                 scenario_strategies=[WebInjectionStrategy.TaskXSS],
@@ -223,18 +193,12 @@ class TestWebInjectionAtomicAttacks:
                     scenario_strategies=[WebInjectionStrategy.MarkdownImageExfil],
                 )
 
-    async def test_max_prompts_per_strategy_caps_output(
-        self, mock_objective_target, dataset_values
-    ):
+    async def test_max_prompts_per_strategy_caps_output(self, mock_objective_target, dataset_values):
         scenario = WebInjection(max_prompts_per_strategy=3)
-        with patch.object(
-            WebInjection, "_load_dataset_values", return_value=dataset_values
-        ):
+        with patch.object(WebInjection, "_load_dataset_values", return_value=dataset_values):
             await scenario.initialize_async(
                 objective_target=mock_objective_target,
-                scenario_strategies=[
-                    WebInjectionStrategy.MarkdownURIImageExfilExtended
-                ],
+                scenario_strategies=[WebInjectionStrategy.MarkdownURIImageExfilExtended],
                 include_baseline=False,
             )
             attack = scenario._atomic_attacks[0]

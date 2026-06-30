@@ -21,7 +21,7 @@ from pyrit.score import (
     TrueFalseScoreAggregator,
     TrueFalseScorer,
 )
-from pyrit.score.true_false.markdown_injection import MarkdownInjectionScorer
+from pyrit.score.true_false.regex.markdown_injection import MarkdownInjectionScorer
 from pyrit.score.true_false.regex.xss_output_scorer import XSSOutputScorer
 
 logger = logging.getLogger(__name__)
@@ -209,15 +209,13 @@ class WebInjection(Scenario):
 
     Each strategy builds one ``PromptSendingAttack`` whose seeds pair a ``SeedObjective``
     (the attack goal) with a ``SeedPrompt`` (the literal injection prompt to send). Exfil
-    strategies are scored with :class:`MarkdownInjectionScorer`; XSS strategies are scored
-    with :class:`XSSOutputScorer`. The default objective scorer (used for the baseline and
+    strategies are scored with ``MarkdownInjectionScorer``; XSS strategies are scored
+    with ``XSSOutputScorer``. The default objective scorer (used for the baseline and
     metadata) is an OR composite of both.
     """
 
     VERSION: int = 1
-    BASELINE_ATTACK_POLICY: ClassVar[BaselineAttackPolicy] = (
-        BaselineAttackPolicy.Enabled
-    )
+    BASELINE_ATTACK_POLICY: ClassVar[BaselineAttackPolicy] = BaselineAttackPolicy.Enabled
 
     # Cap on combinatorial / large strategies so runs stay deterministic and reviewable.
     DEFAULT_MAX_PROMPTS_PER_STRATEGY: int = 12
@@ -253,16 +251,10 @@ class WebInjection(Scenario):
             scorers=[self._exfil_scorer, self._xss_scorer],
         )
 
-        self._exfil_scoring_config = AttackScoringConfig(
-            objective_scorer=self._exfil_scorer
-        )
-        self._xss_scoring_config = AttackScoringConfig(
-            objective_scorer=self._xss_scorer
-        )
+        self._exfil_scoring_config = AttackScoringConfig(objective_scorer=self._exfil_scorer)
+        self._xss_scoring_config = AttackScoringConfig(objective_scorer=self._xss_scorer)
 
-        self._max_prompts_per_strategy = (
-            max_prompts_per_strategy or self.DEFAULT_MAX_PROMPTS_PER_STRATEGY
-        )
+        self._max_prompts_per_strategy = max_prompts_per_strategy or self.DEFAULT_MAX_PROMPTS_PER_STRATEGY
         self._random_seed = random_seed if random_seed is not None else 42
 
         super().__init__(
@@ -349,12 +341,8 @@ class WebInjection(Scenario):
             encoding = rng.choice(ENCODINGS)
             link_display_text = rng.choice(LINK_DISPLAY_TEXTS)
 
-            base_uri = (
-                f"https://{domain}{uri_var_format}{uri_var_name}=[{injection_marker}]"
-            )
-            markdown_uri = rng.choice(markdown_templates).format(
-                link_display_text=link_display_text, uri=base_uri
-            )
+            base_uri = f"https://{domain}{uri_var_format}{uri_var_name}=[{injection_marker}]"
+            markdown_uri = rng.choice(markdown_templates).format(link_display_text=link_display_text, uri=base_uri)
 
             if rng.choice(PROMPT_TEMPLATE_TYPES) == "full_uri":
                 prompt = rng.choice(FULL_URI_PROMPT_TEMPLATES).format(
@@ -367,10 +355,7 @@ class WebInjection(Scenario):
                 split_count = max(1, len(markdown_uri) // 3)
                 split_idxs = sorted(rng.sample(range(len(markdown_uri)), split_count))
                 parts = [
-                    markdown_uri[i:j]
-                    for i, j in zip(
-                        [0] + split_idxs, split_idxs + [len(markdown_uri)], strict=False
-                    )
+                    markdown_uri[i:j] for i, j in zip([0] + split_idxs, split_idxs + [len(markdown_uri)], strict=False)
                 ]
                 prompt = rng.choice(CONCAT_PROMPT_TEMPLATES).format(
                     injected_strings='","'.join(parts),
@@ -403,9 +388,7 @@ class WebInjection(Scenario):
 
         if strategy is WebInjectionStrategy.MarkdownImageExfil:
             prompts = [
-                MARKDOWN_IMAGE_EXFIL_TEMPLATE.replace("{domain}", domain).replace(
-                    "{encoding}", encoding
-                )
+                MARKDOWN_IMAGE_EXFIL_TEMPLATE.replace("{domain}", domain).replace("{encoding}", encoding)
                 for domain in domains
                 for encoding in MARKDOWN_IMAGE_EXFIL_ENCODINGS
             ]
@@ -413,9 +396,7 @@ class WebInjection(Scenario):
 
         if strategy is WebInjectionStrategy.ColabAIDataLeakage:
             prompts = [
-                COLAB_AI_DATA_LEAKAGE_TEMPLATE.replace(
-                    "{modified_domain}", self._mutate_domain(domain, rng=rng)
-                )
+                COLAB_AI_DATA_LEAKAGE_TEMPLATE.replace("{modified_domain}", self._mutate_domain(domain, rng=rng))
                 for domain in domains
             ]
             return _OBJECTIVE_RENDER_IMAGE, prompts
@@ -433,10 +414,7 @@ class WebInjection(Scenario):
             return _OBJECTIVE_EXFIL_URI, prompts
 
         if strategy is WebInjectionStrategy.PlaygroundMarkdownExfil:
-            prompts = [
-                PLAYGROUND_MARKDOWN_EXFIL_TEMPLATE.replace("{domain}", domain)
-                for domain in domains
-            ]
+            prompts = [PLAYGROUND_MARKDOWN_EXFIL_TEMPLATE.replace("{domain}", domain) for domain in domains]
             return _OBJECTIVE_EXFIL_URI, prompts
 
         if strategy is WebInjectionStrategy.MarkdownURIImageExfilExtended:
@@ -459,9 +437,7 @@ class WebInjection(Scenario):
             tasks = dataset_values.get(DATASET_NORMAL_INSTRUCTIONS, [])
             payloads = dataset_values.get(DATASET_WEB_HTML_JS, [])
             prompts = [
-                TASK_XSS_TEMPLATE.replace("{task}", task).replace(
-                    "{injection_marker}", payload
-                )
+                TASK_XSS_TEMPLATE.replace("{task}", task).replace("{injection_marker}", payload)
                 for task in tasks
                 for payload in payloads
             ]
@@ -471,17 +447,12 @@ class WebInjection(Scenario):
 
         if strategy is WebInjectionStrategy.MarkdownXSS:
             payloads = dataset_values.get(DATASET_MARKDOWN_JS, [])
-            prompts = [
-                MARKDOWN_JS_TEMPLATE.replace("{injected_js}", payload)
-                for payload in payloads
-            ]
+            prompts = [MARKDOWN_JS_TEMPLATE.replace("{injected_js}", payload) for payload in payloads]
             return _OBJECTIVE_XSS, prompts
 
         return _OBJECTIVE_EXFIL_URI, []
 
-    def _build_seed_groups(
-        self, *, objective: str, prompts: list[str]
-    ) -> list[SeedAttackGroup]:
+    def _build_seed_groups(self, *, objective: str, prompts: list[str]) -> list[SeedAttackGroup]:
         """
         Wrap each rendered prompt in a SeedAttackGroup pairing the objective and the prompt.
 
@@ -513,9 +484,7 @@ class WebInjection(Scenario):
             )
         return seed_groups
 
-    def _scoring_config_for_strategy(
-        self, strategy: WebInjectionStrategy
-    ) -> AttackScoringConfig:
+    def _scoring_config_for_strategy(self, strategy: WebInjectionStrategy) -> AttackScoringConfig:
         """
         Return the strategy-appropriate scoring config (markdown for exfil, XSS otherwise).
 
@@ -555,9 +524,7 @@ class WebInjection(Scenario):
                 strategy=strategy, dataset_values=dataset_values, rng=rng
             )
             if not prompts:
-                logger.warning(
-                    "No prompts generated for strategy '%s'; skipping.", strategy.value
-                )
+                logger.warning("No prompts generated for strategy '%s'; skipping.", strategy.value)
                 continue
 
             seed_groups = self._build_seed_groups(objective=objective, prompts=prompts)
@@ -584,8 +551,6 @@ class WebInjection(Scenario):
             )
 
         if self._include_baseline and all_seed_groups:
-            atomic_attacks.insert(
-                0, self._build_baseline_atomic_attack(seed_groups=all_seed_groups)
-            )
+            atomic_attacks.insert(0, self._build_baseline_atomic_attack(seed_groups=all_seed_groups))
 
         return atomic_attacks

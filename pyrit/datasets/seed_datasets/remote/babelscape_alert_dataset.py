@@ -80,7 +80,7 @@ class _BabelscapeAlertDataset(_RemoteDatasetLoader):
     @property
     @override
     def dataset_name(self) -> str:
-        """Return the dataset name."""
+        """The dataset name."""
         return "babelscape_alert"
 
     @override

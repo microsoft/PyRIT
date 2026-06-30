@@ -4,6 +4,7 @@
  */
 
 import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { FluentProvider, webLightTheme } from "@fluentui/react-components";
 import MainLayout from "./MainLayout";
 
@@ -133,6 +134,57 @@ describe("MainLayout", () => {
         <div>Content</div>
       </MainLayout>
     );
+
+    await waitFor(() => {
+      expect(mockedVersionApi.getVersion).toHaveBeenCalled();
+    });
+  });
+
+  it("renders a 'Take a tour' button in the top bar when onStartTour is provided", async () => {
+    mockedVersionApi.getVersion.mockResolvedValue({ version: "1.0.0" });
+
+    renderWithProvider(
+      <MainLayout {...defaultProps} onStartTour={jest.fn()}>
+        <div>Content</div>
+      </MainLayout>
+    );
+
+    expect(screen.getByRole("button", { name: /take a tour/i })).toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(mockedVersionApi.getVersion).toHaveBeenCalled();
+    });
+  });
+
+  it("calls onStartTour when the 'Take a tour' button is clicked", async () => {
+    mockedVersionApi.getVersion.mockResolvedValue({ version: "1.0.0" });
+    const onStartTour = jest.fn();
+    const user = userEvent.setup();
+
+    renderWithProvider(
+      <MainLayout {...defaultProps} onStartTour={onStartTour}>
+        <div>Content</div>
+      </MainLayout>
+    );
+
+    await user.click(screen.getByRole("button", { name: /take a tour/i }));
+    expect(onStartTour).toHaveBeenCalledTimes(1);
+
+    await waitFor(() => {
+      expect(mockedVersionApi.getVersion).toHaveBeenCalled();
+    });
+  });
+
+  it("does not render the 'Take a tour' button when onStartTour is not provided", async () => {
+    mockedVersionApi.getVersion.mockResolvedValue({ version: "1.0.0" });
+
+    renderWithProvider(
+      <MainLayout {...defaultProps}>
+        <div>Content</div>
+      </MainLayout>
+    );
+
+    expect(screen.queryByRole("button", { name: /take a tour/i })).not.toBeInTheDocument();
 
     await waitFor(() => {
       expect(mockedVersionApi.getVersion).toHaveBeenCalled();

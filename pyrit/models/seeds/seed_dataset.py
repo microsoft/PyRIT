@@ -371,7 +371,7 @@ class SeedDataset(BaseModel):
     @property
     def prompts(self) -> Sequence[SeedPrompt]:
         """
-        Return all prompt-type seeds.
+        All prompt-type seeds.
 
         Returns:
             Sequence[SeedPrompt]: Prompt seeds in this dataset.
@@ -382,7 +382,7 @@ class SeedDataset(BaseModel):
     @property
     def objectives(self) -> Sequence[SeedObjective]:
         """
-        Return all objective-type seeds.
+        All objective-type seeds.
 
         Returns:
             Sequence[SeedObjective]: Objective seeds in this dataset.
@@ -393,7 +393,7 @@ class SeedDataset(BaseModel):
     @property
     def seed_groups(self) -> Sequence[SeedGroup]:
         """
-        Returns the seeds grouped by their prompt_group_id.
+        The seeds grouped by their prompt_group_id.
 
         Returns:
             Sequence[SeedGroup]: A list of SeedGroup objects, with seeds grouped by prompt_group_id.
