@@ -119,11 +119,11 @@ class TestSubclassBaselineKwargDeprecation:
         """Populate the technique registry so Cyber/RapidResponse-style subclasses can build their strategy enum."""
         from pyrit.prompt_target import PromptTarget
         from pyrit.registry import TargetRegistry
-        from pyrit.registry.object_registries.attack_technique_registry import AttackTechniqueRegistry
+        from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
         from pyrit.scenario.scenarios.airt.cyber import Cyber
         from pyrit.setup.initializers.components.scenario_techniques import build_scenario_technique_factories
 
-        AttackTechniqueRegistry.reset_instance()
+        AttackTechniqueRegistry.reset_registry_singleton()
         TargetRegistry.reset_instance()
         Cyber._cached_strategy_class = None
 
@@ -133,7 +133,7 @@ class TestSubclassBaselineKwargDeprecation:
 
         AttackTechniqueRegistry.get_registry_singleton().register_from_factories(build_scenario_technique_factories())
         yield
-        AttackTechniqueRegistry.reset_instance()
+        AttackTechniqueRegistry.reset_registry_singleton()
         TargetRegistry.reset_instance()
         Cyber._cached_strategy_class = None
 

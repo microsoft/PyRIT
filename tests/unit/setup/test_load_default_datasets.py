@@ -15,7 +15,7 @@ from pyrit.memory import CentralMemory
 from pyrit.models import SeedDataset
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry import ScenarioRegistry, TargetRegistry
-from pyrit.registry.object_registries.attack_technique_registry import AttackTechniqueRegistry
+from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
 from pyrit.setup.initializers.components.scenario_techniques import build_scenario_technique_factories
 from pyrit.setup.initializers.scenarios.load_default_datasets import LoadDefaultDatasets
 
@@ -23,7 +23,7 @@ from pyrit.setup.initializers.scenarios.load_default_datasets import LoadDefault
 @pytest.fixture
 def populated_technique_registry():
     """Populate the technique + target registries so scenario metadata building succeeds."""
-    AttackTechniqueRegistry.reset_instance()
+    AttackTechniqueRegistry.reset_registry_singleton()
     TargetRegistry.reset_instance()
 
     adv_target = MagicMock(spec=PromptTarget)
@@ -32,7 +32,7 @@ def populated_technique_registry():
 
     AttackTechniqueRegistry.get_registry_singleton().register_from_factories(build_scenario_technique_factories())
     yield
-    AttackTechniqueRegistry.reset_instance()
+    AttackTechniqueRegistry.reset_registry_singleton()
     TargetRegistry.reset_instance()
 
 

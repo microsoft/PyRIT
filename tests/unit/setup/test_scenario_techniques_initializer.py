@@ -13,7 +13,7 @@ from pyrit.executor.attack import PromptSendingAttack, RedTeamingAttack
 from pyrit.models import SeedPrompt
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry import TargetRegistry
-from pyrit.registry.object_registries.attack_technique_registry import AttackTechniqueRegistry
+from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
 from pyrit.score.true_false.self_ask_true_false_scorer import TrueFalseQuestionPaths
 from pyrit.setup.initializers import ScenarioTechniqueInitializer
 from pyrit.setup.initializers.components.scenario_techniques import (
@@ -34,10 +34,10 @@ PERSONA_CRESCENDO_TECHNIQUE_NAMES: list[str] = [
 @pytest.fixture(autouse=True)
 def reset_registries():
     """Reset technique and target registries between tests."""
-    AttackTechniqueRegistry.reset_instance()
+    AttackTechniqueRegistry.reset_registry_singleton()
     TargetRegistry.reset_instance()
     yield
-    AttackTechniqueRegistry.reset_instance()
+    AttackTechniqueRegistry.reset_registry_singleton()
     TargetRegistry.reset_instance()
 
 
@@ -186,7 +186,7 @@ class TestScenarioTechniqueInitializerRegistration:
         await init.initialize_async()
 
         registry = AttackTechniqueRegistry.get_registry_singleton()
-        names = set(registry.get_names())
+        names = set(registry.instances.get_names())
         assert "crescendo_movie_director" in names
         assert "crescendo_history_lecture" in names
         assert "crescendo_journalist_interview" in names
@@ -198,7 +198,7 @@ class TestScenarioTechniqueInitializerRegistration:
         await init.initialize_async()
 
         registry = AttackTechniqueRegistry.get_registry_singleton()
-        names = set(registry.get_names())
+        names = set(registry.instances.get_names())
         # Core factories from build_scenario_technique_factories()
         assert {"role_play", "many_shot", "tap", "crescendo_simulated"} <= names
 
@@ -230,11 +230,11 @@ class TestScenarioTechniqueInitializerRegistration:
         await init.initialize_async()
 
         registry = AttackTechniqueRegistry.get_registry_singleton()
-        first_names = set(registry.get_names())
+        first_names = set(registry.instances.get_names())
         first_factory = registry.get_factories()["crescendo_movie_director"]
 
         await init.initialize_async()
-        second_names = set(registry.get_names())
+        second_names = set(registry.instances.get_names())
         second_factory = registry.get_factories()["crescendo_movie_director"]
 
         assert first_names == second_names
@@ -315,7 +315,7 @@ class TestViolentDurianTechnique:
         await init.initialize_async()
 
         registry = AttackTechniqueRegistry.get_registry_singleton()
-        assert "violent_durian" in set(registry.get_names())
+        assert "violent_durian" in set(registry.instances.get_names())
 
 
 # ---------------------------------------------------------------------------

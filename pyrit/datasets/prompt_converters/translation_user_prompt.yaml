@@ -10,4 +10,4 @@ parameters:
   - language
   - objective
 data_type: text
-value: "Translate the following to {{ language }} between the begin and end tags:=== begin ===\n{{ objective }}\n=== end ===\n\n\n"
+value: "Translate the following to {{ language }} between the [TRANSLATE_START] and [TRANSLATE_END] markers:\n[TRANSLATE_START]\n{{ objective }}\n[TRANSLATE_END]\n"

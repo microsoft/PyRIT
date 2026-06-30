@@ -15,7 +15,7 @@ from pyrit.executor.attack import (
 )
 from pyrit.prompt_converter import AddImageTextConverter, FirstLetterConverter
 from pyrit.prompt_normalizer import PromptConverterConfiguration
-from pyrit.registry.object_registries.attack_technique_registry import (
+from pyrit.registry.components.attack_technique_registry import (
     AttackTechniqueRegistry,
 )
 from pyrit.registry.tag_query import TagQuery
