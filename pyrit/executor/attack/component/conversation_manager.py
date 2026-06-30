@@ -5,7 +5,7 @@ import logging
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any
 
 from pyrit.common.deprecation import print_deprecation_message
 from pyrit.common.utils import combine_dict
@@ -284,7 +284,7 @@ class ConversationManager:
         target: PromptTarget,
         conversation_id: str,
         request_converters: list[PromptConverterConfiguration] | None = None,
-        prepended_conversation_config: Optional["PrependedConversationConfig"] = None,
+        prepended_conversation_config: "PrependedConversationConfig | None" = None,
         max_turns: int | None = None,
         memory_labels: dict[str, str] | None = None,
     ) -> ConversationState:
@@ -364,7 +364,7 @@ class ConversationManager:
         *,
         context: "AttackContext[Any]",
         prepended_conversation: list[Message],
-        config: Optional["PrependedConversationConfig"],
+        config: "PrependedConversationConfig | None",
     ) -> ConversationState:
         """
         Handle prepended conversation for non-chat targets.
@@ -435,7 +435,7 @@ class ConversationManager:
         prepended_conversation: list[Message],
         conversation_id: str,
         request_converters: list[PromptConverterConfiguration] | None = None,
-        prepended_conversation_config: Optional["PrependedConversationConfig"] = None,
+        prepended_conversation_config: "PrependedConversationConfig | None" = None,
         max_turns: int | None = None,
         target_identifier: ComponentIdentifier | None = None,
     ) -> int:
@@ -522,7 +522,7 @@ class ConversationManager:
         prepended_conversation: list[Message],
         conversation_id: str,
         request_converters: list[PromptConverterConfiguration] | None,
-        prepended_conversation_config: Optional["PrependedConversationConfig"],
+        prepended_conversation_config: "PrependedConversationConfig | None",
         max_turns: int | None,
         target_identifier: ComponentIdentifier | None = None,
     ) -> ConversationState:

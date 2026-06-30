@@ -14,7 +14,7 @@ have a common interface for scenarios.
 """
 
 import logging
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any
 
 from pyrit.common.deprecation import print_deprecation_message
 from pyrit.common.utils import to_sha256
@@ -56,8 +56,8 @@ class AtomicAttack:
         attack_technique: AttackTechnique | None = None,
         attack: AttackStrategy[Any, Any] | None = None,
         seed_groups: list[SeedAttackGroup],
-        adversarial_chat: Optional["PromptTarget"] = None,
-        objective_scorer: Optional["TrueFalseScorer"] = None,
+        adversarial_chat: "PromptTarget | None" = None,
+        objective_scorer: "TrueFalseScorer | None" = None,
         memory_labels: dict[str, str] | None = None,
         **attack_execute_params: Any,
     ) -> None:

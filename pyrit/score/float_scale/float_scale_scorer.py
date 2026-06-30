@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 from uuid import UUID
 
 from pyrit.exceptions.exception_classes import InvalidJsonException
@@ -113,7 +113,7 @@ class FloatScaleScorer(Scorer):
             if not (0 <= score.get_value() <= 1):
                 raise ValueError("FloatScaleScorer score value must be between 0 and 1.")
 
-    def get_scorer_metrics(self) -> Optional["HarmScorerMetrics"]:
+    def get_scorer_metrics(self) -> "HarmScorerMetrics | None":
         """
         Get evaluation metrics for this scorer from the configured evaluation result file.
 

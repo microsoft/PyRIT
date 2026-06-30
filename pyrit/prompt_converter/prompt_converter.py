@@ -6,7 +6,7 @@ import asyncio
 import inspect
 import re
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, ClassVar, Optional, get_args
+from typing import TYPE_CHECKING, Any, ClassVar, get_args
 
 from pyrit import prompt_converter
 from pyrit.models import ComponentIdentifier, ConverterIdentifier, Identifiable, PromptDataType
@@ -89,7 +89,7 @@ class PromptConverter(Identifiable):
                     f"Declare the output modalities this converter produces."
                 )
 
-    def __init__(self, *, converter_target: Optional["PromptTarget"] = None) -> None:
+    def __init__(self, *, converter_target: "PromptTarget | None" = None) -> None:
         """
         Initialize the prompt converter.
 

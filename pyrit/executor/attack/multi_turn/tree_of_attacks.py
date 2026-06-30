@@ -8,7 +8,7 @@ import logging
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional, cast, overload
+from typing import TYPE_CHECKING, Any, cast, overload
 
 from treelib.tree import Tree
 
@@ -376,7 +376,7 @@ class _TreeOfAttacksNode:
         self,
         *,
         prepended_conversation: list[Message],
-        prepended_conversation_config: Optional["PrependedConversationConfig"] = None,
+        prepended_conversation_config: "PrependedConversationConfig | None" = None,
     ) -> None:
         """
         Initialize the node with a prepended conversation history.

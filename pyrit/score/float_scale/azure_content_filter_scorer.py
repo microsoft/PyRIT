@@ -4,7 +4,7 @@
 import base64
 import logging
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 from azure.ai.contentsafety.aio import ContentSafetyClient
 from azure.ai.contentsafety.models import (
@@ -62,7 +62,7 @@ class AzureContentFilterScorer(FloatScaleScorer):
     }
 
     @classmethod
-    def _get_eval_files_for_category(cls, category: TextCategory) -> Optional["ScorerEvalDatasetFiles"]:
+    def _get_eval_files_for_category(cls, category: TextCategory) -> "ScorerEvalDatasetFiles | None":
         """
         Get the ScorerEvalDatasetFiles for a given harm category.
 
@@ -175,12 +175,12 @@ class AzureContentFilterScorer(FloatScaleScorer):
 
     async def evaluate_async(
         self,
-        file_mapping: Optional["ScorerEvalDatasetFiles"] = None,
+        file_mapping: "ScorerEvalDatasetFiles | None" = None,
         *,
         num_scorer_trials: int = 3,
         update_registry_behavior: "RegistryUpdateBehavior | None" = None,
         max_concurrency: int = 10,
-    ) -> Optional["ScorerMetrics"]:
+    ) -> "ScorerMetrics | None":
         """
         Evaluate this scorer against human-labeled datasets.
 
