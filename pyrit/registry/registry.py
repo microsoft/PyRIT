@@ -257,7 +257,14 @@ class Registry(ABC, Generic[T, MetadataT]):
             cls = getattr(package, name, None)
             if cls is None or not isinstance(cls, type):
                 continue
-            if not issubclass(cls, base) or cls is base or inspect.isabstract(cls):
+            # Guard against entries that aren't genuine classes. A test elsewhere in the
+            # suite may patch a package export with a mock (e.g. ``autospec``/``spec=type``)
+            # that reports ``isinstance(cls, type) is True`` yet makes ``issubclass`` raise
+            # ``TypeError``; skip anything that isn't a real subclass of the base.
+            try:
+                if not issubclass(cls, base) or cls is base or inspect.isabstract(cls):
+                    continue
+            except TypeError:
                 continue
             self.register_class(cls)
             logger.debug(f"Registered {base.__name__} class: {cls.__name__}")

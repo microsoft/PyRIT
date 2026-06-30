@@ -12,6 +12,8 @@ every base default.
 """
 
 from dataclasses import dataclass, field
+from types import ModuleType
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -210,3 +212,42 @@ def test_get_metadata_value_falls_back_to_params():
     missing_found, missing_value = _get_metadata_value(HasParams(), "missing")
     assert missing_found is False
     assert missing_value is None
+
+
+class _WidgetBase:
+    """Base for the default-discovery hardening test."""
+
+
+class _ConcreteWidget(_WidgetBase):
+    """A concrete widget."""
+
+
+class _PackageDrivenRegistry(Registry[object, ClassRegistryEntry]):
+    """Registry that uses the base's default ``_discover`` over a supplied package."""
+
+    def __init__(self, *, package: ModuleType) -> None:
+        self._package = package
+        super().__init__(lazy_discovery=False)
+
+    def _base_type(self) -> type:
+        return _WidgetBase
+
+    def _discovery_package(self) -> ModuleType:
+        return self._package
+
+    def _metadata_class(self) -> type[ClassRegistryEntry]:
+        return ClassRegistryEntry
+
+
+def test_discover_skips_spec_type_mock_exports():
+    # A foreign test may patch a discovery-package export with a ``MagicMock(spec=type)``
+    # that reports ``isinstance(obj, type) is True`` yet makes ``issubclass`` raise
+    # ``TypeError``. Default discovery must skip it rather than blow up the whole catalog.
+    package = ModuleType("_fake_widget_package")
+    package.__all__ = ["_ConcreteWidget", "_LeakedMock"]
+    package._ConcreteWidget = _ConcreteWidget
+    package._LeakedMock = MagicMock(spec=type)
+
+    registry = _PackageDrivenRegistry(package=package)
+
+    assert registry.get_class_names() == ["_ConcreteWidget"]
