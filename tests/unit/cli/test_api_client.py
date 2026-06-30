@@ -304,24 +304,6 @@ async def test_list_datasets_async(client, mock_httpx_client):
     mock_httpx_client.get.assert_awaited_once_with("/api/datasets", params=None)
 
 
-async def test_load_datasets_async(client, mock_httpx_client):
-    payload = {"loaded_datasets": [{"name": "airt_hate", "seed_count": 2}], "total_seeds": 2}
-    mock_httpx_client.post.return_value = _make_response(json_data=payload)
-    result = await client.load_datasets_async(dataset_names=["airt_hate"], cache=False)
-    assert result == payload
-    call = mock_httpx_client.post.call_args
-    assert call.args[0] == "/api/datasets/load"
-    assert call.kwargs["json"] == {"dataset_names": ["airt_hate"], "cache": False}
-
-
-async def test_load_datasets_async_raises_on_error(client, mock_httpx_client):
-    resp = _make_response(status_code=400, json_data={"detail": "Dataset(s) not found"})
-    resp.raise_for_status.side_effect = httpx.HTTPStatusError("400", request=MagicMock(), response=resp)
-    mock_httpx_client.post.return_value = resp
-    with pytest.raises(httpx.HTTPStatusError):
-        await client.load_datasets_async(dataset_names=["nope"])
-
-
 # ---------------------------------------------------------------------------
 # Scenario runs
 # ---------------------------------------------------------------------------
