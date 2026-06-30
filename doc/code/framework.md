@@ -184,7 +184,7 @@ If you are contributing to PyRIT, that work will most likely land in one of the 
 
 ## [Executors and Attacks](./executor/0_executor)
 
-**Executor Responsibility**: Manage conversations between objective targets and adversarial targets; using datasets, scorers, and converters. 
+**Executor Responsibility**: Manage conversations between objective targets and adversarial targets; using datasets, scorers, and converters.
 
 **Attack Responsibility**: An attack is a type of executor, which manages conversations to achieve an objective.
 
@@ -234,7 +234,7 @@ If you are contributing to PyRIT, that work will most likely land in one of the 
 - Better agent support may require extra pieces attached to a Message
 - Better surface support may require expanding the return types
 
-**Contributing (difficulty low)**: 
+**Contributing (difficulty low)**:
 
 - The pattern is well-defined.
 - Are there models you want to use at any stage or for different attacks? But also, can your model just be one of the existing targets?
@@ -251,7 +251,7 @@ If you are contributing to PyRIT, that work will most likely land in one of the 
 
 - Scorers will be refactored to be more generic, so they can determine more general results (does a file exist? Was a tool called?)
 
-**Contributing (difficulty low)**:  
+**Contributing (difficulty low)**:
 
 - The pattern is well-defined.
 - You can evaluate how accurate probabilistic scorers are and likely make them more accurate.
@@ -321,7 +321,7 @@ The below talks about responsibilities of most modules in the PyRIT library
 
 ## [Registry](./registry/0_registry)
 
-**Responsibility**: The registry is used to build and store the core components. 
+**Responsibility**: The registry is used to build and store the core components.
 
 - If you are creating a component with user input (e.g. via config, REST, or automatically) it should always use the registry
 - If you are storing an instance of a component, it should always use the registry
@@ -371,7 +371,3 @@ PyRIT can be used in three modes ([Scanner](../scanner/0_scanner), [GUI](../gui/
 
 - A TypeScript + React single-page app built with Vite and Fluent UI.
 - Dev workflow via `dev.py` / npm scripts orchestrates both servers together; tested with Jest (unit) and Playwright (e2e).
-
-
-
-
