@@ -1,6 +1,8 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+from __future__ import annotations
+
 import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -51,13 +53,13 @@ class MultiPromptSendingAttackParameters(AttackParameters):
 
     @classmethod
     async def from_seed_group_async(
-        cls: type["MultiPromptSendingAttackParameters"],
+        cls: type[MultiPromptSendingAttackParameters],
         seed_group: SeedAttackGroup,
         *,
-        adversarial_chat: "PromptTarget | None" = None,
-        objective_scorer: "TrueFalseScorer | None" = None,
+        adversarial_chat: PromptTarget | None = None,
+        objective_scorer: TrueFalseScorer | None = None,
         **overrides: Any,
-    ) -> "MultiPromptSendingAttackParameters":
+    ) -> MultiPromptSendingAttackParameters:
         """
         Create parameters from a SeedGroup, extracting user messages.
 

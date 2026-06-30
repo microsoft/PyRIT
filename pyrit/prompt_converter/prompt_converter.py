@@ -1,6 +1,8 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+from __future__ import annotations
+
 import abc
 import asyncio
 import inspect
@@ -89,7 +91,7 @@ class PromptConverter(Identifiable):
                     f"Declare the output modalities this converter produces."
                 )
 
-    def __init__(self, *, converter_target: "PromptTarget | None" = None) -> None:
+    def __init__(self, *, converter_target: PromptTarget | None = None) -> None:
         """
         Initialize the prompt converter.
 
