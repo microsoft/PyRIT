@@ -4,6 +4,8 @@ applyTo: "pyrit/datasets/seed_datasets/**"
 
 # Seed Dataset Loader Guidelines
 
+**Responsibility**: Seed dataset loaders (`SeedDatasetProvider` subclasses) are the single place to manage the prompts/objectives for a source. They load seeds into `CentralMemory`; components then retrieve seeds from memory — components never read from a loader directly.
+
 These rules apply when adding or modifying loaders under `pyrit/datasets/seed_datasets/`.
 Style rules from `style-guide.instructions.md` (async `_async` suffix, keyword-only args, type hints, enums-over-Literals) still apply and are not repeated here.
 
