@@ -37,6 +37,7 @@ from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.dataset_configuration import (
     DatasetAttackConfiguration,
     DatasetConstraintError,
+    MultiDatasetAttackConfiguration,
 )
 from pyrit.scenario.core.scenario import Scenario
 from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
@@ -166,9 +167,11 @@ class Encoding(Scenario):
             version=self.VERSION,
             strategy_class=EncodingStrategy,
             default_strategy=EncodingStrategy.ALL,
-            default_dataset_config=EncodingDatasetConfiguration(
-                dataset_names=["garak_slur_terms_en", "garak_web_html_js"],
-                max_dataset_size=3,
+            default_dataset_config=MultiDatasetAttackConfiguration(
+                configurations=[
+                    EncodingDatasetConfiguration(dataset_names=["garak_slur_terms_en"], max_dataset_size=3),
+                    EncodingDatasetConfiguration(dataset_names=["garak_web_html_js"], max_dataset_size=3),
+                ]
             ),
             objective_scorer=objective_scorer,
             scenario_result_id=scenario_result_id,

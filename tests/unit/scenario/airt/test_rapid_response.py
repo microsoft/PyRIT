@@ -22,8 +22,7 @@ from pyrit.registry import TargetRegistry
 from pyrit.registry.object_registries.attack_technique_registry import AttackTechniqueRegistry
 from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
 from pyrit.scenario.core.dataset_configuration import (
-    DatasetAttackConfiguration,
-    DatasetConfiguration,
+    MultiDatasetAttackConfiguration,
 )
 from pyrit.scenario.scenarios.airt.rapid_response import (
     RapidResponse,
@@ -178,7 +177,7 @@ class TestRapidResponseBasic:
             "pyrit.scenario.core.scenario.Scenario._get_default_objective_scorer", return_value=mock_objective_scorer
         ):
             config = RapidResponse()._default_dataset_config
-        assert isinstance(config, DatasetConfiguration)
+        assert isinstance(config, MultiDatasetAttackConfiguration)
         names = config.dataset_names
         expected = [f"airt_{cat}" for cat in ALL_HARM_CATEGORIES]
         for name in expected:
@@ -190,7 +189,7 @@ class TestRapidResponseBasic:
             "pyrit.scenario.core.scenario.Scenario._get_default_objective_scorer", return_value=mock_objective_scorer
         ):
             config = RapidResponse()._default_dataset_config
-        assert config.max_dataset_size == 4
+        assert all(child.max_dataset_size == 4 for child in config._configurations)
 
     @patch("pyrit.scenario.core.scenario.Scenario._get_default_objective_scorer")
     def test_initialization_minimal(self, mock_get_scorer, mock_objective_scorer):
@@ -206,7 +205,7 @@ class TestRapidResponseBasic:
 
     @patch("pyrit.scenario.core.scenario.Scenario._get_default_objective_scorer")
     @patch.object(
-        DatasetAttackConfiguration,
+        MultiDatasetAttackConfiguration,
         "get_attack_groups_by_dataset_async",
         new_callable=AsyncMock,
         return_value=ALL_HARM_SEED_GROUPS,
@@ -240,7 +239,7 @@ class TestRapidResponseBasic:
 
     @patch("pyrit.scenario.core.scenario.Scenario._get_default_objective_scorer")
     @patch.object(
-        DatasetAttackConfiguration,
+        MultiDatasetAttackConfiguration,
         "get_attack_groups_by_dataset_async",
         new_callable=AsyncMock,
         return_value=ALL_HARM_SEED_GROUPS,
@@ -284,7 +283,7 @@ class TestRapidResponseAttackGeneration:
         """Helper: initialize scenario and return atomic attacks."""
         groups = seed_groups or {"hate": _make_seed_groups("hate")}
         with patch.object(
-            DatasetAttackConfiguration,
+            MultiDatasetAttackConfiguration,
             "get_attack_groups_by_dataset_async",
             new_callable=AsyncMock,
             return_value=groups,
@@ -438,7 +437,7 @@ class TestRapidResponseAttackGeneration:
         )
 
         with patch.object(
-            DatasetAttackConfiguration,
+            MultiDatasetAttackConfiguration,
             "get_attack_groups_by_dataset_async",
             new_callable=AsyncMock,
             return_value=groups,

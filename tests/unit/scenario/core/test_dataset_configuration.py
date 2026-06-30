@@ -14,6 +14,7 @@ from pyrit.scenario.core.dataset_configuration import (
     DatasetConfiguration,
     DatasetConstraintError,
     DatasetSourceKind,
+    MultiDatasetAttackConfiguration,
     ResolvedDataset,
     forbid_inline_seeds,
     require_harm_categories,
@@ -237,7 +238,7 @@ class TestGetSeedAttackGroupsAsync:
 
 
 class TestGetAttackGroupsByDatasetAsync:
-    """``get_attack_groups_by_dataset_async`` (keyed by dataset, per-dataset sample)."""
+    """``get_attack_groups_by_dataset_async`` (keyed by dataset, global sample)."""
 
     async def test_inline_uses_inline_label(self, sample_seed_groups: list[SeedGroup]) -> None:
         config = DatasetAttackConfiguration(seed_groups=sample_seed_groups)
@@ -253,12 +254,12 @@ class TestGetAttackGroupsByDatasetAsync:
         assert len(result["d1"]) == 2
         assert len(result["d2"]) == 1
 
-    async def test_per_dataset_max_sample(self, mock_memory: MagicMock) -> None:
+    async def test_max_sample_is_a_single_global_budget(self, mock_memory: MagicMock) -> None:
+        # A single config now applies max_dataset_size globally across datasets, not per dataset.
         mock_memory.get_seeds.side_effect = [make_objectives("a", "b", "c"), make_objectives("d", "e", "f")]
-        config = DatasetAttackConfiguration(dataset_names=["d1", "d2"], max_dataset_size=1)
+        config = DatasetAttackConfiguration(dataset_names=["d1", "d2"], max_dataset_size=2)
         result = await config.get_attack_groups_by_dataset_async()
-        assert len(result["d1"]) == 1
-        assert len(result["d2"]) == 1
+        assert sum(len(groups) for groups in result.values()) == 2
 
     async def test_loud_raise_when_a_dataset_is_empty(self, mock_memory: MagicMock) -> None:
         mock_memory.get_seeds.side_effect = [make_objectives("a"), []]
@@ -515,3 +516,82 @@ class TestResolvedDatasetNames:
         config = DatasetAttackConfiguration(dataset_names=["d1"], validators=[restrict_dataset_names({"d1", "d2"})])
         groups = await config.get_seed_attack_groups_async()
         assert [g.objective.value for g in groups] == ["a"]
+
+
+class TestMultiDatasetAttackConfiguration:
+    """``MultiDatasetAttackConfiguration`` composes child configs with independent budgets."""
+
+    def test_empty_configurations_raises(self) -> None:
+        with pytest.raises(ValueError, match="at least one child"):
+            MultiDatasetAttackConfiguration(configurations=[])
+
+    def test_per_dataset_empty_names_raises(self) -> None:
+        with pytest.raises(ValueError, match="at least one dataset"):
+            MultiDatasetAttackConfiguration.per_dataset(dataset_names=[])
+
+    def test_per_dataset_builds_one_child_per_name(self) -> None:
+        config = MultiDatasetAttackConfiguration.per_dataset(dataset_names=["d1", "d2"], max_dataset_size=4)
+        assert len(config._configurations) == 2
+        assert [child.dataset_names for child in config._configurations] == [["d1"], ["d2"]]
+        assert all(child.max_dataset_size == 4 for child in config._configurations)
+
+    def test_dataset_names_aggregates_and_dedups(self) -> None:
+        config = MultiDatasetAttackConfiguration(
+            configurations=[
+                DatasetAttackConfiguration(dataset_names=["d1"]),
+                DatasetAttackConfiguration(dataset_names=["d1", "d2"]),
+            ]
+        )
+        assert config.dataset_names == ["d1", "d2"]
+
+    def test_source_kind_inline_when_all_children_inline(self) -> None:
+        config = MultiDatasetAttackConfiguration(
+            configurations=[
+                DatasetAttackConfiguration(seeds=make_objectives("a")),
+                DatasetAttackConfiguration(seeds=make_objectives("b")),
+            ]
+        )
+        assert config.source_kind is DatasetSourceKind.INLINE
+
+    def test_source_kind_memory_when_any_child_from_memory(self) -> None:
+        config = MultiDatasetAttackConfiguration(
+            configurations=[
+                DatasetAttackConfiguration(seeds=make_objectives("a")),
+                DatasetAttackConfiguration(dataset_names=["d1"]),
+            ]
+        )
+        assert config.source_kind is DatasetSourceKind.MEMORY
+
+    async def test_flat_concatenates_children_with_per_child_budget(self, mock_memory: MagicMock) -> None:
+        mock_memory.get_seeds.side_effect = [make_objectives("a", "b", "c", "d"), make_objectives("e", "f", "g", "h")]
+        config = MultiDatasetAttackConfiguration.per_dataset(dataset_names=["d1", "d2"], max_dataset_size=3)
+        groups = await config.get_seed_attack_groups_async()
+        assert len(groups) == 6
+
+    async def test_by_dataset_merges_children(self, mock_memory: MagicMock) -> None:
+        mock_memory.get_seeds.side_effect = [make_objectives("a", "b", "c", "d"), make_objectives("e", "f", "g", "h")]
+        config = MultiDatasetAttackConfiguration.per_dataset(dataset_names=["d1", "d2"], max_dataset_size=3)
+        result = await config.get_attack_groups_by_dataset_async()
+        assert {name: len(groups) for name, groups in result.items()} == {"d1": 3, "d2": 3}
+
+    async def test_compound_max_caps_combined_result(self, mock_memory: MagicMock) -> None:
+        mock_memory.get_seeds.side_effect = [make_objectives("a", "b", "c"), make_objectives("d", "e", "f")]
+        config = MultiDatasetAttackConfiguration(
+            configurations=[
+                DatasetAttackConfiguration(dataset_names=["d1"]),
+                DatasetAttackConfiguration(dataset_names=["d2"]),
+            ],
+            max_dataset_size=2,
+        )
+        groups = await config.get_seed_attack_groups_async()
+        assert len(groups) == 2
+
+    async def test_inline_children_combine(self) -> None:
+        config = MultiDatasetAttackConfiguration(
+            configurations=[
+                DatasetAttackConfiguration(seeds=make_objectives("a")),
+                DatasetAttackConfiguration(seeds=make_objectives("b")),
+            ]
+        )
+        groups = await config.get_seed_attack_groups_async()
+        assert sorted(g.objective.value for g in groups) == ["a", "b"]

@@ -664,13 +664,18 @@ class DatasetAttackConfiguration(DatasetConfiguration):
     A ``DatasetConfiguration`` that groups resolved seeds into attack groups.
 
     This is the default most scenarios use: scenarios run over ``SeedAttackGroup`` s
-    (each carrying exactly one objective plus optional prompts). Two resolvers are
-    provided, differing only in how ``max_dataset_size`` is applied:
+    (each carrying exactly one objective plus optional prompts). ``max_dataset_size`` is a
+    single global budget for the configuration; both resolvers apply it the same way:
 
     - ``get_seed_attack_groups_async`` -- a flat ``list[SeedAttackGroup]``, sampled
       globally over all built groups.
-    - ``get_attack_groups_by_dataset_async`` -- groups keyed by dataset name (sampled
-      per dataset), used when a scenario fans atomic attacks out per (technique, dataset).
+    - ``get_attack_groups_by_dataset_async`` -- the same globally sampled groups, keyed by
+      dataset name, used when a scenario fans atomic attacks out per (technique, dataset).
+
+    To draw an independent budget from *each* of several datasets (the old "N per dataset"
+    behavior), compose one child per dataset with ``MultiDatasetAttackConfiguration`` --
+    e.g. ``MultiDatasetAttackConfiguration.per_dataset(dataset_names=[...], max_dataset_size=4)``
+    -- rather than relying on a single config to special-case dataset names.
 
     Both run ``validators`` against the full resolved seed set before sampling.
 
@@ -769,11 +774,13 @@ class DatasetAttackConfiguration(DatasetConfiguration):
 
     async def get_attack_groups_by_dataset_async(self) -> dict[str, list[SeedAttackGroup]]:
         """
-        Resolve attack groups keyed by dataset name, sampled per dataset.
+        Resolve attack groups keyed by dataset name, globally sampled.
 
-        Inline configs resolve under the ``INLINE_DATASET_NAME`` label. Builds attack
-        groups (auto-fetching missing datasets), validates the full resolved seed set, then
-        samples ``max_dataset_size`` per dataset independently.
+        Inline configs resolve under the ``INLINE_DATASET_NAME`` label. Builds attack groups
+        (auto-fetching missing datasets), validates the full resolved seed set, then applies
+        ``max_dataset_size`` as one global budget across all datasets -- the survivors stay
+        keyed by their originating dataset. For an independent budget per dataset, compose
+        ``MultiDatasetAttackConfiguration.per_dataset(...)`` instead.
 
         Returns:
             dict[str, list[SeedAttackGroup]]: Dataset name -> sampled attack groups.
@@ -784,9 +791,188 @@ class DatasetAttackConfiguration(DatasetConfiguration):
         """
         groups_by_dataset, resolved = await self._build_groups_by_dataset_async()
         self.validate(resolved)
-        result = {name: self._apply_max_dataset_size(groups) for name, groups in groups_by_dataset.items()}
-        result = {name: groups for name, groups in result.items() if groups}
+        result = {name: groups for name, groups in self._sample_groups_by_dataset(groups_by_dataset).items() if groups}
         if not result:
             names = ", ".join(self._dataset_names) if self._dataset_names else "<inline>"
             raise DatasetConstraintError(f"Resolved attack-group dataset is empty (datasets: {names}).")
         return result
+
+    def _sample_groups_by_dataset(
+        self, groups_by_dataset: dict[str, list[SeedAttackGroup]]
+    ) -> dict[str, list[SeedAttackGroup]]:
+        """
+        Apply ``max_dataset_size`` as one global budget across datasets, preserving keys.
+
+        Flattens every ``(dataset_name, group)`` pair, samples up to ``max_dataset_size``
+        across the union, then regroups the survivors under their originating dataset name.
+
+        Args:
+            groups_by_dataset (dict[str, list[SeedAttackGroup]]): Built groups keyed by dataset.
+
+        Returns:
+            dict[str, list[SeedAttackGroup]]: The globally sampled groups, still keyed by dataset.
+        """
+        pairs = [(name, group) for name, groups in groups_by_dataset.items() for group in groups]
+        result: dict[str, list[SeedAttackGroup]] = {}
+        for name, group in self._apply_max_dataset_size(pairs):
+            result.setdefault(name, []).append(group)
+        return result
+
+
+class MultiDatasetAttackConfiguration(DatasetAttackConfiguration):
+    """
+    A ``DatasetAttackConfiguration`` composed of child configurations.
+
+    Each child resolves, validates, and samples itself (with its own ``max_dataset_size``);
+    this compound concatenates the results. Use it to combine datasets that need independent
+    budgets or shaping -- for example "up to 4 attack groups from *each* of several datasets"
+    (see ``per_dataset``), or pairing one dataset's objectives with another dataset's prompts.
+
+    A single ``DatasetAttackConfiguration`` applies ``max_dataset_size`` as one global budget;
+    per-dataset budgets are expressed by composing one child per dataset rather than by
+    special-casing dataset names inside a single configuration. An optional compound-level
+    ``max_dataset_size`` caps the combined result on top of each child's own sampling.
+    """
+
+    def __init__(
+        self,
+        *,
+        configurations: Sequence[DatasetAttackConfiguration],
+        max_dataset_size: int | None = None,
+        validators: Sequence[Callable[[ResolvedDataset], None]] | None = None,
+    ) -> None:
+        """
+        Initialize a compound configuration from child configurations.
+
+        Args:
+            configurations (Sequence[DatasetAttackConfiguration]): The child configurations to
+                combine; each resolves and samples independently. Must be non-empty.
+            max_dataset_size (int | None): Optional cap applied to the *combined* result, on
+                top of each child's own sampling.
+            validators (Sequence[Callable[[ResolvedDataset], None]] | None): Validators run
+                against the combined resolved seeds, in addition to each child's validators.
+
+        Raises:
+            ValueError: If ``configurations`` is empty.
+        """
+        if not configurations:
+            raise ValueError("MultiDatasetAttackConfiguration requires at least one child configuration.")
+        super().__init__(max_dataset_size=max_dataset_size, validators=validators)
+        self._configurations = list(configurations)
+
+    @classmethod
+    def per_dataset(
+        cls,
+        *,
+        dataset_names: Sequence[str],
+        max_dataset_size: int | None = None,
+        auto_fetch: bool = True,
+        validators: Sequence[Callable[[ResolvedDataset], None]] | None = None,
+    ) -> MultiDatasetAttackConfiguration:
+        """
+        Build a compound that draws up to ``max_dataset_size`` from *each* dataset name.
+
+        Creates one single-dataset ``DatasetAttackConfiguration`` child per name, so the budget
+        applies independently to each -- the explicit, composable form of "N per dataset".
+
+        Args:
+            dataset_names (Sequence[str]): The dataset names; one child is built per name.
+            max_dataset_size (int | None): Per-dataset cap applied to each child.
+            auto_fetch (bool): Passed to each child (fetch missing datasets into memory).
+            validators (Sequence[Callable[[ResolvedDataset], None]] | None): Applied to each child.
+
+        Returns:
+            MultiDatasetAttackConfiguration: The composed configuration.
+
+        Raises:
+            ValueError: If ``dataset_names`` is empty.
+        """
+        if not dataset_names:
+            raise ValueError("per_dataset requires at least one dataset name.")
+        return cls(
+            configurations=[
+                DatasetAttackConfiguration(
+                    dataset_names=[name],
+                    max_dataset_size=max_dataset_size,
+                    auto_fetch=auto_fetch,
+                    validators=validators,
+                )
+                for name in dataset_names
+            ]
+        )
+
+    @property
+    def dataset_names(self) -> list[str]:
+        """
+        The dataset names contributed by every child, in order (de-duplicated).
+
+        Returns:
+            list[str]: Aggregated child dataset names.
+        """
+        names: list[str] = []
+        for child in self._configurations:
+            for name in child.dataset_names:
+                if name not in names:
+                    names.append(name)
+        return names
+
+    @property
+    def source_kind(self) -> DatasetSourceKind:
+        """
+        Whether every child is inline; otherwise the compound is treated as memory-sourced.
+
+        Returns:
+            DatasetSourceKind: ``INLINE`` only when all children are inline, else ``MEMORY``.
+        """
+        if all(child.source_kind is DatasetSourceKind.INLINE for child in self._configurations):
+            return DatasetSourceKind.INLINE
+        return DatasetSourceKind.MEMORY
+
+    async def get_seed_attack_groups_async(self) -> list[SeedAttackGroup]:
+        """
+        Concatenate every child's flat result, then validate and apply the global cap.
+
+        Each child validates and samples itself; the combined result is validated against this
+        compound's validators and capped by an optional compound ``max_dataset_size``.
+
+        Returns:
+            list[SeedAttackGroup]: The combined, validated, capped attack groups.
+
+        Raises:
+            DatasetConstraintError: If a child yields nothing, or the combined result fails validation.
+        """
+        groups: list[SeedAttackGroup] = []
+        for child in self._configurations:
+            groups.extend(await child.get_seed_attack_groups_async())
+        self.validate(self._resolved_from_groups(groups))
+        return self._apply_max_dataset_size(groups)
+
+    async def get_attack_groups_by_dataset_async(self) -> dict[str, list[SeedAttackGroup]]:
+        """
+        Merge each child's by-dataset result, validate, then apply the global cap across the union.
+
+        Returns:
+            dict[str, list[SeedAttackGroup]]: Combined groups keyed by dataset name.
+
+        Raises:
+            DatasetConstraintError: If a child yields nothing, or the combined result fails validation.
+        """
+        merged: dict[str, list[SeedAttackGroup]] = {}
+        for child in self._configurations:
+            for name, groups in (await child.get_attack_groups_by_dataset_async()).items():
+                merged.setdefault(name, []).extend(groups)
+        self.validate(self._resolved_from_groups([group for groups in merged.values() for group in groups]))
+        return self._sample_groups_by_dataset(merged)
+
+    def _resolved_from_groups(self, groups: list[SeedAttackGroup]) -> ResolvedDataset:
+        """
+        Build a ResolvedDataset over the combined groups for compound-level validation.
+
+        Args:
+            groups (list[SeedAttackGroup]): The combined attack groups.
+
+        Returns:
+            ResolvedDataset: Carries the flattened seeds, source kind, and aggregated names.
+        """
+        seeds = [seed for group in groups for seed in group.seeds]
+        return ResolvedDataset(seeds=seeds, source_kind=self.source_kind, dataset_names=tuple(self.dataset_names))

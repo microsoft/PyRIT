@@ -11,7 +11,11 @@ from pyrit.executor.attack import PromptSendingAttack
 from pyrit.models import ComponentIdentifier, SeedAttackGroup, SeedObjective, SeedPrompt
 from pyrit.prompt_converter import Base64Converter
 from pyrit.prompt_target import PromptTarget
-from pyrit.scenario import DatasetAttackConfiguration, DatasetConfiguration
+from pyrit.scenario import (
+    DatasetAttackConfiguration,
+    DatasetConfiguration,
+    MultiDatasetAttackConfiguration,
+)
 from pyrit.scenario.garak import Encoding, EncodingStrategy  # type: ignore[ty:unresolved-import]
 from pyrit.scenario.scenarios.garak.encoding import EncodingDatasetConfiguration
 from pyrit.score import DecodingScorer, TrueFalseScorer
@@ -350,9 +354,10 @@ class TestEncodingDatasetConfiguration:
     """Tests for the EncodingDatasetConfiguration class."""
 
     def test_default_dataset_config_returns_encoding_config(self, mock_objective_scorer):
-        """Test that default_dataset_config returns EncodingDatasetConfiguration."""
+        """Test that default_dataset_config is a compound of EncodingDatasetConfiguration children."""
         config = Encoding(objective_scorer=mock_objective_scorer)._default_dataset_config
-        assert isinstance(config, EncodingDatasetConfiguration)
+        assert isinstance(config, MultiDatasetAttackConfiguration)
+        assert all(isinstance(child, EncodingDatasetConfiguration) for child in config._configurations)
 
     def test_default_dataset_config_uses_garak_datasets(self, mock_objective_scorer):
         """Test that the default config uses the expected garak datasets."""
@@ -362,9 +367,9 @@ class TestEncodingDatasetConfiguration:
         assert "garak_web_html_js" in dataset_names
 
     def test_default_dataset_config_has_max_size(self, mock_objective_scorer):
-        """Test that the default config has max_dataset_size set."""
+        """Test that each child of the default config caps samples at 3 per dataset."""
         config = Encoding(objective_scorer=mock_objective_scorer)._default_dataset_config
-        assert config.max_dataset_size == 3
+        assert [child.max_dataset_size for child in config._configurations] == [3, 3]
 
 
 @pytest.mark.usefixtures("patch_central_database")
