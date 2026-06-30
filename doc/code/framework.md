@@ -97,7 +97,7 @@ flowchart TB
     ATK <-- reads / writes --> MEM
     core <--> MEM
     SCEN --> OUT
-    OUT --> MEM
+    MEM -- reads --> OUT
     MODEL -. shared types .-> core
 
     classDef flow fill:#e8f0fe,stroke:#4285f4,color:#15233a;
