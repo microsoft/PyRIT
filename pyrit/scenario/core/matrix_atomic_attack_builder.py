@@ -45,7 +45,7 @@ class MatrixCombo:
 
     Attributes:
         technique_name (str): The technique (strategy enum value) for this cell.
-        dataset_name (str): The dataset key from ``DatasetConfiguration.get_seed_attack_groups()``.
+        dataset_name (str): The dataset key from ``DatasetAttackConfiguration.get_attack_groups_by_dataset_async()``.
         target_name (str | None): The adversarial-target registry name when an
             adversarial-target axis is in play, else ``None``.
     """
@@ -188,7 +188,7 @@ class MatrixAtomicAttackBuilder:
             technique_factories (dict[str, AttackTechniqueFactory]): Mapping of technique
                 name to the factory that produces it. Only these techniques are built.
             dataset_groups (dict[str, list[SeedAttackGroup]]): Mapping of dataset name to
-                its seed groups (e.g. ``DatasetConfiguration.get_seed_attack_groups()``).
+                its seed groups (e.g. ``await DatasetAttackConfiguration.get_attack_groups_by_dataset_async()``).
             adversarial_targets (Sequence[tuple[str, PromptTarget]] | None): Optional
                 ``(name, instance)`` pairs adding an adversarial-target axis. When set,
                 each technique is swept across every target and the target instance is

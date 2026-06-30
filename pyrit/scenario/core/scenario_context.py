@@ -19,7 +19,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from pyrit.prompt_target import PromptTarget
-    from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
+    from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
     from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
 
 
@@ -38,7 +38,7 @@ class ScenarioContext:
         objective_target (PromptTarget): The target system the scenario attacks.
         scenario_strategies (Sequence[ScenarioStrategy]): The resolved, concrete
             strategies selected for this run (aggregates already expanded).
-        dataset_config (DatasetConfiguration): The effective dataset configuration
+        dataset_config (DatasetAttackConfiguration): The effective dataset configuration
             (caller-supplied or the scenario's default).
         memory_labels (dict[str, str]): Labels applied to every attack run.
         include_baseline (bool): Whether a baseline atomic attack should be emitted
@@ -48,6 +48,6 @@ class ScenarioContext:
 
     objective_target: PromptTarget
     scenario_strategies: Sequence[ScenarioStrategy]
-    dataset_config: DatasetConfiguration
+    dataset_config: DatasetAttackConfiguration
     memory_labels: dict[str, str] = field(default_factory=dict)
     include_baseline: bool = False

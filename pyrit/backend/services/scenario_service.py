@@ -11,8 +11,8 @@ through the REST API.
 from functools import lru_cache
 
 from pyrit.backend.models.common import PaginationInfo
-from pyrit.backend.models.scenarios import (
-    ListRegisteredScenariosResponse,
+from pyrit.backend.models.scenarios import ListRegisteredScenariosResponse
+from pyrit.models.catalog.scenario import (
     RegisteredScenario,
     ScenarioParameterSummary,
 )

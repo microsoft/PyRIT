@@ -7,7 +7,16 @@ from pyrit.models.parameter import Parameter
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory, ScorerOverridePolicy
-from pyrit.scenario.core.dataset_configuration import EXPLICIT_SEED_GROUPS_KEY, DatasetConfiguration
+from pyrit.scenario.core.dataset_configuration import (
+    INLINE_DATASET_NAME,
+    CompoundDatasetAttackConfiguration,
+    DatasetAttackConfiguration,
+    DatasetConfiguration,
+    DatasetConstraintError,
+    DatasetSourceKind,
+    ResolvedDataset,
+    require_nonempty,
+)
 from pyrit.scenario.core.scenario import BaselineAttackPolicy, Scenario
 from pyrit.scenario.core.scenario_strategy import ScenarioCompositeStrategy, ScenarioStrategy
 from pyrit.scenario.core.scenario_target_defaults import get_default_adversarial_target, get_default_scorer_target
@@ -17,9 +26,15 @@ __all__ = [
     "AttackTechnique",
     "AttackTechniqueFactory",
     "BaselineAttackPolicy",
+    "CompoundDatasetAttackConfiguration",
+    "DatasetAttackConfiguration",
     "DatasetConfiguration",
-    "EXPLICIT_SEED_GROUPS_KEY",
+    "DatasetConstraintError",
+    "DatasetSourceKind",
+    "INLINE_DATASET_NAME",
     "Parameter",
+    "ResolvedDataset",
+    "require_nonempty",
     "Scenario",
     "ScenarioCompositeStrategy",
     "ScenarioStrategy",

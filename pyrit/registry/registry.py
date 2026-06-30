@@ -26,24 +26,27 @@ registry singleton.
 
 from __future__ import annotations
 
+import inspect
+import logging
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
-from pyrit.models import class_name_to_snake_case
 from pyrit.registry.base import ClassRegistryEntry
 from pyrit.registry.resolution import (
     derive_parameters,
-    is_component_type_resolvable,
     resolve_constructor_args,
 )
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Mapping
+    from types import ModuleType
 
     from typing_extensions import Self
 
     from pyrit.models.identifiers.component_identifier import ComponentIdentifier
-    from pyrit.models.parameter import Parameter
+    from pyrit.models.parameter import ComponentType, Parameter
+
+logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
 MetadataT = TypeVar("MetadataT", bound=ClassRegistryEntry)
@@ -138,10 +141,18 @@ class Registry(ABC, Generic[T, MetadataT]):
       registry-reference parameters are resolved by name from the owning domain.
     - Singleton support via ``get_registry_singleton()``.
 
-    Subclasses must implement:
+    Subclasses provide the domain specifics:
 
-    - ``_discover()`` — populate the catalog by calling ``register_class`` for each class.
+    - ``_base_type()`` — the base class to discover (and the type the optional
+      ``instances`` container is constrained to), imported lazily.
+    - ``_discovery_package()`` — the package whose ``__all__`` is scanned for
+      concrete subclasses of ``_base_type()``.
     - ``_metadata_class()`` — return the concrete metadata dataclass the base builds.
+
+    The default ``_discover()`` scans ``_discovery_package().__all__`` for concrete
+    ``_base_type()`` subclasses and registers each by class name. A registry whose
+    discovery is genuinely different (e.g. a directory or filesystem scan) overrides
+    ``_discover()`` instead of supplying the two hooks.
 
     Type Parameters:
         T: The type of classes being registered (e.g. ``PromptConverter``).
@@ -198,14 +209,65 @@ class Registry(ABC, Generic[T, MetadataT]):
             self._discover()
             self._discovered = True
 
-    @abstractmethod
+    def _base_type(self) -> type[T]:
+        """
+        Return the domain base class to discover (e.g. ``PromptTarget``), imported lazily.
+
+        Used by the default ``_discover`` to filter the package's exports, and by
+        instance-holding registries to constrain their ``instances`` container.
+        Importing lazily keeps the heavy domain package out of module load so the
+        registry's lazy discovery is preserved.
+
+        Returns:
+            type[T]: The domain base class.
+
+        Raises:
+            NotImplementedError: If neither ``_base_type`` nor ``_discover`` is overridden.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} must implement _base_type()/_discovery_package() or override _discover()."
+        )
+
+    def _discovery_package(self) -> ModuleType:
+        """
+        Return the package whose ``__all__`` the default ``_discover`` scans.
+
+        Returns:
+            ModuleType: The domain package (e.g. ``pyrit.prompt_target``).
+
+        Raises:
+            NotImplementedError: If neither ``_discovery_package`` nor ``_discover`` is overridden.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} must implement _base_type()/_discovery_package() or override _discover()."
+        )
+
     def _discover(self) -> None:
         """
-        Perform discovery of registry classes.
+        Populate the catalog from the domain package.
 
-        Subclasses implement this to populate the catalog by calling
-        ``self.register_class(cls)`` for each discovered class.
+        Scans ``_discovery_package().__all__`` and registers every concrete subclass
+        of ``_base_type()`` (skipping the base itself and abstract classes), keyed by
+        class name via ``register_class``. Registries with bespoke discovery override
+        this method instead of supplying ``_base_type``/``_discovery_package``.
         """
+        package = self._discovery_package()
+        base = self._base_type()
+        for name in getattr(package, "__all__", []):
+            cls = getattr(package, name, None)
+            if cls is None or not isinstance(cls, type):
+                continue
+            # Guard against entries that aren't genuine classes. A test elsewhere in the
+            # suite may patch a package export with a mock (e.g. ``autospec``/``spec=type``)
+            # that reports ``isinstance(cls, type) is True`` yet makes ``issubclass`` raise
+            # ``TypeError``; skip anything that isn't a real subclass of the base.
+            try:
+                if not issubclass(cls, base) or cls is base or inspect.isabstract(cls):
+                    continue
+            except TypeError:
+                continue
+            self.register_class(cls)
+            logger.debug(f"Registered {base.__name__} class: {cls.__name__}")
 
     @abstractmethod
     def _metadata_class(self) -> type[MetadataT]:
@@ -292,16 +354,17 @@ class Registry(ABC, Generic[T, MetadataT]):
         """
         Get the catalog name for a class.
 
-        Subclasses can override this to customize name derivation. The default
-        converts CamelCase to snake_case.
+        Component classes are referenced by their exact class name (e.g.
+        ``"OpenAIChatTarget"``). Registries whose names follow a different scheme
+        (e.g. snake_case filenames or dotted paths) override this.
 
         Args:
             cls (type[T]): The class to get a name for.
 
         Returns:
-            str: The catalog name (snake_case identifier by default).
+            str: The class name.
         """
-        return class_name_to_snake_case(cls.__name__)
+        return cls.__name__
 
     def _validate_class(self, cls: type[T]) -> None:
         """
@@ -326,11 +389,30 @@ class Registry(ABC, Generic[T, MetadataT]):
         # cheap, so the small duplication is deliberate rather than worth caching.
         parameters = self._derive_parameters(cls)
         for param in parameters:
-            if param.reference is not None and not is_component_type_resolvable(param.reference.component_type):
+            if param.reference is not None and not self._is_component_type_resolvable(param.reference.component_type):
                 raise ValueError(
                     f"{cls.__name__}: reference parameter '{param.name}' has no registry wired for component type "
                     f"'{param.reference.component_type}'."
                 )
+
+    @staticmethod
+    def _is_component_type_resolvable(component_type: ComponentType) -> bool:
+        """
+        Return whether a registry is wired to resolve references of ``component_type``.
+
+        This is the registration-time gate: a reference parameter whose component
+        type has no paired registry can never be resolved by name and should fail
+        fast at ``register_class`` time instead of erroring only at build time.
+
+        Args:
+            component_type (ComponentType): The referenced component family.
+
+        Returns:
+            bool: True when references of ``component_type`` can be resolved by name.
+        """
+        from pyrit.registry.resolution import _registry_getter_for_component_type
+
+        return _registry_getter_for_component_type(component_type) is not None
 
     def register_class(self, cls: type[T], *, name: str | None = None) -> None:
         """

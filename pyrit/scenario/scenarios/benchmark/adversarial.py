@@ -20,7 +20,7 @@ from pyrit.models import (
 from pyrit.models.parameter import Parameter
 from pyrit.registry import AttackTechniqueRegistry, TargetRegistry
 from pyrit.registry.tag_query import TagQuery
-from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
+from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
 from pyrit.scenario.core.matrix_atomic_attack_builder import MatrixAtomicAttackBuilder
 from pyrit.scenario.core.scenario import BaselineAttackPolicy, Scenario
 
@@ -83,7 +83,7 @@ class AdversarialBenchmark(Scenario):
     parameter (declared in ``supported_parameters``). Each target must
     already be registered in ``TargetRegistry`` — typically by
     ``TargetInitializer`` from ``ADVERSARIAL_CHAT_*`` env vars, or
-    programmatically via ``TargetRegistry.register_instance``.
+    programmatically via ``TargetRegistry.get_registry_singleton().instances.register``.
 
     At run time, ``_build_atomic_attacks_async`` performs the
     ``(technique × adversarial_target × dataset)`` cross-product: for each
@@ -130,7 +130,7 @@ class AdversarialBenchmark(Scenario):
                 description=(
                     "Registry names of adversarial chat targets to benchmark. "
                     "Each name must already be registered in TargetRegistry "
-                    "(via TargetInitializer or TargetRegistry.register_instance). "
+                    "(via TargetInitializer or TargetRegistry instance registration). "
                     "Use 'pyrit_scan list-targets' to see registered targets. "
                     "Settable via --adversarial-targets <name> [<name> ...] on the CLI, "
                     "or scenario.args.adversarial_targets in .pyrit_conf."
@@ -187,7 +187,7 @@ class AdversarialBenchmark(Scenario):
             objective_scorer=self._objective_scorer,
             strategy_class=strategy_class,
             default_strategy=strategy_class("light"),
-            default_dataset_config=DatasetConfiguration(
+            default_dataset_config=DatasetAttackConfiguration(
                 dataset_names=["harmbench"],
                 max_dataset_size=8,
             ),
@@ -247,7 +247,7 @@ class AdversarialBenchmark(Scenario):
         # ``{technique}__{target}_{dataset}`` naming preserves the VERSION=2 cache key shape.
         atomic_attacks = builder.build(
             technique_factories=technique_factories,
-            dataset_groups=context.dataset_config.get_seed_attack_groups(),
+            dataset_groups=await context.dataset_config.get_attack_groups_by_dataset_async(),
             adversarial_targets=resolved_targets,
             display_group_fn=lambda combo: combo.target_name or "",
             include_baseline=False,
@@ -299,14 +299,14 @@ class AdversarialBenchmark(Scenario):
         resolved: list[tuple[str, PromptTarget]] = []
         unknown: list[str] = []
         for name in target_names:
-            instance = target_registry.get_instance_by_name(name)
+            instance = target_registry.instances.get(name)
             if instance is None:
                 unknown.append(name)
             else:
                 resolved.append((name, instance))
 
         if unknown:
-            available = sorted(target_registry.get_names())
+            available = sorted(target_registry.instances.get_names())
             raise ValueError(
                 f"AdversarialBenchmark: adversarial_targets {sorted(unknown)} not found in TargetRegistry. "
                 f"Available targets: {available}."
