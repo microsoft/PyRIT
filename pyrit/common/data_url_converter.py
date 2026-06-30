@@ -21,7 +21,6 @@ from pyrit.common.deprecation import module_deprecation_getattr
 
 __all__ = [
     "AZURE_OPENAI_GPT4O_SUPPORTED_IMAGE_FORMATS",
-    "convert_local_image_to_data_url",
     "convert_local_image_to_data_url_async",
 ]
 
