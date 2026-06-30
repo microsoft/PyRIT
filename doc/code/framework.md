@@ -133,7 +133,6 @@ As much as possible, each core component is a pluggable brick of functionality. 
 If you are contributing to PyRIT, that work will most likely land in one of the core components buckets and be as self-contained as possible. It isn't always this clean, but when an attack scenario doesn't quite fit (and that's okay!) it's good to brainstorm with the maintainers about how we can modify our architecture. Also, please open issues if you see anything under Framework Plans you do/don't want.
 
 
-
 ## [Datasets](./datasets/0_dataset)
 
 **Responsibility**: Create a single place to manage seeds
