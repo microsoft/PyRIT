@@ -81,7 +81,7 @@ def test_video_validate_request_multiple_text_pieces(video_target: OpenAIVideoTa
         msg2 = MessagePiece(
             role="user", original_value="test2", converted_value="test2", conversation_id=conversation_id
         )
-        video_target._validate_request(normalized_conversation=[Message([msg1, msg2])])
+        video_target._validate_request(normalized_conversation=[Message(message_pieces=[msg1, msg2])])
 
 
 def test_video_validate_prompt_type_image_only(video_target: OpenAIVideoTarget):
@@ -90,7 +90,7 @@ def test_video_validate_prompt_type_image_only(video_target: OpenAIVideoTarget):
         msg = MessagePiece(
             role="user", original_value="test", converted_value="test", converted_value_data_type="image_path"
         )
-        video_target._validate_request(normalized_conversation=[Message([msg])])
+        video_target._validate_request(normalized_conversation=[Message(message_pieces=[msg])])
 
 
 async def test_video_send_prompt_async_success(
@@ -123,7 +123,7 @@ async def test_video_send_prompt_async_success(
         mock_download.return_value = mock_video_response
         mock_factory.return_value = mock_serializer
 
-        response = await video_target.send_prompt_async(message=Message([request]))
+        response = await video_target.send_prompt_async(message=Message(message_pieces=[request]))
 
         # Verify SDK methods were called correctly
         mock_create.assert_called_once_with(
@@ -166,7 +166,7 @@ async def test_video_send_prompt_async_failed_content_filter(
     with patch.object(video_target._async_client.videos, "create_and_poll", new_callable=AsyncMock) as mock_create:
         mock_create.return_value = mock_video
 
-        response = await video_target.send_prompt_async(message=Message([request]))
+        response = await video_target.send_prompt_async(message=Message(message_pieces=[request]))
 
         # Verify response is error with blocked status
         assert len(response) == 1
@@ -195,7 +195,7 @@ async def test_video_send_prompt_async_failed_processing_error(
     with patch.object(video_target._async_client.videos, "create_and_poll", new_callable=AsyncMock) as mock_create:
         mock_create.return_value = mock_video
 
-        response = await video_target.send_prompt_async(message=Message([request]))
+        response = await video_target.send_prompt_async(message=Message(message_pieces=[request]))
 
         # Verify response is processing error
         assert len(response) == 1
@@ -225,7 +225,7 @@ async def test_video_send_prompt_async_bad_request_exception(
     with patch.object(video_target._async_client.videos, "create_and_poll", new_callable=AsyncMock) as mock_create:
         mock_create.side_effect = bad_request_error
 
-        response = await video_target.send_prompt_async(message=Message([request]))
+        response = await video_target.send_prompt_async(message=Message(message_pieces=[request]))
 
         # Verify response is error with blocked status (content filter)
         assert len(response) == 1
@@ -251,7 +251,7 @@ async def test_video_send_prompt_async_rate_limit_exception(
         mock_create.side_effect = rate_limit_error
 
         with pytest.raises(RateLimitException):
-            await video_target.send_prompt_async(message=Message([request]))
+            await video_target.send_prompt_async(message=Message(message_pieces=[request]))
 
 
 async def test_video_send_prompt_async_api_error(
@@ -273,7 +273,7 @@ async def test_video_send_prompt_async_api_error(
         mock_create.side_effect = api_error
 
         with pytest.raises(APIStatusError):
-            await video_target.send_prompt_async(message=Message([request]))
+            await video_target.send_prompt_async(message=Message(message_pieces=[request]))
 
 
 async def test_video_send_prompt_async_unexpected_status(
@@ -291,7 +291,7 @@ async def test_video_send_prompt_async_unexpected_status(
     with patch.object(video_target._async_client.videos, "create_and_poll", new_callable=AsyncMock) as mock_create:
         mock_create.return_value = mock_video
 
-        response = await video_target.send_prompt_async(message=Message([request]))
+        response = await video_target.send_prompt_async(message=Message(message_pieces=[request]))
 
         # Verify response is error with unknown status
         assert len(response) == 1
@@ -367,7 +367,7 @@ class TestVideoTargetValidation:
         """Test validation accepts single text piece (text-to-video mode)."""
         msg = MessagePiece(role="user", original_value="test prompt", converted_value="test prompt")
         # Should not raise
-        video_target._validate_request(normalized_conversation=[Message([msg])])
+        video_target._validate_request(normalized_conversation=[Message(message_pieces=[msg])])
 
     def test_validate_accepts_text_and_image(self, video_target: OpenAIVideoTarget):
         """Test validation accepts text + image (image-to-video mode)."""
@@ -386,7 +386,7 @@ class TestVideoTargetValidation:
             conversation_id=conversation_id,
         )
         # Should not raise
-        video_target._validate_request(normalized_conversation=[Message([msg_text, msg_image])])
+        video_target._validate_request(normalized_conversation=[Message(message_pieces=[msg_text, msg_image])])
 
     def test_validate_rejects_multiple_images(self, video_target: OpenAIVideoTarget):
         """Test validation rejects multiple image pieces."""
@@ -412,7 +412,9 @@ class TestVideoTargetValidation:
             conversation_id=conversation_id,
         )
         with pytest.raises(ValueError, match="at most 1 image piece"):
-            video_target._validate_request(normalized_conversation=[Message([msg_text, msg_img1, msg_img2])])
+            video_target._validate_request(
+                normalized_conversation=[Message(message_pieces=[msg_text, msg_img1, msg_img2])]
+            )
 
     def test_validate_rejects_unsupported_types(self, video_target: OpenAIVideoTarget):
         """Test validation rejects unsupported data types."""
@@ -435,7 +437,7 @@ class TestVideoTargetValidation:
             match="This target supports only the following data types.*If your target does support this, set the"
             " custom_configuration parameter accordingly",
         ):
-            video_target._validate_request(normalized_conversation=[Message([msg_text, msg_audio])])
+            video_target._validate_request(normalized_conversation=[Message(message_pieces=[msg_text, msg_audio])])
 
     def test_validate_rejects_remix_with_image(self, video_target: OpenAIVideoTarget):
         """Test validation rejects remix mode combined with image input."""
@@ -455,7 +457,7 @@ class TestVideoTargetValidation:
             conversation_id=conversation_id,
         )
         with pytest.raises(ValueError, match="Cannot use image input in remix mode"):
-            video_target._validate_request(normalized_conversation=[Message([msg_text, msg_image])])
+            video_target._validate_request(normalized_conversation=[Message(message_pieces=[msg_text, msg_image])])
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -517,7 +519,7 @@ class TestVideoTargetImageToVideo:
             mock_download.return_value = mock_video_response
             mock_mime.return_value = "image/png"
 
-            response = await video_target.send_prompt_async(message=Message([msg_text, msg_image]))
+            response = await video_target.send_prompt_async(message=Message(message_pieces=[msg_text, msg_image]))
 
             # Verify create_and_poll was called with input_reference as tuple with MIME type
             mock_create.assert_called_once()
@@ -588,7 +590,7 @@ class TestVideoTargetRemix:
             mock_download.return_value = mock_video_response
             mock_factory.return_value = mock_serializer
 
-            response = await video_target.send_prompt_async(message=Message([msg]))
+            response = await video_target.send_prompt_async(message=Message(message_pieces=[msg]))
 
             # Verify remix was called with correct params
             mock_remix.assert_called_once_with("existing_video_123", prompt="make it more dramatic")
@@ -634,7 +636,7 @@ class TestVideoTargetRemix:
             mock_download.return_value = mock_video_response
             mock_factory.return_value = mock_serializer
 
-            await video_target.send_prompt_async(message=Message([msg]))
+            await video_target.send_prompt_async(message=Message(message_pieces=[msg]))
 
             # Verify poll was NOT called since status was already completed
             mock_poll.assert_not_called()
@@ -688,7 +690,7 @@ class TestVideoTargetRemix:
             mock_download.return_value = mock_video_response
             mock_factory.return_value = mock_serializer
 
-            response = await video_target.send_prompt_async(message=Message([msg_text, msg_video]))
+            response = await video_target.send_prompt_async(message=Message(message_pieces=[msg_text, msg_video]))
 
             # Verify remix was called with the video_id from text metadata
             mock_remix.assert_called_once_with("vid_from_ui_123", prompt="make it more dramatic")
@@ -743,7 +745,7 @@ class TestVideoTargetMetadata:
             mock_download.return_value = mock_video_response
             mock_factory.return_value = mock_serializer
 
-            response = await video_target.send_prompt_async(message=Message([msg]))
+            response = await video_target.send_prompt_async(message=Message(message_pieces=[msg]))
 
             # Verify response contains video_id in metadata for chaining
             response_piece = response[0].message_pieces[0]
@@ -766,7 +768,7 @@ class TestVideoTargetEdgeCases:
     def test_validate_rejects_empty_message(self, video_target: OpenAIVideoTarget):
         """Test that empty messages are rejected (by Message constructor)."""
         with pytest.raises(ValueError, match="at least one message piece"):
-            Message([])
+            Message(message_pieces=[])
 
     def test_validate_rejects_no_text_piece(self, video_target: OpenAIVideoTarget):
         """Test validation rejects message without text piece."""
@@ -777,7 +779,7 @@ class TestVideoTargetEdgeCases:
             converted_value_data_type="image_path",
         )
         with pytest.raises(ValueError, match="Expected exactly 1 text piece"):
-            video_target._validate_request(normalized_conversation=[Message([msg])])
+            video_target._validate_request(normalized_conversation=[Message(message_pieces=[msg])])
 
     async def test_image_to_video_with_jpeg(self, video_target: OpenAIVideoTarget):
         """Test image-to-video with JPEG image format."""
@@ -825,7 +827,7 @@ class TestVideoTargetEdgeCases:
             mock_download.return_value = mock_video_response
             mock_mime.return_value = "image/jpeg"
 
-            response = await video_target.send_prompt_async(message=Message([msg_text, msg_image]))
+            response = await video_target.send_prompt_async(message=Message(message_pieces=[msg_text, msg_image]))
 
             # Verify JPEG MIME type is used
             call_kwargs = mock_create.call_args.kwargs
@@ -882,7 +884,7 @@ class TestVideoTargetEdgeCases:
             mock_download.return_value = mock_video_response
             mock_mime.return_value = None  # strict=True returns None for .webp
 
-            response = await video_target.send_prompt_async(message=Message([msg_text, msg_image]))
+            response = await video_target.send_prompt_async(message=Message(message_pieces=[msg_text, msg_image]))
 
             # Verify webp MIME type is correctly resolved via guess_type fallback
             call_kwargs = mock_create.call_args.kwargs
@@ -917,7 +919,7 @@ class TestVideoTargetEdgeCases:
             mock_factory.return_value = mock_image_serializer
             mock_mime.return_value = None  # MIME type cannot be determined
 
-            await video_target.send_prompt_async(message=Message([msg_text, msg_image]))
+            await video_target.send_prompt_async(message=Message(message_pieces=[msg_text, msg_image]))
 
     async def test_remix_with_failed_status(self, video_target: OpenAIVideoTarget):
         """Test remix mode handles failed video generation."""
@@ -943,7 +945,7 @@ class TestVideoTargetEdgeCases:
             mock_remix.return_value = mock_video
             # Don't need poll since status is already "failed"
 
-            response = await video_target.send_prompt_async(message=Message([msg]))
+            response = await video_target.send_prompt_async(message=Message(message_pieces=[msg]))
 
             # Verify response is processing error
             response_piece = response[0].message_pieces[0]
@@ -1018,7 +1020,7 @@ class TestVideoTargetRemixValidation:
             conversation_id=conversation_id,
         )
         # Should not raise
-        video_target._validate_request(normalized_conversation=[Message([msg_text, msg_video])])
+        video_target._validate_request(normalized_conversation=[Message(message_pieces=[msg_text, msg_video])])
 
     def test_validate_rejects_video_path_and_image_path(self, video_target: OpenAIVideoTarget) -> None:
         """Test validation rejects combining video_path and image_path."""
@@ -1044,7 +1046,9 @@ class TestVideoTargetRemixValidation:
             conversation_id=conversation_id,
         )
         with pytest.raises(ValueError, match="Cannot combine video_path and image_path"):
-            video_target._validate_request(normalized_conversation=[Message([msg_text, msg_video, msg_image])])
+            video_target._validate_request(
+                normalized_conversation=[Message(message_pieces=[msg_text, msg_video, msg_image])]
+            )
 
     def test_remix_keeps_video_path_pieces_when_ids_match(self, video_target: OpenAIVideoTarget) -> None:
         """Test that video_path pieces are preserved after validation so normalizer stores them."""
@@ -1064,7 +1068,7 @@ class TestVideoTargetRemixValidation:
             prompt_metadata={"video_id": "vid_123"},
             conversation_id=conversation_id,
         )
-        message = Message([msg_text, msg_video])
+        message = Message(message_pieces=[msg_text, msg_video])
 
         OpenAIVideoTarget._validate_video_remix_pieces(message=message)
 
@@ -1090,7 +1094,7 @@ class TestVideoTargetRemixValidation:
             prompt_metadata={"video_id": "vid_DIFFERENT"},
             conversation_id=conversation_id,
         )
-        message = Message([msg_text, msg_video])
+        message = Message(message_pieces=[msg_text, msg_video])
 
         with pytest.raises(ValueError, match="video_id mismatch"):
             OpenAIVideoTarget._validate_video_remix_pieces(message=message)
@@ -1111,7 +1115,7 @@ class TestVideoTargetRemixValidation:
             converted_value_data_type="video_path",
             conversation_id=conversation_id,
         )
-        message = Message([msg_text, msg_video])
+        message = Message(message_pieces=[msg_text, msg_video])
 
         with pytest.raises(ValueError, match="missing.*video_id"):
             OpenAIVideoTarget._validate_video_remix_pieces(message=message)
@@ -1123,7 +1127,7 @@ class TestVideoTargetRemixValidation:
             original_value="generate a cat video",
             converted_value="generate a cat video",
         )
-        message = Message([msg_text])
+        message = Message(message_pieces=[msg_text])
 
         OpenAIVideoTarget._validate_video_remix_pieces(message=message)
 
@@ -1146,7 +1150,7 @@ class TestVideoTargetRemixValidation:
             converted_value_data_type="video_path",
             conversation_id=conversation_id,
         )
-        message = Message([msg_text, msg_video])
+        message = Message(message_pieces=[msg_text, msg_video])
 
         with pytest.raises(ValueError, match="video_path piece is missing.*video_id"):
             OpenAIVideoTarget._validate_video_remix_pieces(message=message)
@@ -1165,7 +1169,7 @@ async def test_send_prompt_async_raises_when_no_text_piece(patch_central_databas
         converted_value="/path/image.png",
         converted_value_data_type="image_path",
     )
-    message = Message([msg])
+    message = Message(message_pieces=[msg])
     with patch.object(target, "_validate_request"):
         with pytest.raises(ValueError, match="No text piece found in message"):
             await target.send_prompt_async(message=message)

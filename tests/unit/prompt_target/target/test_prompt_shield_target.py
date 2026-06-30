@@ -72,7 +72,7 @@ async def test_prompt_shield_reject_non_text(
     promptshield_target: PromptShieldTarget, audio_message_piece: MessagePiece
 ):
     with pytest.raises(ValueError):
-        await promptshield_target.send_prompt_async(message=Message([audio_message_piece]))
+        await promptshield_target.send_prompt_async(message=Message(message_pieces=[audio_message_piece]))
 
 
 async def test_prompt_shield_document_parsing(

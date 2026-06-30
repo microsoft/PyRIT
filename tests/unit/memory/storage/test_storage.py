@@ -169,20 +169,60 @@ async def test_azure_blob_storage_io_create_container_client_uses_explicit_sas_t
 
     mock_container_client = AsyncMock()
 
+    with patch(
+        "azure.storage.blob.aio.ContainerClient.from_container_url", return_value=mock_container_client
+    ) as mock_from_container_url:
+        await azure_blob_storage_io._create_container_client_async()
+
+    mock_from_container_url.assert_called_once_with(container_url=container_url, credential=sas_token)
+    assert azure_blob_storage_io._client_async is mock_container_client
+    assert azure_blob_storage_io._credential is None
+
+
+async def test_azure_blob_storage_io_create_container_client_uses_default_credential_when_no_sas_token():
+    container_url = "https://youraccount.blob.core.windows.net/yourcontainer"
+    azure_blob_storage_io = AzureBlobStorageIO(container_url=container_url)
+
+    mock_container_client = AsyncMock()
+    mock_credential = AsyncMock()
+
     with (
-        patch("pyrit.auth.AzureStorageAuth.get_sas_token_async", new_callable=AsyncMock) as mock_get_sas_token,
-        patch(
-            "azure.storage.blob.aio.ContainerClient.from_container_url", return_value=mock_container_client
-        ) as mock_from_container_url,
+        patch("azure.identity.aio.DefaultAzureCredential", return_value=mock_credential) as mock_credential_cls,
+        patch("azure.storage.blob.aio.ContainerClient", return_value=mock_container_client) as mock_container_cls,
     ):
         await azure_blob_storage_io._create_container_client_async()
 
-    mock_get_sas_token.assert_not_awaited()
-    mock_from_container_url.assert_called_once_with(container_url=container_url, credential=sas_token)
+    mock_credential_cls.assert_called_once()
+    mock_container_cls.assert_called_once_with(
+        account_url="https://youraccount.blob.core.windows.net",
+        container_name="yourcontainer",
+        credential=mock_credential,
+    )
     assert azure_blob_storage_io._client_async is mock_container_client
+    assert azure_blob_storage_io._credential is mock_credential
 
 
-async def test_azure_storage_io_path_exists(azure_blob_storage_io):
+async def test_azure_blob_storage_io_close_client_async_closes_credential_and_client():
+    azure_blob_storage_io = AzureBlobStorageIO(container_url="https://youraccount.blob.core.windows.net/yourcontainer")
+
+    mock_client = AsyncMock()
+    mock_credential = AsyncMock()
+    azure_blob_storage_io._client_async = mock_client
+    azure_blob_storage_io._credential = mock_credential
+
+    await azure_blob_storage_io._close_client_async()
+
+    mock_client.close.assert_awaited_once()
+    mock_credential.close.assert_awaited_once()
+    assert azure_blob_storage_io._client_async is None
+    assert azure_blob_storage_io._credential is None
+
+
+async def test_azure_blob_storage_io_create_container_client_raises_for_url_without_container():
+    azure_blob_storage_io = AzureBlobStorageIO(container_url="https://youraccount.blob.core.windows.net")
+
+    with pytest.raises(ValueError, match="expected a container name"):
+        await azure_blob_storage_io._create_container_client_async()
     azure_blob_storage_io._client_async = AsyncMock()
 
     mock_blob_client = AsyncMock()

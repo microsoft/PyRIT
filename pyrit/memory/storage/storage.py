@@ -15,6 +15,7 @@ import aiofiles
 from pyrit.common.deprecation import print_deprecation_message
 
 if TYPE_CHECKING:
+    from azure.identity.aio import DefaultAzureCredential
     from azure.storage.blob.aio import ContainerClient as AsyncContainerClient
 
 logger = logging.getLogger(__name__)
@@ -264,6 +265,7 @@ class AzureBlobStorageIO(StorageIO):
         self._container_url: str = container_url
         self._sas_token = sas_token
         self._client_async: AsyncContainerClient | None = None
+        self._credential: DefaultAzureCredential | None = None
 
     async def _create_container_client_async(self) -> AsyncContainerClient:
         """
@@ -271,25 +273,54 @@ class AzureBlobStorageIO(StorageIO):
 
         If a SAS token is provided via the
         AZURE_STORAGE_ACCOUNT_SAS_TOKEN environment variable or the init sas_token parameter, it will be used
-        for authentication. Otherwise, a delegation SAS token will be created using Entra ID authentication.
+        for authentication. Otherwise, ``DefaultAzureCredential`` is used directly, which requires the caller
+        to hold a data-plane role such as Storage Blob Data Contributor on the storage account.
 
         Returns:
             AsyncContainerClient: The initialized container client.
+
+        Raises:
+            ValueError: If the container URL does not include a container name in its path.
         """
         from azure.storage.blob.aio import ContainerClient as AsyncContainerClient
 
-        from pyrit.auth import AzureStorageAuth
+        if self._sas_token:
+            self._client_async = AsyncContainerClient.from_container_url(
+                container_url=self._container_url,
+                credential=self._sas_token,
+            )
+            return self._client_async
 
-        sas_token = self._sas_token
-        if not self._sas_token:
-            logger.info("SAS token not provided. Creating a delegation SAS token using Entra ID authentication.")
-            sas_token = await AzureStorageAuth.get_sas_token_async(self._container_url)
+        from azure.identity.aio import DefaultAzureCredential
 
-        self._client_async = AsyncContainerClient.from_container_url(
-            container_url=self._container_url,
-            credential=sas_token,
+        logger.info("SAS token not provided. Using DefaultAzureCredential for direct Entra ID authentication.")
+        parsed_url = urlparse(self._container_url)
+        path_parts = [part for part in parsed_url.path.split("/") if part]
+        if not path_parts:
+            raise ValueError(
+                f"Invalid Azure Storage container URL '{self._container_url}': expected a container name in the "
+                "path, e.g. https://<account>.blob.core.windows.net/<container>."
+            )
+        account_url = f"{parsed_url.scheme}://{parsed_url.netloc}"
+        container_name = path_parts[0]
+        self._credential = DefaultAzureCredential()
+        self._client_async = AsyncContainerClient(
+            account_url=account_url,
+            container_name=container_name,
+            credential=self._credential,
         )
         return self._client_async
+
+    async def _close_client_async(self) -> None:
+        """Close the container client and credential, resetting both to None."""
+        client, self._client_async = self._client_async, None
+        credential, self._credential = self._credential, None
+        try:
+            if client:
+                await client.close()  # type: ignore[no-untyped-call, unused-ignore]
+        finally:
+            if credential:
+                await credential.close()
 
     async def _upload_blob_async(self, file_name: str, data: bytes, content_type: str) -> None:
         """
@@ -321,10 +352,10 @@ class AzureBlobStorageIO(StorageIO):
         except Exception as exc:
             if isinstance(exc, ClientAuthenticationError):
                 logger.exception(
-                    msg="Authentication failed. Please check that the container existence in the "
-                    "Azure Storage Account and ensure the validity of the provided SAS token. If you "
-                    "haven't set the SAS token as an environment variable use `az login` to "
-                    "enable delegation-based SAS authentication to connect to the storage account"
+                    msg="Authentication failed. Please check that the container exists in the "
+                    "Azure Storage Account. If using a SAS token, ensure it is valid. Otherwise, "
+                    "ensure you are logged in via `az login` and hold a data-plane role such as "
+                    "Storage Blob Data Contributor on the storage account."
                 )
                 raise
             logger.exception(msg=f"An unexpected error occurred: {exc}")
@@ -417,8 +448,7 @@ class AzureBlobStorageIO(StorageIO):
             logger.exception(f"Failed to read file at {blob_name}: {exc}")
             raise
         finally:
-            await self._client_async.close()
-            self._client_async = None
+            await self._close_client_async()
 
     async def write_file_async(self, path: Path | str, data: bytes) -> None:
         """
@@ -440,8 +470,7 @@ class AzureBlobStorageIO(StorageIO):
             logger.exception(f"Failed to write file at {blob_name}: {exc}")
             raise
         finally:
-            await self._client_async.close()
-            self._client_async = None
+            await self._close_client_async()
 
     async def path_exists_async(self, path: Path | str) -> bool:
         """
@@ -465,8 +494,7 @@ class AzureBlobStorageIO(StorageIO):
         except ResourceNotFoundError:
             return False
         finally:
-            await self._client_async.close()
-            self._client_async = None
+            await self._close_client_async()
 
     async def is_file_async(self, path: Path | str) -> bool:
         """
@@ -490,8 +518,7 @@ class AzureBlobStorageIO(StorageIO):
         except ResourceNotFoundError:
             return False
         finally:
-            await self._client_async.close()
-            self._client_async = None
+            await self._close_client_async()
 
     async def create_directory_if_not_exists_async(self, directory_path: Path | str) -> None:  # type: ignore[ty:invalid-method-override]
         """

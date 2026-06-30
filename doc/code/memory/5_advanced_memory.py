@@ -263,7 +263,7 @@ assistant_pieces = memory.get_message_pieces(
 )
 
 # Wrap each piece in a Message so we can pass it to score_async
-assistant_messages = [Message([piece]) for piece in assistant_pieces]
+assistant_messages = [Message(message_pieces=[piece]) for piece in assistant_pieces]
 
 # Score every response with both scorers — scores are automatically persisted in memory
 for msg in assistant_messages:
