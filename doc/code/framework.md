@@ -106,13 +106,12 @@ flowchart TB
     class MEM,REG,MODEL,OUT libnode;
 ```
 
-# Core Components
-
-As much as possible, each core component is a pluggable brick of functionality. Prompts from one attack can be used in another. An attack for one scenario can use multiple targets. And sometimes you completely skip components (e.g. almost every component can be a NoOp also, you can have a NoOp converter that doesn't convert, or a NoOp target that just prints the prompts).
-
-If you are contributing to PyRIT, that work will most likely land in one of the core components buckets and be as self-contained as possible. It isn't always this clean, but when an attack scenario doesn't quite fit (and that's okay!) it's good to brainstorm with the maintainers about how we can modify our architecture. Also, please open issues if you see anything under Framework Plans you do/don't want.
-
 The orchestration layers **nest from broadest to narrowest** — each owns less than the layer above it:
+
+- **Scenario** packages many attack techniques and owns parallelism and resiliency.
+- **Attack Technique** configures one executor with its converters, seeds, scorers, and strategy.
+- **Executor / Attack** runs the algorithm: sends to targets, applies converters, and branches on scorers.
+
 
 ```mermaid
 flowchart TB
@@ -125,11 +124,15 @@ flowchart TB
     end
 ```
 
-- **Scenario** packages many attack techniques and owns parallelism and resiliency.
-- **Attack Technique** configures one executor with its converters, seeds, scorers, and strategy.
-- **Executor / Attack** runs the algorithm: sends to targets, applies converters, and branches on scorers.
 
-(*Attack Technique* and *Attack* are deliberately different: a **technique is configuration**, an **attack is the running algorithm** it configures.)
+
+# Core Components
+
+As much as possible, each core component is a pluggable brick of functionality. Prompts from one attack can be used in another. An attack for one scenario can use multiple targets. And sometimes you completely skip components (e.g. almost every component can be a NoOp also, you can have a NoOp converter that doesn't convert, or a NoOp target that just prints the prompts).
+
+If you are contributing to PyRIT, that work will most likely land in one of the core components buckets and be as self-contained as possible. It isn't always this clean, but when an attack scenario doesn't quite fit (and that's okay!) it's good to brainstorm with the maintainers about how we can modify our architecture. Also, please open issues if you see anything under Framework Plans you do/don't want.
+
+
 
 ## [Datasets](./datasets/0_dataset)
 
