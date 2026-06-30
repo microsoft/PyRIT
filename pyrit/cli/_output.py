@@ -13,7 +13,7 @@ import is deferred to each function so importing this module stays cheap.
 from __future__ import annotations
 
 import sys
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from pyrit.models import ScenarioResult
@@ -191,6 +191,58 @@ def print_target_list(*, items: list[TargetInstance]) -> None:
             print(f"    Endpoint: {tgt.endpoint}")
     print("\n" + "=" * 80)
     print(f"\nTotal targets: {len(items)}")
+
+
+# ---------------------------------------------------------------------------
+# Dataset listing
+# ---------------------------------------------------------------------------
+
+
+def print_dataset_list(*, items: list[dict[str, Any]]) -> None:
+    """
+    Print a formatted list of available datasets.
+
+    Args:
+        items: List of dataset dicts from ``GET /api/datasets``.
+    """
+    if not items:
+        print("No datasets found.")
+        return
+
+    print("\nAvailable Datasets:")
+    print("=" * 80)
+    for ds in items:
+        name = ds.get("name", "unknown")
+        loaded = ds.get("loaded", False)
+        status = "loaded" if loaded else "not loaded"
+        marker = "*" if loaded else " "
+        print(f"  {marker} {name} ({status})")
+    print("=" * 80)
+    loaded_count = sum(1 for ds in items if ds.get("loaded"))
+    print(f"\nTotal datasets: {len(items)} ({loaded_count} loaded)")
+    print("Load a dataset into memory with: pyrit_scan --load-dataset <name> [<name> ...]")
+
+
+def print_dataset_load_result(*, result: dict[str, Any]) -> None:
+    """
+    Print a summary of datasets loaded into memory.
+
+    Args:
+        result: ``LoadDatasetResponse`` dict from ``POST /api/datasets/load``.
+    """
+    loaded = result.get("loaded_datasets") or []
+    total_seeds = result.get("total_seeds", 0)
+
+    if not loaded:
+        print("No datasets were loaded.")
+        return
+
+    print("\nLoaded Datasets:")
+    print("=" * 80)
+    for ds in loaded:
+        print(f"  - {ds.get('name', 'unknown')}: {ds.get('seed_count', 0)} seeds")
+    print("=" * 80)
+    print(f"\nLoaded {len(loaded)} dataset(s), {total_seeds} seeds total into memory.")
 
 
 # ---------------------------------------------------------------------------

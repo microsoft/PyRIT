@@ -92,6 +92,10 @@ Examples:
   pyrit_scan --list-initializers
   pyrit_scan --list-targets
 
+  # List available datasets, or load datasets into memory
+  pyrit_scan --list-datasets
+  pyrit_scan --load-dataset airt_hate harmbench
+
   # Run single-turn cyber attacks against a target
   pyrit_scan airt.cyber --target openai_chat --strategies single_turn
 
@@ -188,6 +192,18 @@ def _build_base_parser(*, add_help: bool = True) -> ArgumentParser:
         "--list-targets",
         action="store_true",
         help="List all available targets and exit",
+    )
+    discovery_group.add_argument(
+        "--list-datasets",
+        action="store_true",
+        help="List all available datasets and exit",
+    )
+    discovery_group.add_argument(
+        "--load-dataset",
+        type=str,
+        nargs="+",
+        metavar="NAME",
+        help="Load one or more datasets into memory and exit",
     )
     discovery_group.add_argument(
         "--add-initializer",
@@ -452,6 +468,8 @@ def _is_command_specified(*, parsed_args: Namespace) -> bool:
         parsed_args.list_scenarios
         or parsed_args.list_initializers
         or parsed_args.list_targets
+        or parsed_args.list_datasets
+        or parsed_args.load_dataset
         or parsed_args.add_initializer
         or parsed_args.scenario_name
     )
@@ -515,7 +533,31 @@ async def _handle_list_commands_async(*, client: Any, parsed_args: Namespace) ->
         targets = await client.list_targets_async()
         _output.print_target_list(items=targets)
         return 0
+    if parsed_args.list_datasets:
+        resp = await client.list_datasets_async()
+        _output.print_dataset_list(items=resp.get("items", []))
+        return 0
     return None
+
+
+async def _handle_load_dataset_async(*, client: Any, parsed_args: Namespace) -> int:
+    """
+    Handle ``--load-dataset``: load the requested datasets into memory.
+
+    Returns:
+        int: Exit code (``0`` on success, ``1`` on failure).
+    """
+    print(f"\nLoading datasets: {', '.join(parsed_args.load_dataset)} (this can take a few minutes)...")
+    sys.stdout.flush()
+    try:
+        result = await client.load_datasets_async(dataset_names=parsed_args.load_dataset)
+    except Exception as exc:
+        print(f"Error loading datasets: {exc}")
+        return 1
+    from pyrit.cli import _output
+
+    _output.print_dataset_load_result(result=result)
+    return 0
 
 
 async def _handle_add_initializer_async(*, client: Any, parsed_args: Namespace) -> int:
@@ -727,6 +769,9 @@ async def _dispatch_with_client_async(*, client: Any, parsed_args: Namespace) ->
     list_result = await _handle_list_commands_async(client=client, parsed_args=parsed_args)
     if list_result is not None:
         return list_result
+
+    if parsed_args.load_dataset:
+        return await _handle_load_dataset_async(client=client, parsed_args=parsed_args)
 
     if parsed_args.add_initializer:
         return await _handle_add_initializer_async(client=client, parsed_args=parsed_args)

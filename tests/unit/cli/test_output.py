@@ -309,6 +309,51 @@ def test_print_target_list_full(capsys):
 
 
 # ---------------------------------------------------------------------------
+# print_dataset_list / print_dataset_load_result
+# ---------------------------------------------------------------------------
+
+
+def test_print_dataset_list_empty(capsys):
+    _output.print_dataset_list(items=[])
+    captured = capsys.readouterr()
+    assert "No datasets found" in captured.out
+
+
+def test_print_dataset_list_full(capsys):
+    items = [
+        {"name": "airt_hate", "loaded": True},
+        {"name": "harmbench", "loaded": False},
+    ]
+    _output.print_dataset_list(items=items)
+    captured = capsys.readouterr()
+    assert "airt_hate" in captured.out
+    assert "harmbench" in captured.out
+    assert "loaded" in captured.out
+    assert "Total datasets: 2 (1 loaded)" in captured.out
+
+
+def test_print_dataset_load_result_empty(capsys):
+    _output.print_dataset_load_result(result={"loaded_datasets": [], "total_seeds": 0})
+    captured = capsys.readouterr()
+    assert "No datasets were loaded" in captured.out
+
+
+def test_print_dataset_load_result_full(capsys):
+    result = {
+        "loaded_datasets": [
+            {"name": "airt_hate", "seed_count": 3},
+            {"name": "harmbench", "seed_count": 5},
+        ],
+        "total_seeds": 8,
+    }
+    _output.print_dataset_load_result(result=result)
+    captured = capsys.readouterr()
+    assert "airt_hate: 3 seeds" in captured.out
+    assert "harmbench: 5 seeds" in captured.out
+    assert "8 seeds total" in captured.out
+
+
+# ---------------------------------------------------------------------------
 # print_scenario_run_progress
 # ---------------------------------------------------------------------------
 

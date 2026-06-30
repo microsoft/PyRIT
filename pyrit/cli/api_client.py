@@ -197,6 +197,45 @@ class PyRITApiClient:
         return [TargetInstance.model_validate(item) for item in payload.get("items", [])]
 
     # ------------------------------------------------------------------
+    # Datasets
+    # ------------------------------------------------------------------
+
+    async def list_datasets_async(self) -> dict[str, Any]:
+        """
+        List all available datasets.
+
+        Returns:
+            dict: ``DatasetListResponse`` payload.
+        """
+        return await self._get_json_async(path="/api/datasets")
+
+    async def load_datasets_async(self, *, dataset_names: list[str], cache: bool = True) -> dict[str, Any]:
+        """
+        Load one or more datasets into memory.
+
+        Fetching datasets (especially remote ones) can take several minutes, so
+        this request uses ``read=None`` to wait indefinitely for the server
+        rather than tripping the client's default read timeout.
+
+        Args:
+            dataset_names: Names of the datasets to load.
+            cache: Whether to cache fetched remote datasets to disk.
+
+        Returns:
+            dict: ``LoadDatasetResponse`` payload.
+        """
+        import httpx
+
+        client = self._get_client()
+        resp = await client.post(
+            "/api/datasets/load",
+            json={"dataset_names": dataset_names, "cache": cache},
+            timeout=httpx.Timeout(connect=10.0, read=None, write=30.0, pool=10.0),
+        )
+        self._raise_for_status(resp)
+        return resp.json()
+
+    # ------------------------------------------------------------------
     # Scenario runs
     # ------------------------------------------------------------------
 

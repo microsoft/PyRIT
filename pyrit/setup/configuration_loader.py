@@ -103,6 +103,7 @@ class ConfigurationLoader(YamlLoadable):
             None means "use defaults", [] means "load nothing".
         env_files: List of environment file paths to load.
             None means "use defaults (.env, .env.local)", [] means "load nothing".
+        datasets: List of seed dataset names to load into memory after initialization.
         silent: Whether to suppress initialization messages.
         operator: Name for the current operator, e.g. a team or username.
         operation: Name for the current operation.
@@ -123,6 +124,10 @@ class ConfigurationLoader(YamlLoadable):
           - /path/to/.env
           - /path/to/.env.local
 
+        datasets:
+          - airt_illegal
+          - airt_malware
+
         silent: false
 
         operator: my_team
@@ -141,6 +146,7 @@ class ConfigurationLoader(YamlLoadable):
     initialization_scripts: list[str] | None = None
     env_files: list[str] | None = None
     env_akv_ref: list[str] | None = None
+    datasets: list[str] = field(default_factory=list)
     silent: bool = False
     operator: str | None = None
     operation: str | None = None
@@ -379,6 +385,7 @@ class ConfigurationLoader(YamlLoadable):
                 config_data["initialization_scripts"] = default_config.initialization_scripts
                 config_data["env_files"] = default_config.env_files
                 config_data["env_akv_ref"] = default_config.env_akv_ref
+                config_data["datasets"] = default_config.datasets
                 config_data["silent"] = default_config.silent
                 if default_config.operator:
                     config_data["operator"] = default_config.operator
@@ -405,6 +412,7 @@ class ConfigurationLoader(YamlLoadable):
             config_data["initialization_scripts"] = explicit_config.initialization_scripts
             config_data["env_files"] = explicit_config.env_files
             config_data["env_akv_ref"] = explicit_config.env_akv_ref
+            config_data["datasets"] = explicit_config.datasets
             config_data["silent"] = explicit_config.silent
             if explicit_config.operator:
                 config_data["operator"] = explicit_config.operator
@@ -560,7 +568,8 @@ class ConfigurationLoader(YamlLoadable):
         Initialize PyRIT with the loaded configuration.
 
         This method resolves all initializer names to instances and calls
-        the core initialize_pyrit_async function.
+        the core initialize_pyrit_async function. Any datasets configured via
+        the ``datasets`` block are loaded into memory after initialization.
 
         Raises:
             ValueError: If configuration is invalid or initializers cannot be resolved.
@@ -580,6 +589,37 @@ class ConfigurationLoader(YamlLoadable):
             env_akv_ref=self.env_akv_ref,
             silent=self.silent,
         )
+
+        await self._load_datasets_async()
+
+    async def _load_datasets_async(self) -> None:
+        """
+        Load the configured seed datasets into memory.
+
+        Fetches each dataset named in the ``datasets`` block and adds its seeds
+        to ``CentralMemory``. This runs after PyRIT initialization so that memory
+        is available. No-op when no datasets are configured.
+
+        Raises:
+            ValueError: If any configured dataset name does not exist.
+        """
+        if not self.datasets:
+            return
+
+        import logging
+
+        from pyrit.datasets import SeedDatasetProvider
+        from pyrit.memory import CentralMemory
+
+        logger = logging.getLogger(__name__)
+        logger.info("Loading %d dataset(s) from configuration...", len(self.datasets))
+
+        datasets = await SeedDatasetProvider.fetch_datasets_async(dataset_names=self.datasets)
+
+        memory = CentralMemory.get_memory_instance()
+        await memory.add_seed_datasets_to_memory_async(datasets=datasets, added_by="ConfigurationLoader")
+
+        logger.info("Successfully loaded %d dataset(s) into memory", len(datasets))
 
 
 async def initialize_from_config_async(

@@ -544,7 +544,10 @@ class DatasetConfiguration:
                     result[name] = self._apply_max_dataset_size(loaded)
 
         if not result:
-            raise ValueError("DatasetConfiguration has no seed_groups. Set seed_groups or dataset_names.")
+            raise ValueError(
+                "DatasetConfiguration has no seed_groups. Set seed_groups or dataset_names. "
+                "Ensure those datasets are loaded first if using 'dataset_names'"
+            )
 
         return result
 

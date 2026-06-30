@@ -125,6 +125,18 @@ operation: op_trash_panda
 # env_akv_ref:
 #   - https://my-vault.vault.azure.net/secrets/my-pyrit-env
 
+# Datasets
+# --------
+# List of seed dataset names to load into memory after initialization completes.
+# Each name must match a registered dataset (run `pyrit_scan --list-datasets` to
+# see available datasets). Loaded datasets are added to CentralMemory and are
+# available to scenarios and attacks.
+#
+# Example:
+# datasets:
+#   - airt_illegal
+#   - airt_malware
+
 # Max Concurrent Scenario Runs
 # ----------------------------
 # Maximum number of scenario runs that can execute concurrently in the backend.
