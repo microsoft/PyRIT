@@ -48,7 +48,6 @@ from pyrit.backend.models.converters import (
     PreviewStep,
 )
 from pyrit.backend.models.initializers import (
-    InitializerParameterSummary,
     ListRegisteredInitializersResponse,
     RegisteredInitializer,
     RegisterInitializerRequest,
@@ -56,7 +55,6 @@ from pyrit.backend.models.initializers import (
 from pyrit.backend.models.scenarios import (
     ListRegisteredScenariosResponse,
     RegisteredScenario,
-    ScenarioParameterSummary,
 )
 from pyrit.backend.models.targets import (
     CreateTargetRequest,
@@ -106,9 +104,7 @@ __all__ = [
     # Scenarios
     "ListRegisteredScenariosResponse",
     "RegisteredScenario",
-    "ScenarioParameterSummary",
     # Initializers
-    "InitializerParameterSummary",
     "ListRegisteredInitializersResponse",
     "RegisteredInitializer",
     "RegisterInitializerRequest",

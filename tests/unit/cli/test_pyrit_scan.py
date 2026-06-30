@@ -606,7 +606,7 @@ class TestScenarioParamCoercion:
         parser = ArgumentParser()
         pyrit_scan._add_scenario_params_from_api(
             parser=parser,
-            params=[{"name": "items", "description": "...", "param_type": "list[str]", "is_list": True}],
+            params=[{"name": "items", "description": "...", "type_name": "list[str]", "is_list": True}],
         )
         parsed = parser.parse_args(["--items", "a", "b", "c"])
         assert parsed.scenario__items == ["a", "b", "c"]
@@ -617,7 +617,7 @@ class TestScenarioParamCoercion:
         parser = ArgumentParser()
         pyrit_scan._add_scenario_params_from_api(
             parser=parser,
-            params=[{"name": "max_turns", "description": "...", "param_type": "int"}],
+            params=[{"name": "max_turns", "description": "...", "type_name": "int"}],
         )
         parsed = parser.parse_args(["--max-turns", "7"])
         assert parsed.scenario__max_turns == 7
@@ -628,7 +628,7 @@ class TestScenarioParamCoercion:
         parser = ArgumentParser()
         pyrit_scan._add_scenario_params_from_api(
             parser=parser,
-            params=[{"name": "max_turns", "description": "...", "param_type": "int"}],
+            params=[{"name": "max_turns", "description": "...", "type_name": "int"}],
         )
         with pytest.raises(SystemExit):
             parser.parse_args(["--max-turns", "not-an-int"])
@@ -640,7 +640,7 @@ class TestScenarioParamCoercion:
         parser = ArgumentParser()
         pyrit_scan._add_scenario_params_from_api(
             parser=parser,
-            params=[{"name": "mode", "description": "...", "param_type": "str", "choices": ["fast", "slow"]}],
+            params=[{"name": "mode", "description": "...", "type_name": "str", "choices": ["fast", "slow"]}],
         )
         parsed = parser.parse_args(["--mode", "fast"])
         assert parsed.scenario__mode == "fast"

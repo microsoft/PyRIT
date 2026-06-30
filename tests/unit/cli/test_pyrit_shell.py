@@ -751,7 +751,7 @@ class TestScenarioParamCoercionInShell:
         client.get_scenario_async.return_value = {
             "scenario_name": "foo",
             "supported_parameters": [
-                {"name": "items", "description": "list field", "param_type": "list[str]", "is_list": True}
+                {"name": "items", "description": "list field", "type_name": "list[str]", "is_list": True}
             ],
         }
         client.start_scenario_run_async = AsyncMock(return_value={"scenario_result_id": "rid", "status": "CREATED"})
@@ -773,7 +773,7 @@ class TestScenarioParamCoercionInShell:
         client.get_scenario_async.return_value = {
             "scenario_name": "foo",
             "supported_parameters": [
-                {"name": "mode", "description": "...", "param_type": "str", "choices": ["fast", "slow"]}
+                {"name": "mode", "description": "...", "type_name": "str", "choices": ["fast", "slow"]}
             ],
         }
         s.do_run("foo --target t --mode warp")

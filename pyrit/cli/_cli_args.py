@@ -659,7 +659,7 @@ def build_parameters_from_api(*, api_params: list[dict[str, Any]]) -> list[Param
     """
     Build ``Parameter`` objects from a scenario catalog's ``supported_parameters``.
 
-    Maps the display ``param_type`` string ("int", "float", "bool", "str",
+    Maps the display ``type_name`` string ("int", "float", "bool", "str",
     "list[...]", "any") back to a concrete ``param_type`` so the shell parser
     can apply per-element coercion and treat list params as ``multi_value``. A
     ``choices`` list is reconstructed into a ``Literal[...]`` (the single source
@@ -678,7 +678,7 @@ def build_parameters_from_api(*, api_params: list[dict[str, Any]]) -> list[Param
     type_map: dict[str, Any] = {"int": int, "float": float, "bool": bool, "str": str}
     parameters: list[Parameter] = []
     for p in api_params:
-        type_display = p.get("param_type", "")
+        type_display = p.get("type_name", "")
         is_list = bool(p.get("is_list"))
         base_name = type_display.removeprefix("list[").rstrip("]") if is_list else type_display
         base_type = type_map.get(base_name, str)

@@ -260,7 +260,7 @@ def _scenario_param_kwargs(*, param: dict[str, Any]) -> dict[str, Any]:
     """
     Build argparse ``add_argument`` kwargs for a scenario-declared parameter dict.
 
-    Uses ``param_type``, ``is_list`` and ``choices`` from the catalog payload
+    Uses ``type_name``, ``is_list`` and ``choices`` from the catalog payload
     so list params accept ``nargs='+'`` and scalar params get client-side
     type coercion and choice validation.
 
@@ -278,7 +278,7 @@ def _scenario_param_kwargs(*, param: dict[str, Any]) -> dict[str, Any]:
     if param.get("is_list"):
         kwargs["nargs"] = "+"
     else:
-        coercer = _SCALAR_TYPE_COERCERS.get(param.get("param_type", ""))
+        coercer = _SCALAR_TYPE_COERCERS.get(param.get("type_name", ""))
         if coercer is not None and coercer is not str:
             param_name = param.get("name", "")
 

@@ -87,14 +87,14 @@ def test_print_scenario_list_full(capsys):
                 {
                     "name": "max_turns",
                     "default": 5,
-                    "param_type": "int",
+                    "type_name": "int",
                     "choices": None,
                     "description": "Maximum turns.",
                 },
                 {
                     "name": "mode",
                     "default": None,
-                    "param_type": "str",
+                    "type_name": "str",
                     "choices": ["a", "b"],
                     "description": "Mode.",
                 },

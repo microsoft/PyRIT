@@ -109,7 +109,7 @@ def print_scenario_list(*, items: list[dict[str, Any]]) -> None:
             print("    Supported Parameters:")
             for p in params:
                 default_str = f" [default: {p.get('default')!r}]" if p.get("default") is not None else ""
-                type_str = f" ({p.get('param_type', '')})" if p.get("param_type") else ""
+                type_str = f" ({p.get('type_name', '')})" if p.get("type_name") else ""
                 choices = p.get("choices")
                 choices_display = ", ".join(choices) if isinstance(choices, list) else choices
                 choices_str = f" [choices: {choices_display}]" if choices_display else ""

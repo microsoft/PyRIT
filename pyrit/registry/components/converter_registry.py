@@ -30,6 +30,7 @@ from typing import TYPE_CHECKING
 from pyrit.models.identifiers import ConverterIdentifier
 from pyrit.models.parameter import ComponentType
 from pyrit.registry.base import ClassRegistryEntry
+from pyrit.registry.discovery import discover_exported_subclasses
 from pyrit.registry.instance_registry import DefaultInstanceRegistry, InstanceRegistry
 from pyrit.registry.registry import Registry
 
@@ -136,12 +137,7 @@ class ConverterRegistry(Registry["PromptConverter", ConverterMetadata]):
         from pyrit import prompt_converter
         from pyrit.prompt_converter import PromptConverter
 
-        for name in prompt_converter.__all__:
-            cls = getattr(prompt_converter, name, None)
-            if cls is None or not isinstance(cls, type):
-                continue
-            if not issubclass(cls, PromptConverter) or cls is PromptConverter:
-                continue
+        for cls in discover_exported_subclasses(module=prompt_converter, base_class=PromptConverter):
             # Key off the class itself (via _get_registry_name) rather than the
             # __all__ export name so the catalog key always matches class_name,
             # even if an export is ever aliased.

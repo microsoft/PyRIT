@@ -14,11 +14,11 @@ from fastapi.testclient import TestClient
 from pyrit.backend.main import app
 from pyrit.backend.models.common import PaginationInfo
 from pyrit.backend.models.initializers import (
-    InitializerParameterSummary,
     ListRegisteredInitializersResponse,
     RegisteredInitializer,
 )
 from pyrit.backend.services.initializer_service import InitializerService, get_initializer_service
+from pyrit.models import Parameter
 from pyrit.registry import InitializerMetadata
 
 
@@ -50,8 +50,8 @@ def _make_initializer_metadata(
     class_name: str = "TargetInitializer",
     description: str = "Registers targets",
     required_env_vars: tuple[str, ...] = ("AZURE_OPENAI_ENDPOINT",),
-    supported_parameters: tuple[tuple[str, str, list[str] | None], ...] = (
-        ("tags", "Comma-separated tag filter", ["default"]),
+    supported_parameters: tuple[Parameter, ...] = (
+        Parameter(name="tags", description="Comma-separated tag filter", default=["default"]),
     ),
 ) -> InitializerMetadata:
     """Create an InitializerMetadata instance for testing."""
@@ -221,9 +221,7 @@ class TestInitializerRoutes:
             initializer_type="TargetInitializer",
             description="Registers targets",
             required_env_vars=["AZURE_OPENAI_ENDPOINT"],
-            supported_parameters=[
-                InitializerParameterSummary(name="tags", description="Tag filter", default=["default"])
-            ],
+            supported_parameters=[Parameter(name="tags", description="Tag filter", default=["default"])],
         )
 
         with patch("pyrit.backend.routes.initializers.get_initializer_service") as mock_get_service:
@@ -246,6 +244,7 @@ class TestInitializerRoutes:
             assert item["initializer_type"] == "TargetInitializer"
             assert item["required_env_vars"] == ["AZURE_OPENAI_ENDPOINT"]
             assert item["supported_parameters"][0]["name"] == "tags"
+            assert item["supported_parameters"][0]["default"] == ["default"]
 
     def test_list_initializers_passes_pagination_params(self, client: TestClient) -> None:
         with patch("pyrit.backend.routes.initializers.get_initializer_service") as mock_get_service:
