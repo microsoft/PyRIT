@@ -1,12 +1,15 @@
 
 # Builds the pyrit environment and runs integration tests
 
-trigger:
+trigger: none
+
+schedules:
+- cron: "0 */3 * * *"  # Every 3 hours
+  displayName: Integration Tests Every 3 Hours
   branches:
     include:
       - main
-
-# There are additional PR triggers for this that are configurable in ADO.
+  always: true
 
 jobs:
 - template: test-job-template.yml

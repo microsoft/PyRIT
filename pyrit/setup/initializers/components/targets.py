@@ -20,8 +20,8 @@ from enum import Enum
 from typing import Any
 
 from pyrit.auth import get_azure_openai_auth, get_azure_token_provider
-from pyrit.common.parameter import Parameter
 from pyrit.models.identifiers import TARGET_EVAL_PARAM_FALLBACKS, TARGET_EVAL_PARAMS
+from pyrit.models.parameter import Parameter
 from pyrit.prompt_target import (
     AzureMLChatTarget,
     OpenAIChatTarget,
@@ -549,7 +549,7 @@ class TargetInitializer(PyRITInitializer):
 
     @property
     def supported_parameters(self) -> list[Parameter]:
-        """Get the list of parameters this initializer accepts."""
+        """The list of parameters this initializer accepts."""
         return [
             Parameter(
                 name="tags",
@@ -566,7 +566,7 @@ class TargetInitializer(PyRITInitializer):
     @property
     def required_env_vars(self) -> list[str]:
         """
-        Get list of required environment variables.
+        Required environment variables.
 
         Returns empty list since this initializer is optional - it registers
         whatever endpoints are available without requiring any.
@@ -676,11 +676,13 @@ class TargetInitializer(PyRITInitializer):
 
         target = config.target_class(**kwargs)
         registry = TargetRegistry.get_registry_singleton()
-        registry.register_instance(target, name=config.registry_name)
+        registry.instances.register(target, name=config.registry_name)
         if config.tags:
-            registry.add_tags(name=config.registry_name, tags=list(config.tags))
+            registry.instances.add_tags(name=config.registry_name, tags=list(config.tags))
         if config.default_objective_target:
-            registry.add_tags(name=config.registry_name, tags=[TargetInitializerTags.DEFAULT_OBJECTIVE_TARGET])
+            registry.instances.add_tags(
+                name=config.registry_name, tags=[TargetInitializerTags.DEFAULT_OBJECTIVE_TARGET]
+            )
         self._registered_names.append(config.registry_name)
         logger.info(f"Registered target: {config.registry_name}")
 
@@ -701,9 +703,9 @@ class TargetInitializer(PyRITInitializer):
         registry = TargetRegistry.get_registry_singleton()
 
         # Group registered targets by behavioral key.
-        groups: dict[tuple, list[tuple[str, PromptTarget]]] = defaultdict(list)
+        groups: dict[tuple[Any, ...], list[tuple[str, PromptTarget]]] = defaultdict(list)
         for name in self._registered_names:
-            target = registry.get_instance_by_name(name)
+            target = registry.instances.get(name)
             if target is None:
                 continue
             key = get_behavioral_key(target)
@@ -741,16 +743,16 @@ class TargetInitializer(PyRITInitializer):
 
             rr_name = generate_rr_name(key)
 
-            if rr_name in registry:
+            if rr_name in registry.instances:
                 logger.debug(f"Skipping auto-group {rr_name}: name already exists in registry")
                 continue
 
-            registry.register_instance(rr_target, name=rr_name)
+            registry.instances.register(rr_target, name=rr_name)
 
             logger.info(f"Auto-grouped round-robin target: {rr_name} (members: {member_names})")
 
 
-def get_behavioral_key(target: PromptTarget) -> tuple:
+def get_behavioral_key(target: PromptTarget) -> tuple[Any, ...]:
     """
     Extract a hashable behavioral grouping key from a target's identifier.
 
@@ -774,7 +776,7 @@ def get_behavioral_key(target: PromptTarget) -> tuple:
     return tuple(parts)
 
 
-def generate_rr_name(key: tuple) -> str:
+def generate_rr_name(key: tuple[Any, ...]) -> str:
     """
     Generate a registry name for an auto-grouped round-robin target.
 

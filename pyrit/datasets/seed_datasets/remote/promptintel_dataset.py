@@ -102,6 +102,8 @@ class _PromptIntelDataset(_RemoteDatasetLoader):
             self._validate_enum(severity, PromptIntelSeverity, "severity")
 
         if categories is not None:
+            if not categories:
+                raise ValueError("`categories` must be a non-empty list (pass None to include all categories)")
             self._validate_enums(categories, PromptIntelCategory, "category")
 
         self._severity = severity
@@ -112,7 +114,7 @@ class _PromptIntelDataset(_RemoteDatasetLoader):
     @property
     @override
     def dataset_name(self) -> str:
-        """Return the dataset name."""
+        """The dataset name."""
         return "promptintel"
 
     def _fetch_all_prompts(self) -> list[dict[str, Any]]:

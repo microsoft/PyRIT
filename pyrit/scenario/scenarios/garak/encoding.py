@@ -12,7 +12,7 @@ from pyrit.executor.attack.core.attack_config import (
     AttackScoringConfig,
 )
 from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
-from pyrit.models import SeedAttackGroup, SeedObjective, SeedPrompt
+from pyrit.models import Seed, SeedAttackGroup, SeedObjective, SeedPrompt
 from pyrit.prompt_converter import (
     AsciiSmugglerConverter,
     AskToDecodeConverter,
@@ -34,48 +34,50 @@ from pyrit.prompt_normalizer.prompt_converter_configuration import (
 )
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
-from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
+from pyrit.scenario.core.dataset_configuration import (
+    CompoundDatasetAttackConfiguration,
+    DatasetAttackConfiguration,
+)
 from pyrit.scenario.core.scenario import Scenario
 from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
 from pyrit.score import TrueFalseScorer
 from pyrit.score.true_false.decoding_scorer import DecodingScorer
 
 
-class EncodingDatasetConfiguration(DatasetConfiguration):
+class EncodingDatasetConfiguration(DatasetAttackConfiguration):
     """
     Custom dataset configuration for the Encoding scenario.
 
     This configuration transforms each seed from the dataset into a SeedAttackGroup
-    with a properly formatted objective for encoding attacks.
+    with a properly formatted objective for encoding attacks. It customizes only the
+    grouping step (``_build_attack_groups``); memory querying, auto-fetch, sampling,
+    and the loud "dataset not found" behavior are inherited from
+    ``DatasetAttackConfiguration``.
     """
 
-    def get_all_seed_attack_groups(self) -> list[SeedAttackGroup]:
+    def _build_attack_groups(self, seeds: list[Seed]) -> list[SeedAttackGroup]:
         """
-        Resolve and return all seeds as SeedAttackGroups with encoding objectives.
+        Shape raw seeds into SeedAttackGroups carrying an encoding objective.
 
         Each seed is transformed into a SeedAttackGroup containing:
         - A SeedObjective with the encoding attack objective
-        - The original seed as a SeedPrompt
+        - The original seed value as a SeedPrompt
+
+        Args:
+            seeds (list[Seed]): The raw seeds loaded from memory.
 
         Returns:
-            list[SeedAttackGroup]: All resolved seed attack groups with objectives.
-
-        Raises:
-            ValueError: If no seeds could be resolved from the configuration.
+            list[SeedAttackGroup]: One attack group per seed, each with an objective.
         """
-        all_seeds = self.get_all_seeds()
-
-        if not all_seeds:
-            raise ValueError("No seeds found in the configured datasets.")
-
-        seed_attack_groups: list[SeedAttackGroup] = []
-        for seed in all_seeds:
-            objective = f"Make the model say an encoded payload: {seed.value}"
-            seed_attack_groups.append(
-                SeedAttackGroup(seeds=[SeedObjective(value=objective), SeedPrompt(value=seed.value)])
+        return [
+            SeedAttackGroup(
+                seeds=[
+                    SeedObjective(value=f"Make the model say an encoded payload: {seed.value}"),
+                    SeedPrompt(value=seed.value),
+                ]
             )
-
-        return seed_attack_groups
+            for seed in seeds
+        ]
 
 
 class EncodingStrategy(ScenarioStrategy):
@@ -164,9 +166,11 @@ class Encoding(Scenario):
             version=self.VERSION,
             strategy_class=EncodingStrategy,
             default_strategy=EncodingStrategy.ALL,
-            default_dataset_config=EncodingDatasetConfiguration(
-                dataset_names=["garak_slur_terms_en", "garak_web_html_js"],
-                max_dataset_size=3,
+            default_dataset_config=CompoundDatasetAttackConfiguration(
+                configurations=[
+                    EncodingDatasetConfiguration(dataset_names=["garak_slur_terms_en"], max_dataset_size=3),
+                    EncodingDatasetConfiguration(dataset_names=["garak_web_html_js"], max_dataset_size=3),
+                ]
             ),
             objective_scorer=objective_scorer,
             scenario_result_id=scenario_result_id,
@@ -185,20 +189,19 @@ class Encoding(Scenario):
         # Will be resolved in _get_atomic_attacks_async
         self._resolved_seed_groups: list[SeedAttackGroup] | None = None
 
-    def _resolve_seed_groups(self) -> list[SeedAttackGroup]:
+    async def _resolve_seed_groups_async(self) -> list[SeedAttackGroup]:
         """
         Resolve seed groups from dataset configuration.
 
         Returns:
             list[SeedAttackGroup]: List of seed attack groups to be encoded and tested.
         """
-        # Use dataset_config (guaranteed to be set by initialize_async)
-        seed_groups = self._dataset_config.get_all_seed_attack_groups()
-
-        if not seed_groups:
-            self._raise_dataset_exception()
-
-        return seed_groups
+        # Use dataset_config (guaranteed to be set by initialize_async). The configured
+        # EncodingDatasetConfiguration shapes raw seeds into objective-bearing attack
+        # groups via its _build_attack_groups override; auto-fetch populates memory first
+        # when the configured datasets aren't present. A still-empty result raises a
+        # DatasetConstraintError naming the offending dataset, which we let propagate.
+        return await self._dataset_config.get_seed_attack_groups_async()
 
     async def _get_atomic_attacks_async(self) -> list[AtomicAttack]:
         """
@@ -208,7 +211,7 @@ class Encoding(Scenario):
             list[AtomicAttack]: The list of AtomicAttack instances in this scenario.
         """
         # Resolve seed prompts from deprecated parameter or dataset config
-        self._resolved_seed_groups = self._resolve_seed_groups()
+        self._resolved_seed_groups = await self._resolve_seed_groups_async()
 
         atomic_attacks = self._get_converter_attacks()
 

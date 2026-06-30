@@ -298,7 +298,7 @@ async def test_send_prompt_async_empty_response_adds_memory(
     sample_conversations: MutableSequence[MessagePiece],
 ) -> None:
     mock_memory = MagicMock()
-    mock_memory.get_conversation.return_value = []
+    mock_memory.get_conversation_messages.return_value = []
     mock_memory.add_message_to_memory = AsyncMock()
 
     request = sample_conversations[0]
@@ -324,7 +324,7 @@ async def test_send_prompt_async_rate_limit_adds_memory(
     sample_conversations: MutableSequence[MessagePiece],
 ) -> None:
     mock_memory = MagicMock()
-    mock_memory.get_conversation.return_value = []
+    mock_memory.get_conversation_messages.return_value = []
     mock_memory.add_message_to_memory = AsyncMock()
 
     request = sample_conversations[0]
@@ -492,7 +492,7 @@ async def test_validate_previous_conversations(
     prior_message = Message(message_pieces=[message_piece])
 
     mock_memory = MagicMock()
-    mock_memory.get_conversation.return_value = [prior_message]
+    mock_memory.get_conversation_messages.return_value = [prior_message]
     mock_memory.add_message_to_memory = AsyncMock()
 
     image_target._memory = mock_memory

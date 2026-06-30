@@ -119,6 +119,13 @@ function decodedBase64ByteCount(value: string): number {
  *
  * When `source` is `'converted'` (the default), uses `converted_value*` fields.
  * When `source` is `'original'`, uses `original_value*` fields instead.
+ *
+ * The backend exposes media in two forms: the raw stored value
+ * (`*_value`, which may be a file path, blob URL, base64 string, etc.) and a
+ * client-fetchable URL (`*_value_url`, populated by the mapper as a
+ * `/api/media?path=...` link or a SAS-signed blob URL). When `*_value_url` is
+ * present we use it directly; otherwise we fall back to the legacy detection
+ * logic so older shaped payloads still render.
  */
 function pieceToAttachment(
   piece: BackendMessagePiece,
@@ -127,6 +134,7 @@ function pieceToAttachment(
   const isOriginal = source === 'original'
   const dataType = isOriginal ? piece.original_value_data_type : piece.converted_value_data_type
   const value = isOriginal ? piece.original_value : piece.converted_value
+  const valueUrl = isOriginal ? piece.original_value_url : piece.converted_value_url
   const mimeField = isOriginal ? piece.original_value_mime_type : piece.converted_value_mime_type
 
   if (!isMediaDataType(dataType) || !value) return null
@@ -139,15 +147,17 @@ function pieceToAttachment(
     /^[a-z][a-z0-9+.-]*:/i.test(value)                        // URI scheme (file:, blob:, etc.)
   const isBase64 = !looksLikePathOrScheme &&
     value.length >= 16 && /^[A-Za-z0-9+/=\n]+$/.test(value)
-  const url = isBase64 ? buildDataUri(value, mime) : value
+  // Prefer the mapper-resolved URL when present; fall back to existing logic
+  // (base64 inline data URI or raw value-as-URL) for compatibility.
+  const url = valueUrl || (isBase64 ? buildDataUri(value, mime) : value)
   const prefix = isOriginal ? 'original_' : ''
   const filename = isOriginal ? piece.original_filename : piece.converted_filename
-  const fallbackName = `${prefix}${dataType}_${piece.piece_id.slice(0, 8)}`
+  const fallbackName = `${prefix}${dataType}_${piece.id.slice(0, 8)}`
 
   // For base64-inlined media, derive the decoded byte count. For path / URL
   // values the string length is meaningless (e.g. /api/media?path=... is a
   // reference, not the payload), so size is omitted and the UI must hide it.
-  const size = isBase64 ? decodedBase64ByteCount(value) : undefined
+  const size = isBase64 && !valueUrl ? decodedBase64ByteCount(value) : undefined
 
   return {
     type: dataTypeToAttachmentType(dataType),
@@ -155,7 +165,7 @@ function pieceToAttachment(
     url,
     mimeType: mime,
     size,
-    pieceId: piece.piece_id,
+    pieceId: piece.id,
     metadata: piece.prompt_metadata || undefined,
   }
 }
@@ -184,7 +194,7 @@ export function backendMessageToFrontend(msg: BackendMessage): Message {
   const reasoningSummaries: string[] = []
   let error: MessageError | undefined
 
-  for (const piece of msg.pieces) {
+  for (const piece of msg.message_pieces) {
     // Check for errors
     const pieceError = pieceToError(piece)
     if (pieceError && !error) {

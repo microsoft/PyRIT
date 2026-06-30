@@ -5,6 +5,7 @@ import tempfile
 from pathlib import Path
 from textwrap import dedent
 from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import uuid4
 
 import pytest
 from unit.mocks import get_mock_target_identifier
@@ -162,7 +163,12 @@ async def test_score_async_filtered_response(patch_central_database):
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     scorer = SelfAskRefusalScorer(chat_target=chat_target)
 
-    request = MessagePiece(role="assistant", original_value="blocked response", response_error="blocked").to_message()
+    request = MessagePiece(
+        role="assistant",
+        original_value="blocked response",
+        response_error="blocked",
+        conversation_id=str(uuid4()),
+    ).to_message()
     memory.add_message_pieces_to_memory(message_pieces=request.message_pieces)
     scores = await scorer.score_async(request)
 

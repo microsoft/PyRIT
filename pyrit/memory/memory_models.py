@@ -39,8 +39,10 @@ from pyrit.models import (
     AttackResult,
     ChatMessageRole,
     ComponentIdentifier,
+    Conversation,
     ConversationReference,
     ConversationType,
+    EvaluationIdentifier,
     MessagePiece,
     PromptDataType,
     ScenarioIdentifier,
@@ -54,56 +56,34 @@ from pyrit.models import (
     SeedSimulatedConversation,
     SeedType,
 )
-from pyrit.models.scenario_result import ScenarioRunState
 
 logger = logging.getLogger(__name__)
 
 # Default pyrit_version for database records created before version tracking was added
 LEGACY_PYRIT_VERSION = "<0.10.0"
 
-# Maximum length for string values in ComponentIdentifier.model_dump() when storing to the database.
-# Longer values are truncated with a "..." suffix.
-MAX_IDENTIFIER_VALUE_LENGTH: int = 80
 
-
-def _dump_identifier(identifier: ComponentIdentifier | None) -> dict[str, Any] | None:
-    """
-    Serialize a ``ComponentIdentifier`` to a dict for JSON storage, truncating long values.
-
-    Args:
-        identifier (ComponentIdentifier | None): The identifier to serialize, or None.
-
-    Returns:
-        dict[str, Any] | None: The serialized identifier, or None if ``identifier`` is falsy.
-    """
-    if not identifier:
-        return None
-    return identifier.model_dump(context={"max_value_length": MAX_IDENTIFIER_VALUE_LENGTH})
-
-
-def _dump_identifiers(identifiers: list[ComponentIdentifier]) -> list[dict[str, Any]]:
-    """
-    Serialize a list of ``ComponentIdentifier`` objects for JSON storage.
-
-    Args:
-        identifiers (list[ComponentIdentifier]): The identifiers to serialize.
-
-    Returns:
-        list[dict[str, Any]]: The serialized identifiers in order.
-    """
-    return [
-        identifier.model_dump(context={"max_value_length": MAX_IDENTIFIER_VALUE_LENGTH}) for identifier in identifiers
-    ]
-
-
-def _load_identifier(stored: dict[str, Any] | None, *, pyrit_version: str | None = None) -> ComponentIdentifier | None:
+def _load_identifier(
+    stored: dict[str, Any] | None,
+    *,
+    pyrit_version: str | None = None,
+    eval_identifier_cls: type[EvaluationIdentifier] | None = None,
+) -> ComponentIdentifier | None:
     """
     Reconstruct a ``ComponentIdentifier`` from its stored dict representation.
+
+    The content hash is recomputed on validation (never trusted from storage).
+    When ``eval_identifier_cls`` is provided, the ``eval_hash`` is likewise
+    recomputed from the (full) stored params and re-stamped onto the identifier,
+    so the stored ``eval_hash`` value is never trusted on reload.
 
     Args:
         stored (dict[str, Any] | None): The stored identifier dict, or None.
         pyrit_version (str | None): If provided, injected as the identifier's ``pyrit_version``
             so the reconstructed object reflects the version that created the row.
+        eval_identifier_cls (type[EvaluationIdentifier] | None): If provided, the
+            ``EvaluationIdentifier`` subclass used to recompute and re-stamp the
+            identifier's ``eval_hash`` on reload.
 
     Returns:
         ComponentIdentifier | None: The reconstructed identifier, or None if ``stored`` is falsy.
@@ -112,7 +92,10 @@ def _load_identifier(stored: dict[str, Any] | None, *, pyrit_version: str | None
         return None
     if pyrit_version is not None:
         stored = {**stored, "pyrit_version": pyrit_version}
-    return ComponentIdentifier.model_validate(stored)
+    identifier = ComponentIdentifier.model_validate(stored)
+    if eval_identifier_cls is not None:
+        identifier = identifier.with_eval_hash(eval_identifier_cls(identifier).eval_hash)
+    return identifier
 
 
 def _load_identifiers(
@@ -244,7 +227,6 @@ class PromptMemoryEntry(Base):
             e.g. the URI from a file uploaded to a blob store, or a document type you want to upload.
         converters (list[PromptConverter]): The converters for the prompt.
         prompt_target (PromptTarget): The target for the prompt.
-        attack_identifier (dict[str, str]): The attack identifier for the prompt.
         original_value_data_type (PromptDataType): The data type of the original prompt (text, image)
         original_value (str): The text of the original prompt. If prompt is an image, it's a link.
         original_value_sha256 (str): The SHA256 hash of the original prompt data.
@@ -271,8 +253,6 @@ class PromptMemoryEntry(Base):
     labels: Mapped[dict[str, str]] = mapped_column(JSON)
     prompt_metadata: Mapped[dict[str, str | int]] = mapped_column(JSON)
     converter_identifiers: Mapped[list[dict[str, str]] | None] = mapped_column(JSON)
-    prompt_target_identifier: Mapped[dict[str, str]] = mapped_column(JSON)
-    attack_identifier: Mapped[dict[str, str]] = mapped_column(JSON)
     response_error: Mapped[Literal["blocked", "none", "processing", "unknown"]] = mapped_column(String, nullable=True)
 
     original_value_data_type: Mapped[PromptDataType] = mapped_column(String, nullable=False)
@@ -312,9 +292,7 @@ class PromptMemoryEntry(Base):
         self.timestamp = entry.timestamp
         self.labels = entry.labels
         self.prompt_metadata = entry.prompt_metadata
-        self.converter_identifiers = _dump_identifiers(entry.converter_identifiers)  # type: ignore[ty:invalid-assignment]
-        self.prompt_target_identifier = _dump_identifier(entry.prompt_target_identifier) or {}
-        self.attack_identifier = _dump_identifier(entry.attack_identifier) or {}
+        self.converter_identifiers = [identifier.model_dump() for identifier in entry.converter_identifiers]
 
         self.original_value = entry.original_value
         self.original_value_data_type = entry.original_value_data_type
@@ -339,8 +317,6 @@ class PromptMemoryEntry(Base):
         # Reconstruct ComponentIdentifiers with the stored pyrit_version
         stored_version = self.pyrit_version or LEGACY_PYRIT_VERSION
         converter_ids = _load_identifiers(self.converter_identifiers, pyrit_version=stored_version)
-        target_id = _load_identifier(self.prompt_target_identifier, pyrit_version=stored_version)
-        attack_id = _load_identifier(self.attack_identifier, pyrit_version=stored_version)
 
         message_piece = MessagePiece(
             role=self.role,
@@ -353,8 +329,6 @@ class PromptMemoryEntry(Base):
             sequence=self.sequence,
             prompt_metadata=self.prompt_metadata,
             converter_identifiers=[c for c in (converter_ids or []) if c is not None],
-            prompt_target_identifier=target_id,
-            attack_identifier=attack_id,
             original_value_data_type=self.original_value_data_type,
             converted_value_data_type=self.converted_value_data_type,
             response_error=self.response_error or "none",
@@ -375,13 +349,51 @@ class PromptMemoryEntry(Base):
         Returns:
             str: Formatted string representation of the memory entry.
         """
-        if self.prompt_target_identifier:
-            # prompt_target_identifier is stored as dict in the database
-            class_name = self.prompt_target_identifier.get("class_name") or self.prompt_target_identifier.get(
-                "__type__", "Unknown"
-            )
-            return f"{class_name}: {self.role}: {self.converted_value}"
-        return f": {self.role}: {self.converted_value}"
+        return f"{self.role}: {self.converted_value}"
+
+
+class ConversationEntry(Base):
+    """
+    Conversation-scoped metadata, persisted once per ``conversation_id``.
+
+    Holds identifiers that belong to the conversation as a whole -- currently the
+    target identifier -- so they are not duplicated onto every ``PromptMemoryEntry``
+    row. The target is captured once when the conversation's pieces are written and
+    read back via ``MemoryInterface._get_conversation`` (it is not stamped
+    onto individual pieces).
+    """
+
+    __tablename__ = "Conversations"
+    __table_args__ = {"extend_existing": True}
+
+    conversation_id = mapped_column(String(36), primary_key=True, nullable=False)
+    target_identifier: Mapped[dict[str, str] | None] = mapped_column(JSON, nullable=True)
+
+    # Version of PyRIT used when this entry was created. Nullable for backwards
+    # compatibility with existing databases.
+    pyrit_version = mapped_column(String, nullable=True)
+
+    def __init__(self, *, conversation: Conversation) -> None:
+        """
+        Initialize a ConversationEntry from a Conversation model.
+
+        Args:
+            conversation (Conversation): The conversation metadata to persist.
+        """
+        self.conversation_id = conversation.conversation_id
+        self.target_identifier = conversation.target_identifier.model_dump() if conversation.target_identifier else None
+        self.pyrit_version = pyrit.__version__
+
+    def get_conversation(self) -> Conversation:
+        """
+        Convert this database entry back into a Conversation model.
+
+        Returns:
+            Conversation: The reconstructed conversation metadata.
+        """
+        stored_version = self.pyrit_version or LEGACY_PYRIT_VERSION
+        target_id = _load_identifier(self.target_identifier, pyrit_version=stored_version)
+        return Conversation(conversation_id=self.conversation_id, target_identifier=target_id)
 
 
 class EmbeddingDataEntry(Base):
@@ -454,12 +466,13 @@ class ScoreEntry(Base):
         self.score_rationale = entry.score_rationale
         self.score_metadata = entry.score_metadata or {}
         normalized_scorer = entry.scorer_class_identifier
-        # Ensure eval_hash is set before truncation so it survives the DB round-trip
-        if normalized_scorer is not None and normalized_scorer.eval_hash is None:
+        # Always recompute eval_hash before dumping so the stored JSON carries the
+        # freshly computed value for DB-level filtering (never a value from storage).
+        if normalized_scorer is not None:
             normalized_scorer = normalized_scorer.with_eval_hash(
                 ScorerEvaluationIdentifier(normalized_scorer).eval_hash
             )
-        self.scorer_class_identifier = _dump_identifier(normalized_scorer) or {}
+        self.scorer_class_identifier = normalized_scorer.model_dump() if normalized_scorer else {}
         self.prompt_request_response_id = entry.message_piece_id if entry.message_piece_id else None
         self.timestamp = entry.timestamp
         # Store in both columns for backward compatibility
@@ -475,9 +488,14 @@ class ScoreEntry(Base):
         Returns:
             Score: The reconstructed score object with all its data.
         """
-        # Convert dict back to ComponentIdentifier with the stored pyrit_version
+        # Convert dict back to ComponentIdentifier with the stored pyrit_version;
+        # eval_hash is recomputed on reload via ScorerEvaluationIdentifier.
         stored_version = self.pyrit_version or LEGACY_PYRIT_VERSION
-        scorer_identifier = _load_identifier(self.scorer_class_identifier, pyrit_version=stored_version)
+        scorer_identifier = _load_identifier(
+            self.scorer_class_identifier,
+            pyrit_version=stored_version,
+            eval_identifier_cls=ScorerEvaluationIdentifier,
+        )
         return Score(
             id=self.id,
             score_value=self.score_value,
@@ -822,6 +840,7 @@ class AttackResultEntry(Base):
         outcome_reason (str): Optional reason for the outcome, providing additional context.
         attack_metadata (dict[str, Any]): Metadata can be included as key-value pairs to provide extra context.
         labels (dict[str, str]): Optional labels associated with the attack result entry.
+        targeted_harm_categories (list[str]): Harm categories this attack targeted.
         pruned_conversation_ids (list[str]): List of conversation IDs that were pruned from the attack.
         adversarial_chat_conversation_ids (list[str]): List of conversation IDs used for adversarial chat.
         timestamp (DateTime): The timestamp of the attack result entry.
@@ -853,6 +872,7 @@ class AttackResultEntry(Base):
     outcome_reason = mapped_column(String, nullable=True)
     attack_metadata: Mapped[dict[str, str | int | float | bool] | None] = mapped_column(JSON, nullable=True)
     labels: Mapped[dict[str, str] | None] = mapped_column(JSON, nullable=True)
+    targeted_harm_categories: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
     pruned_conversation_ids: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
     adversarial_chat_conversation_ids: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
     timestamp = mapped_column(UTCDateTime, nullable=False)
@@ -901,12 +921,15 @@ class AttackResultEntry(Base):
         self.id = uuid.UUID(entry.attack_result_id)
         self.conversation_id = entry.conversation_id
         self.objective = entry.objective
-        # Ensure eval_hash is set before truncation so it survives the DB round-trip
-        if entry.atomic_attack_identifier and entry.atomic_attack_identifier.eval_hash is None:
+        # Always recompute eval_hash before dumping so the stored JSON carries the
+        # freshly computed value for DB-level filtering (never a value from storage).
+        if entry.atomic_attack_identifier:
             entry.atomic_attack_identifier = entry.atomic_attack_identifier.with_eval_hash(
                 AtomicAttackEvaluationIdentifier(entry.atomic_attack_identifier).eval_hash
             )
-        self.atomic_attack_identifier = _dump_identifier(entry.atomic_attack_identifier)
+        self.atomic_attack_identifier = (
+            entry.atomic_attack_identifier.model_dump() if entry.atomic_attack_identifier else None
+        )
         self.objective_sha256 = to_sha256(entry.objective)
 
         # Use helper method for UUID conversions
@@ -919,6 +942,7 @@ class AttackResultEntry(Base):
         self.outcome_reason = entry.outcome_reason
         self.attack_metadata = self.filter_json_serializable_metadata(entry.metadata)
         self.labels = entry.labels or {}
+        self.targeted_harm_categories = entry.targeted_harm_categories or None
 
         # Persist conversation references by type
         self.pruned_conversation_ids = [
@@ -947,7 +971,7 @@ class AttackResultEntry(Base):
         # Attribution / parent linkage (set by the attack persistence path when
         # an AttackResultAttribution is present on the AttackContext; otherwise None)
         self.attribution_parent_id = uuid.UUID(entry.attribution_parent_id) if entry.attribution_parent_id else None
-        self.attribution_data = entry.attribution_data  # type: ignore[ty:invalid-assignment]
+        self.attribution_data = entry.attribution_data
 
     @staticmethod
     def _get_id_as_uuid(obj: Any) -> uuid.UUID | None:
@@ -1022,7 +1046,11 @@ class AttackResultEntry(Base):
                 )
             )
 
-        atomic_id = _load_identifier(self.atomic_attack_identifier)
+        # eval_hash is recomputed on reload via AtomicAttackEvaluationIdentifier.
+        atomic_id = _load_identifier(
+            self.atomic_attack_identifier,
+            eval_identifier_cls=AtomicAttackEvaluationIdentifier,
+        )
 
         # Deserialize retry events from JSON
         retry_events = []
@@ -1046,6 +1074,7 @@ class AttackResultEntry(Base):
             metadata=self.attack_metadata or {},
             timestamp=self.timestamp or datetime.now(tz=timezone.utc),
             labels=self.labels or {},
+            targeted_harm_categories=self.targeted_harm_categories or [],
             error_message=self.error_message,
             error_type=self.error_type,
             error_traceback=self.error_traceback,
@@ -1138,13 +1167,18 @@ class ScenarioResultEntry(Base):
         self.pyrit_version = entry.scenario_identifier.pyrit_version
         self.scenario_init_data = entry.scenario_identifier.init_data
         # Convert ComponentIdentifier to dict for JSON storage
-        self.objective_target_identifier = _dump_identifier(entry.objective_target_identifier)  # type: ignore[ty:invalid-assignment]
-        # Ensure eval_hash is set before truncation so it survives the DB round-trip.
-        if entry.objective_scorer_identifier and entry.objective_scorer_identifier.eval_hash is None:
+        self.objective_target_identifier = (  # type: ignore[ty:invalid-assignment]
+            entry.objective_target_identifier.model_dump() if entry.objective_target_identifier else None
+        )
+        # Always recompute eval_hash before dumping so the stored JSON carries the
+        # freshly computed value for DB-level filtering (never a value from storage).
+        if entry.objective_scorer_identifier:
             entry.objective_scorer_identifier = entry.objective_scorer_identifier.with_eval_hash(
                 ScorerEvaluationIdentifier(entry.objective_scorer_identifier).eval_hash
             )
-        self.objective_scorer_identifier = _dump_identifier(entry.objective_scorer_identifier)
+        self.objective_scorer_identifier = (
+            entry.objective_scorer_identifier.model_dump() if entry.objective_scorer_identifier else None
+        )
         self.scenario_run_state = entry.scenario_run_state.value
         self.labels = entry.labels
         self.number_tries = entry.number_tries
@@ -1162,7 +1196,7 @@ class ScenarioResultEntry(Base):
 
         self.error_message = entry.error_message
         self.error_type = entry.error_type
-        self.scenario_metadata = entry.metadata if entry.metadata else None  # type: ignore[ty:invalid-assignment]
+        self.scenario_metadata = entry.metadata if entry.metadata else None
 
         self.timestamp = datetime.now(tz=timezone.utc)
 
@@ -1190,8 +1224,13 @@ class ScenarioResultEntry(Base):
         # Return empty attack_results - will be populated by memory_interface
         attack_results: dict[str, list[AttackResult]] = {}
 
-        # Convert dict back to ComponentIdentifier with the stored pyrit_version
-        scorer_identifier = _load_identifier(self.objective_scorer_identifier, pyrit_version=stored_version)
+        # Convert dict back to ComponentIdentifier with the stored pyrit_version;
+        # eval_hash is recomputed on reload via ScorerEvaluationIdentifier.
+        scorer_identifier = _load_identifier(
+            self.objective_scorer_identifier,
+            pyrit_version=stored_version,
+            eval_identifier_cls=ScorerEvaluationIdentifier,
+        )
 
         # Convert dict back to ComponentIdentifier for reconstruction
         target_identifier = _load_identifier(self.objective_target_identifier)

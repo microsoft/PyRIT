@@ -8,10 +8,8 @@ from datetime import datetime, timezone
 import pytest
 
 from pyrit.memory.memory_models import AttackResultEntry
-from pyrit.models import ComponentIdentifier
-from pyrit.models.conversation_reference import ConversationReference, ConversationType
+from pyrit.models import AttackOutcome, AttackResult, ComponentIdentifier, ConversationReference, ConversationType
 from pyrit.models.messages.message_piece import MessagePiece
-from pyrit.models.results.attack_result import AttackOutcome, AttackResult
 from pyrit.models.retry_event import RetryEvent
 from pyrit.models.score import Score
 
@@ -243,11 +241,6 @@ def test_to_dict_from_dict_roundtrip():
         class_name="SelfAskTrueFalseScorer",
         class_module="pyrit.score",
     )
-    target_id = ComponentIdentifier(
-        class_name="OpenAIChatTarget",
-        class_module="pyrit.prompt_target",
-        params={"endpoint": "https://api.example.com"},
-    )
     attack_id = ComponentIdentifier(
         class_name="PromptSendingAttack",
         class_module="pyrit.executor.attack",
@@ -259,8 +252,6 @@ def test_to_dict_from_dict_roundtrip():
         conversation_id="conv-1",
         sequence=1,
         timestamp=datetime(2026, 1, 15, 12, 0, 0, tzinfo=timezone.utc),
-        prompt_target_identifier=target_id,
-        attack_identifier=attack_id,
     )
     last_score = Score(
         score_value="true",
@@ -297,6 +288,7 @@ def test_to_dict_from_dict_roundtrip():
         },
         metadata={"model": "gpt-4", "temperature": 0.7},
         labels={"category": "violence", "severity": "high"},
+        targeted_harm_categories=["violence", "hate"],
         error_message="partial error",
         error_type="RuntimeError",
         error_traceback="Traceback ...\n  File ...",
@@ -400,24 +392,3 @@ class TestAttackResultDuplicate:
         assert copy.backtrack_count == 3
         copy.backtrack_count = 9
         assert original.backtrack_count == 3
-
-
-class TestAttackResultShim:
-    """The relocated module must be importable from the legacy path silently."""
-
-    def test_shim_reexports_same_classes_silently(self) -> None:
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            from pyrit.models.attack_result import AttackOutcome as ShimOutcome
-            from pyrit.models.attack_result import AttackResult as ShimResult
-
-        assert ShimResult is AttackResult
-        assert ShimOutcome is AttackOutcome
-        deprecation_warnings = [w for w in caught if issubclass(w.category, DeprecationWarning)]
-        assert len(deprecation_warnings) == 0, "Shim import must be silent"
-
-    def test_shim_getattr_reexports_dynamic_names(self) -> None:
-        """The module __getattr__ falls through to the relocated module."""
-        import pyrit.models.attack_result as shim
-
-        assert shim.AttackResultT is not None

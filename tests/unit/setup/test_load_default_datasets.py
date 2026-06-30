@@ -15,7 +15,7 @@ from pyrit.memory import CentralMemory
 from pyrit.models import SeedDataset
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry import ScenarioRegistry, TargetRegistry
-from pyrit.registry.object_registries.attack_technique_registry import AttackTechniqueRegistry
+from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
 from pyrit.setup.initializers.components.scenario_techniques import build_scenario_technique_factories
 from pyrit.setup.initializers.scenarios.load_default_datasets import LoadDefaultDatasets
 
@@ -23,17 +23,17 @@ from pyrit.setup.initializers.scenarios.load_default_datasets import LoadDefault
 @pytest.fixture
 def populated_technique_registry():
     """Populate the technique + target registries so scenario metadata building succeeds."""
-    AttackTechniqueRegistry.reset_instance()
-    TargetRegistry.reset_instance()
+    AttackTechniqueRegistry.reset_registry_singleton()
+    TargetRegistry.reset_registry_singleton()
 
     adv_target = MagicMock(spec=PromptTarget)
     adv_target.capabilities.includes.return_value = True
-    TargetRegistry.get_registry_singleton().register_instance(adv_target, name="adversarial_chat")
+    TargetRegistry.get_registry_singleton().instances.register(adv_target, name="adversarial_chat")
 
     AttackTechniqueRegistry.get_registry_singleton().register_from_factories(build_scenario_technique_factories())
     yield
-    AttackTechniqueRegistry.reset_instance()
-    TargetRegistry.reset_instance()
+    AttackTechniqueRegistry.reset_registry_singleton()
+    TargetRegistry.reset_registry_singleton()
 
 
 @dataclass
@@ -139,9 +139,14 @@ class TestLoadDefaultDatasets:
 
         # Patch OpenAIChatTarget at the fallback construction site so registry
         # introspection does not depend on OPENAI_CHAT_MODEL or other env vars.
+        from pyrit.models.identifiers import ComponentIdentifier
         from pyrit.score import TrueFalseScorer
 
         fallback_target = MagicMock()
+        fallback_target.get_identifier.return_value = ComponentIdentifier(
+            class_name="OpenAIChatTarget",
+            class_module="pyrit.prompt_target.openai.openai_chat_target",
+        )
         fallback_scorer = MagicMock(spec=TrueFalseScorer)
         with (
             patch("pyrit.scenario.core.scenario_target_defaults.OpenAIChatTarget", return_value=fallback_target),

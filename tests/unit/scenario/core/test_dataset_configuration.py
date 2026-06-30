@@ -1,517 +1,597 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-"""Tests for the DatasetConfiguration class."""
+"""Tests for the DatasetConfiguration base class and DatasetAttackConfiguration."""
 
-import random
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from pyrit.models import SeedGroup, SeedObjective, SeedPrompt
+from pyrit.models import SeedAttackGroup, SeedGroup, SeedObjective, SeedPrompt
 from pyrit.scenario.core.dataset_configuration import (
-    EXPLICIT_SEED_GROUPS_KEY,
+    INLINE_DATASET_NAME,
+    CompoundDatasetAttackConfiguration,
+    DatasetAttackConfiguration,
     DatasetConfiguration,
+    DatasetConstraintError,
+    DatasetSourceKind,
+    ResolvedDataset,
+    forbid_inline_seeds,
+    require_harm_categories,
+    require_inline_seeds,
+    require_min_size,
+    require_nonempty,
+    require_seed_type,
+    restrict_dataset_names,
 )
+
+MEMORY_PATCH_TARGET = "pyrit.scenario.core.dataset_configuration.CentralMemory.get_memory_instance"
+PROVIDER_PATCH_TARGET = "pyrit.datasets.seed_datasets.seed_dataset_provider.SeedDatasetProvider"
+
+
+def resolved(
+    *seeds: SeedObjective | SeedPrompt,
+    source_kind: DatasetSourceKind = DatasetSourceKind.MEMORY,
+    dataset_names: tuple[str, ...] = (),
+) -> ResolvedDataset:
+    """Build a ResolvedDataset from inline seeds for validator tests."""
+    return ResolvedDataset(seeds=list(seeds), source_kind=source_kind, dataset_names=dataset_names)
+
+
+@pytest.fixture
+def mock_memory() -> MagicMock:
+    """A stand-in CentralMemory whose ``get_seeds`` returns nothing by default."""
+    memory = MagicMock()
+    memory.get_seeds.return_value = []
+    memory.get_seed_groups.return_value = []
+    memory.add_seed_datasets_to_memory_async = AsyncMock()
+    return memory
+
+
+@pytest.fixture(autouse=True)
+def patch_memory(mock_memory: MagicMock):
+    """Patch ``CentralMemory.get_memory_instance`` so configs resolve against ``mock_memory``."""
+    with patch(MEMORY_PATCH_TARGET, return_value=mock_memory):
+        yield mock_memory
 
 
 @pytest.fixture
 def sample_seed_group() -> SeedGroup:
-    """Create a sample SeedGroup for testing."""
-    return SeedGroup(
-        seeds=[
-            SeedObjective(value="Test objective"),
-            SeedPrompt(value="Test prompt"),
-        ]
-    )
+    """A SeedGroup carrying exactly one objective and one prompt."""
+    return SeedGroup(seeds=[SeedObjective(value="Test objective"), SeedPrompt(value="Test prompt")])
 
 
 @pytest.fixture
-def sample_seed_groups(sample_seed_group: SeedGroup) -> list:
-    """Create multiple sample SeedGroups for testing."""
+def sample_seed_groups() -> list[SeedGroup]:
+    """Three distinct SeedGroups, each with one objective and one prompt."""
     return [
-        sample_seed_group,
-        SeedGroup(
-            seeds=[
-                SeedObjective(value="Second objective"),
-                SeedPrompt(value="Second prompt"),
-            ]
-        ),
-        SeedGroup(
-            seeds=[
-                SeedObjective(value="Third objective"),
-                SeedPrompt(value="Third prompt"),
-            ]
-        ),
+        SeedGroup(seeds=[SeedObjective(value="o1"), SeedPrompt(value="p1")]),
+        SeedGroup(seeds=[SeedObjective(value="o2"), SeedPrompt(value="p2")]),
+        SeedGroup(seeds=[SeedObjective(value="o3"), SeedPrompt(value="p3")]),
     ]
 
 
+def make_objectives(*values: str) -> list[SeedObjective]:
+    """Build a list of SeedObjective seeds (each becomes its own attack group)."""
+    return [SeedObjective(value=v) for v in values]
+
+
 class TestDatasetConfigurationInit:
-    """Tests for DatasetConfiguration initialization."""
+    """Construction, source-exclusivity, and defensive copying."""
 
-    def test_init_with_seed_groups_only(self, sample_seed_groups: list) -> None:
-        """Test initialization with only seed_groups."""
+    def test_init_with_seeds_only(self) -> None:
+        seeds = make_objectives("a", "b")
+        config = DatasetConfiguration(seeds=seeds)
+        assert config._seeds == seeds
+        assert config._seed_groups is None
+        assert config._dataset_names is None
+
+    def test_init_with_seed_groups_only(self, sample_seed_groups: list[SeedGroup]) -> None:
         config = DatasetConfiguration(seed_groups=sample_seed_groups)
-
         assert config._seed_groups == sample_seed_groups
+        assert config._seeds is None
         assert config._dataset_names is None
         assert config.max_dataset_size is None
-        assert config._scenario_strategies is None
 
     def test_init_with_dataset_names_only(self) -> None:
-        """Test initialization with only dataset_names."""
-        dataset_names = ["dataset1", "dataset2"]
-        config = DatasetConfiguration(dataset_names=dataset_names)
-
+        config = DatasetConfiguration(dataset_names=["dataset1", "dataset2"])
+        assert config._dataset_names == ["dataset1", "dataset2"]
+        assert config._seeds is None
         assert config._seed_groups is None
-        assert config._dataset_names == dataset_names
-        assert config.max_dataset_size is None
 
-    def test_init_with_both_seed_groups_and_dataset_names_raises_error(self, sample_seed_groups: list) -> None:
-        """Test that setting both seed_groups and dataset_names raises ValueError."""
-        with pytest.raises(ValueError) as exc_info:
+    def test_init_defaults_to_auto_fetch(self) -> None:
+        config = DatasetConfiguration(dataset_names=["d1"])
+        assert config._auto_fetch is True
+
+    def test_init_auto_fetch_can_be_disabled(self) -> None:
+        config = DatasetConfiguration(dataset_names=["d1"], auto_fetch=False)
+        assert config._auto_fetch is False
+
+    def test_init_with_two_sources_raises(self, sample_seed_groups: list[SeedGroup]) -> None:
+        with pytest.raises(ValueError, match="Only one of 'seeds', 'seed_groups', or 'dataset_names'"):
+            DatasetConfiguration(seed_groups=sample_seed_groups, dataset_names=["d1"])
+
+    def test_init_with_three_sources_raises(self, sample_seed_groups: list[SeedGroup]) -> None:
+        with pytest.raises(ValueError, match="Only one of"):
             DatasetConfiguration(
+                seeds=make_objectives("a"),
                 seed_groups=sample_seed_groups,
-                dataset_names=["dataset1"],
+                dataset_names=["d1"],
             )
 
-        assert "Only one of 'seed_groups' or 'dataset_names' can be set" in str(exc_info.value)
-
-    def test_init_with_max_dataset_size(self, sample_seed_groups: list) -> None:
-        """Test initialization with max_dataset_size."""
+    def test_init_with_max_dataset_size(self, sample_seed_groups: list[SeedGroup]) -> None:
         config = DatasetConfiguration(seed_groups=sample_seed_groups, max_dataset_size=2)
-
         assert config.max_dataset_size == 2
 
-    def test_init_with_max_dataset_size_zero_raises_error(self) -> None:
-        """Test that max_dataset_size=0 raises ValueError."""
-        with pytest.raises(ValueError) as exc_info:
-            DatasetConfiguration(dataset_names=["dataset1"], max_dataset_size=0)
+    def test_init_with_max_dataset_size_zero_raises(self) -> None:
+        with pytest.raises(ValueError, match="positive integer"):
+            DatasetConfiguration(dataset_names=["d1"], max_dataset_size=0)
 
-        assert "'max_dataset_size' must be a positive integer" in str(exc_info.value)
+    def test_init_with_max_dataset_size_negative_raises(self) -> None:
+        with pytest.raises(ValueError, match="positive integer"):
+            DatasetConfiguration(dataset_names=["d1"], max_dataset_size=-1)
 
-    def test_init_with_max_dataset_size_negative_raises_error(self) -> None:
-        """Test that negative max_dataset_size raises ValueError."""
-        with pytest.raises(ValueError) as exc_info:
-            DatasetConfiguration(dataset_names=["dataset1"], max_dataset_size=-1)
-
-        assert "'max_dataset_size' must be a positive integer" in str(exc_info.value)
-
-    def test_init_copies_seed_groups_to_prevent_mutation(self, sample_seed_groups: list) -> None:
-        """Test that the constructor copies seed_groups list to prevent external mutation."""
-        original_list = list(sample_seed_groups)
+    def test_init_copies_seed_groups_to_prevent_mutation(self, sample_seed_groups: list[SeedGroup]) -> None:
         config = DatasetConfiguration(seed_groups=sample_seed_groups)
-
-        # Mutate the original list
-        sample_seed_groups.append(SeedGroup(seeds=[SeedObjective(value="New objective")]))
-
-        # Config should still have the original length
-        assert len(config._seed_groups) == len(original_list)
+        sample_seed_groups.append(SeedGroup(seeds=[SeedObjective(value="extra")]))
+        assert config._seed_groups is not None
+        assert len(config._seed_groups) == 3
 
     def test_init_copies_dataset_names_to_prevent_mutation(self) -> None:
-        """Test that the constructor copies dataset_names list to prevent external mutation."""
-        dataset_names = ["dataset1", "dataset2"]
-        config = DatasetConfiguration(dataset_names=dataset_names)
+        names = ["d1", "d2"]
+        config = DatasetConfiguration(dataset_names=names)
+        names.append("d3")
+        assert config._dataset_names == ["d1", "d2"]
 
-        # Mutate the original list
-        dataset_names.append("dataset3")
+    def test_init_copies_seeds_to_prevent_mutation(self) -> None:
+        seeds = make_objectives("a", "b")
+        config = DatasetConfiguration(seeds=seeds)
+        seeds.append(SeedObjective(value="c"))
+        assert config._seeds is not None
+        assert len(config._seeds) == 2
 
-        # Config should still have the original length
-        assert len(config._dataset_names) == 2
 
-    def test_init_with_scenario_strategies(self, sample_seed_groups: list) -> None:
-        """Test initialization with scenario_strategies."""
-        mock_strategies = [MagicMock(), MagicMock()]
-        config = DatasetConfiguration(
-            seed_groups=sample_seed_groups,
-            scenario_strategies=mock_strategies,
+class TestDatasetNamesProperty:
+    """The ``dataset_names`` property (replaces the deprecated getter)."""
+
+    def test_returns_configured_names(self) -> None:
+        config = DatasetConfiguration(dataset_names=["d1", "d2"])
+        assert config.dataset_names == ["d1", "d2"]
+
+    def test_returns_copy(self) -> None:
+        config = DatasetConfiguration(dataset_names=["d1"])
+        config.dataset_names.append("mutated")
+        assert config.dataset_names == ["d1"]
+
+    def test_empty_with_seed_groups(self, sample_seed_groups: list[SeedGroup]) -> None:
+        config = DatasetConfiguration(seed_groups=sample_seed_groups)
+        assert config.dataset_names == []
+
+    def test_empty_with_no_source(self) -> None:
+        assert DatasetConfiguration().dataset_names == []
+
+
+class TestResolutionErrors:
+    """Loud failure branches in base resolution, reached via ``DatasetAttackConfiguration``."""
+
+    async def test_empty_inline_raises(self) -> None:
+        config = DatasetAttackConfiguration(seeds=[])
+        with pytest.raises(DatasetConstraintError, match="empty"):
+            await config.get_seed_attack_groups_async()
+
+    async def test_raises_loudly_when_still_empty_after_fetch(self) -> None:
+        config = DatasetAttackConfiguration(dataset_names=["d1"])
+        with patch.object(config, "_fetch_dataset_async", new=AsyncMock()):
+            with pytest.raises(DatasetConstraintError, match="could not be loaded"):
+                await config.get_seed_attack_groups_async()
+
+    async def test_raises_when_empty_and_auto_fetch_disabled(self) -> None:
+        config = DatasetAttackConfiguration(dataset_names=["d1"], auto_fetch=False)
+        with pytest.raises(DatasetConstraintError, match="auto_fetch is disabled"):
+            await config.get_seed_attack_groups_async()
+
+    async def test_dataset_constraint_error_is_value_error(self) -> None:
+        config = DatasetAttackConfiguration(dataset_names=["d1"], auto_fetch=False)
+        with pytest.raises(ValueError):
+            await config.get_seed_attack_groups_async()
+
+
+class TestGetSeedAttackGroupsAsync:
+    """``DatasetAttackConfiguration.get_seed_attack_groups_async`` (flat, global sample)."""
+
+    async def test_inline_seed_groups_to_attack_groups(self, sample_seed_groups: list[SeedGroup]) -> None:
+        config = DatasetAttackConfiguration(seed_groups=sample_seed_groups)
+        groups = await config.get_seed_attack_groups_async()
+        assert len(groups) == 3
+        assert all(isinstance(g, SeedAttackGroup) for g in groups)
+
+    async def test_inline_seeds_built_into_groups(self) -> None:
+        config = DatasetAttackConfiguration(seeds=make_objectives("a", "b"))
+        groups = await config.get_seed_attack_groups_async()
+        assert len(groups) == 2
+        assert all(isinstance(g, SeedAttackGroup) for g in groups)
+
+    async def test_from_memory(self, mock_memory: MagicMock) -> None:
+        mock_memory.get_seeds.return_value = make_objectives("a", "b", "c")
+        config = DatasetAttackConfiguration(dataset_names=["d1"])
+        groups = await config.get_seed_attack_groups_async()
+        assert len(groups) == 3
+
+    async def test_applies_max_dataset_size_globally(self, mock_memory: MagicMock) -> None:
+        mock_memory.get_seeds.return_value = make_objectives("a", "b", "c", "d")
+        config = DatasetAttackConfiguration(dataset_names=["d1"], max_dataset_size=2)
+        groups = await config.get_seed_attack_groups_async()
+        assert len(groups) == 2
+
+    async def test_empty_raises(self) -> None:
+        config = DatasetAttackConfiguration(dataset_names=["d1"], auto_fetch=False)
+        with pytest.raises(DatasetConstraintError):
+            await config.get_seed_attack_groups_async()
+
+    async def test_auto_fetch_when_memory_empty(self, mock_memory: MagicMock) -> None:
+        mock_memory.get_seeds.side_effect = [[], make_objectives("a")]
+        config = DatasetAttackConfiguration(dataset_names=["d1"])
+        with patch.object(config, "_fetch_dataset_async", new=AsyncMock()) as mock_fetch:
+            groups = await config.get_seed_attack_groups_async()
+        assert len(groups) == 1
+        mock_fetch.assert_awaited_once_with(dataset_name="d1")
+
+
+class TestGetAttackGroupsByDatasetAsync:
+    """``get_attack_groups_by_dataset_async`` (keyed by dataset, global sample)."""
+
+    async def test_inline_uses_inline_label(self, sample_seed_groups: list[SeedGroup]) -> None:
+        config = DatasetAttackConfiguration(seed_groups=sample_seed_groups)
+        result = await config.get_attack_groups_by_dataset_async()
+        assert set(result.keys()) == {INLINE_DATASET_NAME}
+        assert len(result[INLINE_DATASET_NAME]) == 3
+
+    async def test_keyed_per_dataset(self, mock_memory: MagicMock) -> None:
+        mock_memory.get_seeds.side_effect = [make_objectives("a", "b"), make_objectives("c")]
+        config = DatasetAttackConfiguration(dataset_names=["d1", "d2"])
+        result = await config.get_attack_groups_by_dataset_async()
+        assert set(result.keys()) == {"d1", "d2"}
+        assert len(result["d1"]) == 2
+        assert len(result["d2"]) == 1
+
+    async def test_max_sample_is_a_single_global_budget(self, mock_memory: MagicMock) -> None:
+        # A single config now applies max_dataset_size globally across datasets, not per dataset.
+        mock_memory.get_seeds.side_effect = [make_objectives("a", "b", "c"), make_objectives("d", "e", "f")]
+        config = DatasetAttackConfiguration(dataset_names=["d1", "d2"], max_dataset_size=2)
+        result = await config.get_attack_groups_by_dataset_async()
+        assert sum(len(groups) for groups in result.values()) == 2
+
+    async def test_loud_raise_when_a_dataset_is_empty(self, mock_memory: MagicMock) -> None:
+        mock_memory.get_seeds.side_effect = [make_objectives("a"), []]
+        config = DatasetAttackConfiguration(dataset_names=["d1", "d2"], auto_fetch=False)
+        with pytest.raises(DatasetConstraintError, match="could not be loaded"):
+            await config.get_attack_groups_by_dataset_async()
+
+
+class TestBuildAttackGroups:
+    """The ``_build_attack_groups`` override seam."""
+
+    def test_default_groups_by_prompt_group_id(self) -> None:
+        config = DatasetAttackConfiguration(dataset_names=["d1"])
+        groups = config._build_attack_groups(make_objectives("a", "b"))
+        assert len(groups) == 2
+        assert all(isinstance(g, SeedAttackGroup) for g in groups)
+
+    async def test_override_is_used(self, mock_memory: MagicMock) -> None:
+        mock_memory.get_seeds.return_value = make_objectives("a", "b", "c")
+        sentinel = [SeedAttackGroup(seeds=[SeedObjective(value="custom")])]
+
+        class CustomConfig(DatasetAttackConfiguration):
+            def _build_attack_groups(self, seeds):
+                return sentinel
+
+        config = CustomConfig(dataset_names=["d1"])
+        assert await config.get_seed_attack_groups_async() == sentinel
+
+
+class TestFetchDatasetAsync:
+    """``_fetch_dataset_async`` provider interaction."""
+
+    async def test_unregistered_name_does_not_fetch(self, mock_memory: MagicMock) -> None:
+        config = DatasetConfiguration(dataset_names=["d1"])
+        with patch(PROVIDER_PATCH_TARGET) as provider:
+            provider.get_all_dataset_names_async = AsyncMock(return_value=["other"])
+            provider.fetch_datasets_async = AsyncMock()
+            await config._fetch_dataset_async(dataset_name="d1")
+        provider.fetch_datasets_async.assert_not_called()
+        mock_memory.add_seed_datasets_to_memory_async.assert_not_called()
+
+    async def test_registered_name_fetches_and_adds(self, mock_memory: MagicMock) -> None:
+        config = DatasetConfiguration(dataset_names=["d1"])
+        datasets = [MagicMock()]
+        with patch(PROVIDER_PATCH_TARGET) as provider:
+            provider.get_all_dataset_names_async = AsyncMock(return_value=["d1"])
+            provider.fetch_datasets_async = AsyncMock(return_value=datasets)
+            await config._fetch_dataset_async(dataset_name="d1")
+        provider.fetch_datasets_async.assert_awaited_once_with(dataset_names=["d1"])
+        mock_memory.add_seed_datasets_to_memory_async.assert_awaited_once()
+
+    async def test_enumeration_error_propagates(self, mock_memory: MagicMock) -> None:
+        config = DatasetConfiguration(dataset_names=["d1"])
+        with patch(PROVIDER_PATCH_TARGET) as provider:
+            provider.get_all_dataset_names_async = AsyncMock(side_effect=RuntimeError("boom"))
+            with pytest.raises(RuntimeError, match="boom"):
+                await config._fetch_dataset_async(dataset_name="d1")
+        mock_memory.add_seed_datasets_to_memory_async.assert_not_called()
+
+    async def test_fetch_failure_chains_root_cause(self, mock_memory: MagicMock) -> None:
+        config = DatasetAttackConfiguration(dataset_names=["d1"])
+        with patch(PROVIDER_PATCH_TARGET) as provider:
+            provider.get_all_dataset_names_async = AsyncMock(side_effect=RuntimeError("boom"))
+            with pytest.raises(DatasetConstraintError, match="auto-fetch") as exc_info:
+                await config.get_seed_attack_groups_async()
+        assert isinstance(exc_info.value.__cause__, RuntimeError)
+
+
+class TestLegacyDeprecations:
+    """Legacy getters still work but emit ``DeprecationWarning`` (removed in 0.17.0)."""
+
+    def test_get_seed_groups_warns(self, mock_memory: MagicMock, sample_seed_groups: list[SeedGroup]) -> None:
+        config = DatasetConfiguration(seed_groups=sample_seed_groups)
+        with pytest.warns(DeprecationWarning):
+            result = config.get_seed_groups()
+        assert INLINE_DATASET_NAME in result
+
+    def test_get_all_seed_groups_warns(self, sample_seed_groups: list[SeedGroup]) -> None:
+        config = DatasetConfiguration(seed_groups=sample_seed_groups)
+        with pytest.warns(DeprecationWarning):
+            assert len(config.get_all_seed_groups()) == 3
+
+    def test_get_seed_attack_groups_warns(self, sample_seed_groups: list[SeedGroup]) -> None:
+        config = DatasetConfiguration(seed_groups=sample_seed_groups)
+        with pytest.warns(DeprecationWarning):
+            result = config.get_seed_attack_groups()
+        assert INLINE_DATASET_NAME in result
+
+    def test_get_all_seed_attack_groups_warns(self, sample_seed_groups: list[SeedGroup]) -> None:
+        config = DatasetConfiguration(seed_groups=sample_seed_groups)
+        with pytest.warns(DeprecationWarning):
+            groups = config.get_all_seed_attack_groups()
+        assert len(groups) == 3
+        assert all(isinstance(g, SeedAttackGroup) for g in groups)
+
+    def test_get_default_dataset_names_warns(self) -> None:
+        config = DatasetConfiguration(dataset_names=["d1", "d2"])
+        with pytest.warns(DeprecationWarning):
+            assert config.get_default_dataset_names() == ["d1", "d2"]
+
+    def test_get_all_seeds_warns(self, mock_memory: MagicMock) -> None:
+        mock_memory.get_seeds.return_value = make_objectives("a", "b")
+        config = DatasetConfiguration(dataset_names=["d1"])
+        with pytest.warns(DeprecationWarning):
+            assert len(config.get_all_seeds()) == 2
+
+    def test_get_all_seeds_raises_when_no_dataset_names(self, sample_seed_groups: list[SeedGroup]) -> None:
+        config = DatasetConfiguration(seed_groups=sample_seed_groups)
+        with pytest.warns(DeprecationWarning):
+            with pytest.raises(ValueError, match="No dataset names configured"):
+                config.get_all_seeds()
+
+
+class TestValidators:
+    """The standalone validator builders and base ``validate``."""
+
+    def test_require_nonempty_raises_on_empty(self) -> None:
+        with pytest.raises(DatasetConstraintError):
+            require_nonempty()(resolved())
+
+    def test_require_nonempty_passes(self) -> None:
+        require_nonempty()(resolved(SeedObjective(value="a")))
+
+    def test_require_min_size_raises_when_too_few(self) -> None:
+        with pytest.raises(DatasetConstraintError):
+            require_min_size(3)(resolved(SeedObjective(value="a")))
+
+    def test_require_min_size_passes(self) -> None:
+        require_min_size(1)(resolved(SeedObjective(value="a")))
+
+    def test_require_harm_categories_raises_when_missing(self) -> None:
+        with pytest.raises(DatasetConstraintError):
+            require_harm_categories({"illegal"})(resolved(SeedObjective(value="a")))
+
+    def test_require_harm_categories_passes(self) -> None:
+        item = SeedObjective(value="a", harm_categories=["illegal"])
+        require_harm_categories({"illegal"})(resolved(item))
+
+    def test_require_seed_type_raises_on_wrong_type(self) -> None:
+        with pytest.raises(DatasetConstraintError, match="SeedObjective"):
+            require_seed_type(SeedObjective)(resolved(SeedPrompt(value="p")))
+
+    def test_require_seed_type_passes(self) -> None:
+        require_seed_type(SeedObjective)(resolved(SeedObjective(value="a")))
+
+    def test_require_inline_seeds_raises_on_dataset_names(self) -> None:
+        item = SeedObjective(value="a")
+        with pytest.raises(DatasetConstraintError, match="inline"):
+            require_inline_seeds()(resolved(item, source_kind=DatasetSourceKind.MEMORY))
+
+    def test_require_inline_seeds_passes_for_inline(self) -> None:
+        item = SeedObjective(value="a")
+        require_inline_seeds()(resolved(item, source_kind=DatasetSourceKind.INLINE))
+
+    def test_forbid_inline_seeds_raises_on_inline(self) -> None:
+        item = SeedObjective(value="a")
+        with pytest.raises(DatasetConstraintError, match="inline"):
+            forbid_inline_seeds()(resolved(item, source_kind=DatasetSourceKind.INLINE))
+
+    def test_forbid_inline_seeds_passes_for_dataset_names(self) -> None:
+        item = SeedObjective(value="a")
+        forbid_inline_seeds()(resolved(item, source_kind=DatasetSourceKind.MEMORY))
+
+    def test_restrict_dataset_names_passes_when_subset(self) -> None:
+        item = SeedObjective(value="a")
+        restrict_dataset_names({"d1", "d2"})(resolved(item, dataset_names=("d1",)))
+
+    def test_restrict_dataset_names_raises_on_disallowed(self) -> None:
+        item = SeedObjective(value="a")
+        with pytest.raises(DatasetConstraintError, match="not allowed"):
+            restrict_dataset_names({"d1"})(resolved(item, dataset_names=("d1", "rogue")))
+
+    def test_restrict_dataset_names_passes_for_inline(self) -> None:
+        item = SeedObjective(value="a")
+        restrict_dataset_names({"d1"})(resolved(item, source_kind=DatasetSourceKind.INLINE))
+
+    def test_validate_raises_on_empty(self) -> None:
+        config = DatasetConfiguration(dataset_names=["d1"])
+        with pytest.raises(DatasetConstraintError, match="empty"):
+            config.validate(resolved())
+
+
+class TestSourceKind:
+    """``source_kind`` reflects how the configuration was constructed."""
+
+    def test_inline_seeds(self) -> None:
+        config = DatasetConfiguration(seeds=make_objectives("a"))
+        assert config.source_kind is DatasetSourceKind.INLINE
+
+    def test_inline_seed_groups(self, sample_seed_groups: list[SeedGroup]) -> None:
+        config = DatasetConfiguration(seed_groups=sample_seed_groups)
+        assert config.source_kind is DatasetSourceKind.INLINE
+
+    def test_dataset_names(self) -> None:
+        config = DatasetConfiguration(dataset_names=["d1"])
+        assert config.source_kind is DatasetSourceKind.MEMORY
+
+    def test_unconfigured_is_memory(self) -> None:
+        config = DatasetConfiguration()
+        assert config.source_kind is DatasetSourceKind.MEMORY
+
+
+class TestSourceValidatorsEndToEnd:
+    """Source-kind validators wired through ``DatasetAttackConfiguration`` resolution."""
+
+    async def test_require_inline_seeds_raises_for_dataset_names(self, mock_memory: MagicMock) -> None:
+        mock_memory.get_seeds.return_value = make_objectives("a")
+        config = DatasetAttackConfiguration(dataset_names=["d1"], validators=[require_inline_seeds()])
+        with pytest.raises(DatasetConstraintError, match="inline"):
+            await config.get_seed_attack_groups_async()
+
+    async def test_require_inline_seeds_passes_for_inline(self) -> None:
+        seeds = make_objectives("a", "b")
+        config = DatasetAttackConfiguration(seeds=seeds, validators=[require_inline_seeds()])
+        assert len(await config.get_seed_attack_groups_async()) == 2
+
+    async def test_forbid_inline_seeds_raises_for_inline(self) -> None:
+        config = DatasetAttackConfiguration(seeds=make_objectives("a"), validators=[forbid_inline_seeds()])
+        with pytest.raises(DatasetConstraintError, match="inline"):
+            await config.get_seed_attack_groups_async()
+
+
+class TestResolvedDatasetNames:
+    """``ResolvedDataset.dataset_names`` carries the contributing dataset names to validators."""
+
+    async def test_resolution_exposes_contributing_names(self, mock_memory: MagicMock) -> None:
+        mock_memory.get_seeds.side_effect = [make_objectives("a"), make_objectives("b")]
+        seen: list[ResolvedDataset] = []
+        config = DatasetAttackConfiguration(dataset_names=["d1", "d2"], validators=[seen.append])
+        await config.get_seed_attack_groups_async()
+        assert seen[0].dataset_names == ("d1", "d2")
+
+    async def test_inline_reports_no_dataset_names(self) -> None:
+        seen: list[ResolvedDataset] = []
+        config = DatasetAttackConfiguration(seeds=make_objectives("a"), validators=[seen.append])
+        await config.get_seed_attack_groups_async()
+        assert seen[0].dataset_names == ()
+
+    async def test_attack_groups_by_dataset_exposes_contributing_names(self, mock_memory: MagicMock) -> None:
+        mock_memory.get_seeds.side_effect = [make_objectives("a"), make_objectives("b")]
+        seen: list[ResolvedDataset] = []
+        config = DatasetAttackConfiguration(dataset_names=["d1", "d2"], validators=[seen.append])
+        await config.get_attack_groups_by_dataset_async()
+        assert seen[0].dataset_names == ("d1", "d2")
+
+    async def test_restrict_dataset_names_raises_for_rogue_dataset(self, mock_memory: MagicMock) -> None:
+        mock_memory.get_seeds.return_value = make_objectives("a")
+        config = DatasetAttackConfiguration(dataset_names=["rogue"], validators=[restrict_dataset_names({"d1", "d2"})])
+        with pytest.raises(DatasetConstraintError, match="not allowed"):
+            await config.get_seed_attack_groups_async()
+
+    async def test_restrict_dataset_names_passes_for_allowed_dataset(self, mock_memory: MagicMock) -> None:
+        mock_memory.get_seeds.return_value = make_objectives("a")
+        config = DatasetAttackConfiguration(dataset_names=["d1"], validators=[restrict_dataset_names({"d1", "d2"})])
+        groups = await config.get_seed_attack_groups_async()
+        assert [g.objective.value for g in groups] == ["a"]
+
+
+class TestCompoundDatasetAttackConfiguration:
+    """``CompoundDatasetAttackConfiguration`` composes child configs with independent budgets."""
+
+    def test_empty_configurations_raises(self) -> None:
+        with pytest.raises(ValueError, match="at least one child"):
+            CompoundDatasetAttackConfiguration(configurations=[])
+
+    def test_per_dataset_empty_names_raises(self) -> None:
+        with pytest.raises(ValueError, match="at least one dataset"):
+            CompoundDatasetAttackConfiguration.per_dataset(dataset_names=[])
+
+    def test_per_dataset_builds_one_child_per_name(self) -> None:
+        config = CompoundDatasetAttackConfiguration.per_dataset(dataset_names=["d1", "d2"], max_dataset_size=4)
+        assert len(config._configurations) == 2
+        assert [child.dataset_names for child in config._configurations] == [["d1"], ["d2"]]
+        assert all(child.max_dataset_size == 4 for child in config._configurations)
+
+    def test_dataset_names_aggregates_and_dedups(self) -> None:
+        config = CompoundDatasetAttackConfiguration(
+            configurations=[
+                DatasetAttackConfiguration(dataset_names=["d1"]),
+                DatasetAttackConfiguration(dataset_names=["d1", "d2"]),
+            ]
         )
-
-        assert config._scenario_strategies == mock_strategies
-
-    def test_init_with_no_data_source(self) -> None:
-        """Test initialization with neither seed_groups nor dataset_names."""
-        config = DatasetConfiguration()
-
-        assert config._seed_groups is None
-        assert config._dataset_names is None
-
-
-@pytest.mark.usefixtures("patch_central_database")
-class TestDatasetConfigurationGetSeedGroups:
-    """Tests for DatasetConfiguration.get_seed_groups method."""
-
-    def test_get_seed_groups_with_explicit_seed_groups(self, sample_seed_groups: list) -> None:
-        """Test get_seed_groups returns explicit seed_groups under special key."""
-        config = DatasetConfiguration(seed_groups=sample_seed_groups)
-
-        result = config.get_seed_groups()
-
-        assert EXPLICIT_SEED_GROUPS_KEY in result
-        assert result[EXPLICIT_SEED_GROUPS_KEY] == sample_seed_groups
-
-    def test_get_seed_groups_with_dataset_names(self, sample_seed_groups: list) -> None:
-        """Test get_seed_groups loads from memory when dataset_names is set."""
-        config = DatasetConfiguration(dataset_names=["test_dataset"])
-
-        with patch.object(config, "_load_seed_groups_for_dataset", return_value=sample_seed_groups):
-            result = config.get_seed_groups()
-
-        assert "test_dataset" in result
-        assert result["test_dataset"] == sample_seed_groups
-
-    def test_get_seed_groups_with_multiple_dataset_names(self, sample_seed_groups: list) -> None:
-        """Test get_seed_groups loads multiple datasets from memory."""
-        config = DatasetConfiguration(dataset_names=["dataset1", "dataset2"])
-
-        def mock_load(*, dataset_name: str):
-            return sample_seed_groups if dataset_name in ["dataset1", "dataset2"] else []
-
-        with patch.object(config, "_load_seed_groups_for_dataset", side_effect=mock_load):
-            result = config.get_seed_groups()
-
-        assert "dataset1" in result
-        assert "dataset2" in result
-
-    def test_get_seed_groups_skips_empty_datasets_from_memory(self) -> None:
-        """Test that empty datasets from memory are not included in results."""
-        config = DatasetConfiguration(dataset_names=["populated", "empty"])
-
-        def mock_load(*, dataset_name: str):
-            if dataset_name == "populated":
-                return [SeedGroup(seeds=[SeedObjective(value="obj")])]
-            return []
-
-        with patch.object(config, "_load_seed_groups_for_dataset", side_effect=mock_load):
-            result = config.get_seed_groups()
-
-        assert "populated" in result
-        assert "empty" not in result
-
-    def test_get_seed_groups_with_no_data_source_raises_error(self) -> None:
-        """Test that get_seed_groups raises ValueError when no data source is configured."""
-        config = DatasetConfiguration()
-
-        with pytest.raises(ValueError) as exc_info:
-            config.get_seed_groups()
-
-        assert "DatasetConfiguration has no seed_groups" in str(exc_info.value)
-
-    def test_get_seed_groups_applies_max_dataset_size_per_dataset(self, sample_seed_groups: list) -> None:
-        """Test that max_dataset_size is applied per dataset."""
-        config = DatasetConfiguration(seed_groups=sample_seed_groups, max_dataset_size=1)
-
-        # Set seed for deterministic random sampling
-        random.seed(42)
-        result = config.get_seed_groups()
-
-        assert len(result[EXPLICIT_SEED_GROUPS_KEY]) == 1
-
-    def test_get_seed_groups_with_empty_seed_groups_list_raises_error(self) -> None:
-        """Test that empty seed_groups list raises ValueError."""
-        config = DatasetConfiguration(seed_groups=[])
-
-        with pytest.raises(ValueError) as exc_info:
-            config.get_seed_groups()
-
-        assert "DatasetConfiguration has no seed_groups" in str(exc_info.value)
-
-
-@pytest.mark.usefixtures("patch_central_database")
-class TestDatasetConfigurationLoadSeedGroupsForDataset:
-    """Tests for DatasetConfiguration._load_seed_groups_for_dataset method."""
-
-    def test_load_seed_groups_for_dataset_calls_memory(self, sample_seed_groups: list) -> None:
-        """Test that _load_seed_groups_for_dataset calls CentralMemory."""
-        config = DatasetConfiguration(dataset_names=["test_dataset"])
-
-        with patch("pyrit.scenario.core.dataset_configuration.CentralMemory") as mock_central_memory:
-            mock_memory = MagicMock()
-            mock_memory.get_seed_groups.return_value = sample_seed_groups
-            mock_central_memory.get_memory_instance.return_value = mock_memory
-
-            result = config._load_seed_groups_for_dataset(dataset_name="test_dataset")
-
-        mock_memory.get_seed_groups.assert_called_once_with(dataset_name="test_dataset")
-        assert result == sample_seed_groups
-
-    def test_load_seed_groups_for_dataset_returns_empty_list_when_none(self) -> None:
-        """Test that _load_seed_groups_for_dataset returns empty list when memory returns None."""
-        config = DatasetConfiguration(dataset_names=["nonexistent"])
-
-        with patch("pyrit.scenario.core.dataset_configuration.CentralMemory") as mock_central_memory:
-            mock_memory = MagicMock()
-            mock_memory.get_seed_groups.return_value = None
-            mock_central_memory.get_memory_instance.return_value = mock_memory
-
-            result = config._load_seed_groups_for_dataset(dataset_name="nonexistent")
-
-        assert result == []
-
-
-@pytest.mark.usefixtures("patch_central_database")
-class TestDatasetConfigurationGetAllSeedGroups:
-    """Tests for DatasetConfiguration.get_all_seed_groups method."""
-
-    def test_get_all_seed_groups_flattens_results(self, sample_seed_groups: list) -> None:
-        """Test that get_all_seed_groups returns a flat list."""
-        config = DatasetConfiguration(seed_groups=sample_seed_groups)
-
-        result = config.get_all_seed_groups()
-
-        assert isinstance(result, list)
-        assert len(result) == len(sample_seed_groups)
-        for group in sample_seed_groups:
-            assert group in result
-
-    def test_get_all_seed_groups_combines_multiple_datasets(self) -> None:
-        """Test that get_all_seed_groups combines seed groups from multiple datasets."""
-        config = DatasetConfiguration(dataset_names=["dataset1", "dataset2"])
-
-        group1 = SeedGroup(seeds=[SeedObjective(value="obj1")])
-        group2 = SeedGroup(seeds=[SeedObjective(value="obj2")])
-
-        def mock_load(*, dataset_name: str):
-            return [group1] if dataset_name == "dataset1" else [group2]
-
-        with patch.object(config, "_load_seed_groups_for_dataset", side_effect=mock_load):
-            result = config.get_all_seed_groups()
-
-        assert len(result) == 2
-        assert group1 in result
-        assert group2 in result
-
-    def test_get_all_seed_groups_raises_error_when_no_data_source(self) -> None:
-        """Test that get_all_seed_groups raises ValueError when no data source is configured."""
-        config = DatasetConfiguration()
-
-        with pytest.raises(ValueError) as exc_info:
-            config.get_all_seed_groups()
-
-        assert "DatasetConfiguration has no seed_groups" in str(exc_info.value)
-
-
-class TestDatasetConfigurationGetDefaultDatasetNames:
-    """Tests for DatasetConfiguration.get_default_dataset_names method."""
-
-    def test_get_default_dataset_names_returns_dataset_names(self) -> None:
-        """Test that get_default_dataset_names returns configured dataset_names."""
-        dataset_names = ["dataset1", "dataset2", "dataset3"]
-        config = DatasetConfiguration(dataset_names=dataset_names)
-
-        result = config.get_default_dataset_names()
-
-        assert result == dataset_names
-
-    def test_get_default_dataset_names_returns_copy(self) -> None:
-        """Test that get_default_dataset_names returns a copy of the list."""
-        dataset_names = ["dataset1", "dataset2"]
-        config = DatasetConfiguration(dataset_names=dataset_names)
-
-        result = config.get_default_dataset_names()
-        result.append("dataset3")
-
-        # Original should be unchanged
-        assert len(config.get_default_dataset_names()) == 2
-
-    def test_get_default_dataset_names_returns_empty_with_seed_groups(self, sample_seed_groups: list) -> None:
-        """Test that get_default_dataset_names returns empty list when using explicit seed_groups."""
-        config = DatasetConfiguration(seed_groups=sample_seed_groups)
-
-        result = config.get_default_dataset_names()
-
-        assert result == []
-
-    def test_get_default_dataset_names_returns_empty_when_no_config(self) -> None:
-        """Test that get_default_dataset_names returns empty list when nothing is configured."""
-        config = DatasetConfiguration()
-
-        result = config.get_default_dataset_names()
-
-        assert result == []
-
-
-class TestDatasetConfigurationApplyMaxDatasetSize:
-    """Tests for DatasetConfiguration._apply_max_dataset_size method."""
-
-    def test_apply_max_returns_original_when_none(self, sample_seed_groups: list) -> None:
-        """Test that original list is returned when max_dataset_size is None."""
-        config = DatasetConfiguration(seed_groups=sample_seed_groups)
-
-        result = config._apply_max_dataset_size(sample_seed_groups)
-
-        assert result == sample_seed_groups
-
-    def test_apply_max_returns_original_when_under_limit(self, sample_seed_groups: list) -> None:
-        """Test that original list is returned when length is under max_dataset_size."""
-        config = DatasetConfiguration(seed_groups=sample_seed_groups, max_dataset_size=10)
-
-        result = config._apply_max_dataset_size(sample_seed_groups)
-
-        assert result == sample_seed_groups
-
-    def test_apply_max_returns_original_when_equal_to_limit(self, sample_seed_groups: list) -> None:
-        """Test that original list is returned when length equals max_dataset_size."""
-        config = DatasetConfiguration(
-            seed_groups=sample_seed_groups,
-            max_dataset_size=len(sample_seed_groups),
+        assert config.dataset_names == ["d1", "d2"]
+
+    def test_source_kind_inline_when_all_children_inline(self) -> None:
+        config = CompoundDatasetAttackConfiguration(
+            configurations=[
+                DatasetAttackConfiguration(seeds=make_objectives("a")),
+                DatasetAttackConfiguration(seeds=make_objectives("b")),
+            ]
         )
+        assert config.source_kind is DatasetSourceKind.INLINE
 
-        result = config._apply_max_dataset_size(sample_seed_groups)
+    def test_source_kind_memory_when_any_child_from_memory(self) -> None:
+        config = CompoundDatasetAttackConfiguration(
+            configurations=[
+                DatasetAttackConfiguration(seeds=make_objectives("a")),
+                DatasetAttackConfiguration(dataset_names=["d1"]),
+            ]
+        )
+        assert config.source_kind is DatasetSourceKind.MEMORY
 
-        assert result == sample_seed_groups
+    async def test_flat_concatenates_children_with_per_child_budget(self, mock_memory: MagicMock) -> None:
+        mock_memory.get_seeds.side_effect = [make_objectives("a", "b", "c", "d"), make_objectives("e", "f", "g", "h")]
+        config = CompoundDatasetAttackConfiguration.per_dataset(dataset_names=["d1", "d2"], max_dataset_size=3)
+        groups = await config.get_seed_attack_groups_async()
+        assert len(groups) == 6
 
-    def test_apply_max_returns_sample_when_over_limit(self, sample_seed_groups: list) -> None:
-        """Test that a random sample is returned when length exceeds max_dataset_size."""
-        config = DatasetConfiguration(seed_groups=sample_seed_groups, max_dataset_size=1)
+    async def test_by_dataset_merges_children(self, mock_memory: MagicMock) -> None:
+        mock_memory.get_seeds.side_effect = [make_objectives("a", "b", "c", "d"), make_objectives("e", "f", "g", "h")]
+        config = CompoundDatasetAttackConfiguration.per_dataset(dataset_names=["d1", "d2"], max_dataset_size=3)
+        result = await config.get_attack_groups_by_dataset_async()
+        assert {name: len(groups) for name, groups in result.items()} == {"d1": 3, "d2": 3}
 
-        # Set seed for deterministic random sampling
-        random.seed(42)
-        result = config._apply_max_dataset_size(sample_seed_groups)
+    async def test_compound_max_caps_combined_result(self, mock_memory: MagicMock) -> None:
+        mock_memory.get_seeds.side_effect = [make_objectives("a", "b", "c"), make_objectives("d", "e", "f")]
+        config = CompoundDatasetAttackConfiguration(
+            configurations=[
+                DatasetAttackConfiguration(dataset_names=["d1"]),
+                DatasetAttackConfiguration(dataset_names=["d2"]),
+            ],
+            max_dataset_size=2,
+        )
+        groups = await config.get_seed_attack_groups_async()
+        assert len(groups) == 2
 
-        assert len(result) == 1
-        assert result[0] in sample_seed_groups
-
-    def test_apply_max_returns_correct_sample_size(self) -> None:
-        """Test that the sample size is exactly max_dataset_size."""
-        large_seed_groups = [SeedGroup(seeds=[SeedObjective(value=f"obj{i}")]) for i in range(20)]
-        config = DatasetConfiguration(seed_groups=large_seed_groups, max_dataset_size=5)
-
-        result = config._apply_max_dataset_size(large_seed_groups)
-
-        assert len(result) == 5
-        for group in result:
-            assert group in large_seed_groups
-
-
-class TestDatasetConfigurationHasDataSource:
-    """Tests for DatasetConfiguration.has_data_source method."""
-
-    def test_has_data_source_true_with_seed_groups(self, sample_seed_groups: list) -> None:
-        """Test that has_data_source returns True when seed_groups is set."""
-        config = DatasetConfiguration(seed_groups=sample_seed_groups)
-
-        assert config.has_data_source() is True
-
-    def test_has_data_source_true_with_dataset_names(self) -> None:
-        """Test that has_data_source returns True when dataset_names is set."""
-        config = DatasetConfiguration(dataset_names=["dataset1"])
-
-        assert config.has_data_source() is True
-
-    def test_has_data_source_false_when_empty(self) -> None:
-        """Test that has_data_source returns False when nothing is configured."""
-        config = DatasetConfiguration()
-
-        assert config.has_data_source() is False
-
-    def test_has_data_source_true_with_empty_seed_groups_list(self) -> None:
-        """Test that has_data_source returns True even with empty seed_groups list."""
-        # Note: This tests the current behavior - an empty list is still "configured"
-        config = DatasetConfiguration(seed_groups=[])
-
-        assert config.has_data_source() is True
-
-
-@pytest.mark.usefixtures("patch_central_database")
-class TestDatasetConfigurationGetAllSeeds:
-    """Tests for DatasetConfiguration.get_all_seeds method."""
-
-    def test_get_all_seeds_raises_when_no_dataset_names(self) -> None:
-        """Test that get_all_seeds raises ValueError when no dataset_names are configured."""
-        config = DatasetConfiguration()
-
-        with pytest.raises(ValueError, match="No dataset names configured"):
-            config.get_all_seeds()
-
-    def test_get_all_seeds_raises_when_seed_groups_configured(self, sample_seed_groups: list) -> None:
-        """Test that get_all_seeds raises ValueError when seed_groups are configured instead of dataset_names."""
-        config = DatasetConfiguration(seed_groups=sample_seed_groups)
-
-        with pytest.raises(ValueError, match="No dataset names configured"):
-            config.get_all_seeds()
-
-    def test_get_all_seeds_returns_seeds_from_memory(self) -> None:
-        """Test that get_all_seeds returns SeedPrompt objects from memory."""
-        mock_seeds = [
-            SeedPrompt(value="seed1", data_type="text"),
-            SeedPrompt(value="seed2", data_type="text"),
-        ]
-
-        with patch("pyrit.scenario.core.dataset_configuration.CentralMemory") as mock_memory_class:
-            mock_memory = MagicMock()
-            mock_memory.get_seeds.return_value = mock_seeds
-            mock_memory_class.get_memory_instance.return_value = mock_memory
-
-            config = DatasetConfiguration(dataset_names=["test_dataset"])
-            result = config.get_all_seeds()
-
-            assert len(result) == 2
-            assert result[0].value == "seed1"
-            assert result[1].value == "seed2"
-            mock_memory.get_seeds.assert_called_once_with(dataset_name="test_dataset")
-
-    def test_get_all_seeds_aggregates_from_multiple_datasets(self) -> None:
-        """Test that get_all_seeds aggregates seeds from all configured datasets."""
-        seeds_dataset1 = [SeedPrompt(value="ds1_seed1", data_type="text")]
-        seeds_dataset2 = [
-            SeedPrompt(value="ds2_seed1", data_type="text"),
-            SeedPrompt(value="ds2_seed2", data_type="text"),
-        ]
-
-        with patch("pyrit.scenario.core.dataset_configuration.CentralMemory") as mock_memory_class:
-            mock_memory = MagicMock()
-            mock_memory.get_seeds.side_effect = [seeds_dataset1, seeds_dataset2]
-            mock_memory_class.get_memory_instance.return_value = mock_memory
-
-            config = DatasetConfiguration(dataset_names=["dataset1", "dataset2"])
-            result = config.get_all_seeds()
-
-            assert len(result) == 3
-            assert result[0].value == "ds1_seed1"
-            assert result[1].value == "ds2_seed1"
-            assert result[2].value == "ds2_seed2"
-            assert mock_memory.get_seeds.call_count == 2
-
-    def test_get_all_seeds_applies_max_dataset_size_per_dataset(self) -> None:
-        """Test that get_all_seeds applies max_dataset_size sampling per dataset."""
-        seeds = [SeedPrompt(value=f"seed{i}", data_type="text") for i in range(10)]
-
-        with patch("pyrit.scenario.core.dataset_configuration.CentralMemory") as mock_memory_class:
-            mock_memory = MagicMock()
-            mock_memory.get_seeds.return_value = seeds
-            mock_memory_class.get_memory_instance.return_value = mock_memory
-
-            config = DatasetConfiguration(dataset_names=["dataset1"], max_dataset_size=3)
-            result = config.get_all_seeds()
-
-            assert len(result) == 3
-            # All returned seeds should be from the original list
-            for seed in result:
-                assert seed in seeds
-
-    def test_get_all_seeds_returns_all_when_under_max_size(self) -> None:
-        """Test that get_all_seeds returns all seeds when count is under max_dataset_size."""
-        seeds = [SeedPrompt(value=f"seed{i}", data_type="text") for i in range(3)]
-
-        with patch("pyrit.scenario.core.dataset_configuration.CentralMemory") as mock_memory_class:
-            mock_memory = MagicMock()
-            mock_memory.get_seeds.return_value = seeds
-            mock_memory_class.get_memory_instance.return_value = mock_memory
-
-            config = DatasetConfiguration(dataset_names=["dataset1"], max_dataset_size=10)
-            result = config.get_all_seeds()
-
-            assert len(result) == 3
-
-    def test_get_all_seeds_returns_empty_list_when_no_seeds_in_memory(self) -> None:
-        """Test that get_all_seeds returns empty list when memory has no seeds."""
-        with patch("pyrit.scenario.core.dataset_configuration.CentralMemory") as mock_memory_class:
-            mock_memory = MagicMock()
-            mock_memory.get_seeds.return_value = []
-            mock_memory_class.get_memory_instance.return_value = mock_memory
-
-            config = DatasetConfiguration(dataset_names=["empty_dataset"])
-            result = config.get_all_seeds()
-
-            assert result == []
+    async def test_inline_children_combine(self) -> None:
+        config = CompoundDatasetAttackConfiguration(
+            configurations=[
+                DatasetAttackConfiguration(seeds=make_objectives("a")),
+                DatasetAttackConfiguration(seeds=make_objectives("b")),
+            ]
+        )
+        groups = await config.get_seed_attack_groups_async()
+        assert sorted(g.objective.value for g in groups) == ["a", "b"]

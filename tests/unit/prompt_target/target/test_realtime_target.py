@@ -242,6 +242,20 @@ async def test_send_prompt_async_invalid_request(target):
     assert "image_path" in str(excinfo.value)
 
 
+async def test_send_prompt_to_target_raises_without_conversation_id(target):
+    message_piece = MessagePiece(
+        original_value="hello",
+        original_value_data_type="text",
+        converted_value="hello",
+        converted_value_data_type="text",
+        role="user",
+        conversation_id=None,
+    )
+    message = Message(message_pieces=[message_piece])
+    with pytest.raises(ValueError, match="requires a conversation_id"):
+        await target._send_prompt_to_target_async(normalized_conversation=[message])
+
+
 async def test_receive_events_empty_output(target: RealtimeTarget):
     """Test handling of response.done event with empty output array."""
     mock_connection = AsyncMock()

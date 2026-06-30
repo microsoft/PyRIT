@@ -78,7 +78,7 @@ await output_attack_async(result)
 # %%
 # Convert words at specific positions (e.g., words 3, 4, and 5)
 converter = SelectiveTextConverter(
-    converter=Base64Converter(),
+    sub_converter=Base64Converter(),
     selection_strategy=WordIndexSelectionStrategy(indices=[3, 4, 5]),
 )
 
@@ -101,7 +101,7 @@ await output_attack_async(result)
 # %%
 # Convert all numbers in the prompt
 converter = SelectiveTextConverter(
-    converter=Base64Converter(),
+    sub_converter=Base64Converter(),
     selection_strategy=WordRegexSelectionStrategy(pattern=r"\d+"),
 )
 
@@ -126,7 +126,7 @@ await output_attack_async(result)
 # %%
 # Convert the second half of the prompt
 converter = SelectiveTextConverter(
-    converter=ROT13Converter(),
+    sub_converter=ROT13Converter(),
     selection_strategy=WordPositionSelectionStrategy(start_proportion=0.5, end_proportion=1.0),
 )
 
@@ -150,7 +150,7 @@ await output_attack_async(result)
 
 # %%
 converter = SelectiveTextConverter(
-    converter=Base64Converter(),
+    sub_converter=Base64Converter(),
     selection_strategy=WordProportionSelectionStrategy(proportion=0.3, seed=42),
 )
 
@@ -173,7 +173,7 @@ await output_attack_async(result)
 # %%
 # Convert specific sensitive words
 converter = SelectiveTextConverter(
-    converter=Base64Converter(),
+    sub_converter=Base64Converter(),
     selection_strategy=WordKeywordSelectionStrategy(keywords=["password", "secret", "confidential"]),
 )
 
@@ -198,13 +198,13 @@ await output_attack_async(result)
 # %%
 # First convert the first half to russian
 first_converter = SelectiveTextConverter(
-    converter=TranslationConverter(converter_target=OpenAIChatTarget(), language="russian"),
+    sub_converter=TranslationConverter(converter_target=OpenAIChatTarget(), language="russian"),
     selection_strategy=WordPositionSelectionStrategy(start_proportion=0.0, end_proportion=0.5),
 )
 
 # Then converts the second half to spanish
 second_converter = SelectiveTextConverter(
-    converter=TranslationConverter(converter_target=OpenAIChatTarget(), language="spanish"),
+    sub_converter=TranslationConverter(converter_target=OpenAIChatTarget(), language="spanish"),
     selection_strategy=WordPositionSelectionStrategy(start_proportion=0.5, end_proportion=1.0),
 )
 
@@ -229,20 +229,20 @@ await output_attack_async(result)
 # %%
 
 first_converter = SelectiveTextConverter(
-    converter=ToneConverter(converter_target=OpenAIChatTarget(), tone="angry"),
+    sub_converter=ToneConverter(converter_target=OpenAIChatTarget(), tone="angry"),
     selection_strategy=WordPositionSelectionStrategy(start_proportion=0.5, end_proportion=1.0),
     preserve_tokens=True,
 )
 
 # Second converter auto-detects tokens from first converter
 second_converter = SelectiveTextConverter(
-    converter=TranslationConverter(converter_target=OpenAIChatTarget(), language="spanish"),
+    sub_converter=TranslationConverter(converter_target=OpenAIChatTarget(), language="spanish"),
     selection_strategy=TokenSelectionStrategy(),  # Detects tokens from first converter
     preserve_tokens=True,
 )
 
 third_converter = SelectiveTextConverter(
-    converter=EmojiConverter(),
+    sub_converter=EmojiConverter(),
     selection_strategy=TokenSelectionStrategy(),  # Detects tokens from second converter
     preserve_tokens=False,
 )

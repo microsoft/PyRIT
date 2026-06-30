@@ -11,6 +11,7 @@ from pyrit.prompt_target.common.target_capabilities import (
     CapabilityName,
     TargetCapabilities,
     UnsupportedCapabilityBehavior,
+    get_known_capabilities,
 )
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 
@@ -397,36 +398,36 @@ class TestTargetCapabilitiesModalities:
 
 
 class TestGetKnownCapabilities:
-    """Test TargetCapabilities.get_known_capabilities for every recognized model."""
+    """Test get_known_capabilities for every recognized model."""
 
     def test_gpt_4o_supports_multi_turn_and_json_output(self):
-        caps = TargetCapabilities.get_known_capabilities("gpt-4o")
+        caps = get_known_capabilities("gpt-4o")
         assert caps is not None
         assert caps.supports_multi_turn is True
         assert caps.supports_multi_message_pieces is True
         assert caps.supports_json_output is True
 
     def test_gpt_4o_does_not_set_json_schema_or_editable_history(self):
-        caps = TargetCapabilities.get_known_capabilities("gpt-4o")
+        caps = get_known_capabilities("gpt-4o")
         assert caps is not None
         assert caps.supports_json_schema is False
         assert caps.supports_editable_history is True
 
     def test_gpt_4o_input_modalities_include_text_image_and_combined(self):
-        caps = TargetCapabilities.get_known_capabilities("gpt-4o")
+        caps = get_known_capabilities("gpt-4o")
         assert caps is not None
         assert frozenset({"text"}) in caps.input_modalities
         assert frozenset({"image_path"}) in caps.input_modalities
         assert frozenset({"text", "image_path"}) in caps.input_modalities
 
     def test_gpt_4o_output_modalities_are_text_only(self):
-        caps = TargetCapabilities.get_known_capabilities("gpt-4o")
+        caps = get_known_capabilities("gpt-4o")
         assert caps is not None
         assert caps.output_modalities == frozenset({frozenset({"text"})})
 
     def test_gpt_5_returns_json_schema_and_json_output(self):
         for model in ["gpt-5", "gpt-5.1", "gpt-5.4"]:
-            caps = TargetCapabilities.get_known_capabilities(model)
+            caps = get_known_capabilities(model)
             assert caps is not None, f"Expected caps for {model}"
             assert caps.supports_multi_turn is True
             assert caps.supports_multi_message_pieces is True
@@ -435,7 +436,7 @@ class TestGetKnownCapabilities:
 
     def test_gpt_5_input_modalities_include_text_image_path_and_combined(self):
         for model in ["gpt-5", "gpt-5.1", "gpt-5.4"]:
-            caps = TargetCapabilities.get_known_capabilities(model)
+            caps = get_known_capabilities(model)
             assert caps is not None
             assert frozenset({"text"}) in caps.input_modalities
             assert frozenset({"image_path"}) in caps.input_modalities
@@ -443,12 +444,12 @@ class TestGetKnownCapabilities:
 
     def test_gpt_5_output_modalities_are_text_only(self):
         for model in ["gpt-5", "gpt-5.1", "gpt-5.4"]:
-            caps = TargetCapabilities.get_known_capabilities(model)
+            caps = get_known_capabilities(model)
             assert caps is not None
             assert caps.output_modalities == frozenset({frozenset({"text"})})
 
     def test_gpt_realtime_1_5_returns_multi_turn_text_defaults(self):
-        caps = TargetCapabilities.get_known_capabilities("gpt-realtime-1.5")
+        caps = get_known_capabilities("gpt-realtime-1.5")
         assert caps is not None
         assert caps.supports_multi_turn is True
         assert caps.supports_multi_message_pieces is True
@@ -459,13 +460,13 @@ class TestGetKnownCapabilities:
         assert frozenset({"audio_path"}) in caps.output_modalities
 
     def test_tts_returns_text_input_audio_output(self):
-        caps = TargetCapabilities.get_known_capabilities("tts")
+        caps = get_known_capabilities("tts")
         assert caps is not None
         assert caps.input_modalities == frozenset({frozenset(["text"])})
         assert caps.output_modalities == frozenset({frozenset({"audio_path"})})
 
     def test_sora_2_input_modalities_include_text_image_path_and_combined(self):
-        caps = TargetCapabilities.get_known_capabilities("sora-2")
+        caps = get_known_capabilities("sora-2")
         assert caps is not None
         assert caps.supports_multi_turn is True
         assert caps.supports_multi_message_pieces is True
@@ -474,16 +475,16 @@ class TestGetKnownCapabilities:
         assert frozenset({"text", "image_path"}) in caps.input_modalities
 
     def test_sora_2_output_modalities_include_video_and_audio(self):
-        caps = TargetCapabilities.get_known_capabilities("sora-2")
+        caps = get_known_capabilities("sora-2")
         assert caps is not None
         assert frozenset({"video_path"}) in caps.output_modalities
         assert frozenset({"audio_path", "video_path"}) in caps.output_modalities
 
     def test_unknown_model_returns_none(self):
-        assert TargetCapabilities.get_known_capabilities("unknown-model-xyz") is None
+        assert get_known_capabilities("unknown-model-xyz") is None
 
     def test_empty_string_returns_none(self):
-        assert TargetCapabilities.get_known_capabilities("") is None
+        assert get_known_capabilities("") is None
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -513,7 +514,7 @@ class TestGetDefaultConfiguration:
         custom_config = TargetConfiguration(capabilities=TargetCapabilities())
         cls = self._make_target_class(default_config=custom_config)
         result = cls.get_default_configuration("gpt-4o")
-        expected = TargetCapabilities.get_known_capabilities("gpt-4o")
+        expected = get_known_capabilities("gpt-4o")
         assert result.capabilities == expected
 
     def test_returns_class_default_and_warns_when_model_is_unrecognized(self):

@@ -38,14 +38,14 @@ class TokenSelectionStrategy(TextSelectionStrategy):
 
     Example:
         >>> first_converter = SelectiveTextConverter(
-        ...     converter=Base64Converter(),
+        ...     sub_converter=Base64Converter(),
         ...     selection_strategy=WordPositionSelectionStrategy(start_proportion=0.5, end_proportion=1.0),
         ...     preserve_tokens=True
         ... )
         >>> # Text after first converter: "hello world ⟪Y29udmVydGVk⟫"
         >>>
         >>> second_converter = SelectiveTextConverter(
-        ...     converter=ROT13Converter(),
+        ...     sub_converter=ROT13Converter(),
         ...     selection_strategy=TokenSelectionStrategy(),  # Auto-detect tokens
         ...     preserve_tokens=True
         ... )

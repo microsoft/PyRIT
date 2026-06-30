@@ -142,6 +142,12 @@ def test_init_rejects_raw_string_matching_enum_value_for_categories():
         _HarmBenchMultimodalDataset(categories=["illegal"])
 
 
+def test_init_with_empty_categories_raises():
+    """Test that an empty categories list raises ValueError at construction."""
+    with pytest.raises(ValueError, match="`categories` must be a non-empty list"):
+        _HarmBenchMultimodalDataset(categories=[])
+
+
 async def test_fetch_and_save_image_raises_when_memory_not_configured():
     """Test that _fetch_and_save_image_async raises RuntimeError when serializer memory is not configured."""
     from unittest.mock import MagicMock

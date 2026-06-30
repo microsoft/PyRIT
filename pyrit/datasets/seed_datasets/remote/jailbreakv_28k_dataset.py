@@ -110,11 +110,15 @@ class _JailbreakV28KDataset(_RemoteDatasetLoader):
         self.filter_categories = harm_categories
 
         if harm_categories is not None:
+            if not harm_categories:
+                raise ValueError(
+                    "`harm_categories` must be a non-empty list (pass None to include all harm categories)"
+                )
             self._validate_enums(harm_categories, _HarmCategory, "harm category")
 
     @property
     def dataset_name(self) -> str:
-        """Return the dataset name."""
+        """The dataset name."""
         return "jailbreakv_28k"
 
     async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:

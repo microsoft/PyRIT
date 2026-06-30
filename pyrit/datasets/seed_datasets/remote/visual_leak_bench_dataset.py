@@ -109,15 +109,19 @@ class _VisualLeakBenchDataset(_RemoteDatasetLoader):
         self.pii_types = pii_types
 
         if categories is not None:
+            if not categories:
+                raise ValueError("`categories` must be a non-empty list (pass None to include all categories)")
             self._validate_enums(categories, VisualLeakBenchCategory, "category")
 
         if pii_types is not None:
+            if not pii_types:
+                raise ValueError("`pii_types` must be a non-empty list (pass None to include all PII types)")
             self._validate_enums(pii_types, VisualLeakBenchPIIType, "PII type")
 
     @property
     @override
     def dataset_name(self) -> str:
-        """Return the dataset name."""
+        """The dataset name."""
         return "visual_leak_bench"
 
     @override

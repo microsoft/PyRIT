@@ -140,7 +140,7 @@ class ImagePromptStyleConverter(LLMGenericTextConverter):
                 "filter_name": self._filter_name,
                 "variation": self._variation,
             },
-            children={"converter_target": self._converter_target.get_identifier()},
+            converter_target=self._converter_target.get_identifier(),
         )
 
     async def convert_async(self, *, prompt: str, input_type: PromptDataType = "text") -> ConverterResult:

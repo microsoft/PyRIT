@@ -13,7 +13,7 @@ import uuid
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from pyrit.models import Message, MessagePiece
+from pyrit.models import Conversation, Message, MessagePiece
 from pyrit.prompt_target.common.realtime_audio import (
     STREAMING_INTERRUPTED_KEY,
     RealtimeTargetResult,
@@ -30,7 +30,6 @@ except ImportError:  # pragma: no cover - openai is a hard dependency for this m
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
-    from pyrit.models import ComponentIdentifier
     from pyrit.prompt_normalizer import PromptConverterConfiguration, PromptNormalizer
     from pyrit.prompt_target.common.realtime_audio import CommittedEvent
 
@@ -127,7 +126,6 @@ class _OpenAIRealtimeStreamingSession:
         response_converter_configurations: list[PromptConverterConfiguration] | None = None,
         prepended_conversation: list[Message] | None = None,
         server_vad: bool | ServerVadConfig = True,
-        attack_identifier: ComponentIdentifier | None = None,
         persist_prepended_conversation: bool = True,
     ) -> None:
         self._target = target
@@ -137,7 +135,6 @@ class _OpenAIRealtimeStreamingSession:
         self._request_converter_configurations = request_converter_configurations or []
         self._response_converter_configurations = response_converter_configurations or []
         self._prepended_conversation = prepended_conversation or []
-        self._attack_identifier = attack_identifier
         self._persist_prepended_conversation = persist_prepended_conversation
 
         # Normalize server_vad once at construction so config send and commit-time trim
@@ -206,6 +203,7 @@ class _OpenAIRealtimeStreamingSession:
                     conversation_id=self._conversation_id,
                     should_convert=False,
                     prepended_conversation=self._prepended_conversation,
+                    target_identifier=self._target.get_identifier(),
                 )
 
             self._queue = asyncio.Queue()
@@ -404,6 +402,9 @@ class _OpenAIRealtimeStreamingSession:
         )
 
         target_identifier = target.get_identifier()
+        target._memory.add_conversation_to_memory(
+            conversation=Conversation(conversation_id=self._conversation_id, target_identifier=target_identifier)
+        )
         user_piece = MessagePiece(
             role="user",
             original_value=raw_user_path,
@@ -411,8 +412,6 @@ class _OpenAIRealtimeStreamingSession:
             converted_value=converted_user_path,
             converted_value_data_type="audio_path",
             conversation_id=self._conversation_id,
-            prompt_target_identifier=target_identifier,
-            attack_identifier=self._attack_identifier,
         )
         for cfg in self._request_converter_configurations:
             user_piece.converter_identifiers.extend(converter.get_identifier() for converter in cfg.converters)
@@ -423,16 +422,12 @@ class _OpenAIRealtimeStreamingSession:
             original_value=result.flatten_transcripts(),
             original_value_data_type="text",
             conversation_id=self._conversation_id,
-            prompt_target_identifier=target_identifier,
-            attack_identifier=self._attack_identifier,
         )
         assistant_audio_piece = MessagePiece(
             role="assistant",
             original_value=assistant_audio_path,
             original_value_data_type="audio_path",
             conversation_id=self._conversation_id,
-            prompt_target_identifier=target_identifier,
-            attack_identifier=self._attack_identifier,
         )
         if result.interrupted:
             assistant_text_piece.prompt_metadata[STREAMING_INTERRUPTED_KEY] = True

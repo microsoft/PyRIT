@@ -19,7 +19,7 @@
 #
 # A scorer takes a response (or a whole conversation) and returns one or more
 # [`Score`](../../../pyrit/models/score.py) objects. Scorers are used three ways:
-# directly (this page), automatically inside an [attack](../executor/attack/1_prompt_sending_attack.ipynb),
+# directly (this page), automatically inside an [attack](../executor/1_single_turn.ipynb#prompt-sending),
 # and over many stored responses with the [batch scorer](#batch-scoring).
 #
 # ## The two return types

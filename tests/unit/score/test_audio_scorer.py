@@ -85,6 +85,7 @@ def audio_message_piece(patch_central_database):
         converted_value=audio_path,
         original_value_data_type="audio_path",
         converted_value_data_type="audio_path",
+        conversation_id=str(uuid.uuid4()),
     )
     message_piece.id = uuid.uuid4()
 

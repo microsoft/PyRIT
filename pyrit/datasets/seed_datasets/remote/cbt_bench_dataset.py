@@ -67,7 +67,7 @@ class _CBTBenchDataset(_RemoteDatasetLoader):
     @property
     @override
     def dataset_name(self) -> str:
-        """Return the dataset name."""
+        """The dataset name."""
         return "cbt_bench"
 
     @override

@@ -143,7 +143,7 @@ async def generate_simulated_conversation_async(
 
     # Extract the conversation from memory and filter for prepended_conversation use
     memory = CentralMemory.get_memory_instance()
-    raw_messages = list(memory.get_conversation(conversation_id=result.conversation_id))
+    raw_messages = list(memory.get_conversation_messages(conversation_id=result.conversation_id))
 
     # Filter out system messages - keep the actual conversation
     # System prompts are set separately on each target during attack execution

@@ -150,7 +150,6 @@ class MockPromptTarget(PromptTarget):
                     original_value=system_prompt,
                     converted_value=system_prompt,
                     conversation_id=conversation_id,
-                    attack_identifier=attack_identifier,
                     labels=labels or {},
                 ).to_message()
             )
@@ -165,7 +164,6 @@ class MockPromptTarget(PromptTarget):
                 role="assistant",
                 original_value="default",
                 conversation_id=message.message_pieces[0].conversation_id,
-                attack_identifier=message.message_pieces[0].attack_identifier,
                 labels=message.message_pieces[0].labels,
             ).to_message()
         ]
@@ -259,7 +257,6 @@ def get_test_message_piece() -> MessagePiece:
 def get_sample_conversations() -> MutableSequence[Message]:
     with patch.object(CentralMemory, "get_memory_instance", return_value=MagicMock()):
         conversation_1 = str(uuid.uuid4())
-        attack_id = get_mock_attack_identifier()
 
         return [
             MessagePiece(
@@ -268,7 +265,6 @@ def get_sample_conversations() -> MutableSequence[Message]:
                 converted_value="Hello, how are you?",
                 conversation_id=conversation_1,
                 sequence=0,
-                attack_identifier=attack_id,
             ).to_message(),
             MessagePiece(
                 role="assistant",
@@ -276,14 +272,12 @@ def get_sample_conversations() -> MutableSequence[Message]:
                 converted_value="I'm fine, thank you!",
                 conversation_id=conversation_1,
                 sequence=1,
-                attack_identifier=attack_id,
             ).to_message(),
             MessagePiece(
                 role="assistant",
                 original_value="original prompt text",
                 converted_value="I'm fine, thank you!",
                 conversation_id=str(uuid.uuid4()),
-                attack_identifier=attack_id,
             ).to_message(),
         ]
 

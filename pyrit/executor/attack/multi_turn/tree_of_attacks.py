@@ -41,16 +41,18 @@ from pyrit.executor.attack.core.attack_strategy import AttackStrategy
 from pyrit.executor.attack.multi_turn import MultiTurnAttackContext
 from pyrit.memory import CentralMemory
 from pyrit.models import (
+    JSON_SCHEMA_METADATA_KEY,
+    AtomicAttackIdentifier,
     AttackOutcome,
     AttackResult,
     ComponentIdentifier,
+    Conversation,
     ConversationReference,
     ConversationType,
     Message,
     MessagePiece,
     Score,
     SeedPrompt,
-    build_atomic_attack_identifier,
 )
 from pyrit.prompt_normalizer import PromptConverterConfiguration, PromptNormalizer
 from pyrit.prompt_target import CapabilityName, PromptTarget
@@ -146,7 +148,7 @@ class TAPAttackScoringConfig(AttackScoringConfig):
     @property
     def threshold(self) -> float:
         """
-        Get the threshold from the objective scorer.
+        The threshold from the objective scorer.
 
         Returns:
             float: The threshold value from the FloatScaleThresholdScorer.
@@ -187,7 +189,7 @@ class TAPAttackResult(AttackResult):
 
     @property
     def tree_visualization(self) -> Tree | None:
-        """Get the tree visualization from metadata."""
+        """The tree visualization from metadata."""
         return self.metadata.get("tree_visualization", None)
 
     @tree_visualization.setter
@@ -197,7 +199,7 @@ class TAPAttackResult(AttackResult):
 
     @property
     def nodes_explored(self) -> int:
-        """Get the total number of nodes explored during the attack."""
+        """The total number of nodes explored during the attack."""
         return cast("int", self.metadata.get("nodes_explored", 0))
 
     @nodes_explored.setter
@@ -207,7 +209,7 @@ class TAPAttackResult(AttackResult):
 
     @property
     def nodes_pruned(self) -> int:
-        """Get the number of nodes pruned during the attack."""
+        """The number of nodes pruned during the attack."""
         return cast("int", self.metadata.get("nodes_pruned", 0))
 
     @nodes_pruned.setter
@@ -217,7 +219,7 @@ class TAPAttackResult(AttackResult):
 
     @property
     def max_depth_reached(self) -> int:
-        """Get the maximum depth reached in the attack tree."""
+        """The maximum depth reached in the attack tree."""
         return cast("int", self.metadata.get("max_depth_reached", 0))
 
     @max_depth_reached.setter
@@ -227,7 +229,7 @@ class TAPAttackResult(AttackResult):
 
     @property
     def auxiliary_scores_summary(self) -> dict[str, float]:
-        """Get a summary of auxiliary scores from the best node."""
+        """A summary of auxiliary scores from the best node."""
         return cast("dict[str, float]", self.metadata.get("auxiliary_scores_summary", {}))
 
     @auxiliary_scores_summary.setter
@@ -237,7 +239,7 @@ class TAPAttackResult(AttackResult):
 
     @property
     def best_adversarial_conversation_id(self) -> str | None:
-        """Get the adversarial conversation ID for the best-scoring branch."""
+        """The adversarial conversation ID for the best-scoring branch."""
         return cast("str | None", self.metadata.get("best_adversarial_conversation_id", None))
 
     @best_adversarial_conversation_id.setter
@@ -405,7 +407,6 @@ class _TreeOfAttacksNode:
 
         # Use ConversationManager to add messages to memory
         conversation_manager = ConversationManager(
-            attack_identifier=self._attack_id,
             prompt_normalizer=self._prompt_normalizer,
         )
 
@@ -414,6 +415,7 @@ class _TreeOfAttacksNode:
             conversation_id=self.objective_target_conversation_id,
             request_converters=self._request_converters,
             prepended_conversation_config=prepended_conversation_config,
+            target_identifier=self._objective_target.get_identifier(),
         )
 
         # Build context string for adversarial chat system prompt (like Crescendo)
@@ -559,7 +561,6 @@ class _TreeOfAttacksNode:
         with execution_context(
             component_role=ComponentRole.OBJECTIVE_TARGET,
             attack_strategy_name=self._attack_strategy_name,
-            attack_identifier=self._attack_id,
             component_identifier=self._objective_target.get_identifier(),
             objective_target_conversation_id=self.objective_target_conversation_id,
             objective=self._objective,
@@ -571,7 +572,6 @@ class _TreeOfAttacksNode:
                 conversation_id=self.objective_target_conversation_id,
                 target=self._objective_target,
                 labels=self._memory_labels,
-                attack_identifier=self._attack_id,
             )
 
         # Store the last response text for reference
@@ -619,7 +619,6 @@ class _TreeOfAttacksNode:
         with execution_context(
             component_role=ComponentRole.OBJECTIVE_TARGET,
             attack_strategy_name=self._attack_strategy_name,
-            attack_identifier=self._attack_id,
             component_identifier=self._objective_target.get_identifier(),
             objective_target_conversation_id=self.objective_target_conversation_id,
             objective=self._objective,
@@ -631,7 +630,6 @@ class _TreeOfAttacksNode:
                 conversation_id=self.objective_target_conversation_id,
                 target=self._objective_target,
                 labels=self._memory_labels,
-                attack_identifier=self._attack_id,
             )
 
         # Store the last response text for reference
@@ -676,7 +674,6 @@ class _TreeOfAttacksNode:
         with execution_context(
             component_role=ComponentRole.OBJECTIVE_SCORER,
             attack_strategy_name=self._attack_strategy_name,
-            attack_identifier=self._attack_id,
             component_identifier=self._objective_scorer.get_identifier(),
             objective_target_conversation_id=self.objective_target_conversation_id,
             objective=objective,
@@ -823,10 +820,15 @@ class _TreeOfAttacksNode:
                 conversation_id=self.objective_target_conversation_id
             )
         else:
-            messages = self._memory.get_conversation(conversation_id=self.objective_target_conversation_id)
+            messages = self._memory.get_conversation_messages(conversation_id=self.objective_target_conversation_id)
             system_messages = [m for m in messages if m.api_role == "system"]
             if system_messages:
                 new_id, pieces = self._memory.duplicate_messages(messages=system_messages)
+                self._memory.add_conversation_to_memory(
+                    conversation=Conversation(
+                        conversation_id=new_id, target_identifier=self._objective_target.get_identifier()
+                    )
+                )
                 self._memory.add_message_pieces_to_memory(message_pieces=pieces)
                 duplicate_node.objective_target_conversation_id = new_id
             else:
@@ -986,7 +988,7 @@ class _TreeOfAttacksNode:
             bool: True if no messages exist in the objective target conversation (first turn),
                 False if the conversation already contains messages (subsequent turns).
         """
-        target_messages = self._memory.get_conversation(conversation_id=self.objective_target_conversation_id)
+        target_messages = self._memory.get_conversation_messages(conversation_id=self.objective_target_conversation_id)
         return not target_messages
 
     async def _generate_first_turn_prompt_async(self, objective: str) -> str:
@@ -1022,7 +1024,6 @@ class _TreeOfAttacksNode:
         self._adversarial_chat.set_system_prompt(
             system_prompt=system_prompt,
             conversation_id=self.adversarial_chat_conversation_id,
-            attack_identifier=self._attack_id,
             labels=self._memory_labels,  # deprecated
         )
 
@@ -1059,7 +1060,7 @@ class _TreeOfAttacksNode:
                 one prior exchange.
         """
         # Get conversation history
-        target_messages = self._memory.get_conversation(conversation_id=self.objective_target_conversation_id)
+        target_messages = self._memory.get_conversation_messages(conversation_id=self.objective_target_conversation_id)
 
         # Extract the last assistant response
         assistant_responses = [r for r in target_messages if r.get_piece().api_role == "assistant"]
@@ -1128,18 +1129,24 @@ class _TreeOfAttacksNode:
 
         Returns:
             str: The raw response from the adversarial chat, expected to be JSON formatted.
-                This response should contain at least a "prompt" field with the generated
+                This response should contain at least a "next_message" field with the generated
                 attack prompt.
         """
         # Configure for JSON response
         message = Message.from_prompt(prompt=prompt_text, role="user")
-        message.message_pieces[0].prompt_metadata = {"response_format": "json"}
+        prompt_metadata: dict[str, Any] = {"response_format": "json"}
+        # Forward the shared adversarial-chat JSON schema when present so schema-aware
+        # targets can natively constrain the response shape; non-enforcing targets
+        # ignore it and rely on the prompt's formatting instructions.
+        response_json_schema = self._adversarial_chat_system_seed_prompt.response_json_schema
+        if response_json_schema is not None:
+            prompt_metadata[JSON_SCHEMA_METADATA_KEY] = response_json_schema
+        message.message_pieces[0].prompt_metadata = prompt_metadata
 
         # Send and get response
         with execution_context(
             component_role=ComponentRole.ADVERSARIAL_CHAT,
             attack_strategy_name=self._attack_strategy_name,
-            attack_identifier=self._attack_id,
             component_identifier=self._adversarial_chat.get_identifier(),
             objective_target_conversation_id=self.objective_target_conversation_id,
             objective=self._objective,
@@ -1149,7 +1156,6 @@ class _TreeOfAttacksNode:
                 conversation_id=self.adversarial_chat_conversation_id,
                 target=self._adversarial_chat,
                 labels=self._memory_labels,
-                attack_identifier=self._attack_id,
             )
 
         return response.get_value()
@@ -1160,17 +1166,17 @@ class _TreeOfAttacksNode:
 
         This method parses the structured response from the adversarial chat to extract
         the generated attack prompt. The adversarial chat is expected to return JSON with
-        at least a "prompt" field containing the attack text. The method handles common
+        at least a "next_message" field containing the attack text. The method handles common
         formatting issues like markdown wrappers that LLMs sometimes add around JSON.
 
         The parsing is strict - the response must be valid JSON and must contain the
-        required "prompt" field. This ensures the TAP algorithm receives well-formed
+        required "next_message" field. This ensures the TAP algorithm receives well-formed
         prompts for attacking the objective target.
 
         Args:
             red_teaming_response (str): The raw response from the red teaming chat, expected
                 to be JSON formatted (possibly wrapped in markdown). Should contain at
-                least {"prompt": "attack text"}.
+                least {"next_message": "attack text"}.
 
         Returns:
             str: The prompt extracted from the JSON response. This is the actual attack
@@ -1178,7 +1184,7 @@ class _TreeOfAttacksNode:
 
         Raises:
             InvalidJsonException: If the response is not valid JSON after removing markdown
-                formatting, or if the parsed JSON does not contain a "prompt" field.
+                formatting, or if the parsed JSON does not contain a "next_message" field.
         """
         # Remove markdown formatting if present
         red_teaming_response = remove_markdown_json(red_teaming_response)
@@ -1192,11 +1198,13 @@ class _TreeOfAttacksNode:
             ) from None
 
         try:
-            return cast("str", red_teaming_response_dict["prompt"])
+            return cast("str", red_teaming_response_dict["next_message"])
         except KeyError:
-            logger.error(f"The response from the red teaming chat does not contain a prompt: {red_teaming_response}")
+            logger.error(
+                f"The response from the red teaming chat does not contain next_message: {red_teaming_response}"
+            )
             raise InvalidJsonException(
-                message="The response from the red teaming chat does not contain a prompt."
+                message="The response from the red teaming chat does not contain a next_message."
             ) from None
 
     def __str__(self) -> str:
@@ -2175,7 +2183,7 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
 
         # Create the result with basic information
         result = TAPAttackResult(
-            atomic_attack_identifier=build_atomic_attack_identifier(attack_identifier=self.get_identifier()),
+            atomic_attack_identifier=AtomicAttackIdentifier.build(attack_identifier=self.get_identifier()),
             conversation_id=context.best_conversation_id or "",
             objective=context.objective,
             outcome=outcome,

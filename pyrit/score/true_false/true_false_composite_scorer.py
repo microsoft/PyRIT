@@ -63,12 +63,8 @@ class TrueFalseCompositeScorer(TrueFalseScorer):
             ComponentIdentifier: The identifier for this scorer.
         """
         return self._create_identifier(
-            params={
-                "score_aggregator": self._score_aggregator.__name__,  # type: ignore[ty:unresolved-attribute]
-            },
-            children={
-                "sub_scorers": [s.get_identifier() for s in self._scorers],
-            },
+            score_aggregator=self._score_aggregator.__name__,  # type: ignore[ty:unresolved-attribute]
+            sub_scorers=[s.get_identifier() for s in self._scorers],
         )
 
     def get_chat_target(self) -> Optional["PromptTarget"]:

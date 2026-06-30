@@ -7,7 +7,7 @@ from enum import Enum
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import SeedDataset, SeedObjective
+from pyrit.models import SeedDataset, SeedObjective, SeedUnion
 
 logger = logging.getLogger(__name__)
 
@@ -93,11 +93,15 @@ class _JailbreakVRedteam2KDataset(_RemoteDatasetLoader):
         self.filter_categories = harm_categories
 
         if harm_categories is not None:
+            if not harm_categories:
+                raise ValueError(
+                    "`harm_categories` must be a non-empty list (pass None to include all harm categories)"
+                )
             self._validate_enums(harm_categories, _HarmCategory, "harm category")
 
     @property
     def dataset_name(self) -> str:
-        """Return the dataset name."""
+        """The dataset name."""
         return "jailbreakv_redteam_2k"
 
     async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
@@ -131,7 +135,7 @@ class _JailbreakVRedteam2KDataset(_RemoteDatasetLoader):
                 else [self._normalize_policy(cat.value) for cat in self.filter_categories]
             )
 
-            seeds: list[SeedObjective] = []
+            seeds: list[SeedUnion] = []
 
             for item in data:
                 raw_policy = item.get("policy", "")
