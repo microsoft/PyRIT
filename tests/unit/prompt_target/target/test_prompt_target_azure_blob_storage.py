@@ -132,7 +132,7 @@ async def test_send_prompt_async(
 
     message_piece = sample_entries[0]
     message_piece.converted_value = "Test content"
-    request = Message([message_piece])
+    request = Message(message_pieces=[message_piece])
 
     response = await azure_blob_storage_target.send_prompt_async(message=request)
 
