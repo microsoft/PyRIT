@@ -4,15 +4,26 @@
 """
 Async REST client for the PyRIT backend API.
 
-Uses ``httpx`` internally but defers the import to method calls so that
-importing this module does not trigger the import-guard ban on ``httpx``
-at CLI parse time.
+Returns typed ``pyrit.models`` objects (canonical wire-data types defined in
+``pyrit.models.catalog`` plus ``ScenarioResult``). Heavy imports — ``httpx``
+and ``pyrit.models`` — are deferred to method bodies so that importing this
+module does not trigger the CLI parse-time import-guard ban on either.
 """
 
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from pyrit.models import ScenarioResult
+    from pyrit.models.catalog import (
+        RegisteredInitializer,
+        RegisteredScenario,
+        RunScenarioRequest,
+        ScenarioRunSummary,
+        TargetInstance,
+    )
 
 _logger = logging.getLogger(__name__)
 
@@ -92,48 +103,57 @@ class PyRITApiClient:
     # Scenarios
     # ------------------------------------------------------------------
 
-    async def list_scenarios_async(self, *, limit: int = 200) -> dict[str, Any]:
+    async def list_scenarios_async(self, *, limit: int = 200) -> list[RegisteredScenario]:
         """
         List all available scenarios.
 
         Returns:
-            dict: ``ListRegisteredScenariosResponse`` payload.
+            list[RegisteredScenario]: All scenarios in the catalog.
         """
-        return await self._get_json_async(path="/api/scenarios/catalog", params={"limit": limit})
+        from pyrit.models.catalog import RegisteredScenario
 
-    async def get_scenario_async(self, *, scenario_name: str) -> dict[str, Any] | None:
+        payload = await self._get_json_async(path="/api/scenarios/catalog", params={"limit": limit})
+        return [RegisteredScenario.model_validate(item) for item in payload.get("items", [])]
+
+    async def get_scenario_async(self, *, scenario_name: str) -> RegisteredScenario | None:
         """
         Get metadata for a single scenario.
 
         Returns:
-            dict | None: ``RegisteredScenario`` payload, or ``None`` if 404.
+            RegisteredScenario | None: The scenario, or ``None`` if 404.
 
         Raises:
             httpx.HTTPStatusError: For non-404 HTTP error responses.
         """
         import httpx
 
+        from pyrit.models.catalog import RegisteredScenario
+
         try:
-            return await self._get_json_async(path=f"/api/scenarios/catalog/{scenario_name}")
+            payload = await self._get_json_async(path=f"/api/scenarios/catalog/{scenario_name}")
         except httpx.HTTPStatusError as exc:
             if exc.response.status_code == 404:
                 return None
             raise
+        return RegisteredScenario.model_validate(payload)
 
     # ------------------------------------------------------------------
     # Initializers
     # ------------------------------------------------------------------
 
-    async def list_initializers_async(self, *, limit: int = 200) -> dict[str, Any]:
+    async def list_initializers_async(self, *, limit: int = 200) -> list[RegisteredInitializer]:
         """
         List all available initializers.
 
         Returns:
-            dict: ``ListRegisteredInitializersResponse`` payload.
+            list[RegisteredInitializer]: All initializers in the catalog.
         """
-        return await self._get_json_async(path="/api/initializers", params={"limit": limit})
+        from pyrit.models.catalog import RegisteredInitializer
 
-    async def register_initializer_async(self, *, name: str, script_content: str) -> dict[str, Any]:
+        payload = await self._get_json_async(path="/api/initializers", params={"limit": limit})
+        return [RegisteredInitializer.model_validate(item) for item in payload.get("items", [])]
+
+    async def register_initializer_async(self, *, name: str, script_content: str) -> RegisteredInitializer:
         """
         Register a custom initializer by uploading Python source code.
 
@@ -142,11 +162,13 @@ class PyRITApiClient:
             script_content: Python source code containing a ``PyRITInitializer`` subclass.
 
         Returns:
-            dict: ``RegisteredInitializer`` payload.
+            RegisteredInitializer: The newly registered initializer.
 
         Raises:
             ServerNotAvailableError: If custom initializers are disabled (403).
         """
+        from pyrit.models.catalog import RegisteredInitializer
+
         client = self._get_client()
         resp = await client.post(
             "/api/initializers",
@@ -156,41 +178,49 @@ class PyRITApiClient:
             detail = self._response_detail(resp) or "Custom initializer operations are disabled on the server."
             raise ServerNotAvailableError(detail)
         self._raise_for_status(resp)
-        return resp.json()
+        return RegisteredInitializer.model_validate(resp.json())
 
     # ------------------------------------------------------------------
     # Targets
     # ------------------------------------------------------------------
 
-    async def list_targets_async(self, *, limit: int = 200) -> dict[str, Any]:
+    async def list_targets_async(self, *, limit: int = 200) -> list[TargetInstance]:
         """
         List all available targets.
 
         Returns:
-            dict: ``TargetListResponse`` payload.
+            list[TargetInstance]: All targets registered on the server.
         """
-        return await self._get_json_async(path="/api/targets", params={"limit": limit})
+        from pyrit.models.catalog import TargetInstance
+
+        payload = await self._get_json_async(path="/api/targets", params={"limit": limit})
+        return [TargetInstance.model_validate(item) for item in payload.get("items", [])]
 
     # ------------------------------------------------------------------
     # Scenario runs
     # ------------------------------------------------------------------
 
-    async def start_scenario_run_async(self, *, request: dict[str, Any]) -> dict[str, Any]:
+    async def start_scenario_run_async(self, *, request: RunScenarioRequest) -> ScenarioRunSummary:
         """
         Start a new scenario run.
 
         Args:
-            request: ``RunScenarioRequest``-shaped dict.
+            request: Typed run request describing the scenario, initializers, and overrides.
 
         Returns:
-            dict: ``ScenarioRunSummary`` payload.
+            ScenarioRunSummary: The newly-created scenario run.
         """
-        client = self._get_client()
-        resp = await client.post("/api/scenarios/runs", json=request)
-        self._raise_for_status(resp)
-        return resp.json()
+        from pyrit.models.catalog import ScenarioRunSummary
 
-    async def get_scenario_run_async(self, *, scenario_result_id: str) -> dict[str, Any]:
+        client = self._get_client()
+        resp = await client.post(
+            "/api/scenarios/runs",
+            json=request.model_dump(mode="json", exclude_none=True),
+        )
+        self._raise_for_status(resp)
+        return ScenarioRunSummary.model_validate(resp.json())
+
+    async def get_scenario_run_async(self, *, scenario_result_id: str) -> ScenarioRunSummary:
         """
         Get the current status of a scenario run.
 
@@ -200,12 +230,14 @@ class PyRITApiClient:
         default read timeout. The other endpoints keep the configured timeout.
 
         Returns:
-            dict: ``ScenarioRunSummary`` payload.
+            ScenarioRunSummary: The current state of the scenario run.
 
         Raises:
             ServerNotAvailableError: If the server cannot be reached.
         """
         import httpx
+
+        from pyrit.models.catalog import ScenarioRunSummary
 
         client = self._get_client()
         try:
@@ -221,37 +253,45 @@ class PyRITApiClient:
                 "or pass '--server-url <url>'."
             ) from exc
         self._raise_for_status(resp)
-        return resp.json()
+        return ScenarioRunSummary.model_validate(resp.json())
 
-    async def get_scenario_run_results_async(self, *, scenario_result_id: str) -> dict[str, Any]:
+    async def get_scenario_run_results_async(self, *, scenario_result_id: str) -> ScenarioResult:
         """
         Get detailed results for a completed scenario run.
 
         Returns:
-            dict: ``ScenarioResult.model_dump(mode="json", by_alias=True)`` payload.
+            ScenarioResult: The full scenario result deserialized from the server payload.
         """
-        return await self._get_json_async(path=f"/api/scenarios/runs/{scenario_result_id}/results")
+        from pyrit.models import ScenarioResult
 
-    async def cancel_scenario_run_async(self, *, scenario_result_id: str) -> dict[str, Any]:
+        payload = await self._get_json_async(path=f"/api/scenarios/runs/{scenario_result_id}/results")
+        return ScenarioResult.model_validate(payload)
+
+    async def cancel_scenario_run_async(self, *, scenario_result_id: str) -> ScenarioRunSummary:
         """
         Cancel a running scenario.
 
         Returns:
-            dict: Updated ``ScenarioRunSummary`` payload.
+            ScenarioRunSummary: Updated summary reflecting the cancellation request.
         """
+        from pyrit.models.catalog import ScenarioRunSummary
+
         client = self._get_client()
         resp = await client.post(f"/api/scenarios/runs/{scenario_result_id}/cancel")
         self._raise_for_status(resp)
-        return resp.json()
+        return ScenarioRunSummary.model_validate(resp.json())
 
-    async def list_scenario_runs_async(self, *, limit: int = 100) -> dict[str, Any]:
+    async def list_scenario_runs_async(self, *, limit: int = 100) -> list[ScenarioRunSummary]:
         """
         List tracked scenario runs.
 
         Returns:
-            dict: ``ScenarioRunListResponse`` payload.
+            list[ScenarioRunSummary]: All tracked scenario runs.
         """
-        return await self._get_json_async(path="/api/scenarios/runs", params={"limit": limit})
+        from pyrit.models.catalog import ScenarioRunSummary
+
+        payload = await self._get_json_async(path="/api/scenarios/runs", params={"limit": limit})
+        return [ScenarioRunSummary.model_validate(item) for item in payload.get("items", [])]
 
     # ------------------------------------------------------------------
     # Lifecycle

@@ -30,7 +30,7 @@
 #
 # ```bash
 # pyrit_scan benchmark.adversarial \
-#   --initializers target load_default_datasets \
+#   --initializers target \
 #   --target openai_chat \
 #   --adversarial-targets adversarial_chat_singleturn adversarial_chat_multiturn \
 #   --max-dataset-size 4

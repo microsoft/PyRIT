@@ -35,12 +35,11 @@ from pyrit.backend.models.converters import (
     PreviewStep,
 )
 from pyrit.backend.models.targets import (
-    TargetCapabilitiesInfo,
-    TargetInstance,
     TargetListResponse,
 )
 from pyrit.backend.routes.labels import get_label_options
 from pyrit.models import MessagePiece
+from pyrit.models.catalog.target import TargetCapabilitiesInfo, TargetInstance
 
 
 def _make_message_view(*, role: str = "user", value: str = "hello", sequence: int = 1) -> MessageView:
