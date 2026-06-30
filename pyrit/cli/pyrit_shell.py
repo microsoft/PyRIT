@@ -48,8 +48,6 @@ class PyRITShell(cmd.Cmd):
 
     prompt = "pyrit> "
 
-    _TERMINAL_STATUSES = {"COMPLETED", "FAILED", "CANCELLED"}
-
     def __init__(
         self,
         *,
@@ -308,6 +306,7 @@ class PyRITShell(cmd.Cmd):
             print_scenario_run_progress,
             print_scenario_run_summary,
         )
+        from pyrit.models import ScenarioRunState
         from pyrit.models.catalog import RunScenarioRequest
 
         # Fetch scenario metadata so the parser recognizes scenario-declared flags.
@@ -393,7 +392,11 @@ class PyRITShell(cmd.Cmd):
             while True:
                 run = self._run_async(self._api_client.get_scenario_run_async(scenario_result_id=scenario_result_id))
                 print_scenario_run_progress(run=run, total_strategies=total_strategies)
-                if run.status in self._TERMINAL_STATUSES:
+                if run.status in {
+                    ScenarioRunState.COMPLETED,
+                    ScenarioRunState.FAILED,
+                    ScenarioRunState.CANCELLED,
+                }:
                     break
                 time.sleep(0.5)
         except KeyboardInterrupt:
@@ -407,13 +410,20 @@ class PyRITShell(cmd.Cmd):
             return
 
         # Print results
-        if run.status == "COMPLETED":
+        if run.status == ScenarioRunState.COMPLETED:
             try:
                 detail = self._run_async(
                     self._api_client.get_scenario_run_results_async(scenario_result_id=scenario_result_id)
                 )
                 self._run_async(print_scenario_result_async(result=detail))
-            except Exception:
+            except Exception as exc:
+                from pyrit.cli.pyrit_scan import _print_cli_exception
+
+                print(
+                    "\nERROR: The scenario completed, but its detailed results could not be "
+                    "retrieved or parsed from the server."
+                )
+                _print_cli_exception(exc=exc)
                 print_scenario_run_summary(run=run)
         else:
             print_scenario_run_summary(run=run)

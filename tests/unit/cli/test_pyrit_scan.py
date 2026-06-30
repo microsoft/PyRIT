@@ -767,7 +767,10 @@ class TestMainExtraPaths:
         result = pyrit_scan.main(["test_scenario", "--target", "t"])
         assert result == 0
         captured = capsys.readouterr()
-        # The summary printer should be used as a fallback.
+        # The error must be surfaced loudly (not swallowed) and include the exception detail.
+        assert "ERROR: The scenario completed" in captured.out
+        assert "nope" in captured.out
+        # The summary printer should still be used as a fallback.
         assert "test_scenario" in captured.out
 
     @patch("pyrit.cli._server_launcher.ServerLauncher.probe_health_async", new_callable=AsyncMock, return_value=True)

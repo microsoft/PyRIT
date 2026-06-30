@@ -35,8 +35,6 @@ if TYPE_CHECKING:
         ScenarioRunSummary,
     )
 
-_TERMINAL_STATUSES = {"COMPLETED", "FAILED", "CANCELLED"}
-
 
 def _print_cli_exception(*, exc: BaseException) -> None:
     """
@@ -614,11 +612,14 @@ async def _poll_until_terminal_async(
         ScenarioRunSummary: The final run summary.
     """
     from pyrit.cli import _output
+    from pyrit.models import ScenarioRunState
+
+    terminal_states = {ScenarioRunState.COMPLETED, ScenarioRunState.FAILED, ScenarioRunState.CANCELLED}
 
     while True:
         run = await client.get_scenario_run_async(scenario_result_id=scenario_result_id)
         _output.print_scenario_run_progress(run=run, total_strategies=total_strategies)
-        if run.status in _TERMINAL_STATUSES:
+        if run.status in terminal_states:
             return run
         await asyncio.sleep(0.5)
 
@@ -636,6 +637,7 @@ async def _run_scenario_async(
         int: Exit code (``0`` if the run completed successfully, ``1`` otherwise).
     """
     from pyrit.cli import _output
+    from pyrit.models import ScenarioRunState
 
     scenario_name = parsed_args.scenario_name
     request = _build_run_request(parsed_args=parsed_args, scenario_name=scenario_name)
@@ -667,16 +669,21 @@ async def _run_scenario_async(
             print("Warning: could not cancel scenario run on server.")
         return 1
 
-    if run.status == "COMPLETED":
+    if run.status == ScenarioRunState.COMPLETED:
         try:
             detail = await client.get_scenario_run_results_async(scenario_result_id=scenario_result_id)
             await _output.print_scenario_result_async(result=detail)
-        except Exception:
+        except Exception as exc:
+            print(
+                "\nERROR: The scenario completed, but its detailed results could not be "
+                "retrieved or parsed from the server."
+            )
+            _print_cli_exception(exc=exc)
             _output.print_scenario_run_summary(run=run)
-    else:
-        _output.print_scenario_run_summary(run=run)
+        return 0
 
-    return 0 if run.status == "COMPLETED" else 1
+    _output.print_scenario_run_summary(run=run)
+    return 1
 
 
 async def _dispatch_with_client_async(*, client: Any, parsed_args: Namespace) -> int:
