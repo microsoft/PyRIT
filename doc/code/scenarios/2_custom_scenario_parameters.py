@@ -67,13 +67,16 @@ for param in Scam.supported_parameters():
 # - **name**: dict key in `self.params`, converted to `--kebab-case` for the CLI
 # - **description**: shown in `--list-scenarios` and `--help`
 # - **default**: value used when not supplied; deep-copied per run
-# - **param_type**: `str`, `int`, `float`, `bool`, `list[str]`, or `None` (raw passthrough)
-# - **choices**: optional tuple of allowed values (not supported with `list` types)
+# - **param_type**: `str`, `int`, `float`, `bool`, a `Literal[...]`/`Enum` (a
+#   constrained scalar that carries its own allowed set), a `list[...]` of any of
+#   those, or `None` (raw passthrough)
 #
 # A more complete declaration list might look like:
 
 # %%
-from pyrit.common import Parameter
+from typing import Literal
+
+from pyrit.models import Parameter
 
 # What a scenario author would return from supported_parameters():
 example_declarations = [
@@ -81,13 +84,12 @@ example_declarations = [
     Parameter(name="objective", description="Goal the attack pursues", param_type=str),
     # Scalar with default
     Parameter(name="max_turns", description="Conversation cap", default=5, param_type=int),
-    # Choices: behaves like an enum
+    # Constrained scalar: a Literal behaves like an enum (the type *is* the allowed set)
     Parameter(
         name="mode",
         description="Speed mode",
         default="fast",
-        param_type=str,
-        choices=("fast", "slow"),
+        param_type=Literal["fast", "slow"],
     ),
     # List parameter
     Parameter(name="tags", description="Tag list", default=["default"], param_type=list[str]),

@@ -148,7 +148,7 @@ class TAPAttackScoringConfig(AttackScoringConfig):
     @property
     def threshold(self) -> float:
         """
-        Get the threshold from the objective scorer.
+        The threshold from the objective scorer.
 
         Returns:
             float: The threshold value from the FloatScaleThresholdScorer.
@@ -189,7 +189,7 @@ class TAPAttackResult(AttackResult):
 
     @property
     def tree_visualization(self) -> Tree | None:
-        """Get the tree visualization from metadata."""
+        """The tree visualization from metadata."""
         return self.metadata.get("tree_visualization", None)
 
     @tree_visualization.setter
@@ -199,7 +199,7 @@ class TAPAttackResult(AttackResult):
 
     @property
     def nodes_explored(self) -> int:
-        """Get the total number of nodes explored during the attack."""
+        """The total number of nodes explored during the attack."""
         return cast("int", self.metadata.get("nodes_explored", 0))
 
     @nodes_explored.setter
@@ -209,7 +209,7 @@ class TAPAttackResult(AttackResult):
 
     @property
     def nodes_pruned(self) -> int:
-        """Get the number of nodes pruned during the attack."""
+        """The number of nodes pruned during the attack."""
         return cast("int", self.metadata.get("nodes_pruned", 0))
 
     @nodes_pruned.setter
@@ -219,7 +219,7 @@ class TAPAttackResult(AttackResult):
 
     @property
     def max_depth_reached(self) -> int:
-        """Get the maximum depth reached in the attack tree."""
+        """The maximum depth reached in the attack tree."""
         return cast("int", self.metadata.get("max_depth_reached", 0))
 
     @max_depth_reached.setter
@@ -229,7 +229,7 @@ class TAPAttackResult(AttackResult):
 
     @property
     def auxiliary_scores_summary(self) -> dict[str, float]:
-        """Get a summary of auxiliary scores from the best node."""
+        """A summary of auxiliary scores from the best node."""
         return cast("dict[str, float]", self.metadata.get("auxiliary_scores_summary", {}))
 
     @auxiliary_scores_summary.setter
@@ -239,7 +239,7 @@ class TAPAttackResult(AttackResult):
 
     @property
     def best_adversarial_conversation_id(self) -> str | None:
-        """Get the adversarial conversation ID for the best-scoring branch."""
+        """The adversarial conversation ID for the best-scoring branch."""
         return cast("str | None", self.metadata.get("best_adversarial_conversation_id", None))
 
     @best_adversarial_conversation_id.setter

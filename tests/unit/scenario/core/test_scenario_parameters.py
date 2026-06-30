@@ -3,13 +3,12 @@
 
 """Tests for Scenario custom parameter declaration, coercion, and validation (Stage 1b)."""
 
-from typing import ClassVar
+from typing import ClassVar, Literal
 from unittest.mock import MagicMock
 
 import pytest
 
-from pyrit.common import Parameter
-from pyrit.models import ComponentIdentifier
+from pyrit.models import ComponentIdentifier, Parameter
 from pyrit.scenario import DatasetConfiguration
 from pyrit.scenario.core import BaselineAttackPolicy, Scenario, ScenarioStrategy
 from pyrit.score import Scorer
@@ -161,46 +160,52 @@ class TestSetParamsFromArgsListCoercion:
         with pytest.raises(ValueError, match="expects a list"):
             scenario.set_params_from_args(args={"datasets": "single"})
 
-    def test_unsupported_list_element_type_raises(self) -> None:
-        """list[int] is rejected at declaration time (only list[str] is supported)."""
+    def test_list_int_coerces_each_element(self) -> None:
+        """list[int] is supported and coerces each element."""
         scenario = _make_scenario(declared_params=[Parameter(name="counts", description="d", param_type=list[int])])
+        scenario.set_params_from_args(args={"counts": ["1", "2"]})
+        assert scenario.params == {"counts": [1, 2]}
+
+    def test_unsupported_list_element_type_raises(self) -> None:
+        """A list of a non-scalar element type is rejected at declaration time."""
+        scenario = _make_scenario(declared_params=[Parameter(name="tags", description="d", param_type=list[set[str]])])
         with pytest.raises(ValueError, match="unsupported.*param_type"):
-            scenario.set_params_from_args(args={"counts": [1, 2]})
+            scenario.set_params_from_args(args={"tags": [{"a"}]})
 
 
 @pytest.mark.usefixtures("patch_central_database")
-class TestSetParamsFromArgsChoices:
-    """choices validation."""
+class TestSetParamsFromArgsConstrainedScalars:
+    """Constrained-scalar (Literal) membership validation."""
 
     def test_valid_choice_is_accepted(self) -> None:
         scenario = _make_scenario(
-            declared_params=[Parameter(name="mode", description="d", param_type=str, choices=("fast", "slow"))]
+            declared_params=[Parameter(name="mode", description="d", param_type=Literal["fast", "slow"])]
         )
         scenario.set_params_from_args(args={"mode": "fast"})
         assert scenario.params == {"mode": "fast"}
 
     def test_invalid_choice_raises(self) -> None:
         scenario = _make_scenario(
-            declared_params=[Parameter(name="mode", description="d", param_type=str, choices=("fast", "slow"))]
+            declared_params=[Parameter(name="mode", description="d", param_type=Literal["fast", "slow"])]
         )
-        with pytest.raises(ValueError, match="not in declared choices"):
+        with pytest.raises(ValueError, match="one of"):
             scenario.set_params_from_args(args={"mode": "medium"})
 
     def test_choices_validated_after_coercion(self) -> None:
-        """A string '5' coerces to int 5, then is checked against int choices."""
+        """A string '5' coerces to int 5, then is checked against the int Literal."""
         scenario = _make_scenario(
-            declared_params=[Parameter(name="count", description="d", param_type=int, choices=(1, 5, 10))]
+            declared_params=[Parameter(name="count", description="d", param_type=Literal[1, 5, 10])]
         )
         scenario.set_params_from_args(args={"count": "5"})
         assert scenario.params == {"count": 5}
 
-    def test_stringy_choices_accept_typed_user_input(self) -> None:
-        """Author declares choices as strings; user input is coerced and accepted."""
+    def test_list_literal_membership(self) -> None:
+        """A list of a constrained scalar validates membership per element."""
         scenario = _make_scenario(
-            declared_params=[Parameter(name="count", description="d", param_type=int, choices=("1", "5", "10"))]
+            declared_params=[Parameter(name="modes", description="d", param_type=list[Literal["a", "b"]])]
         )
-        scenario.set_params_from_args(args={"count": "5"})
-        assert scenario.params == {"count": 5}
+        scenario.set_params_from_args(args={"modes": ["a", "b", "a"]})
+        assert scenario.params == {"modes": ["a", "b", "a"]}
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -306,45 +311,24 @@ class TestDeclarationValidation:
         with pytest.raises(ValueError, match="invalid default"):
             scenario.set_params_from_args(args={})
 
-    def test_default_not_in_choices_raises(self) -> None:
+    def test_default_not_in_literal_raises(self) -> None:
         scenario = _make_scenario(
             declared_params=[
                 Parameter(
                     name="mode",
                     description="d",
-                    param_type=str,
+                    param_type=Literal["fast", "slow"],
                     default="medium",
-                    choices=("fast", "slow"),
                 )
             ]
         )
-        with pytest.raises(ValueError, match="not in declared choices"):
-            scenario.set_params_from_args(args={})
-
-    def test_choices_on_list_param_rejected_at_declaration(self) -> None:
-        """Combining `choices` with a list param_type is rejected pending semantic resolution.
-
-        argparse's per-item choices for nargs='+' diverges from core's whole-list
-        post-coercion check, so we forbid the combination at declaration time.
-        """
-        scenario = _make_scenario(
-            declared_params=[Parameter(name="datasets", description="d", param_type=list[str], choices=("a", "b"))]
-        )
-        with pytest.raises(ValueError, match="choices on a list param_type"):
+        with pytest.raises(ValueError, match="invalid default"):
             scenario.set_params_from_args(args={})
 
     def test_unsupported_param_type_rejected_at_declaration(self) -> None:
         """An unsupported param_type (e.g. set[str]) fails at declaration time, not user time."""
         scenario = _make_scenario(declared_params=[Parameter(name="tags", description="d", param_type=set[str])])
         with pytest.raises(ValueError, match="unsupported.*param_type"):
-            scenario.set_params_from_args(args={})
-
-    def test_choices_not_coercible_to_param_type_raises(self) -> None:
-        """A choices tuple with values that cannot be coerced to param_type fails fast."""
-        scenario = _make_scenario(
-            declared_params=[Parameter(name="count", description="d", param_type=int, choices=("a", "b"))]
-        )
-        with pytest.raises(ValueError, match="not coercible to"):
             scenario.set_params_from_args(args={})
 
     def test_repeat_call_does_not_revalidate_declarations(self) -> None:

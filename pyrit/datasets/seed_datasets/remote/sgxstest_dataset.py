@@ -109,7 +109,7 @@ class _SGXSTestDataset(_RemoteDatasetLoader):
 
     @property
     def dataset_name(self) -> str:
-        """Return the dataset name."""
+        """The dataset name."""
         return "sgxstest"
 
     async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:

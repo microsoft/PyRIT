@@ -86,6 +86,12 @@ from pyrit.models.messages.chat_message import (
     ToolCall,
 )
 from pyrit.models.messages.conversation_reference import ConversationReference, ConversationType
+from pyrit.models.parameter import (
+    ComponentType,
+    Parameter,
+    ParameterDestination,
+    RegistryReference,
+)
 from pyrit.models.question_answering import QuestionAnsweringDataset, QuestionAnsweringEntry, QuestionChoice
 from pyrit.models.results.attack_result import AttackOutcome, AttackResult, AttackResultT
 from pyrit.models.results.scenario_result import ScenarioIdentifier, ScenarioResult, ScenarioRunState
@@ -131,6 +137,7 @@ __all__ = [
     "class_name_to_snake_case",
     "CapabilityName",
     "ComponentIdentifier",
+    "ComponentType",
     "compute_eval_hash",
     "config_hash",
     "ConverterIdentifier",
@@ -173,10 +180,13 @@ __all__ = [
     "Modality",
     "NextMessageSystemPromptPaths",
     "ObjectiveTargetEvaluationIdentifier",
+    "Parameter",
+    "ParameterDestination",
     "PromptDataType",
     "PromptResponseError",
     "QuestionAnsweringDataset",
     "QuestionAnsweringEntry",
+    "RegistryReference",
     "QuestionChoice",
     "REGISTRY_NAME_PATTERN",
     "ScaleDescription",

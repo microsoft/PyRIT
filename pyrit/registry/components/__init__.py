@@ -6,11 +6,11 @@ Component registries package.
 
 This package contains registries for PyRIT components (objects identified by a
 ``ComponentIdentifier``, such as converters, scorers, and targets). A component
-registry is a ``BuildableRegistry`` class catalog that can build instances from
+registry is a ``Registry`` class catalog that can build instances from
 classes and, when it retains pre-configured instances, also exposes them via an
 ``.instances`` property.
 
-Shared capabilities and base classes (``BuildableRegistry``, ``InstanceRegistry``,
+Shared capabilities and base classes (``Registry``, ``InstanceRegistry``,
 ``DefaultInstanceRegistry``) live at the top level of ``pyrit.registry``.
 """
 

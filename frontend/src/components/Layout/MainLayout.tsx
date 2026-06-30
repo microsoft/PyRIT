@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react'
 import {
+  Button,
   Text,
   Tooltip,
 } from '@fluentui/react-components'
+import { QuestionCircleRegular } from '@fluentui/react-icons'
 import { versionApi } from '../../services/api'
 import Navigation, { type ViewName } from '../Sidebar/Navigation'
 import { UserAccountButton } from '../UserAccountButton'
@@ -48,6 +50,17 @@ export default function MainLayout({
         </Tooltip>
         <Text className={styles.title}>Co-PyRIT</Text>
         <Text className={styles.subtitle}>Python Risk Identification Tool</Text>
+        <div className={styles.spacer} />
+        {onStartTour && (
+          <Button
+            appearance="subtle"
+            icon={<QuestionCircleRegular />}
+            onClick={onStartTour}
+            data-testid="start-tour"
+          >
+            Take a tour
+          </Button>
+        )}
         <UserAccountButton />
       </div>
       <div className={styles.contentArea}>
@@ -56,7 +69,6 @@ export default function MainLayout({
             currentView={currentView}
             onNavigate={onNavigate}
             onOpenFeedback={onOpenFeedback}
-            onStartTour={onStartTour}
           />
         </aside>
         <main className={styles.main}>{children}</main>

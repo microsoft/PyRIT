@@ -10,7 +10,7 @@ from functools import cache
 from typing import TYPE_CHECKING, ClassVar
 
 from pyrit.analytics import get_cached_results_for_technique
-from pyrit.common import Parameter, apply_defaults
+from pyrit.common import apply_defaults
 from pyrit.executor.attack import AttackScoringConfig
 from pyrit.models import (
     AttackOutcome,
@@ -19,6 +19,7 @@ from pyrit.models import (
     ScenarioResult,
     SeedAttackGroup,
 )
+from pyrit.models.parameter import Parameter
 from pyrit.registry import AttackTechniqueRegistry, TargetRegistry
 from pyrit.registry.tag_query import TagQuery
 from pyrit.scenario.core.atomic_attack import AtomicAttack

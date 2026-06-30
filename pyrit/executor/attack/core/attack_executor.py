@@ -92,7 +92,7 @@ class AttackExecutorResult(Generic[AttackResultT]):
 
     @property
     def exceptions(self) -> list[BaseException]:
-        """Get all exceptions from incomplete objectives."""
+        """All exceptions from incomplete objectives."""
         return [exception for _, exception in self.incomplete_objectives]
 
     def raise_if_incomplete(self) -> None:
