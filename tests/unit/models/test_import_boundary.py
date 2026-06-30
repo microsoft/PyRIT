@@ -319,8 +319,6 @@ def test_scan_finds_expected_files() -> None:
         "message_piece.py",
         "score.py",
         "scenario_result.py",
-        "storage_io.py",
-        "data_type_serializer.py",
         "seed.py",
         "seed_dataset.py",
     }

@@ -73,9 +73,9 @@ message_list = [
     ),
 ]
 
-memory.add_message_to_memory(request=Message([message_list[0]]))
-memory.add_message_to_memory(request=Message([message_list[1]]))
-memory.add_message_to_memory(request=Message([message_list[2]]))
+memory.add_message_to_memory(request=Message(message_pieces=[message_list[0]]))
+memory.add_message_to_memory(request=Message(message_pieces=[message_list[1]]))
+memory.add_message_to_memory(request=Message(message_pieces=[message_list[2]]))
 
 entries = memory.get_conversation_messages(conversation_id=conversation_id)
 

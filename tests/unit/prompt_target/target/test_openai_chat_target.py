@@ -25,7 +25,7 @@ from pyrit.exceptions.exception_classes import (
     RateLimitException,
 )
 from pyrit.memory.memory_interface import MemoryInterface
-from pyrit.models import Message, MessagePiece
+from pyrit.models import Message, MessagePiece, flatten_to_message_pieces
 from pyrit.prompt_target import (
     OpenAIChatAudioConfig,
     OpenAIChatTarget,
@@ -58,7 +58,7 @@ def create_mock_completion(content: str = "hi", finish_reason: str = "stop"):
 @pytest.fixture
 def sample_conversations() -> MutableSequence[MessagePiece]:
     conversations = get_sample_conversations()
-    return Message.flatten_to_message_pieces(conversations)
+    return flatten_to_message_pieces(conversations)
 
 
 @pytest.fixture

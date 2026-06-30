@@ -12,7 +12,7 @@ from unit.mocks import get_sample_conversations, openai_chat_response_json_dict
 
 from pyrit.executor.attack.core.attack_strategy import AttackStrategy
 from pyrit.memory.memory_interface import MemoryInterface
-from pyrit.models import ComponentIdentifier, Message, MessagePiece
+from pyrit.models import ComponentIdentifier, Message, MessagePiece, flatten_to_message_pieces
 from pyrit.prompt_target import OpenAIChatTarget
 from pyrit.prompt_target.common.target_capabilities import (
     CapabilityHandlingPolicy,
@@ -26,7 +26,7 @@ from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 @pytest.fixture
 def sample_entries() -> MutableSequence[MessagePiece]:
     conversations = get_sample_conversations()
-    return Message.flatten_to_message_pieces(conversations)
+    return flatten_to_message_pieces(conversations)
 
 
 @pytest.fixture

@@ -243,7 +243,7 @@ class TestGetScenarioRunResultsRoute:
         )
         scenario_result = ScenarioResult(
             scenario_identifier=ScenarioIdentifier(name="foundry.red_team_agent", description="Foundry red-team agent"),
-            objective_target_identifier=ComponentIdentifier.from_dict(
+            objective_target_identifier=ComponentIdentifier.model_validate(
                 {"__type__": "FakeTarget", "__module__": "test.mod", "params": {}}
             ),
             objective_scorer_identifier=None,

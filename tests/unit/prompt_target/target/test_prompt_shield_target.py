@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from unit.mocks import get_audio_message_piece, get_sample_conversations
 
-from pyrit.models import Message, MessagePiece
+from pyrit.models import Message, MessagePiece, flatten_to_message_pieces
 from pyrit.prompt_target import PromptShieldTarget
 
 
@@ -19,7 +19,7 @@ def audio_message_piece() -> MessagePiece:
 @pytest.fixture
 def sample_conversations() -> MutableSequence[MessagePiece]:
     conversations = get_sample_conversations()
-    return Message.flatten_to_message_pieces(conversations)
+    return flatten_to_message_pieces(conversations)
 
 
 @pytest.fixture
@@ -72,7 +72,7 @@ async def test_prompt_shield_reject_non_text(
     promptshield_target: PromptShieldTarget, audio_message_piece: MessagePiece
 ):
     with pytest.raises(ValueError):
-        await promptshield_target.send_prompt_async(message=Message([audio_message_piece]))
+        await promptshield_target.send_prompt_async(message=Message(message_pieces=[audio_message_piece]))
 
 
 async def test_prompt_shield_document_parsing(

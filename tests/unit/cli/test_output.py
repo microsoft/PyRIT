@@ -343,7 +343,7 @@ async def test_print_scenario_result_async_roundtrip_with_real_payload():
     from pyrit.models import AttackOutcome, AttackResult, ComponentIdentifier, ScenarioIdentifier, ScenarioResult
 
     identifier = ScenarioIdentifier(name="test.scenario", description="A test")
-    target_identifier = ComponentIdentifier.from_dict(
+    target_identifier = ComponentIdentifier.model_validate(
         {"__type__": "FakeTarget", "__module__": "test.mod", "params": {}}
     )
     attack = AttackResult(

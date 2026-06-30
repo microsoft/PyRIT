@@ -12,7 +12,6 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 
 import pyrit
-from pyrit.common.deprecation import print_deprecation_message
 from pyrit.models.identifiers.component_identifier import (  # noqa: TC001  (runtime-required by Pydantic field annotations)
     ComponentIdentifier,
 )
@@ -38,42 +37,6 @@ class ScenarioIdentifier(BaseModel):
     pyrit_version: str = Field(default=pyrit.__version__)
     #: Optional initialization data.
     init_data: dict[str, Any] | None = None
-
-    def to_dict(self) -> dict[str, Any]:
-        """
-        Serialize to a JSON-compatible dictionary.
-
-        Deprecated: use ``model_dump(by_alias=True)`` instead.
-
-        Returns:
-            dict[str, Any]: Serialized payload.
-        """
-        print_deprecation_message(
-            old_item="ScenarioIdentifier.to_dict()",
-            new_item="ScenarioIdentifier.model_dump(by_alias=True)",
-            removed_in="0.16.0",
-        )
-        return self.model_dump(by_alias=True)
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> ScenarioIdentifier:
-        """
-        Reconstruct a ScenarioIdentifier from a dictionary.
-
-        Deprecated: use ``model_validate(...)`` instead.
-
-        Args:
-            data (dict[str, Any]): Dictionary as produced by ``model_dump(by_alias=True)``.
-
-        Returns:
-            ScenarioIdentifier: Reconstructed instance.
-        """
-        print_deprecation_message(
-            old_item="ScenarioIdentifier.from_dict(...)",
-            new_item="ScenarioIdentifier.model_validate(...)",
-            removed_in="0.16.0",
-        )
-        return cls.model_validate(data)
 
 
 class ScenarioRunState(str, Enum):
@@ -228,42 +191,6 @@ class ScenarioResult(BaseModel):
 
         successful_results = sum(1 for result in all_results if result.outcome == AttackOutcome.SUCCESS)
         return int((successful_results / total_results) * 100)
-
-    def to_dict(self) -> dict[str, Any]:
-        """
-        Serialize this scenario result to a JSON-compatible dictionary.
-
-        Deprecated: use ``model_dump(mode="json", by_alias=True)`` instead.
-
-        Returns:
-            dict[str, Any]: Serialized payload suitable for REST APIs or persistence.
-        """
-        print_deprecation_message(
-            old_item="ScenarioResult.to_dict()",
-            new_item="ScenarioResult.model_dump(mode='json', by_alias=True)",
-            removed_in="0.16.0",
-        )
-        return self.model_dump(mode="json", by_alias=True)
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> ScenarioResult:
-        """
-        Reconstruct a ScenarioResult from a dictionary.
-
-        Deprecated: use ``model_validate(...)`` instead.
-
-        Args:
-            data (dict[str, Any]): Dictionary as produced by ``model_dump(mode="json")``.
-
-        Returns:
-            ScenarioResult: Reconstructed instance.
-        """
-        print_deprecation_message(
-            old_item="ScenarioResult.from_dict(...)",
-            new_item="ScenarioResult.model_validate(...)",
-            removed_in="0.16.0",
-        )
-        return cls.model_validate(data)
 
     @staticmethod
     def normalize_scenario_name(scenario_name: str) -> str:

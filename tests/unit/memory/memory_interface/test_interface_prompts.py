@@ -13,6 +13,7 @@ from unit.mocks import get_mock_target
 
 from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
 from pyrit.memory import MemoryInterface, PromptMemoryEntry
+from pyrit.memory.storage.serializers import set_message_piece_sha256_async
 from pyrit.models import (
     AtomicAttackIdentifier,
     AttackResult,
@@ -1293,7 +1294,7 @@ async def test_message_piece_hash_stored_and_retrieved(sqlite_instance: MemoryIn
     ]
 
     for entry in entries:
-        await entry.set_sha256_values_async()
+        await set_message_piece_sha256_async(entry)
 
     sqlite_instance.add_message_pieces_to_memory(message_pieces=entries)
     retrieved_entries = sqlite_instance.get_message_pieces()

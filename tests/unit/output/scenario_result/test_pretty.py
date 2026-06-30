@@ -79,7 +79,7 @@ async def test_write_async_renders_full_summary(printer, capsys):
 async def test_write_async_with_unknown_target_when_no_params(printer, capsys):
     result = ScenarioResult(
         scenario_identifier=_scenario_identifier(),
-        objective_target_identifier=ComponentIdentifier.from_dict({}),
+        objective_target_identifier=ComponentIdentifier.model_validate({}),
         attack_results={"s": []},
         objective_scorer_identifier=None,
     )

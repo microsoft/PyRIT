@@ -171,7 +171,7 @@ class TestScoreEntryRoundtrip:
         assert result["objective"] == "objective"
 
     def test_score_to_dict_serializes_scorer_identifier(self):
-        """Test that Score.to_dict() properly serializes the ComponentIdentifier."""
+        """Test that Score.model_dump() properly serializes the ComponentIdentifier."""
         scorer_identifier = ComponentIdentifier(
             class_name="TestScorer",
             class_module="pyrit.score",
@@ -190,8 +190,8 @@ class TestScoreEntryRoundtrip:
             objective="objective",
         )
 
-        result = score.to_dict()
+        result = score.model_dump(mode="json")
 
-        # to_dict should serialize ComponentIdentifier to dict
+        # model_dump should serialize ComponentIdentifier to dict
         assert isinstance(result["scorer_class_identifier"], dict)
         assert result["scorer_class_identifier"][ComponentIdentifier.KEY_CLASS_NAME] == "TestScorer"
