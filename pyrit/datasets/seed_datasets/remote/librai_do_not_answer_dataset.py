@@ -62,7 +62,7 @@ class _LibrAIDoNotAnswerDataset(_RemoteDatasetLoader):
     @property
     @override
     def dataset_name(self) -> str:
-        """Return the dataset name."""
+        """The dataset name."""
         return "librai_do_not_answer"
 
     @override

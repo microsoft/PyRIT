@@ -44,7 +44,7 @@ class ScoreView(Score):
     @computed_field  # type: ignore[prop-decorator]
     @property
     def scorer_type(self) -> str:
-        """Return the scorer class name, or ``"Unknown"`` when unavailable."""
+        """The scorer class name, or ``"Unknown"`` when unavailable."""
         identifier = self.scorer_class_identifier
         if identifier and identifier.class_name:
             return identifier.class_name
@@ -188,19 +188,19 @@ class MessageView(Message):
     @computed_field  # type: ignore[prop-decorator]
     @property
     def turn_number(self) -> int:
-        """Return the sequence of the first piece (the conversation turn)."""
+        """The sequence of the first piece (the conversation turn)."""
         return self.message_pieces[0].sequence if self.message_pieces else 0
 
     @computed_field  # type: ignore[prop-decorator]
     @property
     def role(self) -> ChatMessageRole:
-        """Return the role of the first piece."""
+        """The role of the first piece."""
         return self.message_pieces[0].role if self.message_pieces else "user"
 
     @computed_field  # type: ignore[prop-decorator]
     @property
     def created_at(self) -> datetime:
-        """Return the timestamp of the first piece."""
+        """The timestamp of the first piece."""
         return self.message_pieces[0].timestamp if self.message_pieces else datetime.now(timezone.utc)
 
 
@@ -242,21 +242,21 @@ class AttackSummary(AttackResult):
     @computed_field  # type: ignore[prop-decorator]
     @property
     def attack_type(self) -> str:
-        """Return the attack strategy class name, or ``"Unknown"``."""
+        """The attack strategy class name, or ``"Unknown"``."""
         identifier = self.get_attack_strategy_identifier()
         return identifier.class_name if identifier else "Unknown"
 
     @computed_field  # type: ignore[prop-decorator]
     @property
     def attack_specific_params(self) -> dict[str, Any] | None:
-        """Return the attack strategy params, or ``None``."""
+        """The attack strategy params, or ``None``."""
         identifier = self.get_attack_strategy_identifier()
         return (identifier.params or None) if identifier else None
 
     @computed_field  # type: ignore[prop-decorator]
     @property
     def target(self) -> TargetInfo | None:
-        """Return the objective target info extracted from the identifier."""
+        """The objective target info extracted from the identifier."""
         identifier = self.get_attack_strategy_identifier()
         target_id = identifier.get_child("objective_target") if identifier else None
         if not target_id:
@@ -270,7 +270,7 @@ class AttackSummary(AttackResult):
     @computed_field  # type: ignore[prop-decorator]
     @property
     def converters(self) -> list[str]:
-        """Return the request-converter class names applied in this attack."""
+        """The request-converter class names applied in this attack."""
         identifier = self.get_attack_strategy_identifier()
         converter_ids = identifier.get_child_list("request_converters") if identifier else []
         return [c.class_name for c in converter_ids]
@@ -278,7 +278,7 @@ class AttackSummary(AttackResult):
     @computed_field  # type: ignore[prop-decorator]
     @property
     def related_conversation_ids(self) -> list[str]:
-        """Return the IDs of related conversations, sorted for stable output."""
+        """The IDs of related conversations, sorted for stable output."""
         return sorted(ref.conversation_id for ref in self.related_conversations)
 
 

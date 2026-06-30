@@ -57,7 +57,7 @@ class _ToxicChatDataset(_RemoteDatasetLoader):
 
     @property
     def dataset_name(self) -> str:
-        """Return the dataset name."""
+        """The dataset name."""
         return "toxic_chat"
 
     def _extract_harm_categories(self, item: dict[str, Any]) -> list[str]:

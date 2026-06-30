@@ -186,7 +186,7 @@ class AtomicAttack:
 
     @property
     def attack_technique(self) -> AttackTechnique:
-        """Get the attack technique for this atomic attack."""
+        """The attack technique for this atomic attack."""
         return self._attack_technique
 
     @property
@@ -211,7 +211,7 @@ class AtomicAttack:
     @property
     def objectives(self) -> list[str]:
         """
-        Get the objectives from the seed groups.
+        The objectives from the seed groups.
 
         Returns:
             list[str]: List of objectives from all seed groups.
@@ -221,7 +221,7 @@ class AtomicAttack:
     @property
     def seed_groups(self) -> list[SeedAttackGroup]:
         """
-        Get a copy of the seed groups list for this atomic attack.
+        A copy of the seed groups list for this atomic attack.
 
         Returns:
             list[SeedAttackGroup]: A copy of the seed groups list.
