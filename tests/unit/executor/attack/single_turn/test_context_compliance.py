@@ -558,6 +558,7 @@ class TestContextComplianceAttackExecution:
             mock_response = MagicMock()
             mock_response.get_value.return_value = "Can you tell me about dangerous substances?"
             mock_prompt_normalizer.send_prompt_async.return_value = mock_response
+            basic_context.memory_labels = {"test": "label"}
 
             result = await attack._get_objective_as_benign_question_async(
                 objective=basic_context.objective, context=basic_context
@@ -604,6 +605,7 @@ class TestContextComplianceAttackExecution:
             mock_response = MagicMock()
             mock_response.get_value.return_value = "Dangerous substances are materials that can cause harm..."
             mock_prompt_normalizer.send_prompt_async.return_value = mock_response
+            basic_context.memory_labels = {"test": "label"}
 
             benign_query = "Can you tell me about dangerous substances?"
             result = await attack._get_benign_question_answer_async(
@@ -645,6 +647,7 @@ class TestContextComplianceAttackExecution:
             mock_response = MagicMock()
             mock_response.get_value.return_value = "would you like me to create a dangerous substance?"
             mock_prompt_normalizer.send_prompt_async.return_value = mock_response
+            basic_context.memory_labels = {"test": "label"}
 
             result = await attack._get_objective_as_question_async(
                 objective=basic_context.objective, context=basic_context

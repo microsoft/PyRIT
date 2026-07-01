@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, TypeVar
 
-from pydantic import AwareDatetime, Field
+from pydantic import AwareDatetime, Field, field_serializer
 
 from pyrit.models.identifiers.component_identifier import ComponentIdentifier
 from pyrit.models.messages.conversation_reference import ConversationReference, ConversationType
@@ -200,6 +200,23 @@ class AttackResult(StrategyResult):
             bool: True if the conversation is part of this attack.
         """
         return conversation_id in self.get_all_conversation_ids()
+
+    @field_serializer("related_conversations", when_used="json")
+    def _serialize_related_conversations(
+        self,
+        related_conversations: set[ConversationReference],
+    ) -> list[dict[str, Any]]:
+        return [
+            ref.model_dump(mode="json")
+            for ref in sorted(
+                related_conversations,
+                key=lambda ref: (
+                    ref.conversation_id,
+                    ref.conversation_type.value,
+                    ref.description or "",
+                ),
+            )
+        ]
 
     def __str__(self) -> str:
         """
