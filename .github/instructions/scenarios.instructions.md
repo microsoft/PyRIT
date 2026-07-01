@@ -221,7 +221,7 @@ Overrides that want baseline support must emit it themselves by calling `self._b
 ```python
 AtomicAttack(
     atomic_attack_name=strategy_name,   # groups related attacks
-    attack=attack_instance,             # AttackStrategy implementation
+    attack_technique=AttackTechnique(attack=attack_instance),  # bundles the AttackStrategy
     seed_groups=list(seed_groups),       # must be non-empty
     memory_labels=self._memory_labels,   # from base class
 )
