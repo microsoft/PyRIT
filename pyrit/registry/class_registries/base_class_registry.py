@@ -195,8 +195,8 @@ class BaseClassRegistry(ABC, RegistryProtocol[MetadataT], Generic[T, MetadataT])
         """
         Resolve a registered ``ClassEntry`` by name or raise.
 
-        Shared lookup used by ``get_class`` and by ``BuildableRegistry.create_instance``
-        so the "not found" behavior (and its error message listing the class catalog)
+        Shared lookup used by ``get_class`` and ``create_instance`` so the
+        "not found" behavior (and its error message listing the class catalog)
         lives in one place.
 
         Args:

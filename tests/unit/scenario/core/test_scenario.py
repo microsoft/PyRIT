@@ -17,7 +17,7 @@ except ImportError:  # pragma: no cover - 3.10 only
 from pyrit.executor.attack.core import AttackExecutorResult
 from pyrit.memory import CentralMemory
 from pyrit.models import AttackOutcome, AttackResult, ComponentIdentifier
-from pyrit.scenario import DatasetConfiguration, ScenarioIdentifier, ScenarioResult
+from pyrit.scenario import DatasetAttackConfiguration, DatasetConfiguration, ScenarioIdentifier, ScenarioResult
 from pyrit.scenario.core import AtomicAttack, BaselineAttackPolicy, Scenario, ScenarioStrategy
 from pyrit.score import Scorer
 
@@ -875,7 +875,7 @@ class TestGetDefaultObjectiveScorer:
         mock_entry.instance = mock_scorer
 
         mock_registry = MagicMock()
-        mock_registry.get_by_tag.return_value = [mock_entry]
+        mock_registry.instances.get_by_tag.return_value = [mock_entry]
         mock_registry_cls.get_registry_singleton.return_value = mock_registry
 
         # Mock self with _get_additional_scoring_questions returning empty sequence
@@ -892,7 +892,7 @@ class TestGetDefaultObjectiveScorer:
         from pyrit.score import TrueFalseInverterScorer
 
         mock_registry = MagicMock()
-        mock_registry.get_by_tag.return_value = []
+        mock_registry.instances.get_by_tag.return_value = []
         mock_registry_cls.get_registry_singleton.return_value = mock_registry
 
         # Mock self with _get_additional_scoring_questions returning empty sequence
@@ -1019,10 +1019,10 @@ class TestBaselineEmissionDeprecationRescue:
 
     @staticmethod
     def _dataset_config():
-        from pyrit.models import SeedGroup, SeedObjective
+        from pyrit.models import SeedAttackGroup, SeedObjective
 
-        return DatasetConfiguration(
-            seed_groups=[SeedGroup(seeds=[SeedObjective(value="x")])],
+        return DatasetAttackConfiguration(
+            seed_groups=[SeedAttackGroup(seeds=[SeedObjective(value="x")])],
         )
 
     async def test_rescue_emits_warning_and_injects_baseline(self, mock_objective_target):

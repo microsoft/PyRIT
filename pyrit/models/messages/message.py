@@ -248,7 +248,7 @@ class Message(BaseModel):
     @property
     def api_role(self) -> ChatMessageRole:
         """
-        Return the API-compatible role of the first message piece.
+        The API-compatible role of the first message piece.
 
         Maps simulated_assistant to assistant for API compatibility.
         All message pieces in a Message should have the same role.
@@ -279,7 +279,7 @@ class Message(BaseModel):
     @property
     def conversation_id(self) -> str:
         """
-        Return the conversation ID of the first request piece.
+        The conversation ID of the first request piece.
 
         Returns:
             str: Conversation identifier.
@@ -295,7 +295,7 @@ class Message(BaseModel):
     @property
     def sequence(self) -> int:
         """
-        Return the sequence value of the first request piece.
+        The sequence value of the first request piece.
 
         Returns:
             int: Sequence number for the message turn.

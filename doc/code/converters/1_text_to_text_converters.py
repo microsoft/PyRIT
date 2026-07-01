@@ -313,6 +313,11 @@ print("Persuasion:", await persuasion_converter.convert_async(prompt=prompt))  #
 decomposition_converter = DecompositionConverter(converter_target=attack_llm)
 print("Decomposition:", await decomposition_converter.convert_async(prompt=prompt))  # type: ignore
 
+# With use_word_game=True, each noun phrase is also replaced by an innocuous codeword, with the
+# mapping established in the same prompt
+decomposition_word_game = DecompositionConverter(converter_target=attack_llm, use_word_game=True)
+print("Decomposition (word-game):", await decomposition_word_game.convert_async(prompt=prompt))  # type: ignore
+
 # Denylist detection
 denylist_converter = DenylistConverter(converter_target=attack_llm)
 print("Denylist Check:", await denylist_converter.convert_async(prompt=prompt))  # type: ignore

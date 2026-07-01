@@ -4,7 +4,6 @@
 """Registry module for PyRIT class and object registries."""
 
 from pyrit.registry.base import RegistryProtocol
-from pyrit.registry.buildable_registry import BuildableRegistry
 from pyrit.registry.class_registries import (
     BaseClassRegistry,
     ClassEntry,
@@ -15,8 +14,14 @@ from pyrit.registry.class_registries import (
     ScenarioRegistry,
 )
 from pyrit.registry.components import (
+    AttackTechniqueMetadata,
+    AttackTechniqueRegistry,
     ConverterMetadata,
     ConverterRegistry,
+    ScorerMetadata,
+    ScorerRegistry,
+    TargetMetadata,
+    TargetRegistry,
 )
 from pyrit.registry.discovery import (
     discover_in_directory,
@@ -29,25 +34,22 @@ from pyrit.registry.instance_registry import (
     SupportsInstances,
 )
 from pyrit.registry.object_registries import (
-    AttackTechniqueRegistry,
     BaseInstanceRegistry,
     RegistryEntry,
-    RetrievableInstanceRegistry,
-    ScorerRegistry,
-    TargetRegistry,
 )
+from pyrit.registry.registry import Registry
 from pyrit.registry.tag_query import TagQuery
 
 __all__ = [
     "AttackTechniqueRegistry",
+    "AttackTechniqueMetadata",
     "BaseClassRegistry",
     "BaseInstanceRegistry",
-    "BuildableRegistry",
-    "ConverterMetadata",
     "ConverterRegistry",
+    "ConverterMetadata",
     "DefaultInstanceRegistry",
     "InstanceRegistry",
-    "RetrievableInstanceRegistry",
+    "Registry",
     "SupportsInstances",
     "ClassEntry",
     "discover_in_directory",
@@ -61,6 +63,8 @@ __all__ = [
     "ScenarioParameterMetadata",
     "ScenarioRegistry",
     "ScorerRegistry",
+    "ScorerMetadata",
     "TargetRegistry",
+    "TargetMetadata",
     "TagQuery",
 ]

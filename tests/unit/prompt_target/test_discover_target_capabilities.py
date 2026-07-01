@@ -50,7 +50,7 @@ class _RealValidationTarget(PromptTarget):
 def _ok_response(*, conversation_id: str = "probe", text: str = "ok") -> list[Message]:
     return [
         Message(
-            [
+            message_pieces=[
                 MessagePiece(
                     role="assistant",
                     original_value=text,
@@ -66,7 +66,7 @@ def _ok_response(*, conversation_id: str = "probe", text: str = "ok") -> list[Me
 def _error_response(*, conversation_id: str = "probe") -> list[Message]:
     return [
         Message(
-            [
+            message_pieces=[
                 MessagePiece(
                     role="assistant",
                     original_value="blocked",

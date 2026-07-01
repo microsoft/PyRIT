@@ -10,7 +10,6 @@ import type { MenuCheckedValueChangeData, MenuCheckedValueChangeEvent } from '@f
 import {
   ChatRegular,
   HomeRegular,
-  QuestionCircleRegular,
   SettingsRegular,
   HistoryRegular,
   PersonFeedbackRegular,
@@ -26,7 +25,6 @@ export type ViewName = 'home' | 'chat' | 'history' | 'config'
 interface NavigationProps {
   currentView: ViewName
   onNavigate: (view: ViewName) => void
-  onStartTour?: () => void
   onOpenFeedback: () => void
 }
 
@@ -39,7 +37,7 @@ const THEME_LABELS: Record<ThemeMode, string> = {
 }
 
 
-export default function Navigation({ currentView, onNavigate, onStartTour, onOpenFeedback }: NavigationProps) {
+export default function Navigation({ currentView, onNavigate, onOpenFeedback }: NavigationProps) {
   const styles = useNavigationStyles()
   const { mode, resolved, setMode } = useTheme()
 
@@ -100,16 +98,6 @@ export default function Navigation({ currentView, onNavigate, onStartTour, onOpe
 
       <div className={styles.spacer} />
 
-      {onStartTour && (
-        <Button
-          className={styles.navButton}
-          appearance="subtle"
-          icon={<QuestionCircleRegular />}
-          onClick={onStartTour}
-          title="Take a tour"
-          aria-label="Take a tour"
-        />
-      )}
       <Button
         className={styles.navButton}
         appearance="subtle"

@@ -86,6 +86,12 @@ from pyrit.models.messages.chat_message import (
     ToolCall,
 )
 from pyrit.models.messages.conversation_reference import ConversationReference, ConversationType
+from pyrit.models.parameter import (
+    ComponentType,
+    Parameter,
+    ParameterDestination,
+    RegistryReference,
+)
 from pyrit.models.question_answering import QuestionAnsweringDataset, QuestionAnsweringEntry, QuestionChoice
 from pyrit.models.results.attack_result import AttackOutcome, AttackResult, AttackResultT
 from pyrit.models.results.scenario_result import ScenarioIdentifier, ScenarioResult, ScenarioRunState
@@ -107,6 +113,7 @@ from pyrit.models.seeds import (
     SeedSimulatedConversation,
     SeedUnion,
     SimulatedTargetSystemPromptPaths,
+    group_seeds_into_attack_groups,
 )
 from pyrit.models.target_capabilities import CapabilityName, TargetCapabilities
 
@@ -130,6 +137,7 @@ __all__ = [
     "class_name_to_snake_case",
     "CapabilityName",
     "ComponentIdentifier",
+    "ComponentType",
     "compute_eval_hash",
     "config_hash",
     "ConverterIdentifier",
@@ -153,6 +161,7 @@ __all__ = [
     "get_all_values",
     "group_conversation_message_pieces_by_sequence",
     "group_message_pieces_into_conversations",
+    "group_seeds_into_attack_groups",
     "HarmDefinition",
     "Identifiable",
     "IdentifierFilter",
@@ -171,10 +180,13 @@ __all__ = [
     "Modality",
     "NextMessageSystemPromptPaths",
     "ObjectiveTargetEvaluationIdentifier",
+    "Parameter",
+    "ParameterDestination",
     "PromptDataType",
     "PromptResponseError",
     "QuestionAnsweringDataset",
     "QuestionAnsweringEntry",
+    "RegistryReference",
     "QuestionChoice",
     "REGISTRY_NAME_PATTERN",
     "ScaleDescription",

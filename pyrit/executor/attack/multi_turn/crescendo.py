@@ -90,7 +90,7 @@ class CrescendoAttackResult(AttackResult):
     @property
     def backtrack_count(self) -> int:
         """
-        Get the number of backtracks performed during the attack.
+        The number of backtracks performed during the attack.
 
         Returns:
             int: The number of backtracks.

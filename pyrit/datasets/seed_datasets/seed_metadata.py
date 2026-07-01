@@ -68,6 +68,7 @@ RECOMMENDED_TAGS: frozenset[str] = frozenset(
         "prompt_injection",  # direct or indirect prompt-injection payloads
         "ethics",  # moral-judgment / values evaluation (e.g., moral foundations theory)
         "toxicity",  # toxicity / hate-speech / profanity (e.g., RealToxicityPrompts, Perspective API)
+        "system_prompt",  # collections of system prompts used as extraction targets (e.g., garak sysprompt probes)
     }
 )
 

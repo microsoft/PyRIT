@@ -12,16 +12,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 import pyrit.backend.services.scenario_run_service as _svc_mod
-from pyrit.backend.models.scenarios import (
-    RunScenarioRequest,
-    ScenarioRunStatus,
-)
 from pyrit.backend.services.scenario_run_service import (
     _DEFAULT_MAX_CONCURRENT_RUNS,
     ScenarioRunService,
 )
-from pyrit.models import AttackOutcome
-from pyrit.scenario.core import DatasetConfiguration
+from pyrit.models import AttackOutcome, ScenarioRunState
+from pyrit.models.catalog.scenario import RunScenarioRequest
+from pyrit.scenario.core import DatasetAttackConfiguration, DatasetConfiguration
 
 _REGISTRY_PATCH_BASE = "pyrit.registry"
 _MEMORY_PATCH = "pyrit.memory.CentralMemory.get_memory_instance"
@@ -113,8 +110,8 @@ def mock_all_registries(mock_memory):
     mock_sr.create_instance.return_value = mock_scenario_instance
 
     mock_tr = MagicMock()
-    mock_tr.get_instance_by_name.return_value = MagicMock()
-    mock_tr.get_names.return_value = ["my_target"]
+    mock_tr.instances.get.return_value = MagicMock()
+    mock_tr.instances.get_names.return_value = ["my_target"]
 
     mock_ir = MagicMock()
     mock_ir.get_class.return_value = MagicMock(return_value=MagicMock(initialize_async=AsyncMock()))
@@ -148,7 +145,7 @@ class TestScenarioRunServiceStartRun:
         response = await service.start_run_async(request=_make_request())
 
         assert response.scenario_result_id == "sr-uuid-1"
-        assert response.status == ScenarioRunStatus.IN_PROGRESS
+        assert response.status == ScenarioRunState.IN_PROGRESS
         assert response.scenario_name == "foundry.red_team_agent"
         assert response.error is None
 
@@ -174,8 +171,8 @@ class TestScenarioRunServiceStartRun:
         mock_sr.get_class.return_value = MagicMock()
 
         mock_tr = MagicMock()
-        mock_tr.get_instance_by_name.return_value = None
-        mock_tr.get_names.return_value = ["other_target"]
+        mock_tr.instances.get.return_value = None
+        mock_tr.instances.get_names.return_value = ["other_target"]
 
         with (
             patch(f"{_REGISTRY_PATCH_BASE}.ScenarioRegistry.get_registry_singleton", return_value=mock_sr),
@@ -217,7 +214,7 @@ class TestScenarioRunServiceStartRun:
         mock_sr.get_class.return_value = mock_scenario_class
 
         mock_tr = MagicMock()
-        mock_tr.get_instance_by_name.return_value = MagicMock()
+        mock_tr.instances.get.return_value = MagicMock()
 
         with (
             patch(f"{_REGISTRY_PATCH_BASE}.ScenarioRegistry.get_registry_singleton", return_value=mock_sr),
@@ -238,7 +235,7 @@ class TestScenarioRunServiceStartRun:
         mock_sr.get_class.return_value = mock_scenario_class
 
         mock_tr = MagicMock()
-        mock_tr.get_instance_by_name.return_value = MagicMock()
+        mock_tr.instances.get.return_value = MagicMock()
 
         with (
             patch(f"{_REGISTRY_PATCH_BASE}.ScenarioRegistry.get_registry_singleton", return_value=mock_sr),
@@ -308,10 +305,10 @@ class TestScenarioRunServiceStartRun:
         # Type is preserved (this is the regression assertion)
         assert type(built_config) is _MarkerDatasetConfiguration
         # And carries the caller-supplied values, not the scenario defaults
-        assert built_config.get_default_dataset_names() == ["custom_a", "custom_b"]
+        assert built_config.dataset_names == ["custom_a", "custom_b"]
         assert built_config.max_dataset_size == 3
         # The original default config is not mutated when a fresh dataset_names is supplied
-        assert default_config.get_default_dataset_names() == ["original"]
+        assert default_config.dataset_names == ["original"]
         assert default_config.max_dataset_size == 100
 
     async def test_start_run_dataset_names_without_max_dataset_size_preserves_subclass(
@@ -331,7 +328,7 @@ class TestScenarioRunServiceStartRun:
         init_call = scenario_instance.initialize_async.await_args
         built_config = init_call.kwargs["dataset_config"]
         assert type(built_config) is _MarkerDatasetConfiguration
-        assert built_config.get_default_dataset_names() == ["only_this"]
+        assert built_config.dataset_names == ["only_this"]
         assert built_config.max_dataset_size is None
 
     async def test_start_run_dataset_names_falls_back_when_subclass_constructor_incompatible(
@@ -358,12 +355,12 @@ class TestScenarioRunServiceStartRun:
         built_config = init_call.kwargs["dataset_config"]
 
         # Fallback is the generic base class, not the subclass
-        assert type(built_config) is DatasetConfiguration
-        assert built_config.get_default_dataset_names() == ["custom"]
+        assert type(built_config) is DatasetAttackConfiguration
+        assert built_config.dataset_names == ["custom"]
         # Warning was logged so the operator can see the silent degradation
         assert any(
             "_RequiresExtraArgConfiguration" in record.message
-            and "Falling back to a generic DatasetConfiguration" in record.message
+            and "Falling back to a generic DatasetAttackConfiguration" in record.message
             for record in caplog.records
         )
 
@@ -379,8 +376,8 @@ class TestScenarioRunServiceStartRun:
         mock_sr.get_class.return_value = mock_scenario_class
 
         mock_tr = MagicMock()
-        mock_tr.get_instance_by_name.return_value = MagicMock()
-        mock_tr.get_names.return_value = ["my_target"]
+        mock_tr.instances.get.return_value = MagicMock()
+        mock_tr.instances.get_names.return_value = ["my_target"]
 
         mock_ir = MagicMock()
 
@@ -412,7 +409,7 @@ class TestScenarioRunServiceStartRun:
 
         built_config = scenario_instance.initialize_async.await_args.kwargs["dataset_config"]
         assert type(built_config) is _MarkerDatasetConfiguration
-        assert built_config.get_default_dataset_names() == ["a", "b"]
+        assert built_config.dataset_names == ["a", "b"]
         assert built_config.max_dataset_size == 7
 
     async def test_start_run_exceeds_concurrent_limit(self, mock_all_registries) -> None:
@@ -449,7 +446,7 @@ class TestScenarioRunServiceStartRun:
             request=_make_request(initializers=["target", "load_default_datasets"])
         )
 
-        assert response.status == ScenarioRunStatus.IN_PROGRESS
+        assert response.status == ScenarioRunState.IN_PROGRESS
         assert mock_init_instance.initialize_async.await_count == 2
 
     async def test_start_run_passes_scenario_result_id_for_resume(self, mock_all_registries) -> None:
@@ -459,7 +456,7 @@ class TestScenarioRunServiceStartRun:
 
         response = await service.start_run_async(request=_make_request(scenario_result_id="existing-result-uuid"))
 
-        assert response.status == ScenarioRunStatus.IN_PROGRESS
+        assert response.status == ScenarioRunState.IN_PROGRESS
         mock_sr.create_instance.assert_called_once_with(
             "foundry.red_team_agent", scenario_result_id="existing-result-uuid"
         )
@@ -495,7 +492,7 @@ class TestScenarioRunServiceGetRun:
         assert fetched is not None
         assert fetched.scenario_result_id == "sr-123"
         assert fetched.scenario_name == "foundry.red_team_agent"
-        assert fetched.status == ScenarioRunStatus.IN_PROGRESS
+        assert fetched.status == ScenarioRunState.IN_PROGRESS
 
     def test_get_run_falls_back_to_persisted_error(self, mock_memory) -> None:
         """Test that get_run extracts error from persisted error AttackResult when no active task.
@@ -588,7 +585,7 @@ class TestScenarioRunServiceCancelRun:
             error_type="CancelledError",
         )
         assert result is not None
-        assert result.status == ScenarioRunStatus.CANCELLED
+        assert result.status == ScenarioRunState.CANCELLED
 
     async def test_cancel_completed_run_raises_value_error(self, mock_memory) -> None:
         """Test that cancelling a completed run raises ValueError."""
@@ -741,7 +738,7 @@ class TestScenarioRunServiceProgressReporting:
         fetched = service.get_run(scenario_result_id="sr-running")
 
         assert fetched is not None
-        assert fetched.status == ScenarioRunStatus.IN_PROGRESS
+        assert fetched.status == ScenarioRunState.IN_PROGRESS
         assert fetched.total_attacks == 3
         assert fetched.completed_attacks == 3
         assert fetched.strategies_used == ["attack_a", "attack_b"]
@@ -760,7 +757,7 @@ class TestScenarioRunServiceProgressReporting:
         fetched = service.get_run(scenario_result_id="sr-new")
 
         assert fetched is not None
-        assert fetched.status == ScenarioRunStatus.CREATED
+        assert fetched.status == ScenarioRunState.CREATED
         assert fetched.total_attacks == 0
         assert fetched.completed_attacks == 0
         assert fetched.strategies_used == []
@@ -785,7 +782,7 @@ class TestScenarioRunServiceProgressReporting:
         fetched = service.get_run(scenario_result_id="sr-done")
 
         assert fetched is not None
-        assert fetched.status == ScenarioRunStatus.COMPLETED
+        assert fetched.status == ScenarioRunState.COMPLETED
         assert fetched.total_attacks == 1
         assert fetched.completed_attacks == 1
         assert fetched.strategies_used == ["attack_a"]

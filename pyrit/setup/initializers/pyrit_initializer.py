@@ -16,7 +16,7 @@ from typing import Any
 
 from pyrit.common.apply_defaults import get_global_default_values
 from pyrit.common.deprecation import print_deprecation_message
-from pyrit.common.parameter import Parameter
+from pyrit.models.parameter import Parameter
 
 
 def __getattr__(name: str) -> type:
@@ -79,7 +79,7 @@ class PyRITInitializer(ABC):
     @property
     def description(self) -> str:
         """
-        Get a description of what this initializer configures.
+        A description of what this initializer configures.
 
         By default, extracts the description from the class docstring.
         Falls back to the class name if no docstring is available.
@@ -94,7 +94,7 @@ class PyRITInitializer(ABC):
     @property
     def required_env_vars(self) -> list[str]:
         """
-        Get list of required environment variables for this initializer.
+        Required environment variables for this initializer.
 
         Override this property to specify which environment variables must be
         set for this initializer to work correctly.
@@ -124,7 +124,7 @@ class PyRITInitializer(ABC):
     @property
     def supported_parameters(self) -> list[Parameter]:
         """
-        Get the list of parameters this initializer accepts.
+        The list of parameters this initializer accepts.
 
         Override this property to declare what parameters the initializer
         supports. Parameters are set on self.params before initialize_async() is called.

@@ -54,7 +54,7 @@ class FloatScaleThresholdScorer(TrueFalseScorer):
 
     @property
     def threshold(self) -> float:
-        """Get the threshold value used for score comparison."""
+        """The threshold value used for score comparison."""
         return self._threshold
 
     def _build_identifier(self) -> ComponentIdentifier:
