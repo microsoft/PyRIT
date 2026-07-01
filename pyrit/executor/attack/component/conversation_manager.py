@@ -283,8 +283,6 @@ class ConversationManager:
         For non-chat PromptTarget:
             - Normalizes the prepended conversation to a string and prepends it to
               ``context.next_message`` (using ``config.message_normalizer`` when provided).
-            - If the deprecated ``config.non_chat_target_behavior="raise"`` is set,
-              raises ValueError instead. This option is deprecated and will be removed in v0.16.0.
 
         Args:
             context: The attack context to initialize.
@@ -354,21 +352,10 @@ class ConversationManager:
 
         Returns:
             Empty ConversationState (non-chat targets don't track turns).
-
-        Raises:
-            ValueError: If config requires raising for non-chat targets.
         """
         if config is None:
             config = PrependedConversationConfig()
 
-        if config.non_chat_target_behavior == "raise":
-            raise ValueError(
-                "prepended_conversation requires the objective target to support multi-turn "
-                "conversations with editable history. The current target does not. Note that "
-                "the non_chat_target_behavior parameter is deprecated and will be removed in "
-                "v0.16.0; non-chat targets will then always normalize the prepended conversation "
-                "into the first turn."
-            )
         # Normalize conversation to string
         normalizer = config.get_message_normalizer()
         normalized_context = await normalizer.normalize_string_async(prepended_conversation)

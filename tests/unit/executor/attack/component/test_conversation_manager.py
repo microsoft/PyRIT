@@ -993,33 +993,6 @@ class TestPrependedConversationConfigSettings:
         text_value = context.next_message.get_piece().original_value
         assert len(text_value) > 0
 
-    async def test_non_chat_target_behavior_raise_explicit(
-        self,
-        attack_identifier: ComponentIdentifier,
-        mock_prompt_target: MagicMock,
-        sample_conversation: list[Message],
-    ) -> None:
-        """Test that non_chat_target_behavior='raise' raises ValueError."""
-        manager = ConversationManager()
-        conversation_id = str(uuid.uuid4())
-        context = _TestAttackContext(params=AttackParameters(objective="Test objective"))
-        context.prepended_conversation = sample_conversation
-
-        with pytest.warns(DeprecationWarning, match="non_chat_target_behavior"):
-            config = PrependedConversationConfig(non_chat_target_behavior="raise")
-
-        with pytest.raises(
-            ValueError,
-            match="prepended_conversation requires the objective target to support multi-turn conversations"
-            " with editable history",
-        ):
-            await manager.initialize_context_async(
-                context=context,
-                target=mock_prompt_target,
-                conversation_id=conversation_id,
-                prepended_conversation_config=config,
-            )
-
     async def test_non_chat_target_behavior_normalize_first_turn_creates_next_message(
         self,
         attack_identifier: ComponentIdentifier,
@@ -1284,72 +1257,22 @@ class TestPrependedConversationConfigSettings:
         assert "CUSTOM_FORMAT: test content" in text_value
 
     # -------------------------------------------------------------------------
-    # Factory Methods Tests
-    # -------------------------------------------------------------------------
-
-    def test_default_factory_creates_raise_behavior(self) -> None:
-        """Test that PrependedConversationConfig.default() creates raise behavior."""
-        with pytest.warns(DeprecationWarning, match="PrependedConversationConfig.default\\(\\) is deprecated"):
-            config = PrependedConversationConfig.default()
-
-        assert config.non_chat_target_behavior == "raise"
-        assert config.message_normalizer is None
-        # Should include all roles
-        assert "user" in config.apply_converters_to_roles
-        assert "assistant" in config.apply_converters_to_roles
-        assert "system" in config.apply_converters_to_roles
-
-    def test_for_non_chat_target_factory_creates_normalize_behavior(self) -> None:
-        """Test that for_non_chat_target() creates normalize_first_turn behavior."""
-        with pytest.warns(
-            DeprecationWarning, match="PrependedConversationConfig.for_non_chat_target\\(\\) is deprecated"
-        ):
-            config = PrependedConversationConfig.for_non_chat_target()
-
-        assert config.non_chat_target_behavior == "normalize_first_turn"
-
-    def test_for_non_chat_target_with_custom_normalizer(self) -> None:
-        """Test that for_non_chat_target() accepts custom message_normalizer."""
-        from pyrit.message_normalizer import MessageStringNormalizer
-
-        mock_normalizer = MagicMock(spec=MessageStringNormalizer)
-        with pytest.warns(
-            DeprecationWarning, match="PrependedConversationConfig.for_non_chat_target\\(\\) is deprecated"
-        ):
-            config = PrependedConversationConfig.for_non_chat_target(message_normalizer=mock_normalizer)
-
-        assert config.message_normalizer == mock_normalizer
-        assert config.non_chat_target_behavior == "normalize_first_turn"
-
-    def test_for_non_chat_target_with_custom_roles(self) -> None:
-        """Test that for_non_chat_target() accepts custom apply_converters_to_roles."""
-        with pytest.warns(
-            DeprecationWarning, match="PrependedConversationConfig.for_non_chat_target\\(\\) is deprecated"
-        ):
-            config = PrependedConversationConfig.for_non_chat_target(apply_converters_to_roles=["user"])
-
-        assert config.apply_converters_to_roles == ["user"]
-        assert config.non_chat_target_behavior == "normalize_first_turn"
-
-    # -------------------------------------------------------------------------
     # Chat Target Behavior (Config has no effect)
     # -------------------------------------------------------------------------
 
-    async def test_chat_target_ignores_non_chat_target_behavior(
+    async def test_chat_target_adds_prepended_conversation(
         self,
         attack_identifier: ComponentIdentifier,
         mock_chat_target: MagicMock,
         sample_conversation: list[Message],
     ) -> None:
-        """Test that chat targets ignore non_chat_target_behavior setting."""
+        """Test that chat targets add the prepended conversation to memory."""
         manager = ConversationManager()
         conversation_id = str(uuid.uuid4())
         context = _TestAttackContext(params=AttackParameters(objective="Test objective"))
         context.prepended_conversation = sample_conversation
 
-        # Even with raise behavior, chat targets should work
-        with pytest.warns(DeprecationWarning, match="non_chat_target_behavior"):
-            config = PrependedConversationConfig(non_chat_target_behavior="raise")
+        config = PrependedConversationConfig()
 
         state = await manager.initialize_context_async(
             context=context,
