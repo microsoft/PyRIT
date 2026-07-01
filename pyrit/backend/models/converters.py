@@ -11,7 +11,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from pyrit.models import PromptDataType
+from pyrit.models import JSONValue, PromptDataType
 
 __all__ = [
     "ConverterCatalogEntry",
@@ -83,7 +83,7 @@ class ConverterInstance(BaseModel):
     supported_output_types: list[str] = Field(
         default_factory=list, description="Output data types produced by this converter"
     )
-    converter_specific_params: dict[str, Any] | None = Field(
+    converter_specific_params: dict[str, JSONValue] | None = Field(
         None, description="Additional converter-specific parameters"
     )
     sub_converter_ids: list[str] | None = Field(

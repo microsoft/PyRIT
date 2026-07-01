@@ -17,9 +17,9 @@ REST clients (the CLI today, future external clients tomorrow). Because it
 generated OpenAPI schema.
 """
 
-from typing import Any
-
 from pydantic import BaseModel, Field
+
+from pyrit.models.identifiers.component_identifier import JSONValue
 
 
 class TargetCapabilitiesInfo(BaseModel):
@@ -68,7 +68,9 @@ class TargetInstance(BaseModel):
     top_p: float | None = Field(None, description="Top-p parameter for generation")
     max_requests_per_minute: int | None = Field(None, description="Maximum requests per minute")
     capabilities: TargetCapabilitiesInfo = Field(..., description="Structured snapshot of target capabilities")
-    target_specific_params: dict[str, Any] | None = Field(None, description="Additional target-specific parameters")
+    target_specific_params: dict[str, JSONValue] | None = Field(
+        None, description="Additional target-specific parameters"
+    )
     inner_targets: list["TargetInstance"] | None = Field(
         None, description="Inner targets for composite targets like RoundRobinTarget"
     )

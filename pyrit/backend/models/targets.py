@@ -9,11 +9,12 @@ live in ``pyrit.models.catalog.target`` and should be imported from there
 directly.
 """
 
-from typing import Any, Literal
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
 from pyrit.backend.models.common import PaginationInfo
+from pyrit.models import JSONValue
 from pyrit.models.catalog.target import TargetInstance
 
 __all__ = [
@@ -33,7 +34,7 @@ class CreateTargetRequest(BaseModel):
     """Request to create a new target instance."""
 
     type: str = Field(..., description="Target type (e.g., 'OpenAIChatTarget')")
-    params: dict[str, Any] = Field(default_factory=dict, description="Target constructor parameters")
+    params: dict[str, JSONValue] = Field(default_factory=dict, description="Target constructor parameters")
     auth_mode: Literal["api_key", "entra"] = Field(
         "api_key",
         description=(
