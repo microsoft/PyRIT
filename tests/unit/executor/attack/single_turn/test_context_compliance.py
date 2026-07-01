@@ -568,7 +568,7 @@ class TestContextComplianceAttackExecution:
             call_args = mock_prompt_normalizer.send_prompt_async.call_args
 
             assert call_args.kwargs["target"] == attack._adversarial_chat
-            assert call_args.kwargs["labels"] == basic_context.memory_labels
+            assert call_args.kwargs["message"].message_pieces[0].labels == basic_context.memory_labels
 
             # Verify message was created correctly (converted from seed group)
             message = call_args.kwargs["message"]
@@ -615,7 +615,7 @@ class TestContextComplianceAttackExecution:
             call_args = mock_prompt_normalizer.send_prompt_async.call_args
 
             assert call_args.kwargs["target"] == attack._adversarial_chat
-            assert call_args.kwargs["labels"] == basic_context.memory_labels
+            assert call_args.kwargs["message"].message_pieces[0].labels == basic_context.memory_labels
 
             # Verify template was rendered with benign request
             mock_seed_dataset.seeds[1].render_template_value.assert_called_once_with(benign_request=benign_query)
@@ -655,7 +655,7 @@ class TestContextComplianceAttackExecution:
             call_args = mock_prompt_normalizer.send_prompt_async.call_args
 
             assert call_args.kwargs["target"] == attack._adversarial_chat
-            assert call_args.kwargs["labels"] == basic_context.memory_labels
+            assert call_args.kwargs["message"].message_pieces[0].labels == basic_context.memory_labels
 
             # Verify template was rendered
             mock_seed_dataset.seeds[2].render_template_value.assert_called_once_with(objective=basic_context.objective)

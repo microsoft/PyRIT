@@ -199,7 +199,7 @@ class _OpenAIRealtimeStreamingSession:
         try:
             await self._send_streaming_session_config_async()
             if self._persist_prepended_conversation:
-                await self._prompt_normalizer.add_prepended_conversation_to_memory(
+                await self._prompt_normalizer.add_prepended_conversation_to_memory_async(
                     conversation_id=self._conversation_id,
                     should_convert=False,
                     prepended_conversation=self._prepended_conversation,
@@ -435,7 +435,7 @@ class _OpenAIRealtimeStreamingSession:
         assistant_message = Message(message_pieces=[assistant_text_piece, assistant_audio_piece])
 
         if self._response_converter_configurations:
-            await self._prompt_normalizer.convert_values(
+            await self._prompt_normalizer.convert_values_async(
                 converter_configurations=self._response_converter_configurations,
                 message=assistant_message,
             )

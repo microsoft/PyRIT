@@ -18,7 +18,7 @@ Helper functions include:
 """
 
 import uuid
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from unit.mocks import get_mock_scorer_identifier
@@ -348,36 +348,6 @@ class TestGetAdversarialChatMessages:
 
         assert result == []
 
-    def test_applies_labels(self) -> None:
-        """Test that labels are applied to transformed messages."""
-        piece = MessagePiece(role="user", original_value="Message", conversation_id="original")
-        messages = [Message(message_pieces=[piece])]
-        labels = {"category": "test", "source": "unit_test"}
-
-        result = get_adversarial_chat_messages(
-            messages,
-            adversarial_chat_conversation_id="adversarial_conv",
-            labels=labels,
-        )
-
-        assert result[0].get_piece().labels == labels
-
-    def test_labels_emit_deprecation_warning(self) -> None:
-        """Test that passing labels emits deprecation warning."""
-        piece = MessagePiece(role="user", original_value="Message", conversation_id="original")
-        messages = [Message(message_pieces=[piece])]
-
-        with patch(
-            "pyrit.executor.attack.component.conversation_manager.print_deprecation_message"
-        ) as mock_deprecation:
-            get_adversarial_chat_messages(
-                messages,
-                adversarial_chat_conversation_id="adversarial_conv",
-                labels={"env": "prod"},
-            )
-
-        mock_deprecation.assert_called_once()
-
 
 class TestBuildConversationContextStringAsync:
     """Tests for the build_conversation_context_string_async helper function."""
@@ -613,56 +583,17 @@ class TestSystemPromptHandling:
         manager = ConversationManager()
         conversation_id = str(uuid.uuid4())
         system_prompt = "You are a helpful assistant"
-        labels = {"type": "system"}
 
         manager.set_system_prompt(
             target=mock_chat_target,
             conversation_id=conversation_id,
             system_prompt=system_prompt,
-            labels=labels,
         )
 
         mock_chat_target.set_system_prompt.assert_called_once_with(
             system_prompt=system_prompt,
             conversation_id=conversation_id,
-            labels=labels,
         )
-
-    def test_set_system_prompt_without_labels(
-        self, attack_identifier: ComponentIdentifier, mock_chat_target: MagicMock
-    ) -> None:
-        """Test set_system_prompt works without labels."""
-        manager = ConversationManager()
-        conversation_id = str(uuid.uuid4())
-        system_prompt = "You are a helpful assistant"
-
-        manager.set_system_prompt(
-            target=mock_chat_target,
-            conversation_id=conversation_id,
-            system_prompt=system_prompt,
-        )
-
-        mock_chat_target.set_system_prompt.assert_called_once()
-        call_args = mock_chat_target.set_system_prompt.call_args
-        assert call_args.kwargs["labels"] is None
-
-    def test_set_system_prompt_labels_emit_deprecation_warning(
-        self, attack_identifier: ComponentIdentifier, mock_chat_target: MagicMock
-    ) -> None:
-        """Test that passing labels emits deprecation warning."""
-        manager = ConversationManager()
-
-        with patch(
-            "pyrit.executor.attack.component.conversation_manager.print_deprecation_message"
-        ) as mock_deprecation:
-            manager.set_system_prompt(
-                target=mock_chat_target,
-                conversation_id=str(uuid.uuid4()),
-                system_prompt="You are a helpful assistant",
-                labels={"type": "system"},
-            )
-
-        mock_deprecation.assert_called_once()
 
 
 # =============================================================================

@@ -278,7 +278,6 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
         self._adversarial_chat.set_system_prompt(
             system_prompt=adversarial_system_prompt,
             conversation_id=context.session.adversarial_chat_conversation_id,
-            labels=context.memory_labels,  # deprecated
         )
 
         # Set up adversarial chat with prepended conversation
@@ -287,8 +286,11 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
             adversarial_messages = get_adversarial_chat_messages(
                 prepended_conversation=context.prepended_conversation,
                 adversarial_chat_conversation_id=context.session.adversarial_chat_conversation_id,
-                labels=context.memory_labels,
             )
+            if context.memory_labels:
+                for msg in adversarial_messages:
+                    for piece in msg.message_pieces:
+                        piece.labels = context.memory_labels
 
             self._memory.add_conversation_to_memory(
                 conversation=Conversation(
@@ -405,6 +407,9 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
         # Send the prompt to the adversarial chat and get the response
         logger.debug(f"Sending prompt to adversarial chat: {prompt_text[:50]}...")
         prompt_message = Message.from_prompt(prompt=prompt_text, role="user")
+        if context.memory_labels:
+            for piece in prompt_message.message_pieces:
+                piece.labels = context.memory_labels
 
         with execution_context(
             component_role=ComponentRole.ADVERSARIAL_CHAT,
@@ -417,7 +422,6 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
                 message=prompt_message,
                 conversation_id=context.session.adversarial_chat_conversation_id,
                 target=self._adversarial_chat,
-                labels=context.memory_labels,
             )
 
         # Check if the response is valid
@@ -574,13 +578,15 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
             objective=context.objective,
         ):
             # Send the message to the target
+            if context.memory_labels:
+                for piece in message.message_pieces:
+                    piece.labels = context.memory_labels
             response = await self._prompt_normalizer.send_prompt_async(
                 message=message,
                 conversation_id=context.session.conversation_id,
                 request_converter_configurations=self._request_converters,
                 response_converter_configurations=self._response_converters,
                 target=self._objective_target,
-                labels=context.memory_labels,
             )
 
         if response is None:

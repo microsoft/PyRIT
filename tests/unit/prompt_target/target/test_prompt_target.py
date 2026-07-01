@@ -60,7 +60,6 @@ def test_set_system_prompt(azure_openai_target: OpenAIChatTarget, mock_attack_st
     azure_openai_target.set_system_prompt(
         system_prompt="system prompt",
         conversation_id="1",
-        labels={},
     )
 
     chats = azure_openai_target._memory.get_message_pieces(conversation_id="1")
@@ -69,26 +68,12 @@ def test_set_system_prompt(azure_openai_target: OpenAIChatTarget, mock_attack_st
     assert chats[0].converted_value == "system prompt"
 
 
-def test_set_system_prompt_attack_identifier_emits_deprecation_warning(
-    azure_openai_target: OpenAIChatTarget, mock_attack_strategy: AttackStrategy
-):
-    with patch("pyrit.prompt_target.common.prompt_target.print_deprecation_message") as mock_deprecation:
-        azure_openai_target.set_system_prompt(
-            system_prompt="system prompt",
-            conversation_id="1",
-            attack_identifier=mock_attack_strategy.get_identifier(),
-        )
-
-    mock_deprecation.assert_called_once()
-
-
 async def test_set_system_prompt_adds_memory(
     azure_openai_target: OpenAIChatTarget, mock_attack_strategy: AttackStrategy
 ):
     azure_openai_target.set_system_prompt(
         system_prompt="system prompt",
         conversation_id="1",
-        labels={},
     )
 
     chats = azure_openai_target._memory.get_message_pieces(conversation_id="1")
@@ -121,7 +106,6 @@ async def test_send_prompt_with_system_calls_chat_complete(
         azure_openai_target.set_system_prompt(
             system_prompt="system prompt",
             conversation_id="1",
-            labels={},
         )
 
         request = sample_entries[0]

@@ -955,52 +955,6 @@ class TestRequestToPyritMessage:
         assert result.message_pieces[0].conversation_id == "conv-1"
         assert result.message_pieces[0].sequence == 0
 
-    def test_labels_emit_deprecation_warning(self) -> None:
-        """Test that passing labels emits deprecation warning through mapper helper."""
-        request = MagicMock()
-        request.role = "user"
-        piece = MagicMock()
-        piece.data_type = "text"
-        piece.original_value = "hello"
-        piece.converted_value = None
-        piece.prompt_metadata = None
-        piece.mime_type = None
-        piece.original_prompt_id = None
-        request.pieces = [piece]
-
-        with patch("pyrit.backend.mappers.attack_mappers.print_deprecation_message") as mock_deprecation:
-            request_to_pyrit_message(
-                request=request,
-                conversation_id="conv-1",
-                sequence=0,
-                labels={"env": "prod"},
-            )
-
-        assert mock_deprecation.call_count == 2
-
-    def test_empty_labels_no_deprecation_warning(self) -> None:
-        """An explicit empty ``labels={}`` (forwarded on the happy path) must not warn."""
-        request = MagicMock()
-        request.role = "user"
-        piece = MagicMock()
-        piece.data_type = "text"
-        piece.original_value = "hello"
-        piece.converted_value = None
-        piece.prompt_metadata = None
-        piece.mime_type = None
-        piece.original_prompt_id = None
-        request.pieces = [piece]
-
-        with patch("pyrit.backend.mappers.attack_mappers.print_deprecation_message") as mock_deprecation:
-            request_to_pyrit_message(
-                request=request,
-                conversation_id="conv-1",
-                sequence=0,
-                labels={},
-            )
-
-        mock_deprecation.assert_not_called()
-
 
 class TestRequestPieceToPyritMessagePiece:
     """Tests for request_piece_to_pyrit_message_piece function."""
@@ -1100,68 +1054,6 @@ class TestRequestPieceToPyritMessagePiece:
         )
 
         assert result.prompt_metadata == {}
-
-    def test_labels_are_stamped_on_piece(self) -> None:
-        """Test that labels are passed through to the MessagePiece."""
-        piece = MagicMock()
-        piece.data_type = "text"
-        piece.original_value = "hello"
-        piece.converted_value = None
-        piece.mime_type = None
-        piece.prompt_metadata = None
-        piece.original_prompt_id = None
-
-        result = request_piece_to_pyrit_message_piece(
-            piece=piece,
-            role="user",
-            conversation_id="conv-1",
-            sequence=0,
-            labels={"env": "prod"},
-        )
-
-        assert result.labels == {"env": "prod"}
-
-    def test_labels_emit_deprecation_warning(self) -> None:
-        """Test that passing labels emits deprecation warning."""
-        piece = MagicMock()
-        piece.data_type = "text"
-        piece.original_value = "hello"
-        piece.converted_value = None
-        piece.mime_type = None
-        piece.prompt_metadata = None
-        piece.original_prompt_id = None
-
-        with patch("pyrit.backend.mappers.attack_mappers.print_deprecation_message") as mock_deprecation:
-            request_piece_to_pyrit_message_piece(
-                piece=piece,
-                role="user",
-                conversation_id="conv-1",
-                sequence=0,
-                labels={"env": "prod"},
-            )
-
-        mock_deprecation.assert_called_once()
-
-    def test_empty_labels_no_deprecation_warning(self) -> None:
-        """An explicit empty ``labels={}`` (forwarded on the happy path) must not warn."""
-        piece = MagicMock()
-        piece.data_type = "text"
-        piece.original_value = "hello"
-        piece.converted_value = None
-        piece.mime_type = None
-        piece.prompt_metadata = None
-        piece.original_prompt_id = None
-
-        with patch("pyrit.backend.mappers.attack_mappers.print_deprecation_message") as mock_deprecation:
-            request_piece_to_pyrit_message_piece(
-                piece=piece,
-                role="user",
-                conversation_id="conv-1",
-                sequence=0,
-                labels={},
-            )
-
-        mock_deprecation.assert_not_called()
 
     def test_labels_default_to_empty_dict(self) -> None:
         """Test that labels default to empty dict when not provided."""
