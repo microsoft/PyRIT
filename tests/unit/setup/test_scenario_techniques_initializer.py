@@ -35,10 +35,10 @@ PERSONA_CRESCENDO_TECHNIQUE_NAMES: list[str] = [
 def reset_registries():
     """Reset technique and target registries between tests."""
     AttackTechniqueRegistry.reset_registry_singleton()
-    TargetRegistry.reset_instance()
+    TargetRegistry.reset_registry_singleton()
     yield
     AttackTechniqueRegistry.reset_registry_singleton()
-    TargetRegistry.reset_instance()
+    TargetRegistry.reset_registry_singleton()
 
 
 @pytest.fixture
@@ -48,7 +48,7 @@ def mock_adversarial_target():
     # capabilities check inside get_default_adversarial_target requires multi_turn support
     target.capabilities.includes.return_value = True
     registry = TargetRegistry.get_registry_singleton()
-    registry.register_instance(target, name="adversarial_chat")
+    registry.instances.register(target, name="adversarial_chat")
     return target
 
 

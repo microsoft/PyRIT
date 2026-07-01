@@ -106,7 +106,6 @@ initializers:
         - default
         - scorer
   - name: scorer
-  - name: load_default_datasets
 ```
 ::::
 

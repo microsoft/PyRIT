@@ -4,6 +4,10 @@ applyTo: "pyrit/prompt_target/**"
 
 # Prompt Target Development Guidelines
 
+**Responsibility**: A prompt target is "the thing we're sending the prompt to" — often an LLM, but it can be any endpoint (e.g. a storage account for cross-domain prompt injection). Targets use `message_normalizer` together with `TargetConfiguration` to transform `Message`s into the format the target supports.
+
+**Does not own** (see [framework.md](../../doc/code/framework.md)): what to send or what to do with the response. A target sends a prepared `Message` and returns a response; it must not convert prompts (converters), score (scorers), or manage the conversation / decide the next turn (attacks). Flag such bleed in review.
+
 ## Base Class Contract
 
 All targets MUST inherit from ``PromptTarget`` (or one of its public

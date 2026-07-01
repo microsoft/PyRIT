@@ -32,6 +32,7 @@ from pyrit.common.cli_helpers import (
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from pyrit.models.catalog import ScenarioParameterSummary
     from pyrit.models.parameter import Parameter
     from pyrit.setup.configuration_loader import ScenarioConfig
 
@@ -655,7 +656,7 @@ def extract_scenario_args(*, parsed: dict[str, Any]) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def build_parameters_from_api(*, api_params: list[dict[str, Any]]) -> list[Parameter] | None:
+def build_parameters_from_api(*, api_params: list[ScenarioParameterSummary]) -> list[Parameter] | None:
     """
     Build ``Parameter`` objects from a scenario catalog's ``supported_parameters``.
 
@@ -666,7 +667,7 @@ def build_parameters_from_api(*, api_params: list[dict[str, Any]]) -> list[Param
     of truth for an allowed set) — typed by the same base scalar.
 
     Args:
-        api_params: List of parameter dicts from ``GET /api/scenarios/catalog/{name}``.
+        api_params: Scenario-declared parameters from ``GET /api/scenarios/catalog/{name}``.
 
     Returns:
         list[Parameter] | None: Parameter list when ``api_params`` is non-empty, else ``None``.
@@ -678,26 +679,24 @@ def build_parameters_from_api(*, api_params: list[dict[str, Any]]) -> list[Param
     type_map: dict[str, Any] = {"int": int, "float": float, "bool": bool, "str": str}
     parameters: list[Parameter] = []
     for p in api_params:
-        type_display = p.get("param_type", "")
-        is_list = bool(p.get("is_list"))
-        base_name = type_display.removeprefix("list[").rstrip("]") if is_list else type_display
+        type_display = p.param_type
+        base_name = type_display.removeprefix("list[").rstrip("]") if p.is_list else type_display
         base_type = type_map.get(base_name, str)
 
-        raw_choices = p.get("choices")
-        if raw_choices:
-            choice_param = Parameter(name=p["name"], description="", param_type=base_type)
-            members = tuple(choice_param.coerce_value(c) for c in raw_choices)
+        if p.choices:
+            choice_param = Parameter(name=p.name, description="", param_type=base_type)
+            members = tuple(choice_param.coerce_value(c) for c in p.choices)
             element_type: Any = Literal[members]  # ty: ignore[invalid-type-form]
         else:
-            element_type = type_map.get(base_name) if is_list else type_map.get(type_display)
+            element_type = type_map.get(base_name) if p.is_list else type_map.get(type_display)
 
-        resolved_type: Any = list[element_type] if is_list else element_type  # type: ignore[valid-type]
+        resolved_type: Any = list[element_type] if p.is_list else element_type  # type: ignore[valid-type]
         parameters.append(
             Parameter(
-                name=p["name"],
-                description=p.get("description", ""),
+                name=p.name,
+                description=p.description,
                 param_type=resolved_type,
-                default=p.get("default"),
+                default=p.default,
             )
         )
     return parameters

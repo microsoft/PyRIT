@@ -864,7 +864,7 @@ class TestGetDefaultObjectiveScorer:
         mock_entry.instance = mock_scorer
 
         mock_registry = MagicMock()
-        mock_registry.get_by_tag.return_value = [mock_entry]
+        mock_registry.instances.get_by_tag.return_value = [mock_entry]
         mock_registry_cls.get_registry_singleton.return_value = mock_registry
 
         # Mock self with _get_additional_scoring_questions returning empty sequence
@@ -881,7 +881,7 @@ class TestGetDefaultObjectiveScorer:
         from pyrit.score import TrueFalseInverterScorer
 
         mock_registry = MagicMock()
-        mock_registry.get_by_tag.return_value = []
+        mock_registry.instances.get_by_tag.return_value = []
         mock_registry_cls.get_registry_singleton.return_value = mock_registry
 
         # Mock self with _get_additional_scoring_questions returning empty sequence

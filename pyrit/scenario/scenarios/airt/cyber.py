@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 
 from pyrit.common import apply_defaults
 from pyrit.common.path import SCORER_SEED_PROMPT_PATH
-from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
+from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
 from pyrit.scenario.core.scenario import Scenario
 
 if TYPE_CHECKING:
@@ -99,6 +99,6 @@ class Cyber(Scenario):
             objective_scorer=self._objective_scorer,
             strategy_class=strategy_class,
             default_strategy=strategy_class("all"),
-            default_dataset_config=DatasetConfiguration(dataset_names=["airt_malware"], max_dataset_size=4),
+            default_dataset_config=DatasetAttackConfiguration(dataset_names=["airt_malware"], max_dataset_size=4),
             scenario_result_id=scenario_result_id,
         )

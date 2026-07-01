@@ -20,7 +20,7 @@ from pyrit.registry.components.attack_technique_registry import (
 )
 from pyrit.registry.tag_query import TagQuery
 from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
-from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
+from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
 from pyrit.scenario.core.scenario import Scenario
 from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
 
@@ -139,7 +139,7 @@ class Leakage(Scenario):
             version=self.VERSION,
             strategy_class=strategy_class,
             default_strategy=strategy_class("default"),
-            default_dataset_config=DatasetConfiguration(dataset_names=["airt_leakage"], max_dataset_size=4),
+            default_dataset_config=DatasetAttackConfiguration(dataset_names=["airt_leakage"], max_dataset_size=4),
             objective_scorer=objective_scorer,
             scenario_result_id=scenario_result_id,
         )

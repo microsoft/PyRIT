@@ -6,6 +6,8 @@ applyTo: "pyrit/executor/attack/**"
 
 `AttackStrategy` subclasses (single-turn attacks like `PromptSendingAttack`, multi-turn attacks like `RedTeamingAttack`, etc.) are pluggable bricks orchestrated by `AttackExecutor` and the `Scenario` framework. Style rules from `style-guide.instructions.md` (async `_async` suffix, keyword-only args, type hints, enums-over-Literals) still apply and are not repeated here.
 
+**Does not own** (see [framework.md](../../doc/code/framework.md)): packaging the attack. Prepended/system prompts, role-play framing, the converter stack, and dataset selection are passed in as configuration by the **attack technique** — an attack must accept them as parameters, not assemble them itself (e.g. `RolePlayAttack` building its own prompt scaffolding is attack-technique work bleeding into the executor). It also must not branch on raw responses (use a scorer), construct its own components (use the registry), or format/persist results itself (output/memory). Flag such bleed in review.
+
 ## Constructor contract
 
 `AttackStrategy` subclasses MUST follow the keyword-only constructor shape:

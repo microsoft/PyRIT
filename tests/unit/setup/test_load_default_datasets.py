@@ -24,16 +24,16 @@ from pyrit.setup.initializers.scenarios.load_default_datasets import LoadDefault
 def populated_technique_registry():
     """Populate the technique + target registries so scenario metadata building succeeds."""
     AttackTechniqueRegistry.reset_registry_singleton()
-    TargetRegistry.reset_instance()
+    TargetRegistry.reset_registry_singleton()
 
     adv_target = MagicMock(spec=PromptTarget)
     adv_target.capabilities.includes.return_value = True
-    TargetRegistry.get_registry_singleton().register_instance(adv_target, name="adversarial_chat")
+    TargetRegistry.get_registry_singleton().instances.register(adv_target, name="adversarial_chat")
 
     AttackTechniqueRegistry.get_registry_singleton().register_from_factories(build_scenario_technique_factories())
     yield
     AttackTechniqueRegistry.reset_registry_singleton()
-    TargetRegistry.reset_instance()
+    TargetRegistry.reset_registry_singleton()
 
 
 @dataclass

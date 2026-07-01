@@ -144,6 +144,87 @@ async def test_send_prompt_async(
     mock_upload_blob.assert_awaited_once()
 
 
+async def test_create_container_client_uses_sas_token(azure_blob_storage_target: AzureBlobStorageTarget):
+    container_url, _ = azure_blob_storage_target._parse_url()
+
+    with patch.object(AsyncContainerClient, "from_container_url", return_value=AsyncMock()) as mock_from_container_url:
+        await azure_blob_storage_target._create_container_client_async()
+
+    mock_from_container_url.assert_called_once_with(container_url=container_url, credential="valid_sas_token")
+    assert azure_blob_storage_target._credential is None
+
+
+def test_parse_url_raises_for_url_without_container(patch_central_database):
+    target = AzureBlobStorageTarget(
+        container_url="https://test.blob.core.windows.net",
+        sas_token="valid_sas_token",
+    )
+
+    with pytest.raises(ValueError, match="expected a container name"):
+        target._parse_url()
+
+
+@patch.dict("os.environ", {AzureBlobStorageTarget.SAS_TOKEN_ENVIRONMENT_VARIABLE: ""})
+async def test_create_container_client_uses_default_credential_when_no_sas_token(patch_central_database):
+    target = AzureBlobStorageTarget(container_url="https://test.blob.core.windows.net/test")
+
+    mock_container_client = AsyncMock()
+    mock_credential = AsyncMock()
+
+    with (
+        patch(
+            "pyrit.prompt_target.azure_blob_storage_target.DefaultAzureCredential", return_value=mock_credential
+        ) as mock_credential_cls,
+        patch(
+            "pyrit.prompt_target.azure_blob_storage_target.AsyncContainerClient", return_value=mock_container_client
+        ) as mock_container_cls,
+    ):
+        await target._create_container_client_async()
+
+    mock_credential_cls.assert_called_once()
+    mock_container_cls.assert_called_once_with(
+        account_url="https://test.blob.core.windows.net",
+        container_name="test",
+        credential=mock_credential,
+    )
+    assert target._client_async is mock_container_client
+    assert target._credential is mock_credential
+
+
+async def test_close_client_async_closes_credential_and_client(azure_blob_storage_target: AzureBlobStorageTarget):
+    mock_client = AsyncMock()
+    mock_credential = AsyncMock()
+    azure_blob_storage_target._client_async = mock_client
+    azure_blob_storage_target._credential = mock_credential
+
+    await azure_blob_storage_target._close_client_async()
+
+    mock_client.close.assert_awaited_once()
+    mock_credential.close.assert_awaited_once()
+    assert azure_blob_storage_target._client_async is None
+    assert azure_blob_storage_target._credential is None
+
+
+async def test_upload_blob_async_closes_client_and_credential(azure_blob_storage_target: AzureBlobStorageTarget):
+    mock_client = AsyncMock()
+    mock_client.get_blob_client = MagicMock(return_value=AsyncMock())
+    mock_credential = AsyncMock()
+
+    async def _set_client() -> None:
+        azure_blob_storage_target._client_async = mock_client
+        azure_blob_storage_target._credential = mock_credential
+
+    with patch.object(AzureBlobStorageTarget, "_create_container_client_async", side_effect=_set_client):
+        await azure_blob_storage_target._upload_blob_async(
+            file_name="test.txt", data=b"hello", content_type="text/plain"
+        )
+
+    mock_client.close.assert_awaited_once()
+    mock_credential.close.assert_awaited_once()
+    assert azure_blob_storage_target._client_async is None
+    assert azure_blob_storage_target._credential is None
+
+
 async def test_upload_blob_async_raises_when_client_async_none(azure_blob_storage_target: AzureBlobStorageTarget):
     """Guard at line 169: _client_async is None after _create_container_client_async still leaves it None."""
     azure_blob_storage_target._client_async = None

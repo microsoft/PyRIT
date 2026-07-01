@@ -6,6 +6,8 @@ applyTo: "pyrit/score/**"
 
 Scorers evaluate model responses against an objective and live under `pyrit/score/`. Style rules from `style-guide.instructions.md` (async `_async` suffix, keyword-only args, type hints, enums-over-Literals) still apply and are not repeated here.
 
+**Does not own** (see [framework.md](../../doc/code/framework.md)): acting on its own result. A scorer evaluates a response and returns a score; branching on that score is the attack's job and aggregating scores across runs is analytics'. It may call a target to evaluate, but must not send the attack's objective prompt or manage the conversation. Flag such bleed in review.
+
 ## Constructor contract
 
 `Scorer` subclasses MUST use the keyword-only constructor shape:

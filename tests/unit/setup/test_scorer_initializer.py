@@ -54,14 +54,14 @@ class TestScorerInitializerInitialize:
 
     def setup_method(self) -> None:
         """Reset registries before each test."""
-        ScorerRegistry.reset_instance()
-        TargetRegistry.reset_instance()
+        ScorerRegistry.reset_registry_singleton()
+        TargetRegistry.reset_registry_singleton()
         self._clear_env_vars()
 
     def teardown_method(self) -> None:
         """Clean up after each test."""
-        ScorerRegistry.reset_instance()
-        TargetRegistry.reset_instance()
+        ScorerRegistry.reset_registry_singleton()
+        TargetRegistry.reset_registry_singleton()
         self._clear_env_vars()
 
     def _clear_env_vars(self) -> None:
@@ -92,7 +92,7 @@ class TestScorerInitializerInitialize:
             },
         )
         registry = TargetRegistry.get_registry_singleton()
-        registry.register_instance(target, name=name)
+        registry.instances.register(target, name=name)
         return target
 
     def _register_all_scorer_targets(self) -> None:
@@ -121,7 +121,7 @@ class TestScorerInitializerInitialize:
         await init.initialize_async()
 
         registry = ScorerRegistry.get_registry_singleton()
-        assert len(registry) == 28
+        assert len(registry.instances) == 28
 
     async def test_registers_gpt4o_scorers_when_only_gpt4o_targets(self) -> None:
         """Test that GPT4O-based scorers register when only GPT4O targets are available."""
@@ -133,9 +133,9 @@ class TestScorerInitializerInitialize:
 
         registry = ScorerRegistry.get_registry_singleton()
         # Normal mode: falls back to gpt4o refusal
-        assert registry.get_instance_by_name("refusal_gpt4o_objective_strict") is not None
+        assert registry.instances.get("refusal_gpt4o_objective_strict") is not None
         # inverted_refusal uses the gpt4o refusal fallback
-        assert registry.get_instance_by_name("inverted_refusal") is not None
+        assert registry.instances.get("inverted_refusal") is not None
 
     async def test_refusal_scorers_registered(self) -> None:
         """Test that refusal scorers are registered when gpt4o target is available."""
@@ -145,7 +145,7 @@ class TestScorerInitializerInitialize:
         await init.initialize_async()
 
         registry = ScorerRegistry.get_registry_singleton()
-        refusal_entries = registry.get_by_tag(tag=ScorerInitializerTags.REFUSAL)
+        refusal_entries = registry.instances.get_by_tag(tag=ScorerInitializerTags.REFUSAL)
         # 4 gpt4o prompt-template variants (gpt5_4, gpt5_1, unsafe skipped)
         assert len(refusal_entries) == 4
 
@@ -159,10 +159,10 @@ class TestScorerInitializerInitialize:
 
         registry = ScorerRegistry.get_registry_singleton()
         # 3 threshold + 4 harm = 7 ACS total
-        assert registry.get_instance_by_name("acs_threshold_05") is not None
-        assert registry.get_instance_by_name("acs_hate") is not None
+        assert registry.instances.get("acs_threshold_05") is not None
+        assert registry.instances.get("acs_hate") is not None
 
-        acs_entries = registry.get_by_tag(tag=ScorerInitializerTags.ACS)
+        acs_entries = registry.instances.get_by_tag(tag=ScorerInitializerTags.ACS)
         assert len(acs_entries) == 7
 
     async def test_acs_scorers_skipped_without_env_vars(self) -> None:
@@ -173,9 +173,9 @@ class TestScorerInitializerInitialize:
         await init.initialize_async()
 
         registry = ScorerRegistry.get_registry_singleton()
-        assert registry.get_instance_by_name("acs_threshold_01") is None
-        assert registry.get_instance_by_name("acs_threshold_05") is None
-        assert registry.get_instance_by_name("acs_hate") is None
+        assert registry.instances.get("acs_threshold_01") is None
+        assert registry.instances.get("acs_threshold_05") is None
+        assert registry.instances.get("acs_hate") is None
 
     async def test_likert_scorers_registered(self) -> None:
         """Test that likert scorers are registered for LikertScalePaths with evaluation files."""
@@ -188,7 +188,7 @@ class TestScorerInitializerInitialize:
         for scale in LikertScalePaths:
             if scale.evaluation_files is not None:
                 expected_name = f"likert_{scale.name.lower().removesuffix('_scale')}_gpt4o"
-                scorer = registry.get_instance_by_name(expected_name)
+                scorer = registry.instances.get(expected_name)
                 assert scorer is not None, f"Likert scorer '{expected_name}' not found in registry"
 
     async def test_gracefully_skips_scorers_with_missing_target(self) -> None:
@@ -200,11 +200,11 @@ class TestScorerInitializerInitialize:
 
         registry = ScorerRegistry.get_registry_singleton()
         # Refusal variants requiring missing targets should be skipped
-        assert registry.get_instance_by_name("refusal_gpt5_4") is None
-        assert registry.get_instance_by_name("refusal_gpt5_1") is None
-        assert registry.get_instance_by_name("refusal_gpt4o_unsafe") is None
+        assert registry.instances.get("refusal_gpt5_4") is None
+        assert registry.instances.get("refusal_gpt5_1") is None
+        assert registry.instances.get("refusal_gpt4o_unsafe") is None
         # But gpt4o-based ones should register
-        assert registry.get_instance_by_name("refusal_gpt4o_objective_lenient") is not None
+        assert registry.instances.get("refusal_gpt4o_objective_lenient") is not None
 
     async def test_default_tag_registers_all_current_scorers(self) -> None:
         """Test that default tag registers all current scorers."""
@@ -216,7 +216,7 @@ class TestScorerInitializerInitialize:
         await init.initialize_async()
 
         registry = ScorerRegistry.get_registry_singleton()
-        assert len(registry) == 28
+        assert len(registry.instances) == 28
 
 
 class TestScorerInitializerGetInfo:
@@ -238,13 +238,13 @@ class TestScorerInitializerBestObjective:
 
     def setup_method(self) -> None:
         """Reset registries before each test."""
-        ScorerRegistry.reset_instance()
-        TargetRegistry.reset_instance()
+        ScorerRegistry.reset_registry_singleton()
+        TargetRegistry.reset_registry_singleton()
 
     def teardown_method(self) -> None:
         """Clean up after each test."""
-        ScorerRegistry.reset_instance()
-        TargetRegistry.reset_instance()
+        ScorerRegistry.reset_registry_singleton()
+        TargetRegistry.reset_registry_singleton()
 
     def _register_mock_target(self, *, name: str, underlying_model: str = "gpt-4o") -> OpenAIChatTarget:
         """Register a mock OpenAIChatTarget in the TargetRegistry."""
@@ -267,7 +267,7 @@ class TestScorerInitializerBestObjective:
             },
         )
         registry = TargetRegistry.get_registry_singleton()
-        registry.register_instance(target, name=name)
+        registry.instances.register(target, name=name)
         return target
 
     @patch("pyrit.setup.initializers.components.scorers.find_objective_metrics_by_eval_hash")
@@ -283,7 +283,7 @@ class TestScorerInitializerBestObjective:
         await init.initialize_async()
 
         registry = ScorerRegistry.get_registry_singleton()
-        results = registry.get_by_tag(tag=ScorerInitializerTags.BEST_OBJECTIVE)
+        results = registry.instances.get_by_tag(tag=ScorerInitializerTags.BEST_OBJECTIVE)
         assert len(results) >= 1
 
     @patch("pyrit.setup.initializers.components.scorers.find_objective_metrics_by_eval_hash")
@@ -297,9 +297,9 @@ class TestScorerInitializerBestObjective:
 
         registry = ScorerRegistry.get_registry_singleton()
         # Should fall back to tagging a composite scorer as best_objective
-        results = registry.get_by_tag(tag=ScorerInitializerTags.BEST_OBJECTIVE)
+        results = registry.instances.get_by_tag(tag=ScorerInitializerTags.BEST_OBJECTIVE)
         # Falls back to first composite if available (inverted_refusal)
-        composite_entries = registry.get_by_tag(tag=ScorerInitializerTags.OBJECTIVE_COMPOSITE)
+        composite_entries = registry.instances.get_by_tag(tag=ScorerInitializerTags.OBJECTIVE_COMPOSITE)
         if composite_entries:
             assert len(results) >= 1
         else:
@@ -325,7 +325,7 @@ class TestScorerInitializerBestObjective:
         await init.initialize_async()
 
         registry = ScorerRegistry.get_registry_singleton()
-        results = registry.get_by_tag(tag=ScorerInitializerTags.BEST_OBJECTIVE)
+        results = registry.instances.get_by_tag(tag=ScorerInitializerTags.BEST_OBJECTIVE)
         assert len(results) == 1
         assert ScorerInitializerTags.DEFAULT_OBJECTIVE_SCORER in results[0].tags
 
@@ -342,11 +342,11 @@ class TestScorerInitializerBestObjective:
         await init.initialize_async()
 
         registry = ScorerRegistry.get_registry_singleton()
-        count_with_tag = len(registry)
+        count_with_tag = len(registry.instances)
 
         # Reset and run without metrics to get baseline count
-        ScorerRegistry.reset_instance()
-        TargetRegistry.reset_instance()
+        ScorerRegistry.reset_registry_singleton()
+        TargetRegistry.reset_registry_singleton()
         self._register_mock_target(name=GPT4O_TARGET)
         mock_find_metrics.return_value = None
 
@@ -354,7 +354,7 @@ class TestScorerInitializerBestObjective:
         await init2.initialize_async()
 
         registry2 = ScorerRegistry.get_registry_singleton()
-        count_without_tag = len(registry2)
+        count_without_tag = len(registry2.instances)
 
         assert count_with_tag == count_without_tag
 
@@ -369,12 +369,12 @@ class TestScorerInitializerCategoryTags:
     }
 
     def setup_method(self) -> None:
-        ScorerRegistry.reset_instance()
-        TargetRegistry.reset_instance()
+        ScorerRegistry.reset_registry_singleton()
+        TargetRegistry.reset_registry_singleton()
 
     def teardown_method(self) -> None:
-        ScorerRegistry.reset_instance()
-        TargetRegistry.reset_instance()
+        ScorerRegistry.reset_registry_singleton()
+        TargetRegistry.reset_registry_singleton()
         for var in self.CONTENT_SAFETY_ENV_VARS:
             os.environ.pop(var, None)
 
@@ -399,7 +399,7 @@ class TestScorerInitializerCategoryTags:
             },
         )
         registry = TargetRegistry.get_registry_singleton()
-        registry.register_instance(target, name=name)
+        registry.instances.register(target, name=name)
         return target
 
     async def test_scale_scorers_tagged_with_scale_category(self) -> None:
@@ -411,7 +411,7 @@ class TestScorerInitializerCategoryTags:
         await init.initialize_async()
 
         registry = ScorerRegistry.get_registry_singleton()
-        scale_entries = registry.get_by_tag(tag=ScorerInitializerTags.SCALE)
+        scale_entries = registry.instances.get_by_tag(tag=ScorerInitializerTags.SCALE)
         assert len(scale_entries) >= 1
 
     async def test_acs_threshold_scorers_tagged_separately(self) -> None:
@@ -423,7 +423,7 @@ class TestScorerInitializerCategoryTags:
         await init.initialize_async()
 
         registry = ScorerRegistry.get_registry_singleton()
-        threshold_entries = registry.get_by_tag(tag=ScorerInitializerTags.ACS_THRESHOLD)
+        threshold_entries = registry.instances.get_by_tag(tag=ScorerInitializerTags.ACS_THRESHOLD)
         assert len(threshold_entries) == 3
         for entry in threshold_entries:
             assert ScorerInitializerTags.ACS in entry.tags
@@ -437,7 +437,7 @@ class TestScorerInitializerCategoryTags:
         await init.initialize_async()
 
         registry = ScorerRegistry.get_registry_singleton()
-        harm_entries = registry.get_by_tag(tag=ScorerInitializerTags.ACS_HARM)
+        harm_entries = registry.instances.get_by_tag(tag=ScorerInitializerTags.ACS_HARM)
         assert len(harm_entries) == 4
         for entry in harm_entries:
             assert ScorerInitializerTags.ACS in entry.tags
@@ -450,7 +450,7 @@ class TestScorerInitializerCategoryTags:
         await init.initialize_async()
 
         registry = ScorerRegistry.get_registry_singleton()
-        likert_entries = registry.get_by_tag(tag=ScorerInitializerTags.LIKERT)
+        likert_entries = registry.instances.get_by_tag(tag=ScorerInitializerTags.LIKERT)
         expected_count = sum(1 for s in LikertScalePaths if s.evaluation_files is not None)
         assert len(likert_entries) == expected_count
 
@@ -463,7 +463,7 @@ class TestScorerInitializerCategoryTags:
         await init.initialize_async()
 
         registry = ScorerRegistry.get_registry_singleton()
-        task_entries = registry.get_by_tag(tag=ScorerInitializerTags.TASK_ACHIEVED)
+        task_entries = registry.instances.get_by_tag(tag=ScorerInitializerTags.TASK_ACHIEVED)
         assert len(task_entries) == 2
 
     async def test_composite_scorers_tagged(self) -> None:
@@ -475,7 +475,7 @@ class TestScorerInitializerCategoryTags:
         await init.initialize_async()
 
         registry = ScorerRegistry.get_registry_singleton()
-        composite_entries = registry.get_by_tag(tag=ScorerInitializerTags.OBJECTIVE_COMPOSITE)
+        composite_entries = registry.instances.get_by_tag(tag=ScorerInitializerTags.OBJECTIVE_COMPOSITE)
         assert len(composite_entries) >= 1
 
     async def test_best_refusal_tags_preferred_scorer(self) -> None:
@@ -487,7 +487,7 @@ class TestScorerInitializerCategoryTags:
         await init.initialize_async()
 
         registry = ScorerRegistry.get_registry_singleton()
-        best = registry.get_by_tag(tag=ScorerInitializerTags.BEST_REFUSAL)
+        best = registry.instances.get_by_tag(tag=ScorerInitializerTags.BEST_REFUSAL)
         assert len(best) == 1
         assert best[0].name == "refusal_gpt5_4"
 
@@ -499,7 +499,7 @@ class TestScorerInitializerCategoryTags:
         await init.initialize_async()
 
         registry = ScorerRegistry.get_registry_singleton()
-        best = registry.get_by_tag(tag=ScorerInitializerTags.BEST_REFUSAL)
+        best = registry.instances.get_by_tag(tag=ScorerInitializerTags.BEST_REFUSAL)
         assert len(best) == 1
         # Should be one of the gpt4o refusal variants
         assert ScorerInitializerTags.REFUSAL in best[0].tags
@@ -513,7 +513,7 @@ class TestScorerInitializerCategoryTags:
         await init.initialize_async()
 
         registry = ScorerRegistry.get_registry_singleton()
-        best = registry.get_by_tag(tag=ScorerInitializerTags.BEST_ACS_THRESHOLD)
+        best = registry.instances.get_by_tag(tag=ScorerInitializerTags.BEST_ACS_THRESHOLD)
         assert len(best) == 1
         assert best[0].name == "acs_threshold_05"
 
@@ -523,12 +523,12 @@ class TestScorerInitializerRoundRobin:
     """Tests for ScorerInitializer round-robin target preference via _get_chat_target_prefer_rr."""
 
     def setup_method(self) -> None:
-        ScorerRegistry.reset_instance()
-        TargetRegistry.reset_instance()
+        ScorerRegistry.reset_registry_singleton()
+        TargetRegistry.reset_registry_singleton()
 
     def teardown_method(self) -> None:
-        ScorerRegistry.reset_instance()
-        TargetRegistry.reset_instance()
+        ScorerRegistry.reset_registry_singleton()
+        TargetRegistry.reset_registry_singleton()
 
     def _register_mock_target(self, *, name: str, underlying_model: str = "gpt-4o") -> OpenAIChatTarget:
         """Register a mock OpenAIChatTarget in the TargetRegistry."""
@@ -552,7 +552,7 @@ class TestScorerInitializerRoundRobin:
             },
         )
         registry = TargetRegistry.get_registry_singleton()
-        registry.register_instance(target, name=name)
+        registry.instances.register(target, name=name)
         return target
 
     def _register_mock_rr_target(self, *, name: str) -> MagicMock:
@@ -566,7 +566,7 @@ class TestScorerInitializerRoundRobin:
             class_module="pyrit.prompt_target.round_robin_target",
         )
         registry = TargetRegistry.get_registry_singleton()
-        registry.register_instance(rr_mock, name=name)
+        registry.instances.register(rr_mock, name=name)
         return rr_mock
 
     async def test_refusal_unsafe_uses_round_robin_when_available(self) -> None:
@@ -579,7 +579,7 @@ class TestScorerInitializerRoundRobin:
         await init.initialize_async()
 
         registry = ScorerRegistry.get_registry_singleton()
-        scorer = registry.get_instance_by_name("refusal_gpt4o_unsafe")
+        scorer = registry.instances.get("refusal_gpt4o_unsafe")
         assert scorer is not None
         assert scorer._prompt_target is rr_mock
 
@@ -592,7 +592,7 @@ class TestScorerInitializerRoundRobin:
         await init.initialize_async()
 
         registry = ScorerRegistry.get_registry_singleton()
-        scorer = registry.get_instance_by_name("refusal_gpt4o_unsafe")
+        scorer = registry.instances.get("refusal_gpt4o_unsafe")
         assert scorer is not None
         assert scorer._prompt_target is individual_mock
 
@@ -604,7 +604,7 @@ class TestScorerInitializerRoundRobin:
         await init.initialize_async()
 
         registry = ScorerRegistry.get_registry_singleton()
-        assert registry.get_instance_by_name("refusal_gpt4o_unsafe") is None
+        assert registry.instances.get("refusal_gpt4o_unsafe") is None
 
     async def test_refusal_gpt4o_uses_round_robin_when_available(self) -> None:
         """Test that gpt4o-based refusal scorers use round-robin target wrapping gpt4o."""
@@ -615,7 +615,7 @@ class TestScorerInitializerRoundRobin:
         await init.initialize_async()
 
         registry = ScorerRegistry.get_registry_singleton()
-        scorer = registry.get_instance_by_name("refusal_gpt4o_objective_strict")
+        scorer = registry.instances.get("refusal_gpt4o_objective_strict")
         assert scorer is not None
         assert scorer._prompt_target is rr_mock
 
@@ -627,7 +627,7 @@ class TestScorerInitializerRoundRobin:
         await init.initialize_async()
 
         registry = ScorerRegistry.get_registry_singleton()
-        scorer = registry.get_instance_by_name("refusal_gpt4o_objective_strict")
+        scorer = registry.instances.get("refusal_gpt4o_objective_strict")
         assert scorer is not None
         assert scorer._prompt_target is individual_mock
 
@@ -640,7 +640,7 @@ class TestScorerInitializerRoundRobin:
         await init.initialize_async()
 
         registry = ScorerRegistry.get_registry_singleton()
-        likert_entries = registry.get_by_tag(tag=ScorerInitializerTags.LIKERT)
+        likert_entries = registry.instances.get_by_tag(tag=ScorerInitializerTags.LIKERT)
         assert len(likert_entries) > 0
         for entry in likert_entries:
             assert entry.instance._prompt_target is rr_mock

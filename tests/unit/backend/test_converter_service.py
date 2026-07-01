@@ -575,7 +575,6 @@ def _try_instantiate_converter(converter_name: str):
             (isinstance(ann, type) and issubclass(ann, PromptTarget)) or "PromptTarget" in ann_str
         ):
             mock_target = MagicMock(spec=PromptTarget)
-            mock_target.__class__.__name__ = "MockChatTarget"
             # Configure get_identifier() to return a real identifier so that
             # _create_identifier can promote it into the typed child slot.
             mock_id = ComponentIdentifier(
