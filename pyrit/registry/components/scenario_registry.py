@@ -14,23 +14,20 @@ rather than by class name, so ``_discover``/``_get_registry_name`` are overridde
 
 from __future__ import annotations
 
-import logging
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from pyrit.models import class_name_to_snake_case
 from pyrit.models.identifiers.scenario_identifier import ScenarioIdentifier
 from pyrit.registry.base import ClassRegistryEntry
-from pyrit.registry.discovery import discover_in_package
 from pyrit.registry.registry import Registry
 
 if TYPE_CHECKING:
+    from types import ModuleType
+
     from pyrit.models import Parameter
     from pyrit.models.identifiers.component_identifier import ComponentIdentifier
     from pyrit.scenario.core import Scenario
-
-logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -61,12 +58,14 @@ class ScenarioRegistry(Registry["Scenario", ScenarioMetadata]):
     """
     Registry for discovering and managing available scenario classes.
 
-    This class discovers all Scenario subclasses from:
-    1. Built-in scenarios in pyrit.scenario.scenarios module
-    2. User-defined scenarios from initialization scripts (set via globals)
-
-    Scenarios are identified by their dotted name (e.g., "garak.encoding", "foundry.red_team_agent").
+    Discovers every concrete ``Scenario`` subclass under ``pyrit.scenario.scenarios``
+    via the unified ``Registry`` base (recursive subclass enumeration). Unlike the
+    component registries, scenarios are keyed by their **dotted module path** (e.g.
+    ``"garak.encoding"``, ``"foundry.red_team_agent"``) rather than class name, so
+    only ``_get_registry_name`` and ``_build_metadata`` are customized.
     """
+
+    _DISCOVERY_PACKAGE = "pyrit.scenario.scenarios"
 
     def _identifier_type(self) -> type[ComponentIdentifier] | None:
         """Return ``ScenarioIdentifier`` so ``Param.*`` markers drive derivation."""
@@ -76,82 +75,39 @@ class ScenarioRegistry(Registry["Scenario", ScenarioMetadata]):
         """Return the concrete metadata dataclass this registry builds."""
         return ScenarioMetadata
 
+    def _base_type(self) -> type[Scenario]:
+        """Return the ``Scenario`` base class, imported lazily."""
+        from pyrit.scenario.core import Scenario
+
+        return Scenario
+
+    def _discovery_package(self) -> ModuleType:
+        """Return the ``pyrit.scenario.scenarios`` package scanned for scenario classes."""
+        import pyrit.scenario.scenarios as scenarios_package
+
+        return scenarios_package
+
     def _get_registry_name(self, cls: type[Scenario]) -> str:
         """
-        Scenarios are keyed by dotted registry name assigned during discovery.
+        Key scenarios by their dotted module path (e.g. ``"airt.rapid_response"``).
 
-        User-defined scenarios discovered outside the package fall back to a
-        suffix-stripped snake_case class name.
+        The path is the scenario module's location relative to
+        ``pyrit.scenario.scenarios``. Scenarios discovered outside that package
+        (e.g. user-defined ones) fall back to a suffix-stripped snake_case class name.
 
         Args:
             cls (type[Scenario]): The scenario class.
 
         Returns:
-            str: The snake_case registry name.
+            str: The dotted registry name.
         """
+        module = cls.__module__ or ""
+        prefix = f"{self._DISCOVERY_PACKAGE}."
+        if module.startswith(prefix):
+            relative = module[len(prefix) :]
+            if relative:
+                return relative
         return class_name_to_snake_case(cls.__name__, suffix="Scenario")
-
-    def _discover(self) -> None:
-        """Discover all built-in scenarios from pyrit.scenario.scenarios module."""
-        from pyrit.scenario.core import Scenario
-
-        try:
-            import pyrit.scenario.scenarios as scenarios_package
-
-            # Get the path to the scenarios package
-            package_file = scenarios_package.__file__
-            if package_file is None:
-                if hasattr(scenarios_package, "__path__"):
-                    package_path = Path(scenarios_package.__path__[0])
-                else:
-                    logger.error("Cannot determine scenarios package location")
-                    return
-            else:
-                package_path = Path(package_file).parent
-
-            # Discover scenarios using the shared discovery utility
-            # Use ``package_name.module_name`` as the registry name
-            for registry_name, scenario_class in discover_in_package(
-                package_path=package_path,
-                package_name="pyrit.scenario.scenarios",
-                base_class=Scenario,
-                recursive=True,
-            ):
-                # Skip deprecated alias classes
-                doc = (scenario_class.__doc__ or "").strip()
-                if doc.startswith("Deprecated alias"):
-                    logger.debug(f"Skipping deprecated alias: {scenario_class.__name__}")
-                    continue
-
-                # Skip re-exported aliases: if the class was defined in a different
-                # module than the one being discovered, it's an alias (e.g.,
-                # ContentHarms in content_harms.py is really RapidResponse from
-                # rapid_response.py).
-                class_module = getattr(scenario_class, "__module__", "")
-                if not class_module.endswith(registry_name.replace("/", ".")):
-                    # Build the full expected module name for comparison
-                    expected_module = f"pyrit.scenario.scenarios.{registry_name.replace('/', '.')}"
-                    if class_module != expected_module:
-                        logger.debug(
-                            f"Skipping alias '{scenario_class.__name__}' in '{registry_name}' "
-                            f"(defined in {class_module})"
-                        )
-                        continue
-
-                # Check for registry key collision
-                if registry_name in self._classes:
-                    logger.warning(
-                        f"Scenario registry name collision: '{registry_name}' "
-                        f"conflicts with an already-registered scenario. Original "
-                        f"scenario is kept: {self._classes[registry_name].__name__}"
-                    )
-                    continue
-
-                self.register_class(scenario_class, name=registry_name)
-                logger.debug(f"Registered built-in scenario: {registry_name} ({scenario_class.__name__})")
-
-        except Exception as e:
-            logger.error(f"Failed to discover built-in scenarios: {e}")
 
     def _build_metadata(self, name: str, cls: type[Scenario]) -> ScenarioMetadata:
         """
