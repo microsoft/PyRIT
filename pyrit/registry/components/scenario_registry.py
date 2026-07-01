@@ -60,9 +60,7 @@ class ScenarioMetadata(ClassRegistryEntry):
     max_dataset_size: int | None = field(kw_only=True)
 
     # Scenario-declared custom parameters.
-    supported_parameters: tuple[ScenarioParameterMetadata, ...] = field(
-        kw_only=True, default=()
-    )
+    supported_parameters: tuple[ScenarioParameterMetadata, ...] = field(kw_only=True, default=())
 
 
 class ScenarioParameterMetadata(NamedTuple):
@@ -144,9 +142,7 @@ class ScenarioRegistry(Registry["Scenario", ScenarioMetadata]):
                 # Skip deprecated alias classes
                 doc = (scenario_class.__doc__ or "").strip()
                 if doc.startswith("Deprecated alias"):
-                    logger.debug(
-                        f"Skipping deprecated alias: {scenario_class.__name__}"
-                    )
+                    logger.debug(f"Skipping deprecated alias: {scenario_class.__name__}")
                     continue
 
                 # Skip re-exported aliases: if the class was defined in a different
@@ -156,9 +152,7 @@ class ScenarioRegistry(Registry["Scenario", ScenarioMetadata]):
                 class_module = getattr(scenario_class, "__module__", "")
                 if not class_module.endswith(registry_name.replace("/", ".")):
                     # Build the full expected module name for comparison
-                    expected_module = (
-                        f"pyrit.scenario.scenarios.{registry_name.replace('/', '.')}"
-                    )
+                    expected_module = f"pyrit.scenario.scenarios.{registry_name.replace('/', '.')}"
                     if class_module != expected_module:
                         logger.debug(
                             f"Skipping alias '{scenario_class.__name__}' in '{registry_name}' "
@@ -176,9 +170,7 @@ class ScenarioRegistry(Registry["Scenario", ScenarioMetadata]):
                     continue
 
                 self.register_class(scenario_class, name=registry_name)
-                logger.debug(
-                    f"Registered built-in scenario: {registry_name} ({scenario_class.__name__})"
-                )
+                logger.debug(f"Registered built-in scenario: {registry_name} ({scenario_class.__name__})")
 
         except Exception as e:
             logger.error(f"Failed to discover built-in scenarios: {e}")
@@ -195,18 +187,12 @@ class ScenarioRegistry(Registry["Scenario", ScenarioMetadata]):
         from pyrit.scenario.core import Scenario
 
         try:
-            for _, scenario_class in discover_subclasses_in_loaded_modules(
-                base_class=Scenario
-            ):
+            for _, scenario_class in discover_subclasses_in_loaded_modules(base_class=Scenario):
                 # Check if this is a user-defined class (not from pyrit.scenario.scenarios)
                 if not scenario_class.__module__.startswith("pyrit.scenario.scenarios"):
-                    registry_name = class_name_to_snake_case(
-                        scenario_class.__name__, suffix="Scenario"
-                    )
+                    registry_name = class_name_to_snake_case(scenario_class.__name__, suffix="Scenario")
                     self.register_class(scenario_class, name=registry_name)
-                    logger.info(
-                        f"Registered user-defined scenario: {registry_name} ({scenario_class.__name__})"
-                    )
+                    logger.info(f"Registered user-defined scenario: {registry_name} ({scenario_class.__name__})")
 
         except Exception as e:
             logger.debug(f"Failed to discover user scenarios: {e}")
@@ -230,9 +216,7 @@ class ScenarioRegistry(Registry["Scenario", ScenarioMetadata]):
         Raises:
             TypeError: If ``cls()`` cannot be called with no arguments.
         """
-        description = ClassRegistryEntry.description_from_docstring(
-            cls, fallback="No description available"
-        )
+        description = ClassRegistryEntry.description_from_docstring(cls, fallback="No description available")
 
         supported_parameters = tuple(
             ScenarioParameterMetadata(
@@ -240,11 +224,7 @@ class ScenarioRegistry(Registry["Scenario", ScenarioMetadata]):
                 description=p.description,
                 default=p.default,
                 param_type=_param_type_display(p.param_type),
-                choices=(
-                    [str(c) for c in choices]
-                    if (choices := display_choices(p.param_type))
-                    else None
-                ),
+                choices=([str(c) for c in choices] if (choices := display_choices(p.param_type)) else None),
                 is_list=get_origin(p.param_type) is list,
             )
             for p in cls.supported_parameters()
@@ -264,9 +244,7 @@ class ScenarioRegistry(Registry["Scenario", ScenarioMetadata]):
         strategy_class = instance._strategy_class
         default_strategy_value = instance._default_strategy.value
         all_strategies = tuple(s.value for s in strategy_class.get_all_strategies())
-        aggregate_strategies = tuple(
-            s.value for s in strategy_class.get_aggregate_strategies()
-        )
+        aggregate_strategies = tuple(s.value for s in strategy_class.get_aggregate_strategies())
         default_datasets = tuple(instance._default_dataset_config.dataset_names)
         max_dataset_size = instance._default_dataset_config.max_dataset_size
 
@@ -282,6 +260,54 @@ class ScenarioRegistry(Registry["Scenario", ScenarioMetadata]):
             max_dataset_size=max_dataset_size,
             supported_parameters=supported_parameters,
         )
+
+    async def create_and_initialize_async(
+        self,
+        name: str,
+        *,
+        scenario_params: dict[str, Any] | None = None,
+        scenario_result_id: str | None = None,
+        **initialize_kwargs: Any,
+    ) -> Scenario:
+        """
+        Build, parameterize, and initialize a scenario in one call.
+
+        This is the canonical entry point for producing a run-ready ``Scenario``:
+        the registry — not the caller — owns the full lifecycle.
+
+        1. **create** the scenario via ``create_instance`` (seeding
+           ``scenario_result_id`` when resuming an existing run),
+        2. **set parameters** — the scenario-specific declared parameters (from
+           ``supported_parameters()``) are coerced/validated/injected via
+           ``Scenario.set_params_from_args``,
+        3. **initialize** — the run-resolved common parameters (``objective_target``,
+           ``scenario_strategies``, ``dataset_config``, ``max_concurrency``,
+           ``max_retries``, ``memory_labels``, ``include_baseline``) are forwarded
+           to ``Scenario.initialize_async``.
+
+        Prefer this over manually chaining ``create_instance`` +
+        ``set_params_from_args`` + ``initialize_async``.
+
+        Args:
+            name (str): The registry name of the scenario (e.g. ``"foundry.red_team_agent"``).
+            scenario_params (dict[str, Any] | None): Scenario-specific declared
+                parameters to set before initialization. Defaults to an empty mapping.
+            scenario_result_id (str | None): Existing scenario-result id to resume,
+                or ``None`` to start a fresh run.
+            **initialize_kwargs (Any): Run-resolved common parameters forwarded to
+                ``Scenario.initialize_async`` (notably ``objective_target``).
+
+        Returns:
+            Scenario: The fully initialized scenario, ready for ``run_async``.
+        """
+        constructor_kwargs: dict[str, Any] = {}
+        if scenario_result_id:
+            constructor_kwargs["scenario_result_id"] = scenario_result_id
+
+        scenario = self.create_instance(name, **constructor_kwargs)
+        scenario.set_params_from_args(args=scenario_params or {})
+        await scenario.initialize_async(**initialize_kwargs)
+        return scenario
 
 
 def _param_type_display(param_type: Any) -> str:
