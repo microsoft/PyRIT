@@ -21,6 +21,7 @@ from pyrit.models.catalog.scenario import RunScenarioRequest
 from pyrit.prompt_converter import PromptConverter
 from pyrit.scenario.core import DatasetAttackConfiguration, DatasetConfiguration
 from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
+from pyrit.scenario.scenarios.garak.encoding import EncodingDatasetConfiguration
 
 
 class _StubStrategy(ScenarioStrategy):
@@ -335,6 +336,40 @@ class TestScenarioRunServiceStartRun:
         # The original default config is not mutated when a fresh dataset_names is supplied
         assert default_config.dataset_names == ["original"]
         assert default_config.max_dataset_size == 100
+
+    async def test_encoding_dataset_configuration_stays_backend_constructible(self, mock_all_registries) -> None:
+        """``EncodingDatasetConfiguration`` remains reconstructible by the backend ``dataset_names`` path.
+
+        Foot-gun guard: the backend's ``_build_init_kwargs`` rebuilds the config via
+        ``type(default_config)(dataset_names=..., max_dataset_size=...)`` and silently degrades to a
+        plain base config on ``TypeError``. Each child inside the scenario's default
+        ``CompoundDatasetAttackConfiguration`` is an ``EncodingDatasetConfiguration``, so that subclass
+        must stay constructible with just ``dataset_names``/``max_dataset_size`` (no new *required*
+        ``__init__`` args). This pins the real subclass (not a synthetic marker) so adding a required
+        ctor arg fails loudly here.
+
+        NOTE: This does NOT cover the scenario's actual *default* config, which is a
+        ``CompoundDatasetAttackConfiguration`` — that type takes ``configurations=`` (not
+        ``dataset_names=``), so the backend ``--dataset-names`` override currently falls back to a base
+        ``DatasetAttackConfiguration`` for compound defaults. That reconstruction gap is a separate,
+        pre-existing backend limitation tracked outside this scenario PR.
+        """
+        default_config = EncodingDatasetConfiguration(
+            dataset_names=["garak_slur_terms_en", "garak_web_html_js"], max_dataset_size=3
+        )
+        scenario_instance = mock_all_registries["scenario_instance"]
+        scenario_instance._default_dataset_config = default_config
+
+        service = ScenarioRunService()
+        await service.start_run_async(request=_make_request(dataset_names=["custom_a", "custom_b"], max_dataset_size=2))
+
+        init_call = mock_all_registries["scenario_registry"].create_and_initialize_async.await_args
+        built_config = init_call.kwargs["dataset_config"]
+
+        # Real subclass type is preserved (not degraded to base DatasetConfiguration)
+        assert type(built_config) is EncodingDatasetConfiguration
+        assert built_config.dataset_names == ["custom_a", "custom_b"]
+        assert built_config.max_dataset_size == 2
 
     async def test_start_run_dataset_names_without_max_dataset_size_preserves_subclass(
         self, mock_all_registries

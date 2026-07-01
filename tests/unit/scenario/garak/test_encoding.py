@@ -103,7 +103,7 @@ class TestEncodingInitialization:
             )
 
             assert scenario.name == "Encoding"
-            assert scenario.VERSION == 1
+            assert scenario.VERSION == 2
 
     def test_init_with_custom_scorer(self, mock_objective_target, mock_objective_scorer, mock_memory_seeds):
         """Test initialization with custom objective scorer."""
@@ -198,12 +198,13 @@ class TestEncodingInitialization:
 
             await scenario.initialize_async(objective_target=mock_objective_target, dataset_config=mock_dataset_config)
 
-            # By default, EncodingStrategy.ALL is used, which expands to all encoding strategies
+            # By default, EncodingStrategy.DEFAULT is used, which expands to the curated subset
             assert len(scenario._scenario_strategies) > 0
             # Verify all strategies contain EncodingStrategy instances
             assert all(isinstance(s, EncodingStrategy) for s in scenario._scenario_strategies)
-            # Verify none of the strategies are the aggregate "ALL"
+            # Verify none of the strategies are the aggregate members
             assert all(s != EncodingStrategy.ALL for s in scenario._scenario_strategies)
+            assert all(s != EncodingStrategy.DEFAULT for s in scenario._scenario_strategies)
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -253,7 +254,7 @@ class TestEncodingAtomicAttacks:
             attack_runs = scenario._get_converter_attacks(seed_groups=mock_seed_attack_groups)
 
             # Should have multiple attack runs for different encodings
-            # The list includes: Base64 (4 variants), Base2048, Base16, Base32, ASCII85 (2), hex,
+            # The list includes: Base64 (2 variants), Base2048, Base16, Base32, ASCII85 (2), hex,
             # quoted-printable, UUencode, ROT13, Braille, Atbash, Morse, NATO, Ecoji, Zalgo, Leet, AsciiSmuggler
             assert len(attack_runs) > 0
 
@@ -275,7 +276,10 @@ class TestEncodingAtomicAttacks:
 
             await scenario.initialize_async(objective_target=mock_objective_target, dataset_config=mock_dataset_config)
             attack_runs = scenario._get_prompt_attacks(
-                converters=[Base64Converter()], encoding_name="Base64", seed_groups=mock_seed_attack_groups
+                converters=[Base64Converter()],
+                encoding_name="base64",
+                variant_slug="base64",
+                seed_groups=mock_seed_attack_groups,
             )
 
             # Should create attack runs
@@ -309,7 +313,10 @@ class TestEncodingAtomicAttacks:
 
             await scenario.initialize_async(objective_target=mock_objective_target, dataset_config=mock_dataset_config)
             attack_runs = scenario._get_prompt_attacks(
-                converters=[Base64Converter()], encoding_name="Base64", seed_groups=mock_seed_attack_groups
+                converters=[Base64Converter()],
+                encoding_name="base64",
+                variant_slug="base64",
+                seed_groups=mock_seed_attack_groups,
             )
 
             # Check that seed groups contain objectives with the expected format
@@ -492,3 +499,126 @@ class TestEncodingBaselineUniformity:
         baseline_objs = set(scenario._atomic_attacks[0].objectives)
         for attack in scenario._atomic_attacks[1:]:
             assert set(attack.objectives) == baseline_objs
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestEncodingStrategyDefaults:
+    """Tests for the curated DEFAULT aggregate and aggregate-tag wiring."""
+
+    def test_default_is_the_default_strategy(self, mock_objective_scorer):
+        """The scenario's default strategy is the curated DEFAULT aggregate, not ALL."""
+        scenario = Encoding(objective_scorer=mock_objective_scorer)
+        assert scenario._default_strategy == EncodingStrategy.DEFAULT
+
+    def test_default_aggregate_membership(self):
+        """DEFAULT expands to one base-N, one substitution, and one symbolic encoding."""
+        members = EncodingStrategy.get_strategies_by_tag("default")
+        assert members == {EncodingStrategy.Base16, EncodingStrategy.ROT13, EncodingStrategy.MorseCode}
+
+    def test_default_is_subset_of_all(self):
+        """Every DEFAULT member is also part of the exhaustive ALL aggregate."""
+        all_members = set(EncodingStrategy.get_all_strategies())
+        default_members = EncodingStrategy.get_strategies_by_tag("default")
+        assert default_members <= all_members
+
+    def test_get_aggregate_tags_includes_default(self):
+        """``default`` is registered as an aggregate tag alongside ``all``."""
+        tags = EncodingStrategy.get_aggregate_tags()
+        assert "all" in tags
+        assert "default" in tags
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestEncodingAtomicCountsAndNaming:
+    """Atomic-attack counts, name uniqueness, and display-group grouping."""
+
+    @staticmethod
+    def _seed_groups(count: int = 1):
+        return [
+            SeedAttackGroup(seeds=[SeedObjective(value=f"obj{i}"), SeedPrompt(value=f"payload{i}")])
+            for i in range(count)
+        ]
+
+    async def _build(self, target, scorer, strategies=None, *, include_baseline=True, encoding_templates=None):
+        from unittest.mock import patch
+
+        seed_groups = self._seed_groups(1)
+        ctor_kwargs = {"objective_scorer": scorer}
+        if encoding_templates is not None:
+            ctor_kwargs["encoding_templates"] = encoding_templates
+        scenario = Encoding(**ctor_kwargs)
+        with patch.object(
+            Encoding,
+            "_resolve_seed_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value={"memory": seed_groups},
+        ):
+            kwargs = {"objective_target": target, "include_baseline": include_baseline}
+            if strategies is not None:
+                kwargs["scenario_strategies"] = strategies
+            await scenario.initialize_async(**kwargs)
+        return scenario
+
+    async def test_default_run_atomic_count(self, mock_objective_target, mock_objective_scorer):
+        """DEFAULT = 3 encodings x (1 raw + 4 decode templates) + 1 baseline = 16 atomics."""
+        scenario = await self._build(mock_objective_target, mock_objective_scorer)
+        assert len(scenario._atomic_attacks) == 16
+
+    async def test_all_run_atomic_count(self, mock_objective_target, mock_objective_scorer):
+        """ALL = 19 converter variants x 5 prompt configs + 1 baseline = 96 atomics."""
+        scenario = await self._build(mock_objective_target, mock_objective_scorer, strategies=[EncodingStrategy.ALL])
+        assert len(scenario._atomic_attacks) == 96
+
+    async def test_all_atomic_names_unique(self, mock_objective_target, mock_objective_scorer):
+        """Every atomic-attack name is unique under ALL (no name collisions across variants)."""
+        scenario = await self._build(mock_objective_target, mock_objective_scorer, strategies=[EncodingStrategy.ALL])
+        names = [a.atomic_attack_name for a in scenario._atomic_attacks]
+        assert len(names) == len(set(names))
+
+    async def test_multi_variant_encoding_names_unique(self, mock_objective_target, mock_objective_scorer):
+        """base64 expands to 2 converter variants (default + url-safe), each with distinct names."""
+        scenario = await self._build(mock_objective_target, mock_objective_scorer, strategies=[EncodingStrategy.Base64])
+        names = [a.atomic_attack_name for a in scenario._atomic_attacks if a.atomic_attack_name != "baseline"]
+        # 2 variants x 5 configs = 10 attacks, all uniquely named
+        assert len(names) == 10
+        assert len(set(names)) == 10
+
+    async def test_display_group_aggregates_by_encoding(self, mock_objective_target, mock_objective_scorer):
+        """All base64 variants share a single ``base64`` display_group for reporting."""
+        scenario = await self._build(mock_objective_target, mock_objective_scorer, strategies=[EncodingStrategy.Base64])
+        non_baseline = [a for a in scenario._atomic_attacks if a.atomic_attack_name != "baseline"]
+        assert {a.display_group for a in non_baseline} == {"base64"}
+
+    async def test_fast_path_single_encoding_count(self, mock_objective_target, mock_objective_scorer):
+        """Fast path (single ROT13 strategy) = 1 raw + 4 decode + 1 baseline = 6 atomics."""
+        scenario = await self._build(mock_objective_target, mock_objective_scorer, strategies=[EncodingStrategy.ROT13])
+        assert len(scenario._atomic_attacks) == 6
+        rot13_names = sorted(a.atomic_attack_name for a in scenario._atomic_attacks)
+        assert rot13_names == [
+            "baseline",
+            "rot13_decode0",
+            "rot13_decode1",
+            "rot13_decode2",
+            "rot13_decode3",
+            "rot13_raw",
+        ]
+
+    async def test_default_run_count_without_baseline(self, mock_objective_target, mock_objective_scorer):
+        """With baseline disabled, DEFAULT = 3 encodings x 5 prompt configs = 15 atomics (no baseline)."""
+        scenario = await self._build(mock_objective_target, mock_objective_scorer, include_baseline=False)
+        assert len(scenario._atomic_attacks) == 15
+        assert all(a.atomic_attack_name != "baseline" for a in scenario._atomic_attacks)
+
+    async def test_custom_encoding_templates_scale_decode_configs(self, mock_objective_target, mock_objective_scorer):
+        """Each decode template adds one prompt config: N templates -> 1 raw + N decode configs per variant."""
+        scenario = await self._build(
+            mock_objective_target,
+            mock_objective_scorer,
+            strategies=[EncodingStrategy.ROT13],
+            include_baseline=False,
+            encoding_templates=["decode this: {encoded_text}", "now decode: {encoded_text}"],
+        )
+        # 1 variant x (1 raw + 2 decode) = 3 atomics
+        assert len(scenario._atomic_attacks) == 3
+        names = sorted(a.atomic_attack_name for a in scenario._atomic_attacks)
+        assert names == ["rot13_decode0", "rot13_decode1", "rot13_raw"]

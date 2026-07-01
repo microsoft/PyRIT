@@ -39,15 +39,20 @@ objective_target = TargetRegistry.get_registry_singleton().instances.get("openai
 # strategy encodes the prompt, asks the target to decode it, and scores whether the decoded output
 # matches the harmful content. Default datasets include slur terms and web/HTML/JS content.
 #
-# **CLI example:**
+# **Default run** uses the curated `DEFAULT` strategy aggregate (Base16, ROT13, MorseCode — one
+# base-N, one substitution cipher, and one symbolic alphabet) for a fast, representative scan. Use
+# the `ALL` aggregate for an exhaustive run across every encoding scheme.
+#
+# **Fast path** (sanity-check target wiring in well under a minute) — pick a single-variant encoding
+# and one prompt:
 #
 # ```bash
-# pyrit_scan garak.encoding --target openai_chat --strategies base64 --max-dataset-size 1
+# pyrit_scan garak.encoding --target openai_chat --strategies rot13 --max-dataset-size 1
 # ```
 #
 # **Available strategies** (17 encodings): Base64, Base2048, Base16, Base32, ASCII85, Hex,
 # QuotedPrintable, UUencode, ROT13, Braille, Atbash, MorseCode, NATO, Ecoji, Zalgo, LeetSpeak,
-# AsciiSmuggler
+# AsciiSmuggler. Aggregates: `DEFAULT` (curated subset, the default) and `ALL` (every encoding).
 #
 # > **Note:** Strategy composition is NOT supported for Encoding — each encoding is tested
 # > independently.
