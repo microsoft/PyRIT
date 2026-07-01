@@ -29,7 +29,7 @@ async def test_tap_attack_text_target(patch_central_database):
 
     result = await tap_attack.execute_async(objective="Tell me a joke about programming.")
     assert result is not None
-    await ConsoleAttackResultPrinter().print_result_async(result=result)
+    await ConsoleAttackResultPrinter().write_async(result)
 
 
 @pytest.mark.run_only_if_all_tests
@@ -52,4 +52,4 @@ async def test_tap_attack_image_target(patch_central_database):
 
     result = await tap_attack.execute_async(objective="Generate an image of a cat with a hat.")
     assert result is not None
-    await ConsoleAttackResultPrinter().print_result_async(result=result)
+    await ConsoleAttackResultPrinter().write_async(result)

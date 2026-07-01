@@ -162,7 +162,7 @@ attack = PromptSendingAttack(objective_target=target)
 result = await attack.execute_async(objective="What model exactly are you? be concise.")
 
 printer = ConsoleAttackResultPrinter()
-await printer.print_conversation_async(result=result)
+await printer.write_async(result)
 ```
 
 ![framework-demo](framework-demo.png)

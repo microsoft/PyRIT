@@ -6,7 +6,6 @@ from typing import Any
 
 from colorama import Back, Fore, Style
 
-from pyrit.common.deprecation import print_deprecation_message
 from pyrit.models import AttackOutcome, AttackResult, ConversationType, Message, Score
 from pyrit.output.attack_result.base import AttackResultPrinterBase
 from pyrit.output.conversation.pretty import PrettyConversationPrinter
@@ -120,23 +119,6 @@ class PrettyAttackResultPrinter(AttackResultPrinterBase):
         lines.append(self._render_footer())
         return "".join(lines)
 
-    async def print_result_async(
-        self,
-        result: AttackResult,
-        *,
-        include_auxiliary_scores: bool = False,
-        include_pruned_conversations: bool = False,
-        include_adversarial_conversation: bool = False,
-    ) -> None:
-        """Use ``write_async`` instead. This method is deprecated."""
-        print_deprecation_message(old_item="print_result_async", new_item="write_async", removed_in="0.16.0")
-        await self.write_async(
-            result,
-            include_auxiliary_scores=include_auxiliary_scores,
-            include_pruned_conversations=include_pruned_conversations,
-            include_adversarial_conversation=include_adversarial_conversation,
-        )
-
     async def _render_conversation_async(
         self, result: AttackResult, *, include_scores: bool = False, include_reasoning_trace: bool = False
     ) -> str:
@@ -166,40 +148,6 @@ class PrettyAttackResultPrinter(AttackResultPrinterBase):
             include_scores=include_scores,
             include_reasoning_trace=include_reasoning_trace,
         )
-
-    async def print_conversation_async(
-        self, result: AttackResult, *, include_scores: bool = False, include_reasoning_trace: bool = False
-    ) -> None:
-        """Use ``write_async`` instead. This method is deprecated."""
-        print_deprecation_message(old_item="print_conversation_async", new_item="write_async", removed_in="0.16.0")
-        content = await self._render_conversation_async(
-            result, include_scores=include_scores, include_reasoning_trace=include_reasoning_trace
-        )
-        await self._write_async(content)
-
-    async def output_conversation_async(
-        self, result: AttackResult, *, include_scores: bool = False, include_reasoning_trace: bool = False
-    ) -> None:
-        """Use ``write_async`` instead. This method is deprecated."""
-        print_deprecation_message(old_item="output_conversation_async", new_item="write_async", removed_in="0.16.0")
-        content = await self._render_conversation_async(
-            result, include_scores=include_scores, include_reasoning_trace=include_reasoning_trace
-        )
-        await self._write_async(content)
-
-    async def print_messages_async(
-        self,
-        messages: list[Message],
-        *,
-        include_scores: bool = False,
-        include_reasoning_trace: bool = False,
-    ) -> None:
-        """Use the conversation printer's ``write_async`` instead. This method is deprecated."""
-        print_deprecation_message(old_item="print_messages_async", new_item="write_async", removed_in="0.16.0")
-        content = await self._conversation_printer.render_async(
-            messages, include_scores=include_scores, include_reasoning_trace=include_reasoning_trace
-        )
-        await self._write_async(content)
 
     async def _render_summary_async(self, result: AttackResult) -> str:
         """
@@ -253,12 +201,6 @@ class PrettyAttackResultPrinter(AttackResultPrinterBase):
             lines.append(self._score_printer._render_score(result.last_score, indent_level=2))
 
         return "".join(lines)
-
-    async def print_summary_async(self, result: AttackResult) -> None:
-        """Use ``write_async`` instead. This method is deprecated."""
-        print_deprecation_message(old_item="print_summary_async", new_item="write_async", removed_in="0.16.0")
-        content = await self._render_summary_async(result)
-        await self._write_async(content)
 
     def _render_header(self, result: AttackResult) -> str:
         """

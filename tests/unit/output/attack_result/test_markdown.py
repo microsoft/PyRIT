@@ -374,24 +374,3 @@ async def test_write_async_adversarial_with_no_messages(printer, attack_result, 
 async def test_write_async_include_adversarial_with_no_refs(printer, attack_result, capsys):
     await printer.write_async(attack_result, include_adversarial_conversation=True)
     assert "## Adversarial Conversation" not in capsys.readouterr().out
-
-
-# --- deprecated aliases ---
-
-
-async def test_print_result_async_emits_deprecation_warning(printer, attack_result, capsys):
-    with pytest.warns(DeprecationWarning, match="print_result_async"):
-        await printer.print_result_async(attack_result)
-    assert "Attack Result: SUCCESS" in capsys.readouterr().out
-
-
-async def test_output_conversation_async_emits_deprecation_warning(printer, attack_result, capsys):
-    with pytest.warns(DeprecationWarning, match="output_conversation_async"):
-        await printer.output_conversation_async(attack_result)
-    assert "*No conversation found for ID: conv-main*" in capsys.readouterr().out
-
-
-async def test_print_summary_async_emits_deprecation_warning(printer, attack_result, capsys):
-    with pytest.warns(DeprecationWarning, match="print_summary_async"):
-        await printer.print_summary_async(attack_result)
-    assert "## Attack Summary" in capsys.readouterr().out

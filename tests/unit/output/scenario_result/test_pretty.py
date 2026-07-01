@@ -208,12 +208,3 @@ async def test_write_async_sort_is_stable_for_ties(patch_central_database, capsy
     await sorting_printer.write_async(result)
     # Tied 100% groups retain their original relative order; 0% group goes last.
     assert _group_order(capsys.readouterr().out) == ["first_success", "second_success", "fail"]
-
-
-# --- deprecated alias ---
-
-
-async def test_print_summary_async_emits_deprecation_warning(printer, capsys):
-    with pytest.warns(DeprecationWarning, match="print_summary_async"):
-        await printer.print_summary_async(_scenario_result())
-    assert "SCENARIO RESULTS" in capsys.readouterr().out
