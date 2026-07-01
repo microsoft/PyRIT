@@ -34,7 +34,6 @@ if TYPE_CHECKING:
     from pyrit.models.catalog import (
         RegisteredScenario,
         RunScenarioRequest,
-        ScenarioParameterSummary,
         ScenarioRunSummary,
     )
     from pyrit.models.parameter import Parameter
@@ -328,7 +327,7 @@ def _scenario_param_kwargs(*, parameter: Parameter) -> dict[str, Any]:
     return kwargs
 
 
-def _add_scenario_params_from_api(*, parser: ArgumentParser, params: list[ScenarioParameterSummary]) -> None:
+def _add_scenario_params_from_api(*, parser: ArgumentParser, params: list[Parameter]) -> None:
     """
     Add scenario-declared parameters as CLI flags.
 
@@ -545,9 +544,7 @@ async def _handle_add_initializer_async(*, client: Any, parsed_args: Namespace) 
     return 0
 
 
-def _reparse_with_scenario_params(
-    *, parsed_args: Namespace, supported_params: list[ScenarioParameterSummary]
-) -> Namespace | None:
+def _reparse_with_scenario_params(*, parsed_args: Namespace, supported_params: list[Parameter]) -> Namespace | None:
     """
     Re-parse the original args with scenario-declared flags added to the base parser.
 

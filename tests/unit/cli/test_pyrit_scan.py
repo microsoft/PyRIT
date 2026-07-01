@@ -13,6 +13,21 @@ import pytest
 
 from pyrit.cli import _config_reader as pyrit_scan_config_reader
 from pyrit.cli import pyrit_scan
+from pyrit.models import Parameter
+
+
+def _sp(*, name, description="", default=None, param_type="str", choices=None, is_list=False) -> Parameter:
+    """Build a real Parameter from the legacy Summary-style kwargs (param_type as a string)."""
+    return Parameter.model_validate(
+        {
+            "name": name,
+            "description": description,
+            "default": default,
+            "type_name": param_type,
+            "choices": choices,
+            "is_list": is_list,
+        }
+    )
 
 
 class TestParseArgs:
@@ -516,14 +531,12 @@ class TestAddScenarioParamsFromApi:
     def test_adds_unseen_params_as_optional_flags(self):
         from argparse import ArgumentParser
 
-        from pyrit.models.catalog import ScenarioParameterSummary
-
         parser = ArgumentParser()
         pyrit_scan._add_scenario_params_from_api(
             parser=parser,
             params=[
-                ScenarioParameterSummary(name="max_turns", description="Max turns.", param_type="str"),
-                ScenarioParameterSummary(name="mode", description="Mode.", param_type="str"),
+                _sp(name="max_turns", description="Max turns.", param_type="str"),
+                _sp(name="mode", description="Mode.", param_type="str"),
             ],
         )
         parsed = parser.parse_args(["--max-turns", "5", "--mode", "fast"])
@@ -533,13 +546,11 @@ class TestAddScenarioParamsFromApi:
     def test_skips_params_that_collide_with_existing_flags(self):
         from argparse import ArgumentParser
 
-        from pyrit.models.catalog import ScenarioParameterSummary
-
         parser = ArgumentParser()
         parser.add_argument("--target")
         pyrit_scan._add_scenario_params_from_api(
             parser=parser,
-            params=[ScenarioParameterSummary(name="target", description="...", param_type="str")],
+            params=[_sp(name="target", description="...", param_type="str")],
         )
         parsed = parser.parse_args(["--target", "x"])
         # Original --target wins; no scenario__target added.
@@ -736,19 +747,10 @@ class TestScenarioParamCoercion:
     def test_list_param_uses_nargs_plus(self):
         from argparse import ArgumentParser
 
-        from pyrit.models.catalog import ScenarioParameterSummary
-
         parser = ArgumentParser()
         pyrit_scan._add_scenario_params_from_api(
             parser=parser,
-            params=[
-                ScenarioParameterSummary(
-                    name="items",
-                    description="...",
-                    param_type="list[str]",
-                    is_list=True,
-                )
-            ],
+            params=[_sp(name="items", description="...", param_type="list[str]", is_list=True)],
         )
         parsed = parser.parse_args(["--items", "a", "b", "c"])
         assert parsed.scenario__items == ["a", "b", "c"]
@@ -756,12 +758,10 @@ class TestScenarioParamCoercion:
     def test_int_param_is_coerced(self):
         from argparse import ArgumentParser
 
-        from pyrit.models.catalog import ScenarioParameterSummary
-
         parser = ArgumentParser()
         pyrit_scan._add_scenario_params_from_api(
             parser=parser,
-            params=[ScenarioParameterSummary(name="max_turns", description="...", param_type="int")],
+            params=[_sp(name="max_turns", description="...", param_type="int")],
         )
         parsed = parser.parse_args(["--max-turns", "7"])
         assert parsed.scenario__max_turns == 7
@@ -769,12 +769,10 @@ class TestScenarioParamCoercion:
     def test_int_param_invalid_value_rejected_client_side(self, capsys):
         from argparse import ArgumentParser
 
-        from pyrit.models.catalog import ScenarioParameterSummary
-
         parser = ArgumentParser()
         pyrit_scan._add_scenario_params_from_api(
             parser=parser,
-            params=[ScenarioParameterSummary(name="max_turns", description="...", param_type="int")],
+            params=[_sp(name="max_turns", description="...", param_type="int")],
         )
         with pytest.raises(SystemExit):
             parser.parse_args(["--max-turns", "not-an-int"])
@@ -783,12 +781,10 @@ class TestScenarioParamCoercion:
     def test_bool_param_rejects_invalid_value_client_side(self, capsys):
         from argparse import ArgumentParser
 
-        from pyrit.models.catalog import ScenarioParameterSummary
-
         parser = ArgumentParser()
         pyrit_scan._add_scenario_params_from_api(
             parser=parser,
-            params=[ScenarioParameterSummary(name="dry_run", description="...", param_type="bool")],
+            params=[_sp(name="dry_run", description="...", param_type="bool")],
         )
 
         parsed = parser.parse_args(["--dry-run", "false"])
@@ -811,19 +807,10 @@ class TestScenarioParamCoercion:
     def test_list_int_param_coerces_each_value(self):
         from argparse import ArgumentParser
 
-        from pyrit.models.catalog import ScenarioParameterSummary
-
         parser = ArgumentParser()
         pyrit_scan._add_scenario_params_from_api(
             parser=parser,
-            params=[
-                ScenarioParameterSummary(
-                    name="sample_ids",
-                    description="...",
-                    param_type="list[int]",
-                    is_list=True,
-                )
-            ],
+            params=[_sp(name="sample_ids", description="...", param_type="list[int]", is_list=True)],
         )
 
         parsed = parser.parse_args(["--sample-ids", "1", "2", "3"])
@@ -832,19 +819,10 @@ class TestScenarioParamCoercion:
     def test_typed_choices_are_compared_after_coercion(self):
         from argparse import ArgumentParser
 
-        from pyrit.models.catalog import ScenarioParameterSummary
-
         parser = ArgumentParser()
         pyrit_scan._add_scenario_params_from_api(
             parser=parser,
-            params=[
-                ScenarioParameterSummary(
-                    name="max_turns",
-                    description="...",
-                    param_type="int",
-                    choices=["1", "2"],
-                )
-            ],
+            params=[_sp(name="max_turns", description="...", param_type="int", choices=["1", "2"])],
         )
 
         parsed = parser.parse_args(["--max-turns", "1"])
@@ -853,19 +831,10 @@ class TestScenarioParamCoercion:
     def test_choices_validated_client_side(self, capsys):
         from argparse import ArgumentParser
 
-        from pyrit.models.catalog import ScenarioParameterSummary
-
         parser = ArgumentParser()
         pyrit_scan._add_scenario_params_from_api(
             parser=parser,
-            params=[
-                ScenarioParameterSummary(
-                    name="mode",
-                    description="...",
-                    param_type="str",
-                    choices=["fast", "slow"],
-                )
-            ],
+            params=[_sp(name="mode", description="...", param_type="str", choices=["fast", "slow"])],
         )
         parsed = parser.parse_args(["--mode", "fast"])
         assert parsed.scenario__mode == "fast"
@@ -1063,18 +1032,17 @@ class TestScenarioParamFlow:
         from pyrit.models import ScenarioRunState
         from pyrit.models.catalog import (
             RegisteredScenario,
-            ScenarioParameterSummary,
             ScenarioRunSummary,
         )
 
         now = datetime(2025, 1, 1, tzinfo=timezone.utc)
-        typed_params: list[ScenarioParameterSummary] = []
+        typed_params: list[Parameter] = []
         for p in supported_params or []:
-            if isinstance(p, ScenarioParameterSummary):
+            if isinstance(p, Parameter):
                 typed_params.append(p)
             else:
                 typed_params.append(
-                    ScenarioParameterSummary(
+                    _sp(
                         name=p["name"],
                         description=p.get("description", ""),
                         default=p.get("default"),

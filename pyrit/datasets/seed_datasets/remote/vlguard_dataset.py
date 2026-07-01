@@ -6,7 +6,6 @@ import json
 import logging
 import os
 import uuid
-import zipfile
 from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar
@@ -15,6 +14,7 @@ from huggingface_hub import hf_hub_download
 from typing_extensions import override
 
 from pyrit.common.path import DB_DATA_PATH
+from pyrit.common.safe_extract import safe_extract_zip
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
@@ -331,8 +331,7 @@ class _VLGuardDataset(_RemoteDatasetLoader):
         zip_path = cache_dir / "test.zip"
         if zip_path.exists():
             logger.info("Extracting VLGuard test images...")
-            with zipfile.ZipFile(str(zip_path), "r") as zf:
-                zf.extractall(str(cache_dir))
+            await asyncio.to_thread(safe_extract_zip, source=zip_path, dest_dir=cache_dir)
 
         with open(json_path, encoding="utf-8") as f:
             metadata = json.load(f)

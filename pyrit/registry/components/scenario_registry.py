@@ -17,7 +17,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, NamedTuple, get_args, get_origin
+from typing import TYPE_CHECKING, Any
 
 from pyrit.models import class_name_to_snake_case
 from pyrit.models.identifiers.scenario_identifier import ScenarioIdentifier
@@ -27,9 +27,9 @@ from pyrit.registry.discovery import (
     discover_subclasses_in_loaded_modules,
 )
 from pyrit.registry.registry import Registry
-from pyrit.registry.resolution import display_choices
 
 if TYPE_CHECKING:
+    from pyrit.models import Parameter
     from pyrit.models.identifiers.component_identifier import ComponentIdentifier
     from pyrit.scenario.core import Scenario
 
@@ -60,23 +60,7 @@ class ScenarioMetadata(ClassRegistryEntry):
     max_dataset_size: int | None = field(kw_only=True)
 
     # Scenario-declared custom parameters.
-    supported_parameters: tuple[ScenarioParameterMetadata, ...] = field(kw_only=True, default=())
-
-
-class ScenarioParameterMetadata(NamedTuple):
-    """
-    A scenario-declared parameter rendered for user-facing display.
-
-    NamedTuple so existing positional construction (e.g. in tests) keeps working
-    while consumers can read fields by name.
-    """
-
-    name: str
-    description: str
-    default: Any
-    param_type: str
-    choices: list[str] | None
-    is_list: bool = False
+    supported_parameters: tuple[Parameter, ...] = field(kw_only=True, default=())
 
 
 class ScenarioRegistry(Registry["Scenario", ScenarioMetadata]):
@@ -218,17 +202,7 @@ class ScenarioRegistry(Registry["Scenario", ScenarioMetadata]):
         """
         description = ClassRegistryEntry.description_from_docstring(cls, fallback="No description available")
 
-        supported_parameters = tuple(
-            ScenarioParameterMetadata(
-                name=p.name,
-                description=p.description,
-                default=p.default,
-                param_type=_param_type_display(p.param_type),
-                choices=([str(c) for c in choices] if (choices := display_choices(p.param_type)) else None),
-                is_list=get_origin(p.param_type) is list,
-            )
-            for p in cls.supported_parameters()
-        )
+        supported_parameters = tuple(cls.supported_parameters())
 
         try:
             instance = cls()  # type: ignore[ty:missing-argument]
@@ -308,37 +282,3 @@ class ScenarioRegistry(Registry["Scenario", ScenarioMetadata]):
         scenario.set_params_from_args(args=scenario_params or {})
         await scenario.initialize_async(**initialize_kwargs)
         return scenario
-
-
-def _param_type_display(param_type: Any) -> str:
-    """
-    Render a ``Parameter.param_type`` value as a short user-facing string.
-
-    Args:
-        param_type (Any): The parameter type (None, builtin, or GenericAlias).
-
-    Returns:
-        str: Display string (e.g., ``"int"``, ``"list[str]"``, ``"any"``).
-    """
-    if param_type is None:
-        return "any"
-    # A constrained scalar (Literal[...]) renders as its base scalar name so the
-    # display + API round-trip works; the allowed members travel via `choices`.
-    if get_origin(param_type) is Literal:
-        args = get_args(param_type)
-        return type(args[0]).__name__ if args else "str"
-    if get_origin(param_type) is list:
-        type_args = get_args(param_type)
-        element_type = type_args[0] if type_args else str
-        if get_origin(element_type) is Literal:
-            element_args = get_args(element_type)
-            element_name = type(element_args[0]).__name__ if element_args else "str"
-            return f"list[{element_name}]"
-    # Detect parameterized generics (list[str], dict[str, int], ...) reliably across Python
-    # versions: get_origin returns the unparameterized type for GenericAlias, None otherwise.
-    # On some 3.10 builds GenericAlias passes isinstance(_, type), so we can't rely on that.
-    if get_origin(param_type) is not None:
-        return str(param_type)
-    if isinstance(param_type, type):
-        return param_type.__name__
-    return str(param_type)

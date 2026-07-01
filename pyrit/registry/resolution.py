@@ -32,8 +32,6 @@ responsibilities:
   JSON-safe form stored for resume, and summarize how a stored snapshot differs
   from the current bag. This keeps the persistence/resume mechanics for declared
   params next to the resolution that produces them, rather than in each component.
-- **Present** (``display_choices``): project a constrained-scalar ``param_type``
-  into its allowed-value display tuple.
 
 The identifier is the declarative blueprint; this module is where the registry
 reads and applies it. It performs no eager heavy imports and never imports
@@ -47,20 +45,14 @@ import inspect
 import json
 import re
 import types
-from enum import Enum
-from typing import (
-    TYPE_CHECKING,
-    Any,
-    Literal,
-    Protocol,
-    TypeAlias,
-    Union,
-    get_args,
-    get_origin,
-)
+from typing import TYPE_CHECKING, Any, Protocol, TypeAlias, Union, get_args, get_origin
 
 from pyrit.common.apply_defaults import REQUIRED_VALUE, _RequiredValueSentinel
 from pyrit.models.parameter import ComponentType, Parameter, RegistryReference
+
+# Re-exported so ``from pyrit.registry.resolution import display_choices`` keeps working;
+# the single implementation now lives in ``pyrit.models.parameter``.
+from pyrit.models.parameter import display_choices as display_choices
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -601,32 +593,3 @@ def describe_param_mismatch(*, stored: dict[str, Any] | None, current: dict[str,
         key for key in set(stored_params) & set(current_normalized) if stored_params[key] != current_normalized[key]
     }
     return ", ".join(sorted((set(stored_params) ^ set(current_normalized)) | changed_keys))
-
-
-# ---------------------------------------------------------------------------
-# Present: param_type -> allowed-value display tuple
-# ---------------------------------------------------------------------------
-
-
-def display_choices(param_type: TypeAnnotation) -> tuple[Any, ...] | None:
-    """
-    Derive the allowed-value display list from a constrained-scalar ``param_type``.
-
-    This is the presentation projection of an allowed set: a ``Parameter`` stores
-    the constraint as a ``Literal[...]`` / ``Enum`` type, and serializers render the
-    members on demand instead of reading a separate field. ``Optional[X]`` /
-    ``X | None`` is unwrapped first.
-
-    Args:
-        param_type (TypeAnnotation): The parameter's type annotation.
-
-    Returns:
-        tuple[Any, ...] | None: The allowed members for a constrained scalar
-        (``Literal`` args or ``Enum`` member values), or None when unconstrained.
-    """
-    unwrapped = _unwrap_optional(param_type)
-    if get_origin(unwrapped) is Literal:
-        return get_args(unwrapped)
-    if isinstance(unwrapped, type) and issubclass(unwrapped, Enum):
-        return tuple(member.value for member in unwrapped)
-    return None

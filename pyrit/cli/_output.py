@@ -113,7 +113,7 @@ def print_scenario_list(*, items: list[RegisteredScenario]) -> None:
             print("    Supported Parameters:")
             for p in sc.supported_parameters:
                 default_str = f" [default: {p.default!r}]" if p.default is not None else ""
-                type_str = f" ({p.param_type})" if p.param_type else ""
+                type_str = f" ({p.type_name})" if p.type_name else ""
                 choices_str = f" [choices: {', '.join(p.choices)}]" if p.choices else ""
                 print(f"      - {p.name}{type_str}{default_str}{choices_str}: {p.description}")
     print("\n" + "=" * 80)

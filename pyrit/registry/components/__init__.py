@@ -24,7 +24,6 @@ from pyrit.registry.components.converter_registry import (
 )
 from pyrit.registry.components.scenario_registry import (
     ScenarioMetadata,
-    ScenarioParameterMetadata,
     ScenarioRegistry,
 )
 from pyrit.registry.components.scorer_registry import (
@@ -45,7 +44,6 @@ __all__ = [
     "ScorerMetadata",
     "ScenarioRegistry",
     "ScenarioMetadata",
-    "ScenarioParameterMetadata",
     "TargetRegistry",
     "TargetMetadata",
 ]

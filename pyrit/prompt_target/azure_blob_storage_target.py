@@ -6,10 +6,10 @@ from enum import Enum
 from urllib.parse import urlparse
 
 from azure.core.exceptions import ClientAuthenticationError
+from azure.identity.aio import DefaultAzureCredential
 from azure.storage.blob import ContentSettings
 from azure.storage.blob.aio import ContainerClient as AsyncContainerClient
 
-from pyrit.auth import AzureStorageAuth
 from pyrit.common import default_values
 from pyrit.models import ComponentIdentifier, Message, construct_response_from_request
 from pyrit.prompt_target.common.prompt_target import PromptTarget
@@ -37,8 +37,9 @@ class AzureBlobStorageTarget(PromptTarget):
 
     Args:
         container_url (str): URL to the Azure Blob Storage Container.
-        sas_token (optional[str]): Optional Blob SAS token needed to authenticate blob operations. If not provided, a
-            delegation SAS token will be created using Entra ID authentication.
+        sas_token (optional[str]): Optional Blob SAS token needed to authenticate blob operations. If not provided,
+            ``DefaultAzureCredential`` is used directly, which requires the caller to hold a data-plane role such
+            as Storage Blob Data Contributor on the storage account.
         blob_content_type (SupportedContentType): Expected Content Type of the blob, chosen from the
             SupportedContentType enum. Set to PLAIN_TEXT by default.
         max_requests_per_minute (int, Optional): Number of requests the target can handle per
@@ -96,6 +97,7 @@ class AzureBlobStorageTarget(PromptTarget):
 
         self._sas_token: str | None = sas_token
         self._client_async: AsyncContainerClient | None = None
+        self._credential: DefaultAzureCredential | None = None
 
         super().__init__(
             endpoint=self._container_url,
@@ -121,21 +123,41 @@ class AzureBlobStorageTarget(PromptTarget):
         """
         Create an asynchronous ContainerClient for Azure Storage. If a SAS token is provided via the
         AZURE_STORAGE_ACCOUNT_SAS_TOKEN environment variable or the init sas_token parameter, it will be used
-        for authentication. Otherwise, a delegation SAS token will be created using Entra ID authentication.
+        for authentication. Otherwise, ``DefaultAzureCredential`` is used directly, which requires the caller
+        to hold a data-plane role such as Storage Blob Data Contributor on the storage account.
         """
         container_url, _ = self._parse_url()
         try:
             sas_token: str = default_values.get_required_value(
                 env_var_name=self.SAS_TOKEN_ENVIRONMENT_VARIABLE, passed_value=self._sas_token
             )
-            logger.info("Using SAS token from environment variable or passed parameter.")
         except ValueError:
-            logger.info("SAS token not provided. Creating a delegation SAS token using Entra ID authentication.")
-            sas_token = await AzureStorageAuth.get_sas_token_async(container_url)
+            logger.info("SAS token not provided. Using DefaultAzureCredential for direct Entra ID authentication.")
+            account_url, _, container_name = container_url.rpartition("/")
+            self._credential = DefaultAzureCredential()
+            self._client_async = AsyncContainerClient(
+                account_url=account_url,
+                container_name=container_name,
+                credential=self._credential,
+            )
+            return
+
+        logger.info("Using SAS token from environment variable or passed parameter.")
         self._client_async = AsyncContainerClient.from_container_url(
             container_url=container_url,
             credential=sas_token,
         )
+
+    async def _close_client_async(self) -> None:
+        """Close the container client and credential, resetting both to None."""
+        client, self._client_async = self._client_async, None
+        credential, self._credential = self._credential, None
+        try:
+            if client:
+                await client.close()
+        finally:
+            if credential:
+                await credential.close()
 
     async def _upload_blob_async(self, file_name: str, data: bytes, content_type: str) -> None:
         """
@@ -152,14 +174,14 @@ class AzureBlobStorageTarget(PromptTarget):
         content_settings = ContentSettings(content_type=f"{content_type}")
         logger.info(msg="\nUploading to Azure Storage as blob:\n\t" + file_name)
 
-        if not self._client_async:
-            await self._create_container_client_async()
         # Parse the Azure Storage Blob URL to extract components
         _, blob_prefix = self._parse_url()
         # If a blob prefix is provided, prepend it to the file name.
         # If not, the file will be put in the root of the container.
         blob_path = f"{blob_prefix}/{file_name}" if blob_prefix else file_name
         try:
+            if not self._client_async:
+                await self._create_container_client_async()
             if self._client_async is None:
                 raise RuntimeError("Blob storage client not initialized")
             blob_client = self._client_async.get_blob_client(blob=blob_path)
@@ -171,14 +193,16 @@ class AzureBlobStorageTarget(PromptTarget):
         except Exception as exc:
             if isinstance(exc, ClientAuthenticationError):
                 logger.exception(
-                    msg="Authentication failed. Please check that the container existence in the "
-                    "Azure Storage Account and ensure the validity of the provided SAS token. If you "
-                    "haven't set the SAS token as an environment variable use `az login` to "
-                    "enable delegation-based SAS authentication to connect to the storage account"
+                    msg="Authentication failed. Please check that the container exists in the "
+                    "Azure Storage Account. If using a SAS token, ensure it is valid. Otherwise, "
+                    "ensure you are logged in via `az login` and hold a data-plane role such as "
+                    "Storage Blob Data Contributor on the storage account."
                 )
                 raise
             logger.exception(msg=f"An unexpected error occurred: {exc}")
             raise
+        finally:
+            await self._close_client_async()
 
     def _parse_url(self) -> tuple[str, str]:
         """
@@ -186,9 +210,17 @@ class AzureBlobStorageTarget(PromptTarget):
 
         Returns:
             tuple: A tuple containing the container URL and blob prefix.
+
+        Raises:
+            ValueError: If the container URL does not include a container name in its path.
         """
         parsed_url = urlparse(self._container_url)
         path_parts = parsed_url.path.split("/")
+        if len(path_parts) < 2 or not path_parts[1]:
+            raise ValueError(
+                f"Invalid Azure Storage container URL '{self._container_url}': expected a container name in the "
+                "path, e.g. https://<account>.blob.core.windows.net/<container>."
+            )
         container_name = path_parts[1]
         blob_prefix = "/".join(path_parts[2:])
         container_url = f"https://{parsed_url.netloc}/{container_name}"

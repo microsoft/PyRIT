@@ -5,6 +5,8 @@
 Tests for backend converter service.
 """
 
+import base64
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -16,7 +18,6 @@ from pyrit.backend.models.converters import (
 )
 from pyrit.backend.services.converter_service import (
     ConverterService,
-    _serialize_type,
     get_converter_service,
 )
 from pyrit.models import ComponentIdentifier
@@ -71,10 +72,11 @@ class TestListConverters:
 
         assert len(result.items) == 1
         assert result.items[0].converter_id == "conv-1"
-        assert result.items[0].converter_type == "MockConverter"
-        assert result.items[0].supported_input_types == ["text"]
-        assert result.items[0].supported_output_types == ["text"]
-        assert result.items[0].converter_specific_params == {"param1": "value1", "param2": 42}
+        assert result.items[0].identifier.class_name == "MockConverter"
+        assert result.items[0].identifier.supported_input_types == ["text"]
+        assert result.items[0].identifier.supported_output_types == ["text"]
+        assert result.items[0].identifier.params["param1"] == "value1"
+        assert result.items[0].identifier.params["param2"] == 42
 
 
 class TestListConverterCatalog:
@@ -135,26 +137,6 @@ class TestListConverterCatalog:
         assert all("Target" not in p.type_name for p in persuasion_entry.parameters)
 
 
-class TestSerializeType:
-    """Tests for the _serialize_type presentation helper."""
-
-    def test_empty_annotation(self) -> None:
-        import inspect
-
-        assert _serialize_type(inspect.Parameter.empty) == "Any"
-
-    def test_plain_type(self) -> None:
-        assert _serialize_type(int) == "int"
-
-    def test_optional_pep604(self) -> None:
-        assert _serialize_type(str | None) == "Optional[str]"
-
-    def test_literal(self) -> None:
-        from typing import Literal
-
-        assert _serialize_type(Literal["a", "b"]) == "Literal['a', 'b']"
-
-
 class TestGetConverter:
     """Tests for ConverterService.get_converter method."""
 
@@ -187,7 +169,7 @@ class TestGetConverter:
 
         assert result is not None
         assert result.converter_id == "conv-1"
-        assert result.converter_type == "MockConverter"
+        assert result.identifier.class_name == "MockConverter"
 
 
 class TestGetConverterObject:
@@ -259,49 +241,85 @@ class TestCreateConverter:
         assert converter_obj is not None
 
 
-class TestResolveConverterParams:
-    """Tests for ConverterService._resolve_converter_params method."""
+class TestPersistDataUriParams:
+    """Tests for ConverterService._persist_data_uri_params_async (registry-metadata driven)."""
 
-    def test_resolve_converter_params_returns_params_unchanged_when_no_converter_ref(self) -> None:
-        """Test that params without converter reference are returned unchanged."""
+    async def test_persist_data_uri_wraps_path_param(self) -> None:
+        """A data-URI value for a ``Path``-typed constructor param is persisted and wrapped in Path."""
         service = ConverterService()
-        params = {"key": "value", "number": 42}
 
-        result = service._resolve_converter_params(params=params)
+        mock_serializer = MagicMock()
+        mock_serializer.value = "/tmp/persisted.pdf"
+        mock_serializer.save_data_async = AsyncMock()
+
+        params = {"existing_pdf": "data:application/pdf;base64,iVBORw0KGgo="}
+
+        with patch(
+            "pyrit.backend.services.converter_service.data_serializer_factory",
+            return_value=mock_serializer,
+        ):
+            result = await service._persist_data_uri_params_async(converter_type="PDFConverter", params=params)
+
+        assert result["existing_pdf"] == Path("/tmp/persisted.pdf")
+        mock_serializer.save_data_async.assert_awaited_once_with(data=base64.b64decode("iVBORw0KGgo="))
+
+    async def test_persist_data_uri_keeps_str_param_as_string(self) -> None:
+        """A data-URI value for a ``str``-typed constructor param is persisted but left as a string."""
+        service = ConverterService()
+
+        mock_serializer = MagicMock()
+        mock_serializer.value = "/tmp/words.yaml"
+        mock_serializer.save_data_async = AsyncMock()
+
+        params = {"wordswap_path": "data:text/yaml;base64,aGVsbG8="}
+
+        with patch(
+            "pyrit.backend.services.converter_service.data_serializer_factory",
+            return_value=mock_serializer,
+        ):
+            result = await service._persist_data_uri_params_async(
+                converter_type="ColloquialWordswapConverter", params=params
+            )
+
+        assert result["wordswap_path"] == "/tmp/words.yaml"
+        assert not isinstance(result["wordswap_path"], Path)
+
+    async def test_persist_data_uri_ignores_param_not_on_converter(self) -> None:
+        """A data-URI value under a name that is not a constructor param is left unchanged."""
+        service = ConverterService()
+
+        with patch("pyrit.backend.services.converter_service.data_serializer_factory") as mock_factory:
+            result = await service._persist_data_uri_params_async(
+                converter_type="PDFConverter",
+                params={"not_a_param": "data:application/pdf;base64,iVBORw0KGgo="},
+            )
+
+        assert result == {"not_a_param": "data:application/pdf;base64,iVBORw0KGgo="}
+        mock_factory.assert_not_called()
+
+    async def test_persist_data_uri_noop_for_unregistered_type(self) -> None:
+        """When the converter type has no registry metadata, params pass through untouched."""
+        service = ConverterService()
+
+        params = {"existing_pdf": "data:application/pdf;base64,iVBORw0KGgo="}
+
+        with patch("pyrit.backend.services.converter_service.data_serializer_factory") as mock_factory:
+            result = await service._persist_data_uri_params_async(converter_type="NonExistentConverter", params=params)
 
         assert result == params
+        mock_factory.assert_not_called()
 
-    def test_resolve_converter_params_resolves_converter_id_reference(self) -> None:
-        """Test that converter_id reference is resolved to actual object."""
+    async def test_persist_data_uri_ignores_non_data_uri_values(self) -> None:
+        """Values that are not data URIs are left unchanged."""
         service = ConverterService()
 
-        # Register a mock converter
-        mock_converter = MagicMock(spec=prompt_converter.PromptConverter)
-        service._registry.instances.register(mock_converter, name="inner-conv")
+        params = {"existing_pdf": "/already/a/path.pdf", "font_size": 12}
 
-        params = {"converter": {"converter_id": "inner-conv"}}
-
-        result = service._resolve_converter_params(params=params)
-
-        assert result["converter"] is mock_converter
-
-    def test_resolve_converter_params_raises_for_nonexistent_reference(self) -> None:
-        """Test that referencing a non-existent converter raises ValueError."""
-        service = ConverterService()
-
-        params = {"converter": {"converter_id": "nonexistent"}}
-
-        with pytest.raises(ValueError, match="not found"):
-            service._resolve_converter_params(params=params)
-
-    def test_resolve_converter_params_ignores_non_dict_converter(self) -> None:
-        """Test that non-dict converter values are not modified."""
-        service = ConverterService()
-        params = {"converter": "some_string_value"}
-
-        result = service._resolve_converter_params(params=params)
+        with patch("pyrit.backend.services.converter_service.data_serializer_factory") as mock_factory:
+            result = await service._persist_data_uri_params_async(converter_type="PDFConverter", params=params)
 
         assert result == params
+        mock_factory.assert_not_called()
 
 
 class TestPreviewConversion:
@@ -648,8 +666,8 @@ class TestBuildInstanceFromObjectWithRealConverters:
         Instantiates every converter with minimal representative arguments
         (using mocks for complex dependencies like PromptTarget) and verifies:
         - converter_id is set correctly
-        - converter_type matches the class name
-        - supported_input_types and supported_output_types are lists
+        - identifier.class_name matches the class name
+        - identifier supported input/output types are lists or None
         """
         # Try to instantiate the converter
         converter_instance, error = _try_instantiate_converter(converter_name)
@@ -665,14 +683,19 @@ class TestBuildInstanceFromObjectWithRealConverters:
 
         # Verify the result
         assert result.converter_id == "test-id"
-        assert result.converter_type == converter_name
-        assert isinstance(result.supported_input_types, list)
-        assert isinstance(result.supported_output_types, list)
+        assert result.identifier.class_name == converter_name
+        assert result.identifier.supported_input_types is None or isinstance(
+            result.identifier.supported_input_types, list
+        )
+        assert result.identifier.supported_output_types is None or isinstance(
+            result.identifier.supported_output_types, list
+        )
 
 
 class TestConverterParamsExtraction:
     """
-    Tests that verify converter_specific_params are correctly extracted.
+    Tests that verify converter-specific params are correctly extracted onto the
+    identifier.
 
     Uses converters with known parameters to verify the params are properly
     captured from the identifier.
@@ -684,9 +707,8 @@ class TestConverterParamsExtraction:
         service = ConverterService()
         result = service._build_instance_from_object(converter_id="test-id", converter_obj=converter)
 
-        assert result.converter_type == "CaesarConverter"
-        assert result.converter_specific_params is not None
-        assert result.converter_specific_params.get("caesar_offset") == 13
+        assert result.identifier.class_name == "CaesarConverter"
+        assert result.identifier.params.get("caesar_offset") == 13
 
     def test_suffix_append_converter_params(self) -> None:
         """Test that SuffixAppendConverter params are extracted correctly."""
@@ -694,9 +716,8 @@ class TestConverterParamsExtraction:
         service = ConverterService()
         result = service._build_instance_from_object(converter_id="test-id", converter_obj=converter)
 
-        assert result.converter_type == "SuffixAppendConverter"
-        assert result.converter_specific_params is not None
-        assert result.converter_specific_params.get("suffix") == "test suffix"
+        assert result.identifier.class_name == "SuffixAppendConverter"
+        assert result.identifier.params.get("suffix") == "test suffix"
 
     def test_repeat_token_converter_params(self) -> None:
         """Test that RepeatTokenConverter params are extracted correctly."""
@@ -704,10 +725,9 @@ class TestConverterParamsExtraction:
         service = ConverterService()
         result = service._build_instance_from_object(converter_id="test-id", converter_obj=converter)
 
-        assert result.converter_type == "RepeatTokenConverter"
-        assert result.converter_specific_params is not None
-        assert result.converter_specific_params.get("token_to_repeat") == "x"
-        assert result.converter_specific_params.get("times_to_repeat") == 5
+        assert result.identifier.class_name == "RepeatTokenConverter"
+        assert result.identifier.params.get("token_to_repeat") == "x"
+        assert result.identifier.params.get("times_to_repeat") == 5
 
     def test_base64_converter_default_params(self) -> None:
         """Test that Base64Converter default params are captured."""
@@ -715,7 +735,7 @@ class TestConverterParamsExtraction:
         service = ConverterService()
         result = service._build_instance_from_object(converter_id="test-id", converter_obj=converter)
 
-        assert result.converter_type == "Base64Converter"
+        assert result.identifier.class_name == "Base64Converter"
         # Verify type info is populated from identifier
-        assert isinstance(result.supported_input_types, list)
-        assert isinstance(result.supported_output_types, list)
+        assert isinstance(result.identifier.supported_input_types, list)
+        assert isinstance(result.identifier.supported_output_types, list)

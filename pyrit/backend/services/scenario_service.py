@@ -14,7 +14,6 @@ from pyrit.backend.models.common import PaginationInfo
 from pyrit.backend.models.scenarios import ListRegisteredScenariosResponse
 from pyrit.models.catalog.scenario import (
     RegisteredScenario,
-    ScenarioParameterSummary,
 )
 from pyrit.registry import ScenarioMetadata, ScenarioRegistry
 
@@ -38,17 +37,7 @@ def _metadata_to_registered_scenario(metadata: ScenarioMetadata) -> RegisteredSc
         all_strategies=list(metadata.all_strategies),
         default_datasets=list(metadata.default_datasets),
         max_dataset_size=metadata.max_dataset_size,
-        supported_parameters=[
-            ScenarioParameterSummary(
-                name=p.name,
-                description=p.description,
-                default=repr(p.default) if p.default is not None else None,
-                param_type=p.param_type,
-                choices=p.choices,
-                is_list=p.is_list,
-            )
-            for p in metadata.supported_parameters
-        ],
+        supported_parameters=list(metadata.supported_parameters),
     )
 
 
