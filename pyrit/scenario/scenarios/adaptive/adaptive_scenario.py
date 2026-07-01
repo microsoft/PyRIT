@@ -167,31 +167,29 @@ class AdaptiveScenario(Scenario):
         For each dataset, construct a single ``AdaptiveTechniqueDispatcher``
         shared across that dataset's seed groups. For each seed group, ask
         the dispatcher to build its per-objective ``SequentialAttack`` and
-        wrap it in its own ``AtomicAttack``. All dispatchers across all
+        wrap it in its own ``AtomicAttack``.         All dispatchers across all
         datasets share one ``TechniqueSelector`` instance so learning
         accumulates globally; selection is committed up-front during
         scenario initialization, before any execution starts.
 
-        When ``context.include_baseline`` is true (the default under
-        ``BASELINE_ATTACK_POLICY = Enabled``), a baseline ``AtomicAttack``
-        named ``"baseline"`` is prepended at index 0.
+        The base ``Scenario`` prepends the baseline ``AtomicAttack`` (named
+        ``"baseline"``) at index 0 when ``context.include_baseline`` is true (the
+        default under ``BASELINE_ATTACK_POLICY = Enabled``).
 
         Args:
             context (ScenarioContext): The resolved runtime inputs for this run.
 
         Returns:
             list[AtomicAttack]: One ``AtomicAttack`` per compatible
-                seed group across all datasets, with the baseline (when
-                enabled) prepended at index 0.
+                seed group across all datasets.
 
         Raises:
             ValueError: If ``_build_techniques_dict`` finds no usable techniques.
         """
         techniques = self._build_techniques_dict(objective_target=context.objective_target)
 
-        seed_groups_by_dataset = await context.dataset_config.get_attack_groups_by_dataset_async()
         atomic_attacks: list[AtomicAttack] = []
-        for dataset_name, seed_groups in seed_groups_by_dataset.items():
+        for dataset_name, seed_groups in context.seed_groups_by_dataset.items():
             atomic_attacks.extend(
                 await self._build_atomics_for_dataset_async(
                     dataset_name=dataset_name,
@@ -200,10 +198,6 @@ class AdaptiveScenario(Scenario):
                     selector=self._selector,
                 )
             )
-
-        if context.include_baseline:
-            all_seed_groups = [g for groups in seed_groups_by_dataset.values() for g in groups]
-            atomic_attacks.insert(0, self._build_baseline_atomic_attack(seed_groups=all_seed_groups))
 
         return atomic_attacks
 

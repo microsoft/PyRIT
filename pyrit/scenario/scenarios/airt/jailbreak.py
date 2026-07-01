@@ -172,9 +172,6 @@ class Jailbreak(Scenario):
             )
             self._legacy_include_baseline = include_baseline
 
-        # Will be resolved in _build_atomic_attacks_async
-        self._seed_groups: list[SeedAttackGroup] | None = None
-
     def _get_or_create_adversarial_target(self) -> PromptTarget:
         """
         Return the shared adversarial target, creating it on first access.
@@ -189,20 +186,8 @@ class Jailbreak(Scenario):
             self._adversarial_target = get_default_adversarial_target()
         return self._adversarial_target
 
-    async def _resolve_seed_groups_async(self) -> list[SeedAttackGroup]:
-        """
-        Resolve seed groups from dataset configuration.
-
-        Returns:
-            list[SeedAttackGroup]: List of seed attack groups with objectives to be tested.
-        """
-        # Use dataset_config (guaranteed to be set by initialize_async). Auto-fetch
-        # populates memory first; a still-empty result raises a DatasetConstraintError
-        # naming the offending dataset, which we let propagate.
-        return list(await self._dataset_config.get_seed_attack_groups_async())
-
     async def _get_atomic_attack_from_strategy_async(
-        self, *, strategy: str, jailbreak_template_name: str
+        self, *, strategy: str, jailbreak_template_name: str, seed_groups: list[SeedAttackGroup]
     ) -> AtomicAttack:
         """
         Create an atomic attack for a specific jailbreak template.
@@ -210,6 +195,7 @@ class Jailbreak(Scenario):
         Args:
             strategy (str): JailbreakStrategy to use.
             jailbreak_template_name (str): Name of the jailbreak template file.
+            seed_groups (list[SeedAttackGroup]): Seed groups the attack draws from.
 
         Returns:
             AtomicAttack: An atomic attack using the specified jailbreak template.
@@ -264,7 +250,7 @@ class Jailbreak(Scenario):
         return AtomicAttack(
             atomic_attack_name=f"jailbreak_{template_name}",
             attack_technique=AttackTechnique(attack=attack),
-            seed_groups=self._seed_groups or [],
+            seed_groups=seed_groups,
         )
 
     async def _build_atomic_attacks_async(self, *, context: ScenarioContext) -> list[AtomicAttack]:
@@ -281,20 +267,15 @@ class Jailbreak(Scenario):
         """
         atomic_attacks: list[AtomicAttack] = []
 
-        # Retrieve seed prompts based on selected strategies
-        self._seed_groups = await self._resolve_seed_groups_async()
-
+        seed_groups = list(context.seed_groups)
         strategies = {s.value for s in context.scenario_strategies}
 
         for strategy in strategies:
             for template_name in self._jailbreaks:
                 for _ in range(self._num_attempts):
                     atomic_attack = await self._get_atomic_attack_from_strategy_async(
-                        strategy=strategy, jailbreak_template_name=template_name
+                        strategy=strategy, jailbreak_template_name=template_name, seed_groups=seed_groups
                     )
                     atomic_attacks.append(atomic_attack)
-
-        if context.include_baseline:
-            atomic_attacks.insert(0, self._build_baseline_atomic_attack(seed_groups=self._seed_groups or []))
 
         return atomic_attacks

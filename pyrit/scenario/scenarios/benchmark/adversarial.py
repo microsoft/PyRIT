@@ -247,7 +247,7 @@ class AdversarialBenchmark(Scenario):
         # ``{technique}__{target}_{dataset}`` naming preserves the VERSION=2 cache key shape.
         atomic_attacks = builder.build(
             technique_factories=technique_factories,
-            dataset_groups=await context.dataset_config.get_attack_groups_by_dataset_async(),
+            dataset_groups=context.seed_groups_by_dataset,
             adversarial_targets=resolved_targets,
             display_group_fn=lambda combo: combo.target_name or "",
             include_baseline=False,
