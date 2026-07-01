@@ -342,10 +342,10 @@ async def test_get_scenario_run_async_wraps_connect_error(client, mock_httpx_cli
 
 async def test_get_scenario_run_results_async(client, mock_httpx_client):
     # Build a minimal ScenarioResult.to_dict() payload that from_dict can deserialize.
-    from pyrit.models import ScenarioIdentifier, ScenarioResult, ScenarioRunState
+    from pyrit.models import ScenarioResult, ScenarioRunState
 
     scenario_result = ScenarioResult(
-        scenario_identifier=ScenarioIdentifier.for_scenario(scenario_class_name="x"),
+        scenario_name="x",
         objective_target_identifier=None,
         objective_scorer_identifier=None,
         attack_results={},

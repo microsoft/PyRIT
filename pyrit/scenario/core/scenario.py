@@ -36,7 +36,6 @@ from pyrit.memory.memory_models import ScenarioResultEntry
 from pyrit.models import (
     AttackOutcome,
     AttackResult,
-    ScenarioIdentifier,
     ScenarioResult,
     ScenarioRunState,
     SeedAttackGroup,
@@ -188,13 +187,11 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
 
         description = ClassRegistryEntry.description_from_docstring(self.__class__)
 
-        self._identifier = ScenarioIdentifier.for_scenario(
-            scenario_class_name=type(self).__name__,
-            scenario_class_module=type(self).__module__,
-            version=version,
-        )
-        # Non-identity persistence record carried on the ScenarioResult, not the
-        # identifier: the display description and the resolved-param resume snapshot.
+        # The scenario identifier is a build-time projection owned by the scenario
+        # registry, not a per-run record. The run persists denormalized identity
+        # facts (name / version / pyrit_version) plus the display description and the
+        # resolved-param resume snapshot directly on the ScenarioResult.
+        self._version = version
         self._description = description
         self._init_data: dict[str, Any] | None = None
 
@@ -587,7 +584,8 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
         }
 
         result = ScenarioResult(
-            scenario_identifier=self._identifier,
+            scenario_name=type(self).__name__,
+            scenario_version=self._version,
             scenario_description=self._description,
             init_data=self._init_data,
             objective_target_identifier=self._objective_target_identifier,
@@ -726,21 +724,22 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
             ValueError: If the stored scenario name, version, or parameters do not
                 match the current configuration.
         """
-        stored_name = stored_result.scenario_identifier.name
-        stored_version = stored_result.scenario_identifier.version
+        stored_name = stored_result.scenario_name
+        stored_version = stored_result.scenario_version
+        current_name = type(self).__name__
 
-        if stored_name != self._identifier.name:
+        if stored_name != current_name:
             raise ValueError(
                 f"Scenario result id '{self._scenario_result_id}' belongs to scenario '{stored_name}' "
-                f"but current scenario is '{self._identifier.name}'. "
+                f"but current scenario is '{current_name}'. "
                 f"Drop scenario_result_id to start a new scenario."
             )
 
-        if stored_version != self._identifier.version:
+        if stored_version != self._version:
             raise ValueError(
                 f"Scenario result id '{self._scenario_result_id}' was created with "
-                f"{self._identifier.name} version {stored_version} but current version is "
-                f"{self._identifier.version}. Drop scenario_result_id to start a new scenario."
+                f"{current_name} version {stored_version} but current version is "
+                f"{self._version}. Drop scenario_result_id to start a new scenario."
             )
 
         # Treat None (legacy result without persisted params) as empty. The registry
@@ -971,7 +970,7 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
 
         Example:
             >>> result = await scenario.run_async()
-            >>> print(f"Scenario: {result.scenario_identifier.name}")
+            >>> print(f"Scenario: {result.scenario_name}")
             >>> print(f"Total results: {len(result.attack_results)}")
         """
         if not self._atomic_attacks:

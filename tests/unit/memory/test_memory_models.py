@@ -28,7 +28,6 @@ from pyrit.models import (
     ConversationReference,
     ConversationType,
     MessagePiece,
-    ScenarioIdentifier,
     ScenarioResult,
     Score,
     SeedObjective,
@@ -552,7 +551,7 @@ class TestAttackResultEntry:
 class TestScenarioResultEntry:
     def _make_scenario_result(self, **overrides) -> ScenarioResult:
         defaults = {
-            "scenario_identifier": ScenarioIdentifier.for_scenario(scenario_class_name="test_scenario"),
+            "scenario_name": "test_scenario",
             "scenario_description": "desc",
             "objective_target_identifier": ComponentIdentifier(class_name="MockTarget", class_module="tests.mocks"),
             "attack_results": {},
@@ -577,7 +576,7 @@ class TestScenarioResultEntry:
         sr = self._make_scenario_result()
         entry = ScenarioResultEntry(entry=sr)
         recovered = entry.get_scenario_result()
-        assert recovered.scenario_identifier.name == "test_scenario"
+        assert recovered.scenario_name == "test_scenario"
         assert recovered.scenario_run_state == "COMPLETED"
         # attack_results should be empty after roundtrip (populated by memory_interface)
         assert recovered.attack_results == {}

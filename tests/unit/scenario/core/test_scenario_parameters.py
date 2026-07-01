@@ -402,16 +402,13 @@ class TestResumeParameterValidation:
 
     @staticmethod
     def _make_stored_result(*, scenario_name: str, version: int, init_data):
-        """Build a minimal ScenarioResult with a controlled identifier for resume tests."""
-        from pyrit.models import ScenarioIdentifier, ScenarioResult
+        """Build a minimal ScenarioResult with controlled flat scenario fields for resume tests."""
+        from pyrit.models import ScenarioResult
 
-        identifier = ScenarioIdentifier.for_scenario(
-            scenario_class_name=scenario_name,
-            version=version,
-        )
         target_id = ComponentIdentifier(class_name="MockTarget", class_module="tests.unit.scenarios")
         return ScenarioResult(
-            scenario_identifier=identifier,
+            scenario_name=scenario_name,
+            scenario_version=version,
             init_data=init_data,
             objective_target_identifier=target_id,
             objective_scorer_identifier=_TEST_SCORER_ID,

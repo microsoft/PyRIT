@@ -64,8 +64,8 @@ def _make_db_scenario_result(
     """Create a mock ScenarioResult as returned by CentralMemory."""
     sr = MagicMock()
     sr.id = result_id
-    sr.scenario_identifier.name = scenario_name
-    sr.scenario_identifier.version = 1
+    sr.scenario_name = scenario_name
+    sr.scenario_version = 1
     sr.scenario_run_state = run_state
     sr.get_strategies_used.return_value = []
     sr.attack_results = attack_results or {}

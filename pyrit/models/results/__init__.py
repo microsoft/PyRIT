@@ -12,9 +12,9 @@ Results module - strategy, attack, and scenario result types for PyRIT.
 - ScenarioRunState: Lifecycle state of a scenario run.
 """
 
+from pyrit.models.identifiers.scenario_identifier import ScenarioIdentifier
 from pyrit.models.results.attack_result import AttackOutcome, AttackResult, AttackResultT
 from pyrit.models.results.scenario_result import (
-    ScenarioIdentifier,
     ScenarioResult,
     ScenarioRunState,
 )

@@ -13,7 +13,7 @@ from unittest.mock import patch
 
 from pyrit.memory import MemoryInterface
 from pyrit.memory.memory_models import PromptMemoryEntry
-from pyrit.models import AttackResult, ComponentIdentifier, MessagePiece, ScenarioIdentifier, ScenarioResult, Score
+from pyrit.models import AttackResult, ComponentIdentifier, MessagePiece, ScenarioResult, Score
 
 # Use the class attribute for the batch limit in tests
 _MAX_BIND_VARS = MemoryInterface._MAX_BIND_VARS
@@ -59,12 +59,10 @@ def _create_scenario_result(
 ) -> ScenarioResult:
     """Create a sample scenario result for testing."""
     return ScenarioResult(
-        scenario_identifier=ScenarioIdentifier(
-            name=name,
-            description="test",
-            scenario_version=1,
-            init_data={},
-        ),
+        scenario_name=name,
+        scenario_description="test",
+        scenario_version=1,
+        init_data={},
         objective_target_identifier=ComponentIdentifier(class_name="TestTarget", class_module="test"),
         attack_results=attack_results or {},
         objective_scorer_identifier=ComponentIdentifier(class_name="TestScorer", class_module="test"),

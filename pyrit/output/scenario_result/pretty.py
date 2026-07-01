@@ -97,7 +97,7 @@ class PrettyScenarioResultPrinter(ScenarioResultPrinterBase):
         lines: list[str] = []
         lines.append("\n")
         lines.append(self._format_colored("=" * self._width, Fore.CYAN))
-        header_text = f"📊 SCENARIO RESULTS: {result.scenario_identifier.name}"
+        header_text = f"📊 SCENARIO RESULTS: {result.scenario_name}"
         lines.append(self._format_colored(header_text.center(self._width), Style.BRIGHT, Fore.CYAN))
         lines.append(self._format_colored("=" * self._width, Fore.CYAN))
         return "".join(lines)
@@ -154,17 +154,11 @@ class PrettyScenarioResultPrinter(ScenarioResultPrinterBase):
 
         lines.append(self._render_section_header("Scenario Information"))
         lines.append(self._format_colored(f"{self._indent}📋 Scenario Details", Style.BRIGHT))
-        lines.append(self._format_colored(f"{self._indent * 2}• Name: {result.scenario_identifier.name}", Fore.CYAN))
+        lines.append(self._format_colored(f"{self._indent * 2}• Name: {result.scenario_name}", Fore.CYAN))
         lines.append(
-            self._format_colored(
-                f"{self._indent * 2}• Scenario Version: {result.scenario_identifier.version}", Fore.CYAN
-            )
+            self._format_colored(f"{self._indent * 2}• Scenario Version: {result.scenario_version}", Fore.CYAN)
         )
-        lines.append(
-            self._format_colored(
-                f"{self._indent * 2}• PyRIT Version: {result.scenario_identifier.pyrit_version}", Fore.CYAN
-            )
-        )
+        lines.append(self._format_colored(f"{self._indent * 2}• PyRIT Version: {result.pyrit_version}", Fore.CYAN))
 
         if result.scenario_description:
             lines.append(self._format_colored(f"{self._indent * 2}• Description:", Fore.CYAN))

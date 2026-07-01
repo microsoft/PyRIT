@@ -9,18 +9,9 @@ from pyrit.models import (
     AttackOutcome,
     AttackResult,
     ComponentIdentifier,
-    ScenarioIdentifier,
     ScenarioResult,
 )
 from pyrit.output.scenario_result.pretty import PrettyScenarioResultMemoryPrinter
-
-
-def _scenario_identifier(*, name: str = "TestScenario") -> ScenarioIdentifier:
-    return ScenarioIdentifier.for_scenario(
-        scenario_class_name=name,
-        version=1,
-        pyrit_version="1.0.0",
-    )
 
 
 def _target_identifier(**params) -> ComponentIdentifier:
@@ -40,7 +31,9 @@ def _scenario_result(
     display_group_map: dict[str, str] | None = None,
 ) -> ScenarioResult:
     return ScenarioResult(
-        scenario_identifier=_scenario_identifier(),
+        scenario_name="TestScenario",
+        scenario_version=1,
+        pyrit_version="1.0.0",
         scenario_description=description,
         objective_target_identifier=_target_identifier(**(target_params or {})),
         attack_results=attack_results or {"strategy_a": [_attack_result()]},
@@ -89,7 +82,9 @@ async def test_write_async_renders_full_summary(printer, capsys):
 
 async def test_write_async_with_unknown_target_when_no_params(printer, capsys):
     result = ScenarioResult(
-        scenario_identifier=_scenario_identifier(),
+        scenario_name="TestScenario",
+        scenario_version=1,
+        pyrit_version="1.0.0",
         objective_target_identifier=ComponentIdentifier.from_dict({}),
         attack_results={"s": []},
         objective_scorer_identifier=None,

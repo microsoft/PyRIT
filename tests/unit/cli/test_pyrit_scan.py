@@ -178,7 +178,6 @@ def _make_scenario_result():
         AttackOutcome,
         AttackResult,
         ComponentIdentifier,
-        ScenarioIdentifier,
         ScenarioResult,
         ScenarioRunState,
     )
@@ -192,7 +191,7 @@ def _make_scenario_result():
         timestamp=datetime(2025, 1, 1, tzinfo=timezone.utc),
     )
     return ScenarioResult(
-        scenario_identifier=ScenarioIdentifier.for_scenario(scenario_class_name="test_scenario"),
+        scenario_name="test_scenario",
         scenario_description="A test",
         objective_target_identifier=ComponentIdentifier.model_validate(
             {"__type__": "FakeTarget", "__module__": "test.mod", "params": {}}

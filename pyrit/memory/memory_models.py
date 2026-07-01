@@ -45,7 +45,6 @@ from pyrit.models import (
     EvaluationIdentifier,
     MessagePiece,
     PromptDataType,
-    ScenarioIdentifier,
     ScenarioResult,
     ScenarioRunState,
     Score,
@@ -1161,10 +1160,10 @@ class ScenarioResultEntry(Base):
             entry (ScenarioResult): The scenario result object to convert into a database entry.
         """
         self.id = entry.id
-        self.scenario_name = entry.scenario_identifier.name
+        self.scenario_name = entry.scenario_name
         self.scenario_description = entry.scenario_description
-        self.scenario_version = entry.scenario_identifier.version
-        self.pyrit_version = entry.scenario_identifier.pyrit_version
+        self.scenario_version = entry.scenario_version
+        self.pyrit_version = entry.pyrit_version
         self.scenario_init_data = entry.init_data
         # Convert ComponentIdentifier to dict for JSON storage
         self.objective_target_identifier = (  # type: ignore[ty:invalid-assignment]
@@ -1211,15 +1210,9 @@ class ScenarioResultEntry(Base):
         Returns:
             ScenarioResult object with scenario metadata but empty attack_results
         """
-        # Recreate ScenarioIdentifier with the stored pyrit_version. Only identity
-        # fields live on the identifier; description / init_data are set on the
-        # ScenarioResult below.
+        # Denormalized identity facts (name / version / pyrit_version) are stored
+        # directly on the row; the ScenarioResult carries them as flat fields.
         stored_version = self.pyrit_version or LEGACY_PYRIT_VERSION
-        scenario_identifier = ScenarioIdentifier.for_scenario(
-            scenario_class_name=self.scenario_name,
-            version=self.scenario_version,
-            pyrit_version=stored_version,
-        )
 
         # Return empty attack_results - will be populated by memory_interface
         attack_results: dict[str, list[AttackResult]] = {}
@@ -1242,7 +1235,9 @@ class ScenarioResultEntry(Base):
 
         return ScenarioResult(
             id=self.id,
-            scenario_identifier=scenario_identifier,
+            scenario_name=self.scenario_name,
+            scenario_version=self.scenario_version,
+            pyrit_version=stored_version,
             scenario_description=self.scenario_description or "",
             init_data=self.scenario_init_data,
             objective_target_identifier=target_identifier,

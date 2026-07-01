@@ -486,8 +486,8 @@ class ScenarioRunService:
 
         return ScenarioRunSummary(
             scenario_result_id=scenario_result_id,
-            scenario_name=scenario_result.scenario_identifier.name,
-            scenario_version=scenario_result.scenario_identifier.version,
+            scenario_name=scenario_result.scenario_name,
+            scenario_version=scenario_result.scenario_version,
             status=status,
             created_at=scenario_result.creation_time,
             updated_at=scenario_result.completion_time or scenario_result.creation_time,

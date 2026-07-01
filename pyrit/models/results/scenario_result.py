@@ -11,17 +11,17 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+import pyrit
 from pyrit.common.deprecation import print_deprecation_message
 from pyrit.models.identifiers.component_identifier import (  # noqa: TC001  (runtime-required by Pydantic field annotations)
     ComponentIdentifier,
 )
-from pyrit.models.identifiers.scenario_identifier import ScenarioIdentifier
 from pyrit.models.results.attack_result import AttackOutcome, AttackResult
 
 logger = logging.getLogger(__name__)
 
 
-__all__ = ["ScenarioIdentifier", "ScenarioResult", "ScenarioRunState"]
+__all__ = ["ScenarioResult", "ScenarioRunState"]
 
 
 class ScenarioRunState(str, Enum):
@@ -52,8 +52,12 @@ class ScenarioResult(BaseModel):
 
     #: Scenario result ID.
     id: uuid.UUID = Field(default_factory=uuid.uuid4)
-    #: Identifier for the executed scenario.
-    scenario_identifier: ScenarioIdentifier
+    #: Scenario class name (denormalized identity fact; e.g. ``"ContentHarms"``).
+    scenario_name: str
+    #: Scenario definition version (denormalized identity fact).
+    scenario_version: int = 1
+    #: PyRIT version the scenario ran under (denormalized for storage / display).
+    pyrit_version: str = Field(default=pyrit.__version__)
     #: Human-readable scenario description (the scenario class docstring). Display /
     #: catalog metadata snapshotted on the result — not part of scenario identity.
     scenario_description: str = ""
