@@ -19,13 +19,19 @@ from pyrit.models.retry_event import RetryEvent
 
 
 def _make_scenario_identifier(**kwargs):
-    defaults = {"name": "TestScenario", "description": "A test", "scenario_version": 1}
+    defaults = {
+        "scenario_class_name": "TestScenario",
+        "description": "A test",
+        "version": 1,
+    }
     defaults.update(kwargs)
-    return ScenarioIdentifier(**defaults)
+    return ScenarioIdentifier.for_scenario(**defaults)
 
 
 def _make_component_identifier_dict(class_name="TestTarget"):
-    return ComponentIdentifier.from_dict({"__type__": class_name, "__module__": "test.module", "params": {}})
+    return ComponentIdentifier.from_dict(
+        {"__type__": class_name, "__module__": "test.module", "params": {}}
+    )
 
 
 def _make_attack_result(*, objective="test objective", outcome=AttackOutcome.SUCCESS):
@@ -38,17 +44,17 @@ def _make_attack_result(*, objective="test objective", outcome=AttackOutcome.SUC
 
 class TestScenarioIdentifier:
     def test_init_basic(self):
-        si = ScenarioIdentifier(name="MySc")
+        si = ScenarioIdentifier.for_scenario(scenario_class_name="MySc")
         assert si.name == "MySc"
         assert si.description == ""
         assert si.version == 1
         assert si.init_data is None
 
     def test_init_with_all_params(self):
-        si = ScenarioIdentifier(
-            name="MySc",
+        si = ScenarioIdentifier.for_scenario(
+            scenario_class_name="MySc",
             description="desc",
-            scenario_version=2,
+            version=2,
             init_data={"key": "val"},
             pyrit_version="1.0.0",
         )
@@ -57,7 +63,7 @@ class TestScenarioIdentifier:
         assert si.pyrit_version == "1.0.0"
 
     def test_init_default_pyrit_version(self):
-        si = ScenarioIdentifier(name="X")
+        si = ScenarioIdentifier.for_scenario(scenario_class_name="X")
         assert si.pyrit_version == pyrit.__version__
 
 
@@ -172,7 +178,9 @@ class TestScenarioResult:
         assert ScenarioResult.normalize_scenario_name("ContentHarms") == "ContentHarms"
 
     def test_normalize_scenario_name_mixed_case_with_underscore(self):
-        assert ScenarioResult.normalize_scenario_name("Content_harms") == "Content_harms"
+        assert (
+            ScenarioResult.normalize_scenario_name("Content_harms") == "Content_harms"
+        )
 
     def test_error_attack_result_ids_defaults_to_empty(self):
         """error_attack_result_ids defaults to empty list."""
@@ -196,23 +204,11 @@ class TestScenarioResult:
         assert sr.error_attack_result_ids == ["id-1", "id-2"]
 
 
-def test_scenario_identifier_to_dict_from_dict_roundtrip():
-    original = ScenarioIdentifier(
-        name="ContentHarms",
-        description="Tests content harm scenarios",
-        scenario_version=3,
-        init_data={"max_turns": 5, "strategy": "crescendo"},
-        pyrit_version="0.14.0",
-    )
-    roundtripped = ScenarioIdentifier.from_dict(original.to_dict())
-    assert original.to_dict() == roundtripped.to_dict()
-
-
 def test_scenario_result_to_dict_from_dict_roundtrip():
-    scenario_id = ScenarioIdentifier(
-        name="ContentHarms",
+    scenario_id = ScenarioIdentifier.for_scenario(
+        scenario_class_name="ContentHarms",
         description="Tests content harm scenarios",
-        scenario_version=2,
+        version=2,
         pyrit_version="0.14.0",
     )
     target_id = ComponentIdentifier(
@@ -271,28 +267,19 @@ def test_scenario_result_to_dict_from_dict_roundtrip():
     )
     roundtripped = ScenarioResult.from_dict(original.to_dict())
     assert original.to_dict() == roundtripped.to_dict()
-    # The nested identifier must preserve the legacy ``scenario_version`` wire key.
-    assert "scenario_version" in original.to_dict()["scenario_identifier"]
-    assert "version" not in original.to_dict()["scenario_identifier"]
-
-
-def test_scenario_identifier_from_dict_missing_pyrit_version_uses_current():
-    """A payload missing pyrit_version now resolves to the current version via the Pydantic default."""
-    data = {
-        "name": "Legacy",
-        "description": "loaded from older payload",
-        "scenario_version": 1,
-        "init_data": None,
-        # pyrit_version intentionally absent
-    }
-    identifier = ScenarioIdentifier.from_dict(data)
-    assert identifier.pyrit_version == pyrit.__version__
+    # The nested identifier round-trips via the ComponentIdentifier flat shape.
+    assert original.to_dict()["scenario_identifier"]["class_name"] == "ContentHarms"
+    assert original.to_dict()["scenario_identifier"]["attributes"]["version"] == 2
 
 
 def test_scenario_result_from_dict_preserves_missing_completion_time():
     """An in-progress scenario serialized without completion_time should round-trip with completion_time=None."""
-    scenario_id = ScenarioIdentifier(name="Test", scenario_version=1, pyrit_version="0.14.0")
-    target_id = ComponentIdentifier(class_name="OpenAIChatTarget", class_module="pyrit.prompt_target")
+    scenario_id = ScenarioIdentifier.for_scenario(
+        scenario_class_name="Test", version=1, pyrit_version="0.14.0"
+    )
+    target_id = ComponentIdentifier(
+        class_name="OpenAIChatTarget", class_module="pyrit.prompt_target"
+    )
 
     original = ScenarioResult(
         scenario_identifier=scenario_id,
@@ -308,16 +295,10 @@ def test_scenario_result_from_dict_preserves_missing_completion_time():
     assert roundtripped.scenario_run_state == "IN_PROGRESS"
 
 
-def test_scenario_identifier_to_dict_from_dict_emit_deprecation_warnings():
-    identifier = ScenarioIdentifier(name="Test", scenario_version=1, pyrit_version="0.14.0")
-    with pytest.warns(DeprecationWarning):
-        payload = identifier.to_dict()
-    with pytest.warns(DeprecationWarning):
-        ScenarioIdentifier.from_dict(payload)
-
-
 def test_scenario_result_to_dict_from_dict_emit_deprecation_warnings():
-    scenario_id = ScenarioIdentifier(name="Test", scenario_version=1, pyrit_version="0.14.0")
+    scenario_id = ScenarioIdentifier.for_scenario(
+        scenario_class_name="Test", version=1, pyrit_version="0.14.0"
+    )
     result = ScenarioResult(
         scenario_identifier=scenario_id,
         objective_target_identifier=ComponentIdentifier.from_dict({}),
@@ -331,7 +312,9 @@ def test_scenario_result_to_dict_from_dict_emit_deprecation_warnings():
 
 
 def test_scenario_result_display_group_map_is_public_field():
-    scenario_id = ScenarioIdentifier(name="Test", scenario_version=1, pyrit_version="0.14.0")
+    scenario_id = ScenarioIdentifier.for_scenario(
+        scenario_class_name="Test", version=1, pyrit_version="0.14.0"
+    )
     result = ScenarioResult(
         scenario_identifier=scenario_id,
         objective_target_identifier=ComponentIdentifier.from_dict({}),

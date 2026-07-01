@@ -5,20 +5,39 @@ import uuid
 
 import pytest
 
-from pyrit.models import AttackOutcome, AttackResult, ComponentIdentifier, ScenarioIdentifier, ScenarioResult
+from pyrit.models import (
+    AttackOutcome,
+    AttackResult,
+    ComponentIdentifier,
+    ScenarioIdentifier,
+    ScenarioResult,
+)
 from pyrit.output.scenario_result.pretty import PrettyScenarioResultMemoryPrinter
 
 
-def _scenario_identifier(*, name: str = "TestScenario", description: str = "") -> ScenarioIdentifier:
-    return ScenarioIdentifier(name=name, description=description, scenario_version=1, pyrit_version="1.0.0")
+def _scenario_identifier(
+    *, name: str = "TestScenario", description: str = ""
+) -> ScenarioIdentifier:
+    return ScenarioIdentifier.for_scenario(
+        scenario_class_name=name,
+        description=description,
+        version=1,
+        pyrit_version="1.0.0",
+    )
 
 
 def _target_identifier(**params) -> ComponentIdentifier:
-    return ComponentIdentifier(class_name="MockTarget", class_module="tests", params=params)
+    return ComponentIdentifier(
+        class_name="MockTarget", class_module="tests", params=params
+    )
 
 
-def _attack_result(*, outcome: AttackOutcome = AttackOutcome.SUCCESS, objective: str = "obj") -> AttackResult:
-    return AttackResult(conversation_id=str(uuid.uuid4()), objective=objective, outcome=outcome)
+def _attack_result(
+    *, outcome: AttackOutcome = AttackOutcome.SUCCESS, objective: str = "obj"
+) -> AttackResult:
+    return AttackResult(
+        conversation_id=str(uuid.uuid4()), objective=objective, outcome=outcome
+    )
 
 
 def _scenario_result(
@@ -40,7 +59,9 @@ def _scenario_result(
 
 @pytest.fixture
 def printer(patch_central_database):
-    return PrettyScenarioResultMemoryPrinter(width=100, indent_size=2, enable_colors=False)
+    return PrettyScenarioResultMemoryPrinter(
+        width=100, indent_size=2, enable_colors=False
+    )
 
 
 # --- write_async ---
@@ -89,7 +110,9 @@ async def test_write_async_with_unknown_target_when_no_params(printer, capsys):
     assert "Target Endpoint: Unknown" in out
 
 
-async def test_write_async_renders_scorer_section_when_scorer_identifier_present(printer, monkeypatch, capsys):
+async def test_write_async_renders_scorer_section_when_scorer_identifier_present(
+    printer, monkeypatch, capsys
+):
     # Stub the scorer printer's render_async so we don't depend on real evaluation data.
     async def fake_render_async(*, scorer_identifier, harm_category=None):
         return "[scorer-render-output]"
@@ -101,7 +124,9 @@ async def test_write_async_renders_scorer_section_when_scorer_identifier_present
     assert "[scorer-render-output]" in capsys.readouterr().out
 
 
-async def test_write_async_raises_when_scorer_identifier_present_without_scorer_printer(patch_central_database):
+async def test_write_async_raises_when_scorer_identifier_present_without_scorer_printer(
+    patch_central_database,
+):
     printer = PrettyScenarioResultMemoryPrinter(enable_colors=False)
     printer._scorer_printer = None
     result = _scenario_result(objective_scorer_identifier=_target_identifier())
@@ -114,13 +139,20 @@ async def test_write_async_raises_when_scorer_identifier_present_without_scorer_
     [
         (100, [AttackOutcome.SUCCESS, AttackOutcome.SUCCESS]),  # >=75 RED band
         (50, [AttackOutcome.SUCCESS, AttackOutcome.FAILURE]),  # >=50 YELLOW band
-        (33, [AttackOutcome.SUCCESS, AttackOutcome.FAILURE, AttackOutcome.FAILURE]),  # >=25 CYAN band
+        (
+            33,
+            [AttackOutcome.SUCCESS, AttackOutcome.FAILURE, AttackOutcome.FAILURE],
+        ),  # >=25 CYAN band
         (0, [AttackOutcome.FAILURE]),  # <25 GREEN band
     ],
 )
-async def test_write_async_color_bands_for_success_rate(patch_central_database, capsys, expected_rate, attack_outcomes):
+async def test_write_async_color_bands_for_success_rate(
+    patch_central_database, capsys, expected_rate, attack_outcomes
+):
     p = PrettyScenarioResultMemoryPrinter(enable_colors=True)
-    result = _scenario_result(attack_results={"s": [_attack_result(outcome=o) for o in attack_outcomes]})
+    result = _scenario_result(
+        attack_results={"s": [_attack_result(outcome=o) for o in attack_outcomes]}
+    )
     await p.write_async(result)
     out = capsys.readouterr().out
     assert f"Overall Success Rate: {expected_rate}%" in out
@@ -180,8 +212,12 @@ async def test_write_async_preserves_insertion_order_by_default(printer, capsys)
     assert _group_order(capsys.readouterr().out) == ["low", "high", "mid"]
 
 
-async def test_write_async_sorts_groups_by_success_rate_descending(patch_central_database, capsys):
-    sorting_printer = PrettyScenarioResultMemoryPrinter(enable_colors=False, sort_groups_by_success_rate=True)
+async def test_write_async_sorts_groups_by_success_rate_descending(
+    patch_central_database, capsys
+):
+    sorting_printer = PrettyScenarioResultMemoryPrinter(
+        enable_colors=False, sort_groups_by_success_rate=True
+    )
     result = _scenario_result(
         attack_results={
             "low": [_attack_result(outcome=AttackOutcome.FAILURE)],
@@ -197,7 +233,9 @@ async def test_write_async_sorts_groups_by_success_rate_descending(patch_central
 
 
 async def test_write_async_sort_is_stable_for_ties(patch_central_database, capsys):
-    sorting_printer = PrettyScenarioResultMemoryPrinter(enable_colors=False, sort_groups_by_success_rate=True)
+    sorting_printer = PrettyScenarioResultMemoryPrinter(
+        enable_colors=False, sort_groups_by_success_rate=True
+    )
     result = _scenario_result(
         attack_results={
             "first_success": [_attack_result(outcome=AttackOutcome.SUCCESS)],
@@ -207,7 +245,11 @@ async def test_write_async_sort_is_stable_for_ties(patch_central_database, capsy
     )
     await sorting_printer.write_async(result)
     # Tied 100% groups retain their original relative order; 0% group goes last.
-    assert _group_order(capsys.readouterr().out) == ["first_success", "second_success", "fail"]
+    assert _group_order(capsys.readouterr().out) == [
+        "first_success",
+        "second_success",
+        "fail",
+    ]
 
 
 # --- deprecated alias ---

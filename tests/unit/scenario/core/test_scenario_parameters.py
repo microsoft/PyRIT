@@ -405,10 +405,10 @@ class TestResumeParameterValidation:
         """Build a minimal ScenarioResult with a controlled identifier for resume tests."""
         from pyrit.models import ScenarioIdentifier, ScenarioResult
 
-        identifier = ScenarioIdentifier(
-            name=scenario_name,
+        identifier = ScenarioIdentifier.for_scenario(
+            scenario_class_name=scenario_name,
             description="",
-            scenario_version=version,
+            version=version,
             init_data=init_data,
         )
         target_id = ComponentIdentifier(class_name="MockTarget", class_module="tests.unit.scenarios")

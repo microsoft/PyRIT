@@ -4,8 +4,12 @@
 """
 Scenario registry for discovering and managing PyRIT scenarios.
 
-This module provides a unified registry for discovering all available Scenario subclasses
-from the pyrit.scenario.scenarios module and from user-defined initialization scripts.
+A ``Registry`` for ``Scenario`` classes that discovers all available subclasses
+from the ``pyrit.scenario.scenarios`` package and from user-defined initialization
+scripts. Like the other component registries it is a unified ``Registry``: it owns
+a validated class catalog and builds instances via ``create_instance``. Its
+buildable classes are keyed by **dotted registry name** (e.g. ``garak.encoding``)
+rather than by class name, so ``_discover``/``_get_registry_name`` are overridden.
 """
 
 from __future__ import annotations
@@ -16,18 +20,17 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, NamedTuple, get_args, get_origin
 
 from pyrit.models import class_name_to_snake_case
+from pyrit.models.identifiers.scenario_identifier import ScenarioIdentifier
 from pyrit.registry.base import ClassRegistryEntry
-from pyrit.registry.class_registries.base_class_registry import (
-    BaseClassRegistry,
-    ClassEntry,
-)
 from pyrit.registry.discovery import (
     discover_in_package,
     discover_subclasses_in_loaded_modules,
 )
+from pyrit.registry.registry import Registry
 from pyrit.registry.resolution import display_choices
 
 if TYPE_CHECKING:
+    from pyrit.models.identifiers.component_identifier import ComponentIdentifier
     from pyrit.scenario.core import Scenario
 
 logger = logging.getLogger(__name__)
@@ -57,7 +60,9 @@ class ScenarioMetadata(ClassRegistryEntry):
     max_dataset_size: int | None = field(kw_only=True)
 
     # Scenario-declared custom parameters.
-    supported_parameters: tuple[ScenarioParameterMetadata, ...] = field(kw_only=True, default=())
+    supported_parameters: tuple[ScenarioParameterMetadata, ...] = field(
+        kw_only=True, default=()
+    )
 
 
 class ScenarioParameterMetadata(NamedTuple):
@@ -76,7 +81,7 @@ class ScenarioParameterMetadata(NamedTuple):
     is_list: bool = False
 
 
-class ScenarioRegistry(BaseClassRegistry["Scenario", ScenarioMetadata]):
+class ScenarioRegistry(Registry["Scenario", ScenarioMetadata]):
     """
     Registry for discovering and managing available scenario classes.
 
@@ -87,27 +92,31 @@ class ScenarioRegistry(BaseClassRegistry["Scenario", ScenarioMetadata]):
     Scenarios are identified by their dotted name (e.g., "garak.encoding", "foundry.red_team_agent").
     """
 
-    def __init__(self, *, lazy_discovery: bool = True) -> None:
+    def _identifier_type(self) -> type[ComponentIdentifier] | None:
+        """Return ``ScenarioIdentifier`` so ``Param.*`` markers drive derivation."""
+        return ScenarioIdentifier
+
+    def _metadata_class(self) -> type[ScenarioMetadata]:
+        """Return the concrete metadata dataclass this registry builds."""
+        return ScenarioMetadata
+
+    def _get_registry_name(self, cls: type[Scenario]) -> str:
         """
-        Initialize the scenario registry.
+        Scenarios are keyed by dotted registry name assigned during discovery.
+
+        User-defined scenarios discovered outside the package fall back to a
+        suffix-stripped snake_case class name.
 
         Args:
-            lazy_discovery: If True, discovery is deferred until first access.
-                Defaults to True for performance.
+            cls (type[Scenario]): The scenario class.
+
+        Returns:
+            str: The snake_case registry name.
         """
-        super().__init__(lazy_discovery=lazy_discovery)
+        return class_name_to_snake_case(cls.__name__, suffix="Scenario")
 
     def _discover(self) -> None:
         """Discover all built-in scenarios from pyrit.scenario.scenarios module."""
-        self._discover_builtin_scenarios()
-
-    def _discover_builtin_scenarios(self) -> None:
-        """
-        Discover all built-in scenarios from pyrit.scenario.scenarios module.
-
-        This method dynamically imports all modules in the scenarios package
-        and registers any Scenario subclasses found.
-        """
         from pyrit.scenario.core import Scenario
 
         try:
@@ -135,7 +144,9 @@ class ScenarioRegistry(BaseClassRegistry["Scenario", ScenarioMetadata]):
                 # Skip deprecated alias classes
                 doc = (scenario_class.__doc__ or "").strip()
                 if doc.startswith("Deprecated alias"):
-                    logger.debug(f"Skipping deprecated alias: {scenario_class.__name__}")
+                    logger.debug(
+                        f"Skipping deprecated alias: {scenario_class.__name__}"
+                    )
                     continue
 
                 # Skip re-exported aliases: if the class was defined in a different
@@ -143,10 +154,11 @@ class ScenarioRegistry(BaseClassRegistry["Scenario", ScenarioMetadata]):
                 # ContentHarms in content_harms.py is really RapidResponse from
                 # rapid_response.py).
                 class_module = getattr(scenario_class, "__module__", "")
-                expected_module_suffix = registry_name.replace(".", "/")
                 if not class_module.endswith(registry_name.replace("/", ".")):
                     # Build the full expected module name for comparison
-                    expected_module = f"pyrit.scenario.scenarios.{registry_name.replace('/', '.')}"
+                    expected_module = (
+                        f"pyrit.scenario.scenarios.{registry_name.replace('/', '.')}"
+                    )
                     if class_module != expected_module:
                         logger.debug(
                             f"Skipping alias '{scenario_class.__name__}' in '{registry_name}' "
@@ -155,17 +167,18 @@ class ScenarioRegistry(BaseClassRegistry["Scenario", ScenarioMetadata]):
                         continue
 
                 # Check for registry key collision
-                if registry_name in self._class_entries:
+                if registry_name in self._classes:
                     logger.warning(
                         f"Scenario registry name collision: '{registry_name}' "
                         f"conflicts with an already-registered scenario. Original "
-                        f"scenario is kept: {self._class_entries[registry_name].registered_class.__name__}"
+                        f"scenario is kept: {self._classes[registry_name].__name__}"
                     )
                     continue
 
-                entry = ClassEntry(registered_class=scenario_class)
-                self._class_entries[registry_name] = entry
-                logger.debug(f"Registered built-in scenario: {registry_name} ({scenario_class.__name__})")
+                self.register_class(scenario_class, name=registry_name)
+                logger.debug(
+                    f"Registered built-in scenario: {registry_name} ({scenario_class.__name__})"
+                )
 
         except Exception as e:
             logger.error(f"Failed to discover built-in scenarios: {e}")
@@ -182,19 +195,23 @@ class ScenarioRegistry(BaseClassRegistry["Scenario", ScenarioMetadata]):
         from pyrit.scenario.core import Scenario
 
         try:
-            for _, scenario_class in discover_subclasses_in_loaded_modules(base_class=Scenario):
+            for _, scenario_class in discover_subclasses_in_loaded_modules(
+                base_class=Scenario
+            ):
                 # Check if this is a user-defined class (not from pyrit.scenario.scenarios)
                 if not scenario_class.__module__.startswith("pyrit.scenario.scenarios"):
-                    # Convert class name to snake_case for scenario name
-                    registry_name = class_name_to_snake_case(scenario_class.__name__, suffix="Scenario")
-                    entry = ClassEntry(registered_class=scenario_class)
-                    self._class_entries[registry_name] = entry
-                    logger.info(f"Registered user-defined scenario: {registry_name} ({scenario_class.__name__})")
+                    registry_name = class_name_to_snake_case(
+                        scenario_class.__name__, suffix="Scenario"
+                    )
+                    self.register_class(scenario_class, name=registry_name)
+                    logger.info(
+                        f"Registered user-defined scenario: {registry_name} ({scenario_class.__name__})"
+                    )
 
         except Exception as e:
             logger.debug(f"Failed to discover user scenarios: {e}")
 
-    def _build_metadata(self, name: str, entry: ClassEntry[Scenario]) -> ScenarioMetadata:
+    def _build_metadata(self, name: str, cls: type[Scenario]) -> ScenarioMetadata:
         """
         Build metadata for a Scenario class.
 
@@ -205,17 +222,17 @@ class ScenarioRegistry(BaseClassRegistry["Scenario", ScenarioMetadata]):
 
         Args:
             name: The registry name of the scenario.
-            entry: The ClassEntry containing the scenario class.
+            cls: The scenario class to describe.
 
         Returns:
             ScenarioMetadata describing the scenario class.
 
         Raises:
-            TypeError: If ``scenario_class()`` cannot be called with no arguments.
+            TypeError: If ``cls()`` cannot be called with no arguments.
         """
-        scenario_class = entry.registered_class
-
-        description = entry.get_description(fallback="No description available")
+        description = ClassRegistryEntry.description_from_docstring(
+            cls, fallback="No description available"
+        )
 
         supported_parameters = tuple(
             ScenarioParameterMetadata(
@@ -223,17 +240,21 @@ class ScenarioRegistry(BaseClassRegistry["Scenario", ScenarioMetadata]):
                 description=p.description,
                 default=p.default,
                 param_type=_param_type_display(p.param_type),
-                choices=[str(c) for c in choices] if (choices := display_choices(p.param_type)) else None,
+                choices=(
+                    [str(c) for c in choices]
+                    if (choices := display_choices(p.param_type))
+                    else None
+                ),
                 is_list=get_origin(p.param_type) is list,
             )
-            for p in scenario_class.supported_parameters()
+            for p in cls.supported_parameters()
         )
 
         try:
-            instance = scenario_class()  # type: ignore[ty:missing-argument]
+            instance = cls()  # type: ignore[ty:missing-argument]
         except TypeError as exc:
             raise TypeError(
-                f"Scenario {scenario_class.__module__}.{scenario_class.__name__} (registered as "
+                f"Scenario {cls.__module__}.{cls.__name__} (registered as "
                 f"{name!r}) must be instantiable with no arguments so the registry can introspect "
                 f"its strategies and default dataset config. Make all constructor parameters "
                 f"optional (defaulting to None) and defer required-input validation to "
@@ -243,13 +264,15 @@ class ScenarioRegistry(BaseClassRegistry["Scenario", ScenarioMetadata]):
         strategy_class = instance._strategy_class
         default_strategy_value = instance._default_strategy.value
         all_strategies = tuple(s.value for s in strategy_class.get_all_strategies())
-        aggregate_strategies = tuple(s.value for s in strategy_class.get_aggregate_strategies())
+        aggregate_strategies = tuple(
+            s.value for s in strategy_class.get_aggregate_strategies()
+        )
         default_datasets = tuple(instance._default_dataset_config.dataset_names)
         max_dataset_size = instance._default_dataset_config.max_dataset_size
 
         return ScenarioMetadata(
-            class_name=scenario_class.__name__,
-            class_module=scenario_class.__module__,
+            class_name=cls.__name__,
+            class_module=cls.__module__,
             class_description=description,
             registry_name=name,
             default_strategy=default_strategy_value,

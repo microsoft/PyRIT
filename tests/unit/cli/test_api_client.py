@@ -92,7 +92,9 @@ def _target_payload(*, target_registry_name: str = "t1") -> dict:
     }
 
 
-def _run_summary_payload(*, scenario_result_id: str = "abc", status: str = "CREATED") -> dict:
+def _run_summary_payload(
+    *, scenario_result_id: str = "abc", status: str = "CREATED"
+) -> dict:
     now = datetime(2025, 1, 1, tzinfo=timezone.utc).isoformat()
     return {
         "scenario_result_id": scenario_result_id,
@@ -133,7 +135,9 @@ async def test_async_context_manager_opens_and_closes(mock_httpx_client):
         mock_httpx_client.aclose.assert_awaited_once()
         assert c._client is None
     # Default request_timeout (60s) propagates to the httpx client constructor.
-    fake_async_client_cls.assert_called_once_with(base_url="http://localhost:8000", timeout=60.0)
+    fake_async_client_cls.assert_called_once_with(
+        base_url="http://localhost:8000", timeout=60.0
+    )
 
 
 async def test_async_context_manager_passes_custom_request_timeout(mock_httpx_client):
@@ -142,16 +146,22 @@ async def test_async_context_manager_passes_custom_request_timeout(mock_httpx_cl
     with patch("httpx.AsyncClient", fake_async_client_cls):
         async with c:
             pass
-    fake_async_client_cls.assert_called_once_with(base_url="http://localhost:8000", timeout=120.0)
+    fake_async_client_cls.assert_called_once_with(
+        base_url="http://localhost:8000", timeout=120.0
+    )
 
 
-async def test_async_context_manager_uses_default_when_request_timeout_is_none(mock_httpx_client):
+async def test_async_context_manager_uses_default_when_request_timeout_is_none(
+    mock_httpx_client,
+):
     c = PyRITApiClient(base_url="http://localhost:8000", request_timeout=None)
     fake_async_client_cls = MagicMock(return_value=mock_httpx_client)
     with patch("httpx.AsyncClient", fake_async_client_cls):
         async with c:
             pass
-    fake_async_client_cls.assert_called_once_with(base_url="http://localhost:8000", timeout=60.0)
+    fake_async_client_cls.assert_called_once_with(
+        base_url="http://localhost:8000", timeout=60.0
+    )
 
 
 async def test_close_async_is_noop_when_already_closed():
@@ -186,7 +196,9 @@ async def test_health_check_returns_false_on_connect_error(client, mock_httpx_cl
     assert await client.health_check_async() is False
 
 
-async def test_health_check_returns_false_on_generic_exception(client, mock_httpx_client):
+async def test_health_check_returns_false_on_generic_exception(
+    client, mock_httpx_client
+):
     mock_httpx_client.get.side_effect = RuntimeError("broken")
     assert await client.health_check_async() is False
 
@@ -203,15 +215,21 @@ async def test_list_scenarios_async(client, mock_httpx_client):
     assert len(result) == 1
     assert isinstance(result[0], RegisteredScenario)
     assert result[0].scenario_name == "s1"
-    mock_httpx_client.get.assert_awaited_once_with("/api/scenarios/catalog", params={"limit": 10})
+    mock_httpx_client.get.assert_awaited_once_with(
+        "/api/scenarios/catalog", params={"limit": 10}
+    )
 
 
 async def test_get_scenario_async_returns_payload(client, mock_httpx_client):
-    mock_httpx_client.get.return_value = _make_response(json_data=_scenario_payload(scenario_name="foo"))
+    mock_httpx_client.get.return_value = _make_response(
+        json_data=_scenario_payload(scenario_name="foo")
+    )
     result = await client.get_scenario_async(scenario_name="foo")
     assert isinstance(result, RegisteredScenario)
     assert result.scenario_name == "foo"
-    mock_httpx_client.get.assert_awaited_once_with("/api/scenarios/catalog/foo", params=None)
+    mock_httpx_client.get.assert_awaited_once_with(
+        "/api/scenarios/catalog/foo", params=None
+    )
 
 
 async def test_get_scenario_async_returns_none_on_404(client, mock_httpx_client):
@@ -223,7 +241,9 @@ async def test_get_scenario_async_returns_none_on_404(client, mock_httpx_client)
     assert result is None
 
 
-async def test_get_scenario_async_raises_on_other_http_errors(client, mock_httpx_client):
+async def test_get_scenario_async_raises_on_other_http_errors(
+    client, mock_httpx_client
+):
     resp = _make_response(status_code=500)
     error = httpx.HTTPStatusError("500", request=MagicMock(), response=resp)
     mock_httpx_client.get.return_value = resp
@@ -238,17 +258,23 @@ async def test_get_scenario_async_raises_on_other_http_errors(client, mock_httpx
 
 
 async def test_list_initializers_async(client, mock_httpx_client):
-    mock_httpx_client.get.return_value = _make_response(json_data={"items": [_initializer_payload()]})
+    mock_httpx_client.get.return_value = _make_response(
+        json_data={"items": [_initializer_payload()]}
+    )
     result = await client.list_initializers_async(limit=5)
     assert len(result) == 1
     assert isinstance(result[0], RegisteredInitializer)
-    mock_httpx_client.get.assert_awaited_once_with("/api/initializers", params={"limit": 5})
+    mock_httpx_client.get.assert_awaited_once_with(
+        "/api/initializers", params={"limit": 5}
+    )
 
 
 async def test_register_initializer_async_success(client, mock_httpx_client):
     payload = _initializer_payload(initializer_name="x")
     mock_httpx_client.post.return_value = _make_response(json_data=payload)
-    result = await client.register_initializer_async(name="x", script_content="print(1)")
+    result = await client.register_initializer_async(
+        name="x", script_content="print(1)"
+    )
     assert isinstance(result, RegisteredInitializer)
     assert result.initializer_name == "x"
     mock_httpx_client.post.assert_awaited_once_with(
@@ -257,13 +283,17 @@ async def test_register_initializer_async_success(client, mock_httpx_client):
 
 
 async def test_register_initializer_async_raises_on_403(client, mock_httpx_client):
-    resp = _make_response(status_code=403, json_data={"detail": "Custom initializers disabled"})
+    resp = _make_response(
+        status_code=403, json_data={"detail": "Custom initializers disabled"}
+    )
     mock_httpx_client.post.return_value = resp
     with pytest.raises(ServerNotAvailableError, match="disabled"):
         await client.register_initializer_async(name="x", script_content="...")
 
 
-async def test_register_initializer_async_raises_on_403_with_plain_text_body(client, mock_httpx_client):
+async def test_register_initializer_async_raises_on_403_with_plain_text_body(
+    client, mock_httpx_client
+):
     resp = _make_response(status_code=403, text_data="Forbidden by proxy")
     resp.json.side_effect = ValueError("not json")
     mock_httpx_client.post.return_value = resp
@@ -274,7 +304,9 @@ async def test_register_initializer_async_raises_on_403_with_plain_text_body(cli
 
 async def test_register_initializer_async_raises_on_500(client, mock_httpx_client):
     resp = _make_response(status_code=500)
-    resp.raise_for_status.side_effect = httpx.HTTPStatusError("500", request=MagicMock(), response=resp)
+    resp.raise_for_status.side_effect = httpx.HTTPStatusError(
+        "500", request=MagicMock(), response=resp
+    )
     mock_httpx_client.post.return_value = resp
     with pytest.raises(httpx.HTTPStatusError):
         await client.register_initializer_async(name="x", script_content="...")
@@ -286,7 +318,9 @@ async def test_register_initializer_async_raises_on_500(client, mock_httpx_clien
 
 
 async def test_list_targets_async(client, mock_httpx_client):
-    mock_httpx_client.get.return_value = _make_response(json_data={"items": [_target_payload()]})
+    mock_httpx_client.get.return_value = _make_response(
+        json_data={"items": [_target_payload()]}
+    )
     result = await client.list_targets_async(limit=7)
     assert len(result) == 1
     assert isinstance(result[0], TargetInstance)
@@ -299,7 +333,9 @@ async def test_list_targets_async(client, mock_httpx_client):
 
 
 async def test_start_scenario_run_async(client, mock_httpx_client):
-    mock_httpx_client.post.return_value = _make_response(json_data=_run_summary_payload(scenario_result_id="abc"))
+    mock_httpx_client.post.return_value = _make_response(
+        json_data=_run_summary_payload(scenario_result_id="abc")
+    )
     request = RunScenarioRequest(scenario_name="x", target_name="t")
     result = await client.start_scenario_run_async(request=request)
     assert isinstance(result, ScenarioRunSummary)
@@ -317,7 +353,9 @@ async def test_start_scenario_run_async(client, mock_httpx_client):
 async def test_get_scenario_run_async(client, mock_httpx_client):
     import httpx as _httpx
 
-    mock_httpx_client.get.return_value = _make_response(json_data=_run_summary_payload(status="IN_PROGRESS"))
+    mock_httpx_client.get.return_value = _make_response(
+        json_data=_run_summary_payload(status="IN_PROGRESS")
+    )
     result = await client.get_scenario_run_async(scenario_result_id="abc")
     assert isinstance(result, ScenarioRunSummary)
     assert result.status == ScenarioRunState.IN_PROGRESS
@@ -344,7 +382,7 @@ async def test_get_scenario_run_results_async(client, mock_httpx_client):
     from pyrit.models import ScenarioIdentifier, ScenarioResult, ScenarioRunState
 
     scenario_result = ScenarioResult(
-        scenario_identifier=ScenarioIdentifier(name="x"),
+        scenario_identifier=ScenarioIdentifier.for_scenario(scenario_class_name="x"),
         objective_target_identifier=None,
         objective_scorer_identifier=None,
         attack_results={},
@@ -355,11 +393,15 @@ async def test_get_scenario_run_results_async(client, mock_httpx_client):
     )
     result = await client.get_scenario_run_results_async(scenario_result_id="abc")
     assert isinstance(result, ScenarioResult)
-    mock_httpx_client.get.assert_awaited_once_with("/api/scenarios/runs/abc/results", params=None)
+    mock_httpx_client.get.assert_awaited_once_with(
+        "/api/scenarios/runs/abc/results", params=None
+    )
 
 
 async def test_cancel_scenario_run_async(client, mock_httpx_client):
-    mock_httpx_client.post.return_value = _make_response(json_data=_run_summary_payload(status="CANCELLED"))
+    mock_httpx_client.post.return_value = _make_response(
+        json_data=_run_summary_payload(status="CANCELLED")
+    )
     result = await client.cancel_scenario_run_async(scenario_result_id="abc")
     assert isinstance(result, ScenarioRunSummary)
     assert result.status == ScenarioRunState.CANCELLED
@@ -367,11 +409,15 @@ async def test_cancel_scenario_run_async(client, mock_httpx_client):
 
 
 async def test_list_scenario_runs_async(client, mock_httpx_client):
-    mock_httpx_client.get.return_value = _make_response(json_data={"items": [_run_summary_payload()]})
+    mock_httpx_client.get.return_value = _make_response(
+        json_data={"items": [_run_summary_payload()]}
+    )
     result = await client.list_scenario_runs_async(limit=20)
     assert len(result) == 1
     assert isinstance(result[0], ScenarioRunSummary)
-    mock_httpx_client.get.assert_awaited_once_with("/api/scenarios/runs", params={"limit": 20})
+    mock_httpx_client.get.assert_awaited_once_with(
+        "/api/scenarios/runs", params={"limit": 20}
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -379,7 +425,9 @@ async def test_list_scenario_runs_async(client, mock_httpx_client):
 # ---------------------------------------------------------------------------
 
 
-async def test_get_json_wraps_connect_error_as_server_not_available(client, mock_httpx_client):
+async def test_get_json_wraps_connect_error_as_server_not_available(
+    client, mock_httpx_client
+):
     mock_httpx_client.get.side_effect = httpx.ConnectError("nope")
     with pytest.raises(ServerNotAvailableError, match="Cannot connect"):
         await client.list_scenarios_async()

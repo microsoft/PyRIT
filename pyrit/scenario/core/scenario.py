@@ -235,8 +235,11 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
 
         description = ClassRegistryEntry.description_from_docstring(self.__class__)
 
-        self._identifier = ScenarioIdentifier(
-            name=type(self).__name__, scenario_version=version, description=description
+        self._identifier = ScenarioIdentifier.for_scenario(
+            scenario_class_name=type(self).__name__,
+            scenario_class_module=type(self).__module__,
+            version=version,
+            description=description,
         )
 
         # Store strategy configuration for use in initialize_async
@@ -681,7 +684,7 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
         # mutable state with self.params.
         params_snapshot = copy.deepcopy(self.params)
         _assert_json_serializable(params=params_snapshot)
-        self._identifier.init_data = params_snapshot
+        self._identifier = self._identifier.with_init_data(params_snapshot)
 
         # Check if we're resuming an existing scenario. Any divergence is a hard error
         # rather than a silent restart, so the original progress isn't orphaned without

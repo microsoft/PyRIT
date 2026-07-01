@@ -89,7 +89,9 @@ class TagQuery:
                 object.__setattr__(self, attr, frozenset(val))
 
         if self._op not in self._VALID_OPS:
-            raise ValueError(f"Invalid TagQuery op {self._op!r}; must be one of {sorted(self._VALID_OPS)}")
+            raise ValueError(
+                f"Invalid TagQuery op {self._op!r}; must be one of {sorted(self._VALID_OPS)}"
+            )
         if self._op in ("and", "or") and len(self._children) < 2:
             raise ValueError(f"'{self._op}' TagQuery must have at least 2 children")
         if self._op == "" and self._children:

@@ -50,10 +50,14 @@ def discover_in_directory(
         if item.is_file() and item.suffix == ".py" and item.stem != "__init__":
             yield from _process_file(file_path=item, base_class=base_class)
         elif recursive and item.is_dir() and item.name != "__pycache__":
-            yield from discover_in_directory(directory=item, base_class=base_class, recursive=True)
+            yield from discover_in_directory(
+                directory=item, base_class=base_class, recursive=True
+            )
 
 
-def _process_file(*, file_path: Path, base_class: type[T]) -> Iterator[tuple[str, Path, type[T]]]:
+def _process_file(
+    *, file_path: Path, base_class: type[T]
+) -> Iterator[tuple[str, Path, type[T]]]:
     """
     Process a Python file and yield subclasses of the base class.
 
@@ -65,7 +69,9 @@ def _process_file(*, file_path: Path, base_class: type[T]) -> Iterator[tuple[str
         Tuples of (filename_stem, file_path, class) for each discovered subclass.
     """
     try:
-        spec = importlib.util.spec_from_file_location(f"discovered_module.{file_path.stem}", file_path)
+        spec = importlib.util.spec_from_file_location(
+            f"discovered_module.{file_path.stem}", file_path
+        )
         if not spec or not spec.loader:
             return
 
@@ -130,7 +136,11 @@ def discover_in_package(
             # For non-package modules, find and yield subclasses
             if not is_pkg:
                 for _name, obj in inspect.getmembers(module, inspect.isclass):
-                    if issubclass(obj, base_class) and obj is not base_class and not inspect.isabstract(obj):
+                    if (
+                        issubclass(obj, base_class)
+                        and obj is not base_class
+                        and not inspect.isabstract(obj)
+                    ):
                         # Build the registry name including any prefix
                         registry_name = name_builder(_prefix, module_name)
                         yield (registry_name, obj)
@@ -189,5 +199,9 @@ def discover_subclasses_in_loaded_modules(
             continue
 
         for _name, obj in inspect.getmembers(module, inspect.isclass):
-            if issubclass(obj, base_class) and obj is not base_class and not inspect.isabstract(obj):
+            if (
+                issubclass(obj, base_class)
+                and obj is not base_class
+                and not inspect.isabstract(obj)
+            ):
                 yield (module_name, obj)

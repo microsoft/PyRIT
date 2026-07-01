@@ -79,7 +79,7 @@ class ScenarioService:
         Returns:
             ScenarioListResponse with paginated scenario summaries.
         """
-        all_metadata = self._registry.list_metadata()
+        all_metadata = self._registry.get_all_registered_class_metadata()
         all_summaries = [_metadata_to_registered_scenario(m) for m in all_metadata]
 
         page, has_more = self._paginate(items=all_summaries, cursor=cursor, limit=limit)
@@ -87,10 +87,17 @@ class ScenarioService:
 
         return ListRegisteredScenariosResponse(
             items=page,
-            pagination=PaginationInfo(limit=limit, has_more=has_more, next_cursor=next_cursor, prev_cursor=cursor),
+            pagination=PaginationInfo(
+                limit=limit,
+                has_more=has_more,
+                next_cursor=next_cursor,
+                prev_cursor=cursor,
+            ),
         )
 
-    async def get_scenario_async(self, *, scenario_name: str) -> RegisteredScenario | None:
+    async def get_scenario_async(
+        self, *, scenario_name: str
+    ) -> RegisteredScenario | None:
         """
         Get a single scenario by registry name.
 
@@ -100,10 +107,9 @@ class ScenarioService:
         Returns:
             ScenarioSummary if found, None otherwise.
         """
-        all_metadata = self._registry.list_metadata()
-        for metadata in all_metadata:
-            if metadata.registry_name == scenario_name:
-                return _metadata_to_registered_scenario(metadata)
+        metadata = self._registry.get_registered_class_metadata(scenario_name)
+        if metadata is not None:
+            return _metadata_to_registered_scenario(metadata)
         return None
 
     @staticmethod

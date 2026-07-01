@@ -11,69 +11,17 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-import pyrit
 from pyrit.common.deprecation import print_deprecation_message
 from pyrit.models.identifiers.component_identifier import (  # noqa: TC001  (runtime-required by Pydantic field annotations)
     ComponentIdentifier,
 )
+from pyrit.models.identifiers.scenario_identifier import ScenarioIdentifier
 from pyrit.models.results.attack_result import AttackOutcome, AttackResult
 
 logger = logging.getLogger(__name__)
 
 
-class ScenarioIdentifier(BaseModel):
-    """
-    Identifier describing the executed scenario.
-    """
-
-    model_config = ConfigDict(extra="forbid", populate_by_name=True)
-
-    #: Name of the scenario.
-    name: str
-    #: Description of the scenario.
-    description: str = ""
-    #: Version of the scenario. Accepts the legacy ``scenario_version`` kwarg/wire key.
-    version: int = Field(default=1, alias="scenario_version")
-    #: PyRIT version string. Defaults to the current installed version.
-    pyrit_version: str = Field(default=pyrit.__version__)
-    #: Optional initialization data.
-    init_data: dict[str, Any] | None = None
-
-    def to_dict(self) -> dict[str, Any]:
-        """
-        Serialize to a JSON-compatible dictionary.
-
-        Deprecated: use ``model_dump(by_alias=True)`` instead.
-
-        Returns:
-            dict[str, Any]: Serialized payload.
-        """
-        print_deprecation_message(
-            old_item="ScenarioIdentifier.to_dict()",
-            new_item="ScenarioIdentifier.model_dump(by_alias=True)",
-            removed_in="0.16.0",
-        )
-        return self.model_dump(by_alias=True)
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> ScenarioIdentifier:
-        """
-        Reconstruct a ScenarioIdentifier from a dictionary.
-
-        Deprecated: use ``model_validate(...)`` instead.
-
-        Args:
-            data (dict[str, Any]): Dictionary as produced by ``model_dump(by_alias=True)``.
-
-        Returns:
-            ScenarioIdentifier: Reconstructed instance.
-        """
-        print_deprecation_message(
-            old_item="ScenarioIdentifier.from_dict(...)",
-            new_item="ScenarioIdentifier.model_validate(...)",
-            removed_in="0.16.0",
-        )
-        return cls.model_validate(data)
+__all__ = ["ScenarioIdentifier", "ScenarioResult", "ScenarioRunState"]
 
 
 class ScenarioRunState(str, Enum):

@@ -77,7 +77,9 @@ class ClassEntry(Generic[T]):
         Returns:
             str: The resolved description string.
         """
-        return ClassRegistryEntry.description_from_docstring(self.registered_class, fallback=fallback)
+        return ClassRegistryEntry.description_from_docstring(
+            self.registered_class, fallback=fallback
+        )
 
     def create_instance(self, **kwargs: object) -> T:
         """
@@ -290,7 +292,8 @@ class BaseClassRegistry(ABC, RegistryProtocol[MetadataT], Generic[T, MetadataT])
 
         if self._metadata_cache is None:
             self._metadata_cache = [
-                self._build_metadata(name, entry) for name, entry in sorted(self._class_entries.items())
+                self._build_metadata(name, entry)
+                for name, entry in sorted(self._class_entries.items())
             ]
 
         if not include_filters and not exclude_filters:
@@ -299,7 +302,9 @@ class BaseClassRegistry(ABC, RegistryProtocol[MetadataT], Generic[T, MetadataT])
         return [
             m
             for m in self._metadata_cache
-            if _matches_filters(m, include_filters=include_filters, exclude_filters=exclude_filters)
+            if _matches_filters(
+                m, include_filters=include_filters, exclude_filters=exclude_filters
+            )
         ]
 
     def register(

@@ -9,15 +9,15 @@ from pyrit.registry.class_registries import (
     ClassEntry,
     InitializerMetadata,
     InitializerRegistry,
-    ScenarioMetadata,
-    ScenarioParameterMetadata,
-    ScenarioRegistry,
 )
 from pyrit.registry.components import (
     AttackTechniqueMetadata,
     AttackTechniqueRegistry,
     ConverterMetadata,
     ConverterRegistry,
+    ScenarioMetadata,
+    ScenarioParameterMetadata,
+    ScenarioRegistry,
     ScorerMetadata,
     ScorerRegistry,
     TargetMetadata,

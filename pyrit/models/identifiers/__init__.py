@@ -31,6 +31,7 @@ from pyrit.models.identifiers.evaluation_identifier import (
 from pyrit.models.identifiers.evaluation_markers import EvalMarker, Evaluate, Exclude, Include, Unwrap
 from pyrit.models.identifiers.identifier_filters import IdentifierFilter, IdentifierType
 from pyrit.models.identifiers.param_markers import Param, ParamMarker
+from pyrit.models.identifiers.scenario_identifier import ScenarioIdentifier
 from pyrit.models.identifiers.scorer_identifier import ScorerIdentifier
 from pyrit.models.identifiers.seed_identifier import SeedIdentifier
 from pyrit.models.identifiers.target_identifier import TargetIdentifier
@@ -59,6 +60,7 @@ __all__ = [
     "ParamMarker",
     "ScorerEvaluationIdentifier",
     "ScorerIdentifier",
+    "ScenarioIdentifier",
     "SeedIdentifier",
     "snake_case_to_class_name",
     "TARGET_EVAL_PARAM_FALLBACKS",

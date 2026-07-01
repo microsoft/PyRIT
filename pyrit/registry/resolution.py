@@ -32,7 +32,16 @@ import inspect
 import re
 import types
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeAlias, Union, get_args, get_origin
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Literal,
+    Protocol,
+    TypeAlias,
+    Union,
+    get_args,
+    get_origin,
+)
 
 from pyrit.common.apply_defaults import REQUIRED_VALUE, _RequiredValueSentinel
 from pyrit.models.parameter import ComponentType, Parameter, RegistryReference
@@ -82,7 +91,9 @@ def _parse_arg_descriptions(cls: type) -> dict[str, str]:
         dict[str, str]: Mapping of parameter names to their descriptions.
     """
     doc = (cls.__init__.__doc__ or cls.__doc__ or "").strip()
-    match = re.search(r"Args:\s*\n(.*?)(?:\n\s*\n|\n\s*Returns:|\n\s*Raises:|\Z)", doc, re.DOTALL)
+    match = re.search(
+        r"Args:\s*\n(.*?)(?:\n\s*\n|\n\s*Returns:|\n\s*Raises:|\Z)", doc, re.DOTALL
+    )
     if not match:
         return {}
     args_block = match.group(1)
@@ -105,12 +116,16 @@ def _default_for(param: inspect.Parameter) -> Any:
     Returns:
         Any: The parameter's default value, or ``REQUIRED_VALUE`` when it is required.
     """
-    if param.default is inspect.Parameter.empty or isinstance(param.default, _RequiredValueSentinel):
+    if param.default is inspect.Parameter.empty or isinstance(
+        param.default, _RequiredValueSentinel
+    ):
         return REQUIRED_VALUE
     return param.default
 
 
-def derive_parameters(*, cls: type, identifier_type: type[ComponentIdentifier] | None = None) -> list[Parameter]:
+def derive_parameters(
+    *, cls: type, identifier_type: type[ComponentIdentifier] | None = None
+) -> list[Parameter]:
     """
     Derive the declarative ``Parameter`` list for ``cls`` from its constructor.
 
@@ -135,16 +150,25 @@ def derive_parameters(*, cls: type, identifier_type: type[ComponentIdentifier] |
     try:
         sig = inspect.signature(cls.__init__)
     except (ValueError, TypeError) as e:
-        raise ValueError(f"Failed to inspect __init__ signature for '{cls.__name__}': {e}") from e
+        raise ValueError(
+            f"Failed to inspect __init__ signature for '{cls.__name__}': {e}"
+        ) from e
 
-    reference_overrides = identifier_type.get_reference_component_types() if identifier_type is not None else {}
+    reference_overrides = (
+        identifier_type.get_reference_component_types()
+        if identifier_type is not None
+        else {}
+    )
     descriptions = _parse_arg_descriptions(cls)
 
     parameters: list[Parameter] = []
     for name, param in sig.parameters.items():
         if name in _SKIPPED_PARAM_NAMES:
             continue
-        if param.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
+        if param.kind in (
+            inspect.Parameter.VAR_POSITIONAL,
+            inspect.Parameter.VAR_KEYWORD,
+        ):
             continue
 
         annotation = param.annotation
@@ -158,12 +182,25 @@ def derive_parameters(*, cls: type, identifier_type: type[ComponentIdentifier] |
                     name=name,
                     description=description,
                     default=default,
-                    reference=RegistryReference(component_type=component_type, annotation=annotation),
+                    reference=RegistryReference(
+                        component_type=component_type, annotation=annotation
+                    ),
                 )
             )
         else:
-            param_type = None if annotation is inspect.Parameter.empty else _unwrap_optional(annotation)
-            parameters.append(Parameter(name=name, description=description, default=default, param_type=param_type))
+            param_type = (
+                None
+                if annotation is inspect.Parameter.empty
+                else _unwrap_optional(annotation)
+            )
+            parameters.append(
+                Parameter(
+                    name=name,
+                    description=description,
+                    default=default,
+                    param_type=param_type,
+                )
+            )
 
     return parameters
 
@@ -185,7 +222,9 @@ class _NamedInstanceRegistry(Protocol):
         ...
 
 
-def _registry_getter_for_component_type(component_type: ComponentType) -> Callable[[], _NamedInstanceRegistry] | None:
+def _registry_getter_for_component_type(
+    component_type: ComponentType,
+) -> Callable[[], _NamedInstanceRegistry] | None:
     """
     Return the getter for the instance registry that resolves a component family.
 
@@ -202,7 +241,11 @@ def _registry_getter_for_component_type(component_type: ComponentType) -> Callab
         Callable[[], _NamedInstanceRegistry] | None: The registry getter, or None
         when no registry is wired for ``component_type``.
     """
-    from pyrit.registry.components import ConverterRegistry, ScorerRegistry, TargetRegistry
+    from pyrit.registry.components import (
+        ConverterRegistry,
+        ScorerRegistry,
+        TargetRegistry,
+    )
 
     registry_classes = {
         ComponentType.TARGET: TargetRegistry,
@@ -300,7 +343,10 @@ def _resolve_registry_reference(
                 f"{owner}.{name}: expected a list of registry names or instances for this "
                 f'reference, but got {type(value).__name__}. Pass a list, e.g. {name}=["a", "b"].'
             )
-        return [_resolve_single_reference(value=item, getter=getter, owner=owner, name=name) for item in value]
+        return [
+            _resolve_single_reference(value=item, getter=getter, owner=owner, name=name)
+            for item in value
+        ]
     if isinstance(value, list):
         raise ValueError(
             f"{owner}.{name}: expected a single registry name or instance for this reference, "
@@ -310,7 +356,10 @@ def _resolve_registry_reference(
 
 
 def resolve_constructor_args(
-    *, cls: type, raw_args: dict[str, Any], identifier_type: type[ComponentIdentifier] | None = None
+    *,
+    cls: type,
+    raw_args: dict[str, Any],
+    identifier_type: type[ComponentIdentifier] | None = None,
 ) -> dict[str, Any]:
     """
     Resolve a flat argument dict into constructor-ready keyword arguments.
@@ -335,7 +384,10 @@ def resolve_constructor_args(
         ValueError: If an argument is not a declared parameter, a registry
             reference cannot be resolved, or a simple value cannot be coerced.
     """
-    by_name = {param.name: param for param in derive_parameters(cls=cls, identifier_type=identifier_type)}
+    by_name = {
+        param.name: param
+        for param in derive_parameters(cls=cls, identifier_type=identifier_type)
+    }
 
     resolved: dict[str, Any] = {}
     for name, value in raw_args.items():

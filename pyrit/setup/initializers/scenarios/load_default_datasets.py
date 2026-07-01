@@ -35,15 +35,13 @@ class LoadDefaultDatasets(PyRITInitializer):
     @property
     def description(self) -> str:
         """A description of this initializer."""
-        return textwrap.dedent(
-            """
+        return textwrap.dedent("""
                 This configuration uses the DatasetLoader to load default datasets into memory.
                 This will enable all scenarios to run. Datasets can be customized in memory.
 
                 Note: if you are using persistent memory, avoid calling this every time as datasets
                 can take time to load.
-            """
-        ).strip()
+            """).strip()
 
     @property
     def required_env_vars(self) -> list[str]:
@@ -56,10 +54,12 @@ class LoadDefaultDatasets(PyRITInitializer):
 
         all_default_datasets: list[str] = []
 
-        for metadata in registry.list_metadata():
+        for metadata in registry.get_all_registered_class_metadata():
             datasets = list(metadata.default_datasets)
             all_default_datasets.extend(datasets)
-            logger.info(f"Scenario '{metadata.registry_name}' uses datasets: {datasets}")
+            logger.info(
+                f"Scenario '{metadata.registry_name}' uses datasets: {datasets}"
+            )
 
         # Remove duplicates
         unique_datasets = list(dict.fromkeys(all_default_datasets))
@@ -68,13 +68,19 @@ class LoadDefaultDatasets(PyRITInitializer):
             logger.warning("No datasets required by any scenario")
             return
 
-        logger.info(f"Loading {len(unique_datasets)} unique datasets required by all scenarios")
+        logger.info(
+            f"Loading {len(unique_datasets)} unique datasets required by all scenarios"
+        )
 
         dataset_list = await SeedDatasetProvider.fetch_datasets_async(
             dataset_names=unique_datasets,
         )
 
         memory = CentralMemory.get_memory_instance()
-        await memory.add_seed_datasets_to_memory_async(datasets=dataset_list, added_by="LoadDefaultDatasets")
+        await memory.add_seed_datasets_to_memory_async(
+            datasets=dataset_list, added_by="LoadDefaultDatasets"
+        )
 
-        logger.info(f"Successfully loaded {len(dataset_list)} datasets into CentralMemory")
+        logger.info(
+            f"Successfully loaded {len(dataset_list)} datasets into CentralMemory"
+        )

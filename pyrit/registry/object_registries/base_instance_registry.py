@@ -105,7 +105,9 @@ class BaseInstanceRegistry(ABC, RegistryProtocol[ComponentIdentifier], Generic[T
             del cls._instances[cls]
 
     @staticmethod
-    def _normalize_tags(tags: dict[str, str] | list[str] | None = None) -> dict[str, str]:
+    def _normalize_tags(
+        tags: dict[str, str] | list[str] | None = None,
+    ) -> dict[str, str]:
         """
         Normalize tags into a ``dict[str, str]``.
 
@@ -296,7 +298,9 @@ class BaseInstanceRegistry(ABC, RegistryProtocol[ComponentIdentifier], Generic[T
         return [
             m
             for m in self._metadata_cache
-            if _matches_filters(m, include_filters=include_filters, exclude_filters=exclude_filters)
+            if _matches_filters(
+                m, include_filters=include_filters, exclude_filters=exclude_filters
+            )
         ]
 
     def _build_metadata(self, name: str, instance: T) -> ComponentIdentifier:

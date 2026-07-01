@@ -240,7 +240,9 @@ class TestGetScenarioRunResultsRoute:
             timestamp=datetime(2025, 1, 1, tzinfo=timezone.utc),
         )
         scenario_result = ScenarioResult(
-            scenario_identifier=ScenarioIdentifier(name="foundry.red_team_agent", description="Foundry red-team agent"),
+            scenario_identifier=ScenarioIdentifier.for_scenario(
+                scenario_class_name="foundry.red_team_agent", description="Foundry red-team agent"
+            ),
             objective_target_identifier=ComponentIdentifier.from_dict(
                 {"__type__": "FakeTarget", "__module__": "test.mod", "params": {}}
             ),
@@ -258,7 +260,7 @@ class TestGetScenarioRunResultsRoute:
 
         assert response.status_code == status.HTTP_200_OK
         data = response.json()
-        assert data["scenario_identifier"]["name"] == "foundry.red_team_agent"
+        assert data["scenario_identifier"]["class_name"] == "foundry.red_team_agent"
         assert "base64_attack" in data["attack_results"]
 
     def test_get_results_not_found_returns_404(self, client: TestClient) -> None:

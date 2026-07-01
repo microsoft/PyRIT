@@ -83,7 +83,9 @@ class ScorerRegistry(Registry["Scorer", ScorerMetadata]):
                 access. If False, discovery runs immediately.
         """
         super().__init__(lazy_discovery=lazy_discovery)
-        self.instances: InstanceRegistry[Scorer] = DefaultInstanceRegistry(instance_type=self._base_type)
+        self.instances: InstanceRegistry[Scorer] = DefaultInstanceRegistry(
+            instance_type=self._base_type
+        )
 
     def _base_type(self) -> type[Scorer]:
         """Return the ``Scorer`` base class, imported lazily."""

@@ -1213,10 +1213,10 @@ class ScenarioResultEntry(Base):
         """
         # Recreate ScenarioIdentifier with the stored pyrit_version
         stored_version = self.pyrit_version or LEGACY_PYRIT_VERSION
-        scenario_identifier = ScenarioIdentifier(
-            name=self.scenario_name,
+        scenario_identifier = ScenarioIdentifier.for_scenario(
+            scenario_class_name=self.scenario_name,
             description=self.scenario_description or "",
-            scenario_version=self.scenario_version,
+            version=self.scenario_version,
             init_data=self.scenario_init_data,
             pyrit_version=stored_version,
         )
