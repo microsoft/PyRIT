@@ -84,20 +84,6 @@ class TestAttackScoringConfig:
         assert config.use_score_as_feedback is False
 
 
-class TestAttackAdversarialConfig:
-    """Tests for AttackAdversarialConfig construction and its deprecation handling."""
-
-    def test_both_system_prompt_and_path_logs_warning(self, caplog):
-        """Setting both system_prompt and the deprecated system_prompt_path warns about precedence."""
-        with caplog.at_level("WARNING"):
-            AttackAdversarialConfig(
-                target=MagicMock(spec=PromptTarget),
-                system_prompt="inline {{ objective }}",
-                system_prompt_path="some/legacy/path.yaml",
-            )
-        assert "takes precedence" in caplog.text
-
-
 class TestResolveAdversarialSystemPrompt:
     """Tests for resolve_adversarial_system_prompt."""
 

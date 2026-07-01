@@ -189,7 +189,7 @@ class TestRedTeamingAttackInitialization:
     ):
         """Test that attack initializes correctly with different system prompt paths."""
         adversarial_config = AttackAdversarialConfig(
-            target=mock_adversarial_chat, system_prompt_path=system_prompt_path
+            target=mock_adversarial_chat, system_prompt=SeedPrompt.from_yaml_file(system_prompt_path)
         )
         scoring_config = AttackScoringConfig(objective_scorer=mock_objective_scorer)
 
@@ -233,20 +233,11 @@ class TestRedTeamingAttackInitialization:
         if expected_type is str:
             assert attack._adversarial_chat_seed_prompt.data_type == "text"
 
-    def test_init_with_invalid_system_prompt_path_raises_error(
-        self, mock_objective_target: MagicMock, mock_objective_scorer: MagicMock, mock_adversarial_chat: MagicMock
-    ):
-        """Test that invalid system prompt path raises FileNotFoundError."""
-        adversarial_config = AttackAdversarialConfig(
-            target=mock_adversarial_chat, system_prompt_path="nonexistent_file.yaml"
-        )
-        scoring_config = AttackScoringConfig(objective_scorer=mock_objective_scorer)
-
+    def test_init_with_invalid_system_prompt_path_raises_error(self, mock_adversarial_chat: MagicMock):
+        """Test that loading a nonexistent system prompt path raises FileNotFoundError."""
         with pytest.raises(FileNotFoundError):
-            RedTeamingAttack(
-                objective_target=mock_objective_target,
-                attack_adversarial_config=adversarial_config,
-                attack_scoring_config=scoring_config,
+            AttackAdversarialConfig(
+                target=mock_adversarial_chat, system_prompt=SeedPrompt.from_yaml_file("nonexistent_file.yaml")
             )
 
     def test_init_with_all_custom_configurations(
