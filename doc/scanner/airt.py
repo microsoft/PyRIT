@@ -129,7 +129,7 @@ await output_scenario_async(scenario_result)
 #   --max-dataset-size 1
 # ```
 #
-# **Available strategies:** ALL, MULTI_TURN, red_teaming
+# **Available strategies:** ALL, DEFAULT, MULTI_TURN, red_teaming
 
 # %%
 from pyrit.scenario.airt import Cyber, CyberStrategy

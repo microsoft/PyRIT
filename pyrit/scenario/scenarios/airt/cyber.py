@@ -23,6 +23,11 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Techniques Cyber selects from the shared catalog. ``DEFAULT`` is wired to ``any_of("core")``
+# (see _build_cyber_strategy), so adding a technique here that carries the ``core`` tag pulls it
+# into DEFAULT, while a technique lacking ``core`` (e.g. an ``extra``-group technique) would stay
+# in ALL but be silently dropped from DEFAULT. Either case breaks the current DEFAULT == ALL
+# invariant (guarded by test_default_matches_all); revisit the aggregate wiring if that happens.
 _CYBER_TECHNIQUE_NAMES = {"red_teaming"}
 
 
@@ -35,6 +40,9 @@ def _build_cyber_strategy() -> type[ScenarioStrategy]:
     ``AttackTechniqueRegistry``. A plain ``PromptSendingAttack`` baseline is
     prepended automatically by ``Scenario._build_baseline_atomic_attack`` via
     ``BaselineAttackPolicy.Enabled``.
+
+    The ``DEFAULT`` aggregate is the curated default run; for Cyber it expands to the
+    same single ``red_teaming`` technique as ``ALL``.
 
     Returns:
         type[ScenarioStrategy]: The dynamically generated strategy enum class.
@@ -50,6 +58,11 @@ def _build_cyber_strategy() -> type[ScenarioStrategy]:
         class_name="CyberStrategy",
         factories=cyber_factories,
         aggregate_tags={
+            # Cyber curates a single technique (red_teaming) at the scenario level. That
+            # technique carries the canonical ``core`` tag but not the catalog-wide
+            # ``default`` tag, so DEFAULT matches ``core`` here to select it (rather than
+            # tagging red_teaming ``default`` globally, which would alter other scenarios).
+            "default": TagQuery.any_of("core"),
             "multi_turn": TagQuery.any_of("multi_turn"),
         },
     )
@@ -101,7 +114,7 @@ class Cyber(Scenario):
             version=self.VERSION,
             objective_scorer=self._objective_scorer,
             strategy_class=strategy_class,
-            default_strategy=strategy_class("all"),
+            default_strategy=strategy_class("default"),
             default_dataset_config=DatasetAttackConfiguration(dataset_names=["airt_malware"], max_dataset_size=4),
             scenario_result_id=scenario_result_id,
         )
