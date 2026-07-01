@@ -22,10 +22,7 @@ from typing import TYPE_CHECKING, Any
 from pyrit.models import class_name_to_snake_case
 from pyrit.models.identifiers.scenario_identifier import ScenarioIdentifier
 from pyrit.registry.base import ClassRegistryEntry
-from pyrit.registry.discovery import (
-    discover_in_package,
-    discover_subclasses_in_loaded_modules,
-)
+from pyrit.registry.discovery import discover_in_package
 from pyrit.registry.registry import Registry
 
 if TYPE_CHECKING:
@@ -155,28 +152,6 @@ class ScenarioRegistry(Registry["Scenario", ScenarioMetadata]):
 
         except Exception as e:
             logger.error(f"Failed to discover built-in scenarios: {e}")
-
-    def discover_user_scenarios(self) -> None:
-        """
-        Discover user-defined scenarios from global variables.
-
-        After initialization scripts are executed, they may define Scenario subclasses
-        and store them in globals. This method searches for such classes.
-
-        User scenarios will override built-in scenarios with the same name.
-        """
-        from pyrit.scenario.core import Scenario
-
-        try:
-            for _, scenario_class in discover_subclasses_in_loaded_modules(base_class=Scenario):
-                # Check if this is a user-defined class (not from pyrit.scenario.scenarios)
-                if not scenario_class.__module__.startswith("pyrit.scenario.scenarios"):
-                    registry_name = class_name_to_snake_case(scenario_class.__name__, suffix="Scenario")
-                    self.register_class(scenario_class, name=registry_name)
-                    logger.info(f"Registered user-defined scenario: {registry_name} ({scenario_class.__name__})")
-
-        except Exception as e:
-            logger.debug(f"Failed to discover user scenarios: {e}")
 
     def _build_metadata(self, name: str, cls: type[Scenario]) -> ScenarioMetadata:
         """
