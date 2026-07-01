@@ -50,18 +50,6 @@ class ScoreView(Score):
             return identifier.class_name
         return "Unknown"
 
-    @computed_field(json_schema_extra={"deprecated": True})  # type: ignore[prop-decorator]
-    @property
-    def score_id(self) -> str:
-        """Deprecated alias for ``id``; use ``id`` instead (removed in 0.17.0)."""
-        return str(self.id)
-
-    @computed_field(json_schema_extra={"deprecated": True})  # type: ignore[prop-decorator]
-    @property
-    def scored_at(self) -> datetime | None:
-        """Deprecated alias for ``timestamp``; use ``timestamp`` instead (removed in 0.17.0)."""
-        return self.timestamp
-
     @classmethod
     def from_domain(cls, score: Score) -> "ScoreView":
         """
@@ -120,12 +108,6 @@ class MessagePieceView(MessagePiece):
     response_error_description: str | None = Field(
         default=None, description="Description of the error if response_error is not 'none'"
     )
-
-    @computed_field(json_schema_extra={"deprecated": True})  # type: ignore[prop-decorator]
-    @property
-    def piece_id(self) -> str:
-        """Deprecated alias for ``id``; use ``id`` instead (removed in 0.17.0)."""
-        return str(self.id)
 
     @classmethod
     def from_domain(

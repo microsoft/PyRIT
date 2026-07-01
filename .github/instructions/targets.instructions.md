@@ -61,9 +61,9 @@ def __init__(self, endpoint: str, api_key: str) -> None: ...    # missing *
 ```
 
 > [!NOTE]
-> ``PromptTarget.__init__`` *itself* still accepts positional parameters and
-> is not currently keyword-only. The ``__init_subclass__`` hook only runs for
-> subclasses, so the base class non-compliance is tolerated.
+> ``PromptTarget.__init__`` *itself* is now keyword-only as well (``*`` after
+> ``self``), so both the base class and its subclasses enforce the same
+> contract.
 
 ## Configuration and Capabilities
 

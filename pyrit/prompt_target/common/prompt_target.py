@@ -62,13 +62,9 @@ class PromptTarget(Identifiable):
 
         enforce_keyword_only_init(cls, base_name="PromptTarget")
 
-    # TODO: ``PromptTarget.__init__`` itself accepts positional parameters, which
-    # violates the keyword-only contract enforced by ``__init_subclass__`` on
-    # subclasses. The hook only runs for subclasses, so the base class non-
-    # compliance is tolerated during the warn-first phase. Reshape this
-    # signature (insert ``*`` after ``self``) in 0.16.0 as a BREAKING CHANGE.
     def __init__(
         self,
+        *,
         verbose: bool = False,
         max_requests_per_minute: int | None = None,
         endpoint: str = "",
