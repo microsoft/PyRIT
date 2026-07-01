@@ -3,7 +3,6 @@
 
 """PyRIT initializers package."""
 
-from pyrit.common.deprecation import print_deprecation_message
 from pyrit.models.parameter import Parameter
 from pyrit.setup.initializers.airt import AIRTInitializer
 from pyrit.setup.initializers.components.scenario_techniques import ScenarioTechniqueInitializer
@@ -25,14 +24,3 @@ __all__ = [
     "LoadDefaultDatasets",
     "ScenarioObjectiveListInitializer",
 ]
-
-
-def __getattr__(name: str) -> type:
-    if name == "InitializerParameter":
-        print_deprecation_message(
-            old_item="pyrit.setup.initializers.InitializerParameter",
-            new_item=Parameter,
-            removed_in="0.16.0",
-        )
-        return Parameter
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

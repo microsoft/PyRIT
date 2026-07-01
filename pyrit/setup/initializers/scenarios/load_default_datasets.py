@@ -23,16 +23,6 @@ class LoadDefaultDatasets(PyRITInitializer):
     """Load default datasets for all registered scenarios."""
 
     @property
-    def name(self) -> str:
-        """The name of this initializer."""
-        return "Default Dataset Loader for Scenarios"
-
-    @property
-    def execution_order(self) -> int:
-        """Should be executed after most initializers."""
-        return 10
-
-    @property
     def description(self) -> str:
         """A description of this initializer."""
         return textwrap.dedent(

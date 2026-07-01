@@ -19,16 +19,6 @@ class ScenarioObjectiveListInitializer(PyRITInitializer):
     """Configure default seed groups for use in PyRIT scenarios."""
 
     @property
-    def name(self) -> str:
-        """The display name of this initializer."""
-        return "Simple Objective List Configuration for Scenarios"
-
-    @property
-    def execution_order(self) -> int:
-        """The execution order, ensuring this initializer runs after most others."""
-        return 10
-
-    @property
     def required_env_vars(self) -> list[str]:
         """An empty list because this initializer requires no environment variables."""
         return []

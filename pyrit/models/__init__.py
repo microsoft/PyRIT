@@ -11,10 +11,9 @@ CI test ``tests/unit/models/test_import_boundary.py`` enforces this. See
 ``.github/instructions/models.instructions.md`` for the rule.
 
 Identifier types and helpers live in the ``pyrit.models.identifiers``
-sub-package but are re-exported here, so external callers should import them
+sub-package but are re-exported here, so callers should import them
 directly from ``pyrit.models`` (e.g. ``from pyrit.models import
-ComponentIdentifier``). The previous ``pyrit.identifiers`` location is kept as
-a deprecation shim through ``0.16.0``.
+ComponentIdentifier``).
 """
 
 from pyrit.models.conversation_stats import ConversationStats
