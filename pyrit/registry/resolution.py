@@ -2,11 +2,12 @@
 # Licensed under the MIT license.
 
 """
-The constructor <-> ``Parameter`` contract bridge for PyRIT registries.
+The ``Parameter`` contract bridge for PyRIT registries.
 
-This module is the single place that translates between a component class's
-``__init__`` and the declarative ``Parameter`` contract carried by its domain
-identifier. It has three responsibilities:
+This module is the single place that translates raw arguments into ready values
+against the declarative ``Parameter`` contract, whether that contract is derived
+from a class ``__init__`` or declared explicitly by a component. It has four
+responsibilities:
 
 - **Derive** (``derive_parameters``): read the constructor signature, enriched
   by the identifier's ``Param.*`` build markers, into a ``list[Parameter]``. A
@@ -14,10 +15,18 @@ identifier. It has three responsibilities:
   included field typed as a child identifier, e.g. ``TargetIdentifier``) becomes
   a registry **reference**; every other parameter becomes a plain value parameter
   whose ``param_type`` is the annotation with ``Optional[X]`` reduced to ``X``.
-- **Resolve** (``resolve_constructor_args``): derive the contract for a class
-  and turn a flat dict of raw arguments into constructor-ready keyword arguments —
-  coercing simple string values via ``Parameter.coerce_value`` and resolving
-  registry-reference parameters by name from the owning domain's registry.
+- **Resolve from a constructor** (``resolve_constructor_args``): derive the
+  contract for a class and turn a flat dict of raw arguments into
+  constructor-ready keyword arguments — coercing simple string values via
+  ``Parameter.coerce_value`` and resolving registry-reference parameters by name
+  from the owning domain's registry. Defaults are left to the constructor.
+- **Resolve from a declared list** (``resolve_declared_params``): the sibling for
+  a component that declares an explicit ``list[Parameter]`` (e.g. a scenario's
+  ``supported_parameters()``). It has no references, coerces every supplied
+  value, and materializes every declared default so the result is a complete
+  param bag. Both resolve functions delegate the actual coercion/validation to
+  the ``Parameter`` model — that is the one shared kernel; they differ only in
+  where the contract comes from and how defaults are handled.
 - **Present** (``display_choices``): project a constrained-scalar ``param_type``
   into its allowed-value display tuple.
 
@@ -400,29 +409,37 @@ def resolve_constructor_args(
 
 
 # ---------------------------------------------------------------------------
-# Apply: raw args -> fully-materialized declared-parameter dict
+# Resolve (declared list): raw args -> fully-materialized declared-parameter dict
 # ---------------------------------------------------------------------------
 
 
-def apply_declared_parameters(
+def resolve_declared_params(
     *,
     declared: list[Parameter],
-    args: dict[str, Any],
+    raw_args: dict[str, Any],
     owner: str,
 ) -> dict[str, Any]:
     """
-    Coerce/validate ``args`` against ``declared`` and materialize declared defaults.
+    Resolve ``raw_args`` against an explicit declared-parameter contract.
 
-    Single source of truth for turning a raw args dict into a fully-materialized
-    parameter dict against a *declared* ``Parameter`` contract (e.g. a scenario's
-    ``supported_parameters()``, as opposed to a constructor signature handled by
-    ``resolve_constructor_args``). Every declared parameter is guaranteed a key in
-    the returned dict; params declared without a default land as ``None`` so
-    callers can rely on ``params[name]`` never raising ``KeyError``.
+    The declared-list sibling of ``resolve_constructor_args``. Both translate a
+    flat dict of raw arguments into ready values against the ``Parameter``
+    contract, delegating the actual coercion/validation to the ``Parameter``
+    model; they differ only in where the contract comes from and how it is
+    consumed:
+
+    - ``resolve_constructor_args`` derives the contract from a class ``__init__``,
+      resolves registry references, coerces string values, and returns the kwargs
+      subset for ``cls(**resolved)`` (the constructor supplies defaults).
+    - ``resolve_declared_params`` takes an explicit ``list[Parameter]`` (e.g. a
+      scenario's ``supported_parameters()``), has no references, coerces every
+      supplied value, and **materializes every declared default** so the returned
+      dict is a complete param bag. Params declared without a default land as
+      ``None`` so callers can rely on ``params[name]`` never raising ``KeyError``.
 
     Args:
         declared (list[Parameter]): The declaration snapshot to validate against.
-        args (dict[str, Any]): Map of parameter name to raw value. Keys with
+        raw_args (dict[str, Any]): Map of parameter name to raw value. Keys with
             ``None`` values are treated as absent (YAML ``null``).
         owner (str): Human-readable owner label used to prefix error messages,
             e.g. ``"Scenario 'FoundryScenario'"``.
@@ -439,7 +456,7 @@ def apply_declared_parameters(
     declared_by_name = {param.name: param for param in declared}
 
     # None values are treated as absent so YAML `key: null` falls through to defaults.
-    supplied = {name: value for name, value in args.items() if value is not None}
+    supplied = {name: value for name, value in raw_args.items() if value is not None}
 
     coerced: dict[str, Any] = {}
     for name, raw_value in supplied.items():

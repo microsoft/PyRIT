@@ -47,7 +47,7 @@ from pyrit.models.parameter import Parameter
 from pyrit.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_requirements import TargetRequirements
 from pyrit.registry import ScorerRegistry
-from pyrit.registry.resolution import apply_declared_parameters
+from pyrit.registry.resolution import resolve_declared_params
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
@@ -433,7 +433,7 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
 
         The scenario only **declares** its parameters via ``supported_parameters()``;
         the coerce / validate / inject-defaults *mapping* is owned by the registry
-        layer (``pyrit.registry.resolution.apply_declared_parameters``) so there is a
+        layer (``pyrit.registry.resolution.resolve_declared_params``) so there is a
         single implementation shared by the programmatic, CLI, and registry paths.
         Every declared parameter is guaranteed a key in ``self.params`` after this
         call; params without a declared default land as ``None``.
@@ -447,9 +447,9 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
             ValueError: Invalid declaration, unknown parameter, coercion
                 failure, or value not in ``choices``.
         """
-        self.params = apply_declared_parameters(
+        self.params = resolve_declared_params(
             declared=list(self.supported_parameters()),
-            args=args,
+            raw_args=args,
             owner=f"Scenario '{type(self).__name__}'",
         )
         self._declarations_validated = True
