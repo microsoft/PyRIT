@@ -89,9 +89,7 @@ class TestScenarioServiceListScenarios:
         with patch.object(ScenarioService, "__init__", lambda self: None):
             service = ScenarioService()
             service._registry = MagicMock()
-            service._registry.get_all_registered_class_metadata.return_value = [
-                metadata
-            ]
+            service._registry.get_all_registered_class_metadata.return_value = [metadata]
 
             result = await service.list_scenarios_async()
 
@@ -108,18 +106,13 @@ class TestScenarioServiceListScenarios:
     async def test_list_scenarios_paginates_with_limit(self) -> None:
         """Test that list respects the limit parameter."""
         metadata_list = [
-            _make_scenario_metadata(
-                registry_name=f"test.scenario_{i}", class_name=f"Scenario{i}"
-            )
-            for i in range(5)
+            _make_scenario_metadata(registry_name=f"test.scenario_{i}", class_name=f"Scenario{i}") for i in range(5)
         ]
 
         with patch.object(ScenarioService, "__init__", lambda self: None):
             service = ScenarioService()
             service._registry = MagicMock()
-            service._registry.get_all_registered_class_metadata.return_value = (
-                metadata_list
-            )
+            service._registry.get_all_registered_class_metadata.return_value = metadata_list
 
             result = await service.list_scenarios_async(limit=3)
 
@@ -130,22 +123,15 @@ class TestScenarioServiceListScenarios:
     async def test_list_scenarios_paginates_with_cursor(self) -> None:
         """Test that list uses cursor for pagination."""
         metadata_list = [
-            _make_scenario_metadata(
-                registry_name=f"test.scenario_{i}", class_name=f"Scenario{i}"
-            )
-            for i in range(5)
+            _make_scenario_metadata(registry_name=f"test.scenario_{i}", class_name=f"Scenario{i}") for i in range(5)
         ]
 
         with patch.object(ScenarioService, "__init__", lambda self: None):
             service = ScenarioService()
             service._registry = MagicMock()
-            service._registry.get_all_registered_class_metadata.return_value = (
-                metadata_list
-            )
+            service._registry.get_all_registered_class_metadata.return_value = metadata_list
 
-            result = await service.list_scenarios_async(
-                limit=2, cursor="test.scenario_1"
-            )
+            result = await service.list_scenarios_async(limit=2, cursor="test.scenario_1")
 
             assert len(result.items) == 2
             assert result.items[0].scenario_name == "test.scenario_2"
@@ -155,18 +141,13 @@ class TestScenarioServiceListScenarios:
     async def test_list_scenarios_last_page_has_more_false(self) -> None:
         """Test that last page shows has_more=False."""
         metadata_list = [
-            _make_scenario_metadata(
-                registry_name=f"test.scenario_{i}", class_name=f"Scenario{i}"
-            )
-            for i in range(3)
+            _make_scenario_metadata(registry_name=f"test.scenario_{i}", class_name=f"Scenario{i}") for i in range(3)
         ]
 
         with patch.object(ScenarioService, "__init__", lambda self: None):
             service = ScenarioService()
             service._registry = MagicMock()
-            service._registry.get_all_registered_class_metadata.return_value = (
-                metadata_list
-            )
+            service._registry.get_all_registered_class_metadata.return_value = metadata_list
 
             result = await service.list_scenarios_async(limit=5)
 
@@ -181,9 +162,7 @@ class TestScenarioServiceListScenarios:
         with patch.object(ScenarioService, "__init__", lambda self: None):
             service = ScenarioService()
             service._registry = MagicMock()
-            service._registry.get_all_registered_class_metadata.return_value = [
-                metadata
-            ]
+            service._registry.get_all_registered_class_metadata.return_value = [metadata]
 
             result = await service.list_scenarios_async()
 
@@ -202,9 +181,7 @@ class TestScenarioServiceGetScenario:
             service._registry = MagicMock()
             service._registry.get_registered_class_metadata.return_value = metadata
 
-            result = await service.get_scenario_async(
-                scenario_name="foundry.red_team_agent"
-            )
+            result = await service.get_scenario_async(scenario_name="foundry.red_team_agent")
 
             assert result is not None
             assert result.scenario_name == "foundry.red_team_agent"
@@ -231,16 +208,12 @@ class TestScenarioRoutes:
 
     def test_list_scenarios_returns_200(self, client: TestClient) -> None:
         """Test that GET /api/scenarios/catalog returns 200."""
-        with patch(
-            "pyrit.backend.routes.scenarios.get_scenario_service"
-        ) as mock_get_service:
+        with patch("pyrit.backend.routes.scenarios.get_scenario_service") as mock_get_service:
             mock_service = MagicMock()
             mock_service.list_scenarios_async = AsyncMock(
                 return_value=ListRegisteredScenariosResponse(
                     items=[],
-                    pagination=PaginationInfo(
-                        limit=50, has_more=False, next_cursor=None, prev_cursor=None
-                    ),
+                    pagination=PaginationInfo(limit=50, has_more=False, next_cursor=None, prev_cursor=None),
                 )
             )
             mock_get_service.return_value = mock_service
@@ -265,16 +238,12 @@ class TestScenarioRoutes:
             max_dataset_size=10,
         )
 
-        with patch(
-            "pyrit.backend.routes.scenarios.get_scenario_service"
-        ) as mock_get_service:
+        with patch("pyrit.backend.routes.scenarios.get_scenario_service") as mock_get_service:
             mock_service = MagicMock()
             mock_service.list_scenarios_async = AsyncMock(
                 return_value=ListRegisteredScenariosResponse(
                     items=[summary],
-                    pagination=PaginationInfo(
-                        limit=50, has_more=False, next_cursor=None, prev_cursor=None
-                    ),
+                    pagination=PaginationInfo(limit=50, has_more=False, next_cursor=None, prev_cursor=None),
                 )
             )
             mock_get_service.return_value = mock_service
@@ -295,28 +264,20 @@ class TestScenarioRoutes:
 
     def test_list_scenarios_passes_pagination_params(self, client: TestClient) -> None:
         """Test that pagination params are forwarded to service."""
-        with patch(
-            "pyrit.backend.routes.scenarios.get_scenario_service"
-        ) as mock_get_service:
+        with patch("pyrit.backend.routes.scenarios.get_scenario_service") as mock_get_service:
             mock_service = MagicMock()
             mock_service.list_scenarios_async = AsyncMock(
                 return_value=ListRegisteredScenariosResponse(
                     items=[],
-                    pagination=PaginationInfo(
-                        limit=10, has_more=False, next_cursor=None, prev_cursor=None
-                    ),
+                    pagination=PaginationInfo(limit=10, has_more=False, next_cursor=None, prev_cursor=None),
                 )
             )
             mock_get_service.return_value = mock_service
 
-            response = client.get(
-                "/api/scenarios/catalog?limit=10&cursor=test.scenario_1"
-            )
+            response = client.get("/api/scenarios/catalog?limit=10&cursor=test.scenario_1")
 
             assert response.status_code == status.HTTP_200_OK
-            mock_service.list_scenarios_async.assert_called_once_with(
-                limit=10, cursor="test.scenario_1"
-            )
+            mock_service.list_scenarios_async.assert_called_once_with(limit=10, cursor="test.scenario_1")
 
     def test_get_scenario_returns_200(self, client: TestClient) -> None:
         """Test that GET /api/scenarios/catalog/{name} returns 200 when found."""
@@ -331,9 +292,7 @@ class TestScenarioRoutes:
             max_dataset_size=None,
         )
 
-        with patch(
-            "pyrit.backend.routes.scenarios.get_scenario_service"
-        ) as mock_get_service:
+        with patch("pyrit.backend.routes.scenarios.get_scenario_service") as mock_get_service:
             mock_service = MagicMock()
             mock_service.get_scenario_async = AsyncMock(return_value=summary)
             mock_get_service.return_value = mock_service
@@ -346,9 +305,7 @@ class TestScenarioRoutes:
 
     def test_get_scenario_returns_404_when_not_found(self, client: TestClient) -> None:
         """Test that GET /api/scenarios/catalog/{name} returns 404 when not found."""
-        with patch(
-            "pyrit.backend.routes.scenarios.get_scenario_service"
-        ) as mock_get_service:
+        with patch("pyrit.backend.routes.scenarios.get_scenario_service") as mock_get_service:
             mock_service = MagicMock()
             mock_service.get_scenario_async = AsyncMock(return_value=None)
             mock_get_service.return_value = mock_service
@@ -370,9 +327,7 @@ class TestScenarioRoutes:
             max_dataset_size=None,
         )
 
-        with patch(
-            "pyrit.backend.routes.scenarios.get_scenario_service"
-        ) as mock_get_service:
+        with patch("pyrit.backend.routes.scenarios.get_scenario_service") as mock_get_service:
             mock_service = MagicMock()
             mock_service.get_scenario_async = AsyncMock(return_value=summary)
             mock_get_service.return_value = mock_service
@@ -380,9 +335,7 @@ class TestScenarioRoutes:
             response = client.get("/api/scenarios/catalog/garak.encoding")
 
             assert response.status_code == status.HTTP_200_OK
-            mock_service.get_scenario_async.assert_called_once_with(
-                scenario_name="garak.encoding"
-            )
+            mock_service.get_scenario_async.assert_called_once_with(scenario_name="garak.encoding")
 
 
 # ============================================================================
@@ -427,9 +380,7 @@ class TestScenarioServiceSupportedParameters:
         with patch.object(ScenarioService, "__init__", lambda self: None):
             service = ScenarioService()
             service._registry = MagicMock()
-            service._registry.get_all_registered_class_metadata.return_value = [
-                metadata
-            ]
+            service._registry.get_all_registered_class_metadata.return_value = [metadata]
 
             result = await service.list_scenarios_async()
 
@@ -458,9 +409,7 @@ class TestScenarioServiceSupportedParameters:
         with patch.object(ScenarioService, "__init__", lambda self: None):
             service = ScenarioService()
             service._registry = MagicMock()
-            service._registry.get_all_registered_class_metadata.return_value = [
-                metadata
-            ]
+            service._registry.get_all_registered_class_metadata.return_value = [metadata]
 
             result = await service.list_scenarios_async()
 
@@ -492,9 +441,7 @@ class TestScenarioServiceSupportedParameters:
         with patch.object(ScenarioService, "__init__", lambda self: None):
             service = ScenarioService()
             service._registry = MagicMock()
-            service._registry.get_all_registered_class_metadata.return_value = [
-                metadata
-            ]
+            service._registry.get_all_registered_class_metadata.return_value = [metadata]
 
             result = await service.list_scenarios_async()
 

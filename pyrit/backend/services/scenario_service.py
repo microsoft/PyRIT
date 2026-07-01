@@ -95,9 +95,7 @@ class ScenarioService:
             ),
         )
 
-    async def get_scenario_async(
-        self, *, scenario_name: str
-    ) -> RegisteredScenario | None:
+    async def get_scenario_async(self, *, scenario_name: str) -> RegisteredScenario | None:
         """
         Get a single scenario by registry name.
 

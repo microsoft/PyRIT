@@ -246,12 +246,8 @@ def test_print_initializer_list_full(capsys):
             initializer_type="OpenAITargetInitializer",
             required_env_vars=["OPENAI_API_KEY", "OPENAI_ENDPOINT"],
             supported_parameters=[
-                InitializerParameterSummary(
-                    name="model", default=["gpt-4"], description="Model name."
-                ),
-                InitializerParameterSummary(
-                    name="temp", default=None, description="Temperature."
-                ),
+                InitializerParameterSummary(name="model", default=["gpt-4"], description="Model name."),
+                InitializerParameterSummary(name="temp", default=None, description="Temperature."),
             ],
             description="Registers OpenAI targets.",
         ),
@@ -431,9 +427,7 @@ async def test_print_scenario_result_async_accepts_real_scenario_result():
         ScenarioResult,
     )
 
-    identifier = ScenarioIdentifier.for_scenario(
-        scenario_class_name="test.scenario", description="A test"
-    )
+    identifier = ScenarioIdentifier.for_scenario(scenario_class_name="test.scenario", description="A test")
     target_identifier = ComponentIdentifier.model_validate(
         {"__type__": "FakeTarget", "__module__": "test.mod", "params": {}}
     )

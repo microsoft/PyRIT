@@ -92,9 +92,7 @@ class InstanceRegistry(Protocol[T]):
         """Return all entries sorted by name."""
         ...
 
-    def get_by_tag(
-        self, *, tag: str, value: str | None = None
-    ) -> list[RegistryEntry[T]]:
+    def get_by_tag(self, *, tag: str, value: str | None = None) -> list[RegistryEntry[T]]:
         """Return entries carrying ``tag`` (optionally matching ``value``), sorted by name."""
         ...
 
@@ -166,9 +164,7 @@ class DefaultInstanceRegistry(Generic[T]):
         T: The type of instances held (must be ``Identifiable``).
     """
 
-    def __init__(
-        self, *, instance_type: type[T] | Callable[[], type[T]] | None = None
-    ) -> None:
+    def __init__(self, *, instance_type: type[T] | Callable[[], type[T]] | None = None) -> None:
         """
         Initialize an empty instance container.
 
@@ -292,9 +288,7 @@ class DefaultInstanceRegistry(Generic[T]):
         Returns:
             list[RegistryEntry[T]]: The entries sorted by name.
         """
-        return [
-            self._registry_items[name] for name in sorted(self._registry_items.keys())
-        ]
+        return [self._registry_items[name] for name in sorted(self._registry_items.keys())]
 
     def get_names(self) -> list[str]:
         """
@@ -305,9 +299,7 @@ class DefaultInstanceRegistry(Generic[T]):
         """
         return sorted(self._registry_items.keys())
 
-    def get_by_tag(
-        self, *, tag: str, value: str | None = None
-    ) -> list[RegistryEntry[T]]:
+    def get_by_tag(self, *, tag: str, value: str | None = None) -> list[RegistryEntry[T]]:
         """
         Get entries that carry a given tag, optionally matching a value.
 
@@ -415,9 +407,7 @@ class DefaultInstanceRegistry(Generic[T]):
         return [
             m
             for m in self._metadata_cache
-            if _matches_filters(
-                m, include_filters=include_filters, exclude_filters=exclude_filters
-            )
+            if _matches_filters(m, include_filters=include_filters, exclude_filters=exclude_filters)
         ]
 
     def _build_metadata(self, instance: T) -> ComponentIdentifier:

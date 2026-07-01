@@ -66,9 +66,7 @@ class AttackTechniqueMetadata(ClassRegistryEntry):
     """
 
 
-class AttackTechniqueRegistry(
-    Registry["AttackTechniqueFactory", AttackTechniqueMetadata]
-):
+class AttackTechniqueRegistry(Registry["AttackTechniqueFactory", AttackTechniqueMetadata]):
     """
     Registry that holds reusable ``AttackTechniqueFactory`` instances.
 
@@ -97,8 +95,8 @@ class AttackTechniqueRegistry(
         from pyrit.scenario.core.attack_technique_factory import ScorerOverridePolicy
 
         super().__init__(lazy_discovery=lazy_discovery)
-        self.instances: InstanceRegistry[AttackTechniqueFactory] = (
-            DefaultInstanceRegistry(instance_type=_attack_technique_factory_type)
+        self.instances: InstanceRegistry[AttackTechniqueFactory] = DefaultInstanceRegistry(
+            instance_type=_attack_technique_factory_type
         )
         self._scorer_override_policy = ScorerOverridePolicy.WARN
 
@@ -127,9 +125,7 @@ class AttackTechniqueRegistry(
                 key with value ``""``).
         """
         self.instances.register(factory, name=name, tags=tags)
-        logger.debug(
-            f"Registered attack technique factory: {name} ({factory.attack_class.__name__})"
-        )
+        logger.debug(f"Registered attack technique factory: {name} ({factory.attack_class.__name__})")
 
     def get_factories(self) -> dict[str, AttackTechniqueFactory]:
         """
@@ -141,9 +137,7 @@ class AttackTechniqueRegistry(
         Returns:
             dict[str, AttackTechniqueFactory]: Mapping of technique name to factory.
         """
-        return {
-            entry.name: entry.instance for entry in self.instances.get_all_instances()
-        }
+        return {entry.name: entry.instance for entry in self.instances.get_all_instances()}
 
     def get_factories_or_raise(self) -> dict[str, AttackTechniqueFactory]:
         """
@@ -221,11 +215,7 @@ class AttackTechniqueRegistry(
         # Technique members from factories — assign aggregate tags based on TagQuery matching
         for factory in factories:
             factory_tags = set(factory.strategy_tags)
-            matched_agg_tags = {
-                agg_name
-                for agg_name, query in aggregate_tags.items()
-                if query.matches(factory_tags)
-            }
+            matched_agg_tags = {agg_name for agg_name, query in aggregate_tags.items() if query.matches(factory_tags)}
             members[factory.name] = (factory.name, factory_tags | matched_agg_tags)
 
         # Build the enum class dynamically

@@ -51,9 +51,7 @@ def _make_message_piece(**overrides) -> MessagePiece:
         "sequence": 0,
         "labels": {"label1": "value1"},
         "prompt_metadata": {"meta": "data"},
-        "converter_identifiers": [
-            ComponentIdentifier(class_name="NoOp", class_module="pyrit.converters")
-        ],
+        "converter_identifiers": [ComponentIdentifier(class_name="NoOp", class_module="pyrit.converters")],
         "original_value_data_type": "text",
         "converted_value_data_type": "text",
         "response_error": "none",
@@ -71,9 +69,7 @@ def _make_score(**overrides) -> Score:
         "score_category": ["test"],
         "score_rationale": "Good result",
         "score_metadata": {"key": "val"},
-        "scorer_class_identifier": ComponentIdentifier(
-            class_name="MockScorer", class_module="pyrit.score"
-        ),
+        "scorer_class_identifier": ComponentIdentifier(class_name="MockScorer", class_module="pyrit.score"),
         "message_piece_id": uuid.uuid4(),
         "objective": "test objective",
     }
@@ -104,9 +100,7 @@ def _make_attack_result(**overrides) -> AttackResult:
     defaults = {
         "conversation_id": str(uuid.uuid4()),
         "objective": "test objective",
-        "atomic_attack_identifier": ComponentIdentifier(
-            class_name="MockAttack", class_module="tests.mocks"
-        ),
+        "atomic_attack_identifier": ComponentIdentifier(class_name="MockAttack", class_module="tests.mocks"),
         "executed_turns": 3,
         "execution_time_ms": 1500,
         "outcome": AttackOutcome.SUCCESS,
@@ -151,9 +145,7 @@ def test_load_identifier_returns_none_for_falsy():
 
 
 def test_dump_then_load_identifier_round_trips():
-    identifier = ComponentIdentifier(
-        class_name="MyConverter", class_module="pyrit.converters", pyrit_version="0.1.0"
-    )
+    identifier = ComponentIdentifier(class_name="MyConverter", class_module="pyrit.converters", pyrit_version="0.1.0")
     stored = identifier.model_dump()
     assert stored is not None
     loaded = _load_identifier(stored)
@@ -163,9 +155,7 @@ def test_dump_then_load_identifier_round_trips():
 
 
 def test_load_identifier_injects_pyrit_version():
-    identifier = ComponentIdentifier(
-        class_name="MyConverter", class_module="pyrit.converters", pyrit_version="0.1.0"
-    )
+    identifier = ComponentIdentifier(class_name="MyConverter", class_module="pyrit.converters", pyrit_version="0.1.0")
     stored = identifier.model_dump()
     loaded = _load_identifier(stored, pyrit_version="9.9.9")
     assert loaded is not None
@@ -185,9 +175,7 @@ def test_conversation_message_with_similarity_defaults():
 
 def test_conversation_message_with_similarity_forbids_extra():
     with pytest.raises(ValidationError):
-        ConversationMessageWithSimilarity(
-            role="user", content="hi", metric="cosine", unknown_field="x"
-        )
+        ConversationMessageWithSimilarity(role="user", content="hi", metric="cosine", unknown_field="x")
 
 
 # ---------------------------------------------------------------------------
@@ -464,9 +452,7 @@ class TestSeedEntry:
         # ``set`` is not JSON-serializable; json.dumps would normally raise a bare
         # ``TypeError: Object of type set is not JSON serializable`` with no hint
         # about which seed produced it.
-        seed = _make_seed_prompt(
-            name="bad-schema-seed", response_json_schema={"enum": {1, 2, 3}}
-        )
+        seed = _make_seed_prompt(name="bad-schema-seed", response_json_schema={"enum": {1, 2, 3}})
         with pytest.raises(TypeError, match="bad-schema-seed.*not JSON-serializable"):
             SeedEntry(entry=seed)
 
@@ -542,17 +528,13 @@ class TestAttackResultEntry:
 
     def test_get_attack_result_prefers_atomic_over_stale_attack_identifier(self):
         """When atomic_attack_identifier and attack_identifier disagree, atomic wins."""
-        correct_attack_id = ComponentIdentifier(
-            class_name="CorrectAttack", class_module="pyrit.backend"
-        )
+        correct_attack_id = ComponentIdentifier(class_name="CorrectAttack", class_module="pyrit.backend")
         atomic_id = AtomicAttackIdentifier.build(attack_identifier=correct_attack_id)
         ar = _make_attack_result(atomic_attack_identifier=atomic_id)
         entry = AttackResultEntry(entry=ar)
 
         # Simulate a stale attack_identifier column (as if it wasn't updated)
-        stale_id = ComponentIdentifier(
-            class_name="StaleAttack", class_module="pyrit.backend"
-        )
+        stale_id = ComponentIdentifier(class_name="StaleAttack", class_module="pyrit.backend")
         entry.attack_identifier = stale_id.to_dict()
 
         round_tripped = entry.get_attack_result()
@@ -573,13 +555,9 @@ class TestScenarioResultEntry:
             "scenario_identifier": ScenarioIdentifier.for_scenario(
                 scenario_class_name="test_scenario", description="desc"
             ),
-            "objective_target_identifier": ComponentIdentifier(
-                class_name="MockTarget", class_module="tests.mocks"
-            ),
+            "objective_target_identifier": ComponentIdentifier(class_name="MockTarget", class_module="tests.mocks"),
             "attack_results": {},
-            "objective_scorer_identifier": ComponentIdentifier(
-                class_name="MockScorer", class_module="pyrit.score"
-            ),
+            "objective_scorer_identifier": ComponentIdentifier(class_name="MockScorer", class_module="pyrit.score"),
             "scenario_run_state": "COMPLETED",
             "labels": {"env": "test"},
             "number_tries": 1,
@@ -617,9 +595,7 @@ class TestScenarioResultEntry:
         result_a = _make_attack_result()
         result_b = _make_attack_result()
         result_c = _make_attack_result()
-        sr = self._make_scenario_result(
-            attack_results={"attack1": [result_a, result_b], "attack2": [result_c]}
-        )
+        sr = self._make_scenario_result(attack_results={"attack1": [result_a, result_b], "attack2": [result_c]})
         entry = ScenarioResultEntry(entry=sr)
         conv_ids = entry.get_conversation_ids_by_attack_name()
         assert len(conv_ids["attack1"]) == 2

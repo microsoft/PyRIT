@@ -45,14 +45,10 @@ class ScenarioIdentifier(ComponentIdentifier):
 
     #: Target the scenario attacks. Run-resolved reference (constructor/`self`
     #: input) resolved by name from the target registry; unset on persisted runs.
-    objective_target: Annotated[
-        TargetIdentifier | None, Evaluate.Include(), Param.Include()
-    ] = None
+    objective_target: Annotated[TargetIdentifier | None, Evaluate.Include(), Param.Include()] = None
     #: Primary scorer the scenario evaluates with. Run-resolved reference resolved
     #: by name from the scorer registry; unset on persisted runs.
-    objective_scorer: Annotated[
-        ScorerIdentifier | None, Evaluate.Include(), Param.Include()
-    ] = None
+    objective_scorer: Annotated[ScorerIdentifier | None, Evaluate.Include(), Param.Include()] = None
 
     @property
     def name(self) -> str:

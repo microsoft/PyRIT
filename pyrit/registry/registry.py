@@ -318,9 +318,7 @@ class Registry(ABC, Generic[T, MetadataT]):
         Returns:
             tuple[Parameter, ...]: The derived build contract.
         """
-        return tuple(
-            derive_parameters(cls=cls, identifier_type=self._identifier_type())
-        )
+        return tuple(derive_parameters(cls=cls, identifier_type=self._identifier_type()))
 
     def _class_attributes(self, cls: type[T]) -> Mapping[str, Any]:
         """
@@ -391,9 +389,7 @@ class Registry(ABC, Generic[T, MetadataT]):
         # cheap, so the small duplication is deliberate rather than worth caching.
         parameters = self._derive_parameters(cls)
         for param in parameters:
-            if param.reference is not None and not self._is_component_type_resolvable(
-                param.reference.component_type
-            ):
+            if param.reference is not None and not self._is_component_type_resolvable(param.reference.component_type):
                 raise ValueError(
                     f"{cls.__name__}: reference parameter '{param.name}' has no registry wired for component type "
                     f"'{param.reference.component_type}'."
@@ -481,8 +477,7 @@ class Registry(ABC, Generic[T, MetadataT]):
         self._ensure_discovered()
         if self._metadata_cache is None:
             self._metadata_cache = {
-                name: self._build_metadata(name, cls)
-                for name, cls in sorted(self._classes.items())
+                name: self._build_metadata(name, cls) for name, cls in sorted(self._classes.items())
             }
         return self._metadata_cache
 
@@ -514,11 +509,7 @@ class Registry(ABC, Generic[T, MetadataT]):
             return metadata
 
         return [
-            m
-            for m in metadata
-            if _matches_filters(
-                m, include_filters=include_filters, exclude_filters=exclude_filters
-            )
+            m for m in metadata if _matches_filters(m, include_filters=include_filters, exclude_filters=exclude_filters)
         ]
 
     def get_registered_class_metadata(self, name: str) -> MetadataT | None:

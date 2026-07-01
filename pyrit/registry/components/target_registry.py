@@ -72,9 +72,7 @@ class TargetRegistry(Registry["PromptTarget", TargetMetadata]):
                 access. If False, discovery runs immediately.
         """
         super().__init__(lazy_discovery=lazy_discovery)
-        self.instances: InstanceRegistry[PromptTarget] = DefaultInstanceRegistry(
-            instance_type=self._base_type
-        )
+        self.instances: InstanceRegistry[PromptTarget] = DefaultInstanceRegistry(instance_type=self._base_type)
 
     def _base_type(self) -> type[PromptTarget]:
         """Return the ``PromptTarget`` base class, imported lazily."""

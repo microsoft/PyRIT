@@ -91,9 +91,7 @@ def _parse_arg_descriptions(cls: type) -> dict[str, str]:
         dict[str, str]: Mapping of parameter names to their descriptions.
     """
     doc = (cls.__init__.__doc__ or cls.__doc__ or "").strip()
-    match = re.search(
-        r"Args:\s*\n(.*?)(?:\n\s*\n|\n\s*Returns:|\n\s*Raises:|\Z)", doc, re.DOTALL
-    )
+    match = re.search(r"Args:\s*\n(.*?)(?:\n\s*\n|\n\s*Returns:|\n\s*Raises:|\Z)", doc, re.DOTALL)
     if not match:
         return {}
     args_block = match.group(1)
@@ -116,16 +114,12 @@ def _default_for(param: inspect.Parameter) -> Any:
     Returns:
         Any: The parameter's default value, or ``REQUIRED_VALUE`` when it is required.
     """
-    if param.default is inspect.Parameter.empty or isinstance(
-        param.default, _RequiredValueSentinel
-    ):
+    if param.default is inspect.Parameter.empty or isinstance(param.default, _RequiredValueSentinel):
         return REQUIRED_VALUE
     return param.default
 
 
-def derive_parameters(
-    *, cls: type, identifier_type: type[ComponentIdentifier] | None = None
-) -> list[Parameter]:
+def derive_parameters(*, cls: type, identifier_type: type[ComponentIdentifier] | None = None) -> list[Parameter]:
     """
     Derive the declarative ``Parameter`` list for ``cls`` from its constructor.
 
@@ -150,15 +144,9 @@ def derive_parameters(
     try:
         sig = inspect.signature(cls.__init__)
     except (ValueError, TypeError) as e:
-        raise ValueError(
-            f"Failed to inspect __init__ signature for '{cls.__name__}': {e}"
-        ) from e
+        raise ValueError(f"Failed to inspect __init__ signature for '{cls.__name__}': {e}") from e
 
-    reference_overrides = (
-        identifier_type.get_reference_component_types()
-        if identifier_type is not None
-        else {}
-    )
+    reference_overrides = identifier_type.get_reference_component_types() if identifier_type is not None else {}
     descriptions = _parse_arg_descriptions(cls)
 
     parameters: list[Parameter] = []
@@ -182,17 +170,11 @@ def derive_parameters(
                     name=name,
                     description=description,
                     default=default,
-                    reference=RegistryReference(
-                        component_type=component_type, annotation=annotation
-                    ),
+                    reference=RegistryReference(component_type=component_type, annotation=annotation),
                 )
             )
         else:
-            param_type = (
-                None
-                if annotation is inspect.Parameter.empty
-                else _unwrap_optional(annotation)
-            )
+            param_type = None if annotation is inspect.Parameter.empty else _unwrap_optional(annotation)
             parameters.append(
                 Parameter(
                     name=name,
@@ -343,10 +325,7 @@ def _resolve_registry_reference(
                 f"{owner}.{name}: expected a list of registry names or instances for this "
                 f'reference, but got {type(value).__name__}. Pass a list, e.g. {name}=["a", "b"].'
             )
-        return [
-            _resolve_single_reference(value=item, getter=getter, owner=owner, name=name)
-            for item in value
-        ]
+        return [_resolve_single_reference(value=item, getter=getter, owner=owner, name=name) for item in value]
     if isinstance(value, list):
         raise ValueError(
             f"{owner}.{name}: expected a single registry name or instance for this reference, "
@@ -384,10 +363,7 @@ def resolve_constructor_args(
         ValueError: If an argument is not a declared parameter, a registry
             reference cannot be resolved, or a simple value cannot be coerced.
     """
-    by_name = {
-        param.name: param
-        for param in derive_parameters(cls=cls, identifier_type=identifier_type)
-    }
+    by_name = {param.name: param for param in derive_parameters(cls=cls, identifier_type=identifier_type)}
 
     resolved: dict[str, Any] = {}
     for name, value in raw_args.items():

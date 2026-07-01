@@ -47,9 +47,7 @@ class InitializerMetadata(ClassRegistryEntry):
     required_env_vars: tuple[str, ...] = field(kw_only=True)
 
     # Supported parameters as tuples of (name, description, default).
-    supported_parameters: tuple[tuple[str, str, list[str] | None], ...] = field(
-        kw_only=True, default=()
-    )
+    supported_parameters: tuple[tuple[str, str, list[str] | None], ...] = field(kw_only=True, default=())
 
 
 class InitializerRegistry(BaseClassRegistry["PyRITInitializer", InitializerMetadata]):
@@ -63,9 +61,7 @@ class InitializerRegistry(BaseClassRegistry["PyRITInitializer", InitializerMetad
     The directory structure is used for organization but not exposed to users.
     """
 
-    def __init__(
-        self, *, discovery_path: Path | None = None, lazy_discovery: bool = False
-    ) -> None:
+    def __init__(self, *, discovery_path: Path | None = None, lazy_discovery: bool = False) -> None:
         """
         Initialize the initializer registry.
 
@@ -107,9 +103,7 @@ class InitializerRegistry(BaseClassRegistry["PyRITInitializer", InitializerMetad
         from pyrit.setup.initializers.pyrit_initializer import PyRITInitializer
 
         if discovery_path.is_file():
-            self._process_file(
-                file_path=discovery_path, base_class=PyRITInitializer, builtin=True
-            )
+            self._process_file(file_path=discovery_path, base_class=PyRITInitializer, builtin=True)
         else:
             for _file_stem, _file_path, initializer_class in discover_in_directory(
                 directory=discovery_path,
@@ -121,9 +115,7 @@ class InitializerRegistry(BaseClassRegistry["PyRITInitializer", InitializerMetad
                     builtin=True,
                 )
 
-    def _process_file(
-        self, *, file_path: Path, base_class: type, builtin: bool = False
-    ) -> None:
+    def _process_file(self, *, file_path: Path, base_class: type, builtin: bool = False) -> None:
         """
         Process a Python file to extract initializer subclasses.
 
@@ -135,9 +127,7 @@ class InitializerRegistry(BaseClassRegistry["PyRITInitializer", InitializerMetad
         short_name = file_path.stem
 
         try:
-            spec = importlib.util.spec_from_file_location(
-                f"initializer.{short_name}", file_path
-            )
+            spec = importlib.util.spec_from_file_location(f"initializer.{short_name}", file_path)
             if not spec or not spec.loader:
                 return
 
@@ -175,9 +165,7 @@ class InitializerRegistry(BaseClassRegistry["PyRITInitializer", InitializerMetad
         """
         try:
             # Convert class name to snake_case for registry name
-            registry_name = class_name_to_snake_case(
-                initializer_class.__name__, suffix="Initializer"
-            )
+            registry_name = class_name_to_snake_case(initializer_class.__name__, suffix="Initializer")
 
             # Check for registry key collision
             if registry_name in self._class_entries:
@@ -192,18 +180,12 @@ class InitializerRegistry(BaseClassRegistry["PyRITInitializer", InitializerMetad
             self._class_entries[registry_name] = entry
             if builtin:
                 self._builtin_names.add(registry_name)
-            logger.debug(
-                f"Registered initializer: {registry_name} ({initializer_class.__name__})"
-            )
+            logger.debug(f"Registered initializer: {registry_name} ({initializer_class.__name__})")
 
         except Exception as e:
-            logger.warning(
-                f"Failed to register initializer {initializer_class.__name__}: {e}"
-            )
+            logger.warning(f"Failed to register initializer {initializer_class.__name__}: {e}")
 
-    def _build_metadata(
-        self, name: str, entry: ClassEntry[PyRITInitializer]
-    ) -> InitializerMetadata:
+    def _build_metadata(self, name: str, entry: ClassEntry[PyRITInitializer]) -> InitializerMetadata:
         """
         Build metadata for an initializer class.
 
@@ -226,10 +208,7 @@ class InitializerRegistry(BaseClassRegistry["PyRITInitializer", InitializerMetad
                 class_description=description,
                 registry_name=name,
                 required_env_vars=tuple(instance.required_env_vars),
-                supported_parameters=tuple(
-                    (p.name, p.description, p.default)
-                    for p in instance.supported_parameters
-                ),
+                supported_parameters=tuple((p.name, p.description, p.default) for p in instance.supported_parameters),
             )
         except Exception as e:
             logger.warning(f"Failed to get metadata for {name}: {e}")
@@ -272,9 +251,7 @@ class InitializerRegistry(BaseClassRegistry["PyRITInitializer", InitializerMetad
         validate_registry_name(name)
 
         if name in self._class_entries:
-            raise ValueError(
-                f"Initializer '{name}' is already registered. Unregister it first to replace it."
-            )
+            raise ValueError(f"Initializer '{name}' is already registered. Unregister it first to replace it.")
 
         # Deferred: importing pyrit.setup triggers heavy __init__.py chain
         from pyrit.setup.initializers.pyrit_initializer import PyRITInitializer
@@ -288,9 +265,7 @@ class InitializerRegistry(BaseClassRegistry["PyRITInitializer", InitializerMetad
             raise ValueError(f"Failed to write initializer script: {e}") from e
 
         try:
-            spec = importlib.util.spec_from_file_location(
-                f"custom_initializer.{name}", script_path
-            )
+            spec = importlib.util.spec_from_file_location(f"custom_initializer.{name}", script_path)
             if not spec or not spec.loader:
                 raise ValueError(f"Could not load initializer script for '{name}'")
 
@@ -311,9 +286,7 @@ class InitializerRegistry(BaseClassRegistry["PyRITInitializer", InitializerMetad
                     break
 
             if discovered is None:
-                raise ValueError(
-                    f"Uploaded script for '{name}' does not contain a concrete PyRITInitializer subclass."
-                )
+                raise ValueError(f"Uploaded script for '{name}' does not contain a concrete PyRITInitializer subclass.")
         except ValueError:
             script_path.unlink(missing_ok=True)
             raise

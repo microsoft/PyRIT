@@ -29,9 +29,7 @@ def _make_scenario_identifier(**kwargs):
 
 
 def _make_component_identifier_dict(class_name="TestTarget"):
-    return ComponentIdentifier.from_dict(
-        {"__type__": class_name, "__module__": "test.module", "params": {}}
-    )
+    return ComponentIdentifier.from_dict({"__type__": class_name, "__module__": "test.module", "params": {}})
 
 
 def _make_attack_result(*, objective="test objective", outcome=AttackOutcome.SUCCESS):
@@ -178,9 +176,7 @@ class TestScenarioResult:
         assert ScenarioResult.normalize_scenario_name("ContentHarms") == "ContentHarms"
 
     def test_normalize_scenario_name_mixed_case_with_underscore(self):
-        assert (
-            ScenarioResult.normalize_scenario_name("Content_harms") == "Content_harms"
-        )
+        assert ScenarioResult.normalize_scenario_name("Content_harms") == "Content_harms"
 
     def test_error_attack_result_ids_defaults_to_empty(self):
         """error_attack_result_ids defaults to empty list."""
@@ -274,12 +270,8 @@ def test_scenario_result_to_dict_from_dict_roundtrip():
 
 def test_scenario_result_from_dict_preserves_missing_completion_time():
     """An in-progress scenario serialized without completion_time should round-trip with completion_time=None."""
-    scenario_id = ScenarioIdentifier.for_scenario(
-        scenario_class_name="Test", version=1, pyrit_version="0.14.0"
-    )
-    target_id = ComponentIdentifier(
-        class_name="OpenAIChatTarget", class_module="pyrit.prompt_target"
-    )
+    scenario_id = ScenarioIdentifier.for_scenario(scenario_class_name="Test", version=1, pyrit_version="0.14.0")
+    target_id = ComponentIdentifier(class_name="OpenAIChatTarget", class_module="pyrit.prompt_target")
 
     original = ScenarioResult(
         scenario_identifier=scenario_id,
@@ -296,9 +288,7 @@ def test_scenario_result_from_dict_preserves_missing_completion_time():
 
 
 def test_scenario_result_to_dict_from_dict_emit_deprecation_warnings():
-    scenario_id = ScenarioIdentifier.for_scenario(
-        scenario_class_name="Test", version=1, pyrit_version="0.14.0"
-    )
+    scenario_id = ScenarioIdentifier.for_scenario(scenario_class_name="Test", version=1, pyrit_version="0.14.0")
     result = ScenarioResult(
         scenario_identifier=scenario_id,
         objective_target_identifier=ComponentIdentifier.from_dict({}),
@@ -312,9 +302,7 @@ def test_scenario_result_to_dict_from_dict_emit_deprecation_warnings():
 
 
 def test_scenario_result_display_group_map_is_public_field():
-    scenario_id = ScenarioIdentifier.for_scenario(
-        scenario_class_name="Test", version=1, pyrit_version="0.14.0"
-    )
+    scenario_id = ScenarioIdentifier.for_scenario(scenario_class_name="Test", version=1, pyrit_version="0.14.0")
     result = ScenarioResult(
         scenario_identifier=scenario_id,
         objective_target_identifier=ComponentIdentifier.from_dict({}),

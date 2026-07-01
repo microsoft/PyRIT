@@ -57,17 +57,12 @@ class ConverterMetadata(ClassRegistryEntry):
     @property
     def supported_input_types(self) -> tuple[str, ...]:
         """Input data types the converter accepts (stringified ``PromptDataType`` values)."""
-        return tuple(
-            str(dt) for dt in (self.class_attributes.get("supported_input_types") or ())
-        )
+        return tuple(str(dt) for dt in (self.class_attributes.get("supported_input_types") or ()))
 
     @property
     def supported_output_types(self) -> tuple[str, ...]:
         """Output data types the converter produces (stringified ``PromptDataType`` values)."""
-        return tuple(
-            str(dt)
-            for dt in (self.class_attributes.get("supported_output_types") or ())
-        )
+        return tuple(str(dt) for dt in (self.class_attributes.get("supported_output_types") or ()))
 
     @property
     def is_llm_based(self) -> bool:
@@ -99,9 +94,7 @@ class ConverterRegistry(Registry["PromptConverter", ConverterMetadata]):
                 access. If False, discovery runs immediately.
         """
         super().__init__(lazy_discovery=lazy_discovery)
-        self.instances: InstanceRegistry[PromptConverter] = DefaultInstanceRegistry(
-            instance_type=self._base_type
-        )
+        self.instances: InstanceRegistry[PromptConverter] = DefaultInstanceRegistry(instance_type=self._base_type)
 
     def _base_type(self) -> type[PromptConverter]:
         """Return the ``PromptConverter`` base class, imported lazily."""

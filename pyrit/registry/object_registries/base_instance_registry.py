@@ -298,9 +298,7 @@ class BaseInstanceRegistry(ABC, RegistryProtocol[ComponentIdentifier], Generic[T
         return [
             m
             for m in self._metadata_cache
-            if _matches_filters(
-                m, include_filters=include_filters, exclude_filters=exclude_filters
-            )
+            if _matches_filters(m, include_filters=include_filters, exclude_filters=exclude_filters)
         ]
 
     def _build_metadata(self, name: str, instance: T) -> ComponentIdentifier:

@@ -41,9 +41,7 @@ class TestPreloadScenarioMetadata:
         initializer = PreloadScenarioMetadata()
 
         mock_registry = MagicMock()
-        mock_registry.get_all_registered_class_metadata.side_effect = TypeError(
-            "scenario X is not no-arg instantiable"
-        )
+        mock_registry.get_all_registered_class_metadata.side_effect = TypeError("scenario X is not no-arg instantiable")
 
         with patch(
             "pyrit.setup.initializers.scenarios.preload_scenario_metadata.ScenarioRegistry.get_registry_singleton",
