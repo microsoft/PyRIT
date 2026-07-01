@@ -27,7 +27,6 @@ from pyrit.scenario.core import (
     BaselineAttackPolicy,
     DatasetConfiguration,
     Scenario,
-    ScenarioCompositeStrategy,
     ScenarioStrategy,
 )
 
@@ -82,7 +81,6 @@ __all__ = [
     "DatasetConfiguration",
     "Parameter",
     "Scenario",
-    "ScenarioCompositeStrategy",
     "ScenarioStrategy",
     "ScenarioIdentifier",
     "ScenarioResult",

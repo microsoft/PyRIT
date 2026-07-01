@@ -30,7 +30,6 @@ except ImportError:  # pragma: no cover - exercised only on 3.10
 from tqdm.auto import tqdm
 
 from pyrit.common import REQUIRED_VALUE, apply_defaults
-from pyrit.common.deprecation import print_deprecation_message
 from pyrit.common.utils import to_sha256
 from pyrit.executor.attack import AttackExecutor
 from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
@@ -201,7 +200,6 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
         default_dataset_config: DatasetConfiguration,
         objective_scorer: Scorer,
         scenario_result_id: uuid.UUID | str | None = None,
-        include_default_baseline: bool | None = None,  # Deprecated. Will be removed in 0.16.0.
     ) -> None:
         """
         Initialize a scenario.
@@ -220,10 +218,6 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
                 Can be either a UUID object or a string representation of a UUID.
                 If provided and found in memory, the scenario will resume from prior progress.
                 All other parameters must still match the stored scenario configuration.
-            include_default_baseline (bool | None): **Deprecated.** Will be removed in 0.16.0.
-                Pass ``include_baseline`` to ``initialize_async`` instead. When set, the value is
-                used as the effective ``include_baseline`` for the next ``initialize_async`` call
-                unless that call passes its own ``include_baseline``.
 
         Note:
             Attack runs are populated by calling initialize_async(), which invokes the
@@ -273,18 +267,6 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
         # Resolved effective baseline inclusion for the current run. Set in initialize_async
         # before _get_atomic_attacks_async is awaited so overrides can read it.
         self._include_baseline: bool = False
-
-        # Deprecated constructor-time baseline override. Will be removed in 0.16.0, along
-        # with the include_default_baseline kwarg above and the legacy fallback branch in
-        # initialize_async. Subclass shims set this attribute directly to avoid double-warning.
-        self._legacy_include_baseline: bool | None = None
-        if include_default_baseline is not None:
-            print_deprecation_message(
-                old_item="Scenario(include_default_baseline=...)",
-                new_item="Scenario.initialize_async(include_baseline=...)",
-                removed_in="0.16.0",
-            )
-            self._legacy_include_baseline = include_default_baseline
 
     @property
     def name(self) -> str:
@@ -623,12 +605,6 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
         self._max_retries = max_retries
         self._memory_labels = memory_labels or {}
 
-        # Deprecated. Will be removed in 0.16.0. Honor the legacy constructor-time
-        # include_default_baseline (or subclass include_baseline) only when the caller did
-        # not supply a runtime value.
-        if include_baseline is None and self._legacy_include_baseline is not None:
-            include_baseline = self._legacy_include_baseline
-
         # Resolve the effective include_baseline. Forbidden is checked first so a forbidden
         # scenario type never silently inherits a True default; explicit-True on a forbidden
         # type is a hard error rather than a silent ignore. For the Enabled / Disabled states,
@@ -656,24 +632,6 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
             self.set_params_from_args(args={})
 
         self._atomic_attacks = await self._get_atomic_attacks_async()
-
-        # Deprecation rescue. Will be removed in 0.16.0. If the override didn't emit baseline,
-        # warn and inject. Migrated overrides emit baseline themselves and bypass this branch.
-        # Reuse seeds from the first existing attack rather than re-resolving from
-        # dataset_config; re-resolution under max_dataset_size would draw a fresh sample
-        # (the very ADO 9012 bug this PR fixes). When no atomic attacks exist yet the
-        # rescue falls back to the dataset_config one-time resolution.
-        if include_baseline and (not self._atomic_attacks or self._atomic_attacks[0].atomic_attack_name != "baseline"):
-            print_deprecation_message(
-                old_item=f"Implicit baseline injection for {type(self).__name__}._get_atomic_attacks_async()",
-                new_item="explicit emission via self._build_baseline_atomic_attack(seed_groups=...) in the override",
-                removed_in="0.16.0",
-            )
-            if self._atomic_attacks:
-                seed_groups = self._atomic_attacks[0].seed_groups
-            else:
-                seed_groups = self._dataset_config.get_all_seed_attack_groups()
-            self._atomic_attacks.insert(0, self._build_baseline_atomic_attack(seed_groups=seed_groups))
 
         # Snapshot params onto the identifier before the resume branch so the identifier
         # is fully populated regardless of which branch we take. Deep-copy avoids sharing
