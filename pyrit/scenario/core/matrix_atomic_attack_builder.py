@@ -7,8 +7,8 @@ Reusable matrix builder for scenario atomic attacks.
 ``MatrixAtomicAttackBuilder`` turns a technique × dataset (× optional adversarial
 target) grid into a flat list of ``AtomicAttack`` instances. It centralizes the
 seed-technique compatibility filtering, ``factory.create`` wiring, ``AtomicAttack``
-construction, and baseline emission that scenarios previously duplicated in their
-own ``_get_atomic_attacks_async`` overrides.
+construction, and baseline emission for scenarios whose attacks form such a
+cross-product.
 
 This is one member of a *family* of construction helpers named by shape
 (``Matrix...``); scenarios whose construction is composite or per-objective build

@@ -356,7 +356,7 @@ class AdaptiveScenario(Scenario):
 
         Raises:
             ValueError: If ``self._objective_target`` is not set
-                (defensive guard; ``_get_atomic_attacks_async`` enforces
+                (defensive guard; ``_build_atomic_attacks_async`` enforces
                 this earlier).
         """
         if self._objective_target is None:  # pragma: no cover - defensive

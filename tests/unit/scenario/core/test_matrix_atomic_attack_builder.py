@@ -4,8 +4,7 @@
 """Tests for ``MatrixAtomicAttackBuilder`` and its module-level helpers.
 
 The builder centralizes the technique × dataset (× optional adversarial target)
-cross-product that scenarios previously duplicated in their own
-``_get_atomic_attacks_async`` overrides. These tests pin the contract:
+cross-product for scenarios whose attacks form such a grid. These tests pin the contract:
 
 * cross-product cardinality across techniques, datasets, and the optional
   adversarial-target axis,

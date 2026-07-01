@@ -93,7 +93,7 @@ class AdaptiveTechniqueDispatcher:
     reference across all calls in a scenario so learning accumulates
     across objectives — though all selections are committed up-front
     during scenario initialization (see
-    ``AdaptiveScenario._get_atomic_attacks_async``).
+    ``AdaptiveScenario._build_atomic_attacks_async``).
     """
 
     def __init__(

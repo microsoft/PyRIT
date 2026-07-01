@@ -1005,13 +1005,12 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
 
     async def _get_atomic_attacks_async(self) -> list[AtomicAttack]:
         """
-        Build this scenario's atomic attacks (internal entry point from ``initialize_async``).
+        Build this scenario's atomic attacks (internal entry point called by ``initialize_async``).
 
-        New scenarios should override ``_build_atomic_attacks_async(context=...)`` instead
-        of this method. The base implementation here builds a ``ScenarioContext`` from the
-        values resolved in ``initialize_async`` and forwards to
-        ``_build_atomic_attacks_async``. It remains as a stable, no-argument entry point so
-        legacy overrides and existing call sites keep working during the migration.
+        Builds a ``ScenarioContext`` from the values resolved in ``initialize_async`` and
+        forwards to ``_build_atomic_attacks_async`` — the extension point scenarios override
+        to customize attack construction. This stays a stable, no-argument entry point for
+        ``initialize_async`` and other internal callers.
 
         Returns:
             list[AtomicAttack]: The generated atomic attacks.
