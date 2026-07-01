@@ -216,14 +216,13 @@ files and model definitions match exactly what will be shipped to users. Running
 
 ```bash
 git checkout releases/vx.y.z
-uv sync --frozen
-python -c "import pyrit; print(pyrit.__version__)"  # verify: x.y.z (no .dev0)
+uv run python -c "import pyrit; print(pyrit.__version__)"  # verify: x.y.z (no .dev0)
 ```
 
 **Run the migration** (reads `AZURE_SQL_DB_CONNECTION_STRING_PROD` from `~/.pyrit/.env`):
 
 ```bash
-python build_scripts/migrate_prod_memory_schema.py
+uv run python build_scripts/migrate_prod_memory_schema.py
 ```
 
 The script validates the environment (release branch, clean tree, no `.dev` version),
@@ -231,13 +230,20 @@ constructs an `AzureSQLMemory` pointed at prod, and runs `_run_schema_migration(
 upgrades to head and verifies the schema matches models. Since you're on the release branch,
 head is the release revision.
 
-**Verify prod is usable after migration:**
+**Verify prod is usable after migration.** This connects to the prod DB using the
+check-only path and confirms compatibility:
 
 ```bash
-python -c "from pyrit.memory import AzureSQLMemory; AzureSQLMemory()"
+uv run python -c "
+import os, dotenv
+from pyrit.common.path import CONFIGURATION_DIRECTORY_PATH
+dotenv.load_dotenv(CONFIGURATION_DIRECTORY_PATH / '.env', override=False, interpolate=True)
+from pyrit.memory import AzureSQLMemory
+AzureSQLMemory(connection_string=os.environ['AZURE_SQL_DB_CONNECTION_STRING_PROD'])
+"
 ```
 
-If it exits without error, prod is ready.
+If it exits without error (or only a schema mismatch warning), prod is ready.
 
 If no schema changes landed in this release, `_run_schema_migration` is a no-op.
 Still run it as confirmation.
