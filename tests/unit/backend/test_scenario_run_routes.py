@@ -240,9 +240,8 @@ class TestGetScenarioRunResultsRoute:
             timestamp=datetime(2025, 1, 1, tzinfo=timezone.utc),
         )
         scenario_result = ScenarioResult(
-            scenario_identifier=ScenarioIdentifier.for_scenario(
-                scenario_class_name="foundry.red_team_agent", description="Foundry red-team agent"
-            ),
+            scenario_identifier=ScenarioIdentifier.for_scenario(scenario_class_name="foundry.red_team_agent"),
+            scenario_description="Foundry red-team agent",
             objective_target_identifier=ComponentIdentifier.from_dict(
                 {"__type__": "FakeTarget", "__module__": "test.mod", "params": {}}
             ),

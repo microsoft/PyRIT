@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import Annotated, Any, ClassVar
 
-from pyrit.models.identifiers.component_identifier import ComponentIdentifier, JSONValue
+from pyrit.models.identifiers.component_identifier import ComponentIdentifier
 from pyrit.models.identifiers.evaluation_markers import Evaluate
 from pyrit.models.identifiers.param_markers import Param
 from pyrit.models.identifiers.scorer_identifier import (  # noqa: TC001
@@ -23,9 +23,9 @@ class ScenarioIdentifier(ComponentIdentifier):
     """
     Strongly-typed projection of a ``Scenario``'s ``ComponentIdentifier``.
 
-    Unifies the two former "scenario identifier" concepts into one type: the
-    build-contract projection the registry reads (via ``Param.*`` markers) and the
-    per-run persistence record stored on a ``ScenarioResult``.
+    Like the sibling projections (``TargetIdentifier`` / ``ScorerIdentifier``),
+    this declares only the scenario's identity and build contract — never its
+    per-run persistence record.
 
     Declares the scenario's two run-resolved reference slots — ``objective_target``
     (a ``PromptTarget``) and ``objective_scorer`` (a ``Scorer``) — so the registry
@@ -34,11 +34,12 @@ class ScenarioIdentifier(ComponentIdentifier):
     ``ScenarioResult`` tracks the concrete target/scorer identifiers separately);
     they exist so the class-level build contract is derivable.
 
-    The persistence metadata — ``name`` (the scenario class name), ``version``,
-    ``description``, and ``init_data`` (the resolved parameter snapshot used for
-    resume) — is exposed through read-only properties over ``class_name`` and the
-    ``attributes`` bucket, so the identifier stays a frozen, content-addressed
-    value while preserving the accessor surface memory / output / resume rely on.
+    The scenario definition ``version`` is identity-bearing state (a v1 and a v2 of
+    the same scenario are different identities) and lives in the ``attributes``
+    bucket, surfaced through a read-only property. Non-identity metadata — the
+    human-readable ``description`` (the class docstring) and ``init_data`` (the
+    resolved parameter snapshot used for resume) — is *not* stored here; it lives
+    on the ``ScenarioResult`` persistence aggregate.
     """
 
     component_type: ClassVar[ComponentType] = ComponentType.SCENARIO
@@ -52,25 +53,14 @@ class ScenarioIdentifier(ComponentIdentifier):
 
     @property
     def name(self) -> str:
-        """The scenario class name (persistence surface over ``class_name``)."""
+        """The scenario class name (alias over ``class_name``)."""
         return self.class_name
 
     @property
     def version(self) -> int:
-        """The scenario definition version (defaults to 1)."""
+        """The scenario definition version (identity-bearing; defaults to 1)."""
         raw = self.attributes.get("version")
         return int(raw) if raw is not None else 1
-
-    @property
-    def description(self) -> str:
-        """The scenario description (defaults to an empty string)."""
-        return str(self.attributes.get("description") or "")
-
-    @property
-    def init_data(self) -> dict[str, Any] | None:
-        """The resolved parameter snapshot used for resume, or ``None``."""
-        raw = self.attributes.get("init_data")
-        return raw if isinstance(raw, dict) else None
 
     @classmethod
     def for_scenario(
@@ -79,66 +69,37 @@ class ScenarioIdentifier(ComponentIdentifier):
         scenario_class_name: str,
         scenario_class_module: str = "unknown",
         version: int = 1,
-        description: str = "",
-        init_data: dict[str, Any] | None = None,
         pyrit_version: str | None = None,
         objective_target: TargetIdentifier | None = None,
         objective_scorer: ScorerIdentifier | None = None,
     ) -> ScenarioIdentifier:
         """
-        Build a ``ScenarioIdentifier`` from scenario persistence metadata.
+        Build a ``ScenarioIdentifier`` from a scenario's identity fields.
+
+        The definition ``version`` is stored in ``attributes`` (identity-bearing
+        state), keeping the projection frozen and content-addressed. Non-identity
+        metadata (description, resume snapshot) belongs on the ``ScenarioResult``,
+        not here.
 
         Args:
             scenario_class_name (str): The scenario class name (stored as ``class_name``).
             scenario_class_module (str): The scenario class module (stored as ``class_module``).
             version (int): The scenario definition version.
-            description (str): The scenario description.
-            init_data (dict[str, Any] | None): The resolved parameter snapshot for resume.
             pyrit_version (str | None): Override for the stored pyrit version; ``None``
                 uses the current installed version.
             objective_target (TargetIdentifier | None): Optional resolved target reference.
             objective_scorer (ScorerIdentifier | None): Optional resolved scorer reference.
 
         Returns:
-            ScenarioIdentifier: The frozen identifier carrying the metadata in ``attributes``.
+            ScenarioIdentifier: The frozen identifier carrying ``version`` in ``attributes``.
         """
-        attributes: dict[str, JSONValue] = {"version": int(version)}
-        if description:
-            attributes["description"] = description
-        if init_data is not None:
-            attributes["init_data"] = init_data
-
         kwargs: dict[str, Any] = {
             "class_name": scenario_class_name,
             "class_module": scenario_class_module,
-            "attributes": attributes,
+            "attributes": {"version": int(version)},
             "objective_target": objective_target,
             "objective_scorer": objective_scorer,
         }
         if pyrit_version is not None:
             kwargs["pyrit_version"] = pyrit_version
         return cls(**kwargs)
-
-    def with_init_data(self, init_data: dict[str, Any]) -> ScenarioIdentifier:
-        """
-        Return a copy of this identifier with ``init_data`` set in ``attributes``.
-
-        The identifier is frozen, so mutating ``init_data`` in place is not
-        possible; this returns a new value with the snapshot applied.
-
-        Args:
-            init_data (dict[str, Any]): The resolved parameter snapshot to store.
-
-        Returns:
-            ScenarioIdentifier: A new identifier carrying ``init_data``.
-        """
-        return type(self).for_scenario(
-            scenario_class_name=self.class_name,
-            scenario_class_module=self.class_module,
-            version=self.version,
-            description=self.description,
-            init_data=init_data,
-            pyrit_version=self.pyrit_version,
-            objective_target=self.objective_target,
-            objective_scorer=self.objective_scorer,
-        )

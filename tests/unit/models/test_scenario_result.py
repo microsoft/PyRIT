@@ -21,7 +21,6 @@ from pyrit.models.retry_event import RetryEvent
 def _make_scenario_identifier(**kwargs):
     defaults = {
         "scenario_class_name": "TestScenario",
-        "description": "A test",
         "version": 1,
     }
     defaults.update(kwargs)
@@ -44,20 +43,15 @@ class TestScenarioIdentifier:
     def test_init_basic(self):
         si = ScenarioIdentifier.for_scenario(scenario_class_name="MySc")
         assert si.name == "MySc"
-        assert si.description == ""
         assert si.version == 1
-        assert si.init_data is None
 
     def test_init_with_all_params(self):
         si = ScenarioIdentifier.for_scenario(
             scenario_class_name="MySc",
-            description="desc",
             version=2,
-            init_data={"key": "val"},
             pyrit_version="1.0.0",
         )
         assert si.version == 2
-        assert si.init_data == {"key": "val"}
         assert si.pyrit_version == "1.0.0"
 
     def test_init_default_pyrit_version(self):
@@ -203,7 +197,6 @@ class TestScenarioResult:
 def test_scenario_result_to_dict_from_dict_roundtrip():
     scenario_id = ScenarioIdentifier.for_scenario(
         scenario_class_name="ContentHarms",
-        description="Tests content harm scenarios",
         version=2,
         pyrit_version="0.14.0",
     )

@@ -54,6 +54,12 @@ class ScenarioResult(BaseModel):
     id: uuid.UUID = Field(default_factory=uuid.uuid4)
     #: Identifier for the executed scenario.
     scenario_identifier: ScenarioIdentifier
+    #: Human-readable scenario description (the scenario class docstring). Display /
+    #: catalog metadata snapshotted on the result — not part of scenario identity.
+    scenario_description: str = ""
+    #: Resolved parameter snapshot used to detect configuration drift on resume.
+    #: ``None`` for legacy results persisted without it.
+    init_data: dict[str, Any] | None = None
     #: Target identifier.
     objective_target_identifier: ComponentIdentifier | None
     #: Objective scorer identifier, or None if the scenario has no objective scorer.

@@ -421,7 +421,7 @@ async def test_print_scenario_result_async_accepts_real_scenario_result():
         ScenarioResult,
     )
 
-    identifier = ScenarioIdentifier.for_scenario(scenario_class_name="test.scenario", description="A test")
+    identifier = ScenarioIdentifier.for_scenario(scenario_class_name="test.scenario")
     target_identifier = ComponentIdentifier.model_validate(
         {"__type__": "FakeTarget", "__module__": "test.mod", "params": {}}
     )
@@ -435,6 +435,7 @@ async def test_print_scenario_result_async_accepts_real_scenario_result():
     )
     scenario_result = ScenarioResult(
         scenario_identifier=identifier,
+        scenario_description="A test",
         objective_target_identifier=target_identifier,
         objective_scorer_identifier=None,
         attack_results={"strat_a": [attack]},

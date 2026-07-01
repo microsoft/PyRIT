@@ -552,9 +552,8 @@ class TestAttackResultEntry:
 class TestScenarioResultEntry:
     def _make_scenario_result(self, **overrides) -> ScenarioResult:
         defaults = {
-            "scenario_identifier": ScenarioIdentifier.for_scenario(
-                scenario_class_name="test_scenario", description="desc"
-            ),
+            "scenario_identifier": ScenarioIdentifier.for_scenario(scenario_class_name="test_scenario"),
+            "scenario_description": "desc",
             "objective_target_identifier": ComponentIdentifier(class_name="MockTarget", class_module="tests.mocks"),
             "attack_results": {},
             "objective_scorer_identifier": ComponentIdentifier(class_name="MockScorer", class_module="pyrit.score"),

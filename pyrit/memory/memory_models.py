@@ -1162,10 +1162,10 @@ class ScenarioResultEntry(Base):
         """
         self.id = entry.id
         self.scenario_name = entry.scenario_identifier.name
-        self.scenario_description = entry.scenario_identifier.description
+        self.scenario_description = entry.scenario_description
         self.scenario_version = entry.scenario_identifier.version
         self.pyrit_version = entry.scenario_identifier.pyrit_version
-        self.scenario_init_data = entry.scenario_identifier.init_data
+        self.scenario_init_data = entry.init_data
         # Convert ComponentIdentifier to dict for JSON storage
         self.objective_target_identifier = (  # type: ignore[ty:invalid-assignment]
             entry.objective_target_identifier.model_dump() if entry.objective_target_identifier else None
@@ -1211,13 +1211,13 @@ class ScenarioResultEntry(Base):
         Returns:
             ScenarioResult object with scenario metadata but empty attack_results
         """
-        # Recreate ScenarioIdentifier with the stored pyrit_version
+        # Recreate ScenarioIdentifier with the stored pyrit_version. Only identity
+        # fields live on the identifier; description / init_data are set on the
+        # ScenarioResult below.
         stored_version = self.pyrit_version or LEGACY_PYRIT_VERSION
         scenario_identifier = ScenarioIdentifier.for_scenario(
             scenario_class_name=self.scenario_name,
-            description=self.scenario_description or "",
             version=self.scenario_version,
-            init_data=self.scenario_init_data,
             pyrit_version=stored_version,
         )
 
@@ -1243,6 +1243,8 @@ class ScenarioResultEntry(Base):
         return ScenarioResult(
             id=self.id,
             scenario_identifier=scenario_identifier,
+            scenario_description=self.scenario_description or "",
+            init_data=self.scenario_init_data,
             objective_target_identifier=target_identifier,
             attack_results=attack_results,
             objective_scorer_identifier=scorer_identifier,

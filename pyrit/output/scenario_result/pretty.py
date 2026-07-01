@@ -166,13 +166,11 @@ class PrettyScenarioResultPrinter(ScenarioResultPrinterBase):
             )
         )
 
-        if result.scenario_identifier.description:
+        if result.scenario_description:
             lines.append(self._format_colored(f"{self._indent * 2}• Description:", Fore.CYAN))
             desc_indent = self._indent * 4
             available_width = 120 - len(desc_indent)
-            wrapped_lines = textwrap.wrap(
-                result.scenario_identifier.description, width=available_width, break_long_words=False
-            )
+            wrapped_lines = textwrap.wrap(result.scenario_description, width=available_width, break_long_words=False)
             lines.extend(self._format_colored(f"{desc_indent}{line}", Fore.CYAN) for line in wrapped_lines)
 
         lines.append("\n")

@@ -672,13 +672,6 @@ class TestScenarioIdentifier:
         assert identifier.pyrit_version is not None
         assert identifier.name == "TestScenario"
 
-    def test_scenario_identifier_with_init_data(self):
-        """Test ScenarioIdentifier with init_data."""
-        init_data = {"param1": "value1", "param2": 42}
-        identifier = ScenarioIdentifier.for_scenario(scenario_class_name="TestScenario", version=1, init_data=init_data)
-
-        assert identifier.init_data == init_data
-
 
 def create_mock_truefalse_scorer():
     """Create a mock TrueFalseScorer for testing baseline-only execution."""
@@ -1106,6 +1099,7 @@ class TestValidateStoredScenario:
             scenario_class_name="ConcreteScenario", version=2
         )
         stored_result.scenario_run_state = "CREATED"
+        stored_result.init_data = None
 
         # Should not raise
         scenario._validate_stored_scenario(stored_result=stored_result)

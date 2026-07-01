@@ -192,8 +192,11 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
             scenario_class_name=type(self).__name__,
             scenario_class_module=type(self).__module__,
             version=version,
-            description=description,
         )
+        # Non-identity persistence record carried on the ScenarioResult, not the
+        # identifier: the display description and the resolved-param resume snapshot.
+        self._description = description
+        self._init_data: dict[str, Any] | None = None
 
         # Store strategy configuration for use in initialize_async
         self._strategy_class = strategy_class
@@ -552,12 +555,12 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
                 seed_groups = await self._dataset_config.get_seed_attack_groups_async()
             self._atomic_attacks.insert(0, self._build_baseline_atomic_attack(seed_groups=seed_groups))
 
-        # Snapshot params onto the identifier before the resume branch so the identifier
-        # is fully populated regardless of which branch we take. The registry helper
+        # Snapshot params before the resume branch so the persistence record is
+        # populated regardless of which branch we take. The registry helper
         # deep-copies, normalizes to the JSON-safe stored form, and fails fast on a
-        # non-serializable value instead of at DB write time.
-        params_snapshot = snapshot_params_for_persistence(params=self.params, owner=f"Scenario '{type(self).__name__}'")
-        self._identifier = self._identifier.with_init_data(params_snapshot)
+        # non-serializable value instead of at DB write time. The snapshot rides on
+        # the ScenarioResult (persistence aggregate), not the identifier.
+        self._init_data = snapshot_params_for_persistence(params=self.params, owner=f"Scenario '{type(self).__name__}'")
 
         # Check if we're resuming an existing scenario. Any divergence is a hard error
         # rather than a silent restart, so the original progress isn't orphaned without
@@ -585,6 +588,8 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
 
         result = ScenarioResult(
             scenario_identifier=self._identifier,
+            scenario_description=self._description,
+            init_data=self._init_data,
             objective_target_identifier=self._objective_target_identifier,
             objective_scorer_identifier=self._objective_scorer_identifier,
             labels=self._memory_labels,
@@ -743,7 +748,7 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
         # dict keys → str don't false-mismatch) and names only the differing keys,
         # never their values, so secrets or large blobs never leak into logs.
         differing = describe_param_mismatch(
-            stored=stored_result.scenario_identifier.init_data,
+            stored=stored_result.init_data,
             current=self.params,
         )
         if differing is not None:

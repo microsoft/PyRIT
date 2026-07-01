@@ -46,9 +46,7 @@ def create_scenario_result(
     """Helper function to create ScenarioResult."""
     scenario_identifier = ScenarioIdentifier.for_scenario(
         scenario_class_name=name,
-        description=description,
         version=version,
-        init_data={"test_key": "test_value"},
     )
 
     if attack_results is None:
@@ -61,6 +59,8 @@ def create_scenario_result(
 
     return ScenarioResult(
         scenario_identifier=scenario_identifier,
+        scenario_description=description,
+        init_data={"test_key": "test_value"},
         objective_target_identifier=ComponentIdentifier(class_name="test_target", class_module="test"),
         attack_results=attack_results,
         objective_scorer_identifier=scorer_identifier,
@@ -276,9 +276,7 @@ def test_preserves_metadata(sqlite_instance: MemoryInterface):
     # Create scenario result with metadata
     scenario_identifier = ScenarioIdentifier.for_scenario(
         scenario_class_name="Metadata Test Scenario",
-        description="A test scenario with metadata",
         version=3,
-        init_data={"param1": "value1", "param2": 42},
     )
 
     scorer_identifier = ComponentIdentifier(
@@ -288,6 +286,8 @@ def test_preserves_metadata(sqlite_instance: MemoryInterface):
 
     scenario_result = ScenarioResult(
         scenario_identifier=scenario_identifier,
+        scenario_description="A test scenario with metadata",
+        init_data={"param1": "value1", "param2": 42},
         objective_target_identifier=ComponentIdentifier(
             class_name="test_target",
             class_module="test",
@@ -304,9 +304,9 @@ def test_preserves_metadata(sqlite_instance: MemoryInterface):
 
     retrieved = results[0]
     assert retrieved.scenario_identifier.name == "Metadata Test Scenario"
-    assert retrieved.scenario_identifier.description == "A test scenario with metadata"
+    assert retrieved.scenario_description == "A test scenario with metadata"
     assert retrieved.scenario_identifier.version == 3
-    assert retrieved.scenario_identifier.init_data == {"param1": "value1", "param2": 42}
+    assert retrieved.init_data == {"param1": "value1", "param2": 42}
     assert retrieved.objective_target_identifier.params["endpoint"] == "https://example.com"
     # objective_scorer_identifier is now a ComponentIdentifier, check its properties
     assert retrieved.objective_scorer_identifier.class_name == "TestScorer"

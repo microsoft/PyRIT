@@ -407,13 +407,12 @@ class TestResumeParameterValidation:
 
         identifier = ScenarioIdentifier.for_scenario(
             scenario_class_name=scenario_name,
-            description="",
             version=version,
-            init_data=init_data,
         )
         target_id = ComponentIdentifier(class_name="MockTarget", class_module="tests.unit.scenarios")
         return ScenarioResult(
             scenario_identifier=identifier,
+            init_data=init_data,
             objective_target_identifier=target_id,
             objective_scorer_identifier=_TEST_SCORER_ID,
             labels={},
@@ -522,7 +521,7 @@ class TestParamPersistenceJsonSafety:
 
         await scenario.initialize_async(objective_target=self._mock_target())
 
-        assert scenario._identifier.init_data == {"max_turns": 10}
+        assert scenario._init_data == {"max_turns": 10}
 
     async def test_non_json_safe_value_raises(self) -> None:
         class _NotJsonable:

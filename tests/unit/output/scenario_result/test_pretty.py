@@ -15,10 +15,9 @@ from pyrit.models import (
 from pyrit.output.scenario_result.pretty import PrettyScenarioResultMemoryPrinter
 
 
-def _scenario_identifier(*, name: str = "TestScenario", description: str = "") -> ScenarioIdentifier:
+def _scenario_identifier(*, name: str = "TestScenario") -> ScenarioIdentifier:
     return ScenarioIdentifier.for_scenario(
         scenario_class_name=name,
-        description=description,
         version=1,
         pyrit_version="1.0.0",
     )
@@ -41,7 +40,8 @@ def _scenario_result(
     display_group_map: dict[str, str] | None = None,
 ) -> ScenarioResult:
     return ScenarioResult(
-        scenario_identifier=_scenario_identifier(description=description),
+        scenario_identifier=_scenario_identifier(),
+        scenario_description=description,
         objective_target_identifier=_target_identifier(**(target_params or {})),
         attack_results=attack_results or {"strategy_a": [_attack_result()]},
         objective_scorer_identifier=objective_scorer_identifier,
