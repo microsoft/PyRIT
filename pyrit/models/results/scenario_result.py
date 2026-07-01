@@ -223,7 +223,9 @@ class ScenarioResult(BaseModel):
         If the input is already in PascalCase or doesn't match the snake_case pattern,
         it is returned unchanged.
 
-        This is the inverse of ScenarioRegistry._class_name_to_scenario_name().
+        This is the inverse of the snake_case registry-name conversion
+        (``class_name_to_snake_case``) applied to scenario class names during
+        discovery.
 
         Args:
             scenario_name (str): The scenario name to normalize.
