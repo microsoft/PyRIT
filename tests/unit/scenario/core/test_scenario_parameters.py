@@ -19,8 +19,8 @@ _TEST_SCORER_ID = ComponentIdentifier(class_name="MockScorer", class_module="tes
 def _make_scenario(*, declared_params: list[Parameter]) -> Scenario:
     """Build a minimal Scenario subclass that declares the given parameters.
 
-    Each test gets its own subclass so ``_declarations_validated`` state never
-    leaks across tests.
+    Each test gets its own subclass so declared-parameter state never leaks
+    across tests.
     """
     params_to_declare = declared_params
 
@@ -438,7 +438,7 @@ class TestResumeParameterValidation:
         scenario.set_params_from_args(args={"max_turns": 10})
 
         stored = self._make_stored_result(scenario_name=type(scenario).__name__, version=1, init_data={"max_turns": 5})
-        with pytest.raises(ValueError, match="mismatched parameters .*changed: max_turns") as exc_info:
+        with pytest.raises(ValueError, match="mismatched parameters .*differing keys: max_turns") as exc_info:
             scenario._validate_stored_scenario(stored_result=stored)
         # Diff names the key but never the values (no leak).
         assert "10" not in str(exc_info.value)
@@ -454,7 +454,7 @@ class TestResumeParameterValidation:
         scenario.set_params_from_args(args={})
 
         stored = self._make_stored_result(scenario_name=type(scenario).__name__, version=1, init_data={"max_turns": 5})
-        with pytest.raises(ValueError, match="added: mode"):
+        with pytest.raises(ValueError, match="differing keys: mode"):
             scenario._validate_stored_scenario(stored_result=stored)
 
     def test_legacy_init_data_none_matches_empty_params(self) -> None:
@@ -472,7 +472,7 @@ class TestResumeParameterValidation:
         scenario.set_params_from_args(args={"max_turns": 7})
 
         stored = self._make_stored_result(scenario_name=type(scenario).__name__, version=1, init_data=None)
-        with pytest.raises(ValueError, match="added: max_turns"):
+        with pytest.raises(ValueError, match="differing keys: max_turns"):
             scenario._validate_stored_scenario(stored_result=stored)
 
     def test_resume_normalizes_json_drift_for_passthrough_tuples(self) -> None:
@@ -506,18 +506,31 @@ class TestResumeParameterValidation:
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestParamPersistenceJsonSafety:
-    """Tests for the JSON-serializability check before persisting params."""
+    """The JSON-safety guard runs when params are snapshotted during initialize_async."""
 
-    def test_json_safe_scalar_passes(self) -> None:
-        from pyrit.scenario.core.scenario import _assert_json_serializable
+    @staticmethod
+    def _mock_target() -> MagicMock:
+        target = MagicMock()
+        target.get_identifier.return_value = ComponentIdentifier(class_name="MockTarget", class_module="test")
+        return target
 
-        _assert_json_serializable(params={"max_turns": 5, "mode": "fast", "datasets": ["a", "b"]})
+    async def test_json_safe_params_persist_on_init(self) -> None:
+        scenario = _make_scenario(
+            declared_params=[Parameter(name="max_turns", description="d", param_type=int, default=5)]
+        )
+        scenario.set_params_from_args(args={"max_turns": 10})
 
-    def test_non_json_safe_value_raises(self) -> None:
-        from pyrit.scenario.core.scenario import _assert_json_serializable
+        await scenario.initialize_async(objective_target=self._mock_target())
 
+        assert scenario._identifier.init_data == {"max_turns": 10}
+
+    async def test_non_json_safe_value_raises(self) -> None:
         class _NotJsonable:
             pass
 
+        # param_type=None passes the raw value straight through set_params_from_args.
+        scenario = _make_scenario(declared_params=[Parameter(name="blob", description="d")])
+        scenario.set_params_from_args(args={"blob": _NotJsonable()})
+
         with pytest.raises(ValueError, match="non-JSON-serializable"):
-            _assert_json_serializable(params={"x": _NotJsonable()})
+            await scenario.initialize_async(objective_target=self._mock_target())

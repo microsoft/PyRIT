@@ -27,6 +27,11 @@ responsibilities:
   param bag. Both resolve functions delegate the actual coercion/validation to
   the ``Parameter`` model — that is the one shared kernel; they differ only in
   where the contract comes from and how defaults are handled.
+- **Persist** (``snapshot_params_for_persistence`` /
+  ``describe_param_mismatch``): project a resolved declared-param bag into the
+  JSON-safe form stored for resume, and summarize how a stored snapshot differs
+  from the current bag. This keeps the persistence/resume mechanics for declared
+  params next to the resolution that produces them, rather than in each component.
 - **Present** (``display_choices``): project a constrained-scalar ``param_type``
   into its allowed-value display tuple.
 
@@ -39,6 +44,7 @@ from __future__ import annotations
 
 import copy
 import inspect
+import json
 import re
 import types
 from enum import Enum
@@ -532,6 +538,69 @@ def _reject_unknown_parameters(*, params: dict[str, Any], declared: list[Paramet
             f"Supported parameters: "
             f"{', '.join(sorted(declared_names)) if declared_names else 'none'}."
         )
+
+
+# ---------------------------------------------------------------------------
+# Persist (declared params): snapshot for storage + resume-mismatch summary
+# ---------------------------------------------------------------------------
+
+
+def snapshot_params_for_persistence(*, params: dict[str, Any], owner: str) -> dict[str, Any]:
+    """
+    Project a resolved declared-param bag into the JSON-safe form stored for resume.
+
+    The ``json.loads(json.dumps(...))`` round-trip does triple duty: it deep-copies
+    (so persisted state never shares mutable references with the live component),
+    normalizes the types the memory column rewrites (tuple → list, non-str dict
+    keys → str), and fails fast on a non-serializable value with a clear,
+    owner-prefixed error instead of surfacing deep in the DB write.
+
+    Args:
+        params (dict[str, Any]): The resolved parameter bag.
+        owner (str): Human-readable owner label used to prefix the error message,
+            e.g. ``"Scenario 'FoundryScenario'"``.
+
+    Returns:
+        dict[str, Any]: The JSON-normalized snapshot.
+
+    Raises:
+        ValueError: If any value is not JSON-serializable.
+    """
+    try:
+        return json.loads(json.dumps(params))
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"{owner} params contain a non-JSON-serializable value (cannot persist for resume): {exc}. "
+            f"Use only JSON-safe types (str, int, float, bool, list, dict, None) for parameters."
+        ) from exc
+
+
+def describe_param_mismatch(*, stored: dict[str, Any] | None, current: dict[str, Any]) -> str | None:
+    """
+    Summarize how a stored param snapshot differs from the current param bag.
+
+    Both sides are compared after JSON normalization so types the memory column
+    rewrites (tuple → list, non-str dict keys → str) don't surface as false
+    mismatches. Only the *names* of differing keys are returned, never their
+    values, so secrets or large blobs in parameters never leak into logs.
+
+    Args:
+        stored (dict[str, Any] | None): The persisted snapshot (``None`` for a
+            legacy result without persisted params, treated as empty).
+        current (dict[str, Any]): The live resolved parameter bag.
+
+    Returns:
+        str | None: A comma-separated, sorted list of differing key names, or
+        ``None`` when the two bags match.
+    """
+    stored_params = stored or {}
+    current_normalized = json.loads(json.dumps(current))
+    if stored_params == current_normalized:
+        return None
+    changed_keys = {
+        key for key in set(stored_params) & set(current_normalized) if stored_params[key] != current_normalized[key]
+    }
+    return ", ".join(sorted((set(stored_params) ^ set(current_normalized)) | changed_keys))
 
 
 # ---------------------------------------------------------------------------

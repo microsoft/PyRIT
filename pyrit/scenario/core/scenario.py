@@ -9,8 +9,6 @@ AtomicAttack instances sequentially, enabling comprehensive security testing cam
 """
 
 import asyncio
-import copy
-import json
 import logging
 import uuid
 from abc import ABC
@@ -47,7 +45,11 @@ from pyrit.models.parameter import Parameter
 from pyrit.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_requirements import TargetRequirements
 from pyrit.registry import ScorerRegistry
-from pyrit.registry.resolution import resolve_declared_params
+from pyrit.registry.resolution import (
+    describe_param_mismatch,
+    resolve_declared_params,
+    snapshot_params_for_persistence,
+)
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
@@ -89,56 +91,6 @@ class BaselineAttackPolicy(Enum):
 
     #: Not supported. Explicit ``include_baseline=True`` at runtime raises ``ValueError``.
     Forbidden = "forbidden"
-
-
-def _assert_json_serializable(*, params: dict[str, Any]) -> None:
-    """
-    Raise if any value in ``params`` cannot round-trip through JSON.
-
-    Stage 5 stores ``params`` on ``ScenarioIdentifier.init_data`` for resume
-    validation; the underlying memory column is JSON. Catching unserializable
-    values here gives a clear error rather than a database failure.
-
-    Args:
-        params (dict[str, Any]): Effective parameters to validate.
-
-    Raises:
-        ValueError: If any value is not JSON-serializable.
-    """
-    try:
-        json.dumps(params)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(
-            f"Scenario params contain a non-JSON-serializable value (cannot persist for resume): {exc}. "
-            f"Use only JSON-safe types (str, int, float, bool, list, dict, None) for scenario parameters."
-        ) from exc
-
-
-def _format_param_key_diff(*, stored: dict[str, Any], current: dict[str, Any]) -> str:
-    """
-    Render the set-level difference between two param dicts as a short string.
-
-    Lists only key names (no values) so secrets or large blobs in scenario
-    parameters do not leak into logs.
-
-    Args:
-        stored (dict[str, Any]): Persisted params from the previous run.
-        current (dict[str, Any]): Effective params for the current run.
-
-    Returns:
-        str: A short summary like ``"added: x, y; removed: z; changed: max_turns"``.
-    """
-    parts: list[str] = []
-    added = sorted(set(current) - set(stored))
-    removed = sorted(set(stored) - set(current))
-    changed = sorted(k for k in set(stored) & set(current) if stored[k] != current[k])
-    if added:
-        parts.append(f"added: {', '.join(added)}")
-    if removed:
-        parts.append(f"removed: {', '.join(removed)}")
-    if changed:
-        parts.append(f"changed: {', '.join(changed)}")
-    return "; ".join(parts) if parts else "no diff details"
 
 
 class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even without abstract methods
@@ -269,9 +221,9 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
         # Maps atomic_attack_name → display_group for user-facing aggregation
         self._display_group_map: dict[str, str] = {}
 
-        # Custom parameters: declared via supported_parameters(), populated via set_params_from_args().
+        # Declared via supported_parameters(); resolved/populated by the registry
+        # helper (pyrit.registry.resolution). Subclasses read it in _get_atomic_attacks_async.
         self.params: dict[str, Any] = {}
-        self._declarations_validated: bool = False
 
         # Resolved effective baseline inclusion for the current run. Set in initialize_async
         # before _get_atomic_attacks_async is awaited so overrides can read it.
@@ -452,7 +404,6 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
             raw_args=args,
             owner=f"Scenario '{type(self).__name__}'",
         )
-        self._declarations_validated = True
 
     def _prepare_strategies(
         self,
@@ -575,12 +526,11 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
         # Prepare scenario strategies using the stored configuration
         self._scenario_strategies = self._prepare_strategies(scenario_strategies)
 
-        # Materialize declared defaults for programmatic callers that skip the
-        # explicit set_params_from_args step. Frontend-driven flows already
-        # call it (which sets _declarations_validated=True), so this is a no-op
-        # in that path.
-        if not self._declarations_validated:
-            self.set_params_from_args(args={})
+        # Resolve declared parameters through the single registry-owned path,
+        # materializing defaults for programmatic callers that skipped an explicit
+        # set_params_from_args. Re-resolving an already-resolved bag is idempotent,
+        # so the registry- and CLI-driven flows converge here without divergence.
+        self.set_params_from_args(args=self.params)
 
         self._atomic_attacks = await self._get_atomic_attacks_async()
 
@@ -603,10 +553,10 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
             self._atomic_attacks.insert(0, self._build_baseline_atomic_attack(seed_groups=seed_groups))
 
         # Snapshot params onto the identifier before the resume branch so the identifier
-        # is fully populated regardless of which branch we take. Deep-copy avoids sharing
-        # mutable state with self.params.
-        params_snapshot = copy.deepcopy(self.params)
-        _assert_json_serializable(params=params_snapshot)
+        # is fully populated regardless of which branch we take. The registry helper
+        # deep-copies, normalizes to the JSON-safe stored form, and fails fast on a
+        # non-serializable value instead of at DB write time.
+        params_snapshot = snapshot_params_for_persistence(params=self.params, owner=f"Scenario '{type(self).__name__}'")
         self._identifier = self._identifier.with_init_data(params_snapshot)
 
         # Check if we're resuming an existing scenario. Any divergence is a hard error
@@ -788,15 +738,18 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
                 f"{self._identifier.version}. Drop scenario_result_id to start a new scenario."
             )
 
-        # Treat None (legacy result without persisted params) as empty. Compare both sides
-        # post-JSON-roundtrip so types that the memory column rewrites (tuple → list, non-str
-        # dict keys → str) don't surface as false mismatches under param_type=None.
-        stored_params = stored_result.scenario_identifier.init_data or {}
-        current_params_normalized = json.loads(json.dumps(self.params))
-        if stored_params != current_params_normalized:
-            diff = _format_param_key_diff(stored=stored_params, current=current_params_normalized)
+        # Treat None (legacy result without persisted params) as empty. The registry
+        # helper compares both sides post-JSON-normalization (so tuple → list, non-str
+        # dict keys → str don't false-mismatch) and names only the differing keys,
+        # never their values, so secrets or large blobs never leak into logs.
+        differing = describe_param_mismatch(
+            stored=stored_result.scenario_identifier.init_data,
+            current=self.params,
+        )
+        if differing is not None:
             raise ValueError(
-                f"Scenario result id '{self._scenario_result_id}' has mismatched parameters ({diff}). "
+                f"Scenario result id '{self._scenario_result_id}' has mismatched parameters "
+                f"(differing keys: {differing}). "
                 f"Drop scenario_result_id to start a new scenario, or pass matching parameters to resume."
             )
 
