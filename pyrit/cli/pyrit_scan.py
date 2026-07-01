@@ -544,9 +544,7 @@ async def _handle_add_initializer_async(*, client: Any, parsed_args: Namespace) 
     return 0
 
 
-def _reparse_with_scenario_params(
-    *, parsed_args: Namespace, supported_params: list[Parameter]
-) -> Namespace | None:
+def _reparse_with_scenario_params(*, parsed_args: Namespace, supported_params: list[Parameter]) -> Namespace | None:
     """
     Re-parse the original args with scenario-declared flags added to the base parser.
 
