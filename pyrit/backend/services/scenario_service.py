@@ -36,7 +36,6 @@ def _metadata_to_registered_scenario(metadata: ScenarioMetadata) -> RegisteredSc
         aggregate_strategies=list(metadata.aggregate_strategies),
         all_strategies=list(metadata.all_strategies),
         default_datasets=list(metadata.default_datasets),
-        max_dataset_size=metadata.max_dataset_size,
         supported_parameters=list(metadata.supported_parameters),
     )
 

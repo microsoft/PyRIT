@@ -60,7 +60,6 @@ def _scenario_payload(*, scenario_name: str = "s1") -> dict:
         "aggregate_strategies": [],
         "all_strategies": ["single_turn"],
         "default_datasets": [],
-        "max_dataset_size": None,
         "supported_parameters": [],
     }
 

@@ -56,9 +56,6 @@ class ScenarioMetadata(ClassRegistryEntry):
     # Default dataset names used by this scenario.
     default_datasets: tuple[str, ...] = field(kw_only=True)
 
-    # Maximum number of items per dataset.
-    max_dataset_size: int | None = field(kw_only=True)
-
     # Scenario-declared custom parameters.
     supported_parameters: tuple[Parameter, ...] = field(kw_only=True, default=())
 
@@ -220,7 +217,6 @@ class ScenarioRegistry(Registry["Scenario", ScenarioMetadata]):
         all_strategies = tuple(s.value for s in strategy_class.get_all_strategies())
         aggregate_strategies = tuple(s.value for s in strategy_class.get_aggregate_strategies())
         default_datasets = tuple(instance._default_dataset_config.dataset_names)
-        max_dataset_size = instance._default_dataset_config.max_dataset_size
 
         return ScenarioMetadata(
             class_name=cls.__name__,
@@ -231,7 +227,6 @@ class ScenarioRegistry(Registry["Scenario", ScenarioMetadata]):
             all_strategies=all_strategies,
             aggregate_strategies=aggregate_strategies,
             default_datasets=default_datasets,
-            max_dataset_size=max_dataset_size,
             supported_parameters=supported_parameters,
         )
 

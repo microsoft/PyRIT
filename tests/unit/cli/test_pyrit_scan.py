@@ -229,7 +229,6 @@ def _mock_api_client():
         aggregate_strategies=[],
         all_strategies=[],
         default_datasets=[],
-        max_dataset_size=None,
         supported_parameters=[],
     )
     client.start_scenario_run_async.return_value = ScenarioRunSummary(
@@ -873,7 +872,6 @@ class TestMainExtraPaths:
                 aggregate_strategies=[],
                 all_strategies=[],
                 default_datasets=[],
-                max_dataset_size=None,
             ),
             RegisteredScenario(
                 scenario_name="alt_b",
@@ -883,7 +881,6 @@ class TestMainExtraPaths:
                 aggregate_strategies=[],
                 all_strategies=[],
                 default_datasets=[],
-                max_dataset_size=None,
             ),
         ]
         mock_client_class.return_value = mock_client
@@ -1062,7 +1059,6 @@ class TestScenarioParamFlow:
                 aggregate_strategies=[],
                 all_strategies=[],
                 default_datasets=[],
-                max_dataset_size=None,
             )
         ]
         client.get_scenario_async.return_value = RegisteredScenario(
@@ -1073,7 +1069,6 @@ class TestScenarioParamFlow:
             aggregate_strategies=[],
             all_strategies=[],
             default_datasets=[],
-            max_dataset_size=None,
             supported_parameters=typed_params,
         )
         client.start_scenario_run_async.return_value = ScenarioRunSummary(

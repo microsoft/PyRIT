@@ -37,7 +37,6 @@ def _make_scenario(**overrides) -> RegisteredScenario:
         "aggregate_strategies": [],
         "all_strategies": [],
         "default_datasets": [],
-        "max_dataset_size": None,
         "supported_parameters": [],
     }
     defaults.update(overrides)
@@ -170,7 +169,6 @@ def test_print_scenario_list_full(capsys):
             all_strategies=["s1", "s2", "s3"],
             default_strategy="s1",
             default_datasets=["d1", "d2"],
-            max_dataset_size=50,
             supported_parameters=[
                 Parameter(
                     name="max_turns",
@@ -195,7 +193,7 @@ def test_print_scenario_list_full(capsys):
     assert "single_turn" in captured.out
     assert "Available Strategies (3)" in captured.out
     assert "Default Strategy: s1" in captured.out
-    assert "Default Datasets (2, max 50 per dataset)" in captured.out
+    assert "Default Datasets (2)" in captured.out
     assert "Supported Parameters" in captured.out
     assert "max_turns" in captured.out
     assert "mode" in captured.out

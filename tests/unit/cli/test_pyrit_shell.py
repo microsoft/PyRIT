@@ -50,7 +50,6 @@ def mock_api_client():
         aggregate_strategies=[],
         all_strategies=[],
         default_datasets=[],
-        max_dataset_size=None,
         supported_parameters=[],
     )
     client.close_async = AsyncMock()
@@ -65,7 +64,6 @@ def mock_api_client():
         aggregate_strategies=kw.get("aggregate_strategies", []),
         all_strategies=kw.get("all_strategies", []),
         default_datasets=kw.get("default_datasets", []),
-        max_dataset_size=kw.get("max_dataset_size", None),
         supported_parameters=kw.get("supported_parameters", []),
     )
     # Suppress unused-import warning for datetime/timezone helpers used by tests.
