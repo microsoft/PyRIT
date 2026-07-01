@@ -362,7 +362,8 @@ class TestCrescendoAttackInitialization:
 
     @pytest.mark.parametrize(
         "system_prompt_path",
-        [Path(EXECUTOR_SEED_PROMPT_PATH) / "crescendo" / f"crescendo_variant_{i}.yaml" for i in range(1, 6)],
+        [Path(EXECUTOR_SEED_PROMPT_PATH) / "crescendo" / f"crescendo_variant_{i}.yaml" for i in range(1, 6)]
+        + [Path(EXECUTOR_SEED_PROMPT_PATH) / "crescendo" / "image_generation.yaml"],
     )
     def test_init_with_different_system_prompt_variants(
         self,
@@ -385,6 +386,7 @@ class TestCrescendoAttackInitialization:
         # Making sure the system prompt template has expected parameters
         assert "objective" in attack._adversarial_chat_system_prompt_template.parameters
         assert "max_turns" in attack._adversarial_chat_system_prompt_template.parameters
+        assert attack._adversarial_chat_system_prompt_template.response_json_schema is not None
 
     def test_init_with_invalid_system_prompt_path_raises_error(
         self, mock_objective_target: MagicMock, mock_adversarial_chat: MagicMock

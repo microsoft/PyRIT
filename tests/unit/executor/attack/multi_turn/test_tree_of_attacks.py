@@ -2070,6 +2070,48 @@ class TestTreeOfAttacksConversationTracking:
                 in context.related_conversations
             )
 
+    def test_initialize_first_level_nodes_edit_only_objective_seeds_all_roots(self, attack_builder, helpers):
+        """Edit-only objectives seed every root node so turn-0 requests are valid."""
+        builder = attack_builder.with_default_mocks().with_tree_params(tree_width=3)
+        builder.objective_target.configuration.capabilities.input_modalities = frozenset(
+            {frozenset({"text", "image_path"})}
+        )
+        builder.objective_target.configuration.capabilities.output_modalities = frozenset({frozenset({"image_path"})})
+        attack = builder.build()
+        context = helpers.create_basic_context()
+        context.next_message = Message(
+            message_pieces=[
+                MessagePiece.adversarial_placeholder(),
+                MessagePiece(role="user", original_value="/path/to/seed.png", original_value_data_type="image_path"),
+            ]
+        )
+
+        asyncio.run(attack._initialize_first_level_nodes_async(context))
+
+        assert len(context.nodes) == 3
+        for node in context.nodes:
+            assert node._initial_prompt is not None
+            assert any(piece.is_adversarial_placeholder() for piece in node._initial_prompt.message_pieces)
+            assert any(piece.original_value_data_type == "image_path" for piece in node._initial_prompt.message_pieces)
+        assert context.next_message is None
+
+    def test_initialize_first_level_nodes_text_objective_keeps_seed_on_first_root_only(self, basic_attack, helpers):
+        """Text-capable objectives keep historical behavior: node 0 consumes next_message."""
+        context = helpers.create_basic_context()
+        basic_attack._tree_width = 3
+        context.next_message = Message(
+            message_pieces=[
+                MessagePiece.adversarial_placeholder(),
+                MessagePiece(role="user", original_value="/path/to/seed.png", original_value_data_type="image_path"),
+            ]
+        )
+
+        asyncio.run(basic_attack._initialize_first_level_nodes_async(context))
+
+        assert context.nodes[0]._initial_prompt is not None
+        assert all(node._initial_prompt is None for node in context.nodes[1:])
+        assert context.next_message is None
+
     def test_attack_result_includes_adversarial_chat_conversation_ids(self, attack_builder, helpers):
         """Test that the attack result includes the tracked adversarial chat conversation IDs."""
         attack = attack_builder.with_default_mocks().build()

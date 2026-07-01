@@ -1809,9 +1809,17 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
         """
         context.nodes = []
 
+        reuse_seed_for_all_first_level_nodes = (
+            context.next_message is not None and self._modality_router.objective_target_requires_media_on_first_turn
+        )
+
         for i in range(self._tree_width):
-            # Only pass next_message to the first node (all nodes explore from the same start)
-            initial_prompt = context.next_message if i == 0 else None
+            # Historically only node 0 consumed next_message so sibling roots could
+            # explore alternative starts. For edit-only objectives (no {text} path),
+            # every root must receive seed media to build a valid first-turn request.
+            initial_prompt = None
+            if context.next_message is not None and (i == 0 or reuse_seed_for_all_first_level_nodes):
+                initial_prompt = context.next_message if i == 0 else context.next_message.duplicate()
             node = self._create_attack_node(context=context, parent_id=None, initial_prompt=initial_prompt)
 
             # Initialize node with prepended conversation if provided

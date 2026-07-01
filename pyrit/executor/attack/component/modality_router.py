@@ -48,7 +48,8 @@ class ModalityFeedbackRouter:
 
     The router is a pure utility (no I/O, no memory access). Each attack
     constructs one instance in ``__init__`` and consults it at message-build
-    time.
+    time. Target capabilities are snapshotted at construction; if a caller
+    mutates target capabilities later, it must create a new router instance.
     """
 
     def __init__(
@@ -63,6 +64,10 @@ class ModalityFeedbackRouter:
         Args:
             adversarial_chat: The chat target that generates adversarial prompts.
             objective_target: The target being attacked.
+
+        Notes:
+            Capability sets are read once here and cached for deterministic
+            routing decisions throughout the attack.
         """
         self._adversarial_chat = adversarial_chat
         self._objective_target = objective_target
