@@ -10,7 +10,6 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 from openai import AsyncOpenAI
 
-from pyrit.common.deprecation import print_deprecation_message
 from pyrit.exceptions import (
     pyrit_target_retry,
 )
@@ -362,17 +361,6 @@ class RealtimeTarget(OpenAITarget):
         await connection.session.update(session=config_variables)
         logger.info("Session configuration sent")
 
-    async def send_config(  # pyrit-async-suffix-exempt
-        self, *, conversation_id: str, conversation: list[Message] | None = None
-    ) -> None:
-        """Use ``send_config_async`` instead; this is a deprecated alias."""
-        print_deprecation_message(
-            old_item="pyrit.prompt_target.RealtimeTarget.send_config",
-            new_item="pyrit.prompt_target.RealtimeTarget.send_config_async",
-            removed_in="0.16.0",
-        )
-        await self.send_config_async(conversation_id=conversation_id, conversation=conversation)
-
     def _get_system_prompt_from_conversation(self, *, conversation: list[Message]) -> str:
         """
         Retrieve the system prompt from conversation history.
@@ -485,15 +473,6 @@ class RealtimeTarget(OpenAITarget):
                 logger.warning(f"Error closing realtime client: {e}")
             self._realtime_client = None
 
-    async def cleanup_target(self) -> None:  # pyrit-async-suffix-exempt
-        """Use ``cleanup_target_async`` instead; this is a deprecated alias."""
-        print_deprecation_message(
-            old_item="pyrit.prompt_target.RealtimeTarget.cleanup_target",
-            new_item="pyrit.prompt_target.RealtimeTarget.cleanup_target_async",
-            removed_in="0.16.0",
-        )
-        await self.cleanup_target_async()
-
     async def cleanup_conversation_async(self, conversation_id: str) -> None:
         """
         Disconnects from the Realtime API for a specific conversation.
@@ -509,15 +488,6 @@ class RealtimeTarget(OpenAITarget):
             except Exception as e:
                 logger.warning(f"Error closing connection for {conversation_id}: {e}")
             del self._existing_conversation[conversation_id]
-
-    async def cleanup_conversation(self, conversation_id: str) -> None:  # pyrit-async-suffix-exempt
-        """Use ``cleanup_conversation_async`` instead; this is a deprecated alias."""
-        print_deprecation_message(
-            old_item="pyrit.prompt_target.RealtimeTarget.cleanup_conversation",
-            new_item="pyrit.prompt_target.RealtimeTarget.cleanup_conversation_async",
-            removed_in="0.16.0",
-        )
-        await self.cleanup_conversation_async(conversation_id=conversation_id)
 
     async def _connect_async(self, *, conversation_id: str) -> Any:
         """
@@ -571,33 +541,6 @@ class RealtimeTarget(OpenAITarget):
 
         return data.value
 
-    async def save_audio(  # pyrit-async-suffix-exempt
-        self,
-        audio_bytes: bytes,
-        num_channels: int = 1,
-        sample_width: int = 2,
-        sample_rate: int = 16000,
-        output_filename: str | None = None,
-    ) -> str:
-        """
-        Use ``save_audio_async`` instead; this is a deprecated alias.
-
-        Returns:
-            str: Same as ``save_audio_async``.
-        """
-        print_deprecation_message(
-            old_item="pyrit.prompt_target.RealtimeTarget.save_audio",
-            new_item="pyrit.prompt_target.RealtimeTarget.save_audio_async",
-            removed_in="0.16.0",
-        )
-        return await self.save_audio_async(
-            audio_bytes,
-            num_channels=num_channels,
-            sample_width=sample_width,
-            sample_rate=sample_rate,
-            output_filename=output_filename,
-        )
-
     async def send_response_create_async(self, conversation_id: str) -> None:
         """
         Send response.create using OpenAI client.
@@ -607,15 +550,6 @@ class RealtimeTarget(OpenAITarget):
         """
         connection = self._get_connection(conversation_id=conversation_id)
         await connection.response.create()
-
-    async def send_response_create(self, conversation_id: str) -> None:  # pyrit-async-suffix-exempt
-        """Use ``send_response_create_async`` instead; this is a deprecated alias."""
-        print_deprecation_message(
-            old_item="pyrit.prompt_target.RealtimeTarget.send_response_create",
-            new_item="pyrit.prompt_target.RealtimeTarget.send_response_create_async",
-            removed_in="0.16.0",
-        )
-        await self.send_response_create_async(conversation_id=conversation_id)
 
     async def receive_events_async(self, conversation_id: str) -> RealtimeTargetResult:
         """
@@ -760,20 +694,6 @@ class RealtimeTarget(OpenAITarget):
             f"and {len(result.audio_bytes)} bytes of audio"
         )
         return result
-
-    async def receive_events(self, conversation_id: str) -> RealtimeTargetResult:  # pyrit-async-suffix-exempt
-        """
-        Use ``receive_events_async`` instead; this is a deprecated alias.
-
-        Returns:
-            RealtimeTargetResult: Same as ``receive_events_async``.
-        """
-        print_deprecation_message(
-            old_item="pyrit.prompt_target.RealtimeTarget.receive_events",
-            new_item="pyrit.prompt_target.RealtimeTarget.receive_events_async",
-            removed_in="0.16.0",
-        )
-        return await self.receive_events_async(conversation_id=conversation_id)
 
     def _get_connection(self, *, conversation_id: str) -> Any:
         """

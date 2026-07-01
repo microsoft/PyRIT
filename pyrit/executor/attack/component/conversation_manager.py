@@ -317,8 +317,7 @@ class ConversationManager:
 
         # Targets that don't natively support editable history cannot consume a
         # prepended multi-message conversation as-is — route them to the
-        # single-string fallback path. Type identity (PromptChatTarget) is a
-        # legacy signal for this; capability-based routing is the durable form.
+        # single-string fallback path via capability-based routing.
         is_chat_target = target.configuration.includes(capability=CapabilityName.EDITABLE_HISTORY)
         if not is_chat_target:
             return await self._handle_non_chat_target_async(
