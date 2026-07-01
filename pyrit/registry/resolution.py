@@ -28,6 +28,7 @@ reads and applies it. It performs no eager heavy imports and never imports
 
 from __future__ import annotations
 
+import copy
 import inspect
 import re
 import types
@@ -396,6 +397,124 @@ def resolve_constructor_args(
             resolved[name] = value
 
     return resolved
+
+
+# ---------------------------------------------------------------------------
+# Apply: raw args -> fully-materialized declared-parameter dict
+# ---------------------------------------------------------------------------
+
+
+def apply_declared_parameters(
+    *,
+    declared: list[Parameter],
+    args: dict[str, Any],
+    owner: str,
+) -> dict[str, Any]:
+    """
+    Coerce/validate ``args`` against ``declared`` and materialize declared defaults.
+
+    Single source of truth for turning a raw args dict into a fully-materialized
+    parameter dict against a *declared* ``Parameter`` contract (e.g. a scenario's
+    ``supported_parameters()``, as opposed to a constructor signature handled by
+    ``resolve_constructor_args``). Every declared parameter is guaranteed a key in
+    the returned dict; params declared without a default land as ``None`` so
+    callers can rely on ``params[name]`` never raising ``KeyError``.
+
+    Args:
+        declared (list[Parameter]): The declaration snapshot to validate against.
+        args (dict[str, Any]): Map of parameter name to raw value. Keys with
+            ``None`` values are treated as absent (YAML ``null``).
+        owner (str): Human-readable owner label used to prefix error messages,
+            e.g. ``"Scenario 'FoundryScenario'"``.
+
+    Returns:
+        dict[str, Any]: Fully-materialized parameter dict.
+
+    Raises:
+        ValueError: Invalid declaration, unknown parameter, coercion failure, or
+            value not in ``choices``.
+    """
+    _validate_declarations(declared=declared, owner=owner)
+
+    declared_by_name = {param.name: param for param in declared}
+
+    # None values are treated as absent so YAML `key: null` falls through to defaults.
+    supplied = {name: value for name, value in args.items() if value is not None}
+
+    coerced: dict[str, Any] = {}
+    for name, raw_value in supplied.items():
+        param = declared_by_name.get(name)
+        if param is None:
+            # Stash unknowns so _reject_unknown_parameters can list them all at once.
+            coerced[name] = raw_value
+            continue
+        coerced[name] = param.coerce_value(raw_value)
+
+    _reject_unknown_parameters(params=coerced, declared=declared, owner=owner)
+
+    for param in declared:
+        if param.name in coerced:
+            continue
+        # Materialize every declared param so callers can rely on
+        # ``params[name]`` never raising ``KeyError``. Params declared without an
+        # explicit default land as None, and the owner raises a domain-specific
+        # error at run time if it cannot proceed.
+        coerced[param.name] = copy.deepcopy(param.coerce_value(param.default)) if param.default is not None else None
+
+    return coerced
+
+
+def _validate_declarations(*, declared: list[Parameter], owner: str) -> None:
+    """
+    Validate a declared-parameter snapshot for author mistakes.
+
+    Args:
+        declared (list[Parameter]): The declaration snapshot.
+        owner (str): Owner label used to prefix error messages.
+
+    Raises:
+        ValueError: If declarations contain duplicate names, an unsupported
+            ``param_type``, or a default that fails coercion (including
+            membership for a constrained scalar).
+    """
+    seen: set[str] = set()
+    for param in declared:
+        if param.name in seen:
+            raise ValueError(f"{owner} declares duplicate parameter name '{param.name}'.")
+        seen.add(param.name)
+
+        try:
+            param.validate()
+        except ValueError as exc:
+            raise ValueError(f"{owner} {exc}") from exc
+
+        if param.default is not None:
+            try:
+                param.coerce_value(param.default)
+            except ValueError as exc:
+                raise ValueError(f"{owner} parameter '{param.name}' has an invalid default: {exc}") from exc
+
+
+def _reject_unknown_parameters(*, params: dict[str, Any], declared: list[Parameter], owner: str) -> None:
+    """
+    Raise if ``params`` contains any key not present in ``declared``.
+
+    Args:
+        params (dict[str, Any]): Coerced (declared names) or raw (unknown) values.
+        declared (list[Parameter]): Declaration snapshot from the caller.
+        owner (str): Owner label used to prefix error messages.
+
+    Raises:
+        ValueError: If any keys in ``params`` are not declared.
+    """
+    declared_names = {param.name for param in declared}
+    unknown = sorted(set(params.keys()) - declared_names)
+    if unknown:
+        raise ValueError(
+            f"{owner} received unknown parameter(s): {', '.join(unknown)}. "
+            f"Supported parameters: "
+            f"{', '.join(sorted(declared_names)) if declared_names else 'none'}."
+        )
 
 
 # ---------------------------------------------------------------------------

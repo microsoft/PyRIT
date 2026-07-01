@@ -47,6 +47,7 @@ from pyrit.models.parameter import Parameter
 from pyrit.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_requirements import TargetRequirements
 from pyrit.registry import ScorerRegistry
+from pyrit.registry.resolution import apply_declared_parameters
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
@@ -430,9 +431,11 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
         """
         Populate ``self.params`` from merged CLI / config arguments.
 
-        Coerces each value to its declared ``param_type``, validates, and
-        materializes declared defaults for params not in ``args``. Every
-        declared parameter is guaranteed a key in ``self.params`` after this
+        The scenario only **declares** its parameters via ``supported_parameters()``;
+        the coerce / validate / inject-defaults *mapping* is owned by the registry
+        layer (``pyrit.registry.resolution.apply_declared_parameters``) so there is a
+        single implementation shared by the programmatic, CLI, and registry paths.
+        Every declared parameter is guaranteed a key in ``self.params`` after this
         call; params without a declared default land as ``None``.
 
         Args:
@@ -444,92 +447,12 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
             ValueError: Invalid declaration, unknown parameter, coercion
                 failure, or value not in ``choices``.
         """
-        declared = list(self.supported_parameters())
-        if not self._declarations_validated:
-            self._validate_declarations(declared=declared)
-            self._declarations_validated = True
-
-        declared_by_name = {p.name: p for p in declared}
-
-        # None values are treated as absent so YAML `key: null` falls through to defaults.
-        supplied = {name: value for name, value in args.items() if value is not None}
-
-        coerced: dict[str, Any] = {}
-        for name, raw_value in supplied.items():
-            param = declared_by_name.get(name)
-            if param is None:
-                # Stash unknowns so _validate_params can list them all at once.
-                coerced[name] = raw_value
-                continue
-            coerced[name] = param.coerce_value(raw_value)
-
-        self._validate_params(params=coerced, declared=declared)
-
-        for param in declared:
-            if param.name in coerced:
-                continue
-            # Materialize every declared param so scenarios can rely on
-            # ``self.params[name]`` never raising ``KeyError``. Params declared
-            # without an explicit default land as None, and the scenario raises
-            # a domain-specific error at run time if it cannot proceed.
-            coerced[param.name] = (
-                copy.deepcopy(param.coerce_value(param.default)) if param.default is not None else None
-            )
-
-        self.params = coerced
-
-    def _validate_declarations(self, *, declared: list[Parameter]) -> None:
-        """
-        Validate the scenario's parameter declarations on first use.
-
-        Args:
-            declared (list[Parameter]): The ``supported_parameters()`` snapshot.
-
-        Raises:
-            ValueError: If declarations contain duplicate names, an
-                unsupported ``param_type``, or a default that fails coercion
-                (including membership for a constrained scalar).
-        """
-        seen: set[str] = set()
-        for param in declared:
-            if param.name in seen:
-                raise ValueError(f"Scenario '{type(self).__name__}' declares duplicate parameter name '{param.name}'.")
-            seen.add(param.name)
-
-            try:
-                param.validate()
-            except ValueError as exc:
-                raise ValueError(f"Scenario '{type(self).__name__}' {exc}") from exc
-
-            if param.default is not None:
-                try:
-                    param.coerce_value(param.default)
-                except ValueError as exc:
-                    raise ValueError(
-                        f"Scenario '{type(self).__name__}' parameter '{param.name}' has an invalid default: {exc}"
-                    ) from exc
-
-    def _validate_params(self, *, params: dict[str, Any], declared: list[Parameter]) -> None:
-        """
-        Validate supplied params against the scenario's declarations.
-
-        Args:
-            params (dict[str, Any]): Coerced (declared names) or raw (unknown) values.
-            declared (list[Parameter]): Declarations snapshot from the caller, so
-                the whole call sees one consistent view.
-
-        Raises:
-            ValueError: If any keys in ``params`` are not declared.
-        """
-        declared_names = {p.name for p in declared}
-
-        unknown = sorted(set(params.keys()) - declared_names)
-        if unknown:
-            raise ValueError(
-                f"Scenario '{type(self).__name__}' received unknown parameter(s): {', '.join(unknown)}. "
-                f"Supported parameters: "
-                f"{', '.join(sorted(declared_names)) if declared_names else 'none'}."
-            )
+        self.params = apply_declared_parameters(
+            declared=list(self.supported_parameters()),
+            args=args,
+            owner=f"Scenario '{type(self).__name__}'",
+        )
+        self._declarations_validated = True
 
     def _prepare_strategies(
         self,
