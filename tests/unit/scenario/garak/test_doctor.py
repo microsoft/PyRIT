@@ -14,7 +14,12 @@ from pyrit.prompt_target import PromptTarget
 from pyrit.scenario import DatasetAttackConfiguration
 from pyrit.scenario.core.scenario import BaselineAttackPolicy
 from pyrit.scenario.garak import Doctor, DoctorStrategy  # type: ignore[ty:unresolved-import]
+from pyrit.scenario.scenarios.garak.doctor import DOCTOR_FACTORIES
 from pyrit.score import TrueFalseScorer
+
+
+def _factories_by_name():
+    return {factory.name: factory for factory in DOCTOR_FACTORIES}
 
 
 def _mock_id(name: str) -> ComponentIdentifier:
@@ -83,18 +88,16 @@ class TestDoctorInitialization:
 class TestDoctorTechniqueFactories:
     """Tests for the Doctor technique factories."""
 
-    def test_factories_names(self, mock_objective_scorer):
-        scenario = Doctor(objective_scorer=mock_objective_scorer)
-        factories = scenario._get_attack_technique_factories()
+    def test_factories_names(self):
+        factories = _factories_by_name()
         assert set(factories.keys()) == {"policy_puppetry", "policy_puppetry_leet"}
 
     def test_factories_create_prompt_sending_attacks(self, mock_objective_target, mock_objective_scorer):
         from pyrit.executor.attack import AttackScoringConfig
 
-        scenario = Doctor(objective_scorer=mock_objective_scorer)
         scoring_config = AttackScoringConfig(objective_scorer=mock_objective_scorer)
 
-        for factory in scenario._get_attack_technique_factories().values():
+        for factory in _factories_by_name().values():
             technique = factory.create(
                 objective_target=mock_objective_target,
                 attack_scoring_config=scoring_config,
@@ -104,10 +107,9 @@ class TestDoctorTechniqueFactories:
     def test_policy_puppetry_wires_policy_puppetry_converter(self, mock_objective_target, mock_objective_scorer):
         from pyrit.executor.attack import AttackScoringConfig
 
-        scenario = Doctor(objective_scorer=mock_objective_scorer)
         scoring_config = AttackScoringConfig(objective_scorer=mock_objective_scorer)
 
-        technique = scenario._get_attack_technique_factories()["policy_puppetry"].create(
+        technique = _factories_by_name()["policy_puppetry"].create(
             objective_target=mock_objective_target,
             attack_scoring_config=scoring_config,
         )
@@ -118,10 +120,9 @@ class TestDoctorTechniqueFactories:
     def test_policy_puppetry_leet_wires_both_converters(self, mock_objective_target, mock_objective_scorer):
         from pyrit.executor.attack import AttackScoringConfig
 
-        scenario = Doctor(objective_scorer=mock_objective_scorer)
         scoring_config = AttackScoringConfig(objective_scorer=mock_objective_scorer)
 
-        technique = scenario._get_attack_technique_factories()["policy_puppetry_leet"].create(
+        technique = _factories_by_name()["policy_puppetry_leet"].create(
             objective_target=mock_objective_target,
             attack_scoring_config=scoring_config,
         )

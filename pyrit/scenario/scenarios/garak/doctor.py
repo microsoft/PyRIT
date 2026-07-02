@@ -12,10 +12,13 @@ from pyrit.prompt_converter import LeetspeakConverter, PolicyPuppetryConverter, 
 from pyrit.prompt_normalizer import PromptConverterConfiguration
 from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
 from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
+from pyrit.scenario.core.matrix_atomic_attack_builder import MatrixAtomicAttackBuilder
 from pyrit.scenario.core.scenario import BaselineAttackPolicy, Scenario
 from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
 
 if TYPE_CHECKING:
+    from pyrit.scenario.core.atomic_attack import AtomicAttack
+    from pyrit.scenario.core.scenario_context import ScenarioContext
     from pyrit.score import TrueFalseScorer
 
 logger = logging.getLogger(__name__)
@@ -45,8 +48,8 @@ class DoctorStrategy(ScenarioStrategy):
         return super().get_aggregate_tags() | {"default"}
 
 
-# Doctor-specific technique factories. Kept local to this scenario (returned from
-# _get_attack_technique_factories) so they don't pollute the global registry.
+# Doctor-specific technique factories. Kept local to this scenario (referenced from
+# _build_atomic_attacks_async) so they don't pollute the global registry.
 # The Dr House template is pinned (matching Garak's "Bypass" probe) so the
 # scenario stays deterministic rather than using the converter's random default.
 DOCTOR_FACTORIES: list[AttackTechniqueFactory] = [
@@ -137,14 +140,34 @@ class Doctor(Scenario):
             scenario_result_id=scenario_result_id,
         )
 
-    def _get_attack_technique_factories(self) -> dict[str, AttackTechniqueFactory]:
+    async def _build_atomic_attacks_async(self, *, context: ScenarioContext) -> list[AtomicAttack]:
         """
-        Return the Doctor-specific attack technique factories.
+        Build the Doctor atomic attacks from the selected Policy Puppetry techniques.
 
-        Kept local to this scenario so the policy-puppetry techniques don't pollute
-        the global registry.
+        Overrides the base extension point (rather than riding the base default cross-product
+        via ``_get_attack_technique_factories``) so the Doctor-specific techniques stay local
+        to this scenario and never enter the global registry. Delegates the technique × dataset
+        cross-product to ``MatrixAtomicAttackBuilder``. The base owns baseline emission, so this
+        passes ``include_baseline=False``.
+
+        Args:
+            context (ScenarioContext): The resolved runtime inputs for this run.
 
         Returns:
-            dict[str, AttackTechniqueFactory]: Mapping of technique names to their factories.
+            list[AtomicAttack]: The generated atomic attacks.
         """
-        return {factory.name: factory for factory in DOCTOR_FACTORIES}
+        selected_techniques = {strategy.value for strategy in context.scenario_strategies}
+        technique_factories = {
+            factory.name: factory for factory in DOCTOR_FACTORIES if factory.name in selected_techniques
+        }
+
+        builder = MatrixAtomicAttackBuilder(
+            objective_target=context.objective_target,
+            objective_scorer=self._objective_scorer,
+            memory_labels=context.memory_labels,
+        )
+        return builder.build(
+            technique_factories=technique_factories,
+            dataset_groups=context.seed_groups_by_dataset,
+            include_baseline=False,
+        )
