@@ -13,19 +13,21 @@ times when that may not be possible or make sense. So this class exists to
 have a common interface for scenarios.
 """
 
+from __future__ import annotations
+
 import logging
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any
 
 from pyrit.common.deprecation import print_deprecation_message
 from pyrit.common.utils import to_sha256
 from pyrit.executor.attack import AttackExecutor, AttackStrategy
-from pyrit.executor.attack.core.attack_executor import AttackExecutorResult
 from pyrit.executor.attack.core.attack_result_attribution import AttackResultAttribution
 from pyrit.memory import CentralMemory
 from pyrit.models import AtomicAttackEvaluationIdentifier, AtomicAttackIdentifier, AttackResult, SeedAttackGroup
 from pyrit.scenario.core.attack_technique import AttackTechnique
 
 if TYPE_CHECKING:
+    from pyrit.executor.attack.core.attack_executor import AttackExecutorResult
     from pyrit.prompt_target import PromptTarget
     from pyrit.score import TrueFalseScorer
 
@@ -56,8 +58,8 @@ class AtomicAttack:
         attack_technique: AttackTechnique | None = None,
         attack: AttackStrategy[Any, Any] | None = None,
         seed_groups: list[SeedAttackGroup],
-        adversarial_chat: Optional["PromptTarget"] = None,
-        objective_scorer: Optional["TrueFalseScorer"] = None,
+        adversarial_chat: PromptTarget | None = None,
+        objective_scorer: TrueFalseScorer | None = None,
         memory_labels: dict[str, str] | None = None,
         **attack_execute_params: Any,
     ) -> None:
@@ -186,7 +188,7 @@ class AtomicAttack:
 
     @property
     def attack_technique(self) -> AttackTechnique:
-        """Get the attack technique for this atomic attack."""
+        """The attack technique for this atomic attack."""
         return self._attack_technique
 
     @property
@@ -211,7 +213,7 @@ class AtomicAttack:
     @property
     def objectives(self) -> list[str]:
         """
-        Get the objectives from the seed groups.
+        The objectives from the seed groups.
 
         Returns:
             list[str]: List of objectives from all seed groups.
@@ -221,7 +223,7 @@ class AtomicAttack:
     @property
     def seed_groups(self) -> list[SeedAttackGroup]:
         """
-        Get a copy of the seed groups list for this atomic attack.
+        A copy of the seed groups list for this atomic attack.
 
         Returns:
             list[SeedAttackGroup]: A copy of the seed groups list.

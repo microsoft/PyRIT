@@ -80,7 +80,7 @@ async def test_send_prompt_async_generate(
     with patch.object(image_target._async_client.images, "generate", new_callable=AsyncMock) as mock_generate:
         mock_generate.return_value = mock_response
 
-        resp = await image_target.send_prompt_async(message=Message([request]))
+        resp = await image_target.send_prompt_async(message=Message(message_pieces=[request]))
         assert len(resp) == 1
         assert resp
         path = resp[0].message_pieces[0].original_value
@@ -115,7 +115,7 @@ async def test_send_prompt_async_edit(
     with patch.object(image_target._async_client.images, "edit", new_callable=AsyncMock) as mock_edit:
         mock_edit.return_value = mock_response
 
-        resp = await image_target.send_prompt_async(message=Message([text_piece, image_piece]))
+        resp = await image_target.send_prompt_async(message=Message(message_pieces=[text_piece, image_piece]))
         assert len(resp) == 1
         assert resp
         path = resp[0].message_pieces[0].original_value
@@ -151,7 +151,7 @@ async def test_send_prompt_async_edit_single_image_passes_tuple_not_list(
     with patch.object(image_target._async_client.images, "edit", new_callable=AsyncMock) as mock_edit:
         mock_edit.return_value = mock_response
 
-        resp = await image_target.send_prompt_async(message=Message([text_piece, image_piece]))
+        resp = await image_target.send_prompt_async(message=Message(message_pieces=[text_piece, image_piece]))
         assert resp
 
         call_kwargs = mock_edit.call_args[1]
@@ -189,7 +189,9 @@ async def test_send_prompt_async_edit_multiple_images(
     with patch.object(image_target._async_client.images, "edit", new_callable=AsyncMock) as mock_edit:
         mock_edit.return_value = mock_response
 
-        resp = await image_target.send_prompt_async(message=Message([image_piece, text_piece] + image_pieces))
+        resp = await image_target.send_prompt_async(
+            message=Message(message_pieces=[image_piece, text_piece] + image_pieces)
+        )
         assert len(resp) == 1
         assert resp
         path = resp[0].message_pieces[0].original_value
@@ -226,7 +228,7 @@ async def test_send_prompt_async_invalid_image_path(
     )
 
     with pytest.raises(FileNotFoundError):
-        await image_target.send_prompt_async(message=Message([text_piece, image_piece]))
+        await image_target.send_prompt_async(message=Message(message_pieces=[text_piece, image_piece]))
 
 
 async def test_send_prompt_async_empty_response(
@@ -248,7 +250,7 @@ async def test_send_prompt_async_empty_response(
         mock_generate.return_value = mock_response
 
         with pytest.raises(EmptyResponseException):
-            await image_target.send_prompt_async(message=Message([request]))
+            await image_target.send_prompt_async(message=Message(message_pieces=[request]))
 
 
 async def test_send_prompt_async_rate_limit_exception(
@@ -264,7 +266,7 @@ async def test_send_prompt_async_rate_limit_exception(
         mock_generate.side_effect = RateLimitError("Rate Limit Reached", response=MagicMock(), body={})
 
         with pytest.raises(RateLimitException):
-            await image_target.send_prompt_async(message=Message([request]))
+            await image_target.send_prompt_async(message=Message(message_pieces=[request]))
 
 
 async def test_send_prompt_async_bad_request_error(
@@ -290,7 +292,7 @@ async def test_send_prompt_async_bad_request_error(
 
         # Non-content-filter BadRequestError should be re-raised (same as chat target behavior)
         with pytest.raises(Exception):
-            await image_target.send_prompt_async(message=Message([request]))
+            await image_target.send_prompt_async(message=Message(message_pieces=[request]))
 
 
 async def test_send_prompt_async_empty_response_adds_memory(
@@ -316,7 +318,7 @@ async def test_send_prompt_async_empty_response_adds_memory(
         image_target._memory = mock_memory
 
         with pytest.raises(EmptyResponseException):
-            await image_target.send_prompt_async(message=Message([request]))
+            await image_target.send_prompt_async(message=Message(message_pieces=[request]))
 
 
 async def test_send_prompt_async_rate_limit_adds_memory(
@@ -338,7 +340,7 @@ async def test_send_prompt_async_rate_limit_adds_memory(
         image_target._memory = mock_memory
 
         with pytest.raises(RateLimitException):
-            await image_target.send_prompt_async(message=Message([request]))
+            await image_target.send_prompt_async(message=Message(message_pieces=[request]))
 
 
 async def test_send_prompt_async_bad_request_content_filter(
@@ -364,7 +366,7 @@ async def test_send_prompt_async_bad_request_content_filter(
 
     with patch.object(image_target._async_client.images, "generate", new_callable=AsyncMock) as mock_generate:
         mock_generate.side_effect = bad_request_error
-        result = await image_target.send_prompt_async(message=Message([request]))
+        result = await image_target.send_prompt_async(message=Message(message_pieces=[request]))
         assert len(result) == 1
         assert result[0].message_pieces[0].converted_value_data_type == "error"
         assert "content_filter" in result[0].message_pieces[0].converted_value
@@ -393,7 +395,7 @@ async def test_send_prompt_async_bad_request_content_policy_violation(
 
     with patch.object(image_target._async_client.images, "generate", new_callable=AsyncMock) as mock_generate:
         mock_generate.side_effect = bad_request_error
-        result = await image_target.send_prompt_async(message=Message([request]))
+        result = await image_target.send_prompt_async(message=Message(message_pieces=[request]))
         assert len(result) == 1
         assert result[0].message_pieces[0].response_error == "blocked"
         assert result[0].message_pieces[0].converted_value_data_type == "error"
@@ -542,7 +544,7 @@ async def test_generate_request_passes_background(
     with patch.object(image_target._async_client.images, "generate", new_callable=AsyncMock) as mock_generate:
         mock_generate.return_value = mock_response
 
-        resp = await image_target.send_prompt_async(message=Message([request]))
+        resp = await image_target.send_prompt_async(message=Message(message_pieces=[request]))
         assert resp
 
         call_kwargs = mock_generate.call_args[1]
@@ -569,7 +571,7 @@ async def test_generate_request_omits_background_when_none(
     with patch.object(image_target._async_client.images, "generate", new_callable=AsyncMock) as mock_generate:
         mock_generate.return_value = mock_response
 
-        resp = await image_target.send_prompt_async(message=Message([request]))
+        resp = await image_target.send_prompt_async(message=Message(message_pieces=[request]))
         assert resp
 
         call_kwargs = mock_generate.call_args[1]

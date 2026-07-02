@@ -18,10 +18,10 @@ from fastapi import APIRouter, HTTPException, Query, Request, status
 from pyrit.backend.models.common import ProblemDetail
 from pyrit.backend.models.initializers import (
     ListRegisteredInitializersResponse,
-    RegisteredInitializer,
     RegisterInitializerRequest,
 )
 from pyrit.backend.services.initializer_service import get_initializer_service
+from pyrit.models.catalog.initializer import RegisteredInitializer
 
 router = APIRouter(prefix="/initializers", tags=["initializers"])
 

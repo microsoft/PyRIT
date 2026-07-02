@@ -1,14 +1,15 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+from __future__ import annotations
+
 import asyncio
 import enum
 import json
 import logging
 import uuid
 from dataclasses import dataclass, field
-from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional, cast, overload
+from typing import TYPE_CHECKING, Any, cast, overload
 
 from treelib.tree import Tree
 
@@ -70,6 +71,8 @@ from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.true_false.true_false_inverter_scorer import TrueFalseInverterScorer
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from pyrit.models.literals import PromptDataType
 
 logger = logging.getLogger(__name__)
@@ -148,7 +151,7 @@ class TAPAttackScoringConfig(AttackScoringConfig):
     @property
     def threshold(self) -> float:
         """
-        Get the threshold from the objective scorer.
+        The threshold from the objective scorer.
 
         Returns:
             float: The threshold value from the FloatScaleThresholdScorer.
@@ -171,7 +174,7 @@ class TAPAttackContext(MultiTurnAttackContext[Any]):
 
     # Nodes in the attack tree
     # Each node represents a branch in the attack tree with its own state
-    nodes: list["_TreeOfAttacksNode"] = field(default_factory=list)
+    nodes: list[_TreeOfAttacksNode] = field(default_factory=list)
 
     # Best conversation ID and score found during the attack
     best_conversation_id: str | None = None
@@ -189,7 +192,7 @@ class TAPAttackResult(AttackResult):
 
     @property
     def tree_visualization(self) -> Tree | None:
-        """Get the tree visualization from metadata."""
+        """The tree visualization from metadata."""
         return self.metadata.get("tree_visualization", None)
 
     @tree_visualization.setter
@@ -199,7 +202,7 @@ class TAPAttackResult(AttackResult):
 
     @property
     def nodes_explored(self) -> int:
-        """Get the total number of nodes explored during the attack."""
+        """The total number of nodes explored during the attack."""
         return cast("int", self.metadata.get("nodes_explored", 0))
 
     @nodes_explored.setter
@@ -209,7 +212,7 @@ class TAPAttackResult(AttackResult):
 
     @property
     def nodes_pruned(self) -> int:
-        """Get the number of nodes pruned during the attack."""
+        """The number of nodes pruned during the attack."""
         return cast("int", self.metadata.get("nodes_pruned", 0))
 
     @nodes_pruned.setter
@@ -219,7 +222,7 @@ class TAPAttackResult(AttackResult):
 
     @property
     def max_depth_reached(self) -> int:
-        """Get the maximum depth reached in the attack tree."""
+        """The maximum depth reached in the attack tree."""
         return cast("int", self.metadata.get("max_depth_reached", 0))
 
     @max_depth_reached.setter
@@ -229,7 +232,7 @@ class TAPAttackResult(AttackResult):
 
     @property
     def auxiliary_scores_summary(self) -> dict[str, float]:
-        """Get a summary of auxiliary scores from the best node."""
+        """A summary of auxiliary scores from the best node."""
         return cast("dict[str, float]", self.metadata.get("auxiliary_scores_summary", {}))
 
     @auxiliary_scores_summary.setter
@@ -239,7 +242,7 @@ class TAPAttackResult(AttackResult):
 
     @property
     def best_adversarial_conversation_id(self) -> str | None:
-        """Get the adversarial conversation ID for the best-scoring branch."""
+        """The adversarial conversation ID for the best-scoring branch."""
         return cast("str | None", self.metadata.get("best_adversarial_conversation_id", None))
 
     @best_adversarial_conversation_id.setter
@@ -376,7 +379,7 @@ class _TreeOfAttacksNode:
         self,
         *,
         prepended_conversation: list[Message],
-        prepended_conversation_config: Optional["PrependedConversationConfig"] = None,
+        prepended_conversation_config: PrependedConversationConfig | None = None,
     ) -> None:
         """
         Initialize the node with a prepended conversation history.
@@ -769,7 +772,7 @@ class _TreeOfAttacksNode:
         logger.error(f"Node {self.node_id}: Unexpected error during execution: {error}")
         self.error_message = f"Execution error: {str(error)}"
 
-    def duplicate(self) -> "_TreeOfAttacksNode":
+    def duplicate(self) -> _TreeOfAttacksNode:
         """
         Create a duplicate of this node for branching.
 

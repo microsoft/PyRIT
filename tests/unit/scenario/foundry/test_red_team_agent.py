@@ -3,7 +3,7 @@
 
 """Tests for the RedTeamAgent class."""
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -13,7 +13,7 @@ from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
 from pyrit.models import ComponentIdentifier, SeedAttackGroup, SeedObjective
 from pyrit.prompt_converter import Base64Converter
 from pyrit.prompt_target import PromptTarget
-from pyrit.scenario import AtomicAttack, DatasetConfiguration, ScenarioCompositeStrategy
+from pyrit.scenario import AtomicAttack, DatasetAttackConfiguration, ScenarioCompositeStrategy
 from pyrit.scenario.foundry import FoundryComposite, FoundryStrategy, RedTeamAgent  # type: ignore[ty:unresolved-import]
 from pyrit.score import FloatScaleThresholdScorer, TrueFalseScorer
 
@@ -49,10 +49,9 @@ def mock_memory_seed_groups():
 @pytest.fixture
 def mock_dataset_config(mock_memory_seed_groups):
     """Create a mock dataset config that returns the seed groups."""
-    mock_config = MagicMock(spec=DatasetConfiguration)
-    mock_config.get_all_seed_attack_groups.return_value = mock_memory_seed_groups
-    mock_config.get_default_dataset_names.return_value = ["foundry_red_team"]
-    mock_config.has_data_source.return_value = True
+    mock_config = MagicMock(spec=DatasetAttackConfiguration)
+    mock_config.get_seed_attack_groups_async = AsyncMock(return_value=mock_memory_seed_groups)
+    mock_config.dataset_names = ["foundry_red_team"]
     return mock_config
 
 
@@ -116,7 +115,12 @@ class TestFoundryInitialization:
         self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups, mock_dataset_config
     ):
         """Test initialization with a single attack strategy."""
-        with patch.object(RedTeamAgent, "_resolve_seed_groups", return_value=mock_memory_seed_groups):
+        with patch.object(
+            RedTeamAgent,
+            "_resolve_seed_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value={"memory": mock_memory_seed_groups},
+        ):
             scenario = RedTeamAgent(
                 attack_scoring_config=AttackScoringConfig(objective_scorer=mock_objective_scorer),
             )
@@ -139,7 +143,12 @@ class TestFoundryInitialization:
             FoundryStrategy.Leetspeak,
         ]
 
-        with patch.object(RedTeamAgent, "_resolve_seed_groups", return_value=mock_memory_seed_groups):
+        with patch.object(
+            RedTeamAgent,
+            "_resolve_seed_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value={"memory": mock_memory_seed_groups},
+        ):
             scenario = RedTeamAgent(
                 attack_scoring_config=AttackScoringConfig(objective_scorer=mock_objective_scorer),
             )
@@ -176,7 +185,12 @@ class TestFoundryInitialization:
         """Test initialization with memory labels."""
         memory_labels = {"test": "foundry", "category": "attack"}
 
-        with patch.object(RedTeamAgent, "_resolve_seed_groups", return_value=mock_memory_seed_groups):
+        with patch.object(
+            RedTeamAgent,
+            "_resolve_seed_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value={"memory": mock_memory_seed_groups},
+        ):
             scenario = RedTeamAgent(
                 attack_scoring_config=AttackScoringConfig(objective_scorer=mock_objective_scorer),
             )
@@ -199,7 +213,12 @@ class TestFoundryInitialization:
         mock_scorer_instance = MagicMock(spec=TrueFalseScorer)
         mock_get_scorer.return_value = mock_scorer_instance
 
-        with patch.object(RedTeamAgent, "_resolve_seed_groups", return_value=mock_memory_seed_groups):
+        with patch.object(
+            RedTeamAgent,
+            "_resolve_seed_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value={"memory": mock_memory_seed_groups},
+        ):
             scenario = RedTeamAgent()
 
             # Verify default scorer was used
@@ -214,9 +233,14 @@ class TestFoundryInitialization:
         # Don't mock _resolve_seed_groups, let it try to load from empty memory
         scenario = RedTeamAgent(attack_scoring_config=AttackScoringConfig(objective_scorer=mock_objective_scorer))
 
-        # Error should occur during initialize_async when _get_atomic_attacks_async resolves seed groups
-        with pytest.raises(ValueError, match="DatasetConfiguration has no seed_groups"):
-            await scenario.initialize_async(objective_target=mock_objective_target)
+        # Error should occur during initialize_async when _get_atomic_attacks_async resolves seed groups.
+        # Neutralize the provider fetch so the empty-memory path raises loudly instead of fetching.
+        with patch(
+            "pyrit.scenario.core.dataset_configuration.DatasetConfiguration._fetch_dataset_async",
+            new_callable=AsyncMock,
+        ):
+            with pytest.raises(ValueError, match="could not be loaded"):
+                await scenario.initialize_async(objective_target=mock_objective_target)
 
 
 @pytest.mark.usefixtures(*FIXTURES)
@@ -227,7 +251,12 @@ class TestFoundryStrategyNormalization:
         self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups, mock_dataset_config
     ):
         """Test that EASY strategy expands to easy attack strategies."""
-        with patch.object(RedTeamAgent, "_resolve_seed_groups", return_value=mock_memory_seed_groups):
+        with patch.object(
+            RedTeamAgent,
+            "_resolve_seed_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value={"memory": mock_memory_seed_groups},
+        ):
             scenario = RedTeamAgent(
                 attack_scoring_config=AttackScoringConfig(objective_scorer=mock_objective_scorer),
             )
@@ -244,7 +273,12 @@ class TestFoundryStrategyNormalization:
         self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups, mock_dataset_config
     ):
         """Test that MODERATE strategy expands to moderate attack strategies."""
-        with patch.object(RedTeamAgent, "_resolve_seed_groups", return_value=mock_memory_seed_groups):
+        with patch.object(
+            RedTeamAgent,
+            "_resolve_seed_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value={"memory": mock_memory_seed_groups},
+        ):
             scenario = RedTeamAgent(
                 attack_scoring_config=AttackScoringConfig(objective_scorer=mock_objective_scorer),
             )
@@ -261,7 +295,12 @@ class TestFoundryStrategyNormalization:
         self, mock_objective_target, mock_float_threshold_scorer, mock_memory_seed_groups, mock_dataset_config
     ):
         """Test that DIFFICULT strategy expands to difficult attack strategies."""
-        with patch.object(RedTeamAgent, "_resolve_seed_groups", return_value=mock_memory_seed_groups):
+        with patch.object(
+            RedTeamAgent,
+            "_resolve_seed_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value={"memory": mock_memory_seed_groups},
+        ):
             # DIFFICULT strategy includes TAP which requires FloatScaleThresholdScorer
             scenario = RedTeamAgent(
                 attack_scoring_config=AttackScoringConfig(objective_scorer=mock_float_threshold_scorer),
@@ -279,7 +318,12 @@ class TestFoundryStrategyNormalization:
         self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups, mock_dataset_config
     ):
         """Test that multiple difficulty levels expand correctly."""
-        with patch.object(RedTeamAgent, "_resolve_seed_groups", return_value=mock_memory_seed_groups):
+        with patch.object(
+            RedTeamAgent,
+            "_resolve_seed_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value={"memory": mock_memory_seed_groups},
+        ):
             scenario = RedTeamAgent(
                 attack_scoring_config=AttackScoringConfig(objective_scorer=mock_objective_scorer),
             )
@@ -296,7 +340,12 @@ class TestFoundryStrategyNormalization:
         self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups, mock_dataset_config
     ):
         """Test that specific strategies combined with difficulty levels work correctly."""
-        with patch.object(RedTeamAgent, "_resolve_seed_groups", return_value=mock_memory_seed_groups):
+        with patch.object(
+            RedTeamAgent,
+            "_resolve_seed_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value={"memory": mock_memory_seed_groups},
+        ):
             scenario = RedTeamAgent(
                 attack_scoring_config=AttackScoringConfig(objective_scorer=mock_objective_scorer),
             )
@@ -321,7 +370,12 @@ class TestFoundryAttackCreation:
         self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups, mock_dataset_config
     ):
         """Test creating an attack from a single-turn strategy."""
-        with patch.object(RedTeamAgent, "_resolve_seed_groups", return_value=mock_memory_seed_groups):
+        with patch.object(
+            RedTeamAgent,
+            "_resolve_seed_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value={"memory": mock_memory_seed_groups},
+        ):
             scenario = RedTeamAgent(
                 attack_scoring_config=AttackScoringConfig(objective_scorer=mock_objective_scorer),
             )
@@ -334,7 +388,9 @@ class TestFoundryAttackCreation:
 
             # Get the composite strategy that was created during initialization
             composite_strategy = scenario._scenario_composites[0]
-            atomic_attack = scenario._get_attack_from_strategy(composite_strategy)
+            atomic_attack = scenario._get_attack_from_strategy(
+                composite=composite_strategy, seed_groups=mock_memory_seed_groups
+            )
 
             assert isinstance(atomic_attack, AtomicAttack)
             assert atomic_attack.seed_groups == mock_memory_seed_groups
@@ -348,7 +404,12 @@ class TestFoundryAttackCreation:
         mock_dataset_config,
     ):
         """Test creating a multi-turn attack strategy."""
-        with patch.object(RedTeamAgent, "_resolve_seed_groups", return_value=mock_memory_seed_groups):
+        with patch.object(
+            RedTeamAgent,
+            "_resolve_seed_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value={"memory": mock_memory_seed_groups},
+        ):
             scenario = RedTeamAgent(
                 adversarial_chat=mock_adversarial_target,
                 attack_scoring_config=AttackScoringConfig(objective_scorer=mock_objective_scorer),
@@ -362,7 +423,9 @@ class TestFoundryAttackCreation:
 
             # Get the composite strategy that was created during initialization
             composite_strategy = scenario._scenario_composites[0]
-            atomic_attack = scenario._get_attack_from_strategy(composite_strategy)
+            atomic_attack = scenario._get_attack_from_strategy(
+                composite=composite_strategy, seed_groups=mock_memory_seed_groups
+            )
 
             assert isinstance(atomic_attack, AtomicAttack)
             assert atomic_attack.seed_groups == mock_memory_seed_groups
@@ -376,7 +439,12 @@ class TestFoundryGetAttack:
         self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups, mock_dataset_config
     ):
         """Test creating a single-turn attack with converters."""
-        with patch.object(RedTeamAgent, "_resolve_seed_groups", return_value=mock_memory_seed_groups):
+        with patch.object(
+            RedTeamAgent,
+            "_resolve_seed_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value={"memory": mock_memory_seed_groups},
+        ):
             scenario = RedTeamAgent(
                 attack_scoring_config=AttackScoringConfig(objective_scorer=mock_objective_scorer),
             )
@@ -403,7 +471,12 @@ class TestFoundryGetAttack:
         mock_dataset_config,
     ):
         """Test creating a multi-turn attack."""
-        with patch.object(RedTeamAgent, "_resolve_seed_groups", return_value=mock_memory_seed_groups):
+        with patch.object(
+            RedTeamAgent,
+            "_resolve_seed_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value={"memory": mock_memory_seed_groups},
+        ):
             scenario = RedTeamAgent(
                 adversarial_chat=mock_adversarial_target,
                 attack_scoring_config=AttackScoringConfig(objective_scorer=mock_objective_scorer),
@@ -457,7 +530,12 @@ class TestFoundryAllStrategies:
         self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups, mock_dataset_config, strategy
     ):
         """Test that all single-turn strategies can create attack runs."""
-        with patch.object(RedTeamAgent, "_resolve_seed_groups", return_value=mock_memory_seed_groups):
+        with patch.object(
+            RedTeamAgent,
+            "_resolve_seed_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value={"memory": mock_memory_seed_groups},
+        ):
             scenario = RedTeamAgent(
                 attack_scoring_config=AttackScoringConfig(objective_scorer=mock_objective_scorer),
             )
@@ -470,7 +548,9 @@ class TestFoundryAllStrategies:
 
             # Get the composite strategy that was created during initialization
             composite_strategy = scenario._scenario_composites[0]
-            atomic_attack = scenario._get_attack_from_strategy(composite_strategy)
+            atomic_attack = scenario._get_attack_from_strategy(
+                composite=composite_strategy, seed_groups=mock_memory_seed_groups
+            )
             assert isinstance(atomic_attack, AtomicAttack)
 
     @pytest.mark.parametrize(
@@ -490,7 +570,12 @@ class TestFoundryAllStrategies:
         strategy,
     ):
         """Test that all multi-turn strategies can create attack runs."""
-        with patch.object(RedTeamAgent, "_resolve_seed_groups", return_value=mock_memory_seed_groups):
+        with patch.object(
+            RedTeamAgent,
+            "_resolve_seed_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value={"memory": mock_memory_seed_groups},
+        ):
             scenario = RedTeamAgent(
                 adversarial_chat=mock_adversarial_target,
                 attack_scoring_config=AttackScoringConfig(objective_scorer=mock_objective_scorer),
@@ -504,7 +589,9 @@ class TestFoundryAllStrategies:
 
             # Get the composite strategy that was created during initialization
             composite_strategy = scenario._scenario_composites[0]
-            atomic_attack = scenario._get_attack_from_strategy(composite_strategy)
+            atomic_attack = scenario._get_attack_from_strategy(
+                composite=composite_strategy, seed_groups=mock_memory_seed_groups
+            )
             assert isinstance(atomic_attack, AtomicAttack)
 
 
@@ -518,7 +605,12 @@ class TestFoundryProperties:
         """Test that scenario composites are set after initialize_async."""
         strategies = [FoundryStrategy.Base64, FoundryStrategy.ROT13]
 
-        with patch.object(RedTeamAgent, "_resolve_seed_groups", return_value=mock_memory_seed_groups):
+        with patch.object(
+            RedTeamAgent,
+            "_resolve_seed_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value={"memory": mock_memory_seed_groups},
+        ):
             scenario = RedTeamAgent(
                 attack_scoring_config=AttackScoringConfig(objective_scorer=mock_objective_scorer),
             )
@@ -555,7 +647,12 @@ class TestFoundryProperties:
             FoundryStrategy.Leetspeak,
         ]
 
-        with patch.object(RedTeamAgent, "_resolve_seed_groups", return_value=mock_memory_seed_groups):
+        with patch.object(
+            RedTeamAgent,
+            "_resolve_seed_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value={"memory": mock_memory_seed_groups},
+        ):
             scenario = RedTeamAgent(
                 attack_scoring_config=AttackScoringConfig(objective_scorer=mock_objective_scorer),
             )
@@ -574,7 +671,12 @@ class TestFoundryProperties:
         """FoundryComposite objects passed to initialize_async are used as-is."""
         composite = FoundryComposite(attack=FoundryStrategy.Crescendo, converters=[FoundryStrategy.Base64])
 
-        with patch.object(RedTeamAgent, "_resolve_seed_groups", return_value=mock_memory_seed_groups):
+        with patch.object(
+            RedTeamAgent,
+            "_resolve_seed_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value={"memory": mock_memory_seed_groups},
+        ):
             scenario = RedTeamAgent(
                 attack_scoring_config=AttackScoringConfig(objective_scorer=mock_objective_scorer),
             )
@@ -597,7 +699,12 @@ class TestFoundryProperties:
         """A mix of bare FoundryStrategy and FoundryComposite can be passed together."""
         composite = FoundryComposite(attack=FoundryStrategy.Crescendo, converters=[FoundryStrategy.Base64])
 
-        with patch.object(RedTeamAgent, "_resolve_seed_groups", return_value=mock_memory_seed_groups):
+        with patch.object(
+            RedTeamAgent,
+            "_resolve_seed_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value={"memory": mock_memory_seed_groups},
+        ):
             scenario = RedTeamAgent(
                 attack_scoring_config=AttackScoringConfig(objective_scorer=mock_objective_scorer),
             )
@@ -620,7 +727,12 @@ class TestFoundryProperties:
         """ScenarioCompositeStrategy passed to initialize_async is converted to FoundryComposite."""
         legacy = ScenarioCompositeStrategy(strategies=[FoundryStrategy.Crescendo, FoundryStrategy.Base64])
 
-        with patch.object(RedTeamAgent, "_resolve_seed_groups", return_value=mock_memory_seed_groups):
+        with patch.object(
+            RedTeamAgent,
+            "_resolve_seed_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value={"memory": mock_memory_seed_groups},
+        ):
             scenario = RedTeamAgent(
                 attack_scoring_config=AttackScoringConfig(objective_scorer=mock_objective_scorer),
             )
@@ -643,7 +755,12 @@ class TestFoundryProperties:
         """Converter-first ScenarioCompositeStrategy is routed by tags, not position."""
         legacy = ScenarioCompositeStrategy(strategies=[FoundryStrategy.Base64, FoundryStrategy.Crescendo])
 
-        with patch.object(RedTeamAgent, "_resolve_seed_groups", return_value=mock_memory_seed_groups):
+        with patch.object(
+            RedTeamAgent,
+            "_resolve_seed_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value={"memory": mock_memory_seed_groups},
+        ):
             scenario = RedTeamAgent(
                 attack_scoring_config=AttackScoringConfig(objective_scorer=mock_objective_scorer),
             )
@@ -665,7 +782,12 @@ class TestFoundryProperties:
         """Converter-only ScenarioCompositeStrategy maps to attack=None."""
         legacy = ScenarioCompositeStrategy(strategies=[FoundryStrategy.Base64, FoundryStrategy.ROT13])
 
-        with patch.object(RedTeamAgent, "_resolve_seed_groups", return_value=mock_memory_seed_groups):
+        with patch.object(
+            RedTeamAgent,
+            "_resolve_seed_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value={"memory": mock_memory_seed_groups},
+        ):
             scenario = RedTeamAgent(
                 attack_scoring_config=AttackScoringConfig(objective_scorer=mock_objective_scorer),
             )
@@ -686,13 +808,13 @@ class TestRedTeamAgentBaselineUniformity:
     """ADO 9012 regression: baseline shares objectives with strategies under max_dataset_size."""
 
     async def test_one_resolution_call_baseline_matches_strategies(self, mock_objective_target, mock_objective_scorer):
-        from pyrit.models import SeedGroup, SeedObjective
+        from pyrit.models import SeedAttackGroup, SeedObjective
 
-        seed_groups = [SeedGroup(seeds=[SeedObjective(value=f"obj{i}")]) for i in range(10)]
-        config = DatasetConfiguration(seed_groups=seed_groups, max_dataset_size=3)
+        seed_groups = [SeedAttackGroup(seeds=[SeedObjective(value=f"obj{i}")]) for i in range(10)]
+        config = DatasetAttackConfiguration(seed_groups=seed_groups, max_dataset_size=3)
 
-        first_sample = seed_groups[:3]
-        second_sample = seed_groups[5:8]
+        first_sample = [("inline", group) for group in seed_groups[:3]]
+        second_sample = [("inline", group) for group in seed_groups[5:8]]
         with patch(
             "pyrit.scenario.core.dataset_configuration.random.sample",
             side_effect=[first_sample, second_sample],

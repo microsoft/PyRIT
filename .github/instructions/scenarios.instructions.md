@@ -6,6 +6,8 @@ applyTo: "pyrit/scenario/**"
 
 Scenarios orchestrate multi-attack security testing campaigns. Each scenario groups `AtomicAttack` instances and executes them sequentially against a target.
 
+**Does not own** (see [framework.md](../../doc/code/framework.md)): the per-objective conversation logic. Branching, turn-by-turn adaptation, and scoring-based decisions belong to the attack — a scenario selects and packages existing attack techniques and owns parallelism/resiliency, not new attack algorithms or datasets. Flag such bleed in review.
+
 ## Base Class Contract
 
 All scenarios inherit from `Scenario` (ABC) and must:
@@ -161,6 +163,8 @@ The default implementation:
    `AttackTechniqueRegistry` singleton)
 2. Iterates over every (technique × dataset) pair from `self._dataset_config`
 3. Calls `factory.create()` with `objective_target` and conditional scorer override
+   (also forwards any per-technique converters from `self._strategy_converters`, populated
+   from the CLI `--strategies <technique>:converter.<name>` modifier, as `extra_request_converters`)
 4. Uses `self._build_display_group()` for user-facing grouping
 5. Builds `AtomicAttack` with unique `atomic_attack_name` = `"{technique}_{dataset}"`
 

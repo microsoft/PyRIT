@@ -14,24 +14,31 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from pyrit.backend.models.scenarios import (
+from pyrit.backend.models.scenarios import ScenarioRunListResponse
+from pyrit.memory import CentralMemory
+from pyrit.models import AttackOutcome, ScenarioResult, ScenarioRunState
+from pyrit.models.catalog.scenario import (
     RunScenarioRequest,
-    ScenarioRunListResponse,
-    ScenarioRunStatus,
     ScenarioRunSummary,
 )
-from pyrit.memory import CentralMemory
-from pyrit.models import AttackOutcome, ScenarioResult
-from pyrit.registry import InitializerRegistry, ScenarioRegistry, TargetRegistry
+from pyrit.registry import (
+    ConverterRegistry,
+    InitializerRegistry,
+    ScenarioRegistry,
+    TargetRegistry,
+)
 from pyrit.scenario import Scenario
-from pyrit.scenario.core import DatasetConfiguration
+from pyrit.scenario.core import DatasetAttackConfiguration
 
 if TYPE_CHECKING:
+    from pyrit.prompt_converter import PromptConverter
     from pyrit.prompt_target import PromptTarget
 
 logger = logging.getLogger(__name__)
 
 _DEFAULT_MAX_CONCURRENT_RUNS = 3
+
+_CONVERTER_MODIFIER_PREFIX = "converter."
 
 
 @dataclass
@@ -164,9 +171,9 @@ class ScenarioRunService:
             return None
 
         scenario_result = results[0]
-        db_status = ScenarioRunStatus(scenario_result.scenario_run_state)
+        db_status = ScenarioRunState(scenario_result.scenario_run_state)
 
-        if db_status in (ScenarioRunStatus.COMPLETED, ScenarioRunStatus.FAILED, ScenarioRunStatus.CANCELLED):
+        if db_status in (ScenarioRunState.COMPLETED, ScenarioRunState.FAILED, ScenarioRunState.CANCELLED):
             raise ValueError(f"Cannot cancel run in '{db_status}' state.")
 
         # Cancel the asyncio task if active and wait for it to finish
@@ -243,9 +250,9 @@ class ScenarioRunService:
             ValueError: If the target is not found in the registry.
         """
         target_registry = TargetRegistry.get_registry_singleton()
-        objective_target = target_registry.get_instance_by_name(request.target_name)
+        objective_target = target_registry.instances.get(request.target_name)
         if objective_target is None:
-            available_names = target_registry.get_names()
+            available_names = target_registry.instances.get_names()
             if not available_names:
                 raise ValueError(
                     f"Target '{request.target_name}' not found. The target registry is empty. "
@@ -266,11 +273,11 @@ class ScenarioRunService:
         Resolves strategies and dataset configuration from the request.
 
         Dataset configuration is built so that the scenario's default
-        ``DatasetConfiguration`` *subclass* (e.g. ``EncodingDatasetConfiguration``)
+        ``DatasetAttackConfiguration`` *subclass* (e.g. ``EncodingDatasetConfiguration``)
         is preserved when the caller overrides ``dataset_names`` or
         ``max_dataset_size``. Subclasses commonly override
-        ``get_all_seed_attack_groups()`` or ``_load_seed_groups_for_dataset()``
-        to shape seeds into scenario-appropriate ``SeedAttackGroup`` objects.
+        ``_build_attack_groups()`` to shape seeds into scenario-appropriate
+        ``SeedAttackGroup`` objects.
 
         Args:
             request: The run request.
@@ -318,17 +325,14 @@ class ScenarioRunService:
 
         if request.strategies:
             strategy_class = introspection_instance._strategy_class
-            strategy_enums = []
-            for name in request.strategies:
-                try:
-                    strategy_enums.append(strategy_class(name))
-                except ValueError:
-                    available_strategies = [s.value for s in strategy_class]
-                    raise ValueError(
-                        f"Strategy '{name}' not found for scenario '{request.scenario_name}'. "
-                        f"Available: {', '.join(available_strategies)}"
-                    ) from None
+            strategy_enums, strategy_converters = self._resolve_strategies_and_converters(
+                tokens=request.strategies,
+                strategy_class=strategy_class,
+                scenario_name=request.scenario_name,
+            )
             init_kwargs["scenario_strategies"] = strategy_enums
+            if strategy_converters:
+                init_kwargs["strategy_converters"] = strategy_converters
 
         if request.dataset_names or request.max_dataset_size is not None:
             default_config = introspection_instance._default_dataset_config
@@ -345,18 +349,18 @@ class ScenarioRunService:
                 except TypeError as exc:
                     # The subclass __init__ takes extra required kwargs we cannot
                     # supply from a backend request. Fall back to the base
-                    # DatasetConfiguration so the run can still proceed; downstream
+                    # DatasetAttackConfiguration so the run can still proceed; downstream
                     # scenarios that strictly require the subclass should either
                     # define a no-extra-required-args constructor or surface the
                     # incompatibility through their own initialize_async validation.
                     logger.warning(
                         "Cannot construct %s(dataset_names=..., max_dataset_size=...) (%s). "
-                        "Falling back to a generic DatasetConfiguration; scenario-specific "
+                        "Falling back to a generic DatasetAttackConfiguration; scenario-specific "
                         "dataset-config behavior may be lost.",
                         default_config_class.__name__,
                         exc,
                     )
-                    init_kwargs["dataset_config"] = DatasetConfiguration(
+                    init_kwargs["dataset_config"] = DatasetAttackConfiguration(
                         dataset_names=request.dataset_names,
                         max_dataset_size=request.max_dataset_size,
                     )
@@ -369,26 +373,126 @@ class ScenarioRunService:
 
         return init_kwargs
 
+    def _resolve_strategies_and_converters(
+        self,
+        *,
+        tokens: list[str],
+        strategy_class: type[Any],
+        scenario_name: str,
+    ) -> tuple[list[Any], dict[str, list["PromptConverter"]]]:
+        """
+        Resolve ``--strategies`` tokens into strategy enums and per-technique converters.
+
+        Each token has the form ``<strategy>[:converter.<name>[:converter.<name>...]]``.
+        The base ``<strategy>`` is resolved to a ``ScenarioStrategy`` enum member (which may
+        be an aggregate). Each ``converter.<name>`` modifier is resolved to a registered
+        converter instance and appended (in token order) to every concrete technique that the
+        base strategy expands to.
+
+        Args:
+            tokens: The raw strategy tokens from the request.
+            strategy_class: The scenario's ``ScenarioStrategy`` subclass.
+            scenario_name: The scenario name, used for error messages.
+
+        Returns:
+            A tuple of (strategy enums to pass as ``scenario_strategies``, mapping from concrete
+            technique name to the list of converters to append for that technique).
+
+        Raises:
+            ValueError: If a base strategy name is unknown, a modifier is malformed, or a
+                converter name is not registered.
+        """
+        strategy_enums: list[Any] = []
+        strategy_converters: dict[str, list[PromptConverter]] = {}
+
+        for token in tokens:
+            base_name, _, remainder = token.partition(":")
+            modifiers = [m for m in remainder.split(":") if m] if remainder else []
+
+            try:
+                strategy_enum = strategy_class(base_name)
+            except ValueError:
+                available_strategies = [s.value for s in strategy_class]
+                raise ValueError(
+                    f"Strategy '{base_name}' not found for scenario '{scenario_name}'. "
+                    f"Available: {', '.join(available_strategies)}"
+                ) from None
+            strategy_enums.append(strategy_enum)
+
+            converters = self._resolve_converter_modifiers(modifiers=modifiers, token=token)
+            if not converters:
+                continue
+
+            for concrete in strategy_class.expand({strategy_enum}):
+                strategy_converters.setdefault(concrete.value, []).extend(converters)
+
+        return strategy_enums, strategy_converters
+
+    def _resolve_converter_modifiers(self, *, modifiers: list[str], token: str) -> list["PromptConverter"]:
+        """
+        Resolve the converter modifiers of a single strategy token to converter instances.
+
+        Args:
+            modifiers: The modifier segments of the token (everything after the base strategy).
+            token: The full original token, used for error messages.
+
+        Returns:
+            The resolved converter instances in token order.
+
+        Raises:
+            ValueError: If a modifier does not use the ``converter.`` prefix or names a
+                converter that is not registered.
+        """
+        if not modifiers:
+            return []
+
+        instances = ConverterRegistry.get_registry_singleton().instances
+        converters: list[PromptConverter] = []
+        for modifier in modifiers:
+            if not modifier.startswith(_CONVERTER_MODIFIER_PREFIX):
+                raise ValueError(
+                    f"Unknown strategy modifier '{modifier}' in '{token}'. "
+                    f"Supported modifiers must use the '{_CONVERTER_MODIFIER_PREFIX}' prefix "
+                    f"(e.g. '{_CONVERTER_MODIFIER_PREFIX}translation_spanish')."
+                )
+            converter_name = modifier[len(_CONVERTER_MODIFIER_PREFIX) :]
+            converter = instances.get(converter_name)
+            if converter is None:
+                available = instances.get_names()
+                available_text = ", ".join(available) if available else "(none registered)"
+                raise ValueError(
+                    f"Converter '{converter_name}' in '{token}' is not a registered converter "
+                    f"instance. Available converters: {available_text}"
+                )
+            converters.append(converter)
+        return converters
+
     async def _initialize_scenario_async(self, *, request: RunScenarioRequest, init_kwargs: dict[str, Any]) -> Scenario:
         """
-        Instantiate the scenario and call initialize_async.
+        Build and initialize the scenario via the registry.
+
+        Delegates the full create + set-parameters + initialize lifecycle to
+        ``ScenarioRegistry.create_and_initialize_async`` so the registry owns
+        scenario creation and initialization. The run-specific common parameters
+        (target, strategies, dataset config, concurrency) are resolved by
+        ``_build_init_kwargs`` and forwarded as ``init_kwargs``.
 
         Args:
             request: The run request (for scenario_name, scenario_params, and
                 scenario_result_id).
-            init_kwargs: The kwargs to pass to scenario.initialize_async.
+            init_kwargs: The resolved common parameters to pass to
+                scenario.initialize_async.
 
         Returns:
             The fully initialized Scenario instance ready for run_async.
         """
-        constructor_kwargs: dict[str, Any] = {}
-        if request.scenario_result_id:
-            constructor_kwargs["scenario_result_id"] = request.scenario_result_id
         scenario_registry = ScenarioRegistry.get_registry_singleton()
-        scenario = scenario_registry.create_instance(request.scenario_name, **constructor_kwargs)
-        scenario.set_params_from_args(args=request.scenario_params or {})
-        await scenario.initialize_async(**init_kwargs)
-        return scenario
+        return await scenario_registry.create_and_initialize_async(
+            request.scenario_name,
+            scenario_params=request.scenario_params or {},
+            scenario_result_id=request.scenario_result_id or None,
+            **init_kwargs,
+        )
 
     async def _execute_run_async(self, *, scenario_result_id: str) -> None:
         """
@@ -472,7 +576,7 @@ class ScenarioRunService:
         if not error and active is not None:
             error = active.error
 
-        status = ScenarioRunStatus(scenario_result.scenario_run_state)
+        status = ScenarioRunState(scenario_result.scenario_run_state)
 
         # Build result fields from DB (always computed so in-progress runs show progress)
         total_attacks = sum(len(results) for results in scenario_result.attack_results.values())
@@ -481,8 +585,8 @@ class ScenarioRunService:
 
         return ScenarioRunSummary(
             scenario_result_id=scenario_result_id,
-            scenario_name=scenario_result.scenario_identifier.name,
-            scenario_version=scenario_result.scenario_identifier.version,
+            scenario_name=scenario_result.scenario_name,
+            scenario_version=scenario_result.scenario_version,
             status=status,
             created_at=scenario_result.creation_time,
             updated_at=scenario_result.completion_time or scenario_result.creation_time,
@@ -516,7 +620,7 @@ class ScenarioRunService:
         scenario_result = results[0]
         run_response = self._build_response_from_db(scenario_result=scenario_result)
 
-        if run_response.status != ScenarioRunStatus.COMPLETED:
+        if run_response.status != ScenarioRunState.COMPLETED:
             raise ValueError(f"Results are only available for completed runs. Current status: '{run_response.status}'.")
 
         return scenario_result

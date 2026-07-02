@@ -7,11 +7,86 @@ import tempfile
 import uuid
 from collections.abc import Generator, MutableSequence, Sequence
 from contextlib import AbstractAsyncContextManager
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 from pyrit.memory import AzureSQLMemory, CentralMemory, PromptMemoryEntry
-from pyrit.models import ComponentIdentifier, Message, MessagePiece
+from pyrit.models import (
+    ComponentIdentifier,
+    Message,
+    MessagePiece,
+    ScenarioIdentifier,
+    ScenarioResult,
+)
 from pyrit.prompt_target import PromptTarget, TargetCapabilities, TargetConfiguration, limit_requests_per_minute
+
+
+def make_scenario_identifier(
+    *,
+    scenario_name: str = "TestScenario",
+    scenario_module: str = "tests.unit.mocks",
+    version: int = 1,
+    objective_target: ComponentIdentifier | None = None,
+    objective_scorer: ComponentIdentifier | None = None,
+    techniques: list[str] | None = None,
+    datasets: list[str] | None = None,
+    params: dict[str, Any] | None = None,
+    pyrit_version: str | None = None,
+) -> ScenarioIdentifier:
+    """
+    Build a ``ScenarioIdentifier`` for tests.
+
+    Mirrors what ``Scenario._build_scenario_identifier`` produces so tests can
+    construct a ``ScenarioResult`` without a live scenario.
+    """
+    extra: dict[str, Any] = {}
+    if pyrit_version is not None:
+        extra["pyrit_version"] = pyrit_version
+    return ScenarioIdentifier(
+        class_name=scenario_name,
+        class_module=scenario_module,
+        version=version,
+        techniques=techniques,
+        datasets=datasets,
+        params=dict(params) if params else {},
+        objective_target=objective_target,
+        objective_scorer=objective_scorer,
+        **extra,
+    )
+
+
+def make_scenario_result(
+    *,
+    scenario_name: str = "TestScenario",
+    scenario_version: int = 1,
+    objective_target_identifier: ComponentIdentifier | None = None,
+    objective_scorer_identifier: ComponentIdentifier | None = None,
+    techniques: list[str] | None = None,
+    datasets: list[str] | None = None,
+    params: dict[str, Any] | None = None,
+    pyrit_version: str | None = None,
+    **kwargs: Any,
+) -> ScenarioResult:
+    """
+    Build a ``ScenarioResult`` for tests from flat identity kwargs.
+
+    The identity kwargs (``scenario_name`` / ``scenario_version`` /
+    ``objective_target_identifier`` / ``objective_scorer_identifier`` /
+    ``techniques`` / ``datasets`` / ``params`` / ``pyrit_version``) are folded
+    into a ``ScenarioIdentifier``; all other kwargs pass through to
+    ``ScenarioResult``.
+    """
+    identifier = make_scenario_identifier(
+        scenario_name=scenario_name,
+        version=scenario_version,
+        objective_target=objective_target_identifier,
+        objective_scorer=objective_scorer_identifier,
+        techniques=techniques,
+        datasets=datasets,
+        params=params,
+        pyrit_version=pyrit_version,
+    )
+    return ScenarioResult(scenario_identifier=identifier, **kwargs)
 
 
 def get_mock_scorer_identifier() -> ComponentIdentifier:

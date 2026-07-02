@@ -1,11 +1,12 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from typing import TYPE_CHECKING, Optional
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
 
 from pyrit.models import Message, Score
 from pyrit.score.scorer import Scorer
-from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.true_false.true_false_score_aggregator import (
     TrueFalseAggregatorFunc,
     TrueFalseScoreAggregator,
@@ -15,6 +16,7 @@ if TYPE_CHECKING:
     from pyrit.prompt_target import PromptTarget
     from pyrit.score.scorer_evaluation.scorer_evaluator import ScorerEvalDatasetFiles
     from pyrit.score.scorer_evaluation.scorer_metrics import ObjectiveScorerMetrics
+    from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 
 
 class TrueFalseScorer(Scorer):
@@ -40,14 +42,14 @@ class TrueFalseScorer(Scorer):
     """
 
     # Default evaluation configuration - evaluates against all objective CSVs
-    evaluation_file_mapping: Optional["ScorerEvalDatasetFiles"] = None
+    evaluation_file_mapping: ScorerEvalDatasetFiles | None = None
 
     def __init__(
         self,
         *,
         validator: ScorerPromptValidator,
         score_aggregator: TrueFalseAggregatorFunc = TrueFalseScoreAggregator.OR,
-        chat_target: Optional["PromptTarget"] = None,
+        chat_target: PromptTarget | None = None,
     ) -> None:
         """
         Initialize the TrueFalseScorer.
@@ -91,7 +93,7 @@ class TrueFalseScorer(Scorer):
         if scores[0].score_value.lower() not in ["true", "false"]:
             raise ValueError("TrueFalseScorer score value must be True or False.")
 
-    def get_scorer_metrics(self) -> Optional["ObjectiveScorerMetrics"]:
+    def get_scorer_metrics(self) -> ObjectiveScorerMetrics | None:
         """
         Get evaluation metrics for this scorer from the configured evaluation result file.
 

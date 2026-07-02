@@ -1,12 +1,14 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+from __future__ import annotations
+
 import abc
 import asyncio
 import inspect
 import re
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, ClassVar, Optional, get_args
+from typing import TYPE_CHECKING, Any, ClassVar, get_args
 
 from pyrit import prompt_converter
 from pyrit.models import ComponentIdentifier, ConverterIdentifier, Identifiable, PromptDataType
@@ -89,7 +91,7 @@ class PromptConverter(Identifiable):
                     f"Declare the output modalities this converter produces."
                 )
 
-    def __init__(self, *, converter_target: Optional["PromptTarget"] = None) -> None:
+    def __init__(self, *, converter_target: PromptTarget | None = None) -> None:
         """
         Initialize the prompt converter.
 
@@ -203,7 +205,7 @@ class PromptConverter(Identifiable):
         *,
         params: dict[str, Any] | None = None,
         converter_target: ComponentIdentifier | None = None,
-        sub_converters: list[ComponentIdentifier] | None = None,
+        sub_converter: ComponentIdentifier | None = None,
     ) -> ComponentIdentifier:
         """
         Construct and return the converter identifier.
@@ -222,8 +224,8 @@ class PromptConverter(Identifiable):
                 the subclass (e.g., font, encoding_func). Merged into the base params.
             converter_target (ComponentIdentifier | None): The target an LLM-backed
                 converter calls, promoted to ``ConverterIdentifier.converter_target``.
-            sub_converters (list[ComponentIdentifier] | None): Nested converters a
-                composite wraps, promoted to ``ConverterIdentifier.sub_converters``.
+            sub_converter (ComponentIdentifier | None): A nested converter a
+                composite wraps, promoted to ``ConverterIdentifier.sub_converter``.
 
         Returns:
             ComponentIdentifier: The identifier for this converter.
@@ -234,13 +236,13 @@ class PromptConverter(Identifiable):
             supported_input_types=self.SUPPORTED_INPUT_TYPES,
             supported_output_types=self.SUPPORTED_OUTPUT_TYPES,
             converter_target=converter_target,
-            sub_converters=sub_converters,
+            sub_converter=sub_converter,
         )
 
     @property
     def supported_input_types(self) -> list[PromptDataType]:
         """
-        Returns a list of supported input types for the converter.
+        A list of supported input types for the converter.
 
         Returns:
             list[PromptDataType]: A list of supported input types.
@@ -250,7 +252,7 @@ class PromptConverter(Identifiable):
     @property
     def supported_output_types(self) -> list[PromptDataType]:
         """
-        Returns a list of supported output types for the converter.
+        A list of supported output types for the converter.
 
         Returns:
             list[PromptDataType]: A list of supported output types.

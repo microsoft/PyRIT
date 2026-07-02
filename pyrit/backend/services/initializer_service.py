@@ -13,8 +13,9 @@ from functools import lru_cache
 
 from pyrit.backend.models.common import PaginationInfo
 from pyrit.backend.models.initializers import (
-    InitializerParameterSummary,
     ListRegisteredInitializersResponse,
+)
+from pyrit.models.catalog.initializer import (
     RegisteredInitializer,
 )
 from pyrit.registry import InitializerMetadata, InitializerRegistry
@@ -37,14 +38,7 @@ def _metadata_to_registered_initializer(metadata: InitializerMetadata) -> Regist
         initializer_type=metadata.class_name,
         description=metadata.class_description,
         required_env_vars=list(metadata.required_env_vars),
-        supported_parameters=[
-            InitializerParameterSummary(
-                name=name,
-                description=desc,
-                default=default,
-            )
-            for name, desc, default in metadata.supported_parameters
-        ],
+        supported_parameters=list(metadata.supported_parameters),
     )
 
 

@@ -24,7 +24,7 @@ class LoadDefaultDatasets(PyRITInitializer):
 
     @property
     def name(self) -> str:
-        """Return the name of this initializer."""
+        """The name of this initializer."""
         return "Default Dataset Loader for Scenarios"
 
     @property
@@ -34,20 +34,18 @@ class LoadDefaultDatasets(PyRITInitializer):
 
     @property
     def description(self) -> str:
-        """Return a description of this initializer."""
-        return textwrap.dedent(
-            """
+        """A description of this initializer."""
+        return textwrap.dedent("""
                 This configuration uses the DatasetLoader to load default datasets into memory.
                 This will enable all scenarios to run. Datasets can be customized in memory.
 
                 Note: if you are using persistent memory, avoid calling this every time as datasets
                 can take time to load.
-            """
-        ).strip()
+            """).strip()
 
     @property
     def required_env_vars(self) -> list[str]:
-        """Return the list of required environment variables."""
+        """The list of required environment variables."""
         return []
 
     async def initialize_async(self) -> None:
@@ -56,7 +54,7 @@ class LoadDefaultDatasets(PyRITInitializer):
 
         all_default_datasets: list[str] = []
 
-        for metadata in registry.list_metadata():
+        for metadata in registry.get_all_registered_class_metadata():
             datasets = list(metadata.default_datasets)
             all_default_datasets.extend(datasets)
             logger.info(f"Scenario '{metadata.registry_name}' uses datasets: {datasets}")

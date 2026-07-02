@@ -48,7 +48,7 @@
 # ## Where techniques come from: initializers
 #
 # Techniques are registered into a singleton
-# [`AttackTechniqueRegistry`](../../../pyrit/registry/object_registries/attack_technique_registry.py)
+# [`AttackTechniqueRegistry`](../../../pyrit/registry/components/attack_technique_registry.py)
 # by an **initializer**. The canonical catalog lives in
 # [`ScenarioTechniqueInitializer`](../../../pyrit/setup/initializers/components/scenario_techniques.py),
 # which registers a flat list of
@@ -65,7 +65,7 @@
 # %%
 import pandas as pd
 
-from pyrit.registry.object_registries.attack_technique_registry import AttackTechniqueRegistry
+from pyrit.registry import AttackTechniqueRegistry
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 from pyrit.setup.initializers.components import ScenarioTechniqueInitializer
 
@@ -132,7 +132,7 @@ print(pd.DataFrame(rows).to_string(index=False))
 #
 # ```python
 # from pyrit.executor.attack import RolePlayAttack, RolePlayPaths
-# from pyrit.registry.object_registries.attack_technique_registry import AttackTechniqueRegistry
+# from pyrit.registry import AttackTechniqueRegistry
 # from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
 #
 # AttackTechniqueRegistry.get_registry_singleton().register_from_factories(

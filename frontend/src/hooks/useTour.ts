@@ -7,8 +7,6 @@ import { TOUR_STEPS } from '../components/Tour/tourSteps'
 import TourTooltip from '../components/Tour/TourTooltip'
 import type { ViewName } from '../components/Sidebar/Navigation'
 
-const STORAGE_KEY = 'pyrit-tour-completed'
-
 // Static Joyride config — hoisted to module scope so they're created once,
 // not on every render. Joyride compares these by reference internally.
 const JOYRIDE_STEPS = [...TOUR_STEPS]
@@ -27,7 +25,7 @@ const JOYRIDE_LOCALE = {
 
 /**
  * Manages the onboarding tour lifecycle: step progression, cross-view
- * navigation, and localStorage persistence.
+ * navigation, and Joyride configuration.
  *
  * Returns props to spread onto `<Joyride>` plus control functions.
  */
@@ -73,8 +71,6 @@ export function useTour(onNavigate: (view: ViewName) => void, isDarkMode: boolea
     })
   }, [currentView])
 
-  const hasCompletedTour = localStorage.getItem(STORAGE_KEY) === 'true'
-
   const startTour = useCallback(() => {
     setStepIndex(0)
     // If we're already on home, start immediately.
@@ -96,7 +92,6 @@ export function useTour(onNavigate: (view: ViewName) => void, isDarkMode: boolea
     pendingStepRef.current = null
     switchingViewRef.current = false
     onNavigate('home')
-    localStorage.setItem(STORAGE_KEY, 'true')
   }, [onNavigate])
 
   const handleJoyrideEvent = useCallback((data: EventData) => {
@@ -178,8 +173,6 @@ export function useTour(onNavigate: (view: ViewName) => void, isDarkMode: boolea
   return {
     /** Call to start (or restart) the tour from step 1 on the Home view. */
     startTour,
-    /** Whether the user has completed the tour at least once. */
-    hasCompletedTour,
     /** Props to spread onto the `<Joyride>` component. */
     tourProps,
   }
