@@ -450,7 +450,7 @@ class TestResumeParameterValidation:
 
         stored = self._make_stored_result(scenario_name=type(scenario).__name__, version=1, params={"max_turns": 5})
         current = self._current_identifier(scenario=scenario, params={"max_turns": 10})
-        with pytest.raises(ValueError, match="different .* configuration") as exc_info:
+        with pytest.raises(ValueError, match="does not match the current") as exc_info:
             scenario._validate_stored_scenario(stored_result=stored, current_identifier=current)
         # Generic drift message never leaks the differing param values.
         assert "10" not in str(exc_info.value)
@@ -467,7 +467,7 @@ class TestResumeParameterValidation:
 
         stored = self._make_stored_result(scenario_name=type(scenario).__name__, version=1, params={"max_turns": 5})
         current = self._current_identifier(scenario=scenario, params={"max_turns": 5, "mode": "fast"})
-        with pytest.raises(ValueError, match="different .* configuration"):
+        with pytest.raises(ValueError, match="does not match the current"):
             scenario._validate_stored_scenario(stored_result=stored, current_identifier=current)
 
     def test_resume_normalizes_json_drift_for_passthrough_tuples(self) -> None:
@@ -489,7 +489,7 @@ class TestResumeParameterValidation:
 
         stored = self._make_stored_result(scenario_name="OtherScenario", version=1, params={})
         current = self._current_identifier(scenario=scenario, params={})
-        with pytest.raises(ValueError, match="belongs to scenario 'OtherScenario'"):
+        with pytest.raises(ValueError, match="does not match the current"):
             scenario._validate_stored_scenario(stored_result=stored, current_identifier=current)
 
     def test_version_mismatch_raises(self) -> None:
@@ -498,7 +498,7 @@ class TestResumeParameterValidation:
 
         stored = self._make_stored_result(scenario_name=type(scenario).__name__, version=999, params={})
         current = self._current_identifier(scenario=scenario, version=1, params={})
-        with pytest.raises(ValueError, match="different .* configuration"):
+        with pytest.raises(ValueError, match="does not match the current"):
             scenario._validate_stored_scenario(stored_result=stored, current_identifier=current)
 
 

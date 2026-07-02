@@ -1117,7 +1117,7 @@ class TestValidateStoredScenario:
             scenario_name="DifferentScenario", scenario_version=1, attack_results={}
         )
 
-        with pytest.raises(ValueError, match="belongs to scenario 'DifferentScenario'"):
+        with pytest.raises(ValueError, match="does not match the current"):
             scenario._validate_stored_scenario(stored_result=stored_result, current_identifier=current)
 
     def test_raises_when_version_mismatches(self):
@@ -1129,7 +1129,7 @@ class TestValidateStoredScenario:
             scenario_name="ConcreteScenario", scenario_version=99, attack_results={}
         )
 
-        with pytest.raises(ValueError, match="different .* configuration"):
+        with pytest.raises(ValueError, match="does not match the current"):
             scenario._validate_stored_scenario(stored_result=stored_result, current_identifier=current)
 
 

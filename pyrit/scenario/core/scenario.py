@@ -737,9 +737,10 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
         Resume is opt-in via ``scenario_result_id``; any divergence from the stored
         result is treated as user error rather than a silent restart, since the
         original progress would otherwise be orphaned without warning. Divergence is
-        detected by comparing behavioral eval hashes: the scenario class, version,
-        resolved techniques / datasets, params, and objective target / scorer all
-        feed the hash, so a mismatch means the configuration changed.
+        detected by comparing behavioral eval hashes: the scenario class name /
+        module, version, resolved techniques / datasets, params, and objective
+        target / scorer all feed the hash, so a mismatch means either a different
+        scenario or a changed configuration.
 
         Args:
             stored_result (ScenarioResult): The scenario result retrieved from memory.
@@ -748,27 +749,19 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
         Raises:
             ValueError: If the stored scenario identity does not match the current one.
         """
-        stored_name = stored_result.scenario_name
-        current_name = type(self).__name__
-
-        if stored_name != current_name:
-            raise ValueError(
-                f"Scenario result id '{self._scenario_result_id}' belongs to scenario '{stored_name}' "
-                f"but current scenario is '{current_name}'. "
-                f"Drop scenario_result_id to start a new scenario."
-            )
-
         # Compare behavioral eval hashes. The stored eval_hash is never trusted;
         # ScenarioEvaluationIdentifier recomputes it from the stored identifier's
-        # params and children, matching how the current identifier is hashed.
+        # class / params / children, matching how the current identifier is hashed.
+        # class_name and class_module both feed the hash, so this also catches a
+        # scenario_result_id that belongs to an entirely different scenario.
         stored_eval_hash = ScenarioEvaluationIdentifier(stored_result.scenario_identifier).eval_hash
         current_eval_hash = ScenarioEvaluationIdentifier(current_identifier).eval_hash
 
         if stored_eval_hash != current_eval_hash:
             raise ValueError(
-                f"Scenario result id '{self._scenario_result_id}' was created with a different "
-                f"{current_name} configuration (version, techniques, datasets, parameters, or "
-                f"objective target / scorer changed). "
+                f"Scenario result id '{self._scenario_result_id}' does not match the current "
+                f"'{type(self).__name__}' configuration (a different scenario, or its version, "
+                f"techniques, datasets, parameters, or objective target / scorer changed). "
                 f"Drop scenario_result_id to start a new scenario, or pass matching configuration to resume."
             )
 
