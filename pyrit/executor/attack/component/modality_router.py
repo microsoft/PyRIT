@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class ModalityFeedbackRouter:
+class _ModalityFeedbackRouter:
     """
     Capability-aware utility for building ``Message`` objects between an
     adversarial chat and an objective target in multi-turn attacks.

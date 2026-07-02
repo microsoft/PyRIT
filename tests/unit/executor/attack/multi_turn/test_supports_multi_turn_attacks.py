@@ -373,7 +373,7 @@ class TestTAPNodeDuplicateSystemMessages:
 
     def _make_tap_node(self, *, supports_multi_turn: bool):
         """Create a minimal _TreeOfAttacksNode for testing."""
-        from pyrit.executor.attack.component import ModalityFeedbackRouter
+        from pyrit.executor.attack.component.modality_router import _ModalityFeedbackRouter
         from pyrit.executor.attack.multi_turn.tree_of_attacks import _TreeOfAttacksNode
 
         target = MagicMock()
@@ -408,7 +408,7 @@ class TestTAPNodeDuplicateSystemMessages:
             auxiliary_scorers=None,
             attack_id=MagicMock(),
             attack_strategy_name="TAP",
-            modality_router=ModalityFeedbackRouter(
+            modality_router=_ModalityFeedbackRouter(
                 adversarial_chat=adversarial_chat,
                 objective_target=target,
             ),
@@ -756,7 +756,7 @@ class TestTAPBranchingPreservesSystemPrompts:
 
     def _make_tap_node(self, *, supports_multi_turn: bool):
         """Create a _TreeOfAttacksNode with real memory."""
-        from pyrit.executor.attack.component import ModalityFeedbackRouter
+        from pyrit.executor.attack.component.modality_router import _ModalityFeedbackRouter
         from pyrit.executor.attack.multi_turn.tree_of_attacks import _TreeOfAttacksNode
 
         target = MagicMock()
@@ -791,7 +791,7 @@ class TestTAPBranchingPreservesSystemPrompts:
             auxiliary_scorers=None,
             attack_id=MagicMock(),
             attack_strategy_name="TAP",
-            modality_router=ModalityFeedbackRouter(
+            modality_router=_ModalityFeedbackRouter(
                 adversarial_chat=adversarial_chat,
                 objective_target=target,
             ),

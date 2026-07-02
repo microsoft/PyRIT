@@ -14,9 +14,9 @@ from pyrit.common.utils import warn_if_set
 from pyrit.exceptions import ComponentRole, execution_context
 from pyrit.executor.attack.component import (
     ConversationManager,
-    ModalityFeedbackRouter,
     get_adversarial_chat_messages,
 )
+from pyrit.executor.attack.component.modality_router import _ModalityFeedbackRouter
 from pyrit.executor.attack.core.attack_config import (
     DEFAULT_ADVERSARIAL_SEED_PROMPT,
     AttackAdversarialConfig,
@@ -161,7 +161,7 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
         # whether prior media should travel back to the adversarial chat or
         # forward to the objective target, and that fills in adversarial
         # placeholders when ``next_message`` carries seed media.
-        self._modality_router = ModalityFeedbackRouter(
+        self._modality_router = _ModalityFeedbackRouter(
             adversarial_chat=self._adversarial_chat,
             objective_target=objective_target,
         )

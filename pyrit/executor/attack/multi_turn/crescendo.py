@@ -21,9 +21,9 @@ from pyrit.exceptions import (
 )
 from pyrit.executor.attack.component import (
     ConversationManager,
-    ModalityFeedbackRouter,
     PrependedConversationConfig,
 )
+from pyrit.executor.attack.component.modality_router import _ModalityFeedbackRouter
 from pyrit.executor.attack.core import (
     AttackAdversarialConfig,
     AttackConverterConfig,
@@ -226,7 +226,7 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
         # whether prior media should travel back to the adversarial chat or
         # forward to the objective target, and that fills in adversarial
         # placeholders when ``next_message`` carries seed media.
-        self._modality_router = ModalityFeedbackRouter(
+        self._modality_router = _ModalityFeedbackRouter(
             adversarial_chat=self._adversarial_chat,
             objective_target=objective_target,
         )

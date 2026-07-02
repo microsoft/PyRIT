@@ -25,13 +25,13 @@ from pyrit.exceptions import (
 )
 from pyrit.executor.attack.component import (
     ConversationManager,
-    ModalityFeedbackRouter,
     PrependedConversationConfig,
     get_prepended_turn_count,
 )
 from pyrit.executor.attack.component.conversation_manager import (
     build_conversation_context_string_async,
 )
+from pyrit.executor.attack.component.modality_router import _ModalityFeedbackRouter
 from pyrit.executor.attack.core.attack_config import (
     AttackAdversarialConfig,
     AttackConverterConfig,
@@ -295,7 +295,7 @@ class _TreeOfAttacksNode:
         auxiliary_scorers: list[Scorer] | None,
         attack_id: ComponentIdentifier,
         attack_strategy_name: str,
-        modality_router: ModalityFeedbackRouter,
+        modality_router: _ModalityFeedbackRouter,
         memory_labels: dict[str, str] | None = None,
         parent_id: str | None = None,
         prompt_normalizer: PromptNormalizer | None = None,
@@ -318,7 +318,7 @@ class _TreeOfAttacksNode:
             auxiliary_scorers (list[Scorer] | None): Additional scorers for the response
             attack_id (ComponentIdentifier): Unique identifier for the attack.
             attack_strategy_name (str): Name of the attack strategy for execution context.
-            modality_router (ModalityFeedbackRouter): Capability-aware router that decides
+            modality_router (_ModalityFeedbackRouter): Capability-aware router that decides
                 whether prior media should travel back to the adversarial chat or forward to
                 the objective target, and fills adversarial-placeholder pieces in seed
                 messages. Typically shared across all nodes of the same attack.
@@ -1430,7 +1430,7 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
         # forward to the objective target, and that fills in adversarial
         # placeholders when ``next_message`` carries seed media. Shared across
         # all nodes of the tree.
-        self._modality_router = ModalityFeedbackRouter(
+        self._modality_router = _ModalityFeedbackRouter(
             adversarial_chat=self._adversarial_chat,
             objective_target=objective_target,
         )

@@ -21,7 +21,7 @@ from pyrit.executor.attack import (
     TAPAttackResult,
     TreeOfAttacksWithPruningAttack,
 )
-from pyrit.executor.attack.component import ModalityFeedbackRouter
+from pyrit.executor.attack.component.modality_router import _ModalityFeedbackRouter
 from pyrit.executor.attack.multi_turn.tree_of_attacks import (
     AttackScoringConfig,
     TAPAttackScoringConfig,
@@ -241,7 +241,7 @@ class AttackBuilder:
         target.configuration.includes.side_effect = lambda capability: (
             capability == CapabilityName.MULTI_TURN and supports_multi_turn
         )
-        # Sensible defaults so the ModalityFeedbackRouter sees a text-only target,
+        # Sensible defaults so the _ModalityFeedbackRouter sees a text-only target,
         # matching the historical behavior of these tests.
         target.configuration.capabilities.input_modalities = frozenset({frozenset(["text"])})
         target.configuration.capabilities.output_modalities = frozenset({frozenset(["text"])})
@@ -961,7 +961,7 @@ class TestBlockedScoringDefaults:
             auxiliary_scorers=[],
             attack_id=ComponentIdentifier(class_name="Test", class_module="test"),
             attack_strategy_name="TreeOfAttacksWithPruningAttack",
-            modality_router=ModalityFeedbackRouter(
+            modality_router=_ModalityFeedbackRouter(
                 adversarial_chat=builder.adversarial_chat,
                 objective_target=builder.objective_target,
             ),
@@ -1029,7 +1029,7 @@ class TestBlockedScoringDefaults:
             auxiliary_scorers=[],
             attack_id=ComponentIdentifier(class_name="Test", class_module="test"),
             attack_strategy_name="TreeOfAttacksWithPruningAttack",
-            modality_router=ModalityFeedbackRouter(
+            modality_router=_ModalityFeedbackRouter(
                 adversarial_chat=builder.adversarial_chat,
                 objective_target=builder.objective_target,
             ),
@@ -1422,7 +1422,7 @@ class TestTreeOfAttacksNode:
         builder.objective_target.configuration.capabilities.output_modalities = frozenset({frozenset({"text"})})
         builder.adversarial_chat.configuration.capabilities.input_modalities = frozenset({frozenset({"text"})})
         builder.adversarial_chat.configuration.capabilities.output_modalities = frozenset({frozenset({"text"})})
-        modality_router = ModalityFeedbackRouter(
+        modality_router = _ModalityFeedbackRouter(
             adversarial_chat=builder.adversarial_chat,
             objective_target=builder.objective_target,
         )
@@ -2592,7 +2592,7 @@ class TestModalityRouterIntegration:
         prompt_normalizer = MagicMock()
         prompt_normalizer.send_prompt_async = AsyncMock(return_value=None)
 
-        modality_router = ModalityFeedbackRouter(
+        modality_router = _ModalityFeedbackRouter(
             adversarial_chat=builder.adversarial_chat,
             objective_target=builder.objective_target,
         )
@@ -2641,7 +2641,7 @@ class TestModalityRouterIntegration:
         node_components["objective_target"].configuration.capabilities.output_modalities = frozenset(
             {frozenset({"image_path"})}
         )
-        node_components["modality_router"] = ModalityFeedbackRouter(
+        node_components["modality_router"] = _ModalityFeedbackRouter(
             adversarial_chat=node_components["adversarial_chat"],
             objective_target=node_components["objective_target"],
         )
@@ -2712,7 +2712,7 @@ class TestModalityRouterIntegration:
         node_components["objective_target"].configuration.capabilities.input_modalities = frozenset(
             {frozenset({"text", "image_path"})}
         )
-        node_components["modality_router"] = ModalityFeedbackRouter(
+        node_components["modality_router"] = _ModalityFeedbackRouter(
             adversarial_chat=node_components["adversarial_chat"],
             objective_target=node_components["objective_target"],
         )

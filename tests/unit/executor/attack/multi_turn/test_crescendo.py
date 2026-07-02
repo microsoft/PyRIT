@@ -67,7 +67,7 @@ def create_mock_chat_target(*, name: str = "MockChatTarget") -> MagicMock:
     target.send_prompt_async = AsyncMock()
     target.set_system_prompt = MagicMock()
     target.get_identifier.return_value = _mock_target_id(name)
-    # Sensible default for the ModalityFeedbackRouter: text-only target. Tests
+    # Sensible default for the _ModalityFeedbackRouter: text-only target. Tests
     # that need multimodal behavior override input_modalities on their own copy.
     target.configuration.capabilities.input_modalities = frozenset({frozenset({"text"})})
     target.configuration.capabilities.output_modalities = frozenset({frozenset({"text"})})
