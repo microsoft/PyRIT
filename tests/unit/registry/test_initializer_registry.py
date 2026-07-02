@@ -7,8 +7,7 @@ from unittest.mock import patch
 
 import pytest
 
-from pyrit.registry.class_registries.base_class_registry import ClassEntry
-from pyrit.registry.class_registries.initializer_registry import (
+from pyrit.registry.components.initializer_registry import (
     PYRIT_PATH,
     InitializerRegistry,
 )
@@ -47,8 +46,7 @@ def test_build_metadata_uses_docstring_description():
             pass
 
     registry = InitializerRegistry(lazy_discovery=True)
-    entry = ClassEntry(registered_class=FakeInitializer)
-    metadata = registry._build_metadata("fake", entry)
+    metadata = registry._build_metadata("fake", FakeInitializer)
 
     assert metadata.class_description == "A fake initializer for testing."
     assert metadata.class_name == "FakeInitializer"
@@ -182,8 +180,7 @@ def test_unregister_and_cleanup_rejects_builtin(lazy_registry):
         async def initialize_async(self) -> None:
             pass
 
-    entry = ClassEntry(registered_class=BuiltinInit)
-    lazy_registry._class_entries["builtin_test"] = entry
+    lazy_registry._classes["builtin_test"] = BuiltinInit
     lazy_registry._builtin_names.add("builtin_test")
 
     with pytest.raises(ValueError, match="Cannot remove built-in"):
@@ -199,8 +196,7 @@ def test_is_builtin_returns_true_for_discovered_initializers(lazy_registry):
         async def initialize_async(self) -> None:
             pass
 
-    entry = ClassEntry(registered_class=FakeInit)
-    lazy_registry._class_entries["fake"] = entry
+    lazy_registry._classes["fake"] = FakeInit
     lazy_registry._builtin_names.add("fake")
 
     assert lazy_registry.is_builtin("fake") is True

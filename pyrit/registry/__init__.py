@@ -7,14 +7,14 @@ from pyrit.registry.base import RegistryProtocol
 from pyrit.registry.class_registries import (
     BaseClassRegistry,
     ClassEntry,
-    InitializerMetadata,
-    InitializerRegistry,
 )
 from pyrit.registry.components import (
     AttackTechniqueMetadata,
     AttackTechniqueRegistry,
     ConverterMetadata,
     ConverterRegistry,
+    InitializerMetadata,
+    InitializerRegistry,
     ScenarioMetadata,
     ScenarioRegistry,
     ScorerMetadata,
