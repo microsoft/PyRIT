@@ -1,11 +1,12 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+from __future__ import annotations
+
 import logging
 import uuid
-from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any
 
 from pyrit.common.utils import combine_dict
 from pyrit.executor.attack.component.prepended_conversation_config import (
@@ -21,14 +22,16 @@ from pyrit.models import (
     MessagePiece,
     Score,
 )
-from pyrit.prompt_normalizer.prompt_converter_configuration import (
-    PromptConverterConfiguration,
-)
 from pyrit.prompt_normalizer.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import CapabilityName, PromptTarget
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from pyrit.executor.attack.core import AttackContext
+    from pyrit.prompt_normalizer.prompt_converter_configuration import (
+        PromptConverterConfiguration,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -259,11 +262,11 @@ class ConversationManager:
     async def initialize_context_async(
         self,
         *,
-        context: "AttackContext[Any]",
+        context: AttackContext[Any],
         target: PromptTarget,
         conversation_id: str,
         request_converters: list[PromptConverterConfiguration] | None = None,
-        prepended_conversation_config: Optional["PrependedConversationConfig"] = None,
+        prepended_conversation_config: PrependedConversationConfig | None = None,
         max_turns: int | None = None,
         memory_labels: dict[str, str] | None = None,
     ) -> ConversationState:
@@ -338,9 +341,9 @@ class ConversationManager:
     async def _handle_non_chat_target_async(
         self,
         *,
-        context: "AttackContext[Any]",
+        context: AttackContext[Any],
         prepended_conversation: list[Message],
-        config: Optional["PrependedConversationConfig"],
+        config: PrependedConversationConfig | None,
     ) -> ConversationState:
         """
         Handle prepended conversation for non-chat targets.
@@ -400,7 +403,7 @@ class ConversationManager:
         prepended_conversation: list[Message],
         conversation_id: str,
         request_converters: list[PromptConverterConfiguration] | None = None,
-        prepended_conversation_config: Optional["PrependedConversationConfig"] = None,
+        prepended_conversation_config: PrependedConversationConfig | None = None,
         max_turns: int | None = None,
         target_identifier: ComponentIdentifier | None = None,
     ) -> int:
@@ -483,11 +486,11 @@ class ConversationManager:
     async def _process_prepended_for_chat_target_async(
         self,
         *,
-        context: "AttackContext[Any]",
+        context: AttackContext[Any],
         prepended_conversation: list[Message],
         conversation_id: str,
         request_converters: list[PromptConverterConfiguration] | None,
-        prepended_conversation_config: Optional["PrependedConversationConfig"],
+        prepended_conversation_config: PrependedConversationConfig | None,
         max_turns: int | None,
         target_identifier: ComponentIdentifier | None = None,
     ) -> ConversationState:

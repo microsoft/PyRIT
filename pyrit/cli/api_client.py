@@ -197,6 +197,19 @@ class PyRITApiClient:
         return [TargetInstance.model_validate(item) for item in payload.get("items", [])]
 
     # ------------------------------------------------------------------
+    # Datasets
+    # ------------------------------------------------------------------
+
+    async def list_datasets_async(self) -> dict[str, Any]:
+        """
+        List all available datasets.
+
+        Returns:
+            dict: ``DatasetListResponse`` payload.
+        """
+        return await self._get_json_async(path="/api/datasets")
+
+    # ------------------------------------------------------------------
     # Scenario runs
     # ------------------------------------------------------------------
 

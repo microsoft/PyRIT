@@ -86,6 +86,7 @@ from pyrit.models.parameter import (
     Parameter,
     ParameterDestination,
     RegistryReference,
+    display_choices,
 )
 from pyrit.models.question_answering import QuestionAnsweringDataset, QuestionAnsweringEntry, QuestionChoice
 from pyrit.models.results.attack_result import AttackOutcome, AttackResult, AttackResultT
@@ -137,6 +138,7 @@ __all__ = [
     "ConversationStats",
     "ConversationType",
     "construct_response_from_request",
+    "display_choices",
     "EmbeddingData",
     "EmbeddingResponse",
     "EmbeddingSupport",

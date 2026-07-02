@@ -264,6 +264,29 @@ test.describe("Error: backend 500 on send message", () => {
     // The failed text should be restored in the input for easy re-send
     await expect(input).toHaveValue("This should fail", { timeout: 5000 });
   });
+
+  test("should recover cleanly when the first send fails", async ({ page }) => {
+    await mockAllAPIs(page, async (route) => {
+      await route.fulfill({
+        status: 500,
+        contentType: "application/json",
+        body: JSON.stringify({ detail: "Internal server error" }),
+      });
+    });
+
+    await page.goto("/");
+    await activateMockTarget(page);
+
+    const input = page.getByRole("textbox");
+    await input.fill("First send fails");
+    await page.getByRole("button", { name: /send/i }).click();
+
+    await expect(page.getByText(/Internal server error/i)).toBeVisible({
+      timeout: 10000,
+    });
+    await expect(page.getByTestId("loading-state")).toHaveCount(0);
+    await expect(input).toHaveValue("First send fails", { timeout: 5000 });
+  });
 });
 
 // ---------------------------------------------------------------------------

@@ -13,7 +13,7 @@ import is deferred to each function so importing this module stays cheap.
 from __future__ import annotations
 
 import sys
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from pyrit.models import ScenarioResult
@@ -113,7 +113,7 @@ def print_scenario_list(*, items: list[RegisteredScenario]) -> None:
             print("    Supported Parameters:")
             for p in sc.supported_parameters:
                 default_str = f" [default: {p.default!r}]" if p.default is not None else ""
-                type_str = f" ({p.param_type})" if p.param_type else ""
+                type_str = f" ({p.type_name})" if p.type_name else ""
                 choices_str = f" [choices: {', '.join(p.choices)}]" if p.choices else ""
                 print(f"      - {p.name}{type_str}{default_str}{choices_str}: {p.description}")
     print("\n" + "=" * 80)
@@ -191,6 +191,31 @@ def print_target_list(*, items: list[TargetInstance]) -> None:
             print(f"    Endpoint: {tgt.endpoint}")
     print("\n" + "=" * 80)
     print(f"\nTotal targets: {len(items)}")
+
+
+# ---------------------------------------------------------------------------
+# Dataset listing
+# ---------------------------------------------------------------------------
+
+
+def print_dataset_list(*, items: list[dict[str, Any]]) -> None:
+    """
+    Print a formatted list of available datasets.
+
+    Args:
+        items: List of dataset dicts from ``GET /api/datasets``.
+    """
+    if not items:
+        print("No datasets found.")
+        return
+
+    print("\nAvailable Datasets:")
+    print("=" * 80)
+    for ds in items:
+        name = ds.get("name", "unknown")
+        print(f"    {name}")
+    print("=" * 80)
+    print(f"\nTotal datasets: {len(items)}")
 
 
 # ---------------------------------------------------------------------------

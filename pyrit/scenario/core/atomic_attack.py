@@ -13,19 +13,21 @@ times when that may not be possible or make sense. So this class exists to
 have a common interface for scenarios.
 """
 
+from __future__ import annotations
+
 import logging
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any
 
 from pyrit.common.utils import to_sha256
 from pyrit.executor.attack import AttackExecutor
-from pyrit.executor.attack.core.attack_executor import AttackExecutorResult
 from pyrit.executor.attack.core.attack_result_attribution import AttackResultAttribution
 from pyrit.memory import CentralMemory
 from pyrit.models import AtomicAttackEvaluationIdentifier, AtomicAttackIdentifier, AttackResult, SeedAttackGroup
-from pyrit.scenario.core.attack_technique import AttackTechnique
 
 if TYPE_CHECKING:
+    from pyrit.executor.attack.core.attack_executor import AttackExecutorResult
     from pyrit.prompt_target import PromptTarget
+    from pyrit.scenario.core.attack_technique import AttackTechnique
     from pyrit.score import TrueFalseScorer
 
 logger = logging.getLogger(__name__)
@@ -54,8 +56,8 @@ class AtomicAttack:
         display_group: str | None = None,
         attack_technique: AttackTechnique,
         seed_groups: list[SeedAttackGroup],
-        adversarial_chat: Optional["PromptTarget"] = None,
-        objective_scorer: Optional["TrueFalseScorer"] = None,
+        adversarial_chat: PromptTarget | None = None,
+        objective_scorer: TrueFalseScorer | None = None,
         memory_labels: dict[str, str] | None = None,
         **attack_execute_params: Any,
     ) -> None:

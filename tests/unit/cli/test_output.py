@@ -10,15 +10,14 @@ All public ``print_*`` functions accept typed ``pyrit.models`` objects
 """
 
 from datetime import datetime, timezone
+from typing import Literal
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from pyrit.cli import _output
-from pyrit.models import ScenarioRunState
+from pyrit.models import Parameter, ScenarioRunState
 from pyrit.models.catalog import (
-    InitializerParameterSummary,
     RegisteredInitializer,
     RegisteredScenario,
-    ScenarioParameterSummary,
     ScenarioRunSummary,
     TargetCapabilitiesInfo,
     TargetInstance,
@@ -173,18 +172,15 @@ def test_print_scenario_list_full(capsys):
             default_datasets=["d1", "d2"],
             max_dataset_size=50,
             supported_parameters=[
-                ScenarioParameterSummary(
+                Parameter(
                     name="max_turns",
-                    default="5",
-                    param_type="int",
-                    choices=None,
+                    default=5,
+                    param_type=int,
                     description="Maximum turns.",
                 ),
-                ScenarioParameterSummary(
+                Parameter(
                     name="mode",
-                    default=None,
-                    param_type="str",
-                    choices=["a", "b"],
+                    param_type=Literal["a", "b"],
                     description="Mode.",
                 ),
             ],
@@ -246,8 +242,8 @@ def test_print_initializer_list_full(capsys):
             initializer_type="OpenAITargetInitializer",
             required_env_vars=["OPENAI_API_KEY", "OPENAI_ENDPOINT"],
             supported_parameters=[
-                InitializerParameterSummary(name="model", default=["gpt-4"], description="Model name."),
-                InitializerParameterSummary(name="temp", default=None, description="Temperature."),
+                Parameter(name="model", default=["gpt-4"], param_type=list[str], description="Model name."),
+                Parameter(name="temp", default=None, param_type=str, description="Temperature."),
             ],
             description="Registers OpenAI targets.",
         ),
@@ -306,6 +302,29 @@ def test_print_target_list_full(capsys):
     assert "Model: claude-sonnet" in captured.out
     assert "minimal" in captured.out
     assert "Total targets: 3" in captured.out
+
+
+# ---------------------------------------------------------------------------
+# print_dataset_list
+# ---------------------------------------------------------------------------
+
+
+def test_print_dataset_list_empty(capsys):
+    _output.print_dataset_list(items=[])
+    captured = capsys.readouterr()
+    assert "No datasets found" in captured.out
+
+
+def test_print_dataset_list_full(capsys):
+    items = [
+        {"name": "airt_hate"},
+        {"name": "harmbench"},
+    ]
+    _output.print_dataset_list(items=items)
+    captured = capsys.readouterr()
+    assert "airt_hate" in captured.out
+    assert "harmbench" in captured.out
+    assert "Total datasets: 2" in captured.out
 
 
 # ---------------------------------------------------------------------------
