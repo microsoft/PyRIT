@@ -308,7 +308,7 @@ ARG_HELP = {
     "max_dataset_size": "Maximum number of items to use from the dataset (must be >= 1). "
     "Limits new datasets if --dataset-names provided, otherwise overrides scenario's default limit",
     "dataset_parameters": "Dataset seed filters as KEY=VALUE tokens "
-    "(e.g., harm_categories=cyber data_types=text). Accepted keys: harm_categories, data_types. "
+    "(e.g., harm_categories=cyber data_types=text). Accepted keys: " + ", ".join(_ADVERTISED_DATASET_FILTER_KEYS) + ". "
     "Keys filter seeds before sizing. "
     "List values may be comma-separated (e.g., harm_categories=cyber,violence)",
     "target": "Name of a registered target from the TargetRegistry to use as the objective target. "
