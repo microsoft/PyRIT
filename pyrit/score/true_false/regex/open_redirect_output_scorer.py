@@ -31,8 +31,8 @@ class OpenRedirectOutputScorer(RegexScorer):
         ),
         # Redirect parameter carrying an encoded //bypass (%2f%2f or %2F%2F).
         "Encoded Slash Redirect": (
-            r"(?i)\b(?:redirect(?:_?(?:uri|url|to))?|return_?url|next|continue|dest|goto|callback)"
-            r"\s*[=:]\s*[\"']?[^\"'\s]*%2f%2f"
+            r"(?i)\b(?:redirect(?:_?(?:uri|url|to))?|return_?url|returnto|next|continue|dest(?:ination)?|"
+            r"goto|callback|forward|location)\s*[=:]\s*[\"']?[^\"'\s]*%2f%2f"
         ),
         # Userinfo host confusion: https://trusted@evil — the real host is after the @.
         "Userinfo Host Confusion": r"(?i)\bhttps?://[A-Za-z0-9._~%-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}",

@@ -15,6 +15,7 @@ from pyrit.score import OpenRedirectOutputScorer
     [
         "redirect=//evil.com/steal",
         "next=%2f%2fattacker.com",
+        "returnto=%2f%2fattacker.com",
         "Location: //attacker.example",
         "https://trusted.com@evil.com/login",
     ],
