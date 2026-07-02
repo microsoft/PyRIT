@@ -196,7 +196,9 @@ class DefaultInstanceRegistry(Generic[T]):
         return resolved
 
     @staticmethod
-    def _normalize_tags(tags: dict[str, str] | list[str] | None = None) -> dict[str, str]:
+    def _normalize_tags(
+        tags: dict[str, str] | list[str] | None = None,
+    ) -> dict[str, str]:
         """
         Normalize tags into a ``dict[str, str]``.
 

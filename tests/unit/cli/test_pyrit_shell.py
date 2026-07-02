@@ -12,6 +12,7 @@ import pytest
 
 from pyrit.cli import pyrit_shell
 from pyrit.models import Parameter
+from unit.mocks import make_scenario_result
 
 
 def _sp(*, name, description="", default=None, param_type="str", choices=None, is_list=False) -> Parameter:
@@ -40,6 +41,7 @@ def mock_api_client():
     client.list_scenarios_async.return_value = []
     client.list_initializers_async.return_value = []
     client.list_targets_async.return_value = []
+    client.list_converters_async.return_value = {"items": []}
     client.list_scenario_runs_async.return_value = []
     # Default: scenario fetch returns a typed RegisteredScenario with no declared params.
     client.get_scenario_async.return_value = RegisteredScenario(
@@ -50,7 +52,6 @@ def mock_api_client():
         aggregate_strategies=[],
         all_strategies=[],
         default_datasets=[],
-        max_dataset_size=None,
         supported_parameters=[],
     )
     client.close_async = AsyncMock()
@@ -65,7 +66,6 @@ def mock_api_client():
         aggregate_strategies=kw.get("aggregate_strategies", []),
         all_strategies=kw.get("all_strategies", []),
         default_datasets=kw.get("default_datasets", []),
-        max_dataset_size=kw.get("max_dataset_size", None),
         supported_parameters=kw.get("supported_parameters", []),
     )
     # Suppress unused-import warning for datetime/timezone helpers used by tests.
@@ -135,6 +135,17 @@ class TestPyRITShell:
         s, client = shell
         s.do_list_targets("")
         client.list_targets_async.assert_awaited_once()
+
+    def test_do_list_converters(self, shell):
+        s, client = shell
+        s.do_list_converters("")
+        client.list_converters_async.assert_awaited_once()
+
+    def test_do_list_converters_rejects_args(self, shell, capsys):
+        s, _ = shell
+        s.do_list_converters("extra")
+        captured = capsys.readouterr()
+        assert "does not accept arguments" in captured.out
 
     def test_do_run_empty_args(self, shell, capsys):
         s, _ = shell
@@ -266,7 +277,10 @@ class TestShellMain:
             mock_shell = MagicMock()
             mock_shell_class.return_value = mock_shell
 
-            with patch("sys.argv", ["pyrit_shell", "--server-url", "http://remote:9000", "--no-animation"]):
+            with patch(
+                "sys.argv",
+                ["pyrit_shell", "--server-url", "http://remote:9000", "--no-animation"],
+            ):
                 pyrit_shell.main()
 
             mock_shell_class.assert_called_once()
@@ -332,7 +346,10 @@ class TestResolveBaseUrl:
 
     def test_falls_back_to_config_reader(self, tmp_path):
         s = pyrit_shell.PyRITShell(no_animation=True)
-        with patch("pyrit.cli._config_reader.read_server_url", return_value="http://from-cfg:8000"):
+        with patch(
+            "pyrit.cli._config_reader.read_server_url",
+            return_value="http://from-cfg:8000",
+        ):
             assert s._resolve_base_url() == "http://from-cfg:8000"
 
     def test_default_when_config_returns_none(self):
@@ -352,7 +369,10 @@ class TestEnsureClientStartServer:
                 new_callable=AsyncMock,
                 return_value=False,
             ),
-            patch("pyrit.cli._server_launcher.ServerLauncher.start_async", new_callable=AsyncMock) as mock_start,
+            patch(
+                "pyrit.cli._server_launcher.ServerLauncher.start_async",
+                new_callable=AsyncMock,
+            ) as mock_start,
             patch("pyrit.cli.api_client.PyRITApiClient") as mock_client_class,
         ):
             mock_start.return_value = "http://localhost:8000"
@@ -481,10 +501,10 @@ class TestDoRun:
     @staticmethod
     def _empty_scenario_result():
         """Build a minimal ScenarioResult for use as get_scenario_run_results_async return."""
-        from pyrit.models import ScenarioIdentifier, ScenarioResult, ScenarioRunState
+        from pyrit.models import ScenarioRunState
 
-        return ScenarioResult(
-            scenario_identifier=ScenarioIdentifier(name="foo"),
+        return make_scenario_result(
+            scenario_name="foo",
             objective_target_identifier=None,
             objective_scorer_identifier=None,
             attack_results={},
@@ -632,6 +652,12 @@ class TestListErrors:
         s.do_list_targets("")
         assert "Error listing targets" in capsys.readouterr().out
 
+    def test_list_converters_error(self, shell, capsys):
+        s, client = shell
+        client.list_converters_async = AsyncMock(side_effect=RuntimeError("x"))
+        s.do_list_converters("")
+        assert "Error listing converters" in capsys.readouterr().out
+
     def test_scenario_history_error(self, shell, capsys):
         s, client = shell
         client.list_scenario_runs_async = AsyncMock(side_effect=RuntimeError("x"))
@@ -641,11 +667,11 @@ class TestListErrors:
 
 class TestPrintScenarioAndHelp:
     def test_print_scenario_success(self, shell):
-        from pyrit.models import ScenarioIdentifier, ScenarioResult, ScenarioRunState
+        from pyrit.models import ScenarioRunState
 
         s, client = shell
-        empty_result = ScenarioResult(
-            scenario_identifier=ScenarioIdentifier(name="foo"),
+        empty_result = make_scenario_result(
+            scenario_name="foo",
             objective_target_identifier=None,
             objective_scorer_identifier=None,
             attack_results={},
@@ -701,7 +727,10 @@ class TestServerManagement:
                 new_callable=AsyncMock,
                 return_value=False,
             ),
-            patch("pyrit.cli._server_launcher.ServerLauncher.start_async", new_callable=AsyncMock) as mock_start,
+            patch(
+                "pyrit.cli._server_launcher.ServerLauncher.start_async",
+                new_callable=AsyncMock,
+            ) as mock_start,
             patch("pyrit.cli.api_client.PyRITApiClient") as mock_client_class,
         ):
             mock_start.return_value = "http://localhost:8000"
@@ -722,7 +751,10 @@ class TestServerManagement:
                 new_callable=AsyncMock,
                 return_value=False,
             ),
-            patch("pyrit.cli._server_launcher.ServerLauncher.start_async", new_callable=AsyncMock) as mock_start,
+            patch(
+                "pyrit.cli._server_launcher.ServerLauncher.start_async",
+                new_callable=AsyncMock,
+            ) as mock_start,
             patch("pyrit.cli.api_client.PyRITApiClient") as mock_client_class,
         ):
             mock_start.return_value = "http://localhost:8000"
@@ -898,7 +930,10 @@ class TestScenarioParamCoercionInShell:
 class TestSplitInitializerPaths:
     def test_posix_splits_on_whitespace(self):
         with patch.object(pyrit_shell.os, "name", "posix"):
-            assert pyrit_shell._split_initializer_paths("/a/one.py /b/two.py") == ["/a/one.py", "/b/two.py"]
+            assert pyrit_shell._split_initializer_paths("/a/one.py /b/two.py") == [
+                "/a/one.py",
+                "/b/two.py",
+            ]
 
     def test_posix_respects_quotes_with_spaces(self):
         with patch.object(pyrit_shell.os, "name", "posix"):

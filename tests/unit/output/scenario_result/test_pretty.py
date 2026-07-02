@@ -4,13 +4,15 @@
 import uuid
 
 import pytest
+from unit.mocks import make_scenario_result
 
-from pyrit.models import AttackOutcome, AttackResult, ComponentIdentifier, ScenarioIdentifier, ScenarioResult
+from pyrit.models import (
+    AttackOutcome,
+    AttackResult,
+    ComponentIdentifier,
+    ScenarioResult,
+)
 from pyrit.output.scenario_result.pretty import PrettyScenarioResultMemoryPrinter
-
-
-def _scenario_identifier(*, name: str = "TestScenario", description: str = "") -> ScenarioIdentifier:
-    return ScenarioIdentifier(name=name, description=description, scenario_version=1, pyrit_version="1.0.0")
 
 
 def _target_identifier(**params) -> ComponentIdentifier:
@@ -29,8 +31,11 @@ def _scenario_result(
     objective_scorer_identifier: ComponentIdentifier | None = None,
     display_group_map: dict[str, str] | None = None,
 ) -> ScenarioResult:
-    return ScenarioResult(
-        scenario_identifier=_scenario_identifier(description=description),
+    return make_scenario_result(
+        scenario_name="TestScenario",
+        scenario_version=1,
+        pyrit_version="1.0.0",
+        scenario_description=description,
         objective_target_identifier=_target_identifier(**(target_params or {})),
         attack_results=attack_results or {"strategy_a": [_attack_result()]},
         objective_scorer_identifier=objective_scorer_identifier,
@@ -77,8 +82,10 @@ async def test_write_async_renders_full_summary(printer, capsys):
 
 
 async def test_write_async_with_unknown_target_when_no_params(printer, capsys):
-    result = ScenarioResult(
-        scenario_identifier=_scenario_identifier(),
+    result = make_scenario_result(
+        scenario_name="TestScenario",
+        scenario_version=1,
+        pyrit_version="1.0.0",
         objective_target_identifier=ComponentIdentifier.from_dict({}),
         attack_results={"s": []},
         objective_scorer_identifier=None,
@@ -101,7 +108,9 @@ async def test_write_async_renders_scorer_section_when_scorer_identifier_present
     assert "[scorer-render-output]" in capsys.readouterr().out
 
 
-async def test_write_async_raises_when_scorer_identifier_present_without_scorer_printer(patch_central_database):
+async def test_write_async_raises_when_scorer_identifier_present_without_scorer_printer(
+    patch_central_database,
+):
     printer = PrettyScenarioResultMemoryPrinter(enable_colors=False)
     printer._scorer_printer = None
     result = _scenario_result(objective_scorer_identifier=_target_identifier())
@@ -114,7 +123,10 @@ async def test_write_async_raises_when_scorer_identifier_present_without_scorer_
     [
         (100, [AttackOutcome.SUCCESS, AttackOutcome.SUCCESS]),  # >=75 RED band
         (50, [AttackOutcome.SUCCESS, AttackOutcome.FAILURE]),  # >=50 YELLOW band
-        (33, [AttackOutcome.SUCCESS, AttackOutcome.FAILURE, AttackOutcome.FAILURE]),  # >=25 CYAN band
+        (
+            33,
+            [AttackOutcome.SUCCESS, AttackOutcome.FAILURE, AttackOutcome.FAILURE],
+        ),  # >=25 CYAN band
         (0, [AttackOutcome.FAILURE]),  # <25 GREEN band
     ],
 )
@@ -207,7 +219,11 @@ async def test_write_async_sort_is_stable_for_ties(patch_central_database, capsy
     )
     await sorting_printer.write_async(result)
     # Tied 100% groups retain their original relative order; 0% group goes last.
-    assert _group_order(capsys.readouterr().out) == ["first_success", "second_success", "fail"]
+    assert _group_order(capsys.readouterr().out) == [
+        "first_success",
+        "second_success",
+        "fail",
+    ]
 
 
 # --- deprecated alias ---

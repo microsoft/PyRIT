@@ -2,11 +2,12 @@
 # Licensed under the MIT license.
 
 """
-The constructor <-> ``Parameter`` contract bridge for PyRIT registries.
+The ``Parameter`` contract bridge for PyRIT registries.
 
-This module is the single place that translates between a component class's
-``__init__`` and the declarative ``Parameter`` contract carried by its domain
-identifier. It has three responsibilities:
+This module is the single place that translates raw arguments into ready values
+against the declarative ``Parameter`` contract, whether that contract is derived
+from a class ``__init__`` or declared explicitly by a component. It has three
+responsibilities:
 
 - **Derive** (``derive_parameters``): read the constructor signature, enriched
   by the identifier's ``Param.*`` build markers, into a ``list[Parameter]``. A
@@ -14,12 +15,18 @@ identifier. It has three responsibilities:
   included field typed as a child identifier, e.g. ``TargetIdentifier``) becomes
   a registry **reference**; every other parameter becomes a plain value parameter
   whose ``param_type`` is the annotation with ``Optional[X]`` reduced to ``X``.
-- **Resolve** (``resolve_constructor_args``): derive the contract for a class
-  and turn a flat dict of raw arguments into constructor-ready keyword arguments —
-  coercing simple string values via ``Parameter.coerce_value`` and resolving
-  registry-reference parameters by name from the owning domain's registry.
-- **Present** (``display_choices``): project a constrained-scalar ``param_type``
-  into its allowed-value display tuple.
+- **Resolve from a constructor** (``resolve_constructor_args``): derive the
+  contract for a class and turn a flat dict of raw arguments into
+  constructor-ready keyword arguments — coercing simple string values via
+  ``Parameter.coerce_value`` and resolving registry-reference parameters by name
+  from the owning domain's registry. Defaults are left to the constructor.
+- **Resolve from a declared list** (``resolve_declared_params``): the sibling for
+  a component that declares an explicit ``list[Parameter]`` (e.g. a scenario's
+  ``supported_parameters()``). It has no references, coerces every supplied
+  value, and materializes every declared default so the result is a complete
+  param bag. Both resolve functions delegate the actual coercion/validation to
+  the ``Parameter`` model — that is the one shared kernel; they differ only in
+  where the contract comes from and how defaults are handled.
 
 The identifier is the declarative blueprint; this module is where the registry
 reads and applies it. It performs no eager heavy imports and never imports
@@ -28,6 +35,7 @@ reads and applies it. It performs no eager heavy imports and never imports
 
 from __future__ import annotations
 
+import copy
 import inspect
 import re
 import types
@@ -147,7 +155,10 @@ def derive_parameters(*, cls: type, identifier_type: type[ComponentIdentifier] |
     for name, param in sig.parameters.items():
         if name in _SKIPPED_PARAM_NAMES:
             continue
-        if param.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
+        if param.kind in (
+            inspect.Parameter.VAR_POSITIONAL,
+            inspect.Parameter.VAR_KEYWORD,
+        ):
             continue
 
         annotation = param.annotation
@@ -166,7 +177,14 @@ def derive_parameters(*, cls: type, identifier_type: type[ComponentIdentifier] |
             )
         else:
             param_type = None if annotation is inspect.Parameter.empty else _unwrap_optional(annotation)
-            parameters.append(Parameter(name=name, description=description, default=default, param_type=param_type))
+            parameters.append(
+                Parameter(
+                    name=name,
+                    description=description,
+                    default=default,
+                    param_type=param_type,
+                )
+            )
 
     return parameters
 
@@ -188,7 +206,9 @@ class _NamedInstanceRegistry(Protocol):
         ...
 
 
-def _registry_getter_for_component_type(component_type: ComponentType) -> Callable[[], _NamedInstanceRegistry] | None:
+def _registry_getter_for_component_type(
+    component_type: ComponentType,
+) -> Callable[[], _NamedInstanceRegistry] | None:
     """
     Return the getter for the instance registry that resolves a component family.
 
@@ -205,7 +225,11 @@ def _registry_getter_for_component_type(component_type: ComponentType) -> Callab
         Callable[[], _NamedInstanceRegistry] | None: The registry getter, or None
         when no registry is wired for ``component_type``.
     """
-    from pyrit.registry.components import ConverterRegistry, ScorerRegistry, TargetRegistry
+    from pyrit.registry.components import (
+        ConverterRegistry,
+        ScorerRegistry,
+        TargetRegistry,
+    )
 
     registry_classes = {
         ComponentType.TARGET: TargetRegistry,
@@ -313,7 +337,10 @@ def _resolve_registry_reference(
 
 
 def resolve_constructor_args(
-    *, cls: type, raw_args: dict[str, Any], identifier_type: type[ComponentIdentifier] | None = None
+    *,
+    cls: type,
+    raw_args: dict[str, Any],
+    identifier_type: type[ComponentIdentifier] | None = None,
 ) -> dict[str, Any]:
     """
     Resolve a flat argument dict into constructor-ready keyword arguments.
@@ -371,3 +398,136 @@ def resolve_constructor_args(
             resolved[name] = value
 
     return resolved
+
+
+# ---------------------------------------------------------------------------
+# Resolve (declared list): raw args -> fully-materialized declared-parameter dict
+# ---------------------------------------------------------------------------
+
+
+def resolve_declared_params(
+    *,
+    declared: list[Parameter],
+    raw_args: dict[str, Any],
+    owner: str,
+) -> dict[str, Any]:
+    """
+    Resolve ``raw_args`` against an explicit declared-parameter contract.
+
+    The declared-list sibling of ``resolve_constructor_args``. Both translate a
+    flat dict of raw arguments into ready values against the ``Parameter``
+    contract, delegating the actual coercion/validation to the ``Parameter``
+    model; they differ only in where the contract comes from and how it is
+    consumed:
+
+    - ``resolve_constructor_args`` derives the contract from a class ``__init__``,
+      resolves registry references, coerces string values, and returns the kwargs
+      subset for ``cls(**resolved)`` (the constructor supplies defaults).
+    - ``resolve_declared_params`` takes an explicit ``list[Parameter]`` (e.g. a
+      scenario's ``supported_parameters()``), has no references, coerces every
+      supplied value, and **materializes every declared default** so the returned
+      dict is a complete param bag. Params declared without a default land as
+      ``None`` so callers can rely on ``params[name]`` never raising ``KeyError``.
+
+    Args:
+        declared (list[Parameter]): The declaration snapshot to validate against.
+        raw_args (dict[str, Any]): Map of parameter name to raw value. Keys with
+            ``None`` values are treated as absent (YAML ``null``).
+        owner (str): Human-readable owner label used to prefix error messages,
+            e.g. ``"Scenario 'FoundryScenario'"``.
+
+    Returns:
+        dict[str, Any]: Fully-materialized parameter dict.
+
+    Raises:
+        ValueError: Invalid declaration, unknown parameter, coercion failure, or
+            value not in ``choices``.
+    """
+    _validate_declarations(declared=declared, owner=owner)
+
+    declared_by_name = {param.name: param for param in declared}
+
+    # None values are treated as absent so YAML `key: null` falls through to defaults.
+    supplied = {name: value for name, value in raw_args.items() if value is not None}
+
+    coerced: dict[str, Any] = {}
+    for name, raw_value in supplied.items():
+        param = declared_by_name.get(name)
+        if param is None:
+            # Stash unknowns so _reject_undeclared_params can list them all at once.
+            coerced[name] = raw_value
+            continue
+        coerced[name] = param.coerce_value(raw_value)
+
+    _reject_undeclared_params(params=coerced, declared=declared, owner=owner)
+
+    for param in declared:
+        if param.name in coerced:
+            continue
+        # Materialize every declared param so callers can rely on
+        # ``params[name]`` never raising ``KeyError``. Params declared without an
+        # explicit default land as None, and the owner raises a domain-specific
+        # error at run time if it cannot proceed.
+        coerced[param.name] = copy.deepcopy(param.coerce_value(param.default)) if param.default is not None else None
+
+    return coerced
+
+
+def _validate_declarations(*, declared: list[Parameter], owner: str) -> None:
+    """
+    Validate a declared-parameter snapshot for author mistakes.
+
+    Args:
+        declared (list[Parameter]): The declaration snapshot.
+        owner (str): Owner label used to prefix error messages.
+
+    Raises:
+        ValueError: If declarations contain duplicate names, an unsupported
+            ``param_type``, or a default that fails coercion (including
+            membership for a constrained scalar).
+    """
+    seen: set[str] = set()
+    for param in declared:
+        if param.name in seen:
+            raise ValueError(f"{owner} declares duplicate parameter name '{param.name}'.")
+        seen.add(param.name)
+
+        try:
+            param.validate()
+        except ValueError as exc:
+            raise ValueError(f"{owner} {exc}") from exc
+
+        if param.default is not None:
+            try:
+                param.coerce_value(param.default)
+            except ValueError as exc:
+                raise ValueError(f"{owner} parameter '{param.name}' has an invalid default: {exc}") from exc
+
+
+def _reject_undeclared_params(*, params: dict[str, Any], declared: list[Parameter], owner: str) -> None:
+    """
+    Raise if ``params`` contains any key not in the ``declared`` snapshot.
+
+    Specific to the declared-parameter path (``resolve_declared_params``): it
+    reports every undeclared key at once. The constructor path
+    (``resolve_constructor_args``) rejects unknown arguments inline instead.
+
+    Args:
+        params (dict[str, Any]): Coerced (declared names) or raw (unknown) values.
+        declared (list[Parameter]): Declaration snapshot from the caller.
+        owner (str): Owner label used to prefix error messages.
+
+    Raises:
+        ValueError: If any keys in ``params`` are not declared.
+    """
+    declared_names = {param.name for param in declared}
+    unknown = sorted(set(params.keys()) - declared_names)
+    if unknown:
+        raise ValueError(
+            f"{owner} received unknown parameter(s): {', '.join(unknown)}. "
+            f"Supported parameters: "
+            f"{', '.join(sorted(declared_names)) if declared_names else 'none'}."
+        )
+
+
+# ---------------------------------------------------------------------------

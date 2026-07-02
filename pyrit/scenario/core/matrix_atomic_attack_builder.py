@@ -25,12 +25,14 @@ from typing import TYPE_CHECKING, cast
 from pyrit.executor.attack import AttackScoringConfig
 from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
 from pyrit.models import SeedAttackGroup
+from pyrit.prompt_normalizer import PromptConverterConfiguration
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
+    from pyrit.prompt_converter import PromptConverter
     from pyrit.prompt_target import PromptTarget
     from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
     from pyrit.score import Scorer
@@ -175,6 +177,7 @@ class MatrixAtomicAttackBuilder:
         adversarial_targets: Sequence[tuple[str, PromptTarget]] | None = None,
         name_fn: Callable[[MatrixCombo], str] | None = None,
         display_group_fn: Callable[[MatrixCombo], str] | None = None,
+        strategy_converters: dict[str, list[PromptConverter]] | None = None,
         include_baseline: bool = False,
     ) -> list[AtomicAttack]:
         """
@@ -201,6 +204,10 @@ class MatrixAtomicAttackBuilder:
                 when an adversarial-target axis is active).
             display_group_fn (Callable[[MatrixCombo], str] | None): Builds each
                 ``display_group``. Defaults to grouping by technique name.
+            strategy_converters (dict[str, list[PromptConverter]] | None): Optional mapping
+                from technique name to request converters appended on top of that technique's
+                built-in converters (via ``factory.create(extra_request_converters=...)``).
+                Techniques absent from the mapping are built unchanged.
             include_baseline (bool): When ``True``, prepend a baseline atomic attack built
                 from the flattened seed groups across all datasets.
 
@@ -217,7 +224,12 @@ class MatrixAtomicAttackBuilder:
         )
 
         atomic_attacks: list[AtomicAttack] = []
+        strategy_converters = strategy_converters or {}
         for technique_name, factory in technique_factories.items():
+            extra_converters = strategy_converters.get(technique_name)
+            extra_request_converters = (
+                PromptConverterConfiguration.from_converters(converters=extra_converters) if extra_converters else None
+            )
             for target_name, target_instance in target_axis:
                 for dataset_name, seed_groups in dataset_groups.items():
                     compatible_groups = self._filter_compatible_groups(
@@ -233,6 +245,7 @@ class MatrixAtomicAttackBuilder:
                     attack_technique = factory.create(
                         objective_target=self._objective_target,
                         attack_scoring_config=scoring_config,
+                        extra_request_converters=extra_request_converters,
                         **create_adversarial,
                     )
 

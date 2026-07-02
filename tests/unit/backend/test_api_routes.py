@@ -648,7 +648,7 @@ class TestAttackRoutes:
 
             response = client.get("/api/attacks?converter_types_match=garbage")
 
-            assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+            assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
     def test_get_conversations_success(self, client: TestClient) -> None:
         """Test getting attack conversations returns service response."""

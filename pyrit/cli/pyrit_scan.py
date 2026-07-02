@@ -86,10 +86,11 @@ Examples:
   # Start the backend server
   pyrit_scan --start-server
 
-  # List scenarios, initializers, or targets
+  # List scenarios, initializers, targets, or converters
   pyrit_scan --list-scenarios
   pyrit_scan --list-initializers
   pyrit_scan --list-targets
+  pyrit_scan --list-converters
 
   # List available datasets
   pyrit_scan --list-datasets
@@ -101,6 +102,10 @@ Examples:
   pyrit_scan airt.rapid_response --target openai_chat
     --strategies role_play --dataset-names airt_hate
     --max-dataset-size 5 --max-concurrency 4
+
+  # Attach registered converters to a technique (repeatable, applied in order)
+  pyrit_scan airt.rapid_response --target openai_chat
+    --strategies role_play:converter.translation_spanish:converter.leetspeak
 
   # Run multi-turn red team agent with labels for tracking
   pyrit_scan airt.red_team_agent --target openai_chat
@@ -190,6 +195,11 @@ def _build_base_parser(*, add_help: bool = True) -> ArgumentParser:
         "--list-targets",
         action="store_true",
         help="List all available targets and exit",
+    )
+    discovery_group.add_argument(
+        "--list-converters",
+        action="store_true",
+        help="List all registered converter instances and exit",
     )
     discovery_group.add_argument(
         "--list-datasets",
@@ -459,6 +469,7 @@ def _is_command_specified(*, parsed_args: Namespace) -> bool:
         parsed_args.list_scenarios
         or parsed_args.list_initializers
         or parsed_args.list_targets
+        or parsed_args.list_converters
         or parsed_args.list_datasets
         or parsed_args.add_initializer
         or parsed_args.scenario_name
@@ -526,6 +537,10 @@ async def _handle_list_commands_async(*, client: Any, parsed_args: Namespace) ->
     if parsed_args.list_datasets:
         resp = await client.list_datasets_async()
         _output.print_dataset_list(items=resp.get("items", []))
+        return 0
+    if parsed_args.list_converters:
+        resp = await client.list_converters_async()
+        _output.print_converter_list(items=resp.get("items", []))
         return 0
     return None
 

@@ -240,10 +240,11 @@ class _PackageDrivenRegistry(Registry[object, ClassRegistryEntry]):
 
 
 def test_discover_skips_spec_type_mock_exports():
-    # A foreign test may patch a discovery-package export with a ``MagicMock(spec=type)``
-    # that reports ``isinstance(obj, type) is True`` yet makes ``issubclass`` raise
-    # ``TypeError``. Default discovery must skip it rather than blow up the whole catalog.
-    package = ModuleType("_fake_widget_package")
+    # Type-based discovery enumerates concrete subclasses of the base that live under
+    # the discovery package. A foreign export leaked into ``__all__`` (e.g. a
+    # ``MagicMock(spec=type)``) is materialized by the lazy-export force-load but is
+    # not a real subclass, so it must be ignored rather than blow up the catalog.
+    package = ModuleType(_ConcreteWidget.__module__)
     package.__all__ = ["_ConcreteWidget", "_LeakedMock"]
     package._ConcreteWidget = _ConcreteWidget
     package._LeakedMock = MagicMock(spec=type)
