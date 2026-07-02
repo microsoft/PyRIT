@@ -17,7 +17,7 @@ from functools import cache
 from typing import TYPE_CHECKING
 
 from pyrit.common import apply_defaults
-from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
+from pyrit.scenario.core.dataset_configuration import CompoundDatasetAttackConfiguration
 from pyrit.scenario.core.scenario import Scenario
 
 if TYPE_CHECKING:
@@ -38,7 +38,7 @@ def _build_rapid_response_strategy() -> type[ScenarioStrategy]:
     Returns:
         type[ScenarioStrategy]: The dynamically generated strategy enum class.
     """
-    from pyrit.registry.object_registries.attack_technique_registry import AttackTechniqueRegistry
+    from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
     from pyrit.registry.tag_query import TagQuery
 
     registry = AttackTechniqueRegistry.get_registry_singleton()
@@ -93,7 +93,7 @@ class RapidResponse(Scenario):
             objective_scorer=self._objective_scorer,
             strategy_class=strategy_class,
             default_strategy=strategy_class("default"),
-            default_dataset_config=DatasetConfiguration(
+            default_dataset_config=CompoundDatasetAttackConfiguration.per_dataset(
                 dataset_names=[
                     "airt_hate",
                     "airt_fairness",

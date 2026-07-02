@@ -13,15 +13,16 @@ import pytest
 from pyrit.backend.models.targets import CreateTargetRequest
 from pyrit.backend.services.target_service import TargetService, get_target_service
 from pyrit.models import ComponentIdentifier
-from pyrit.registry.object_registries import TargetRegistry
+from pyrit.prompt_target import PromptTarget
+from pyrit.registry import TargetRegistry
 
 
 @pytest.fixture(autouse=True)
 def reset_registry():
     """Reset the TargetRegistry singleton before each test."""
-    TargetRegistry.reset_instance()
+    TargetRegistry.reset_registry_singleton()
     yield
-    TargetRegistry.reset_instance()
+    TargetRegistry.reset_registry_singleton()
 
 
 def _mock_target_identifier(*, class_name: str = "MockTarget", **kwargs) -> ComponentIdentifier:
@@ -64,9 +65,9 @@ class TestListTargets:
         service = TargetService()
 
         # Register a mock target
-        mock_target = MagicMock()
+        mock_target = MagicMock(spec=PromptTarget)
         mock_target.get_identifier.return_value = _mock_target_identifier(endpoint="http://test")
-        service._registry.register_instance(mock_target, name="target-1")
+        service._registry.instances.register(mock_target, name="target-1")
 
         result = await service.list_targets_async()
 
@@ -80,9 +81,9 @@ class TestListTargets:
         service = TargetService()
 
         for i in range(5):
-            mock_target = MagicMock()
+            mock_target = MagicMock(spec=PromptTarget)
             mock_target.get_identifier.return_value = _mock_target_identifier()
-            service._registry.register_instance(mock_target, name=f"target-{i}")
+            service._registry.instances.register(mock_target, name=f"target-{i}")
 
         result = await service.list_targets_async(limit=3)
 
@@ -96,9 +97,9 @@ class TestListTargets:
         service = TargetService()
 
         for i in range(5):
-            mock_target = MagicMock()
+            mock_target = MagicMock(spec=PromptTarget)
             mock_target.get_identifier.return_value = _mock_target_identifier()
-            service._registry.register_instance(mock_target, name=f"target-{i}")
+            service._registry.instances.register(mock_target, name=f"target-{i}")
 
         first_page = await service.list_targets_async(limit=2)
         second_page = await service.list_targets_async(limit=2, cursor=first_page.pagination.next_cursor)
@@ -112,9 +113,9 @@ class TestListTargets:
         service = TargetService()
 
         for i in range(3):
-            mock_target = MagicMock()
+            mock_target = MagicMock(spec=PromptTarget)
             mock_target.get_identifier.return_value = _mock_target_identifier()
-            service._registry.register_instance(mock_target, name=f"target-{i}")
+            service._registry.instances.register(mock_target, name=f"target-{i}")
 
         first_page = await service.list_targets_async(limit=2)
         last_page = await service.list_targets_async(limit=2, cursor=first_page.pagination.next_cursor)
@@ -139,9 +140,9 @@ class TestGetTarget:
         """Test that get_target returns target built from registry object."""
         service = TargetService()
 
-        mock_target = MagicMock()
+        mock_target = MagicMock(spec=PromptTarget)
         mock_target.get_identifier.return_value = _mock_target_identifier()
-        service._registry.register_instance(mock_target, name="target-1")
+        service._registry.instances.register(mock_target, name="target-1")
 
         result = await service.get_target_async(target_registry_name="target-1")
 
@@ -153,7 +154,7 @@ class TestGetTarget:
         """Test that extra identifier params (reasoning_effort etc.) appear in target_specific_params."""
         service = TargetService()
 
-        mock_target = MagicMock()
+        mock_target = MagicMock(spec=PromptTarget)
         identifier = ComponentIdentifier(
             class_name="OpenAIResponseTarget",
             class_module="pyrit.prompt_target",
@@ -167,7 +168,7 @@ class TestGetTarget:
             },
         )
         mock_target.get_identifier.return_value = identifier
-        service._registry.register_instance(mock_target, name="response-target")
+        service._registry.instances.register(mock_target, name="response-target")
 
         result = await service.list_targets_async()
 
@@ -183,7 +184,7 @@ class TestGetTarget:
         """Test that get_target returns target_specific_params with extra identifier params."""
         service = TargetService()
 
-        mock_target = MagicMock()
+        mock_target = MagicMock(spec=PromptTarget)
         identifier = ComponentIdentifier(
             class_name="OpenAIChatTarget",
             class_module="pyrit.prompt_target",
@@ -195,7 +196,7 @@ class TestGetTarget:
             },
         )
         mock_target.get_identifier.return_value = identifier
-        service._registry.register_instance(mock_target, name="chat-target")
+        service._registry.instances.register(mock_target, name="chat-target")
 
         result = await service.get_target_async(target_registry_name="chat-target")
 
@@ -219,8 +220,8 @@ class TestGetTargetObject:
     def test_get_target_object_returns_object_from_registry(self) -> None:
         """Test that get_target_object returns the actual target object."""
         service = TargetService()
-        mock_target = MagicMock()
-        service._registry.register_instance(mock_target, name="target-1")
+        mock_target = MagicMock(spec=PromptTarget)
+        service._registry.instances.register(mock_target, name="target-1")
 
         result = service.get_target_object(target_registry_name="target-1")
 
@@ -610,20 +611,20 @@ class TestCreateRoundRobinTarget:
         # (same class, multi-turn, editable history) that requires real compatible
         # targets. The service's job is to resolve registry names and pass them
         # through — the constructor validation is tested in RoundRobinTarget's own tests.
-        mock_a = MagicMock()
+        mock_a = MagicMock(spec=PromptTarget)
         mock_a.get_identifier.return_value = _mock_target_identifier(
             class_name="OpenAIChatTarget", endpoint="https://a.openai.azure.com", model_name="gpt-4o"
         )
-        mock_b = MagicMock()
+        mock_b = MagicMock(spec=PromptTarget)
         mock_b.get_identifier.return_value = _mock_target_identifier(
             class_name="OpenAIChatTarget", endpoint="https://b.openai.azure.com", model_name="gpt-4o"
         )
-        service._registry.register_instance(mock_a, name="target-a")
-        service._registry.register_instance(mock_b, name="target-b")
+        service._registry.instances.register(mock_a, name="target-a")
+        service._registry.instances.register(mock_b, name="target-b")
 
         # Patch RoundRobinTarget so the constructor returns a mock that behaves
         # like a registered target (has get_identifier, capabilities, etc.)
-        mock_rr = MagicMock()
+        mock_rr = MagicMock(spec=PromptTarget)
         mock_rr.get_identifier.return_value = ComponentIdentifier(
             class_name="RoundRobinTarget",
             class_module="pyrit.prompt_target.round_robin_target",
@@ -683,21 +684,21 @@ class TestCreateRoundRobinTarget:
         identifier_a = _mock_target_identifier(
             class_name="OpenAIChatTarget", endpoint="https://a.openai.azure.com", model_name="gpt-4o"
         )
-        mock_a = MagicMock()
+        mock_a = MagicMock(spec=PromptTarget)
         mock_a.get_identifier.return_value = identifier_a
-        mock_a_alias = MagicMock()
+        mock_a_alias = MagicMock(spec=PromptTarget)
         mock_a_alias.get_identifier.return_value = identifier_a
 
-        mock_b = MagicMock()
+        mock_b = MagicMock(spec=PromptTarget)
         mock_b.get_identifier.return_value = _mock_target_identifier(
             class_name="OpenAIChatTarget", endpoint="https://b.openai.azure.com", model_name="gpt-4o"
         )
 
-        service._registry.register_instance(mock_a, name="target-a")
-        service._registry.register_instance(mock_a_alias, name="target-a-alias")
-        service._registry.register_instance(mock_b, name="target-b")
+        service._registry.instances.register(mock_a, name="target-a")
+        service._registry.instances.register(mock_a_alias, name="target-a-alias")
+        service._registry.instances.register(mock_b, name="target-b")
 
-        mock_rr = MagicMock()
+        mock_rr = MagicMock(spec=PromptTarget)
         mock_rr.get_identifier.return_value = ComponentIdentifier(
             class_name="RoundRobinTarget",
             class_module="pyrit.prompt_target.round_robin_target",
@@ -729,13 +730,13 @@ class TestCreateRoundRobinTarget:
         identifier = _mock_target_identifier(
             class_name="OpenAIChatTarget", endpoint="https://a.openai.azure.com", model_name="gpt-4o"
         )
-        mock_a = MagicMock()
+        mock_a = MagicMock(spec=PromptTarget)
         mock_a.get_identifier.return_value = identifier
-        mock_a_alias = MagicMock()
+        mock_a_alias = MagicMock(spec=PromptTarget)
         mock_a_alias.get_identifier.return_value = identifier
 
-        service._registry.register_instance(mock_a, name="target-a")
-        service._registry.register_instance(mock_a_alias, name="target-a-alias")
+        service._registry.instances.register(mock_a, name="target-a")
+        service._registry.instances.register(mock_a_alias, name="target-a-alias")
 
         rr_request = CreateTargetRequest(
             type="RoundRobinTarget",

@@ -5,12 +5,14 @@
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, ClassVar
 
 from pydantic import Field
 
 from pyrit.models.identifiers.component_identifier import ComponentIdentifier
 from pyrit.models.identifiers.evaluation_markers import Evaluate
+from pyrit.models.identifiers.param_markers import Param
+from pyrit.models.parameter import ComponentType
 
 
 class TargetIdentifier(ComponentIdentifier):
@@ -31,6 +33,8 @@ class TargetIdentifier(ComponentIdentifier):
     unwrapped so a multi-target hashes the same as its inner target.
     """
 
+    component_type: ClassVar[ComponentType] = ComponentType.TARGET
+
     #: Target endpoint URL.
     endpoint: Annotated[str | None, Evaluate.Exclude()] = None
     #: Model or deployment name used in API calls.
@@ -43,5 +47,7 @@ class TargetIdentifier(ComponentIdentifier):
     top_p: Annotated[float | None, Evaluate.Include()] = None
     #: Maximum requests per minute.
     max_requests_per_minute: Annotated[int | None, Evaluate.Exclude()] = None
-    #: Inner targets of a multi-target (e.g., ``RoundRobinTarget``), typed recursively.
-    targets: Annotated[list[TargetIdentifier], Evaluate.Unwrap()] = Field(default_factory=list)
+    #: Inner targets of a multi-target (e.g., ``RoundRobinTarget``), typed
+    #: recursively. An included constructor parameter (the ctor arg is also
+    #: ``targets``, a list) resolved by name from the target registry.
+    targets: Annotated[list[TargetIdentifier], Evaluate.Unwrap(), Param.Include()] = Field(default_factory=list)

@@ -1839,7 +1839,7 @@ class TestConverterObjectToInstance:
     """Tests for converter_object_to_instance function."""
 
     def test_maps_converter_with_identifier(self) -> None:
-        """Test mapping a converter object."""
+        """Test mapping a converter object onto the nested identifier."""
         converter_obj = MagicMock()
         identifier = ComponentIdentifier(
             class_name="Base64Converter",
@@ -1855,32 +1855,13 @@ class TestConverterObjectToInstance:
         result = converter_object_to_instance("c-1", converter_obj)
 
         assert result.converter_id == "c-1"
-        assert result.converter_type == "Base64Converter"
-        assert result.display_name is None
-        assert result.supported_input_types == ["text"]
-        assert result.supported_output_types == ["text"]
-        assert result.converter_specific_params == {"param1": "value1"}
-        assert result.sub_converter_ids is None
+        assert result.identifier.class_name == "Base64Converter"
+        assert result.identifier.supported_input_types == ["text"]
+        assert result.identifier.supported_output_types == ["text"]
+        assert result.identifier.params["param1"] == "value1"
 
-    def test_sub_converter_ids_passed_through(self) -> None:
-        """Test that sub_converter_ids are passed through when provided."""
-        converter_obj = MagicMock()
-        identifier = ComponentIdentifier(
-            class_name="PipelineConverter",
-            class_module="pyrit.converters",
-            params={
-                "supported_input_types": ("text",),
-                "supported_output_types": ("text",),
-            },
-        )
-        converter_obj.get_identifier.return_value = identifier
-
-        result = converter_object_to_instance("c-1", converter_obj, sub_converter_ids=["sub-1", "sub-2"])
-
-        assert result.sub_converter_ids == ["sub-1", "sub-2"]
-
-    def test_none_input_output_types_returns_empty_lists(self) -> None:
-        """Test that None supported types produce empty lists."""
+    def test_none_input_output_types_stay_none(self) -> None:
+        """Test that absent supported types stay None on the identifier."""
         converter_obj = MagicMock()
         identifier = ComponentIdentifier(
             class_name="CustomConverter",
@@ -1890,10 +1871,9 @@ class TestConverterObjectToInstance:
 
         result = converter_object_to_instance("c-1", converter_obj)
 
-        assert result.supported_input_types == []
-        assert result.supported_output_types == []
-        assert result.converter_specific_params is None
-        assert result.sub_converter_ids is None
+        assert result.identifier.supported_input_types is None
+        assert result.identifier.supported_output_types is None
+        assert result.identifier.params == {}
 
 
 # ============================================================================

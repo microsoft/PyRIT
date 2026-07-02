@@ -2,22 +2,35 @@
 # Licensed under the MIT license.
 
 """
-Regex-based true/false scorers for detecting credential leaks and OWASP LLM02
-insecure-output payloads (XSS, SQL injection, shell commands, path traversal).
+Regex-based true/false scorers for detecting credential leaks, OWASP LLM02
+insecure-output payloads (XSS, SQL injection, shell commands, path traversal),
+prompt injection, markdown injection, and CBRN/illicit-substance keywords.
 """
 
+from pyrit.score.true_false.regex.anthrax_keyword_scorer import AnthraxKeywordScorer
 from pyrit.score.true_false.regex.credential_leak_scorer import CredentialLeakScorer
+from pyrit.score.true_false.regex.fentanyl_keyword_scorer import FentanylKeywordScorer
+from pyrit.score.true_false.regex.markdown_injection import MarkdownInjectionScorer
+from pyrit.score.true_false.regex.meth_keyword_scorer import MethKeywordScorer
+from pyrit.score.true_false.regex.nerve_agent_keyword_scorer import NerveAgentKeywordScorer
 from pyrit.score.true_false.regex.path_traversal_output_scorer import PathTraversalOutputScorer
 from pyrit.score.true_false.regex.regex_scorer import RegexScorer
 from pyrit.score.true_false.regex.shell_command_output_scorer import ShellCommandOutputScorer
 from pyrit.score.true_false.regex.sql_injection_output_scorer import SQLInjectionOutputScorer
+from pyrit.score.true_false.regex.static_prompt_injection_scorer import StaticPromptInjectionScorer
 from pyrit.score.true_false.regex.xss_output_scorer import XSSOutputScorer
 
 __all__ = [
+    "AnthraxKeywordScorer",
     "CredentialLeakScorer",
+    "FentanylKeywordScorer",
+    "MarkdownInjectionScorer",
+    "MethKeywordScorer",
+    "NerveAgentKeywordScorer",
     "PathTraversalOutputScorer",
     "RegexScorer",
     "ShellCommandOutputScorer",
     "SQLInjectionOutputScorer",
+    "StaticPromptInjectionScorer",
     "XSSOutputScorer",
 ]

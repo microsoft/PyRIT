@@ -188,7 +188,7 @@ class _DecodingTrustToxicityDataset(_RemoteDatasetLoader):
 
     @property
     def dataset_name(self) -> str:
-        """Return the dataset name."""
+        """The dataset name."""
         return "decoding_trust_toxicity"
 
     async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:

@@ -162,7 +162,7 @@ class _ODINDataset(_RemoteDatasetLoader):
     @property
     @override
     def dataset_name(self) -> str:
-        """Return the dataset name."""
+        """The dataset name."""
         return "0din_threatfeed"
 
     def _resolve_api_key(self) -> str:

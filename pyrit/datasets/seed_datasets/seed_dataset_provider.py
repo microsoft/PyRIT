@@ -69,7 +69,7 @@ class SeedDatasetProvider(ABC):
     @abstractmethod
     def dataset_name(self) -> str:
         """
-        Return the human-readable name of the dataset.
+        The human-readable name of the dataset.
 
         Returns:
             str: The dataset name (e.g., "HarmBench", "JailbreakBench JBB-Behaviors")

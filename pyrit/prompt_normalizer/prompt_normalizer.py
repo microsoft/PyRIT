@@ -44,7 +44,7 @@ class PromptNormalizer:
     @property
     def memory(self) -> MemoryInterface:
         """
-        Get the memory instance.
+        The memory instance.
 
         Raises:
             RuntimeError: If memory is not initialized.

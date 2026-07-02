@@ -34,7 +34,7 @@ class ComicJailbreakTemplateConfig:
 
     @property
     def bounding_box(self) -> tuple[int, int, int, int]:
-        """Return the bounding box as a (x1, y1, x2, y2) tuple."""
+        """The bounding box as a (x1, y1, x2, y2) tuple."""
         return (self.x1, self.y1, self.x2, self.y2)
 
 
@@ -142,7 +142,7 @@ class _ComicJailbreakDataset(_RemoteDatasetLoader):
     @property
     @override
     def dataset_name(self) -> str:
-        """Return the dataset name."""
+        """The dataset name."""
         return "comic_jailbreak"
 
     @override
