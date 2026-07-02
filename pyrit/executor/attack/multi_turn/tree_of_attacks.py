@@ -1,14 +1,15 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+from __future__ import annotations
+
 import asyncio
 import enum
 import json
 import logging
 import uuid
 from dataclasses import dataclass, field
-from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional, cast, overload
+from typing import TYPE_CHECKING, Any, cast, overload
 
 from treelib.tree import Tree
 
@@ -70,6 +71,8 @@ from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.true_false.true_false_inverter_scorer import TrueFalseInverterScorer
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from pyrit.models.literals import PromptDataType
 
 logger = logging.getLogger(__name__)
@@ -171,7 +174,7 @@ class TAPAttackContext(MultiTurnAttackContext[Any]):
 
     # Nodes in the attack tree
     # Each node represents a branch in the attack tree with its own state
-    nodes: list["_TreeOfAttacksNode"] = field(default_factory=list)
+    nodes: list[_TreeOfAttacksNode] = field(default_factory=list)
 
     # Best conversation ID and score found during the attack
     best_conversation_id: str | None = None
@@ -376,7 +379,7 @@ class _TreeOfAttacksNode:
         self,
         *,
         prepended_conversation: list[Message],
-        prepended_conversation_config: Optional["PrependedConversationConfig"] = None,
+        prepended_conversation_config: PrependedConversationConfig | None = None,
     ) -> None:
         """
         Initialize the node with a prepended conversation history.
@@ -769,7 +772,7 @@ class _TreeOfAttacksNode:
         logger.error(f"Node {self.node_id}: Unexpected error during execution: {error}")
         self.error_message = f"Execution error: {str(error)}"
 
-    def duplicate(self) -> "_TreeOfAttacksNode":
+    def duplicate(self) -> _TreeOfAttacksNode:
         """
         Create a duplicate of this node for branching.
 

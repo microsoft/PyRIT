@@ -60,6 +60,10 @@ class TestParseArgs:
         args = pyrit_scan.parse_args(["--add-initializer", "script1.py", "script2.py"])
         assert args.add_initializer == ["script1.py", "script2.py"]
 
+    def test_parse_args_list_datasets(self):
+        args = pyrit_scan.parse_args(["--list-datasets"])
+        assert args.list_datasets is True
+
     def test_parse_args_with_strategies(self):
         args = pyrit_scan.parse_args(["test_scenario", "--strategies", "s1", "s2"])
         assert args.scenario_strategies == ["s1", "s2"]
@@ -134,6 +138,10 @@ class TestParseArgs:
     def test_parse_args_with_list_targets(self):
         args = pyrit_scan.parse_args(["--list-targets"])
         assert args.list_targets is True
+
+    def test_parse_args_with_list_converters(self):
+        args = pyrit_scan.parse_args(["--list-converters"])
+        assert args.list_converters is True
 
     def test_parse_args_with_server_url(self):
         args = pyrit_scan.parse_args(["--list-scenarios", "--server-url", "http://remote:9000"])
@@ -221,6 +229,8 @@ def _mock_api_client():
     client.list_scenarios_async.return_value = []
     client.list_initializers_async.return_value = []
     client.list_targets_async.return_value = []
+    client.list_datasets_async.return_value = {"items": []}
+    client.list_converters_async.return_value = {"items": []}
     client.get_scenario_async.return_value = RegisteredScenario(
         scenario_name="test_scenario",
         scenario_type="X",
@@ -316,6 +326,30 @@ class TestMain:
 
         assert result == 0
         mock_client.list_targets_async.assert_awaited_once()
+
+    @patch("pyrit.cli._server_launcher.ServerLauncher.probe_health_async", new_callable=AsyncMock, return_value=True)
+    @patch("pyrit.cli.api_client.PyRITApiClient")
+    def test_main_list_converters(self, mock_client_class, mock_probe):
+        """Test main with --list-converters flag."""
+        mock_client = _mock_api_client()
+        mock_client_class.return_value = mock_client
+
+        result = pyrit_scan.main(["--list-converters"])
+
+        assert result == 0
+        mock_client.list_converters_async.assert_awaited_once()
+
+    @patch("pyrit.cli._server_launcher.ServerLauncher.probe_health_async", new_callable=AsyncMock, return_value=True)
+    @patch("pyrit.cli.api_client.PyRITApiClient")
+    def test_main_list_datasets(self, mock_client_class, mock_probe):
+        """Test main with --list-datasets flag."""
+        mock_client = _mock_api_client()
+        mock_client_class.return_value = mock_client
+
+        result = pyrit_scan.main(["--list-datasets"])
+
+        assert result == 0
+        mock_client.list_datasets_async.assert_awaited_once()
 
     def test_main_no_args_shows_help(self):
         """Test main with no arguments shows help."""

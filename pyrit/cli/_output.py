@@ -13,7 +13,7 @@ import is deferred to each function so importing this module stays cheap.
 from __future__ import annotations
 
 import sys
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from pyrit.models import ScenarioResult
@@ -190,6 +190,70 @@ def print_target_list(*, items: list[TargetInstance]) -> None:
             print(f"    Endpoint: {tgt.endpoint}")
     print("\n" + "=" * 80)
     print(f"\nTotal targets: {len(items)}")
+
+
+# ---------------------------------------------------------------------------
+# Converter listing
+# ---------------------------------------------------------------------------
+
+
+def print_converter_list(*, items: list[dict[str, Any]]) -> None:
+    """
+    Print a formatted list of registered converter instances.
+
+    Args:
+        items: List of converter dicts from ``GET /api/converters``.
+    """
+    if not items:
+        print("\nNo converters found in registry.")
+        print(
+            "\nConverters are registered by initializers. Include an initializer that "
+            "registers converters to attach them to scenario techniques, for example:\n"
+            "  --strategies role_play:converter.translation_spanish\n"
+        )
+        return
+
+    print("\nRegistered Converters:")
+    print("=" * 80)
+    for conv in items:
+        name = conv.get("converter_id", "unknown")
+        _header(name)
+        print(f"    Class: {conv.get('converter_type', '')}")
+        display_name = conv.get("display_name") or ""
+        if display_name:
+            print(f"    Name: {display_name}")
+        sub_ids = conv.get("sub_converter_ids") or []
+        if sub_ids:
+            print(f"    Sub-converters: {', '.join(sub_ids)}")
+    print("\n" + "=" * 80)
+    print(f"\nTotal converters: {len(items)}")
+    print("\nAttach a converter to a scenario technique with, for example:")
+    print("  --strategies role_play:converter.<name>\n")
+
+
+# ---------------------------------------------------------------------------
+# Dataset listing
+# ---------------------------------------------------------------------------
+
+
+def print_dataset_list(*, items: list[dict[str, Any]]) -> None:
+    """
+    Print a formatted list of available datasets.
+
+    Args:
+        items: List of dataset dicts from ``GET /api/datasets``.
+    """
+    if not items:
+        print("No datasets found.")
+        return
+
+    print("\nAvailable Datasets:")
+    print("=" * 80)
+    for ds in items:
+        name = ds.get("name", "unknown")
+        print(f"    {name}")
+    print("=" * 80)
+    print(f"\nTotal datasets: {len(items)}")
 
 
 # ---------------------------------------------------------------------------

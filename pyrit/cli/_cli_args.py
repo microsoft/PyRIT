@@ -262,7 +262,10 @@ ARG_HELP = {
     "initialization_scripts": "Paths to custom Python initialization scripts to run before the scenario",
     "env_files": "Paths to environment files to load in order (e.g., .env.production .env.local). Later files "
     "override earlier ones.",
-    "scenario_strategies": "List of strategy names to run (e.g., base64 rot13)",
+    "scenario_strategies": "List of strategy names to run (e.g., base64 rot13). Append one or more "
+    "registered converters to a technique with ':converter.<name>' (repeatable), e.g. "
+    "role_play:converter.translation_spanish:converter.leetspeak. The converter is appended on top of "
+    "the technique's built-in converters. Use --list-converters to see registered converter names",
     "max_concurrency": "Maximum number of concurrent attack executions (must be >= 1)",
     "max_retries": "Maximum number of automatic retries on exception (must be >= 0)",
     "memory_labels": 'Additional labels as JSON string (e.g., \'{"experiment": "test1"}\')',

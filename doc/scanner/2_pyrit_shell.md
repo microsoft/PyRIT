@@ -40,6 +40,7 @@ Once starting the shell, you will see the list of commands you have access to. S
 | `list-scenarios` | List all available scenarios |
 | `list-initializers` | List all available initializers |
 | `list-targets` | List all available targets from the registry |
+| `list-converters` | List all registered converter instances |
 | `run <scenario> [options]` | Run a scenario with optional parameters |
 | `scenario-history` | List all previous scenario runs in this session |
 | `print-scenario [N]` | Print detailed results for scenario run(s) |
@@ -63,6 +64,21 @@ pyrit> run foundry.red_team_agent --target my_target --initializers target
 pyrit> run garak.encoding --target my_target --initializers target --strategies base64 rot13
 
 pyrit> run foundry.red_team_agent --target my_target --initializers target -s jailbreak crescendo
+```
+
+### Attaching Converters to a Technique
+
+Append a registered converter instance to a single technique (or an aggregate strategy) with the
+`<technique>:converter.<name>` syntax. The converter is added to the request side of every attack
+the technique produces, on top of any converters the technique already bakes in. Use
+`list-converters` to discover the registered converter names:
+
+```bash
+# Add the registered "translation_spanish" converter to role_play only
+pyrit> run airt.rapid_response --target my_target --initializers target load_default_datasets -s role_play:converter.translation_spanish
+
+# Chain multiple converters (applied in order) and combine with plain strategies
+pyrit> run airt.rapid_response --target my_target --initializers target load_default_datasets -s role_play:converter.translation_spanish:converter.base64 many_shot
 ```
 
 ### With Runtime Parameters

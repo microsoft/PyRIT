@@ -1,10 +1,11 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+from __future__ import annotations
+
 import base64
 import logging
-from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 from azure.ai.contentsafety.aio import ContentSafetyClient
 from azure.ai.contentsafety.models import (
@@ -28,6 +29,8 @@ from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 
 if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
     from pyrit.score.scorer_evaluation.metrics_type import RegistryUpdateBehavior
     from pyrit.score.scorer_evaluation.scorer_evaluator import ScorerEvalDatasetFiles
     from pyrit.score.scorer_evaluation.scorer_metrics import ScorerMetrics
@@ -62,7 +65,7 @@ class AzureContentFilterScorer(FloatScaleScorer):
     }
 
     @classmethod
-    def _get_eval_files_for_category(cls, category: TextCategory) -> Optional["ScorerEvalDatasetFiles"]:
+    def _get_eval_files_for_category(cls, category: TextCategory) -> ScorerEvalDatasetFiles | None:
         """
         Get the ScorerEvalDatasetFiles for a given harm category.
 
@@ -175,12 +178,12 @@ class AzureContentFilterScorer(FloatScaleScorer):
 
     async def evaluate_async(
         self,
-        file_mapping: Optional["ScorerEvalDatasetFiles"] = None,
+        file_mapping: ScorerEvalDatasetFiles | None = None,
         *,
         num_scorer_trials: int = 3,
-        update_registry_behavior: "RegistryUpdateBehavior | None" = None,
+        update_registry_behavior: RegistryUpdateBehavior | None = None,
         max_concurrency: int = 10,
-    ) -> Optional["ScorerMetrics"]:
+    ) -> ScorerMetrics | None:
         """
         Evaluate this scorer against human-labeled datasets.
 
