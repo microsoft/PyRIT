@@ -71,6 +71,13 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+#: Param names a scenario must not declare via ``supported_parameters()``. These
+#: collide with promoted identity fields on ``ScenarioIdentifier`` and would be
+#: silently overwritten during identifier promotion. Only ``version`` is reserved
+#: today; a scenario's definition version is owned by the identifier, not a param.
+_RESERVED_SCENARIO_PARAM_NAMES: frozenset[str] = frozenset({"version"})
+
+
 class BaselineAttackPolicy(Enum):
     """
     Declares how a scenario type treats the default baseline atomic attack.
@@ -397,10 +404,19 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
 
         Raises:
             ValueError: Invalid declaration, unknown parameter, coercion
-                failure, or value not in ``choices``.
+                failure, value not in ``choices``, or a declared parameter using
+                a reserved scenario identity name (e.g. ``version``).
         """
+        declared = list(self.supported_parameters())
+        reserved = sorted({p.name for p in declared} & _RESERVED_SCENARIO_PARAM_NAMES)
+        if reserved:
+            raise ValueError(
+                f"Scenario '{type(self).__name__}' declares reserved parameter(s) {reserved}; "
+                "these names are owned by the scenario identity and cannot be scenario params. "
+                "Rename the parameter."
+            )
         self.params = resolve_declared_params(
-            declared=list(self.supported_parameters()),
+            declared=declared,
             raw_args=args,
             owner=f"Scenario '{type(self).__name__}'",
         )

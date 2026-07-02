@@ -290,6 +290,14 @@ class TestParamValidation:
         with pytest.raises(ValueError, match="bogus1, bogus2"):
             scenario.set_params_from_args(args={"bogus1": "a", "bogus2": "b"})
 
+    def test_reserved_version_param_raises(self) -> None:
+        """A scenario cannot declare a param named ``version`` (owned by the identity)."""
+        scenario = _make_scenario(
+            declared_params=[Parameter(name="version", description="d", param_type=int)]
+        )
+        with pytest.raises(ValueError, match="reserved parameter"):
+            scenario.set_params_from_args(args={})
+
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestDeclarationValidation:
