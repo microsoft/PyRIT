@@ -711,8 +711,9 @@ def test_set_auth_with_entra_auth(patch_central_database):
     assert callable(target._api_key)
     # Since sync provider is wrapped, _api_key is now async
     import asyncio
+    import inspect
 
-    assert asyncio.iscoroutinefunction(target._api_key)
+    assert inspect.iscoroutinefunction(target._api_key)
     assert asyncio.run(target._api_key()) == "mock-entra-token"
 
 

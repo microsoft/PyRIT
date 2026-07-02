@@ -392,7 +392,7 @@ class TestRegisterInitializerRoute:
         response = client_with_custom_initializers_enabled.post(
             "/api/initializers", json={"name": bad_name, "script_content": _SAMPLE_SCRIPT}
         )
-        assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
     def test_post_returns_201_with_registered_initializer(
         self, client_with_custom_initializers_enabled: TestClient

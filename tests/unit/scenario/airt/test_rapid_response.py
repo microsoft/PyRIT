@@ -364,6 +364,48 @@ class TestRapidResponseAttackGeneration:
         for a in attacks:
             assert isinstance(a.attack_technique.attack, RolePlayAttack)
 
+    async def test_strategy_converters_are_threaded_to_factory_create(
+        self, mock_objective_target, mock_objective_scorer
+    ):
+        """``strategy_converters`` passed to ``initialize_async`` reach ``factory.create`` for the keyed technique."""
+        from pyrit.prompt_converter import Base64Converter
+
+        strat = _strategy_class()
+        role_play = strat("role_play")
+        converter = Base64Converter()
+        captured: list[object] = []
+        original_create = AttackTechniqueFactory.create
+
+        def _spy_create(self, **kwargs):
+            captured.append(kwargs.get("extra_request_converters"))
+            return original_create(self, **kwargs)
+
+        groups = {"hate": _make_seed_groups("hate")}
+        with (
+            patch.object(
+                CompoundDatasetAttackConfiguration,
+                "get_attack_groups_by_dataset_async",
+                new_callable=AsyncMock,
+                return_value=groups,
+            ),
+            patch.object(AttackTechniqueFactory, "create", _spy_create),
+        ):
+            scenario = RapidResponse(objective_scorer=mock_objective_scorer)
+            await scenario.initialize_async(
+                objective_target=mock_objective_target,
+                include_baseline=False,
+                scenario_strategies=[role_play],
+                strategy_converters={role_play.value: [converter]},
+            )
+            await scenario._get_atomic_attacks_async()
+
+        # ROLE_PLAY was selected with a converter modifier, so every resulting factory.create
+        # call must receive the extra request converter.
+        assert captured
+        for extra in captured:
+            assert extra is not None
+            assert len(extra) == 1
+
     async def test_attack_count_is_techniques_times_datasets(self, mock_objective_target, mock_objective_scorer):
         """With 2 datasets and DEFAULT (2 techniques), expect 4 atomic attacks."""
         two_datasets = {

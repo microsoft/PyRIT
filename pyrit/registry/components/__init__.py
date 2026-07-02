@@ -22,6 +22,10 @@ from pyrit.registry.components.converter_registry import (
     ConverterMetadata,
     ConverterRegistry,
 )
+from pyrit.registry.components.scenario_registry import (
+    ScenarioMetadata,
+    ScenarioRegistry,
+)
 from pyrit.registry.components.scorer_registry import (
     ScorerMetadata,
     ScorerRegistry,
@@ -38,6 +42,8 @@ __all__ = [
     "ConverterMetadata",
     "ScorerRegistry",
     "ScorerMetadata",
+    "ScenarioRegistry",
+    "ScenarioMetadata",
     "TargetRegistry",
     "TargetMetadata",
 ]

@@ -31,6 +31,7 @@ from pyrit.common.path import EXECUTOR_SEED_PROMPT_PATH
 from pyrit.executor.attack import PromptSendingAttack
 from pyrit.executor.attack.core.attack_config import (
     AttackAdversarialConfig,
+    AttackConverterConfig,
     AttackScoringConfig,
 )
 from pyrit.models import (
@@ -47,7 +48,7 @@ from pyrit.scenario.core.scenario_target_defaults import get_default_adversarial
 
 if TYPE_CHECKING:
     from pyrit.executor.attack import AttackStrategy
-    from pyrit.executor.attack.core.attack_config import AttackConverterConfig
+    from pyrit.prompt_normalizer import PromptConverterConfiguration
     from pyrit.prompt_target import PromptTarget
 
 logger = logging.getLogger(__name__)
@@ -406,6 +407,7 @@ class AttackTechniqueFactory(Identifiable):
         adversarial_seed_prompt: SeedPrompt | str | None = None,
         attack_adversarial_config_override: AttackAdversarialConfig | None = None,
         attack_converter_config_override: AttackConverterConfig | None = None,
+        extra_request_converters: list[PromptConverterConfiguration] | None = None,
     ) -> AttackTechnique:
         """
         Create a fresh AttackTechnique bound to the given target.
@@ -451,6 +453,13 @@ class AttackTechniqueFactory(Identifiable):
             attack_converter_config_override: When non-None, replaces any
                 converter config baked into the factory.  Only forwarded if
                 the attack class constructor accepts ``attack_converter_config``.
+            extra_request_converters: Optional request converters to append on
+                top of the technique's existing request converters (whether baked
+                into the factory or supplied via
+                ``attack_converter_config_override``).  Unlike
+                ``attack_converter_config_override`` these are additive and never
+                replace the existing converters.  Only forwarded if the attack
+                class constructor accepts ``attack_converter_config``.
 
         Returns:
             A fresh AttackTechnique with a newly-constructed attack strategy.
@@ -514,6 +523,15 @@ class AttackTechniqueFactory(Identifiable):
             )
         if attack_converter_config_override is not None and "attack_converter_config" in accepted_params:
             kwargs["attack_converter_config"] = attack_converter_config_override
+
+        if extra_request_converters and "attack_converter_config" in accepted_params:
+            existing = kwargs.get("attack_converter_config")
+            base_request = list(existing.request_converters) if existing else []
+            base_response = list(existing.response_converters) if existing else []
+            kwargs["attack_converter_config"] = AttackConverterConfig(
+                request_converters=base_request + list(extra_request_converters),
+                response_converters=base_response,
+            )
 
         attack = self._attack_class(**kwargs)
         return AttackTechnique(attack=attack, seed_technique=self._seed_technique)

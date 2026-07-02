@@ -281,3 +281,44 @@ class TestBuildBaselineHelper:
         )
         assert baseline.atomic_attack_name == "baseline"
         assert baseline._seed_groups == groups
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestMatrixStrategyConverters:
+    """Per-technique ``strategy_converters`` are appended via ``factory.create``."""
+
+    def test_converters_forwarded_for_keyed_technique(self):
+        from pyrit.prompt_converter import PromptConverter
+
+        builder = _builder()
+        factory = _mock_factory(name="tech")
+        converter = MagicMock(spec=PromptConverter)
+        builder.build(
+            technique_factories={"tech": factory},
+            dataset_groups={"ds": [_seed_group(objective="o1")]},
+            strategy_converters={"tech": [converter]},
+        )
+        extra = factory.create.call_args.kwargs["extra_request_converters"]
+        assert extra is not None
+        assert len(extra) == 1
+
+    def test_unkeyed_technique_gets_no_converters(self):
+        from pyrit.prompt_converter import PromptConverter
+
+        builder = _builder()
+        factory = _mock_factory(name="tech")
+        builder.build(
+            technique_factories={"tech": factory},
+            dataset_groups={"ds": [_seed_group(objective="o1")]},
+            strategy_converters={"other": [MagicMock(spec=PromptConverter)]},
+        )
+        assert factory.create.call_args.kwargs["extra_request_converters"] is None
+
+    def test_no_converters_passes_none(self):
+        builder = _builder()
+        factory = _mock_factory(name="tech")
+        builder.build(
+            technique_factories={"tech": factory},
+            dataset_groups={"ds": [_seed_group(objective="o1")]},
+        )
+        assert factory.create.call_args.kwargs["extra_request_converters"] is None
