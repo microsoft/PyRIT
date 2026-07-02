@@ -31,11 +31,14 @@ from __future__ import annotations
 import inspect
 import re
 import types
-from enum import Enum
-from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeAlias, Union, get_args, get_origin
+from typing import TYPE_CHECKING, Any, Protocol, TypeAlias, Union, get_args, get_origin
 
 from pyrit.common.apply_defaults import REQUIRED_VALUE, _RequiredValueSentinel
 from pyrit.models.parameter import ComponentType, Parameter, RegistryReference
+
+# Re-exported so ``from pyrit.registry.resolution import display_choices`` keeps working;
+# the single implementation now lives in ``pyrit.models.parameter``.
+from pyrit.models.parameter import display_choices as display_choices
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -368,32 +371,3 @@ def resolve_constructor_args(
             resolved[name] = value
 
     return resolved
-
-
-# ---------------------------------------------------------------------------
-# Present: param_type -> allowed-value display tuple
-# ---------------------------------------------------------------------------
-
-
-def display_choices(param_type: TypeAnnotation) -> tuple[Any, ...] | None:
-    """
-    Derive the allowed-value display list from a constrained-scalar ``param_type``.
-
-    This is the presentation projection of an allowed set: a ``Parameter`` stores
-    the constraint as a ``Literal[...]`` / ``Enum`` type, and serializers render the
-    members on demand instead of reading a separate field. ``Optional[X]`` /
-    ``X | None`` is unwrapped first.
-
-    Args:
-        param_type (TypeAnnotation): The parameter's type annotation.
-
-    Returns:
-        tuple[Any, ...] | None: The allowed members for a constrained scalar
-        (``Literal`` args or ``Enum`` member values), or None when unconstrained.
-    """
-    unwrapped = _unwrap_optional(param_type)
-    if get_origin(unwrapped) is Literal:
-        return get_args(unwrapped)
-    if isinstance(unwrapped, type) and issubclass(unwrapped, Enum):
-        return tuple(member.value for member in unwrapped)
-    return None

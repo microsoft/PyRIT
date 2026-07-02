@@ -11,6 +11,21 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from pyrit.cli import pyrit_shell
+from pyrit.models import Parameter
+
+
+def _sp(*, name, description="", default=None, param_type="str", choices=None, is_list=False) -> Parameter:
+    """Build a real Parameter from the legacy Summary-style kwargs (param_type as a string)."""
+    return Parameter.model_validate(
+        {
+            "name": name,
+            "description": description,
+            "default": default,
+            "type_name": param_type,
+            "choices": choices,
+            "is_list": is_list,
+        }
+    )
 
 
 @pytest.fixture()
@@ -25,6 +40,7 @@ def mock_api_client():
     client.list_scenarios_async.return_value = []
     client.list_initializers_async.return_value = []
     client.list_targets_async.return_value = []
+    client.list_converters_async.return_value = {"items": []}
     client.list_scenario_runs_async.return_value = []
     # Default: scenario fetch returns a typed RegisteredScenario with no declared params.
     client.get_scenario_async.return_value = RegisteredScenario(
@@ -120,6 +136,17 @@ class TestPyRITShell:
         s, client = shell
         s.do_list_targets("")
         client.list_targets_async.assert_awaited_once()
+
+    def test_do_list_converters(self, shell):
+        s, client = shell
+        s.do_list_converters("")
+        client.list_converters_async.assert_awaited_once()
+
+    def test_do_list_converters_rejects_args(self, shell, capsys):
+        s, _ = shell
+        s.do_list_converters("extra")
+        captured = capsys.readouterr()
+        assert "does not accept arguments" in captured.out
 
     def test_do_run_empty_args(self, shell, capsys):
         s, _ = shell
@@ -617,6 +644,12 @@ class TestListErrors:
         s.do_list_targets("")
         assert "Error listing targets" in capsys.readouterr().out
 
+    def test_list_converters_error(self, shell, capsys):
+        s, client = shell
+        client.list_converters_async = AsyncMock(side_effect=RuntimeError("x"))
+        s.do_list_converters("")
+        assert "Error listing converters" in capsys.readouterr().out
+
     def test_scenario_history_error(self, shell, capsys):
         s, client = shell
         client.list_scenario_runs_async = AsyncMock(side_effect=RuntimeError("x"))
@@ -787,11 +820,9 @@ class TestShellScenarioParamFlow:
     """Regression tests: shell.do_run must forward scenario-declared parameters."""
 
     def test_run_passes_scenario_declared_params(self, shell):
-        from pyrit.models.catalog import ScenarioParameterSummary
-
         s, client = shell
         client.get_scenario_async.return_value = client._make_typed_scenario(
-            supported_parameters=[ScenarioParameterSummary(name="max_turns", description="...", param_type="str")],
+            supported_parameters=[_sp(name="max_turns", description="...", param_type="str")],
         )
         client.start_scenario_run_async = AsyncMock(return_value=TestDoRun._run_payload("CREATED"))
         client.get_scenario_run_async = AsyncMock(return_value=TestDoRun._run_payload("COMPLETED"))
@@ -820,11 +851,9 @@ class TestShellScenarioParamFlow:
         assert "not found on server" in capsys.readouterr().out
 
     def test_run_unknown_flag_for_scenario_with_declared_params_errors(self, shell, capsys):
-        from pyrit.models.catalog import ScenarioParameterSummary
-
         s, client = shell
         client.get_scenario_async.return_value = client._make_typed_scenario(
-            supported_parameters=[ScenarioParameterSummary(name="max_turns", description="...", param_type="str")],
+            supported_parameters=[_sp(name="max_turns", description="...", param_type="str")],
         )
         s.do_run("foo --target t --not-a-real-flag x")
         captured = capsys.readouterr().out
@@ -853,13 +882,9 @@ class TestScenarioParamCoercionInShell:
     """Shell-side regression tests for typed scenario params from the catalog."""
 
     def test_shell_list_param_collects_multiple_values(self, shell):
-        from pyrit.models.catalog import ScenarioParameterSummary
-
         s, client = shell
         client.get_scenario_async.return_value = client._make_typed_scenario(
-            supported_parameters=[
-                ScenarioParameterSummary(name="items", description="list field", param_type="list[str]", is_list=True)
-            ],
+            supported_parameters=[_sp(name="items", description="list field", param_type="list[str]", is_list=True)],
         )
         client.start_scenario_run_async = AsyncMock(return_value=TestDoRun._run_payload("CREATED"))
         client.get_scenario_run_async = AsyncMock(return_value=TestDoRun._run_payload("COMPLETED"))
@@ -876,13 +901,9 @@ class TestScenarioParamCoercionInShell:
         assert sent.scenario_params == {"items": ["a", "b", "c"]}
 
     def test_shell_choices_rejected_before_request(self, shell, capsys):
-        from pyrit.models.catalog import ScenarioParameterSummary
-
         s, client = shell
         client.get_scenario_async.return_value = client._make_typed_scenario(
-            supported_parameters=[
-                ScenarioParameterSummary(name="mode", description="...", param_type="str", choices=["fast", "slow"])
-            ],
+            supported_parameters=[_sp(name="mode", description="...", param_type="str", choices=["fast", "slow"])],
         )
         s.do_run("foo --target t --mode warp")
         out = capsys.readouterr().out

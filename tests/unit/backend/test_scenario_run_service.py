@@ -18,7 +18,31 @@ from pyrit.backend.services.scenario_run_service import (
 )
 from pyrit.models import AttackOutcome, ScenarioRunState
 from pyrit.models.catalog.scenario import RunScenarioRequest
+from pyrit.prompt_converter import PromptConverter
 from pyrit.scenario.core import DatasetAttackConfiguration, DatasetConfiguration
+from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
+
+
+class _StubStrategy(ScenarioStrategy):
+    """Minimal concrete ScenarioStrategy used to exercise converter-token parsing."""
+
+    ALL = ("all", {"all"})
+    EASY = ("easy", {"easy"})
+    ROLE_PLAY = ("role_play", {"easy"})
+    SINGLE_TURN = ("single_turn", {"easy"})
+
+    @classmethod
+    def get_aggregate_tags(cls) -> set[str]:
+        return {"all", "easy"}
+
+
+def _patch_converter_registry(instances: dict[str, Any]):
+    """Patch the converter registry singleton so ``.instances`` reflects ``instances``."""
+    reg = MagicMock()
+    reg.instances.get.side_effect = lambda name: instances.get(name)
+    reg.instances.get_names.return_value = list(instances.keys())
+    return patch.object(_svc_mod.ConverterRegistry, "get_registry_singleton", return_value=reg)
+
 
 _REGISTRY_PATCH_BASE = "pyrit.registry"
 _MEMORY_PATCH = "pyrit.memory.CentralMemory.get_memory_instance"
@@ -787,3 +811,108 @@ class TestScenarioRunServiceProgressReporting:
         assert fetched.completed_attacks == 1
         assert fetched.strategies_used == ["attack_a"]
         assert fetched.objective_achieved_rate == 100
+
+
+class TestResolveStrategiesAndConverters:
+    """Tests for per-technique converter resolution from ``--strategies`` tokens."""
+
+    def test_plain_strategy_no_converters(self, mock_memory) -> None:
+        service = ScenarioRunService()
+        with _patch_converter_registry({}):
+            enums, converters = service._resolve_strategies_and_converters(
+                tokens=["role_play"], strategy_class=_StubStrategy, scenario_name="x"
+            )
+        assert enums == [_StubStrategy.ROLE_PLAY]
+        assert converters == {}
+
+    def test_single_converter_appended(self, mock_memory) -> None:
+        conv = MagicMock(spec=PromptConverter)
+        service = ScenarioRunService()
+        with _patch_converter_registry({"translation_spanish": conv}):
+            enums, converters = service._resolve_strategies_and_converters(
+                tokens=["role_play:converter.translation_spanish"],
+                strategy_class=_StubStrategy,
+                scenario_name="x",
+            )
+        assert enums == [_StubStrategy.ROLE_PLAY]
+        assert converters == {"role_play": [conv]}
+
+    def test_aggregate_token_applies_converter_to_all_concrete(self, mock_memory) -> None:
+        conv = MagicMock(spec=PromptConverter)
+        service = ScenarioRunService()
+        with _patch_converter_registry({"c1": conv}):
+            enums, converters = service._resolve_strategies_and_converters(
+                tokens=["easy:converter.c1"], strategy_class=_StubStrategy, scenario_name="x"
+            )
+        assert enums == [_StubStrategy.EASY]
+        assert converters == {"role_play": [conv], "single_turn": [conv]}
+
+    def test_multiple_converters_preserve_order(self, mock_memory) -> None:
+        c1 = MagicMock(spec=PromptConverter)
+        c2 = MagicMock(spec=PromptConverter)
+        service = ScenarioRunService()
+        with _patch_converter_registry({"c1": c1, "c2": c2}):
+            _, converters = service._resolve_strategies_and_converters(
+                tokens=["role_play:converter.c1:converter.c2"],
+                strategy_class=_StubStrategy,
+                scenario_name="x",
+            )
+        assert converters == {"role_play": [c1, c2]}
+
+    def test_overlapping_tokens_append_in_order(self, mock_memory) -> None:
+        c1 = MagicMock(spec=PromptConverter)
+        c2 = MagicMock(spec=PromptConverter)
+        service = ScenarioRunService()
+        with _patch_converter_registry({"c1": c1, "c2": c2}):
+            _, converters = service._resolve_strategies_and_converters(
+                tokens=["easy:converter.c1", "role_play:converter.c2"],
+                strategy_class=_StubStrategy,
+                scenario_name="x",
+            )
+        # role_play is targeted by both the aggregate token and the concrete token.
+        assert converters["role_play"] == [c1, c2]
+        assert converters["single_turn"] == [c1]
+
+    def test_unknown_converter_raises(self, mock_memory) -> None:
+        service = ScenarioRunService()
+        with _patch_converter_registry({"known": MagicMock(spec=PromptConverter)}):
+            with pytest.raises(ValueError, match="not a registered converter"):
+                service._resolve_strategies_and_converters(
+                    tokens=["role_play:converter.missing"],
+                    strategy_class=_StubStrategy,
+                    scenario_name="x",
+                )
+
+    def test_unknown_modifier_prefix_raises(self, mock_memory) -> None:
+        service = ScenarioRunService()
+        with _patch_converter_registry({}):
+            with pytest.raises(ValueError, match="Unknown strategy modifier"):
+                service._resolve_strategies_and_converters(
+                    tokens=["role_play:scorer.something"],
+                    strategy_class=_StubStrategy,
+                    scenario_name="x",
+                )
+
+    def test_unknown_base_strategy_raises(self, mock_memory) -> None:
+        service = ScenarioRunService()
+        with _patch_converter_registry({}):
+            with pytest.raises(ValueError, match="not found for scenario"):
+                service._resolve_strategies_and_converters(
+                    tokens=["nope:converter.c1"],
+                    strategy_class=_StubStrategy,
+                    scenario_name="x",
+                )
+
+    async def test_start_run_forwards_strategy_converters(self, mock_all_registries) -> None:
+        """A converter token is resolved and forwarded to ``initialize_async`` as ``strategy_converters``."""
+        conv = MagicMock(spec=PromptConverter)
+        scenario_instance = mock_all_registries["scenario_instance"]
+        scenario_instance._strategy_class = _StubStrategy
+
+        service = ScenarioRunService()
+        with _patch_converter_registry({"translation_spanish": conv}):
+            await service.start_run_async(request=_make_request(strategies=["role_play:converter.translation_spanish"]))
+
+        init_call = scenario_instance.initialize_async.await_args
+        assert init_call.kwargs["scenario_strategies"] == [_StubStrategy.ROLE_PLAY]
+        assert init_call.kwargs["strategy_converters"] == {"role_play": [conv]}

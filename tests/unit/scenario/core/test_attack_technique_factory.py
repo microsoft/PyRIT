@@ -14,6 +14,8 @@ from pyrit.executor.attack.core.attack_config import (
 )
 from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
 from pyrit.models import ComponentIdentifier, Identifiable, SeedAttackTechniqueGroup, SeedPrompt
+from pyrit.prompt_converter import Base64Converter, ROT13Converter
+from pyrit.prompt_normalizer import PromptConverterConfiguration
 from pyrit.prompt_target import PromptTarget
 from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory, ScorerOverridePolicy
@@ -285,6 +287,67 @@ class TestFactoryCreate:
 
         assert not technique.attack.adversarial_was_passed
         assert not technique.attack.converter_was_passed
+
+    def test_create_appends_extra_request_converters_without_baked(self):
+        """``extra_request_converters`` become the request converters when none are baked."""
+        factory = AttackTechniqueFactory(name="test", attack_class=_StubAttack)
+        target = MagicMock(spec=PromptTarget)
+        extra = PromptConverterConfiguration.from_converters(converters=[Base64Converter()])
+
+        technique = factory.create(
+            objective_target=target,
+            attack_scoring_config=self._scoring(),
+            extra_request_converters=extra,
+        )
+
+        cfg = technique.attack.attack_converter_config
+        assert cfg.request_converters == extra
+        assert cfg.response_converters == []
+
+    def test_create_appends_extra_request_converters_on_top_of_baked(self):
+        """``extra_request_converters`` are appended after baked request converters; responses are preserved."""
+        baked_request = PromptConverterConfiguration.from_converters(converters=[Base64Converter()])
+        baked_response = PromptConverterConfiguration.from_converters(converters=[ROT13Converter()])
+        baked = AttackConverterConfig(request_converters=baked_request, response_converters=baked_response)
+        factory = AttackTechniqueFactory(
+            name="test",
+            attack_class=_StubAttack,
+            attack_kwargs={"attack_converter_config": baked},
+        )
+        target = MagicMock(spec=PromptTarget)
+        extra = PromptConverterConfiguration.from_converters(converters=[Base64Converter()])
+
+        technique = factory.create(
+            objective_target=target,
+            attack_scoring_config=self._scoring(),
+            extra_request_converters=extra,
+        )
+
+        cfg = technique.attack.attack_converter_config
+        assert cfg.request_converters == baked_request + extra
+        assert cfg.response_converters == baked_response
+
+    def test_create_extra_request_converters_skipped_when_unsupported(self):
+        """Attacks that don't accept ``attack_converter_config`` silently ignore extras."""
+
+        class _NoConverterAttack:
+            def __init__(self, *, objective_target, attack_scoring_config=None):
+                self.objective_target = objective_target
+
+            def get_identifier(self):
+                return ComponentIdentifier(class_name="_NoConverterAttack", class_module="test")
+
+        factory = AttackTechniqueFactory(name="test", attack_class=_NoConverterAttack, uses_adversarial=False)
+        target = MagicMock(spec=PromptTarget)
+        extra = PromptConverterConfiguration.from_converters(converters=[Base64Converter()])
+
+        technique = factory.create(
+            objective_target=target,
+            attack_scoring_config=self._scoring(),
+            extra_request_converters=extra,
+        )
+
+        assert isinstance(technique, AttackTechnique)
 
 
 class TestFactoryIdentifier:

@@ -5,9 +5,9 @@
 REST envelopes for the scenario endpoints.
 
 Canonical scenario catalog/run types (``RegisteredScenario``,
-``ScenarioParameterSummary``, ``ScenarioRunSummary``, ``RunScenarioRequest``)
-live in ``pyrit.models.catalog.scenario`` and should be imported from there
-directly.
+``ScenarioRunSummary``, ``RunScenarioRequest``) live in
+``pyrit.models.catalog.scenario`` and should be imported from there directly.
+Scenario parameters are described by the shared ``pyrit.models.Parameter``.
 """
 
 from pydantic import BaseModel, Field

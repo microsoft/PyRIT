@@ -12,13 +12,7 @@ consume from ``/api/initializers``.
 
 from pydantic import BaseModel, Field
 
-
-class InitializerParameterSummary(BaseModel):
-    """Summary of an initializer-declared parameter."""
-
-    name: str = Field(..., description="Parameter name")
-    description: str = Field(..., description="Human-readable description of the parameter")
-    default: list[str] | None = Field(None, description="Default value(s), or None if required")
+from pyrit.models.parameter import Parameter
 
 
 class RegisteredInitializer(BaseModel):
@@ -30,6 +24,6 @@ class RegisteredInitializer(BaseModel):
     required_env_vars: list[str] = Field(
         default_factory=list, description="Environment variables required by this initializer"
     )
-    supported_parameters: list[InitializerParameterSummary] = Field(
+    supported_parameters: list[Parameter] = Field(
         default_factory=list, description="Parameters accepted by this initializer"
     )

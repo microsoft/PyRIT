@@ -1,8 +1,9 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from typing import TYPE_CHECKING, Optional
-from uuid import UUID
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
 
 from pyrit.exceptions.exception_classes import InvalidJsonException
 from pyrit.models import (
@@ -12,12 +13,14 @@ from pyrit.models import (
     Score,
     UnvalidatedScore,
 )
-from pyrit.prompt_target.common.prompt_target import PromptTarget
 from pyrit.score.scorer import Scorer
-from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 
 if TYPE_CHECKING:
+    from uuid import UUID
+
+    from pyrit.prompt_target.common.prompt_target import PromptTarget
     from pyrit.score.scorer_evaluation.scorer_metrics import HarmScorerMetrics
+    from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 
 
 class FloatScaleScorer(Scorer):
@@ -113,7 +116,7 @@ class FloatScaleScorer(Scorer):
             if not (0 <= score.get_value() <= 1):
                 raise ValueError("FloatScaleScorer score value must be between 0 and 1.")
 
-    def get_scorer_metrics(self) -> Optional["HarmScorerMetrics"]:
+    def get_scorer_metrics(self) -> HarmScorerMetrics | None:
         """
         Get evaluation metrics for this scorer from the configured evaluation result file.
 
