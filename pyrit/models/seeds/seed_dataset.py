@@ -99,7 +99,7 @@ class SeedDataset(BaseModel):
     seed_type: SeedType | None = None
 
     # The actual prompts
-    seeds: list[SeedUnion]
+    seeds: Sequence[SeedUnion]
 
     @model_validator(mode="before")
     @classmethod

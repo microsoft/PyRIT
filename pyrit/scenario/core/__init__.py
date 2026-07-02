@@ -15,6 +15,7 @@ from pyrit.scenario.core.dataset_configuration import (
     DatasetConstraintError,
     DatasetSourceKind,
     ResolvedDataset,
+    build_dataset_filters,
     require_nonempty,
 )
 from pyrit.scenario.core.scenario import BaselineAttackPolicy, Scenario
@@ -34,6 +35,7 @@ __all__ = [
     "INLINE_DATASET_NAME",
     "Parameter",
     "ResolvedDataset",
+    "build_dataset_filters",
     "require_nonempty",
     "Scenario",
     "ScenarioCompositeStrategy",

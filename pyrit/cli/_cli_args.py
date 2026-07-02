@@ -249,9 +249,44 @@ def parse_memory_labels(json_string: str) -> dict[str, str]:
     return labels
 
 
+def parse_dataset_parameter(arg: str) -> tuple[str, str]:
+    """
+    Parse a single ``KEY=VALUE`` dataset-parameter token from the CLI.
+
+    Note: The ``arg`` parameter is positional (not keyword-only) so it can be used directly
+    as an argparse ``type=`` callable and an ``_ArgSpec`` parser. This mirrors
+    ``_parse_initializer_arg`` and is an intentional exception to the keyword-only style rule
+    for argparse compatibility.
+
+    Args:
+        arg (str): The raw ``KEY=VALUE`` token.
+
+    Returns:
+        tuple[str, str]: The (key, value) pair. The value keeps its raw string form so the
+            server can coerce and validate it.
+
+    Raises:
+        ValueError: If the token is not in ``KEY=VALUE`` form or the key is empty. Argparse
+            converts this into a clean CLI error; the shell catches it directly.
+    """
+    if "=" not in arg:
+        raise ValueError(f"Dataset parameter must be in KEY=VALUE form, got: {arg!r}")
+    key, _, value = arg.partition("=")
+    key = key.strip()
+    if not key:
+        raise ValueError(f"Dataset parameter key cannot be empty in: {arg!r}")
+    return key, value
+
+
 # ---------------------------------------------------------------------------
 # Shared argument help text
 # ---------------------------------------------------------------------------
+
+# Dataset-filter keys advertised in --dataset-parameters help. Kept as a static list here (this
+# module is on the fast --help path and stays import-light); a unit test asserts it matches the
+# authoritative registry in pyrit.scenario.core.dataset_configuration.
+_ADVERTISED_DATASET_FILTER_KEYS: tuple[str, ...] = ("harm_categories", "data_types")
+
 ARG_HELP = {
     "config_file": CONFIG_FILE_HELP,
     "initializers": (
@@ -272,6 +307,10 @@ ARG_HELP = {
     "Creates a new dataset config; fetches all items unless --max-dataset-size is also specified",
     "max_dataset_size": "Maximum number of items to use from the dataset (must be >= 1). "
     "Limits new datasets if --dataset-names provided, otherwise overrides scenario's default limit",
+    "dataset_parameters": "Dataset seed filters as KEY=VALUE tokens "
+    "(e.g., harm_categories=cyber data_types=text). Accepted keys: harm_categories, data_types. "
+    "Keys filter seeds before sizing. "
+    "List values may be comma-separated (e.g., harm_categories=cyber,violence)",
     "target": "Name of a registered target from the TargetRegistry to use as the objective target. "
     "Targets are registered by initializers (e.g., 'target' initializer). "
     "Use --list-targets to see available target names after initializers have run",
@@ -406,6 +445,12 @@ _MAX_DATASET_SIZE_ARG = _ArgSpec(
     result_key="max_dataset_size",
     parser=lambda v: validate_integer(v, name="--max-dataset-size", min_value=1),
 )
+_DATASET_PARAMETERS_ARG = _ArgSpec(
+    flags=["--dataset-parameters"],
+    result_key="dataset_parameters",
+    multi_value=True,
+    parser=parse_dataset_parameter,
+)
 _TARGET_ARG = _ArgSpec(
     flags=["--target"],
     result_key="target",
@@ -419,6 +464,7 @@ _RUN_ARG_SPECS: list[_ArgSpec] = [
     _MEMORY_LABELS_ARG,
     _DATASET_NAMES_ARG,
     _MAX_DATASET_SIZE_ARG,
+    _DATASET_PARAMETERS_ARG,
     _TARGET_ARG,
 ]
 

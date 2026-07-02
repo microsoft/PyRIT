@@ -41,6 +41,7 @@ def _make_request(
     scenario_result_id: str | None = None,
     dataset_names: list[str] | None = None,
     max_dataset_size: int | None = None,
+    dataset_parameters: dict[str, Any] | None = None,
 ) -> RunScenarioRequest:
     """Create a RunScenarioRequest for testing."""
     return RunScenarioRequest(
@@ -51,6 +52,7 @@ def _make_request(
         scenario_result_id=scenario_result_id,
         dataset_names=dataset_names,
         max_dataset_size=max_dataset_size,
+        dataset_parameters=dataset_parameters,
     )
 
 
@@ -363,6 +365,56 @@ class TestScenarioRunServiceStartRun:
             and "Falling back to a generic DatasetAttackConfiguration" in record.message
             for record in caplog.records
         )
+
+    async def test_start_run_dataset_parameters_filters_new_config(self, mock_all_registries) -> None:
+        """``dataset_parameters`` with ``dataset_names`` builds a config carrying the filters."""
+
+        class _MarkerDatasetConfiguration(DatasetConfiguration):
+            pass
+
+        scenario_instance = mock_all_registries["scenario_instance"]
+        scenario_instance._default_dataset_config = _MarkerDatasetConfiguration(dataset_names=["original"])
+
+        service = ScenarioRunService()
+        await service.start_run_async(
+            request=_make_request(
+                dataset_names=["custom"],
+                max_dataset_size=7,
+                dataset_parameters={"harm_categories": "cyber"},
+            )
+        )
+
+        init_call = scenario_instance.initialize_async.await_args
+        built_config = init_call.kwargs["dataset_config"]
+        assert built_config.dataset_names == ["custom"]
+        assert built_config.max_dataset_size == 7
+        assert built_config.filters == {"harm_categories": ["cyber"]}
+
+    async def test_start_run_dataset_parameters_updates_default_config(self, mock_all_registries) -> None:
+        """``dataset_parameters`` with no ``dataset_names`` merges filters into the default config."""
+        default_config = DatasetAttackConfiguration(dataset_names=["original"])
+        scenario_instance = mock_all_registries["scenario_instance"]
+        scenario_instance._default_dataset_config = default_config
+
+        service = ScenarioRunService()
+        await service.start_run_async(request=_make_request(dataset_parameters={"harm_categories": "cyber"}))
+
+        init_call = scenario_instance.initialize_async.await_args
+        built_config = init_call.kwargs["dataset_config"]
+        assert built_config is default_config
+        assert built_config.filters == {"harm_categories": ["cyber"]}
+
+    async def test_start_run_dataset_parameters_rejects_max_dataset_size(self, mock_all_registries) -> None:
+        """``max_dataset_size`` in ``dataset_parameters`` is rejected as an unknown filter key."""
+        service = ScenarioRunService()
+        with pytest.raises(ValueError, match="Unknown dataset parameter 'max_dataset_size'"):
+            await service.start_run_async(request=_make_request(dataset_parameters={"max_dataset_size": "9"}))
+
+    async def test_start_run_dataset_parameters_unknown_key_raises(self, mock_all_registries) -> None:
+        """An unknown dataset parameter surfaces as a validation error."""
+        service = ScenarioRunService()
+        with pytest.raises(ValueError, match="Unknown dataset parameter 'bogus'"):
+            await service.start_run_async(request=_make_request(dataset_parameters={"bogus": "x"}))
 
     async def test_start_run_dataset_names_introspection_failure_raises(self, mock_memory) -> None:
         """Passing ``dataset_names`` against a non-no-arg-instantiable scenario fails fast."""

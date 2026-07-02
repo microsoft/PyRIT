@@ -9,6 +9,7 @@ import pytest
 
 from pyrit.models import SeedAttackGroup, SeedGroup, SeedObjective, SeedPrompt
 from pyrit.scenario.core.dataset_configuration import (
+    DATASET_FILTERS,
     INLINE_DATASET_NAME,
     CompoundDatasetAttackConfiguration,
     DatasetAttackConfiguration,
@@ -16,6 +17,7 @@ from pyrit.scenario.core.dataset_configuration import (
     DatasetConstraintError,
     DatasetSourceKind,
     ResolvedDataset,
+    build_dataset_filters,
     forbid_inline_seeds,
     require_harm_categories,
     require_inline_seeds,
@@ -595,3 +597,117 @@ class TestCompoundDatasetAttackConfiguration:
         )
         groups = await config.get_seed_attack_groups_async()
         assert sorted(g.objective.value for g in groups) == ["a", "b"]
+
+
+class TestBuildDatasetFilters:
+    """``build_dataset_filters`` maps the user-facing bag onto ``get_seeds`` filters."""
+
+    def test_none_returns_empty(self) -> None:
+        assert build_dataset_filters(parameters=None) == {}
+
+    def test_empty_returns_empty(self) -> None:
+        assert build_dataset_filters(parameters={}) == {}
+
+    def test_max_dataset_size_is_rejected(self) -> None:
+        with pytest.raises(ValueError, match="Unknown dataset parameter 'max_dataset_size'"):
+            build_dataset_filters(parameters={"max_dataset_size": "13"})
+
+    def test_single_value_maps_to_list(self) -> None:
+        assert build_dataset_filters(parameters={"harm_categories": "cyber"}) == {"harm_categories": ["cyber"]}
+
+    def test_comma_splits_into_list(self) -> None:
+        assert build_dataset_filters(parameters={"harm_categories": "cyber,violence"}) == {
+            "harm_categories": ["cyber", "violence"]
+        }
+
+    def test_multiple_filters_combine(self) -> None:
+        assert build_dataset_filters(parameters={"harm_categories": "cyber", "data_types": "text,image_path"}) == {
+            "harm_categories": ["cyber"],
+            "data_types": ["text", "image_path"],
+        }
+
+    def test_unknown_key_raises(self) -> None:
+        with pytest.raises(ValueError, match="Unknown dataset parameter 'bogus'"):
+            build_dataset_filters(parameters={"bogus": "x"})
+
+    def test_unexposed_get_seeds_kwarg_is_rejected(self) -> None:
+        # ``authors`` is a real get_seeds kwarg but is intentionally NOT exposed as a filter.
+        with pytest.raises(ValueError, match="Unknown dataset parameter 'authors'"):
+            build_dataset_filters(parameters={"authors": "jones"})
+
+
+class TestDatasetFilterRegistry:
+    """The exposed filter set is intentional and stays in contract with ``get_seeds``."""
+
+    def test_exposed_filters_are_frozen(self) -> None:
+        # Adding/removing a filter must be a deliberate edit to this expected set.
+        assert {"harm_categories", "data_types"} == DATASET_FILTERS
+
+    def test_every_filter_is_a_sequence_get_seeds_param(self) -> None:
+        # Each exposed key must be a real get_seeds parameter AND list-valued, since
+        # build_dataset_filters always coerces values into a list.
+        import typing
+        from collections.abc import Sequence
+
+        from pyrit.memory.memory_interface import MemoryInterface
+
+        hints = typing.get_type_hints(MemoryInterface.get_seeds)
+
+        def _allows_sequence(annotation: object) -> bool:
+            for candidate in (annotation, *typing.get_args(annotation)):
+                origin = typing.get_origin(candidate) or candidate
+                if isinstance(origin, type) and origin is not str and issubclass(origin, Sequence):
+                    return True
+            return False
+
+        for name in DATASET_FILTERS:
+            assert name in hints, f"'{name}' is not a MemoryInterface.get_seeds parameter"
+            assert _allows_sequence(hints[name]), f"'{name}' must be a Sequence-typed get_seeds parameter"
+
+
+class TestDatasetConfigurationFilters:
+    """Filters are threaded into ``get_seeds`` and applied before sampling."""
+
+    async def test_filters_passed_to_get_seeds(self, mock_memory: MagicMock) -> None:
+        mock_memory.get_seeds.return_value = make_objectives("a", "b")
+        config = DatasetAttackConfiguration(dataset_names=["d1"], filters={"harm_categories": ["cyber"]})
+        await config.get_seed_attack_groups_async()
+        mock_memory.get_seeds.assert_called_with(dataset_name="d1", harm_categories=["cyber"])
+
+    async def test_filter_removing_all_seeds_raises_specific_error(self, mock_memory: MagicMock) -> None:
+        def _get_seeds(*, dataset_name, **filters):
+            return [] if filters else make_objectives("a", "b")
+
+        mock_memory.get_seeds.side_effect = _get_seeds
+        config = DatasetAttackConfiguration(
+            dataset_names=["d1"], filters={"harm_categories": ["missing"]}, auto_fetch=False
+        )
+        with pytest.raises(DatasetConstraintError, match="none match the configured filters"):
+            await config.get_seed_attack_groups_async()
+
+    async def test_update_filters_merges(self, mock_memory: MagicMock) -> None:
+        mock_memory.get_seeds.return_value = make_objectives("a")
+        config = DatasetAttackConfiguration(dataset_names=["d1"], filters={"harm_categories": ["a"]})
+        config.update_filters(filters={"authors": ["jones"]})
+        await config.get_seed_attack_groups_async()
+        mock_memory.get_seeds.assert_called_with(dataset_name="d1", harm_categories=["a"], authors=["jones"])
+
+    def test_filters_property_returns_copy(self) -> None:
+        config = DatasetAttackConfiguration(dataset_names=["d1"], filters={"harm_categories": ["a"]})
+        config.filters["authors"] = ["mutated"]
+        assert config.filters == {"harm_categories": ["a"]}
+
+    async def test_per_dataset_threads_filters_to_children(self, mock_memory: MagicMock) -> None:
+        mock_memory.get_seeds.return_value = make_objectives("a")
+        config = CompoundDatasetAttackConfiguration.per_dataset(
+            dataset_names=["d1"], filters={"harm_categories": ["cyber"]}
+        )
+        await config.get_seed_attack_groups_async()
+        mock_memory.get_seeds.assert_called_with(dataset_name="d1", harm_categories=["cyber"])
+
+    async def test_compound_update_filters_propagates_to_children(self, mock_memory: MagicMock) -> None:
+        mock_memory.get_seeds.return_value = make_objectives("a")
+        config = CompoundDatasetAttackConfiguration.per_dataset(dataset_names=["d1"])
+        config.update_filters(filters={"harm_categories": ["cyber"]})
+        await config.get_seed_attack_groups_async()
+        mock_memory.get_seeds.assert_called_with(dataset_name="d1", harm_categories=["cyber"])

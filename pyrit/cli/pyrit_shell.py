@@ -412,6 +412,8 @@ class PyRITShell(cmd.Cmd):
             request_kwargs["dataset_names"] = args["dataset_names"]
         if args.get("max_dataset_size") is not None:
             request_kwargs["max_dataset_size"] = args["max_dataset_size"]
+        if args.get("dataset_parameters"):
+            request_kwargs["dataset_parameters"] = dict(args["dataset_parameters"])
         if args.get("memory_labels"):
             request_kwargs["labels"] = args["memory_labels"]
 
