@@ -54,8 +54,7 @@ class RunScenarioRequest(BaseModel):
     dataset_parameters: dict[str, Any] | None = Field(
         None,
         description=(
-            "Dataset seed filters keyed by field, applied before sampling. "
-            "Accepted keys: harm_categories, data_types."
+            "Dataset seed filters keyed by field, applied before sampling. Accepted keys: harm_categories, data_types."
         ),
     )
     max_concurrency: int = Field(10, ge=1, le=100, description="Maximum concurrent operations")
