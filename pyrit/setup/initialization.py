@@ -10,12 +10,7 @@ import dotenv
 
 from pyrit.common import path
 from pyrit.common.apply_defaults import reset_default_values
-from pyrit.memory import (
-    AzureSQLMemory,
-    CentralMemory,
-    MemoryInterface,
-    SQLiteMemory,
-)
+from pyrit.memory import AzureSQLMemory, CentralMemory, MemoryInterface, SQLiteMemory
 
 if TYPE_CHECKING:
     from pyrit.setup.initializers.pyrit_initializer import PyRITInitializer
@@ -94,95 +89,6 @@ def _print_msg(message: str, quiet: bool, log: bool) -> None:
         print(message)
     if log:
         logger.info(message)
-
-
-def _load_initializers_from_scripts(*, script_paths: Sequence[str | pathlib.Path]) -> Sequence["PyRITInitializer"]:
-    """
-    Load PyRITInitializer instances from external Python files.
-
-    Each script file should contain one or more PyRITInitializer classes. All classes
-    that inherit from PyRITInitializer will be automatically discovered and instantiated.
-
-    Args:
-        script_paths (Sequence[str | pathlib.Path]): Sequence of file paths to Python scripts to load.
-
-    Returns:
-        Sequence[PyRITInitializer]: List of PyRITInitializer instances loaded from the scripts.
-
-    Raises:
-        FileNotFoundError: If a script path does not exist.
-        ValueError: If a script path is not a Python file or doesn't contain valid initializers.
-
-    Example:
-        Script content should be a subclass of PyRITInitializer e.g. like SimpleInitializer
-    """
-    # Import here to avoid circular imports
-    from pyrit.setup.initializers.pyrit_initializer import PyRITInitializer
-
-    loaded_initializers = []
-
-    for script_path in script_paths:
-        # Convert to Path object if string
-        script = pathlib.Path(script_path)
-
-        # Validate the script exists
-        if not script.exists():
-            raise FileNotFoundError(f"Initialization script not found: {script}")
-
-        # Validate it's a Python file
-        if script.suffix != ".py":
-            raise ValueError(f"Initialization script must be a Python file (.py): {script}")
-
-        logger.info(f"Loading initializers from script: {script}")
-
-        # Load the script as a module
-        try:
-            import importlib.util
-
-            spec = importlib.util.spec_from_file_location(f"init_script_{script.stem}", script)
-            if spec is None or spec.loader is None:
-                raise ValueError(f"Could not load initialization script: {script}")
-
-            module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(module)
-
-            # Auto-discover PyRITInitializer subclasses in the module
-            script_initializers = []
-
-            # Look for all PyRITInitializer subclasses defined in the module
-            for name in dir(module):
-                obj = getattr(module, name)
-                # Check if it's a class, is a subclass of PyRITInitializer,
-                # and is not the base class itself
-                if (
-                    isinstance(obj, type)
-                    and issubclass(obj, PyRITInitializer)
-                    and obj is not PyRITInitializer
-                    and obj.__module__ == module.__name__
-                ):
-                    try:
-                        # Instantiate the initializer class
-                        initializer = obj()
-                        script_initializers.append(initializer)
-                        logger.debug(f"Found and instantiated {name} in {script.name}")
-                    except Exception as e:
-                        logger.warning(f"Could not instantiate {name} from {script.name}: {e}")
-                        # Continue to try other classes rather than failing completely
-
-            if not script_initializers:
-                raise ValueError(
-                    f"Initialization script {script} must contain at least one PyRITInitializer subclass. "
-                    f"Define a class that inherits from PyRITInitializer."
-                )
-
-            loaded_initializers.extend(script_initializers)
-            logger.debug(f"Loaded {len(script_initializers)} initializer(s) from {script.name}")
-
-        except Exception as e:
-            logger.error(f"Error loading initializers from script {script}: {e}")
-            raise
-
-    return loaded_initializers
 
 
 def _parse_akv_secret_url(secret_url: str) -> tuple[str, str, str | None]:
@@ -306,8 +212,8 @@ async def initialize_pyrit_async(
         memory_db_type (MemoryDatabaseType): The MemoryDatabaseType string literal which indicates the memory
             instance to use for central memory. Options include "InMemory", "SQLite", and "AzureSQL".
         initialization_scripts (Sequence[str | pathlib.Path] | None): Optional sequence of Python script paths
-            that contain PyRITInitializer classes. Each script must define either a get_initializers() function
-            or an 'initializers' variable that returns/contains a list of PyRITInitializer instances.
+            that define PyRITInitializer subclasses. Every initializer subclass defined in each file is
+            loaded and executed. Loading is handled by the InitializerRegistry.
         initializers (Sequence[PyRITInitializer] | None): Optional sequence of PyRITInitializer instances
             to execute directly. These provide type-safe, validated configuration with clear documentation.
         env_files (Sequence[pathlib.Path] | None): Optional sequence of environment file paths to load
@@ -356,9 +262,13 @@ async def initialize_pyrit_async(
     # Combine directly provided initializers with those loaded from scripts
     all_initializers = list(initializers) if initializers else []
 
-    # Load additional initializers from scripts
+    # Load additional initializers from scripts — the registry owns turning
+    # external script files into initializer instances.
     if initialization_scripts:
-        script_initializers = _load_initializers_from_scripts(script_paths=initialization_scripts)
+        from pyrit.registry import InitializerRegistry
+
+        registry = InitializerRegistry.get_registry_singleton()
+        script_initializers = registry.create_from_script_paths(script_paths=initialization_scripts)
         all_initializers.extend(script_initializers)
 
     # Execute all initializers in order

@@ -7,10 +7,7 @@ from unittest.mock import patch
 
 import pytest
 
-from pyrit.registry.components.initializer_registry import (
-    PYRIT_PATH,
-    InitializerRegistry,
-)
+from pyrit.registry.components.initializer_registry import PYRIT_PATH, InitializerRegistry
 from pyrit.setup.initializers.pyrit_initializer import PyRITInitializer
 
 
@@ -209,3 +206,60 @@ def test_is_builtin_returns_false_for_custom_initializers(lazy_registry):
         lazy_registry.register_from_content(name="custom", script_content=_VALID_SCRIPT)
 
     assert lazy_registry.is_builtin("custom") is False
+
+
+# ============================================================================
+# create_from_script_paths Tests
+# ============================================================================
+
+
+def _write_initializer_script(directory: Path, filename: str, *class_names: str) -> Path:
+    """Write a script defining one or more PyRITInitializer subclasses."""
+    body = "from pyrit.setup.initializers.pyrit_initializer import PyRITInitializer\n\n"
+    for class_name in class_names:
+        body += (
+            f"class {class_name}(PyRITInitializer):\n"
+            f"    async def initialize_async(self) -> None:\n"
+            f"        pass\n\n"
+        )
+    script_path = directory / filename
+    script_path.write_text(body)
+    return script_path
+
+
+def test_create_from_script_paths_loads_multiple_classes(lazy_registry):
+    """Test that all initializer subclasses defined in a file are instantiated."""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        script_path = _write_initializer_script(Path(temp_dir), "multi.py", "FirstInit", "SecondInit")
+
+        instances = lazy_registry.create_from_script_paths(script_paths=[script_path])
+
+        assert {type(i).__name__ for i in instances} == {"FirstInit", "SecondInit"}
+        # Loading does not add the classes to the catalog.
+        assert lazy_registry.get_class_names() == []
+
+
+def test_create_from_script_paths_rejects_non_python_file(lazy_registry):
+    """Test that a non-.py path raises ValueError."""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        bad_path = Path(temp_dir) / "not_python.txt"
+        bad_path.write_text("hello")
+
+        with pytest.raises(ValueError, match="must be a Python file"):
+            lazy_registry.create_from_script_paths(script_paths=[bad_path])
+
+
+def test_create_from_script_paths_no_subclass_raises_value_error(lazy_registry):
+    """Test that a file defining no initializer subclass raises ValueError."""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        empty_path = Path(temp_dir) / "empty.py"
+        empty_path.write_text("x = 1\n")
+
+        with pytest.raises(ValueError, match="must contain at least one"):
+            lazy_registry.create_from_script_paths(script_paths=[empty_path])
+
+
+def test_create_from_script_paths_missing_file_raises(lazy_registry):
+    """Test that a missing script path raises FileNotFoundError."""
+    with pytest.raises(FileNotFoundError):
+        lazy_registry.create_from_script_paths(script_paths=["definitely_missing_script.py"])

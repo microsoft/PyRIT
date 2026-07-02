@@ -34,9 +34,11 @@ from pyrit.registry.registry import Registry
 PYRIT_PATH = Path(__file__).parent.parent.parent.resolve()
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+    from types import ModuleType
+
     from pyrit.models import Parameter
-    from pyrit.models.identifiers.component_identifier import \
-        ComponentIdentifier
+    from pyrit.models.identifiers.component_identifier import ComponentIdentifier
     from pyrit.setup.initializers.pyrit_initializer import PyRITInitializer
 
 logger = logging.getLogger(__name__)
@@ -277,6 +279,113 @@ class InitializerRegistry(Registry["PyRITInitializer", InitializerMetadata]):
             instance._validate_params(params=instance.params)
         return instance
 
+    @staticmethod
+    def _load_module_from_path(*, file_path: Path, module_name: str) -> ModuleType:
+        """
+        Import a Python file as an anonymous module.
+
+        Args:
+            file_path: Path to the ``.py`` file to import.
+            module_name: The synthetic module name to load it under.
+
+        Returns:
+            ModuleType: The executed module.
+
+        Raises:
+            ValueError: If an import spec could not be created for the file.
+        """
+        spec = importlib.util.spec_from_file_location(module_name, file_path)
+        if not spec or not spec.loader:
+            raise ValueError(f"Could not load initializer script: {file_path}")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    @staticmethod
+    def _module_defined_initializers(*, module: ModuleType, base_class: type) -> list[type]:
+        """
+        Find concrete ``PyRITInitializer`` subclasses defined in *module*.
+
+        Only classes whose ``__module__`` is *module* are returned, so classes
+        merely imported into the script are ignored.
+
+        Args:
+            module: The imported module to scan.
+            base_class: The ``PyRITInitializer`` base class.
+
+        Returns:
+            list[type]: Concrete initializer classes defined in the module.
+        """
+        return [
+            attr
+            for attr_name in dir(module)
+            if (
+                inspect.isclass(attr := getattr(module, attr_name))
+                and issubclass(attr, base_class)
+                and attr is not base_class
+                and not inspect.isabstract(attr)
+                and attr.__module__ == module.__name__
+            )
+        ]
+
+    def create_from_script_paths(self, *, script_paths: Sequence[str | Path]) -> list[PyRITInitializer]:
+        """
+        Load initializer instances from external Python script files.
+
+        The registry owns turning script files into initializers: each ``.py``
+        file is imported and every ``PyRITInitializer`` subclass *defined in that
+        file* (imported ones are ignored) is instantiated. Instances are returned
+        in load order, ready for the caller to validate and initialize; they are
+        not added to the class catalog.
+
+        Args:
+            script_paths (Sequence[str | Path]): Python (.py) file paths to load
+                initializers from. Relative paths resolve against the current
+                working directory.
+
+        Returns:
+            list[PyRITInitializer]: Instantiated initializers, in load order.
+
+        Raises:
+            FileNotFoundError: If a script path does not exist.
+            ValueError: If a path is not a ``.py`` file or defines no initializer.
+        """
+        from pyrit.setup.initializers.pyrit_initializer import PyRITInitializer
+
+        resolved = self.resolve_script_paths(script_paths=[str(p) for p in script_paths])
+
+        instances: list[PyRITInitializer] = []
+        for script_path in resolved:
+            if script_path.suffix != ".py":
+                raise ValueError(f"Initialization script must be a Python file (.py): {script_path}")
+
+            logger.info(f"Loading initializers from script: {script_path}")
+            try:
+                module = self._load_module_from_path(
+                    file_path=script_path, module_name=f"init_script_{script_path.stem}"
+                )
+                file_instances: list[PyRITInitializer] = []
+                for init_cls in self._module_defined_initializers(module=module, base_class=PyRITInitializer):
+                    try:
+                        file_instances.append(init_cls())
+                        logger.debug(f"Found and instantiated {init_cls.__name__} in {script_path.name}")
+                    except Exception as e:
+                        logger.warning(f"Could not instantiate {init_cls.__name__} from {script_path.name}: {e}")
+
+                if not file_instances:
+                    raise ValueError(
+                        f"Initialization script {script_path} must contain at least one PyRITInitializer subclass. "
+                        f"Define a class that inherits from PyRITInitializer."
+                    )
+
+                instances.extend(file_instances)
+                logger.debug(f"Loaded {len(file_instances)} initializer(s) from {script_path.name}")
+            except Exception as e:
+                logger.error(f"Error loading initializers from script {script_path}: {e}")
+                raise
+
+        return instances
+
     def register_from_content(self, *, name: str, script_content: str) -> str:
         """
         Register an initializer from uploaded Python source code.
@@ -322,28 +431,12 @@ class InitializerRegistry(Registry["PyRITInitializer", InitializerMetadata]):
             raise ValueError(f"Failed to write initializer script: {e}") from e
 
         try:
-            spec = importlib.util.spec_from_file_location(f"custom_initializer.{name}", script_path)
-            if not spec or not spec.loader:
-                raise ValueError(f"Could not load initializer script for '{name}'")
+            module = self._load_module_from_path(file_path=script_path, module_name=f"custom_initializer.{name}")
 
-            module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(module)
-
-            discovered: type[PyRITInitializer] | None = None
-            for attr_name in dir(module):
-                attr = getattr(module, attr_name)
-                if (
-                    inspect.isclass(attr)
-                    and issubclass(attr, PyRITInitializer)
-                    and attr is not PyRITInitializer
-                    and not inspect.isabstract(attr)
-                    and attr.__module__ == module.__name__
-                ):
-                    discovered = attr
-                    break
-
-            if discovered is None:
+            discovered_classes = self._module_defined_initializers(module=module, base_class=PyRITInitializer)
+            if not discovered_classes:
                 raise ValueError(f"Uploaded script for '{name}' does not contain a concrete PyRITInitializer subclass.")
+            discovered = discovered_classes[0]
         except ValueError:
             script_path.unlink(missing_ok=True)
             raise
