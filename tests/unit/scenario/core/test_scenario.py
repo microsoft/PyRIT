@@ -1113,9 +1113,7 @@ class TestValidateStoredScenario:
         scenario = self._make_scenario(name="TestScenario", version=1)
 
         current = make_scenario_identifier(scenario_name="ConcreteScenario", version=1)
-        stored_result = make_scenario_result(
-            scenario_name="DifferentScenario", scenario_version=1, attack_results={}
-        )
+        stored_result = make_scenario_result(scenario_name="DifferentScenario", scenario_version=1, attack_results={})
 
         with pytest.raises(ValueError, match="does not match the current"):
             scenario._validate_stored_scenario(stored_result=stored_result, current_identifier=current)
@@ -1125,9 +1123,7 @@ class TestValidateStoredScenario:
         scenario = self._make_scenario(name="TestScenario", version=2)
 
         current = make_scenario_identifier(scenario_name="ConcreteScenario", version=2)
-        stored_result = make_scenario_result(
-            scenario_name="ConcreteScenario", scenario_version=99, attack_results={}
-        )
+        stored_result = make_scenario_result(scenario_name="ConcreteScenario", scenario_version=99, attack_results={})
 
         with pytest.raises(ValueError, match="does not match the current"):
             scenario._validate_stored_scenario(stored_result=stored_result, current_identifier=current)

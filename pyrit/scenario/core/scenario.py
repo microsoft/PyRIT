@@ -585,9 +585,7 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
                     f"Drop scenario_result_id to start a new scenario."
                 )
 
-            self._validate_stored_scenario(
-                stored_result=existing_results[0], current_identifier=scenario_identifier
-            )
+            self._validate_stored_scenario(stored_result=existing_results[0], current_identifier=scenario_identifier)
             self._apply_persisted_objectives(stored_result=existing_results[0])
             return  # Valid resume - skip creating new scenario result
 

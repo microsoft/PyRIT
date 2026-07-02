@@ -292,9 +292,7 @@ class TestParamValidation:
 
     def test_reserved_version_param_raises(self) -> None:
         """A scenario cannot declare a param named ``version`` (owned by the identity)."""
-        scenario = _make_scenario(
-            declared_params=[Parameter(name="version", description="d", param_type=int)]
-        )
+        scenario = _make_scenario(declared_params=[Parameter(name="version", description="d", param_type=int)])
         with pytest.raises(ValueError, match="reserved parameter"):
             scenario.set_params_from_args(args={})
 
