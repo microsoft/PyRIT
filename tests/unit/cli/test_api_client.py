@@ -21,6 +21,7 @@ from pyrit.models.catalog import (
     TargetCapabilitiesInfo,
     TargetInstance,
 )
+from unit.mocks import make_scenario_result
 
 
 @pytest.fixture()
@@ -344,7 +345,7 @@ async def test_get_scenario_run_results_async(client, mock_httpx_client):
     # Build a minimal ScenarioResult.to_dict() payload that from_dict can deserialize.
     from pyrit.models import ScenarioResult, ScenarioRunState
 
-    scenario_result = ScenarioResult(
+    scenario_result = make_scenario_result(
         scenario_name="x",
         objective_target_identifier=None,
         objective_scorer_identifier=None,

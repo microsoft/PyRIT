@@ -9,19 +9,29 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validator
 
 import pyrit
 from pyrit.common.deprecation import print_deprecation_message
-from pyrit.models.identifiers.component_identifier import (  # noqa: TC001  (runtime-required by Pydantic field annotations)
-    ComponentIdentifier,
-)
+
+# Runtime-required by Pydantic field / computed-field annotations.
+from pyrit.models.identifiers.scenario_identifier import ScenarioIdentifier  # noqa: TC001
+from pyrit.models.identifiers.scorer_identifier import ScorerIdentifier  # noqa: TC001
+from pyrit.models.identifiers.target_identifier import TargetIdentifier  # noqa: TC001
 from pyrit.models.results.attack_result import AttackOutcome, AttackResult
 
 logger = logging.getLogger(__name__)
 
 
 __all__ = ["ScenarioResult", "ScenarioRunState"]
+
+
+#: Denormalized identity fields exposed as ``@computed_field`` projections of
+#: ``scenario_identifier``. They appear in ``model_dump`` output but are not
+#: settable inputs, so they are dropped when reconstructing from a dump.
+_COMPUTED_IDENTITY_FIELDS = frozenset(
+    {"scenario_name", "scenario_version", "objective_target_identifier", "objective_scorer_identifier"}
+)
 
 
 class ScenarioRunState(str, Enum):
@@ -52,22 +62,16 @@ class ScenarioResult(BaseModel):
 
     #: Scenario result ID.
     id: uuid.UUID = Field(default_factory=uuid.uuid4)
-    #: Scenario class name (denormalized identity fact; e.g. ``"ContentHarms"``).
-    scenario_name: str
-    #: Scenario definition version (denormalized identity fact).
-    scenario_version: int = 1
+    #: Canonical scenario identity for this run. Carries the scenario class name,
+    #: definition version, resolved techniques / datasets, the resolved scenario
+    #: params, and the ``objective_target`` / ``objective_scorer`` child references.
+    #: Its eval hash backs resume drift detection.
+    scenario_identifier: ScenarioIdentifier
     #: PyRIT version the scenario ran under (denormalized for storage / display).
     pyrit_version: str = Field(default=pyrit.__version__)
     #: Human-readable scenario description (the scenario class docstring). Display /
     #: catalog metadata snapshotted on the result — not part of scenario identity.
     scenario_description: str = ""
-    #: Resolved parameter snapshot used to detect configuration drift on resume.
-    #: ``None`` for legacy results persisted without it.
-    init_data: dict[str, Any] | None = None
-    #: Target identifier.
-    objective_target_identifier: ComponentIdentifier | None
-    #: Objective scorer identifier, or None if the scenario has no objective scorer.
-    objective_scorer_identifier: ComponentIdentifier | None
     #: Results grouped by atomic attack name.
     attack_results: dict[str, list[AttackResult]]
     #: Current scenario run state.
@@ -94,6 +98,53 @@ class ScenarioResult(BaseModel):
     #: on resume so a fresh ``random.sample`` can't silently change which objectives the
     #: scenario operates on. Keys are not part of any public contract and may evolve.
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _drop_computed_identity_fields(cls, data: Any) -> Any:
+        """
+        Ignore denormalized computed identity fields when reconstructing from a dump.
+
+        ``scenario_name`` / ``scenario_version`` / ``objective_target_identifier`` /
+        ``objective_scorer_identifier`` are ``@computed_field`` projections of
+        ``scenario_identifier`` that show up in ``model_dump`` output but are not
+        settable inputs. Dropping them lets ``model_validate(model_dump(...))``
+        round-trip under ``extra="forbid"``.
+
+        Args:
+            data (Any): Raw input passed to validation (a dict when reconstructing from a dump).
+
+        Returns:
+            Any: The input with computed identity keys removed when it is a dict; otherwise unchanged.
+        """
+        if isinstance(data, dict):
+            return {key: value for key, value in data.items() if key not in _COMPUTED_IDENTITY_FIELDS}
+        return data
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def scenario_name(self) -> str:
+        """Scenario class name (e.g. ``"ContentHarms"``), delegated to the identifier."""
+        return self.scenario_identifier.class_name
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def scenario_version(self) -> int:
+        """Scenario definition version, delegated to the identifier (defaults to 1)."""
+        version = self.scenario_identifier.version
+        return version if version is not None else 1
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def objective_target_identifier(self) -> TargetIdentifier | None:
+        """Target the scenario attacks, delegated to the identifier."""
+        return self.scenario_identifier.objective_target
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def objective_scorer_identifier(self) -> ScorerIdentifier | None:
+        """Primary scorer the scenario evaluates with, delegated to the identifier."""
+        return self.scenario_identifier.objective_scorer
 
     def get_strategies_used(self) -> list[str]:
         """

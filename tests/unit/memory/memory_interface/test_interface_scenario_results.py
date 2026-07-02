@@ -4,7 +4,7 @@
 from datetime import datetime, timedelta, timezone
 
 import pytest
-from unit.mocks import get_mock_scorer_identifier
+from unit.mocks import get_mock_scorer_identifier, make_scenario_result
 
 from pyrit.memory import MemoryInterface
 from pyrit.models import (
@@ -13,7 +13,6 @@ from pyrit.models import (
     ComponentIdentifier,
     IdentifierFilter,
     IdentifierType,
-    ScenarioResult,
 )
 
 
@@ -51,11 +50,10 @@ def create_scenario_result(
         class_module="tests.unit.memory",
     )
 
-    return ScenarioResult(
+    return make_scenario_result(
         scenario_name=name,
         scenario_version=version,
         scenario_description=description,
-        init_data={"test_key": "test_value"},
         objective_target_identifier=ComponentIdentifier(class_name="test_target", class_module="test"),
         attack_results=attack_results,
         objective_scorer_identifier=scorer_identifier,
@@ -274,11 +272,11 @@ def test_preserves_metadata(sqlite_instance: MemoryInterface):
         class_module="test.module",
     )
 
-    scenario_result = ScenarioResult(
+    scenario_result = make_scenario_result(
         scenario_name="Metadata Test Scenario",
         scenario_version=3,
         scenario_description="A test scenario with metadata",
-        init_data={"param1": "value1", "param2": 42},
+        params={"param1": "value1", "param2": 42},
         objective_target_identifier=ComponentIdentifier(
             class_name="test_target",
             class_module="test",
@@ -297,7 +295,8 @@ def test_preserves_metadata(sqlite_instance: MemoryInterface):
     assert retrieved.scenario_name == "Metadata Test Scenario"
     assert retrieved.scenario_description == "A test scenario with metadata"
     assert retrieved.scenario_version == 3
-    assert retrieved.init_data == {"param1": "value1", "param2": 42}
+    assert retrieved.scenario_identifier.params["param1"] == "value1"
+    assert retrieved.scenario_identifier.params["param2"] == 42
     assert retrieved.objective_target_identifier.params["endpoint"] == "https://example.com"
     # objective_scorer_identifier is now a ComponentIdentifier, check its properties
     assert retrieved.objective_scorer_identifier.class_name == "TestScorer"
@@ -367,7 +366,7 @@ def test_filter_by_name_and_version(sqlite_instance: MemoryInterface):
 def test_filter_by_labels(sqlite_instance: MemoryInterface, sample_attack_results):
     """Test scenario results with labels."""
     # Create scenario with labels
-    scenario_result = ScenarioResult(
+    scenario_result = make_scenario_result(
         scenario_name="Labeled Scenario",
         scenario_version=1,
         objective_target_identifier=ComponentIdentifier(class_name="test_target", class_module="test"),
@@ -391,7 +390,7 @@ def test_filter_by_multiple_labels(sqlite_instance: MemoryInterface):
     sqlite_instance.add_attack_results_to_memory(attack_results=[attack_result1, attack_result2])
 
     # Create scenarios with different labels
-    scenario1 = ScenarioResult(
+    scenario1 = make_scenario_result(
         scenario_name="Scenario 1",
         scenario_version=1,
         objective_target_identifier=ComponentIdentifier(class_name="test_target", class_module="test"),
@@ -400,7 +399,7 @@ def test_filter_by_multiple_labels(sqlite_instance: MemoryInterface):
         objective_scorer_identifier=get_mock_scorer_identifier(),
     )
 
-    scenario2 = ScenarioResult(
+    scenario2 = make_scenario_result(
         scenario_name="Scenario 2",
         scenario_version=1,
         objective_target_identifier=ComponentIdentifier(class_name="test_target", class_module="test"),
@@ -429,7 +428,7 @@ def test_filter_by_completion_time(sqlite_instance: MemoryInterface):
     yesterday = now - timedelta(days=1)
     last_week = now - timedelta(days=7)
 
-    scenario1 = ScenarioResult(
+    scenario1 = make_scenario_result(
         scenario_name="Recent Scenario",
         scenario_version=1,
         objective_target_identifier=ComponentIdentifier(class_name="test_target", class_module="test"),
@@ -438,7 +437,7 @@ def test_filter_by_completion_time(sqlite_instance: MemoryInterface):
         objective_scorer_identifier=get_mock_scorer_identifier(),
     )
 
-    scenario2 = ScenarioResult(
+    scenario2 = make_scenario_result(
         scenario_name="Yesterday Scenario",
         scenario_version=1,
         objective_target_identifier=ComponentIdentifier(class_name="test_target", class_module="test"),
@@ -447,7 +446,7 @@ def test_filter_by_completion_time(sqlite_instance: MemoryInterface):
         objective_scorer_identifier=get_mock_scorer_identifier(),
     )
 
-    scenario3 = ScenarioResult(
+    scenario3 = make_scenario_result(
         scenario_name="Old Scenario",
         scenario_version=1,
         objective_target_identifier=ComponentIdentifier(class_name="test_target", class_module="test"),
@@ -480,7 +479,7 @@ def test_filter_by_pyrit_version(sqlite_instance: MemoryInterface):
     sqlite_instance.add_attack_results_to_memory(attack_results=[attack_result1, attack_result2])
 
     # Create scenarios with different PyRIT versions
-    scenario1 = ScenarioResult(
+    scenario1 = make_scenario_result(
         scenario_name="Old Version Scenario",
         scenario_version=1,
         pyrit_version="0.4.0",
@@ -489,7 +488,7 @@ def test_filter_by_pyrit_version(sqlite_instance: MemoryInterface):
         objective_scorer_identifier=get_mock_scorer_identifier(),
     )
 
-    scenario2 = ScenarioResult(
+    scenario2 = make_scenario_result(
         scenario_name="New Version Scenario",
         scenario_version=1,
         pyrit_version="0.5.0",
@@ -515,7 +514,7 @@ def test_filter_by_target_endpoint(sqlite_instance: MemoryInterface):
     sqlite_instance.add_attack_results_to_memory(attack_results=[attack_result1, attack_result2, attack_result3])
 
     # Create scenarios with different target endpoints
-    scenario1 = ScenarioResult(
+    scenario1 = make_scenario_result(
         scenario_name="Azure Scenario",
         scenario_version=1,
         objective_target_identifier=ComponentIdentifier(
@@ -527,7 +526,7 @@ def test_filter_by_target_endpoint(sqlite_instance: MemoryInterface):
         objective_scorer_identifier=get_mock_scorer_identifier(),
     )
 
-    scenario2 = ScenarioResult(
+    scenario2 = make_scenario_result(
         scenario_name="OpenAI Scenario",
         scenario_version=1,
         objective_target_identifier=ComponentIdentifier(
@@ -539,7 +538,7 @@ def test_filter_by_target_endpoint(sqlite_instance: MemoryInterface):
         objective_scorer_identifier=get_mock_scorer_identifier(),
     )
 
-    scenario3 = ScenarioResult(
+    scenario3 = make_scenario_result(
         scenario_name="No Endpoint Scenario",
         scenario_version=1,
         objective_target_identifier=ComponentIdentifier(class_name="Local", class_module="test"),
@@ -570,7 +569,7 @@ def test_filter_by_target_model_name(sqlite_instance: MemoryInterface):
     sqlite_instance.add_attack_results_to_memory(attack_results=[attack_result1, attack_result2, attack_result3])
 
     # Create scenarios with different model names
-    scenario1 = ScenarioResult(
+    scenario1 = make_scenario_result(
         scenario_name="GPT-4 Scenario",
         scenario_version=1,
         objective_target_identifier=ComponentIdentifier(
@@ -582,7 +581,7 @@ def test_filter_by_target_model_name(sqlite_instance: MemoryInterface):
         objective_scorer_identifier=get_mock_scorer_identifier(),
     )
 
-    scenario2 = ScenarioResult(
+    scenario2 = make_scenario_result(
         scenario_name="GPT-4o Scenario",
         scenario_version=1,
         objective_target_identifier=ComponentIdentifier(
@@ -592,7 +591,7 @@ def test_filter_by_target_model_name(sqlite_instance: MemoryInterface):
         objective_scorer_identifier=get_mock_scorer_identifier(),
     )
 
-    scenario3 = ScenarioResult(
+    scenario3 = make_scenario_result(
         scenario_name="GPT-3.5 Scenario",
         scenario_version=1,
         objective_target_identifier=ComponentIdentifier(
@@ -629,7 +628,7 @@ def test_combined_filters(sqlite_instance: MemoryInterface):
     now = datetime.now(timezone.utc)
     yesterday = now - timedelta(days=1)
 
-    scenario1 = ScenarioResult(
+    scenario1 = make_scenario_result(
         scenario_name="Test Scenario",
         scenario_version=1,
         pyrit_version="0.5.0",
@@ -644,7 +643,7 @@ def test_combined_filters(sqlite_instance: MemoryInterface):
         objective_scorer_identifier=get_mock_scorer_identifier(),
     )
 
-    scenario2 = ScenarioResult(
+    scenario2 = make_scenario_result(
         scenario_name="Test Scenario",
         scenario_version=1,
         pyrit_version="0.4.0",
@@ -845,14 +844,14 @@ def test_get_scenario_results_by_target_identifier_filter_hash(
     attack_result2 = create_attack_result("conv_2", "Objective 2")
     sqlite_instance.add_attack_results_to_memory(attack_results=[attack_result1, attack_result2])
 
-    scenario1 = ScenarioResult(
+    scenario1 = make_scenario_result(
         scenario_name="Scenario OpenAI",
         scenario_version=1,
         objective_target_identifier=target_id_1,
         attack_results={"Attack1": [attack_result1]},
         objective_scorer_identifier=get_mock_scorer_identifier(),
     )
-    scenario2 = ScenarioResult(
+    scenario2 = make_scenario_result(
         scenario_name="Scenario Azure",
         scenario_version=1,
         objective_target_identifier=target_id_2,
@@ -895,14 +894,14 @@ def test_get_scenario_results_by_target_identifier_filter_endpoint(
     attack_result2 = create_attack_result("conv_2", "Objective 2")
     sqlite_instance.add_attack_results_to_memory(attack_results=[attack_result1, attack_result2])
 
-    scenario1 = ScenarioResult(
+    scenario1 = make_scenario_result(
         scenario_name="Scenario OpenAI",
         scenario_version=1,
         objective_target_identifier=target_id_1,
         attack_results={"Attack1": [attack_result1]},
         objective_scorer_identifier=get_mock_scorer_identifier(),
     )
-    scenario2 = ScenarioResult(
+    scenario2 = make_scenario_result(
         scenario_name="Scenario Azure",
         scenario_version=1,
         objective_target_identifier=target_id_2,
@@ -933,7 +932,7 @@ def test_get_scenario_results_by_target_identifier_filter_no_match(
     attack_result1 = create_attack_result("conv_1", "Objective 1")
     sqlite_instance.add_attack_results_to_memory(attack_results=[attack_result1])
 
-    scenario1 = ScenarioResult(
+    scenario1 = make_scenario_result(
         scenario_name="Test Scenario",
         scenario_version=1,
         objective_target_identifier=ComponentIdentifier(

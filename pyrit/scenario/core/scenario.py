@@ -36,6 +36,8 @@ from pyrit.memory.memory_models import ScenarioResultEntry
 from pyrit.models import (
     AttackOutcome,
     AttackResult,
+    ScenarioEvaluationIdentifier,
+    ScenarioIdentifier,
     ScenarioResult,
     ScenarioRunState,
     SeedAttackGroup,
@@ -45,9 +47,7 @@ from pyrit.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_requirements import TargetRequirements
 from pyrit.registry import ScorerRegistry
 from pyrit.registry.resolution import (
-    describe_param_mismatch,
     resolve_declared_params,
-    snapshot_params_for_persistence,
 )
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
@@ -187,13 +187,13 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
 
         description = ClassRegistryEntry.description_from_docstring(self.__class__)
 
-        # The scenario identifier is a build-time projection owned by the scenario
-        # registry, not a per-run record. The run persists denormalized identity
-        # facts (name / version / pyrit_version) plus the display description and the
-        # resolved-param resume snapshot directly on the ScenarioResult.
+        # The scenario identifier is the canonical per-run identity: the scenario
+        # registry produces it and it is persisted on the ScenarioResult (carrying
+        # class name / version / resolved techniques / datasets / params and the
+        # objective_target / objective_scorer references). The display description
+        # and pyrit_version ride alongside it on the ScenarioResult.
         self._version = version
         self._description = description
-        self._init_data: dict[str, Any] | None = None
 
         # Store strategy configuration for use in initialize_async
         self._strategy_class = strategy_class
@@ -552,12 +552,10 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
                 seed_groups = await self._dataset_config.get_seed_attack_groups_async()
             self._atomic_attacks.insert(0, self._build_baseline_atomic_attack(seed_groups=seed_groups))
 
-        # Snapshot params before the resume branch so the persistence record is
-        # populated regardless of which branch we take. The registry helper
-        # deep-copies, normalizes to the JSON-safe stored form, and fails fast on a
-        # non-serializable value instead of at DB write time. The snapshot rides on
-        # the ScenarioResult (persistence aggregate), not the identifier.
-        self._init_data = snapshot_params_for_persistence(params=self.params, owner=f"Scenario '{type(self).__name__}'")
+        # Build the canonical scenario identifier once params/strategies/datasets
+        # are resolved, so both the resume check and the new-result branch share the
+        # same identity (and its eval hash).
+        scenario_identifier = self._build_scenario_identifier()
 
         # Check if we're resuming an existing scenario. Any divergence is a hard error
         # rather than a silent restart, so the original progress isn't orphaned without
@@ -571,7 +569,9 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
                     f"Drop scenario_result_id to start a new scenario."
                 )
 
-            self._validate_stored_scenario(stored_result=existing_results[0])
+            self._validate_stored_scenario(
+                stored_result=existing_results[0], current_identifier=scenario_identifier
+            )
             self._apply_persisted_objectives(stored_result=existing_results[0])
             return  # Valid resume - skip creating new scenario result
 
@@ -584,12 +584,8 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
         }
 
         result = ScenarioResult(
-            scenario_name=type(self).__name__,
-            scenario_version=self._version,
+            scenario_identifier=scenario_identifier,
             scenario_description=self._description,
-            init_data=self._init_data,
-            objective_target_identifier=self._objective_target_identifier,
-            objective_scorer_identifier=self._objective_scorer_identifier,
             labels=self._memory_labels,
             attack_results=attack_results,
             scenario_run_state=ScenarioRunState.CREATED,
@@ -709,23 +705,50 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
             memory_labels=self._memory_labels,
         )
 
-    def _validate_stored_scenario(self, *, stored_result: ScenarioResult) -> None:
+    def _build_scenario_identifier(self) -> ScenarioIdentifier:
         """
-        Validate that a stored scenario result exactly matches the current scenario configuration.
+        Build the canonical ``ScenarioIdentifier`` for the current run.
+
+        Combines the definition version, the resolved technique / dataset
+        selection, the resolved scenario params, and the objective target / scorer
+        references into one identity whose eval hash backs resume drift detection.
+
+        Returns:
+            ScenarioIdentifier: The identifier describing this scenario run.
+        """
+        techniques = sorted({s.value for s in self._scenario_strategies})
+        datasets = list(self._dataset_config.dataset_names)
+        return ScenarioIdentifier.of(
+            self,
+            params=self.params,
+            version=self._version,
+            techniques=techniques,
+            datasets=datasets,
+            objective_target=self._objective_target_identifier,
+            objective_scorer=self._objective_scorer_identifier,
+        )
+
+    def _validate_stored_scenario(
+        self, *, stored_result: ScenarioResult, current_identifier: ScenarioIdentifier
+    ) -> None:
+        """
+        Validate that a stored scenario result matches the current configuration.
 
         Resume is opt-in via ``scenario_result_id``; any divergence from the stored
         result is treated as user error rather than a silent restart, since the
-        original progress would otherwise be orphaned without warning.
+        original progress would otherwise be orphaned without warning. Divergence is
+        detected by comparing behavioral eval hashes: the scenario class, version,
+        resolved techniques / datasets, params, and objective target / scorer all
+        feed the hash, so a mismatch means the configuration changed.
 
         Args:
             stored_result (ScenarioResult): The scenario result retrieved from memory.
+            current_identifier (ScenarioIdentifier): Identifier for the current run.
 
         Raises:
-            ValueError: If the stored scenario name, version, or parameters do not
-                match the current configuration.
+            ValueError: If the stored scenario identity does not match the current one.
         """
         stored_name = stored_result.scenario_name
-        stored_version = stored_result.scenario_version
         current_name = type(self).__name__
 
         if stored_name != current_name:
@@ -735,26 +758,18 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
                 f"Drop scenario_result_id to start a new scenario."
             )
 
-        if stored_version != self._version:
-            raise ValueError(
-                f"Scenario result id '{self._scenario_result_id}' was created with "
-                f"{current_name} version {stored_version} but current version is "
-                f"{self._version}. Drop scenario_result_id to start a new scenario."
-            )
+        # Compare behavioral eval hashes. The stored eval_hash is never trusted;
+        # ScenarioEvaluationIdentifier recomputes it from the stored identifier's
+        # params and children, matching how the current identifier is hashed.
+        stored_eval_hash = ScenarioEvaluationIdentifier(stored_result.scenario_identifier).eval_hash
+        current_eval_hash = ScenarioEvaluationIdentifier(current_identifier).eval_hash
 
-        # Treat None (legacy result without persisted params) as empty. The registry
-        # helper compares both sides post-JSON-normalization (so tuple → list, non-str
-        # dict keys → str don't false-mismatch) and names only the differing keys,
-        # never their values, so secrets or large blobs never leak into logs.
-        differing = describe_param_mismatch(
-            stored=stored_result.init_data,
-            current=self.params,
-        )
-        if differing is not None:
+        if stored_eval_hash != current_eval_hash:
             raise ValueError(
-                f"Scenario result id '{self._scenario_result_id}' has mismatched parameters "
-                f"(differing keys: {differing}). "
-                f"Drop scenario_result_id to start a new scenario, or pass matching parameters to resume."
+                f"Scenario result id '{self._scenario_result_id}' was created with a different "
+                f"{current_name} configuration (version, techniques, datasets, parameters, or "
+                f"objective target / scorer changed). "
+                f"Drop scenario_result_id to start a new scenario, or pass matching configuration to resume."
             )
 
         logger.info(

@@ -14,6 +14,7 @@ from pyrit.models import (
 )
 from pyrit.models.results.attack_result import AttackOutcome, AttackResult
 from pyrit.models.retry_event import RetryEvent
+from tests.unit.mocks import make_scenario_result
 
 
 def _make_component_identifier_dict(class_name="TestTarget"):
@@ -32,7 +33,7 @@ class TestScenarioResult:
     def test_init_basic(self):
         target_id = _make_component_identifier_dict()
         scorer_id = _make_component_identifier_dict("TestScorer")
-        result = ScenarioResult(
+        result = make_scenario_result(
             scenario_name="TestScenario",
             objective_target_identifier=target_id,
             attack_results={"strat1": []},
@@ -47,7 +48,7 @@ class TestScenarioResult:
 
     def test_init_with_explicit_id(self):
         explicit_id = uuid.uuid4()
-        result = ScenarioResult(
+        result = make_scenario_result(
             scenario_name="TestScenario",
             objective_target_identifier=ComponentIdentifier.from_dict({}),
             attack_results={},
@@ -57,7 +58,7 @@ class TestScenarioResult:
         assert result.id == explicit_id
 
     def test_get_strategies_used(self):
-        result = ScenarioResult(
+        result = make_scenario_result(
             scenario_name="TestScenario",
             objective_target_identifier=ComponentIdentifier.from_dict({}),
             attack_results={"crescendo": [], "flip": []},
@@ -70,7 +71,7 @@ class TestScenarioResult:
         ar1 = _make_attack_result(objective="obj1")
         ar2 = _make_attack_result(objective="obj2")
         ar3 = _make_attack_result(objective="obj1")
-        result = ScenarioResult(
+        result = make_scenario_result(
             scenario_name="TestScenario",
             objective_target_identifier=ComponentIdentifier.from_dict({}),
             attack_results={"s1": [ar1, ar3], "s2": [ar2]},
@@ -82,7 +83,7 @@ class TestScenarioResult:
     def test_get_objectives_by_attack_name(self):
         ar1 = _make_attack_result(objective="obj1")
         ar2 = _make_attack_result(objective="obj2")
-        result = ScenarioResult(
+        result = make_scenario_result(
             scenario_name="TestScenario",
             objective_target_identifier=ComponentIdentifier.from_dict({}),
             attack_results={"s1": [ar1], "s2": [ar2]},
@@ -98,7 +99,7 @@ class TestScenarioResult:
             _make_attack_result(outcome=AttackOutcome.SUCCESS),
             _make_attack_result(outcome=AttackOutcome.UNDETERMINED),
         ]
-        sr = ScenarioResult(
+        sr = make_scenario_result(
             scenario_name="TestScenario",
             objective_target_identifier=ComponentIdentifier.from_dict({}),
             attack_results={"s1": results},
@@ -107,7 +108,7 @@ class TestScenarioResult:
         assert sr.objective_achieved_rate() == 50
 
     def test_objective_achieved_rate_empty(self):
-        sr = ScenarioResult(
+        sr = make_scenario_result(
             scenario_name="TestScenario",
             objective_target_identifier=ComponentIdentifier.from_dict({}),
             attack_results={"s1": []},
@@ -116,7 +117,7 @@ class TestScenarioResult:
         assert sr.objective_achieved_rate() == 0
 
     def test_objective_achieved_rate_by_name(self):
-        sr = ScenarioResult(
+        sr = make_scenario_result(
             scenario_name="TestScenario",
             objective_target_identifier=ComponentIdentifier.from_dict({}),
             attack_results={
@@ -141,7 +142,7 @@ class TestScenarioResult:
 
     def test_error_attack_result_ids_defaults_to_empty(self):
         """error_attack_result_ids defaults to empty list."""
-        sr = ScenarioResult(
+        sr = make_scenario_result(
             scenario_name="TestScenario",
             objective_target_identifier=ComponentIdentifier.from_dict({}),
             attack_results={},
@@ -151,7 +152,7 @@ class TestScenarioResult:
 
     def test_error_attack_result_ids_stored(self):
         """error_attack_result_ids are stored correctly."""
-        sr = ScenarioResult(
+        sr = make_scenario_result(
             scenario_name="TestScenario",
             objective_target_identifier=ComponentIdentifier.from_dict({}),
             attack_results={},
@@ -200,7 +201,7 @@ def test_scenario_result_to_dict_from_dict_roundtrip():
         ],
         total_retries=1,
     )
-    original = ScenarioResult(
+    original = make_scenario_result(
         id=uuid.UUID("12345678-1234-1234-1234-123456789abc"),
         scenario_name="ContentHarms",
         scenario_version=2,
@@ -230,7 +231,7 @@ def test_scenario_result_from_dict_preserves_missing_completion_time():
     """An in-progress scenario serialized without completion_time should round-trip with completion_time=None."""
     target_id = ComponentIdentifier(class_name="OpenAIChatTarget", class_module="pyrit.prompt_target")
 
-    original = ScenarioResult(
+    original = make_scenario_result(
         scenario_name="Test",
         pyrit_version="0.14.0",
         objective_target_identifier=target_id,
@@ -246,7 +247,7 @@ def test_scenario_result_from_dict_preserves_missing_completion_time():
 
 
 def test_scenario_result_to_dict_from_dict_emit_deprecation_warnings():
-    result = ScenarioResult(
+    result = make_scenario_result(
         scenario_name="Test",
         pyrit_version="0.14.0",
         objective_target_identifier=ComponentIdentifier.from_dict({}),
@@ -260,7 +261,7 @@ def test_scenario_result_to_dict_from_dict_emit_deprecation_warnings():
 
 
 def test_scenario_result_display_group_map_is_public_field():
-    result = ScenarioResult(
+    result = make_scenario_result(
         scenario_name="Test",
         pyrit_version="0.14.0",
         objective_target_identifier=ComponentIdentifier.from_dict({}),

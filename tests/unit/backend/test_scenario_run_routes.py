@@ -17,6 +17,7 @@ from pyrit.backend.main import app
 from pyrit.backend.models.scenarios import ScenarioRunListResponse
 from pyrit.models import ScenarioRunState
 from pyrit.models.catalog.scenario import ScenarioRunSummary
+from unit.mocks import make_scenario_result
 
 
 @pytest.fixture
@@ -229,7 +230,7 @@ class TestGetScenarioRunResultsRoute:
 
     def test_get_results_returns_200(self, client: TestClient) -> None:
         """Test that getting results of a completed run returns 200."""
-        from pyrit.models import AttackOutcome, AttackResult, ComponentIdentifier, ScenarioResult
+        from pyrit.models import AttackOutcome, AttackResult, ComponentIdentifier
 
         attack = AttackResult(
             conversation_id="conv-1",
@@ -239,7 +240,7 @@ class TestGetScenarioRunResultsRoute:
             execution_time_ms=100,
             timestamp=datetime(2025, 1, 1, tzinfo=timezone.utc),
         )
-        scenario_result = ScenarioResult(
+        scenario_result = make_scenario_result(
             scenario_name="foundry.red_team_agent",
             scenario_description="Foundry red-team agent",
             objective_target_identifier=ComponentIdentifier.from_dict(

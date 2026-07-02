@@ -30,6 +30,7 @@ from pyrit.scenario.core import (
     ScenarioStrategy,
 )
 from pyrit.score import Scorer
+from tests.unit.mocks import make_scenario_identifier, make_scenario_result
 
 # Reusable test scorer identifier
 _TEST_SCORER_ID = ComponentIdentifier(
@@ -574,7 +575,7 @@ class TestScenarioResult:
 
     def test_scenario_result_initialization(self, sample_attack_results):
         """Test ScenarioResult initialization."""
-        result = ScenarioResult(
+        result = make_scenario_result(
             scenario_name="Test",
             scenario_version=1,
             objective_target_identifier=ComponentIdentifier(class_name="TestTarget", class_module="test"),
@@ -594,7 +595,7 @@ class TestScenarioResult:
 
     def test_scenario_result_with_empty_results(self):
         """Test ScenarioResult with empty attack results."""
-        result = ScenarioResult(
+        result = make_scenario_result(
             scenario_name="TestScenario",
             scenario_version=1,
             objective_target_identifier=ComponentIdentifier(
@@ -611,7 +612,7 @@ class TestScenarioResult:
     def test_scenario_result_objective_achieved_rate(self, sample_attack_results):
         """Test objective_achieved_rate calculation."""
         # All successful
-        result = ScenarioResult(
+        result = make_scenario_result(
             scenario_name="Test",
             scenario_version=1,
             objective_target_identifier=ComponentIdentifier(
@@ -638,7 +639,7 @@ class TestScenarioResult:
                 executed_turns=1,
             ),
         ]
-        result2 = ScenarioResult(
+        result2 = make_scenario_result(
             scenario_name="Test",
             scenario_version=1,
             objective_target_identifier=ComponentIdentifier(
@@ -1092,46 +1093,44 @@ class TestValidateStoredScenario:
     def _make_scenario(self, *, name: str = "TestScenario", version: int = 1) -> ConcreteScenario:
         scenario = ConcreteScenario(name=name, version=version)
         scenario._scenario_result_id = "test-result-id"
-        # _validate_stored_scenario now also checks params
         scenario.params = {}
         return scenario
 
     def test_passes_when_name_and_version_match(self):
-        """Valid match does not raise."""
+        """Valid match (identical eval hash) does not raise."""
         scenario = self._make_scenario(name="TestScenario", version=2)
 
-        stored_result = MagicMock(spec=ScenarioResult)
-        stored_result.scenario_name = "ConcreteScenario"
-        stored_result.scenario_version = 2
-        stored_result.scenario_run_state = "CREATED"
-        stored_result.init_data = None
+        current = make_scenario_identifier(scenario_name="ConcreteScenario", version=2)
+        stored_result = make_scenario_result(
+            scenario_name="ConcreteScenario", scenario_version=2, scenario_run_state="CREATED", attack_results={}
+        )
 
         # Should not raise
-        scenario._validate_stored_scenario(stored_result=stored_result)
+        scenario._validate_stored_scenario(stored_result=stored_result, current_identifier=current)
 
     def test_raises_when_name_mismatches(self):
         """Mismatched name raises ValueError."""
         scenario = self._make_scenario(name="TestScenario", version=1)
 
-        stored_result = MagicMock(spec=ScenarioResult)
-        stored_result.scenario_name = "DifferentScenario"
-        stored_result.scenario_version = 1
-        stored_result.init_data = None
+        current = make_scenario_identifier(scenario_name="ConcreteScenario", version=1)
+        stored_result = make_scenario_result(
+            scenario_name="DifferentScenario", scenario_version=1, attack_results={}
+        )
 
         with pytest.raises(ValueError, match="belongs to scenario 'DifferentScenario'"):
-            scenario._validate_stored_scenario(stored_result=stored_result)
+            scenario._validate_stored_scenario(stored_result=stored_result, current_identifier=current)
 
     def test_raises_when_version_mismatches(self):
-        """Mismatched version raises ValueError."""
+        """Mismatched version changes the eval hash and raises ValueError."""
         scenario = self._make_scenario(name="TestScenario", version=2)
 
-        stored_result = MagicMock(spec=ScenarioResult)
-        stored_result.scenario_name = "ConcreteScenario"
-        stored_result.scenario_version = 99
-        stored_result.init_data = None
+        current = make_scenario_identifier(scenario_name="ConcreteScenario", version=2)
+        stored_result = make_scenario_result(
+            scenario_name="ConcreteScenario", scenario_version=99, attack_results={}
+        )
 
-        with pytest.raises(ValueError, match="version 99 but current version is 2"):
-            scenario._validate_stored_scenario(stored_result=stored_result)
+        with pytest.raises(ValueError, match="different .* configuration"):
+            scenario._validate_stored_scenario(stored_result=stored_result, current_identifier=current)
 
 
 @pytest.mark.usefixtures("patch_central_database")

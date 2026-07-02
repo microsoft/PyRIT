@@ -22,6 +22,7 @@ from pyrit.models.catalog import (
     TargetCapabilitiesInfo,
     TargetInstance,
 )
+from unit.mocks import make_scenario_result
 
 # ---------------------------------------------------------------------------
 # Typed-object factory helpers
@@ -417,7 +418,6 @@ async def test_print_scenario_result_async_accepts_real_scenario_result():
         AttackOutcome,
         AttackResult,
         ComponentIdentifier,
-        ScenarioResult,
     )
 
     target_identifier = ComponentIdentifier.model_validate(
@@ -431,7 +431,7 @@ async def test_print_scenario_result_async_accepts_real_scenario_result():
         execution_time_ms=150,
         timestamp=datetime(2025, 1, 1, tzinfo=timezone.utc),
     )
-    scenario_result = ScenarioResult(
+    scenario_result = make_scenario_result(
         scenario_name="test.scenario",
         scenario_description="A test",
         objective_target_identifier=target_identifier,

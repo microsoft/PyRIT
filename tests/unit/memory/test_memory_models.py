@@ -34,6 +34,7 @@ from pyrit.models import (
     SeedPrompt,
     SeedSimulatedConversation,
 )
+from unit.mocks import make_scenario_result
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -562,7 +563,7 @@ class TestScenarioResultEntry:
             "completion_time": datetime.now(tz=timezone.utc),
         }
         defaults.update(overrides)
-        return ScenarioResult(**defaults)
+        return make_scenario_result(**defaults)
 
     def test_init_from_scenario_result(self):
         sr = self._make_scenario_result()

@@ -4,6 +4,7 @@
 import uuid
 
 import pytest
+from unit.mocks import make_scenario_result
 
 from pyrit.models import (
     AttackOutcome,
@@ -30,7 +31,7 @@ def _scenario_result(
     objective_scorer_identifier: ComponentIdentifier | None = None,
     display_group_map: dict[str, str] | None = None,
 ) -> ScenarioResult:
-    return ScenarioResult(
+    return make_scenario_result(
         scenario_name="TestScenario",
         scenario_version=1,
         pyrit_version="1.0.0",
@@ -81,7 +82,7 @@ async def test_write_async_renders_full_summary(printer, capsys):
 
 
 async def test_write_async_with_unknown_target_when_no_params(printer, capsys):
-    result = ScenarioResult(
+    result = make_scenario_result(
         scenario_name="TestScenario",
         scenario_version=1,
         pyrit_version="1.0.0",

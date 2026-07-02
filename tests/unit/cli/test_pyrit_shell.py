@@ -12,6 +12,7 @@ import pytest
 
 from pyrit.cli import pyrit_shell
 from pyrit.models import Parameter
+from unit.mocks import make_scenario_result
 
 
 def _sp(*, name, description="", default=None, param_type="str", choices=None, is_list=False) -> Parameter:
@@ -488,9 +489,9 @@ class TestDoRun:
     @staticmethod
     def _empty_scenario_result():
         """Build a minimal ScenarioResult for use as get_scenario_run_results_async return."""
-        from pyrit.models import ScenarioResult, ScenarioRunState
+        from pyrit.models import ScenarioRunState
 
-        return ScenarioResult(
+        return make_scenario_result(
             scenario_name="foo",
             objective_target_identifier=None,
             objective_scorer_identifier=None,
@@ -648,10 +649,10 @@ class TestListErrors:
 
 class TestPrintScenarioAndHelp:
     def test_print_scenario_success(self, shell):
-        from pyrit.models import ScenarioResult, ScenarioRunState
+        from pyrit.models import ScenarioRunState
 
         s, client = shell
-        empty_result = ScenarioResult(
+        empty_result = make_scenario_result(
             scenario_name="foo",
             objective_target_identifier=None,
             objective_scorer_identifier=None,

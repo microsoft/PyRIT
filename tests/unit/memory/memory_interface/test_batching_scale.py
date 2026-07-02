@@ -11,6 +11,8 @@ import hashlib
 import uuid
 from unittest.mock import patch
 
+from unit.mocks import make_scenario_result
+
 from pyrit.memory import MemoryInterface
 from pyrit.memory.memory_models import PromptMemoryEntry
 from pyrit.models import AttackResult, ComponentIdentifier, MessagePiece, ScenarioResult, Score
@@ -58,11 +60,10 @@ def _create_scenario_result(
     attack_results: dict[str, list[AttackResult]] | None = None,
 ) -> ScenarioResult:
     """Create a sample scenario result for testing."""
-    return ScenarioResult(
+    return make_scenario_result(
         scenario_name=name,
         scenario_description="test",
         scenario_version=1,
-        init_data={},
         objective_target_identifier=ComponentIdentifier(class_name="TestTarget", class_module="test"),
         attack_results=attack_results or {},
         objective_scorer_identifier=ComponentIdentifier(class_name="TestScorer", class_module="test"),

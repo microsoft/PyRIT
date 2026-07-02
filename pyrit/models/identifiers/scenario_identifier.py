@@ -26,10 +26,13 @@ class ScenarioIdentifier(ComponentIdentifier):
     Strongly-typed projection of a ``Scenario``'s ``ComponentIdentifier``.
 
     Like the sibling projections (``TargetIdentifier`` / ``ScorerIdentifier``),
-    this is a build-time projection produced by the scenario registry — never a
-    per-run persistence record. The persisted run facts (scenario name, version,
-    description, and the resolved-parameter resume snapshot) live as denormalized
-    fields on the ``ScenarioResult`` aggregate, not here.
+    this is produced by the scenario registry when a scenario is built. It is also
+    the canonical per-run identity carried on the ``ScenarioResult`` aggregate and
+    persisted with it: the scenario class name (``class_name``), definition
+    ``version``, resolved ``techniques`` / ``datasets``, the resolved scenario
+    ``params``, and the ``objective_target`` / ``objective_scorer`` child
+    references all live here rather than as separate denormalized fields. Its eval
+    hash (via ``ScenarioEvaluationIdentifier``) backs resume drift detection.
 
     Promotes the scenario's behavioral identity to typed ``params`` fields that
     feed both the content and eval hash: the definition ``version`` and the

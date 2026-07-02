@@ -14,6 +14,7 @@ import pytest
 from pyrit.cli import _config_reader as pyrit_scan_config_reader
 from pyrit.cli import pyrit_scan
 from pyrit.models import Parameter
+from unit.mocks import make_scenario_result
 
 
 def _sp(*, name, description="", default=None, param_type="str", choices=None, is_list=False) -> Parameter:
@@ -178,7 +179,6 @@ def _make_scenario_result():
         AttackOutcome,
         AttackResult,
         ComponentIdentifier,
-        ScenarioResult,
         ScenarioRunState,
     )
 
@@ -190,7 +190,7 @@ def _make_scenario_result():
         execution_time_ms=10,
         timestamp=datetime(2025, 1, 1, tzinfo=timezone.utc),
     )
-    return ScenarioResult(
+    return make_scenario_result(
         scenario_name="test_scenario",
         scenario_description="A test",
         objective_target_identifier=ComponentIdentifier.model_validate(
