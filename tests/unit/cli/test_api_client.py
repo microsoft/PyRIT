@@ -294,6 +294,17 @@ async def test_list_targets_async(client, mock_httpx_client):
 
 
 # ---------------------------------------------------------------------------
+# Datasets
+# ---------------------------------------------------------------------------
+
+
+async def test_list_datasets_async(client, mock_httpx_client):
+    mock_httpx_client.get.return_value = _make_response(json_data={"items": []})
+    await client.list_datasets_async()
+    mock_httpx_client.get.assert_awaited_once_with("/api/datasets", params=None)
+
+
+# ---------------------------------------------------------------------------
 # Scenario runs
 # ---------------------------------------------------------------------------
 

@@ -1,10 +1,10 @@
 import { Button, Input, Select, Switch, Text, Tooltip } from '@fluentui/react-components'
 import { ChevronDownRegular, ChevronRightRegular, InfoRegular } from '@fluentui/react-icons'
-import type { ConverterCatalogEntry, ConverterParameterSchema } from '../../../types'
+import type { ConverterCatalogEntry, Parameter } from '../../../types'
 import { useConverterPanelStyles } from './ConverterPanel.styles'
 
 interface ParamInputProps {
-  param: ConverterParameterSchema
+  param: Parameter
   value: string
   isMissing: boolean
   onChange: (name: string, value: string) => void
@@ -13,7 +13,7 @@ interface ParamInputProps {
 function ConverterParameterChoiceViewer({ param, value, onChange }: ParamInputProps) {
   return (
     <Select
-      value={value ?? param.default_value ?? ''}
+      value={value ?? param.default ?? ''}
       onChange={(_, data) => onChange(param.name, data.value)}
       data-testid={`param-${param.name}`}
     >
@@ -33,7 +33,7 @@ function ParameterFileViewer({ param, value, isMissing, onChange, onBrowse }: Pa
     <div className={styles.filePickerRow}>
       <Input
         value={value ?? ''}
-        placeholder={param.default_value ?? 'Select a file...'}
+        placeholder={param.default ?? 'Select a file...'}
         onChange={(_, data) => onChange(param.name, data.value)}
         className={isMissing ? styles.paramInputError : undefined}
         data-testid={`param-${param.name}`}
@@ -56,7 +56,7 @@ function ConverterParameterViewer({ param, value, isMissing, onChange }: ParamIn
   return (
     <Input
       value={value ?? ''}
-      placeholder={param.default_value ?? undefined}
+      placeholder={param.default ?? undefined}
       onChange={(_, data) => onChange(param.name, data.value)}
       className={isMissing ? styles.paramInputError : undefined}
       data-testid={`param-${param.name}`}
@@ -103,11 +103,11 @@ export default function ConverterParams({ converter, paramValues, paramsExpanded
                 </Tooltip>
               )}
             </span>
-            {param.type_name === 'bool' || param.type_name === 'Optional[bool]' ? (
+            {param.type_name === 'bool' ? (
               <Switch
-                checked={(paramValues[param.name] ?? param.default_value ?? 'false').toLowerCase() === 'true'}
+                checked={(paramValues[param.name] ?? param.default ?? 'false').toLowerCase() === 'true'}
                 onChange={(_, data) => onParamChange(param.name, data.checked ? 'true' : 'false')}
-                label={(paramValues[param.name] ?? param.default_value ?? 'false').toLowerCase() === 'true' ? 'True' : 'False'}
+                label={(paramValues[param.name] ?? param.default ?? 'false').toLowerCase() === 'true' ? 'True' : 'False'}
                 data-testid={`param-${param.name}`}
               />
             ) : param.choices ? (
@@ -120,8 +120,8 @@ export default function ConverterParams({ converter, paramValues, paramsExpanded
             {isMissing && (
               <Text size={100} className={styles.paramErrorText}>Required</Text>
             )}
-            {param.type_name !== 'bool' && param.type_name !== 'Optional[bool]' && !param.choices && (
-              <Text size={100} className={styles.hintText}>{param.type_name.replace(/^Optional\[(.+)\]$/, '$1')}</Text>
+            {param.type_name !== 'bool' && !param.choices && (
+              <Text size={100} className={styles.hintText}>{param.type_name}</Text>
             )}
           </div>
         )

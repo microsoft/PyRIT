@@ -64,6 +64,7 @@ from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
 from pyrit.scenario.core.scenario import Scenario
+from pyrit.scenario.core.scenario_context import ScenarioContext
 from pyrit.scenario.core.scenario_strategy import ScenarioCompositeStrategy, ScenarioStrategy
 from pyrit.scenario.core.scenario_target_defaults import get_default_adversarial_target
 
@@ -389,39 +390,32 @@ class RedTeamAgent(Scenario):
             return FoundryComposite(attack=strategy)
         return FoundryComposite(attack=None, converters=[strategy])
 
-    async def _resolve_seed_groups_async(self) -> list[SeedAttackGroup]:
+    async def _build_atomic_attacks_async(self, *, context: ScenarioContext) -> list[AtomicAttack]:
         """
-        Resolve seed groups from the dataset configuration.
+        Build one ``AtomicAttack`` per resolved FoundryComposite.
 
-        Returns:
-            list[SeedGroup]: The resolved seed groups.
-        """
-        return await self._dataset_config.get_seed_attack_groups_async()
-
-    async def _get_atomic_attacks_async(self) -> list[AtomicAttack]:
-        """
-        Retrieve the list of AtomicAttack instances in this scenario.
+        Args:
+            context (ScenarioContext): The resolved runtime inputs for this run.
 
         Returns:
             list[AtomicAttack]: The list of AtomicAttack instances in this scenario.
         """
-        # Resolve seed groups now that initialize_async has been called
-        self._seed_groups = await self._resolve_seed_groups_async()
+        seed_groups = list(context.seed_groups)
+        return [
+            self._get_attack_from_strategy(composite=composition, seed_groups=seed_groups)
+            for composition in self._scenario_composites
+        ]
 
-        atomic_attacks = [self._get_attack_from_strategy(composition) for composition in self._scenario_composites]
-
-        if self._include_baseline:
-            atomic_attacks.insert(0, self._build_baseline_atomic_attack(seed_groups=self._seed_groups))
-
-        return atomic_attacks
-
-    def _get_attack_from_strategy(self, composite: FoundryComposite) -> AtomicAttack:
+    def _get_attack_from_strategy(
+        self, *, composite: FoundryComposite, seed_groups: list[SeedAttackGroup]
+    ) -> AtomicAttack:
         """
         Get an atomic attack for the specified FoundryComposite.
 
         Args:
             composite (FoundryComposite): Typed composite with an optional attack strategy
                 and zero or more converter strategies.
+            seed_groups (list[SeedAttackGroup]): Seed groups the attack draws from.
 
         Returns:
             AtomicAttack: The configured atomic attack.
@@ -497,7 +491,7 @@ class RedTeamAgent(Scenario):
         return AtomicAttack(
             atomic_attack_name=composite.name,
             attack_technique=AttackTechnique(attack=attack),
-            seed_groups=self._seed_groups,
+            seed_groups=seed_groups,
             adversarial_chat=self._adversarial_chat,
             objective_scorer=self._attack_scoring_config.objective_scorer,
             memory_labels=self._memory_labels,

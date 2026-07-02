@@ -90,7 +90,7 @@ class TestStartScenarioRunRoute:
     def test_start_run_missing_required_fields_returns_422(self, client: TestClient) -> None:
         """Test that missing required fields returns 422."""
         response = client.post("/api/scenarios/runs", json={})
-        assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
     def test_start_run_with_all_options(self, client: TestClient) -> None:
         """Test that all optional fields are accepted."""

@@ -2247,9 +2247,9 @@ describe("ChatWindow Integration", () => {
           parameters: [
             {
               name: "encoding_func",
-              type_name: "Literal['b64encode', 'urlsafe_b64encode']",
+              type_name: "str",
               required: false,
-              default_value: "b64encode",
+              default: "b64encode",
               choices: ["b64encode", "urlsafe_b64encode"],
             },
           ],

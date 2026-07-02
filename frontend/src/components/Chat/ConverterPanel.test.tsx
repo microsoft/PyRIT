@@ -37,7 +37,7 @@ const MOCK_CATALOG = {
       supported_input_types: ['text'],
       supported_output_types: ['text'],
       parameters: [
-        { name: 'caesar_offset', type_name: 'int', required: true, default_value: null, choices: null, description: 'Offset value.' },
+        { name: 'caesar_offset', type_name: 'int', required: true, default: null, choices: null, description: 'Offset value.' },
       ],
       is_llm_based: false,
       description: 'Caesar cipher encoding.',
@@ -63,7 +63,7 @@ const MOCK_CATALOG = {
       supported_input_types: ['text'],
       supported_output_types: ['text'],
       parameters: [
-        { name: 'uppercase', type_name: 'bool', required: false, default_value: 'false', choices: null, description: 'Use uppercase.' },
+        { name: 'uppercase', type_name: 'bool', required: false, default: 'false', choices: null, description: 'Use uppercase.' },
       ],
       is_llm_based: false,
       description: 'Bool param test.',
@@ -73,7 +73,7 @@ const MOCK_CATALOG = {
       supported_input_types: ['text'],
       supported_output_types: ['text'],
       parameters: [
-        { name: 'mode', type_name: 'str', required: false, default_value: 'fast', choices: ['fast', 'slow'], description: 'Speed mode.' },
+        { name: 'mode', type_name: 'str', required: false, default: 'fast', choices: ['fast', 'slow'], description: 'Speed mode.' },
       ],
       is_llm_based: false,
       description: 'Choice param test.',
@@ -83,7 +83,7 @@ const MOCK_CATALOG = {
       supported_input_types: ['text'],
       supported_output_types: ['text'],
       parameters: [
-        { name: 'template_file_path', type_name: 'str', required: false, default_value: null, choices: null, description: 'Path to template.' },
+        { name: 'template_file_path', type_name: 'str', required: false, default: null, choices: null, description: 'Path to template.' },
       ],
       is_llm_based: false,
       description: 'File path param test.',
@@ -773,7 +773,7 @@ describe('ConverterPanel edge cases', () => {
     expect(screen.getByTestId('converter-tab-custom_type')).toBeInTheDocument()
   })
 
-  it('handles converters with Optional[bool] param type', async () => {
+  it('handles optional bool params (rendered as a bool Switch)', async () => {
     const catalogWithOptionalBool = {
       items: [
         ...MOCK_CATALOG.items,
@@ -782,7 +782,7 @@ describe('ConverterPanel edge cases', () => {
           supported_input_types: ['text'],
           supported_output_types: ['text'],
           parameters: [
-            { name: 'flag', type_name: 'Optional[bool]', required: false, default_value: 'true', choices: null, description: 'Optional bool.' },
+            { name: 'flag', type_name: 'bool', required: false, default: 'true', choices: null, description: 'Optional bool.' },
           ],
           is_llm_based: false,
           description: 'Optional bool param test.',
@@ -795,7 +795,7 @@ describe('ConverterPanel edge cases', () => {
     await waitForList()
     await openComboboxAndSelect('OptBoolConverter')
 
-    // Should render a Switch (not a text input) for Optional[bool] (line 410-416)
+    // An Optional[bool] constructor param surfaces as type_name 'bool', so it renders a Switch (not a text input).
     const switchEl = screen.getByTestId('param-flag')
     expect(switchEl).toBeInTheDocument()
   })
@@ -808,7 +808,7 @@ describe('ConverterPanel edge cases', () => {
           supported_input_types: ['text'],
           supported_output_types: ['text'],
           parameters: [
-            { name: 'config_file_path', type_name: 'str', required: true, default_value: null, choices: null, description: 'Config file path.' },
+            { name: 'config_file_path', type_name: 'str', required: true, default: null, choices: null, description: 'Config file path.' },
           ],
           is_llm_based: true,
           description: 'Required file param test.',

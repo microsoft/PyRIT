@@ -21,7 +21,7 @@ import json
 import logging
 import shlex
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, get_args, get_origin
+from typing import TYPE_CHECKING, Any, get_args, get_origin
 
 from pyrit.common.cli_helpers import (
     CONFIG_FILE_HELP,
@@ -32,7 +32,6 @@ from pyrit.common.cli_helpers import (
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from pyrit.models.catalog import ScenarioParameterSummary
     from pyrit.models.parameter import Parameter
     from pyrit.setup.configuration_loader import ScenarioConfig
 
@@ -656,15 +655,15 @@ def extract_scenario_args(*, parsed: dict[str, Any]) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def build_parameters_from_api(*, api_params: list[ScenarioParameterSummary]) -> list[Parameter] | None:
+def build_parameters_from_api(*, api_params: list[Parameter]) -> list[Parameter] | None:
     """
-    Build ``Parameter`` objects from a scenario catalog's ``supported_parameters``.
+    Return a scenario catalog's ``supported_parameters`` as coercion-ready ``Parameter`` objects.
 
-    Maps the display ``param_type`` string ("int", "float", "bool", "str",
-    "list[...]", "any") back to a concrete ``param_type`` so the shell parser
-    can apply per-element coercion and treat list params as ``multi_value``. A
-    ``choices`` list is reconstructed into a ``Literal[...]`` (the single source
-    of truth for an allowed set) — typed by the same base scalar.
+    The REST client deserializes catalog payloads directly into ``Parameter``,
+    which reconstructs each parameter's live ``param_type`` from its serialized
+    display fields (``type_name`` / ``choices`` / ``is_list``). The parameters are
+    therefore already coercion-ready, so the shell parser can apply per-element
+    coercion and treat list parameters as ``multi_value`` without further mapping.
 
     Args:
         api_params: Scenario-declared parameters from ``GET /api/scenarios/catalog/{name}``.
@@ -672,34 +671,7 @@ def build_parameters_from_api(*, api_params: list[ScenarioParameterSummary]) -> 
     Returns:
         list[Parameter] | None: Parameter list when ``api_params`` is non-empty, else ``None``.
     """
-    from pyrit.models.parameter import Parameter
-
-    if not api_params:
-        return None
-    type_map: dict[str, Any] = {"int": int, "float": float, "bool": bool, "str": str}
-    parameters: list[Parameter] = []
-    for p in api_params:
-        type_display = p.param_type
-        base_name = type_display.removeprefix("list[").rstrip("]") if p.is_list else type_display
-        base_type = type_map.get(base_name, str)
-
-        if p.choices:
-            choice_param = Parameter(name=p.name, description="", param_type=base_type)
-            members = tuple(choice_param.coerce_value(c) for c in p.choices)
-            element_type: Any = Literal[members]  # ty: ignore[invalid-type-form]
-        else:
-            element_type = type_map.get(base_name) if p.is_list else type_map.get(type_display)
-
-        resolved_type: Any = list[element_type] if p.is_list else element_type  # type: ignore[valid-type]
-        parameters.append(
-            Parameter(
-                name=p.name,
-                description=p.description,
-                param_type=resolved_type,
-                default=p.default,
-            )
-        )
-    return parameters
+    return list(api_params) or None
 
 
 def add_common_arguments(parser: argparse.ArgumentParser) -> None:

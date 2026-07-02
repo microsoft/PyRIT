@@ -60,7 +60,7 @@ def data_serializer_factory(
     Args:
         data_type (str): The type of the data (e.g., 'text', 'image_path', 'audio_path').
         value (str): The data value to be serialized.
-        extension (Optional[str]): The file extension, if applicable.
+        extension (str | None): The file extension, if applicable.
         category (AllowedCategories): The category or context for the data (e.g., 'seed-prompt-entries').
 
     Returns:
@@ -320,10 +320,10 @@ class DataTypeSerializer(abc.ABC):
         Generate or retrieve a unique filename for the data file.
 
         Args:
-            file_name (Optional[str]): Optional file name override.
+            file_name (str | None): Optional file name override.
 
         Returns:
-            Union[Path, str]: Full storage path for the generated data file.
+            Path | str: Full storage path for the generated data file.
 
         Raises:
             TypeError: If the serializer is not configured for on-disk data.
@@ -471,7 +471,7 @@ class DataTypeSerializer(abc.ABC):
             file_name: Optional file name override.
 
         Returns:
-            Union[Path, str]: Full storage path for the generated data file.
+            Path | str: Full storage path for the generated data file.
         """
         print_deprecation_message(
             old_item="pyrit.memory.storage.serializers.DataTypeSerializer.get_data_filename",
@@ -586,7 +586,7 @@ class URLDataTypeSerializer(DataTypeSerializer):
         Args:
             category (str): Data category folder name.
             prompt_text (str): URL or path value.
-            extension (Optional[str]): Optional extension for persisted content.
+            extension (str | None): Optional extension for persisted content.
 
         """
         self.data_type = "url"
@@ -615,8 +615,8 @@ class ImagePathDataTypeSerializer(DataTypeSerializer):
 
         Args:
             category (str): Data category folder name.
-            prompt_text (Optional[str]): Optional existing image path.
-            extension (Optional[str]): Optional image extension.
+            prompt_text (str | None): Optional existing image path.
+            extension (str | None): Optional image extension.
 
         """
         self.data_type = "image_path"
@@ -652,8 +652,8 @@ class AudioPathDataTypeSerializer(DataTypeSerializer):
 
         Args:
             category (str): Data category folder name.
-            prompt_text (Optional[str]): Optional existing audio path.
-            extension (Optional[str]): Optional audio extension.
+            prompt_text (str | None): Optional existing audio path.
+            extension (str | None): Optional audio extension.
 
         """
         self.data_type = "audio_path"
@@ -689,8 +689,8 @@ class VideoPathDataTypeSerializer(DataTypeSerializer):
 
         Args:
             category (str): The category or context for the data.
-            prompt_text (Optional[str]): The video path or identifier.
-            extension (Optional[str]): The file extension, defaults to 'mp4'.
+            prompt_text (str | None): The video path or identifier.
+            extension (str | None): The file extension, defaults to 'mp4'.
 
         """
         self.data_type = "video_path"
@@ -730,8 +730,8 @@ class BinaryPathDataTypeSerializer(DataTypeSerializer):
 
         Args:
             category (str): The category or context for the data.
-            prompt_text (Optional[str]): The binary file path or identifier.
-            extension (Optional[str]): The file extension, defaults to 'bin'.
+            prompt_text (str | None): The binary file path or identifier.
+            extension (str | None): The file extension, defaults to 'bin'.
 
         """
         self.data_type = "binary_path"
