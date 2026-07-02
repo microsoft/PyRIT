@@ -29,7 +29,7 @@ from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
+    from collections.abc import Callable, Mapping, Sequence
 
     from pyrit.prompt_target import PromptTarget
     from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
@@ -171,7 +171,7 @@ class MatrixAtomicAttackBuilder:
         self,
         *,
         technique_factories: dict[str, AttackTechniqueFactory],
-        dataset_groups: dict[str, list[SeedAttackGroup]],
+        dataset_groups: Mapping[str, list[SeedAttackGroup]],
         adversarial_targets: Sequence[tuple[str, PromptTarget]] | None = None,
         name_fn: Callable[[MatrixCombo], str] | None = None,
         display_group_fn: Callable[[MatrixCombo], str] | None = None,
@@ -188,7 +188,7 @@ class MatrixAtomicAttackBuilder:
         Args:
             technique_factories (dict[str, AttackTechniqueFactory]): Mapping of technique
                 name to the factory that produces it. Only these techniques are built.
-            dataset_groups (dict[str, list[SeedAttackGroup]]): Mapping of dataset name to
+            dataset_groups (Mapping[str, list[SeedAttackGroup]]): Mapping of dataset name to
                 its seed groups (e.g. ``await DatasetAttackConfiguration.get_attack_groups_by_dataset_async()``).
             adversarial_targets (Sequence[tuple[str, PromptTarget]] | None): Optional
                 ``(name, instance)`` pairs adding an adversarial-target axis. When set,
