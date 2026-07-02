@@ -1248,7 +1248,6 @@ class ScenarioResultEntry(Base):
         return ScenarioResult(
             id=self.id,
             scenario_identifier=scenario_identifier,
-            pyrit_version=stored_version,
             scenario_description=self.scenario_description or "",
             attack_results=attack_results,
             scenario_run_state=ScenarioRunState(self.scenario_run_state),

@@ -454,12 +454,12 @@ def resolve_declared_params(
     for name, raw_value in supplied.items():
         param = declared_by_name.get(name)
         if param is None:
-            # Stash unknowns so _reject_unknown_parameters can list them all at once.
+            # Stash unknowns so _reject_undeclared_params can list them all at once.
             coerced[name] = raw_value
             continue
         coerced[name] = param.coerce_value(raw_value)
 
-    _reject_unknown_parameters(params=coerced, declared=declared, owner=owner)
+    _reject_undeclared_params(params=coerced, declared=declared, owner=owner)
 
     for param in declared:
         if param.name in coerced:
@@ -504,9 +504,13 @@ def _validate_declarations(*, declared: list[Parameter], owner: str) -> None:
                 raise ValueError(f"{owner} parameter '{param.name}' has an invalid default: {exc}") from exc
 
 
-def _reject_unknown_parameters(*, params: dict[str, Any], declared: list[Parameter], owner: str) -> None:
+def _reject_undeclared_params(*, params: dict[str, Any], declared: list[Parameter], owner: str) -> None:
     """
-    Raise if ``params`` contains any key not present in ``declared``.
+    Raise if ``params`` contains any key not in the ``declared`` snapshot.
+
+    Specific to the declared-parameter path (``resolve_declared_params``): it
+    reports every undeclared key at once. The constructor path
+    (``resolve_constructor_args``) rejects unknown arguments inline instead.
 
     Args:
         params (dict[str, Any]): Coerced (declared names) or raw (unknown) values.

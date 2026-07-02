@@ -11,7 +11,6 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validator
 
-import pyrit
 from pyrit.common.deprecation import print_deprecation_message
 
 # Runtime-required by Pydantic field / computed-field annotations.
@@ -30,7 +29,13 @@ __all__ = ["ScenarioResult", "ScenarioRunState"]
 #: ``scenario_identifier``. They appear in ``model_dump`` output but are not
 #: settable inputs, so they are dropped when reconstructing from a dump.
 _COMPUTED_IDENTITY_FIELDS = frozenset(
-    {"scenario_name", "scenario_version", "objective_target_identifier", "objective_scorer_identifier"}
+    {
+        "scenario_name",
+        "scenario_version",
+        "pyrit_version",
+        "objective_target_identifier",
+        "objective_scorer_identifier",
+    }
 )
 
 
@@ -67,8 +72,6 @@ class ScenarioResult(BaseModel):
     #: params, and the ``objective_target`` / ``objective_scorer`` child references.
     #: Its eval hash backs resume drift detection.
     scenario_identifier: ScenarioIdentifier
-    #: PyRIT version the scenario ran under (denormalized for storage / display).
-    pyrit_version: str = Field(default=pyrit.__version__)
     #: Human-readable scenario description (the scenario class docstring). Display /
     #: catalog metadata snapshotted on the result — not part of scenario identity.
     scenario_description: str = ""
@@ -105,11 +108,11 @@ class ScenarioResult(BaseModel):
         """
         Ignore denormalized computed identity fields when reconstructing from a dump.
 
-        ``scenario_name`` / ``scenario_version`` / ``objective_target_identifier`` /
-        ``objective_scorer_identifier`` are ``@computed_field`` projections of
-        ``scenario_identifier`` that show up in ``model_dump`` output but are not
-        settable inputs. Dropping them lets ``model_validate(model_dump(...))``
-        round-trip under ``extra="forbid"``.
+        ``scenario_name`` / ``scenario_version`` / ``pyrit_version`` /
+        ``objective_target_identifier`` / ``objective_scorer_identifier`` are
+        ``@computed_field`` projections of ``scenario_identifier`` that show up in
+        ``model_dump`` output but are not settable inputs. Dropping them lets
+        ``model_validate(model_dump(...))`` round-trip under ``extra="forbid"``.
 
         Args:
             data (Any): Raw input passed to validation (a dict when reconstructing from a dump).
@@ -133,6 +136,12 @@ class ScenarioResult(BaseModel):
         """Scenario definition version, delegated to the identifier (defaults to 1)."""
         version = self.scenario_identifier.version
         return version if version is not None else 1
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def pyrit_version(self) -> str:
+        """PyRIT version the scenario ran under, delegated to the identifier."""
+        return self.scenario_identifier.pyrit_version
 
     @computed_field  # type: ignore[prop-decorator]
     @property

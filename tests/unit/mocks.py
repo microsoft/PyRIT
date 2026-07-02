@@ -31,6 +31,7 @@ def make_scenario_identifier(
     techniques: list[str] | None = None,
     datasets: list[str] | None = None,
     params: dict[str, Any] | None = None,
+    pyrit_version: str | None = None,
 ) -> ScenarioIdentifier:
     """
     Build a ``ScenarioIdentifier`` for tests.
@@ -38,6 +39,9 @@ def make_scenario_identifier(
     Mirrors what ``Scenario._build_scenario_identifier`` produces so tests can
     construct a ``ScenarioResult`` without a live scenario.
     """
+    extra: dict[str, Any] = {}
+    if pyrit_version is not None:
+        extra["pyrit_version"] = pyrit_version
     return ScenarioIdentifier(
         class_name=scenario_name,
         class_module=scenario_module,
@@ -47,6 +51,7 @@ def make_scenario_identifier(
         params=dict(params) if params else {},
         objective_target=objective_target,
         objective_scorer=objective_scorer,
+        **extra,
     )
 
 
@@ -59,6 +64,7 @@ def make_scenario_result(
     techniques: list[str] | None = None,
     datasets: list[str] | None = None,
     params: dict[str, Any] | None = None,
+    pyrit_version: str | None = None,
     **kwargs: Any,
 ) -> ScenarioResult:
     """
@@ -66,8 +72,9 @@ def make_scenario_result(
 
     The identity kwargs (``scenario_name`` / ``scenario_version`` /
     ``objective_target_identifier`` / ``objective_scorer_identifier`` /
-    ``techniques`` / ``datasets`` / ``params``) are folded into a
-    ``ScenarioIdentifier``; all other kwargs pass through to ``ScenarioResult``.
+    ``techniques`` / ``datasets`` / ``params`` / ``pyrit_version``) are folded
+    into a ``ScenarioIdentifier``; all other kwargs pass through to
+    ``ScenarioResult``.
     """
     identifier = make_scenario_identifier(
         scenario_name=scenario_name,
@@ -77,6 +84,7 @@ def make_scenario_result(
         techniques=techniques,
         datasets=datasets,
         params=params,
+        pyrit_version=pyrit_version,
     )
     return ScenarioResult(scenario_identifier=identifier, **kwargs)
 
