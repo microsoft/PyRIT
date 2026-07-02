@@ -48,6 +48,10 @@ from pyrit.backend.models.converters import (
     CreateConverterResponse,
     PreviewStep,
 )
+from pyrit.backend.models.datasets import (
+    DatasetInfo,
+    DatasetListResponse,
+)
 from pyrit.backend.models.initializers import (
     ListRegisteredInitializersResponse,
     RegisterInitializerRequest,
@@ -101,6 +105,9 @@ __all__ = [
     "CreateConverterRequest",
     "CreateConverterResponse",
     "PreviewStep",
+    # Datasets
+    "DatasetInfo",
+    "DatasetListResponse",
     # Scenarios
     "ListRegisteredScenariosResponse",
     "ScenarioRunListResponse",

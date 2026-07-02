@@ -13,13 +13,11 @@ Converters can be:
 """
 
 import base64
-import inspect
 import mimetypes
-import types
 import uuid
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Literal, Union, get_args, get_origin
+from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 from pyrit.backend.mappers.converter_mappers import converter_object_to_instance
@@ -29,47 +27,15 @@ from pyrit.backend.models.converters import (
     ConverterCatalogResponse,
     ConverterInstance,
     ConverterInstanceListResponse,
-    ConverterParameterSchema,
     ConverterPreviewRequest,
     ConverterPreviewResponse,
     CreateConverterRequest,
     CreateConverterResponse,
     PreviewStep,
 )
-from pyrit.common import REQUIRED_VALUE
 from pyrit.memory import data_serializer_factory
 from pyrit.models import PromptDataType
-from pyrit.models.parameter import Parameter
 from pyrit.registry.components import ConverterRegistry
-from pyrit.registry.resolution import display_choices
-
-
-def _serialize_type(annotation: Any) -> str:
-    """
-    Render a parameter's type annotation as a concise human-readable string.
-
-    Used to populate the catalog DTO consumed by the frontend (e.g. ``"str"``,
-    ``"Optional[int]"``, ``"Literal['a', 'b']"``).
-
-    Returns:
-        str: A human-readable representation of the type annotation.
-    """
-    if annotation is inspect.Parameter.empty:
-        return "Any"
-    if get_origin(annotation) is Literal:
-        args = get_args(annotation)
-        return f"Literal[{', '.join(repr(a) for a in args)}]"
-    origin = get_origin(annotation)
-    if origin is Union or origin is types.UnionType:
-        args = get_args(annotation)
-        non_none = [a for a in args if a is not type(None)]
-        if len(non_none) == 1:
-            inner = _serialize_type(non_none[0])
-            has_none = type(None) in args
-            return f"Optional[{inner}]" if has_none else inner
-    if hasattr(annotation, "__name__"):
-        return str(annotation.__name__)
-    return str(annotation)
 
 
 class ConverterService:
@@ -128,7 +94,7 @@ class ConverterService:
                 converter_type=metadata.class_name,
                 supported_input_types=list(metadata.supported_input_types),
                 supported_output_types=list(metadata.supported_output_types),
-                parameters=[self._build_parameter_schema(p) for p in metadata.parameters if p.is_string_coercible],
+                parameters=[p for p in metadata.parameters if p.is_string_coercible],
                 is_llm_based=metadata.is_llm_based,
                 description=metadata.class_description or None,
             )
@@ -136,30 +102,6 @@ class ConverterService:
         ]
 
         return ConverterCatalogResponse(items=items)
-
-    @staticmethod
-    def _build_parameter_schema(parameter: Parameter) -> ConverterParameterSchema:
-        """
-        Map a derived ``Parameter`` to the catalog DTO.
-
-        Renders the parameter's ``param_type`` to a human-readable ``type_name`` and
-        projects its allowed values (presentation concerns owned by this service).
-        Required-ness is read from the ``REQUIRED_VALUE`` sentinel default.
-
-        Returns:
-            ConverterParameterSchema: The parameter schema for the catalog entry.
-        """
-        required = parameter.default is REQUIRED_VALUE
-        default_value = None if required or parameter.default is None else str(parameter.default)
-        choices = display_choices(parameter.param_type)
-        return ConverterParameterSchema(
-            name=parameter.name,
-            type_name=_serialize_type(parameter.param_type),
-            required=required,
-            default_value=default_value,
-            choices=[str(c) for c in choices] if choices is not None else None,
-            description=parameter.description or None,
-        )
 
     async def get_converter_async(self, *, converter_id: str) -> ConverterInstance | None:
         """
@@ -200,15 +142,12 @@ class ConverterService:
         """
         converter_id = str(uuid.uuid4())
 
-        # Resolve any converter references in params, persist data-URI params to
-        # disk (frontend concern), then delegate construction (incl. param
-        # coercion) to the converter registry.
-        params = self._resolve_converter_params(params=request.params)
-        try:
-            converter_class = self._registry.get_class(request.type)
-        except KeyError as e:
-            raise ValueError(f"Converter type '{request.type}' not found") from e
-        params = await self._persist_data_uri_params_async(converter_class=converter_class, params=params)
+        # Persist data-URI params to disk (frontend concern), then delegate
+        # construction (incl. param coercion and reference resolution) to the
+        # converter registry.
+        if request.type not in self._registry:
+            raise ValueError(f"Converter type '{request.type}' not found")
+        params = await self._persist_data_uri_params_async(converter_type=request.type, params=request.params)
         converter_obj = self._registry.create_instance(request.type, **params)
         self._registry.instances.register(converter_obj, name=converter_id)
 
@@ -304,30 +243,10 @@ class ConverterService:
     # Private Helper Methods
     # ========================================================================
 
-    def _resolve_converter_params(self, *, params: dict[str, Any]) -> dict[str, Any]:
-        """
-        Resolve converter references in params.
-
-        If params contains a 'converter' key with a converter_id reference,
-        resolve it to the actual converter object from the registry.
-
-        Returns:
-            Params dict with converter_id references replaced by actual objects.
-        """
-        resolved = dict(params)
-        if "converter" in resolved and isinstance(resolved["converter"], dict):
-            ref = resolved["converter"]
-            if "converter_id" in ref:
-                conv_obj = self.get_converter_object(converter_id=ref["converter_id"])
-                if conv_obj is None:
-                    raise ValueError(f"Referenced converter '{ref['converter_id']}' not found")
-                resolved["converter"] = conv_obj
-        return resolved
-
-    @staticmethod
     async def _persist_data_uri_params_async(
+        self,
         *,
-        converter_class: type,
+        converter_type: str,
         params: dict[str, Any],
     ) -> dict[str, Any]:
         """
@@ -339,19 +258,25 @@ class ConverterService:
         decoded file persisted to the results store, with the value replaced
         by the resulting file path.
 
+        The set of constructor parameters (and their types) is sourced from the
+        registry's derived ``Parameter`` metadata rather than re-introspecting the
+        constructor signature, so the registry stays the single source of truth.
+
+        Args:
+            converter_type (str): The registered converter class name.
+            params (dict[str, Any]): The raw constructor params from the request.
+
         Returns:
-            Params dict with data-URI values replaced by file paths.
+            dict[str, Any]: Params dict with data-URI values replaced by file paths.
         """
-        try:
-            sig = inspect.signature(converter_class.__init__)
-        except (ValueError, TypeError):
-            return params
+        metadata = self._registry.get_registered_class_metadata(converter_type)
+        param_types = {p.name: p.param_type for p in metadata.parameters} if metadata else {}
 
         result = dict(params)
         for name, value in result.items():
             if not isinstance(value, str) or not value.startswith("data:"):
                 continue
-            if name not in sig.parameters:
+            if name not in param_types:
                 continue
 
             # Parse data URI: data:[<mediatype>][;base64],<data>
@@ -373,16 +298,9 @@ class ConverterService:
             await serializer.save_data_async(data=base64.b64decode(payload))
             file_path = str(serializer.value)
 
-            # Coerce to Path if the constructor expects it
-            annotation = sig.parameters[name].annotation
-            origin = get_origin(annotation)
-            if origin is Union:
-                args = get_args(annotation)
-                non_none = [a for a in args if a is not type(None)]
-                if len(non_none) == 1:
-                    annotation = non_none[0]
-
-            if annotation is Path:
+            # The registry already unwraps Optional, so ``param_type`` is ``Path``
+            # for a ``Path | None`` constructor parameter.
+            if param_types[name] is Path:
                 result[name] = Path(file_path)
             else:
                 result[name] = file_path
