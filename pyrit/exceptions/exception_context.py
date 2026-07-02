@@ -13,9 +13,9 @@ meaningful context in their messages.
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any
+from typing import Any, cast
 
-from pyrit.models import ComponentIdentifier, TargetIdentifier
+from pyrit.models import ComponentIdentifier
 
 
 class ComponentRole(Enum):
@@ -124,9 +124,8 @@ class ExecutionContext:
 
         if self.component_identifier:
             lines.append(f"{self.component_role.value} identifier: {self.component_identifier}")
-            target_identifier = TargetIdentifier.from_component_identifier(self.component_identifier)
-            model_name = target_identifier.model_name
-            endpoint = target_identifier.endpoint
+            model_name = self.component_identifier.params.get("model_name")
+            endpoint = self.component_identifier.params.get("endpoint")
             if model_name:
                 lines.append(f"Model: {model_name}")
             if endpoint:
@@ -239,7 +238,7 @@ def execution_context(
     endpoint: str | None = None
     component_name = None
     if component_identifier:
-        endpoint = TargetIdentifier.from_component_identifier(component_identifier).endpoint
+        endpoint = cast("str | None", component_identifier.params.get("endpoint"))
         component_name = component_identifier.class_name
 
     context = ExecutionContext(
