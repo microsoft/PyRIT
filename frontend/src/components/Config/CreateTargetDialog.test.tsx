@@ -8,10 +8,23 @@ import { targetsApi } from "@/services/api";
 jest.mock("@/services/api", () => ({
   targetsApi: {
     createTarget: jest.fn(),
+    listTargetCatalog: jest.fn(),
+    listTargets: jest.fn(),
   },
 }));
 
 const mockedTargetsApi = targetsApi as jest.Mocked<typeof targetsApi>;
+
+// Representative target catalog covering the types the dialog renders. Mirrors
+// the shape returned by GET /targets/catalog.
+const TARGET_CATALOG = {
+  items: [
+    { target_type: "OpenAIChatTarget", parameters: [], supported_auth_modes: ["api_key", "entra"], api_key_env_var: "OPENAI_CHAT_KEY" },
+    { target_type: "OpenAIResponseTarget", parameters: [], supported_auth_modes: ["api_key", "entra"], api_key_env_var: "OPENAI_RESPONSES_KEY" },
+    { target_type: "AzureMLChatTarget", parameters: [], supported_auth_modes: ["api_key", "entra"], api_key_env_var: "AZURE_ML_KEY" },
+    { target_type: "RoundRobinTarget", parameters: [], supported_auth_modes: ["api_key"], api_key_env_var: null },
+  ],
+};
 
 const TestWrapper: React.FC<{ children: React.ReactNode }> = ({
   children,
@@ -104,6 +117,13 @@ describe("CreateTargetDialog", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    mockedTargetsApi.listTargetCatalog.mockResolvedValue(
+      TARGET_CATALOG as unknown as Awaited<ReturnType<typeof mockedTargetsApi.listTargetCatalog>>,
+    );
+    mockedTargetsApi.listTargets.mockResolvedValue({
+      items: [],
+      pagination: { limit: 200, has_more: false, next_cursor: null, prev_cursor: null },
+    } as unknown as Awaited<ReturnType<typeof mockedTargetsApi.listTargets>>);
   });
 
   it("should render dialog when open", () => {
@@ -1199,6 +1219,7 @@ describe("CreateTargetDialog", () => {
     );
     const call = mockedTargetsApi.createTarget.mock.calls[0][0];
     expect(call.type).toBe("RoundRobinTarget");
+    expect(call.params?.targets).toEqual(["a", "b"]);
     expect(call.params?.weights).toEqual([7, 42]);
   }, 30000);
 

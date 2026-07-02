@@ -23,29 +23,47 @@ import {
 import { DeleteRegular } from '@fluentui/react-icons'
 import { targetsApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
-import type { TargetInstance } from '@/types'
+import type { TargetInstance, TargetCatalogEntry } from '@/types'
 import { useCreateTargetDialogStyles } from './CreateTargetDialog.styles'
 import { MAX_WEIGHT, parseWeight } from './weightValidation'
 
-interface TargetTypeConfig {
-  readonly kind: 'openai' | 'azureml' | 'roundrobin'
-  readonly supportsEntra: boolean
+/**
+ * Form shape for each target type the dialog knows how to render.
+ *
+ * The dialog renders bespoke, type-specific forms (endpoint/model for OpenAI,
+ * extra sampling params for Azure ML, an inner-target picker for RoundRobin),
+ * so this map declares *which* types are renderable and *how*. The list of
+ * available types and their auth flags come from the backend catalog
+ * (`/targets/catalog`); this map only governs the form layout. Types the
+ * backend offers but that aren't in this map are simply not shown, and types in
+ * this map that the backend doesn't offer fall back to being listed anyway
+ * (e.g. when the catalog fetch fails).
+ */
+type TargetFormShape = 'openai' | 'azureml' | 'roundrobin'
+
+const TARGET_FORM_SHAPES: Record<string, TargetFormShape> = {
+  OpenAIChatTarget: 'openai',
+  OpenAICompletionTarget: 'openai',
+  OpenAIImageTarget: 'openai',
+  OpenAIVideoTarget: 'openai',
+  OpenAITTSTarget: 'openai',
+  OpenAIResponseTarget: 'openai',
+  AzureMLChatTarget: 'azureml',
+  RoundRobinTarget: 'roundrobin',
 }
 
-const TARGET_TYPE_CONFIG: Record<string, TargetTypeConfig> = {
-  OpenAIChatTarget: { kind: 'openai', supportsEntra: true },
-  OpenAICompletionTarget: { kind: 'openai', supportsEntra: true },
-  OpenAIImageTarget: { kind: 'openai', supportsEntra: true },
-  OpenAIVideoTarget: { kind: 'openai', supportsEntra: true },
-  OpenAITTSTarget: { kind: 'openai', supportsEntra: true },
-  OpenAIResponseTarget: { kind: 'openai', supportsEntra: true },
-  AzureMLChatTarget: { kind: 'azureml', supportsEntra: true },
-  RoundRobinTarget: { kind: 'roundrobin', supportsEntra: false },
-}
-
-const SUPPORTED_TARGET_TYPES = Object.keys(TARGET_TYPE_CONFIG)
+const RENDERABLE_TARGET_TYPES = Object.keys(TARGET_FORM_SHAPES)
 
 type AuthMode = 'api_key' | 'entra'
+
+/**
+ * Fallback for whether a target type supports Entra auth when the backend
+ * catalog hasn't loaded (or the fetch failed). Once the catalog is available it
+ * is authoritative; this only keeps the form usable offline / mid-load.
+ */
+function defaultSupportsEntra(shape: TargetFormShape | undefined): boolean {
+  return shape === 'openai' || shape === 'azureml'
+}
 
 // Mirrors backend's hostname-suffix check (list in target_service.py).
 // The backend still does the check and will reject unsupported endpoints, but this allows us to show a warning in the UI if the user selects Microsoft Entra authentication with a non-Azure OpenAI endpoint.
@@ -161,11 +179,47 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
   // Targets the user has picked for the RoundRobinTarget, with their weights.
   const [selectedInnerTargets, setSelectedInnerTargets] = useState<SelectedInnerTarget[]>([])
 
-  const targetConfig = TARGET_TYPE_CONFIG[targetType]
-  const isRoundRobin = targetConfig?.kind === 'roundrobin'
-  const isAzureML = targetConfig?.kind === 'azureml'
-  const isOpenAi = targetConfig?.kind === 'openai'
-  const supportsEntra = targetConfig?.supportsEntra ?? false
+  // --- Catalog state ---
+  // Available target types + their auth facts, fetched from the backend registry.
+  const [catalogEntries, setCatalogEntries] = useState<TargetCatalogEntry[]>([])
+  const catalogByType = useMemo(
+    () => new Map(catalogEntries.map((entry) => [entry.target_type, entry])),
+    [catalogEntries],
+  )
+
+  // Fetch the target catalog once when the dialog opens. The backend is the
+  // authority on which types exist and which auth modes they support.
+  useEffect(() => {
+    if (!open) return
+    let cancelled = false
+    targetsApi.listTargetCatalog()
+      .then((res) => {
+        if (!cancelled) setCatalogEntries(res.items)
+      })
+      .catch(() => {
+        // Ignore fetch errors — fall back to the locally-known renderable types.
+      })
+    return () => { cancelled = true }
+  }, [open])
+
+  // The types offered in the dropdown: catalog types the dialog can render,
+  // preserving catalog order. Fall back to the locally-known types when the
+  // catalog hasn't loaded (or the fetch failed) so the form stays usable.
+  const targetTypeOptions = useMemo(() => {
+    const fromCatalog = catalogEntries
+      .map((entry) => entry.target_type)
+      .filter((type) => type in TARGET_FORM_SHAPES)
+    return fromCatalog.length > 0 ? fromCatalog : RENDERABLE_TARGET_TYPES
+  }, [catalogEntries])
+
+  const formShape = TARGET_FORM_SHAPES[targetType]
+  const isRoundRobin = formShape === 'roundrobin'
+  const isAzureML = formShape === 'azureml'
+  const isOpenAi = formShape === 'openai'
+  const catalogEntry = catalogByType.get(targetType)
+  const supportsEntra = catalogEntry
+    ? catalogEntry.supported_auth_modes.includes('entra')
+    : defaultSupportsEntra(formShape)
   const showAuthField = targetType !== '' && supportsEntra
   const isEntra = showAuthField && authMode === 'entra'
   const entraEndpointError: string | null = (() => {
@@ -301,7 +355,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
         await targetsApi.createTarget({
           type: 'RoundRobinTarget',
           params: {
-            target_registry_names: selectedInnerTargets.map((t) => t.registryName),
+            targets: selectedInnerTargets.map((t) => t.registryName),
             weights: parsedWeights,
           },
         })
@@ -390,13 +444,17 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                   onChange={(_, data) => {
                     const next = data.value
                     setTargetType(next)
-                    if (!(TARGET_TYPE_CONFIG[next]?.supportsEntra ?? false)) {
+                    const nextEntry = catalogByType.get(next)
+                    const nextSupportsEntra = nextEntry
+                      ? nextEntry.supported_auth_modes.includes('entra')
+                      : defaultSupportsEntra(TARGET_FORM_SHAPES[next])
+                    if (!nextSupportsEntra) {
                       setAuthMode('api_key')
                     }
                   }}
                 >
                   <option value="">Select a target type</option>
-                  {SUPPORTED_TARGET_TYPES.map((type) => (
+                  {targetTypeOptions.map((type) => (
                     <option key={type} value={type}>{type}</option>
                   ))}
                 </Select>

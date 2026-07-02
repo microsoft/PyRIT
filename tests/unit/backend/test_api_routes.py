@@ -35,6 +35,7 @@ from pyrit.backend.models.converters import (
     PreviewStep,
 )
 from pyrit.backend.models.targets import (
+    TargetCatalogResponse,
     TargetListResponse,
 )
 from pyrit.backend.routes.labels import get_label_options
@@ -794,6 +795,30 @@ class TestTargetRoutes:
             data = response.json()
             assert data["items"] == []
             assert data["pagination"]["has_more"] is False
+
+    def test_list_target_catalog(self, client: TestClient) -> None:
+        """Test listing available target types from the target catalog."""
+        with patch("pyrit.backend.routes.targets.get_target_service") as mock_get_service:
+            mock_service = MagicMock()
+            mock_service.list_target_catalog_async = AsyncMock(
+                return_value=TargetCatalogResponse(
+                    items=[
+                        {
+                            "target_type": "OpenAIChatTarget",
+                            "supported_auth_modes": ["api_key", "entra"],
+                            "api_key_env_var": "OPENAI_CHAT_KEY",
+                        }
+                    ]
+                )
+            )
+            mock_get_service.return_value = mock_service
+
+            response = client.get("/api/targets/catalog")
+
+            assert response.status_code == status.HTTP_200_OK
+            data = response.json()
+            assert data["items"][0]["target_type"] == "OpenAIChatTarget"
+            assert data["items"][0]["supported_auth_modes"] == ["api_key", "entra"]
 
     def test_create_target_success(self, client: TestClient) -> None:
         """Test successful target creation."""

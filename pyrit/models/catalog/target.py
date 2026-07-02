@@ -21,6 +21,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from pyrit.models.identifiers.target_identifier import TargetIdentifier
+
 
 class TargetCapabilitiesInfo(BaseModel):
     """
@@ -73,3 +75,10 @@ class TargetInstance(BaseModel):
         None, description="Inner targets for composite targets like RoundRobinTarget"
     )
     identifier_hash: str | None = Field(None, description="ComponentIdentifier content hash for duplicate detection")
+    identifier: TargetIdentifier | None = Field(
+        None,
+        description=(
+            "The target's typed, lossless TargetIdentifier projection (class, promoted "
+            "params, and inner targets). Additive to the flattened presentation fields above."
+        ),
+    )

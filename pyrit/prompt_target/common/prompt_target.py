@@ -3,7 +3,7 @@
 
 import abc
 import logging
-from typing import Any, final
+from typing import Any, ClassVar, Literal, final
 
 from pyrit.common.deprecation import print_deprecation_message
 from pyrit.memory import CentralMemory, MemoryInterface
@@ -17,6 +17,11 @@ from pyrit.prompt_target.common.target_capabilities import (
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 
 logger = logging.getLogger(__name__)
+
+# Authentication modes a target can expose to the create-target catalog / API.
+# ``api_key`` passes a key (from params or the target's env var); ``entra`` omits
+# the key so the target mints a Microsoft Entra ID token for its own endpoint.
+AuthMode = Literal["api_key", "entra"]
 
 
 class PromptTarget(Identifiable):
@@ -45,6 +50,31 @@ class PromptTarget(Identifiable):
     # Per-instance overrides are also possible via the ``custom_configuration``
     # constructor parameter, which takes precedence over the class-level value.
     _DEFAULT_CONFIGURATION: TargetConfiguration = TargetConfiguration(capabilities=TargetCapabilities())
+
+    # Declarative auth facts consumed by the create-target service and catalog
+    # (kept off ``TargetCapabilities`` / the identifier — auth is a construction
+    # /credential axis, not a message-handling capability or an identity input).
+    #
+    # ``supported_auth_modes`` lists the auth modes the create-target API accepts
+    # for this type. Base default is api-key only; families that can mint an Entra
+    # ID token for their own endpoint (e.g. OpenAI, Azure ML) override this to add
+    # ``"entra"``. ``get_api_key_environment_variable`` names the env var that
+    # supplies the api_key, or None for targets that do not authenticate with one.
+    supported_auth_modes: ClassVar[tuple[AuthMode, ...]] = ("api_key",)
+
+    @classmethod
+    def get_api_key_environment_variable(cls) -> str | None:
+        """
+        Return the name of the environment variable that supplies this target's
+        API key, or None if the target does not authenticate with an API key.
+
+        Used by the create-target service/catalog to decide whether an api_key is
+        required (and which env var to hint) without constructing the target.
+
+        Returns:
+            str | None: The api-key env var name, or None if the target uses none.
+        """
+        return None
 
     def __init_subclass__(cls, **kwargs: object) -> None:
         """

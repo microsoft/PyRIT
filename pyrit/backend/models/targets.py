@@ -14,12 +14,44 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 from pyrit.backend.models.common import PaginationInfo
+from pyrit.models import Parameter
 from pyrit.models.catalog.target import TargetInstance
 
 __all__ = [
     "CreateTargetRequest",
+    "TargetCatalogEntry",
+    "TargetCatalogResponse",
     "TargetListResponse",
 ]
+
+
+def _default_auth_modes() -> list[Literal["api_key", "entra"]]:
+    return ["api_key"]
+
+
+class TargetCatalogEntry(BaseModel):
+    """A target type available from the backend registry."""
+
+    target_type: str = Field(..., description="Target class name (e.g., 'OpenAIChatTarget')")
+    parameters: list[Parameter] = Field(
+        default_factory=list,
+        description="Constructor parameters for dynamic form generation",
+    )
+    supported_auth_modes: list[Literal["api_key", "entra"]] = Field(
+        default_factory=_default_auth_modes,
+        description="Authentication modes this target type supports",
+    )
+    api_key_env_var: str | None = Field(
+        None,
+        description="Environment variable name that supplies this target's API key, if any",
+    )
+    description: str | None = Field(None, description="Short description of the target from its docstring")
+
+
+class TargetCatalogResponse(BaseModel):
+    """Response for listing available target types from the registry."""
+
+    items: list[TargetCatalogEntry] = Field(..., description="List of available target types")
 
 
 class TargetListResponse(BaseModel):

@@ -6,7 +6,7 @@ import logging
 import re
 from abc import abstractmethod
 from collections.abc import Awaitable, Callable
-from typing import Any
+from typing import Any, ClassVar
 from urllib.parse import urlparse
 
 from openai import (
@@ -22,14 +22,14 @@ from openai._exceptions import (
     AuthenticationError,
 )
 
-from pyrit.auth import ensure_async_token_provider, get_azure_openai_auth
+from pyrit.auth import ensure_async_token_provider, get_azure_openai_auth, is_azure_openai_endpoint
 from pyrit.common import default_values
 from pyrit.exceptions.exception_classes import (
     RateLimitException,
     handle_bad_request_exception,
 )
 from pyrit.models import Message, MessagePiece
-from pyrit.prompt_target.common.prompt_target import PromptTarget
+from pyrit.prompt_target.common.prompt_target import AuthMode, PromptTarget
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.prompt_target.openai.openai_error_handling import (
@@ -57,11 +57,35 @@ class OpenAITarget(PromptTarget):
         capabilities=TargetCapabilities(supports_multi_message_pieces=True)
     )
 
+    # OpenAI-family targets can mint an Entra ID token for a recognized Azure
+    # endpoint (see ``is_azure_openai_endpoint``), so they support both modes.
+    supported_auth_modes: ClassVar[tuple[AuthMode, ...]] = ("api_key", "entra")
+
     model_name_environment_variable: str
     endpoint_environment_variable: str
     api_key_environment_variable: str
 
     _async_client: AsyncOpenAI | None = None
+
+    @classmethod
+    def get_api_key_environment_variable(cls) -> str | None:
+        """
+        Return the api-key env var for this concrete OpenAI target subclass.
+
+        The env var name is subclass-specific (e.g. ``OPENAI_CHAT_KEY``) and is
+        assigned in ``_set_openai_env_configuration_vars``. Resolve it without a
+        full construction by binding that setter to a bare instance.
+
+        Returns:
+            str | None: The api-key env var name, or None if it cannot be resolved.
+        """
+        try:
+            instance = cls.__new__(cls)
+            instance._set_openai_env_configuration_vars()
+        except Exception:
+            return None
+        env_var = getattr(instance, "api_key_environment_variable", None)
+        return env_var if isinstance(env_var, str) and env_var else None
 
     @property
     def _client(self) -> AsyncOpenAI:
@@ -96,8 +120,8 @@ class OpenAITarget(PromptTarget):
             endpoint (str, Optional): The target URL for the OpenAI service.
             api_key (str | Callable[[], str | Awaitable[str]], Optional): The API key for accessing the
                 OpenAI service, or a callable that returns an access token (sync or async).
-                For Azure endpoints, if no API key is provided (via parameter or environment variable),
-                Entra ID authentication is used automatically.
+                For recognized Azure OpenAI / AI Foundry endpoints, if no API key is provided
+                (via parameter or environment variable), Entra ID authentication is used automatically.
                 You can also explicitly pass a token provider from pyrit.auth
                 (e.g., get_azure_openai_auth(endpoint) for async, or get_azure_token_provider(scope) for sync).
                 Synchronous token providers are automatically wrapped to work with async clients.
@@ -116,7 +140,8 @@ class OpenAITarget(PromptTarget):
                 this target instance. If None, uses the class-level defaults. Defaults to None.
 
         Raises:
-            ValueError: If no API key is provided and the endpoint is not an Azure endpoint.
+            ValueError: If no API key is provided (via parameter or environment variable) and the
+                endpoint is not a recognized Azure OpenAI / AI Foundry endpoint.
         """
         self._headers: dict[str, str] = {}
         self._httpx_client_kwargs = httpx_client_kwargs or {}
@@ -157,12 +182,13 @@ class OpenAITarget(PromptTarget):
             )
             if api_key_value:
                 resolved_api_key = api_key_value
-            elif "azure" in endpoint_value.lower():
+            elif is_azure_openai_endpoint(endpoint_value):
                 resolved_api_key = get_azure_openai_auth(endpoint_value)
             else:
                 raise ValueError(
                     f"Environment variable {self.api_key_environment_variable} is required for non-Azure endpoints. "
-                    "For Azure endpoints, Entra ID authentication is used automatically."
+                    "For recognized Azure OpenAI / AI Foundry endpoints, Entra ID authentication is used "
+                    "automatically."
                 )
 
         # Ensure api_key is async-compatible (wrap sync token providers if needed)

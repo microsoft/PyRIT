@@ -143,6 +143,18 @@ export interface ConverterCatalogResponse {
   items: ConverterCatalogEntry[]
 }
 
+export interface TargetCatalogEntry {
+  target_type: string
+  parameters: Parameter[]
+  supported_auth_modes: ('api_key' | 'entra')[]
+  api_key_env_var?: string | null
+  description?: string | null
+}
+
+export interface TargetCatalogResponse {
+  items: TargetCatalogEntry[]
+}
+
 // --- Attacks ---
 
 export interface TargetInfo {

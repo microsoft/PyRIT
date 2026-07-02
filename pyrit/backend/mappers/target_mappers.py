@@ -117,6 +117,7 @@ def target_object_to_instance(target_registry_name: str, target_obj: PromptTarge
         target_specific_params=combined_specific,
         inner_targets=inner_targets,
         identifier_hash=target_identifier.hash,
+        identifier=target_identifier,
     )
 
 
