@@ -11,7 +11,7 @@ from pyrit.executor.attack import AttackConverterConfig, PromptSendingAttack
 from pyrit.prompt_converter import LeetspeakConverter, PolicyPuppetryConverter, PolicyPuppetryTemplate
 from pyrit.prompt_normalizer import PromptConverterConfiguration
 from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
-from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
+from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
 from pyrit.scenario.core.scenario import BaselineAttackPolicy, Scenario
 from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
 
@@ -53,7 +53,7 @@ DOCTOR_FACTORIES: list[AttackTechniqueFactory] = [
     AttackTechniqueFactory(
         name="policy_puppetry",
         attack_class=PromptSendingAttack,
-        strategy_tags=["single_turn", "default"],
+        strategy_tags=["default"],
         attack_kwargs={
             "attack_converter_config": AttackConverterConfig(
                 request_converters=PromptConverterConfiguration.from_converters(
@@ -67,7 +67,7 @@ DOCTOR_FACTORIES: list[AttackTechniqueFactory] = [
     AttackTechniqueFactory(
         name="policy_puppetry_leet",
         attack_class=PromptSendingAttack,
-        strategy_tags=["single_turn", "default"],
+        strategy_tags=["default"],
         attack_kwargs={
             "attack_converter_config": AttackConverterConfig(
                 request_converters=PromptConverterConfiguration.from_converters(
@@ -132,7 +132,7 @@ class Doctor(Scenario):
             version=self.VERSION,
             strategy_class=DoctorStrategy,
             default_strategy=DoctorStrategy.ALL,
-            default_dataset_config=DatasetConfiguration(dataset_names=["garak_doctor"]),
+            default_dataset_config=DatasetAttackConfiguration(dataset_names=["garak_doctor"]),
             objective_scorer=objective_scorer,
             scenario_result_id=scenario_result_id,
         )
