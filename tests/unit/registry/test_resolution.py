@@ -15,8 +15,9 @@ from pyrit.models import Message, MessagePiece
 from pyrit.models.identifiers import ConverterIdentifier, TargetIdentifier
 from pyrit.models.parameter import ComponentType
 from pyrit.prompt_target import PromptTarget
-from pyrit.registry.components import TargetRegistry
+from pyrit.registry.components import ConverterRegistry, ScorerRegistry, TargetRegistry
 from pyrit.registry.resolution import (
+    _registry_getter_for_component_type,
     derive_parameters,
     display_choices,
     resolve_constructor_args,
@@ -276,3 +277,37 @@ def test_module_has_no_backend_dependency() -> None:
         elif isinstance(node, ast.ImportFrom) and node.module:
             imported_modules.append(node.module)
     assert not any(name.startswith("pyrit.backend") for name in imported_modules)
+
+
+# Component families whose references resolve by name, and the registry each maps to.
+# Kept in the test (not imported from resolution.py) so it is an independent spec:
+# the test fails if the production mapping drifts from this expectation.
+_RESOLVABLE_COMPONENT_REGISTRIES = {
+    ComponentType.TARGET: TargetRegistry,
+    ComponentType.CONVERTER: ConverterRegistry,
+    ComponentType.SCORER: ScorerRegistry,
+}
+# Scenarios are created by name, never referenced by name inside another component,
+# so they are deliberately not wired for reference resolution.
+_NON_RESOLVABLE_COMPONENT_TYPES = {ComponentType.SCENARIO}
+
+
+def test_every_component_type_is_classified() -> None:
+    # Guard against silently adding a ComponentType without deciding whether its
+    # references resolve by name. A new member forces an update here (and to the
+    # resolution map), rather than failing only at build time.
+    classified = set(_RESOLVABLE_COMPONENT_REGISTRIES) | _NON_RESOLVABLE_COMPONENT_TYPES
+    assert set(ComponentType) == classified
+
+
+@pytest.mark.parametrize("component_type", list(_RESOLVABLE_COMPONENT_REGISTRIES))
+def test_resolvable_component_type_maps_to_its_registry(component_type: ComponentType) -> None:
+    getter = _registry_getter_for_component_type(component_type)
+    assert getter is not None
+    expected_registry = _RESOLVABLE_COMPONENT_REGISTRIES[component_type]
+    assert getter() is expected_registry.get_registry_singleton().instances
+
+
+@pytest.mark.parametrize("component_type", sorted(_NON_RESOLVABLE_COMPONENT_TYPES))
+def test_non_resolvable_component_type_has_no_registry(component_type: ComponentType) -> None:
+    assert _registry_getter_for_component_type(component_type) is None
