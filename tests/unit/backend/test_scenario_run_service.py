@@ -409,7 +409,7 @@ class TestScenarioRunServiceStartRun:
             )
         )
 
-        init_call = scenario_instance.initialize_async.await_args
+        init_call = mock_all_registries["scenario_registry"].create_and_initialize_async.await_args
         built_config = init_call.kwargs["dataset_config"]
         assert built_config.dataset_names == ["custom"]
         assert built_config.max_dataset_size == 7
@@ -424,7 +424,7 @@ class TestScenarioRunServiceStartRun:
         service = ScenarioRunService()
         await service.start_run_async(request=_make_request(dataset_parameters={"harm_categories": "cyber"}))
 
-        init_call = scenario_instance.initialize_async.await_args
+        init_call = mock_all_registries["scenario_registry"].create_and_initialize_async.await_args
         built_config = init_call.kwargs["dataset_config"]
         assert built_config is default_config
         assert built_config.filters == {"harm_categories": ["cyber"]}
