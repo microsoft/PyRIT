@@ -15,6 +15,10 @@ from pyrit.backend.services.converter_service import (
     ConverterService,
     get_converter_service,
 )
+from pyrit.backend.services.dataset_service import (
+    DatasetService,
+    get_dataset_service,
+)
 from pyrit.backend.services.initializer_service import (
     InitializerService,
     get_initializer_service,
@@ -37,6 +41,8 @@ __all__ = [
     "get_attack_service",
     "ConverterService",
     "get_converter_service",
+    "DatasetService",
+    "get_dataset_service",
     "InitializerService",
     "get_initializer_service",
     "ScenarioService",

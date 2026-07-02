@@ -38,7 +38,7 @@ from pyrit.backend.models.targets import (
     TargetListResponse,
 )
 from pyrit.backend.routes.labels import get_label_options
-from pyrit.models import MessagePiece
+from pyrit.models import ConverterIdentifier, MessagePiece
 from pyrit.models.catalog.target import TargetCapabilitiesInfo, TargetInstance
 
 
@@ -648,7 +648,7 @@ class TestAttackRoutes:
 
             response = client.get("/api/attacks?converter_types_match=garbage")
 
-            assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+            assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
     def test_get_conversations_success(self, client: TestClient) -> None:
         """Test getting attack conversations returns service response."""
@@ -1041,8 +1041,10 @@ class TestConverterRoutes:
             mock_service.get_converter_async = AsyncMock(
                 return_value=ConverterInstance(
                     converter_id="conv-1",
-                    converter_type="Base64Converter",
-                    display_name=None,
+                    identifier=ConverterIdentifier(
+                        class_name="Base64Converter",
+                        class_module="pyrit.prompt_converter.base64_converter",
+                    ),
                 )
             )
             mock_get_service.return_value = mock_service

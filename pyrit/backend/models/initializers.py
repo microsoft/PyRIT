@@ -4,9 +4,9 @@
 """
 REST envelopes for the initializer endpoints.
 
-Canonical initializer catalog types (``RegisteredInitializer``,
-``InitializerParameterSummary``) live in ``pyrit.models.catalog.initializer``
-and should be imported from there directly.
+Canonical initializer catalog types (``RegisteredInitializer``) live in
+``pyrit.models.catalog.initializer`` and should be imported from there directly.
+Initializer parameters are described by the shared ``pyrit.models.Parameter``.
 """
 
 from pydantic import BaseModel, Field

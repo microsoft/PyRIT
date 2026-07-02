@@ -5,6 +5,7 @@
 Tests for backend scenario service and routes.
 """
 
+from typing import Literal
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -13,11 +14,10 @@ from fastapi.testclient import TestClient
 
 from pyrit.backend.main import app
 from pyrit.backend.models.common import PaginationInfo
-from pyrit.backend.models.scenarios import ListRegisteredScenariosResponse
+from pyrit.backend.models.scenarios import ListRegisteredScenariosResponse, RegisteredScenario
 from pyrit.backend.services.scenario_service import ScenarioService, get_scenario_service
-from pyrit.models.catalog.scenario import RegisteredScenario
+from pyrit.models import Parameter
 from pyrit.registry import ScenarioMetadata
-from pyrit.registry.class_registries.scenario_registry import ScenarioParameterMetadata
 
 
 @pytest.fixture
@@ -357,19 +357,17 @@ class TestScenarioServiceSupportedParameters:
             default_datasets=("test_dataset",),
             max_dataset_size=None,
             supported_parameters=(
-                ScenarioParameterMetadata(
+                Parameter(
                     name="max_turns",
                     description="Maximum number of turns",
                     default=5,
-                    param_type="int",
-                    choices=None,
+                    param_type=int,
                 ),
-                ScenarioParameterMetadata(
+                Parameter(
                     name="mode",
                     description="Execution mode",
                     default="fast",
-                    param_type="str",
-                    choices=["fast", "slow"],
+                    param_type=Literal["fast", "slow"],
                 ),
             ),
         )
@@ -387,15 +385,15 @@ class TestScenarioServiceSupportedParameters:
 
             assert params[0].name == "max_turns"
             assert params[0].description == "Maximum number of turns"
-            assert params[0].default == "5"
-            assert params[0].param_type == "int"
+            assert params[0].model_dump()["default"] == "5"
+            assert params[0].type_name == "int"
             assert params[0].choices is None
             assert params[0].is_list is False
 
             assert params[1].name == "mode"
             assert params[1].description == "Execution mode"
-            assert params[1].default == "'fast'"
-            assert params[1].param_type == "str"
+            assert params[1].model_dump()["default"] == "fast"
+            assert params[1].type_name == "str"
             assert params[1].choices == ["fast", "slow"]
             assert params[1].is_list is False
 
@@ -425,12 +423,11 @@ class TestScenarioServiceSupportedParameters:
             default_datasets=(),
             max_dataset_size=None,
             supported_parameters=(
-                ScenarioParameterMetadata(
+                Parameter(
                     name="optional_param",
                     description="An optional param",
                     default=None,
-                    param_type="str",
-                    choices=None,
+                    param_type=str,
                 ),
             ),
         )
@@ -444,3 +441,4 @@ class TestScenarioServiceSupportedParameters:
 
             param = result.items[0].supported_parameters[0]
             assert param.default is None
+            assert param.model_dump()["default"] is None

@@ -14,7 +14,7 @@ from pyrit.scenario.airt import (  # type: ignore[ty:unresolved-import]
     Psychosocial,
     PsychosocialStrategy,
 )
-from pyrit.scenario.scenarios.airt.psychosocial import ResolvedSeedData, SubharmConfig
+from pyrit.scenario.scenarios.airt.psychosocial import SubharmConfig
 from pyrit.score import FloatScaleThresholdScorer
 
 SEED_DATASETS_PATH = DATASETS_PATH / "seed_datasets" / "local" / "airt"
@@ -28,9 +28,9 @@ def mock_memory_seed_groups() -> list[SeedGroup]:
 
 
 @pytest.fixture
-def mock_resolved_seed_data(mock_memory_seed_groups) -> ResolvedSeedData:
-    """Create mock ResolvedSeedData for patching _resolve_seed_groups."""
-    return ResolvedSeedData(seed_groups=mock_memory_seed_groups, subharm=None)
+def mock_seed_groups_by_dataset(mock_memory_seed_groups) -> dict[str, list[SeedAttackGroup]]:
+    """Create mock by-dataset seed groups for patching _resolve_seed_groups_by_dataset_async."""
+    return {"psychosocial": mock_memory_seed_groups}
 
 
 @pytest.fixture
@@ -183,12 +183,15 @@ class TestPsychosocialAttackGeneration:
         self,
         mock_objective_target,
         mock_objective_scorer,
-        mock_resolved_seed_data,
+        mock_seed_groups_by_dataset,
         mock_dataset_config,
     ):
         """Test that _get_atomic_attacks_async returns atomic attacks."""
         with patch.object(
-            Psychosocial, "_resolve_seed_groups_async", new_callable=AsyncMock, return_value=mock_resolved_seed_data
+            Psychosocial,
+            "_resolve_seed_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value=mock_seed_groups_by_dataset,
         ):
             scenario = Psychosocial(objective_scorer=mock_objective_scorer)
 
@@ -203,12 +206,15 @@ class TestPsychosocialAttackGeneration:
         *,
         mock_objective_target: PromptTarget,
         mock_objective_scorer: FloatScaleThresholdScorer,
-        mock_resolved_seed_data,
+        mock_seed_groups_by_dataset,
         mock_dataset_config,
     ) -> None:
         """Test that attack runs include objectives for each seed prompt."""
         with patch.object(
-            Psychosocial, "_resolve_seed_groups_async", new_callable=AsyncMock, return_value=mock_resolved_seed_data
+            Psychosocial,
+            "_resolve_seed_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value=mock_seed_groups_by_dataset,
         ):
             scenario = Psychosocial(
                 objective_scorer=mock_objective_scorer,
@@ -225,12 +231,15 @@ class TestPsychosocialAttackGeneration:
         *,
         mock_objective_target: PromptTarget,
         mock_objective_scorer: FloatScaleThresholdScorer,
-        mock_resolved_seed_data,
+        mock_seed_groups_by_dataset,
         mock_dataset_config,
     ) -> None:
         """Test that _get_atomic_attacks_async returns atomic attacks."""
         with patch.object(
-            Psychosocial, "_resolve_seed_groups_async", new_callable=AsyncMock, return_value=mock_resolved_seed_data
+            Psychosocial,
+            "_resolve_seed_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value=mock_seed_groups_by_dataset,
         ):
             scenario = Psychosocial(
                 objective_scorer=mock_objective_scorer,
@@ -251,12 +260,15 @@ class TestPsychosocialHarmsLifecycle:
         *,
         mock_objective_target: PromptTarget,
         mock_objective_scorer: FloatScaleThresholdScorer,
-        mock_resolved_seed_data,
+        mock_seed_groups_by_dataset,
         mock_dataset_config,
     ) -> None:
         """Test initialization with custom max_concurrency."""
         with patch.object(
-            Psychosocial, "_resolve_seed_groups_async", new_callable=AsyncMock, return_value=mock_resolved_seed_data
+            Psychosocial,
+            "_resolve_seed_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value=mock_seed_groups_by_dataset,
         ):
             scenario = Psychosocial(objective_scorer=mock_objective_scorer)
             await scenario.initialize_async(
@@ -269,14 +281,17 @@ class TestPsychosocialHarmsLifecycle:
         *,
         mock_objective_target: PromptTarget,
         mock_objective_scorer: FloatScaleThresholdScorer,
-        mock_resolved_seed_data,
+        mock_seed_groups_by_dataset,
         mock_dataset_config,
     ) -> None:
         """Test initialization with memory labels."""
         memory_labels = {"type": "psychosocial", "category": "crisis"}
 
         with patch.object(
-            Psychosocial, "_resolve_seed_groups_async", new_callable=AsyncMock, return_value=mock_resolved_seed_data
+            Psychosocial,
+            "_resolve_seed_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value=mock_seed_groups_by_dataset,
         ):
             scenario = Psychosocial(objective_scorer=mock_objective_scorer)
             await scenario.initialize_async(
@@ -317,12 +332,15 @@ class TestPsychosocialProperties:
         self,
         *,
         mock_objective_target: PromptTarget,
-        mock_resolved_seed_data,
+        mock_seed_groups_by_dataset,
         mock_dataset_config,
     ) -> None:
         """Test that all three targets (adversarial, objective, scorer) are distinct."""
         with patch.object(
-            Psychosocial, "_resolve_seed_groups_async", new_callable=AsyncMock, return_value=mock_resolved_seed_data
+            Psychosocial,
+            "_resolve_seed_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value=mock_seed_groups_by_dataset,
         ):
             scenario = Psychosocial()
             await scenario.initialize_async(objective_target=mock_objective_target, dataset_config=mock_dataset_config)
@@ -350,12 +368,15 @@ class TestPsychosocialTargetRequirements:
         self,
         mock_objective_target,
         mock_objective_scorer,
-        mock_resolved_seed_data,
+        mock_seed_groups_by_dataset,
         mock_dataset_config,
     ):
         """initialize_async must delegate capability validation to TARGET_REQUIREMENTS.validate."""
         with patch.object(
-            Psychosocial, "_resolve_seed_groups_async", new_callable=AsyncMock, return_value=mock_resolved_seed_data
+            Psychosocial,
+            "_resolve_seed_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value=mock_seed_groups_by_dataset,
         ):
             scenario = Psychosocial(objective_scorer=mock_objective_scorer)
             with patch("pyrit.prompt_target.common.target_requirements.TargetRequirements.validate") as mock_validate:
@@ -373,7 +394,7 @@ class TestPsychosocialTargetRequirements:
     async def test_initialize_async_rejects_target_missing_editable_history(
         self,
         mock_objective_scorer,
-        mock_resolved_seed_data,
+        mock_seed_groups_by_dataset,
         mock_dataset_config,
     ):
         """A target that does not natively support EDITABLE_HISTORY must be rejected."""
@@ -390,7 +411,10 @@ class TestPsychosocialTargetRequirements:
         )
 
         with patch.object(
-            Psychosocial, "_resolve_seed_groups_async", new_callable=AsyncMock, return_value=mock_resolved_seed_data
+            Psychosocial,
+            "_resolve_seed_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value=mock_seed_groups_by_dataset,
         ):
             scenario = Psychosocial(objective_scorer=mock_objective_scorer)
             with pytest.raises(ValueError, match="editable_history"):

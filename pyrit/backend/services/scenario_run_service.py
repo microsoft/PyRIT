@@ -21,16 +21,24 @@ from pyrit.models.catalog.scenario import (
     RunScenarioRequest,
     ScenarioRunSummary,
 )
-from pyrit.registry import InitializerRegistry, ScenarioRegistry, TargetRegistry
+from pyrit.registry import (
+    ConverterRegistry,
+    InitializerRegistry,
+    ScenarioRegistry,
+    TargetRegistry,
+)
 from pyrit.scenario import Scenario
 from pyrit.scenario.core import DatasetAttackConfiguration
 
 if TYPE_CHECKING:
+    from pyrit.prompt_converter import PromptConverter
     from pyrit.prompt_target import PromptTarget
 
 logger = logging.getLogger(__name__)
 
 _DEFAULT_MAX_CONCURRENT_RUNS = 3
+
+_CONVERTER_MODIFIER_PREFIX = "converter."
 
 
 @dataclass
@@ -317,17 +325,14 @@ class ScenarioRunService:
 
         if request.strategies:
             strategy_class = introspection_instance._strategy_class
-            strategy_enums = []
-            for name in request.strategies:
-                try:
-                    strategy_enums.append(strategy_class(name))
-                except ValueError:
-                    available_strategies = [s.value for s in strategy_class]
-                    raise ValueError(
-                        f"Strategy '{name}' not found for scenario '{request.scenario_name}'. "
-                        f"Available: {', '.join(available_strategies)}"
-                    ) from None
+            strategy_enums, strategy_converters = self._resolve_strategies_and_converters(
+                tokens=request.strategies,
+                strategy_class=strategy_class,
+                scenario_name=request.scenario_name,
+            )
             init_kwargs["scenario_strategies"] = strategy_enums
+            if strategy_converters:
+                init_kwargs["strategy_converters"] = strategy_converters
 
         if request.dataset_names or request.max_dataset_size is not None:
             default_config = introspection_instance._default_dataset_config
@@ -367,6 +372,100 @@ class ScenarioRunService:
                 init_kwargs["dataset_config"] = default_config
 
         return init_kwargs
+
+    def _resolve_strategies_and_converters(
+        self,
+        *,
+        tokens: list[str],
+        strategy_class: type[Any],
+        scenario_name: str,
+    ) -> tuple[list[Any], dict[str, list["PromptConverter"]]]:
+        """
+        Resolve ``--strategies`` tokens into strategy enums and per-technique converters.
+
+        Each token has the form ``<strategy>[:converter.<name>[:converter.<name>...]]``.
+        The base ``<strategy>`` is resolved to a ``ScenarioStrategy`` enum member (which may
+        be an aggregate). Each ``converter.<name>`` modifier is resolved to a registered
+        converter instance and appended (in token order) to every concrete technique that the
+        base strategy expands to.
+
+        Args:
+            tokens: The raw strategy tokens from the request.
+            strategy_class: The scenario's ``ScenarioStrategy`` subclass.
+            scenario_name: The scenario name, used for error messages.
+
+        Returns:
+            A tuple of (strategy enums to pass as ``scenario_strategies``, mapping from concrete
+            technique name to the list of converters to append for that technique).
+
+        Raises:
+            ValueError: If a base strategy name is unknown, a modifier is malformed, or a
+                converter name is not registered.
+        """
+        strategy_enums: list[Any] = []
+        strategy_converters: dict[str, list[PromptConverter]] = {}
+
+        for token in tokens:
+            base_name, _, remainder = token.partition(":")
+            modifiers = [m for m in remainder.split(":") if m] if remainder else []
+
+            try:
+                strategy_enum = strategy_class(base_name)
+            except ValueError:
+                available_strategies = [s.value for s in strategy_class]
+                raise ValueError(
+                    f"Strategy '{base_name}' not found for scenario '{scenario_name}'. "
+                    f"Available: {', '.join(available_strategies)}"
+                ) from None
+            strategy_enums.append(strategy_enum)
+
+            converters = self._resolve_converter_modifiers(modifiers=modifiers, token=token)
+            if not converters:
+                continue
+
+            for concrete in strategy_class.expand({strategy_enum}):
+                strategy_converters.setdefault(concrete.value, []).extend(converters)
+
+        return strategy_enums, strategy_converters
+
+    def _resolve_converter_modifiers(self, *, modifiers: list[str], token: str) -> list["PromptConverter"]:
+        """
+        Resolve the converter modifiers of a single strategy token to converter instances.
+
+        Args:
+            modifiers: The modifier segments of the token (everything after the base strategy).
+            token: The full original token, used for error messages.
+
+        Returns:
+            The resolved converter instances in token order.
+
+        Raises:
+            ValueError: If a modifier does not use the ``converter.`` prefix or names a
+                converter that is not registered.
+        """
+        if not modifiers:
+            return []
+
+        instances = ConverterRegistry.get_registry_singleton().instances
+        converters: list[PromptConverter] = []
+        for modifier in modifiers:
+            if not modifier.startswith(_CONVERTER_MODIFIER_PREFIX):
+                raise ValueError(
+                    f"Unknown strategy modifier '{modifier}' in '{token}'. "
+                    f"Supported modifiers must use the '{_CONVERTER_MODIFIER_PREFIX}' prefix "
+                    f"(e.g. '{_CONVERTER_MODIFIER_PREFIX}translation_spanish')."
+                )
+            converter_name = modifier[len(_CONVERTER_MODIFIER_PREFIX) :]
+            converter = instances.get(converter_name)
+            if converter is None:
+                available = instances.get_names()
+                available_text = ", ".join(available) if available else "(none registered)"
+                raise ValueError(
+                    f"Converter '{converter_name}' in '{token}' is not a registered converter "
+                    f"instance. Available converters: {available_text}"
+                )
+            converters.append(converter)
+        return converters
 
     async def _initialize_scenario_async(self, *, request: RunScenarioRequest, init_kwargs: dict[str, Any]) -> Scenario:
         """

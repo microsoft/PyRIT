@@ -7,10 +7,16 @@ from enum import Enum
 from typing import Literal
 
 import pytest
+from pydantic import ValidationError
 
+from pyrit.common import REQUIRED_VALUE
 from pyrit.models import Parameter
-from pyrit.models.parameter import ComponentType, RegistryReference, _is_scalar_param_type
-from pyrit.registry.resolution import display_choices
+from pyrit.models.parameter import (
+    ComponentType,
+    RegistryReference,
+    _is_scalar_param_type,
+    display_choices,
+)
 
 
 class _Speed(Enum):
@@ -60,8 +66,66 @@ class TestParameter:
     def test_parameter_is_immutable(self) -> None:
         p = Parameter(name="x", description="d")
 
-        with pytest.raises((AttributeError, TypeError)):
+        with pytest.raises(ValidationError):
             p.name = "y"  # type: ignore[misc]
+
+
+class TestParameterSerialization:
+    """``Parameter.model_dump`` projects the live type into JSON-friendly display fields."""
+
+    def test_scalar_with_default(self) -> None:
+        dumped = Parameter(name="n", description="d", default=5, param_type=int).model_dump()
+
+        assert dumped == {
+            "name": "n",
+            "description": "d",
+            "default": "5",
+            "type_name": "int",
+            "required": False,
+            "choices": None,
+            "is_list": False,
+        }
+
+    def test_excludes_live_only_fields(self) -> None:
+        dumped = Parameter(name="n", description="d", param_type=int).model_dump()
+
+        assert "param_type" not in dumped
+        assert "reference" not in dumped
+        assert "destination" not in dumped
+
+    def test_required_default_serializes_to_none(self) -> None:
+        p = Parameter(name="mode", description="d", default=REQUIRED_VALUE, param_type=Literal["a", "b"])
+        dumped = p.model_dump()
+
+        assert dumped["required"] is True
+        assert dumped["default"] is None
+        assert dumped["type_name"] == "str"
+        assert dumped["choices"] == ["a", "b"]
+
+    def test_enum_default_serializes_to_member_value(self) -> None:
+        dumped = Parameter(name="speed", description="d", default=_Speed.FAST, param_type=_Speed).model_dump()
+
+        assert dumped["default"] == "fast"
+        assert dumped["choices"] == ["fast", "slow"]
+
+    def test_list_type_is_flagged(self) -> None:
+        dumped = Parameter(name="tags", description="d", default=["x"], param_type=list[str]).model_dump()
+
+        assert dumped["type_name"] == "list[str]"
+        assert dumped["is_list"] is True
+        assert dumped["default"] == ["x"]
+
+    def test_list_default_serializes_elementwise(self) -> None:
+        """A list default is preserved as a list of display strings, not flattened to ``"['1', '2']"``."""
+        dumped = Parameter(name="nums", description="d", default=[1, 2], param_type=list[int]).model_dump()
+
+        assert dumped["default"] == ["1", "2"]
+
+    def test_optional_scalar_unwraps_to_base_name(self) -> None:
+        """``Optional[int]`` renders the base scalar name, matching choices/coercion."""
+        dumped = Parameter(name="n", description="d", param_type=int | None).model_dump()
+
+        assert dumped["type_name"] == "int"
 
 
 class TestIsScalarParamType:
@@ -77,7 +141,7 @@ class TestIsScalarParamType:
 
 
 class TestDisplayChoices:
-    """``display_choices`` (now in the registry layer) derives the allowed set from the type."""
+    """``display_choices`` derives the allowed set from a constrained-scalar type."""
 
     def test_literal_returns_args(self) -> None:
         assert display_choices(Literal["fast", "slow"]) == ("fast", "slow")

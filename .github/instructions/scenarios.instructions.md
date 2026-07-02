@@ -163,6 +163,8 @@ The default implementation:
    `AttackTechniqueRegistry` singleton)
 2. Iterates over every (technique × dataset) pair from `self._dataset_config`
 3. Calls `factory.create()` with `objective_target` and conditional scorer override
+   (also forwards any per-technique converters from `self._strategy_converters`, populated
+   from the CLI `--strategies <technique>:converter.<name>` modifier, as `extra_request_converters`)
 4. Uses `self._build_display_group()` for user-facing grouping
 5. Builds `AtomicAttack` with unique `atomic_attack_name` = `"{technique}_{dataset}"`
 

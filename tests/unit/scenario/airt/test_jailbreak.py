@@ -147,7 +147,10 @@ class TestJailbreakInitialization:
     def test_init_with_scenario_result_id(self, mock_scenario_result_id):
         """Test initialization with a scenario result ID."""
         with patch.object(
-            Jailbreak, "_resolve_seed_groups_async", new_callable=AsyncMock, return_value=mock_memory_seed_groups
+            Jailbreak,
+            "_resolve_seed_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value={"memory": mock_memory_seed_groups},
         ):
             scenario = Jailbreak(scenario_result_id=mock_scenario_result_id)
             assert scenario._scenario_result_id == mock_scenario_result_id
@@ -155,7 +158,10 @@ class TestJailbreakInitialization:
     def test_init_with_default_scorer(self, mock_memory_seed_groups):
         """Test initialization with default scorer."""
         with patch.object(
-            Jailbreak, "_resolve_seed_groups_async", new_callable=AsyncMock, return_value=mock_memory_seed_groups
+            Jailbreak,
+            "_resolve_seed_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value={"memory": mock_memory_seed_groups},
         ):
             scenario = Jailbreak()
             assert scenario._objective_scorer_identifier
@@ -163,7 +169,10 @@ class TestJailbreakInitialization:
     def test_init_with_custom_scorer(self, mock_objective_scorer, mock_memory_seed_groups):
         """Test initialization with custom scorer."""
         with patch.object(
-            Jailbreak, "_resolve_seed_groups_async", new_callable=AsyncMock, return_value=mock_memory_seed_groups
+            Jailbreak,
+            "_resolve_seed_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value={"memory": mock_memory_seed_groups},
         ):
             scenario = Jailbreak(objective_scorer=mock_objective_scorer)
             assert scenario._objective_scorer == mock_objective_scorer
@@ -171,7 +180,10 @@ class TestJailbreakInitialization:
     def test_init_with_num_templates(self, mock_random_num_templates):
         """Test initialization with num_templates provided."""
         with patch.object(
-            Jailbreak, "_resolve_seed_groups_async", new_callable=AsyncMock, return_value=mock_memory_seed_groups
+            Jailbreak,
+            "_resolve_seed_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value={"memory": mock_memory_seed_groups},
         ):
             scenario = Jailbreak(num_templates=mock_random_num_templates)
             assert scenario._num_templates == mock_random_num_templates
@@ -179,7 +191,10 @@ class TestJailbreakInitialization:
     def test_init_with_num_attempts(self, mock_random_num_attempts):
         """Test initialization with n provided."""
         with patch.object(
-            Jailbreak, "_resolve_seed_groups_async", new_callable=AsyncMock, return_value=mock_memory_seed_groups
+            Jailbreak,
+            "_resolve_seed_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value={"memory": mock_memory_seed_groups},
         ):
             scenario = Jailbreak(num_attempts=mock_random_num_attempts)
             assert scenario._num_attempts == mock_random_num_attempts
@@ -200,7 +215,10 @@ class TestJailbreakInitialization:
         subdir_name = subdir_templates[0]
 
         with patch.object(
-            Jailbreak, "_resolve_seed_groups_async", new_callable=AsyncMock, return_value=mock_memory_seed_groups
+            Jailbreak,
+            "_resolve_seed_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value={"memory": mock_memory_seed_groups},
         ):
             scenario = Jailbreak(objective_scorer=mock_objective_scorer, jailbreak_names=[subdir_name])
             assert scenario._jailbreaks == [subdir_name]
@@ -230,7 +248,10 @@ class TestJailbreakInitialization:
     ):
         """initialize_async without include_baseline honors BASELINE_ATTACK_POLICY=Enabled."""
         with patch.object(
-            Jailbreak, "_resolve_seed_groups_async", new_callable=AsyncMock, return_value=mock_memory_seed_groups
+            Jailbreak,
+            "_resolve_seed_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value={"memory": mock_memory_seed_groups},
         ):
             scenario = Jailbreak(objective_scorer=mock_objective_scorer)
             await scenario.initialize_async(objective_target=mock_objective_target)
@@ -241,7 +262,10 @@ class TestJailbreakInitialization:
     ):
         """Caller can opt out of baseline by passing include_baseline=False."""
         with patch.object(
-            Jailbreak, "_resolve_seed_groups_async", new_callable=AsyncMock, return_value=mock_memory_seed_groups
+            Jailbreak,
+            "_resolve_seed_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value={"memory": mock_memory_seed_groups},
         ):
             scenario = Jailbreak(objective_scorer=mock_objective_scorer)
             await scenario.initialize_async(
@@ -260,7 +284,10 @@ class TestJailbreakAttackGeneration:
     ):
         """Test that the simple attack generation works."""
         with patch.object(
-            Jailbreak, "_resolve_seed_groups_async", new_callable=AsyncMock, return_value=mock_memory_seed_groups
+            Jailbreak,
+            "_resolve_seed_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value={"memory": mock_memory_seed_groups},
         ):
             scenario = Jailbreak(objective_scorer=mock_objective_scorer, num_templates=2)
 
@@ -276,7 +303,10 @@ class TestJailbreakAttackGeneration:
     ):
         """Test that the complex attack generation works."""
         with patch.object(
-            Jailbreak, "_resolve_seed_groups_async", new_callable=AsyncMock, return_value=mock_memory_seed_groups
+            Jailbreak,
+            "_resolve_seed_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value={"memory": mock_memory_seed_groups},
         ):
             scenario = Jailbreak(objective_scorer=mock_objective_scorer, num_templates=2)
 
@@ -296,7 +326,10 @@ class TestJailbreakAttackGeneration:
     ):
         """Test that the manyshot attack generation works."""
         with patch.object(
-            Jailbreak, "_resolve_seed_groups_async", new_callable=AsyncMock, return_value=mock_memory_seed_groups
+            Jailbreak,
+            "_resolve_seed_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value={"memory": mock_memory_seed_groups},
         ):
             scenario = Jailbreak(objective_scorer=mock_objective_scorer, num_templates=2)
 
@@ -314,7 +347,10 @@ class TestJailbreakAttackGeneration:
     ):
         """Test that the prompt sending attack generation works."""
         with patch.object(
-            Jailbreak, "_resolve_seed_groups_async", new_callable=AsyncMock, return_value=mock_memory_seed_groups
+            Jailbreak,
+            "_resolve_seed_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value={"memory": mock_memory_seed_groups},
         ):
             scenario = Jailbreak(objective_scorer=mock_objective_scorer, num_templates=2)
 
@@ -332,7 +368,10 @@ class TestJailbreakAttackGeneration:
     ):
         """Test that the skelton key attack generation works."""
         with patch.object(
-            Jailbreak, "_resolve_seed_groups_async", new_callable=AsyncMock, return_value=mock_memory_seed_groups
+            Jailbreak,
+            "_resolve_seed_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value={"memory": mock_memory_seed_groups},
         ):
             scenario = Jailbreak(objective_scorer=mock_objective_scorer, num_templates=2)
 
@@ -350,7 +389,10 @@ class TestJailbreakAttackGeneration:
     ):
         """Test that the roleplaying attack generation works."""
         with patch.object(
-            Jailbreak, "_resolve_seed_groups_async", new_callable=AsyncMock, return_value=mock_memory_seed_groups
+            Jailbreak,
+            "_resolve_seed_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value={"memory": mock_memory_seed_groups},
         ):
             scenario = Jailbreak(objective_scorer=mock_objective_scorer, num_templates=2)
 
@@ -372,7 +414,10 @@ class TestJailbreakAttackGeneration:
         Combined coverage previously split across test_get_atomic_attacks_async_returns_attacks.
         """
         with patch.object(
-            Jailbreak, "_resolve_seed_groups_async", new_callable=AsyncMock, return_value=mock_memory_seed_groups
+            Jailbreak,
+            "_resolve_seed_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value={"memory": mock_memory_seed_groups},
         ):
             scenario = Jailbreak(objective_scorer=mock_objective_scorer, num_templates=2)
 
@@ -389,7 +434,10 @@ class TestJailbreakAttackGeneration:
     ):
         """Test that all jailbreak templates are found."""
         with patch.object(
-            Jailbreak, "_resolve_seed_groups_async", new_callable=AsyncMock, return_value=mock_memory_seed_groups
+            Jailbreak,
+            "_resolve_seed_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value={"memory": mock_memory_seed_groups},
         ):
             scenario = Jailbreak(
                 objective_scorer=mock_objective_scorer,
@@ -402,7 +450,10 @@ class TestJailbreakAttackGeneration:
     ):
         """Test that random jailbreak template selection works."""
         with patch.object(
-            Jailbreak, "_resolve_seed_groups_async", new_callable=AsyncMock, return_value=mock_memory_seed_groups
+            Jailbreak,
+            "_resolve_seed_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value={"memory": mock_memory_seed_groups},
         ):
             scenario = Jailbreak(objective_scorer=mock_objective_scorer, num_templates=mock_random_num_templates)
             await scenario.initialize_async(objective_target=mock_objective_target)
@@ -413,7 +464,10 @@ class TestJailbreakAttackGeneration:
     ):
         """Test that n successfully tries each jailbreak template n-many times."""
         with patch.object(
-            Jailbreak, "_resolve_seed_groups_async", new_callable=AsyncMock, return_value=mock_memory_seed_groups
+            Jailbreak,
+            "_resolve_seed_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value={"memory": mock_memory_seed_groups},
         ):
             base_scenario = Jailbreak(objective_scorer=mock_objective_scorer, num_templates=2)
             await base_scenario.initialize_async(objective_target=mock_objective_target, include_baseline=False)
@@ -443,7 +497,10 @@ class TestJailbreakLifecycle:
     ) -> None:
         """Test initialization with custom max_concurrency."""
         with patch.object(
-            Jailbreak, "_resolve_seed_groups_async", new_callable=AsyncMock, return_value=mock_memory_seed_groups
+            Jailbreak,
+            "_resolve_seed_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value={"memory": mock_memory_seed_groups},
         ):
             scenario = Jailbreak(objective_scorer=mock_objective_scorer)
             await scenario.initialize_async(objective_target=mock_objective_target, max_concurrency=20)
@@ -460,7 +517,10 @@ class TestJailbreakLifecycle:
         memory_labels = {"type": "jailbreak", "category": "scenario"}
 
         with patch.object(
-            Jailbreak, "_resolve_seed_groups_async", new_callable=AsyncMock, return_value=mock_memory_seed_groups
+            Jailbreak,
+            "_resolve_seed_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value={"memory": mock_memory_seed_groups},
         ):
             scenario = Jailbreak(objective_scorer=mock_objective_scorer)
             await scenario.initialize_async(
@@ -496,7 +556,10 @@ class TestJailbreakProperties:
     ) -> None:
         """Test that all three targets (adversarial, object, scorer) are distinct."""
         with patch.object(
-            Jailbreak, "_resolve_seed_groups_async", new_callable=AsyncMock, return_value=mock_memory_seed_groups
+            Jailbreak,
+            "_resolve_seed_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value={"memory": mock_memory_seed_groups},
         ):
             scenario = Jailbreak()
             await scenario.initialize_async(objective_target=mock_objective_target)
@@ -543,7 +606,10 @@ class TestJailbreakAdversarialTarget:
     ) -> None:
         """Test that multiple role-play attacks share the same adversarial target instance."""
         with patch.object(
-            Jailbreak, "_resolve_seed_groups_async", new_callable=AsyncMock, return_value=mock_memory_seed_groups
+            Jailbreak,
+            "_resolve_seed_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value={"memory": mock_memory_seed_groups},
         ):
             scenario = Jailbreak(objective_scorer=mock_objective_scorer, num_templates=2)
             await scenario.initialize_async(
@@ -572,8 +638,8 @@ class TestJailbreakBaselineUniformity:
         seed_groups = [SeedAttackGroup(seeds=[SeedObjective(value=f"obj{i}")]) for i in range(10)]
         config = DatasetAttackConfiguration(seed_groups=seed_groups, max_dataset_size=3)
 
-        first_sample = seed_groups[:3]
-        second_sample = seed_groups[5:8]
+        first_sample = [("inline", group) for group in seed_groups[:3]]
+        second_sample = [("inline", group) for group in seed_groups[5:8]]
         scenario = Jailbreak(objective_scorer=mock_objective_scorer, num_templates=1)
         with patch(
             "pyrit.scenario.core.dataset_configuration.random.sample",

@@ -29,6 +29,7 @@ from pyrit.scenario.core.dataset_configuration import (
     DatasetAttackConfiguration,
 )
 from pyrit.scenario.core.scenario import Scenario
+from pyrit.scenario.core.scenario_context import ScenarioContext
 from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
 from pyrit.scenario.core.scenario_target_defaults import get_default_adversarial_target
 from pyrit.score import TrueFalseScorer
@@ -167,27 +168,13 @@ class Scam(Scenario):
             )
             self._legacy_include_baseline = include_baseline
 
-        # Will be resolved in _get_atomic_attacks_async
-        self._seed_groups: list[SeedAttackGroup] | None = None
-
-    async def _resolve_seed_groups_async(self) -> list[SeedAttackGroup]:
-        """
-        Resolve seed groups from dataset configuration.
-
-        Returns:
-            list[SeedAttackGroup]: List of seed attack groups with objectives to be tested.
-        """
-        # Use dataset_config (guaranteed to be set by initialize_async). Auto-fetch
-        # populates memory first; a still-empty result raises a DatasetConstraintError
-        # naming the offending dataset, which we let propagate.
-        return list(await self._dataset_config.get_seed_attack_groups_async())
-
-    def _get_atomic_attack_from_strategy(self, strategy: str) -> AtomicAttack:
+    def _get_atomic_attack_from_strategy(self, *, strategy: str, seed_groups: list[SeedAttackGroup]) -> AtomicAttack:
         """
         Translate the strategies into actual AtomicAttacks.
 
         Args:
             strategy (str): The strategy to create the attack from.
+            seed_groups (list[SeedAttackGroup]): Seed groups the attack draws from.
 
         Returns:
             AtomicAttack: Configured for the specified strategy.
@@ -236,25 +223,23 @@ class Scam(Scenario):
         return AtomicAttack(
             atomic_attack_name=f"scam_{strategy}",
             attack_technique=AttackTechnique(attack=attack_strategy),
-            seed_groups=self._seed_groups or [],
+            seed_groups=seed_groups,
             memory_labels=self._memory_labels,
         )
 
-    async def _get_atomic_attacks_async(self) -> list[AtomicAttack]:
+    async def _build_atomic_attacks_async(self, *, context: ScenarioContext) -> list[AtomicAttack]:
         """
         Generate atomic attacks for each strategy.
+
+        Args:
+            context (ScenarioContext): The resolved runtime inputs for this run.
 
         Returns:
             list[AtomicAttack]: List of atomic attacks to execute.
         """
-        # Resolve seed groups from deprecated objectives or dataset config
-        self._seed_groups = await self._resolve_seed_groups_async()
+        seed_groups = list(context.seed_groups)
+        strategies = {s.value for s in context.scenario_strategies}
 
-        strategies = {s.value for s in self._scenario_strategies}
-
-        atomic_attacks = [self._get_atomic_attack_from_strategy(strategy) for strategy in strategies]
-
-        if self._include_baseline:
-            atomic_attacks.insert(0, self._build_baseline_atomic_attack(seed_groups=self._seed_groups or []))
-
-        return atomic_attacks
+        return [
+            self._get_atomic_attack_from_strategy(strategy=strategy, seed_groups=seed_groups) for strategy in strategies
+        ]

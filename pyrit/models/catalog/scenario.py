@@ -18,18 +18,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from pyrit.models.parameter import Parameter
 from pyrit.models.results.scenario_result import ScenarioRunState
-
-
-class ScenarioParameterSummary(BaseModel):
-    """Summary of a scenario-declared parameter."""
-
-    name: str = Field(..., description="Parameter name (e.g., 'max_turns')")
-    description: str = Field(..., description="Human-readable description of the parameter")
-    default: str | None = Field(None, description="Default value as a display string, or None if required")
-    param_type: str = Field(..., description="Type of the parameter as a display string (e.g., 'int', 'str')")
-    choices: list[str] | None = Field(None, description="Allowed values as strings, or None if unconstrained")
-    is_list: bool = Field(False, description="True when the parameter accepts a list of values (e.g., list[str])")
 
 
 class RegisteredScenario(BaseModel):
@@ -45,7 +35,7 @@ class RegisteredScenario(BaseModel):
     all_strategies: list[str] = Field(..., description="All available concrete strategy names")
     default_datasets: list[str] = Field(..., description="Default dataset names used by the scenario")
     max_dataset_size: int | None = Field(None, description="Maximum items per dataset (None means unlimited)")
-    supported_parameters: list[ScenarioParameterSummary] = Field(
+    supported_parameters: list[Parameter] = Field(
         default_factory=list, description="Scenario-declared custom parameters"
     )
 

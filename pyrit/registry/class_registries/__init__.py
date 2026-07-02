@@ -20,7 +20,6 @@ from pyrit.registry.class_registries.initializer_registry import (
 )
 from pyrit.registry.class_registries.scenario_registry import (
     ScenarioMetadata,
-    ScenarioParameterMetadata,
     ScenarioRegistry,
 )
 
@@ -29,7 +28,6 @@ __all__ = [
     "ClassEntry",
     "ScenarioRegistry",
     "ScenarioMetadata",
-    "ScenarioParameterMetadata",
     "InitializerRegistry",
     "InitializerMetadata",
 ]
