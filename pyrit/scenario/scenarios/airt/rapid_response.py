@@ -18,9 +18,12 @@ from typing import TYPE_CHECKING
 
 from pyrit.common import apply_defaults
 from pyrit.scenario.core.dataset_configuration import CompoundDatasetAttackConfiguration
+from pyrit.scenario.core.matrix_atomic_attack_builder import build_matrix_atomic_attacks
 from pyrit.scenario.core.scenario import Scenario
 
 if TYPE_CHECKING:
+    from pyrit.scenario.core.atomic_attack import AtomicAttack
+    from pyrit.scenario.core.scenario_context import ScenarioContext
     from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
     from pyrit.score import TrueFalseScorer
 
@@ -108,11 +111,23 @@ class RapidResponse(Scenario):
             scenario_result_id=scenario_result_id,
         )
 
-    def _build_display_group(self, *, technique_name: str, seed_group_name: str) -> str:
+    async def _build_atomic_attacks_async(self, *, context: ScenarioContext) -> list[AtomicAttack]:
         """
-        Group results by harm category (dataset) rather than technique.
+        Build the technique × harm-category atomic attacks, grouped by harm category.
+
+        Results group by harm category (the dataset name) rather than technique so per-category
+        ASR rolls up naturally. The baseline is emitted centrally by the base
+        ``_get_atomic_attacks_async`` bridge, so this override never prepends one.
+
+        Args:
+            context (ScenarioContext): The resolved runtime inputs for this run.
 
         Returns:
-            str: The seed group name used as the display group.
+            list[AtomicAttack]: The generated atomic attacks.
         """
-        return seed_group_name
+        return build_matrix_atomic_attacks(
+            context=context,
+            objective_scorer=self._objective_scorer,
+            display_group_fn=lambda combo: combo.dataset_name,
+            strategy_converters=self._strategy_converters,
+        )

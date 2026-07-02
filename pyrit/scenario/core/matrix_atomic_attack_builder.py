@@ -35,6 +35,7 @@ if TYPE_CHECKING:
     from pyrit.prompt_converter import PromptConverter
     from pyrit.prompt_target import PromptTarget
     from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
+    from pyrit.scenario.core.scenario_context import ScenarioContext
     from pyrit.score import Scorer
     from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
 
@@ -119,6 +120,77 @@ def build_baseline_atomic_attack(
         attack_technique=AttackTechnique(attack=attack),
         seed_groups=seed_groups,
         memory_labels=memory_labels or {},
+    )
+
+
+def resolve_technique_factories(*, context: ScenarioContext) -> dict[str, AttackTechniqueFactory]:
+    """
+    Resolve a run's selected strategies to their registered ``AttackTechniqueFactory`` instances.
+
+    Reads the ``AttackTechniqueRegistry`` singleton and keeps only the factories whose name
+    matches a selected strategy, preserving selection order. Strategies with no registered
+    factory are silently dropped so the caller can proceed with whatever techniques exist.
+
+    Args:
+        context (ScenarioContext): The resolved runtime inputs for this run.
+
+    Returns:
+        dict[str, AttackTechniqueFactory]: Mapping of technique name to factory, ordered by
+        the selected strategies.
+    """
+    from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
+
+    all_factories = AttackTechniqueRegistry.get_registry_singleton().get_factories_or_raise()
+    return {
+        strategy.value: all_factories[strategy.value]
+        for strategy in context.scenario_strategies
+        if strategy.value in all_factories
+    }
+
+
+def build_matrix_atomic_attacks(
+    *,
+    context: ScenarioContext,
+    objective_scorer: Scorer,
+    display_group_fn: Callable[[MatrixCombo], str] | None = None,
+    strategy_converters: dict[str, list[PromptConverter]] | None = None,
+) -> list[AtomicAttack]:
+    """
+    Build a matrix-shaped scenario's atomic attacks from its resolved context in one call.
+
+    This is the zero-boilerplate path for scenarios whose construction is the plain
+    technique × dataset cross-product: it resolves the selected strategies to factories
+    (``resolve_technique_factories``) and hands them to ``MatrixAtomicAttackBuilder``
+    with the context's target, labels, and per-dataset seed groups. The baseline is emitted
+    centrally by ``Scenario._get_atomic_attacks_async``, so this never prepends one.
+
+    Scenarios needing extra axes (adversarial targets, caching, converter stacks) call
+    ``MatrixAtomicAttackBuilder`` directly instead.
+
+    Args:
+        context (ScenarioContext): The resolved runtime inputs for this run.
+        objective_scorer (Scorer): The scorer applied to each produced atomic attack.
+        display_group_fn (Callable[[MatrixCombo], str] | None): Builds each ``display_group``.
+            Defaults to grouping by technique name.
+        strategy_converters (dict[str, list[PromptConverter]] | None): Optional mapping from
+            technique name to converters appended after that technique's converters. Pass a
+            scenario's ``self._strategy_converters`` so per-technique converter overrides are
+            preserved.
+
+    Returns:
+        list[AtomicAttack]: The generated atomic attacks (no baseline).
+    """
+    builder = MatrixAtomicAttackBuilder(
+        objective_target=context.objective_target,
+        objective_scorer=objective_scorer,
+        memory_labels=context.memory_labels,
+    )
+    return builder.build(
+        technique_factories=resolve_technique_factories(context=context),
+        dataset_groups=context.seed_groups_by_dataset,
+        display_group_fn=display_group_fn,
+        strategy_converters=strategy_converters,
+        include_baseline=False,
     )
 
 

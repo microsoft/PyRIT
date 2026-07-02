@@ -510,29 +510,6 @@ class TestRapidResponseAttackGeneration:
 
 
 # ===========================================================================
-# _build_display_group tests
-# ===========================================================================
-
-
-@pytest.mark.usefixtures(*FIXTURES)
-class TestBuildDisplayGroup:
-    def test_rapid_response_groups_by_seed_group_name(self, mock_objective_scorer):
-        scenario = RapidResponse(
-            objective_scorer=mock_objective_scorer,
-        )
-        result = scenario._build_display_group(technique_name="prompt_sending", seed_group_name="hate")
-        assert result == "hate"
-
-    def test_rapid_response_ignores_technique_name(self, mock_objective_scorer):
-        scenario = RapidResponse(
-            objective_scorer=mock_objective_scorer,
-        )
-        r1 = scenario._build_display_group(technique_name="prompt_sending", seed_group_name="hate")
-        r2 = scenario._build_display_group(technique_name="tap", seed_group_name="hate")
-        assert r1 == r2 == "hate"
-
-
-# ===========================================================================
 # Core techniques factory tests
 # ===========================================================================
 
