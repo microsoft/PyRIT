@@ -1,4 +1,5 @@
 import { test, expect, type Page, type Route } from "@playwright/test";
+import { makeTarget } from "./_targets";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -67,12 +68,12 @@ async function mockAllAPIs(
         contentType: "application/json",
         body: JSON.stringify({
           items: [
-            {
+            makeTarget({
               target_registry_name: "mock-target",
               target_type: "OpenAIChatTarget",
               endpoint: "https://mock.endpoint.com",
               model_name: "gpt-4o-mock",
-            },
+            }),
           ],
         }),
       });
@@ -438,12 +439,12 @@ test.describe("Error: create attack fails", () => {
           contentType: "application/json",
           body: JSON.stringify({
             items: [
-              {
+              makeTarget({
                 target_registry_name: "mock-target",
                 target_type: "OpenAIChatTarget",
                 endpoint: "https://mock.endpoint.com",
                 model_name: "gpt-4o-mock",
-              },
+              }),
             ],
           }),
         });

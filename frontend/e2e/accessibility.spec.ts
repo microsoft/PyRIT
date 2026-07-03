@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { makeTarget } from "./_targets";
 
 test.describe("Accessibility", () => {
   test.beforeEach(async ({ page }) => {
@@ -13,12 +14,12 @@ test.describe("Accessibility", () => {
         contentType: "application/json",
         body: JSON.stringify({
           items: [
-            {
+            makeTarget({
               target_registry_name: "a11y-form-target",
               target_type: "OpenAIChatTarget",
               endpoint: "https://test.com",
               model_name: "gpt-4o",
-            },
+            }),
           ],
           pagination: { limit: 200, has_more: false, next_cursor: null, prev_cursor: null },
         }),
@@ -84,12 +85,12 @@ test.describe("Accessibility", () => {
         contentType: "application/json",
         body: JSON.stringify({
           items: [
-            {
+            makeTarget({
               target_registry_name: "a11y-focus-target",
               target_type: "OpenAIChatTarget",
               endpoint: "https://test.com",
               model_name: "gpt-4o",
-            },
+            }),
           ],
           pagination: { limit: 200, has_more: false, next_cursor: null, prev_cursor: null },
         }),
@@ -124,12 +125,12 @@ test.describe("Accessibility", () => {
         contentType: "application/json",
         body: JSON.stringify({
           items: [
-            {
+            makeTarget({
               target_registry_name: "a11y-test-target",
               target_type: "OpenAIChatTarget",
               endpoint: "https://test.com",
               model_name: "gpt-4o",
-            },
+            }),
           ],
           pagination: { limit: 200, has_more: false, next_cursor: null, prev_cursor: null },
         }),
