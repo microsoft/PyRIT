@@ -18,14 +18,9 @@ from typing import TYPE_CHECKING, ClassVar
 
 from pyrit.common import apply_defaults
 from pyrit.models.parameter import Parameter
-from pyrit.registry.components.attack_technique_registry import (
-    AttackTechniqueRegistry,
-)
+from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
 from pyrit.registry.tag_query import TagQuery
-from pyrit.scenario.core.dataset_configuration import (
-    CompoundDatasetAttackConfiguration,
-    DatasetAttackConfiguration,
-)
+from pyrit.scenario.core.dataset_configuration import CompoundDatasetAttackConfiguration, DatasetAttackConfiguration
 from pyrit.scenario.scenarios.adaptive.adaptive_scenario import AdaptiveScenario
 
 if TYPE_CHECKING:

@@ -117,7 +117,7 @@ class RapidResponse(Scenario):
 
         Results group by harm category (the dataset name) rather than technique so per-category
         ASR rolls up naturally. The baseline is emitted centrally by the base
-        ``_get_atomic_attacks_async`` bridge, so this override never prepends one.
+        ``initialize_async``, so this override never prepends one.
 
         Args:
             context (ScenarioContext): The resolved runtime inputs for this run.

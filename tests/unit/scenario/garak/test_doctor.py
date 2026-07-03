@@ -156,7 +156,7 @@ class TestDoctorStrategyExpansion:
             dataset_config=doctor_dataset_config,
         )
 
-        atomic_attacks = await scenario._get_atomic_attacks_async()
+        atomic_attacks = scenario._atomic_attacks
         assert len(atomic_attacks) == 2
         names = {a.atomic_attack_name for a in atomic_attacks}
         assert any(n.startswith("policy_puppetry_leet") for n in names)

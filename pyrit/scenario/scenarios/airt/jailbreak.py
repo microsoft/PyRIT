@@ -5,13 +5,8 @@ from pathlib import Path
 from typing import Any
 
 from pyrit.common import apply_defaults
-from pyrit.common.deprecation import print_deprecation_message  # Deprecated. Will be removed in 0.16.0.
 from pyrit.datasets import TextJailBreak
-from pyrit.executor.attack.core.attack_config import (
-    AttackAdversarialConfig,
-    AttackConverterConfig,
-    AttackScoringConfig,
-)
+from pyrit.executor.attack.core.attack_config import AttackAdversarialConfig, AttackConverterConfig, AttackScoringConfig
 from pyrit.executor.attack.single_turn.many_shot_jailbreak import ManyShotJailbreakAttack
 from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
 from pyrit.executor.attack.single_turn.role_play import RolePlayAttack, RolePlayPaths
@@ -22,16 +17,12 @@ from pyrit.prompt_normalizer import PromptConverterConfiguration
 from pyrit.prompt_target.common.prompt_target import PromptTarget
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
-from pyrit.scenario.core.dataset_configuration import (
-    DatasetAttackConfiguration,
-)
+from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
 from pyrit.scenario.core.scenario import Scenario
 from pyrit.scenario.core.scenario_context import ScenarioContext
 from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
 from pyrit.scenario.core.scenario_target_defaults import get_default_adversarial_target
-from pyrit.score import (
-    TrueFalseScorer,
-)
+from pyrit.score import TrueFalseScorer
 
 
 class JailbreakStrategy(ScenarioStrategy):
@@ -98,7 +89,6 @@ class Jailbreak(Scenario):
         num_templates: int | None = None,
         num_attempts: int = 1,
         jailbreak_names: list[str] | None = None,
-        include_baseline: bool | None = None,  # Deprecated. Will be removed in 0.16.0.
     ) -> None:
         """
         Initialize the jailbreak scenario.
@@ -111,8 +101,6 @@ class Jailbreak(Scenario):
             num_attempts (int | None): Number of times to try each jailbreak.
             jailbreak_names (list[str] | None): List of jailbreak names from the template list under datasets.
                 to use.
-            include_baseline (bool | None): **Deprecated.** Will be removed in 0.16.0. Pass
-                ``include_baseline`` to ``initialize_async`` instead.
 
         Raises:
             ValueError: If both jailbreak_names and num_templates are provided, as random selection
@@ -161,16 +149,6 @@ class Jailbreak(Scenario):
             objective_scorer=self._objective_scorer,
             scenario_result_id=scenario_result_id,
         )
-
-        # Deprecated constructor-time baseline override. Will be removed in 0.16.0, along with
-        # the include_baseline kwarg above.
-        if include_baseline is not None:
-            print_deprecation_message(
-                old_item="Jailbreak(include_baseline=...)",
-                new_item="Jailbreak.initialize_async(include_baseline=...)",
-                removed_in="0.16.0",
-            )
-            self._legacy_include_baseline = include_baseline
 
     def _get_or_create_adversarial_target(self) -> PromptTarget:
         """

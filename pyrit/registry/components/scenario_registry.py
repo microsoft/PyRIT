@@ -116,7 +116,7 @@ class ScenarioRegistry(Registry["Scenario", ScenarioMetadata]):
         Instantiates the scenario with no arguments and reads the strategy/dataset
         configuration off the instance. Every registered scenario MUST be no-arg
         instantiable (defer required-input validation to ``initialize_async`` or
-        ``_get_atomic_attacks_async``); otherwise this raises ``TypeError``.
+        ``_build_atomic_attacks_async``); otherwise this raises ``TypeError``.
 
         Args:
             name: The registry name of the scenario.
@@ -140,7 +140,7 @@ class ScenarioRegistry(Registry["Scenario", ScenarioMetadata]):
                 f"{name!r}) must be instantiable with no arguments so the registry can introspect "
                 f"its strategies and default dataset config. Make all constructor parameters "
                 f"optional (defaulting to None) and defer required-input validation to "
-                f"initialize_async() or _get_atomic_attacks_async(). Original error: {exc}"
+                f"initialize_async() or _build_atomic_attacks_async(). Original error: {exc}"
             ) from exc
 
         strategy_class = instance._strategy_class

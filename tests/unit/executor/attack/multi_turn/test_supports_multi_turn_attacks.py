@@ -373,15 +373,20 @@ class TestTAPNodeDuplicateSystemMessages:
 
     def _make_tap_node(self, *, supports_multi_turn: bool):
         """Create a minimal _TreeOfAttacksNode for testing."""
+        from pyrit.executor.attack.component.modality_router import _ModalityFeedbackRouter
         from pyrit.executor.attack.multi_turn.tree_of_attacks import _TreeOfAttacksNode
 
         target = MagicMock()
         target.capabilities.supports_multi_turn = supports_multi_turn
         target.configuration.includes.return_value = supports_multi_turn
+        target.configuration.capabilities.input_modalities = frozenset({frozenset({"text"})})
+        target.configuration.capabilities.output_modalities = frozenset({frozenset({"text"})})
         target.get_identifier.return_value = {"__type__": "MockTarget", "__module__": "test", "id": "mock-id"}
 
         adversarial_chat = MagicMock()
         adversarial_chat.get_identifier.return_value = {"__type__": "MockTarget", "__module__": "test", "id": "mock-id"}
+        adversarial_chat.configuration.capabilities.input_modalities = frozenset({frozenset({"text"})})
+        adversarial_chat.configuration.capabilities.output_modalities = frozenset({frozenset({"text"})})
 
         scorer = MagicMock()
         scorer.get_identifier.return_value = {"__type__": "MockTarget", "__module__": "test", "id": "mock-id"}
@@ -403,6 +408,10 @@ class TestTAPNodeDuplicateSystemMessages:
             auxiliary_scorers=None,
             attack_id=MagicMock(),
             attack_strategy_name="TAP",
+            modality_router=_ModalityFeedbackRouter(
+                adversarial_chat=adversarial_chat,
+                objective_target=target,
+            ),
         )
 
     def test_single_turn_target_duplicates_only_system_messages(self):
@@ -747,15 +756,20 @@ class TestTAPBranchingPreservesSystemPrompts:
 
     def _make_tap_node(self, *, supports_multi_turn: bool):
         """Create a _TreeOfAttacksNode with real memory."""
+        from pyrit.executor.attack.component.modality_router import _ModalityFeedbackRouter
         from pyrit.executor.attack.multi_turn.tree_of_attacks import _TreeOfAttacksNode
 
         target = MagicMock()
         target.capabilities.supports_multi_turn = supports_multi_turn
         target.configuration.includes.return_value = supports_multi_turn
+        target.configuration.capabilities.input_modalities = frozenset({frozenset({"text"})})
+        target.configuration.capabilities.output_modalities = frozenset({frozenset({"text"})})
         target.get_identifier.return_value = {"__type__": "MockTarget", "__module__": "test", "id": "mock-id"}
 
         adversarial_chat = MagicMock()
         adversarial_chat.get_identifier.return_value = {"__type__": "MockTarget", "__module__": "test", "id": "mock-id"}
+        adversarial_chat.configuration.capabilities.input_modalities = frozenset({frozenset({"text"})})
+        adversarial_chat.configuration.capabilities.output_modalities = frozenset({frozenset({"text"})})
 
         scorer = MagicMock()
         scorer.get_identifier.return_value = {"__type__": "MockTarget", "__module__": "test", "id": "mock-id"}
@@ -777,6 +791,10 @@ class TestTAPBranchingPreservesSystemPrompts:
             auxiliary_scorers=None,
             attack_id=MagicMock(),
             attack_strategy_name="TAP",
+            modality_router=_ModalityFeedbackRouter(
+                adversarial_chat=adversarial_chat,
+                objective_target=target,
+            ),
         )
 
     def test_branching_single_turn_target_preserves_system_across_depths(self):

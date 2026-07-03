@@ -294,7 +294,7 @@ class TestJailbreakAttackGeneration:
             await scenario.initialize_async(
                 objective_target=mock_objective_target, scenario_strategies=[simple_jailbreak_strategy]
             )
-            atomic_attacks = await scenario._get_atomic_attacks_async()
+            atomic_attacks = scenario._atomic_attacks
             for run in atomic_attacks:
                 assert isinstance(run.attack_technique.attack, PromptSendingAttack)
 
@@ -315,7 +315,7 @@ class TestJailbreakAttackGeneration:
                 scenario_strategies=[complex_jailbreak_strategy],
                 include_baseline=False,
             )
-            atomic_attacks = await scenario._get_atomic_attacks_async()
+            atomic_attacks = scenario._atomic_attacks
             for run in atomic_attacks:
                 assert isinstance(
                     run.attack_technique.attack, (RolePlayAttack, ManyShotJailbreakAttack, SkeletonKeyAttack)
@@ -338,7 +338,7 @@ class TestJailbreakAttackGeneration:
                 scenario_strategies=[manyshot_jailbreak_strategy],
                 include_baseline=False,
             )
-            atomic_attacks = await scenario._get_atomic_attacks_async()
+            atomic_attacks = scenario._atomic_attacks
             for run in atomic_attacks:
                 assert isinstance(run.attack_technique.attack, ManyShotJailbreakAttack)
 
@@ -359,7 +359,7 @@ class TestJailbreakAttackGeneration:
                 scenario_strategies=[promptsending_jailbreak_strategy],
                 include_baseline=False,
             )
-            atomic_attacks = await scenario._get_atomic_attacks_async()
+            atomic_attacks = scenario._atomic_attacks
             for run in atomic_attacks:
                 assert isinstance(run.attack_technique.attack, PromptSendingAttack)
 
@@ -380,7 +380,7 @@ class TestJailbreakAttackGeneration:
                 scenario_strategies=[skeleton_jailbreak_attack],
                 include_baseline=False,
             )
-            atomic_attacks = await scenario._get_atomic_attacks_async()
+            atomic_attacks = scenario._atomic_attacks
             for run in atomic_attacks:
                 assert isinstance(run.attack_technique.attack, SkeletonKeyAttack)
 
@@ -401,7 +401,7 @@ class TestJailbreakAttackGeneration:
                 scenario_strategies=[roleplay_jailbreak_strategy],
                 include_baseline=False,
             )
-            atomic_attacks = await scenario._get_atomic_attacks_async()
+            atomic_attacks = scenario._atomic_attacks
             for run in atomic_attacks:
                 assert isinstance(run.attack_technique.attack, RolePlayAttack)
 
@@ -422,7 +422,7 @@ class TestJailbreakAttackGeneration:
             scenario = Jailbreak(objective_scorer=mock_objective_scorer, num_templates=2)
 
             await scenario.initialize_async(objective_target=mock_objective_target)
-            atomic_attacks = await scenario._get_atomic_attacks_async()
+            atomic_attacks = scenario._atomic_attacks
 
             assert len(atomic_attacks) > 0
             for run in atomic_attacks:
@@ -471,7 +471,7 @@ class TestJailbreakAttackGeneration:
         ):
             base_scenario = Jailbreak(objective_scorer=mock_objective_scorer, num_templates=2)
             await base_scenario.initialize_async(objective_target=mock_objective_target, include_baseline=False)
-            atomic_attacks_1 = await base_scenario._get_atomic_attacks_async()
+            atomic_attacks_1 = base_scenario._atomic_attacks
 
             mult_scenario = Jailbreak(
                 objective_scorer=mock_objective_scorer,
@@ -479,7 +479,7 @@ class TestJailbreakAttackGeneration:
                 num_attempts=mock_random_num_attempts,
             )
             await mult_scenario.initialize_async(objective_target=mock_objective_target, include_baseline=False)
-            atomic_attacks_n = await mult_scenario._get_atomic_attacks_async()
+            atomic_attacks_n = mult_scenario._atomic_attacks
 
             assert len(atomic_attacks_1) * mock_random_num_attempts == len(atomic_attacks_n)
 
@@ -617,7 +617,7 @@ class TestJailbreakAdversarialTarget:
                 scenario_strategies=[roleplay_jailbreak_strategy],
                 include_baseline=False,
             )
-            atomic_attacks = await scenario._get_atomic_attacks_async()
+            atomic_attacks = scenario._atomic_attacks
             assert len(atomic_attacks) >= 2
 
             # All role-play attacks should share the same adversarial target
