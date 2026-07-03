@@ -190,7 +190,7 @@ class Registry(ABC, Generic[T, MetadataT]):
             The singleton instance of this registry class.
         """
         if cls not in cls._singletons:
-            cls._singletons[cls] = cls()  # type: ignore[ty:invalid-assignment]
+            cls._singletons[cls] = cls()
         return cls._singletons[cls]  # type: ignore[ty:invalid-return-type]
 
     @classmethod
