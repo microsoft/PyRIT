@@ -1732,7 +1732,7 @@ class TestTargetObjectToInstanceRoundRobin:
             params={"endpoint": "https://b.openai.azure.com", "model_name": "gpt-4o"},
         )
 
-        rr._targets = [inner_a, inner_b]
+        rr.inner_targets = [inner_a, inner_b]
         rr.get_identifier.return_value = ComponentIdentifier(
             class_name="RoundRobinTarget",
             class_module="pyrit.prompt_target.round_robin_target",
@@ -1775,7 +1775,7 @@ class TestTargetObjectToInstanceRoundRobin:
             params={"model_name": "gpt-4o", "underlying_model_name": "gpt-4o"},
         )
 
-        rr._targets = [inner_a, inner_b]
+        rr.inner_targets = [inner_a, inner_b]
         rr.get_identifier.return_value = ComponentIdentifier(
             class_name="RoundRobinTarget",
             class_module="pyrit.prompt_target.round_robin_target",
@@ -1813,7 +1813,7 @@ class TestTargetObjectToInstanceRoundRobin:
             params={"model_name": "deploy-us", "underlying_model_name": "gpt-4o"},
         )
 
-        rr._targets = [inner_a, inner_b]
+        rr.inner_targets = [inner_a, inner_b]
         rr.get_identifier.return_value = ComponentIdentifier(
             class_name="RoundRobinTarget",
             class_module="pyrit.prompt_target.round_robin_target",

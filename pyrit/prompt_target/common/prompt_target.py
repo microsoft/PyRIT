@@ -51,9 +51,12 @@ class PromptTarget(Identifiable):
     # constructor parameter, which takes precedence over the class-level value.
     _DEFAULT_CONFIGURATION: TargetConfiguration = TargetConfiguration(capabilities=TargetCapabilities())
 
-    # Declarative auth facts consumed by the create-target service and catalog
-    # (kept off ``TargetCapabilities`` / the identifier — auth is a construction
-    # /credential axis, not a message-handling capability or an identity input).
+    # Declarative auth facts consumed by the create-target service and catalog.
+    # Kept off ``TargetCapabilities`` (auth is a construction/credential axis, not
+    # a message-handling capability) and out of the identity hash. It is surfaced
+    # on ``TargetIdentifier`` only as a ``Param.ClassAttr`` (``Evaluate.Exclude``)
+    # so the registry can read it into ``TargetMetadata`` without building an
+    # instance — never as an identity input or a constructor argument.
     #
     # ``supported_auth_modes`` lists the auth modes the create-target API accepts
     # for this type. Base default is api-key only; families that can mint an Entra

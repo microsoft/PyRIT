@@ -131,6 +131,20 @@ class RoundRobinTarget(PromptTarget):
 
         self._counter: int = 0
 
+    @property
+    def inner_targets(self) -> list[PromptTarget]:
+        """
+        The inner targets this round-robin distributes requests across.
+
+        Exposed so composition-aware consumers (e.g. DTO mappers) can read the
+        children without knowing this concrete type or reaching into private
+        state.
+
+        Returns:
+            list[PromptTarget]: A copy of the inner targets.
+        """
+        return list(self._targets)
+
     def _next_target(self) -> PromptTarget:
         """
         Return the next inner target in the weighted rotation.

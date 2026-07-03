@@ -130,25 +130,23 @@ class TargetService:
         List all available target types from the target class registry.
 
         Returns every constructible target with its derived constructor
-        parameters and declarative auth facts (which auth modes it supports and
-        its api-key env var). Deciding which entries to surface to a user is a
-        presentation concern owned by the caller (e.g. the frontend), not this
-        service.
+        parameters and the auth modes it supports, all projected from the
+        registry's ``TargetMetadata``. Deciding which entries to surface to a
+        user is a presentation concern owned by the caller (e.g. the frontend),
+        not this service.
 
         Returns:
             TargetCatalogResponse containing all available target classes.
         """
-        items: list[TargetCatalogEntry] = []
-        for metadata in self._registry.get_all_registered_class_metadata():
-            target_cls = self._registry.get_class(metadata.class_name)
-            items.append(
-                TargetCatalogEntry(
-                    target_type=metadata.class_name,
-                    parameters=[p for p in metadata.parameters if p.is_string_coercible],
-                    supported_auth_modes=list(target_cls.supported_auth_modes),
-                    description=metadata.class_description or None,
-                )
+        items: list[TargetCatalogEntry] = [
+            TargetCatalogEntry(
+                target_type=metadata.class_name,
+                parameters=[p for p in metadata.parameters if p.is_string_coercible],
+                supported_auth_modes=list(metadata.supported_auth_modes),
+                description=metadata.class_description or None,
             )
+            for metadata in self._registry.get_all_registered_class_metadata()
+        ]
         return TargetCatalogResponse(items=items)
 
     async def create_target_async(self, *, request: CreateTargetRequest) -> TargetInstance:
@@ -165,8 +163,7 @@ class TargetService:
         class. Endpoint trust and Entra token minting are owned by the target
         classes themselves. This service only enforces the request-level auth
         contract: for ``entra`` it confirms the target supports it and omits the
-        api_key so the target validates its own endpoint and mints the token; for
-        ``api_key`` it confirms a key is available.
+        api_key so the target validates its own endpoint and mints the token.
 
         Args:
             request: The create target request with type, params, and auth_mode.
@@ -175,11 +172,10 @@ class TargetService:
             TargetInstance with the new target's details.
 
         Raises:
-            ValueError: If the target type is not registered, Entra auth is
-                requested but unsupported by the target type, or api_key auth is
-                requested but no key is available. Construction errors (unknown
-                params, incompatible inner targets, unrecognized Entra endpoints)
-                are raised by the registry / target classes.
+            ValueError: If the target type is not registered or Entra auth is
+                requested but unsupported by the target type. Construction errors
+                (unknown params, incompatible inner targets, unrecognized Entra
+                endpoints) are raised by the registry / target classes.
         """
         if request.type not in self._registry:
             raise ValueError(

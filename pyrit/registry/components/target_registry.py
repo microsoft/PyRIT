@@ -43,9 +43,17 @@ class TargetMetadata(ClassRegistryEntry):
     Metadata describing a registered ``PromptTarget`` class.
 
     Carries the derived ``parameters`` build contract (the same list the resolver
-    consumes to build an instance). Use ``TargetRegistry.get_class()`` to get the
-    actual class or ``create_instance()`` to build a configured instance.
+    consumes to build an instance) and, via ``class_attributes`` on the base, the
+    target's declarative auth facts. ``supported_auth_modes`` is projected from
+    those rather than stored, so the entry can never drift from the class. Use
+    ``TargetRegistry.get_class()`` to get the actual class or ``create_instance()``
+    to build a configured instance.
     """
+
+    @property
+    def supported_auth_modes(self) -> tuple[str, ...]:
+        """Auth modes this target type accepts (e.g. ``"api_key"``, ``"entra"``)."""
+        return tuple(self.class_attributes.get("supported_auth_modes") or ())
 
 
 class TargetRegistry(Registry["PromptTarget", TargetMetadata]):

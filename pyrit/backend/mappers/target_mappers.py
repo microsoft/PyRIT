@@ -18,7 +18,6 @@ from pyrit.models import TargetIdentifier
 from pyrit.models.catalog.target import TargetInstance
 from pyrit.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_capabilities import CapabilityName
-from pyrit.prompt_target.round_robin_target import RoundRobinTarget
 
 # Capability flag names that should never be surfaced as identifier-level params:
 # they are sourced from `target_obj.capabilities` instead.
@@ -84,10 +83,12 @@ def _build_inner_targets(target_obj: PromptTarget) -> list[TargetInstance] | Non
     """
     Build inner target DTOs for composite targets like RoundRobinTarget.
 
-    For non-composite targets, returns None. For RoundRobinTarget, recursively
-    maps each inner target into a TargetInstance using the inner target's
-    ``unique_name`` as the registry name (inner targets may not be independently
-    registered in the registry, so we derive the name from the identifier).
+    Composite targets expose their children via a public ``inner_targets``
+    property; non-composite targets don't define one. The mapper stays generic —
+    it asks the target for its inner targets rather than knowing any concrete
+    composite type or reaching into private state — and recurses, deriving each
+    inner registry name from the inner target's ``unique_name`` (inner targets
+    may not be independently registered).
 
     Args:
         target_obj: The domain PromptTarget object.
@@ -95,11 +96,7 @@ def _build_inner_targets(target_obj: PromptTarget) -> list[TargetInstance] | Non
     Returns:
         A list of inner TargetInstance DTOs, or None for non-composite targets.
     """
-    if not isinstance(target_obj, RoundRobinTarget):
+    inner_targets = getattr(target_obj, "inner_targets", None)
+    if not inner_targets:
         return None
-
-    inner_instances: list[TargetInstance] = []
-    for inner_target in target_obj._targets:
-        inner_name = inner_target.get_identifier().unique_name
-        inner_instances.append(target_object_to_instance(inner_name, inner_target))
-    return inner_instances
+    return [target_object_to_instance(inner.get_identifier().unique_name, inner) for inner in inner_targets]
