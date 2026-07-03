@@ -251,7 +251,7 @@ class TestListTargetCatalog:
 
         openai_entry = next(item for item in result.items if item.target_type == "OpenAIChatTarget")
         assert "api_key" in openai_entry.supported_auth_modes
-        assert "entra" in openai_entry.supported_auth_modes
+        assert "identity" in openai_entry.supported_auth_modes
 
 
 class TestCreateTarget:
@@ -361,7 +361,7 @@ class TestCreateTargetEntraAuth:
                         "endpoint": "https://test.openai.azure.com/",
                         "model_name": "gpt-4o",
                     },
-                    auth_mode="entra",
+                    auth_mode="identity",
                 )
 
                 result = await service.create_target_async(request=request)
@@ -372,8 +372,8 @@ class TestCreateTargetEntraAuth:
                 # OpenAI target preserves async callables verbatim through ensure_async_token_provider.
                 assert target_obj._api_key is _test_token_provider  # type: ignore[attr-defined]
 
-    async def test_create_openai_target_with_entra_drops_user_api_key(self, sqlite_instance) -> None:
-        """Any api_key supplied alongside auth_mode='entra' must be discarded."""
+    async def test_create_openai_target_with_identity_drops_user_api_key(self, sqlite_instance) -> None:
+        """Any api_key supplied alongside auth_mode='identity' must be discarded."""
 
         with patch.dict(os.environ, {}, clear=False):
             os.environ.pop("OPENAI_CHAT_KEY", None)
@@ -390,7 +390,7 @@ class TestCreateTargetEntraAuth:
                         "model_name": "gpt-4o",
                         "api_key": "should-be-ignored",
                     },
-                    auth_mode="entra",
+                    auth_mode="identity",
                 )
 
                 result = await service.create_target_async(request=request)
@@ -401,7 +401,7 @@ class TestCreateTargetEntraAuth:
                 # The literal "should-be-ignored" string must never appear.
                 assert target_obj._api_key != "should-be-ignored"  # type: ignore[attr-defined]
 
-    async def test_create_openai_target_with_entra_does_not_mutate_request_params(self, sqlite_instance) -> None:
+    async def test_create_openai_target_with_identity_does_not_mutate_request_params(self, sqlite_instance) -> None:
         """The CreateTargetRequest.params object must remain unchanged after creation."""
 
         with patch.dict(os.environ, {}, clear=False):
@@ -420,7 +420,7 @@ class TestCreateTargetEntraAuth:
                 request = CreateTargetRequest(
                     type="OpenAIChatTarget",
                     params=dict(original_params),
-                    auth_mode="entra",
+                    auth_mode="identity",
                 )
 
                 await service.create_target_async(request=request)
@@ -428,8 +428,8 @@ class TestCreateTargetEntraAuth:
                 # The caller's request.params must be unchanged after the call.
                 assert request.params == original_params
 
-    async def test_create_azureml_target_with_entra_omits_key_and_target_mints_token(self, sqlite_instance) -> None:
-        """AzureML Entra path: the service omits the key so the target mints the ML scope token."""
+    async def test_create_azureml_target_with_identity_omits_key_and_target_mints_token(self, sqlite_instance) -> None:
+        """AzureML identity path: the service omits the key so the target mints the ML scope token."""
 
         with patch.dict(os.environ, {}, clear=False):
             os.environ.pop("AZURE_ML_KEY", None)
@@ -442,7 +442,7 @@ class TestCreateTargetEntraAuth:
                 request = CreateTargetRequest(
                     type="AzureMLChatTarget",
                     params={"endpoint": "https://my-aml.region.inference.ml.azure.com/score"},
-                    auth_mode="entra",
+                    auth_mode="identity",
                 )
 
                 result = await service.create_target_async(request=request)
@@ -454,8 +454,8 @@ class TestCreateTargetEntraAuth:
                 assert target_obj._api_key_provider is _test_token_provider  # type: ignore[attr-defined]
                 assert target_obj._api_key == ""  # type: ignore[attr-defined]
 
-    async def test_create_openai_target_with_entra_non_azure_endpoint_raises(self, sqlite_instance) -> None:
-        """The target (not the service) rejects an unrecognized endpoint under Entra."""
+    async def test_create_openai_target_with_identity_non_azure_endpoint_raises(self, sqlite_instance) -> None:
+        """The target (not the service) rejects an unrecognized endpoint under identity auth."""
 
         with patch.dict(os.environ, {}, clear=False):
             os.environ.pop("OPENAI_CHAT_KEY", None)
@@ -464,23 +464,23 @@ class TestCreateTargetEntraAuth:
             request = CreateTargetRequest(
                 type="OpenAIChatTarget",
                 params={"endpoint": "https://api.openai.com/", "model_name": "gpt-4o"},
-                auth_mode="entra",
+                auth_mode="identity",
             )
 
             with pytest.raises(ValueError, match="non-Azure endpoints"):
                 await service.create_target_async(request=request)
 
-    async def test_create_target_entra_unsupported_type_raises(self, sqlite_instance) -> None:
-        """Entra ID is only supported for OpenAI-family and AzureMLChatTarget."""
+    async def test_create_target_identity_unsupported_type_raises(self, sqlite_instance) -> None:
+        """Identity-based auth is only supported for targets that declare it."""
         service = TargetService()
 
         request = CreateTargetRequest(
             type="TextTarget",
             params={},
-            auth_mode="entra",
+            auth_mode="identity",
         )
 
-        with pytest.raises(ValueError, match="does not support Entra"):
+        with pytest.raises(ValueError, match="does not support identity-based authentication"):
             await service.create_target_async(request=request)
 
 

@@ -19,9 +19,11 @@ from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 logger = logging.getLogger(__name__)
 
 # Authentication modes a target can expose to the create-target catalog / API.
-# ``api_key`` passes a key (from params or the target's env var); ``entra`` omits
-# the key so the target mints a Microsoft Entra ID token for its own endpoint.
-AuthMode = Literal["api_key", "entra"]
+# ``api_key`` passes a key (from params or the target's env var); ``identity``
+# omits the key so the target authenticates itself via an ambient Azure identity
+# (e.g. minting a Microsoft Entra ID token for its own endpoint, or falling back
+# to ``DefaultAzureCredential``).
+AuthMode = Literal["api_key", "identity"]
 
 
 class PromptTarget(Identifiable):
@@ -59,9 +61,9 @@ class PromptTarget(Identifiable):
     # instance — never as an identity input or a constructor argument.
     #
     # ``supported_auth_modes`` lists the auth modes the create-target API accepts
-    # for this type. Base default is api-key only; families that can mint an Entra
-    # ID token for their own endpoint (e.g. OpenAI, Azure ML) override this to add
-    # ``"entra"``.
+    # for this type. Base default is api-key only; targets that can authenticate
+    # via an ambient Azure identity when given no key (e.g. OpenAI, Azure ML,
+    # Azure Blob Storage, Prompt Shield) override this to add ``"identity"``.
     supported_auth_modes: ClassVar[tuple[AuthMode, ...]] = ("api_key",)
 
     def __init_subclass__(cls, **kwargs: object) -> None:

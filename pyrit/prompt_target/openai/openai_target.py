@@ -59,7 +59,7 @@ class OpenAITarget(PromptTarget):
 
     # OpenAI-family targets can mint an Entra ID token for a recognized Azure
     # endpoint (see ``is_azure_openai_endpoint``), so they support both modes.
-    supported_auth_modes: ClassVar[tuple[AuthMode, ...]] = ("api_key", "entra")
+    supported_auth_modes: ClassVar[tuple[AuthMode, ...]] = ("api_key", "identity")
 
     model_name_environment_variable: str
     endpoint_environment_variable: str

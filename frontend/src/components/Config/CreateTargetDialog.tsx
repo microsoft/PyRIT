@@ -60,19 +60,19 @@ const TARGET_FORM_SHAPES: Record<string, TargetFormShape> = {
 
 const RENDERABLE_TARGET_TYPES = Object.keys(TARGET_FORM_SHAPES)
 
-type AuthMode = 'api_key' | 'entra'
+type AuthMode = 'api_key' | 'identity'
 
 /**
- * Fallback for whether a target type supports Entra auth when the backend
- * catalog hasn't loaded (or the fetch failed). Once the catalog is available it
- * is authoritative; this only keeps the form usable offline / mid-load.
+ * Fallback for whether a target type supports identity-based auth when the
+ * backend catalog hasn't loaded (or the fetch failed). Once the catalog is
+ * available it is authoritative; this only keeps the form usable offline / mid-load.
  */
-function defaultSupportsEntra(shape: TargetFormShape | undefined): boolean {
+function defaultSupportsIdentity(shape: TargetFormShape | undefined): boolean {
   return shape === 'openai' || shape === 'azureml'
 }
 
 // Mirrors backend's hostname-suffix check (list in target_service.py).
-// The backend still does the check and will reject unsupported endpoints, but this allows us to show a warning in the UI if the user selects Microsoft Entra authentication with a non-Azure OpenAI endpoint.
+// The backend still does the check and will reject unsupported endpoints, but this allows us to show a warning in the UI if the user selects identity-based authentication with a non-Azure OpenAI endpoint.
 const AZURE_OPENAI_HOSTNAME_SUFFIXES = [
   '.openai.azure.com',
   '.ai.azure.com',
@@ -223,22 +223,22 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
   const isAzureML = formShape === 'azureml'
   const isOpenAi = formShape === 'openai'
   const catalogEntry = catalogByType.get(targetType)
-  const supportsEntra = catalogEntry
-    ? catalogEntry.supported_auth_modes.includes('entra')
-    : defaultSupportsEntra(formShape)
-  const showAuthField = targetType !== '' && supportsEntra
-  const isEntra = showAuthField && authMode === 'entra'
-  const entraEndpointError: string | null = (() => {
-    if (!isEntra || endpoint === '') return null
+  const supportsIdentity = catalogEntry
+    ? catalogEntry.supported_auth_modes.includes('identity')
+    : defaultSupportsIdentity(formShape)
+  const showAuthField = targetType !== '' && supportsIdentity
+  const isIdentity = showAuthField && authMode === 'identity'
+  const identityEndpointError: string | null = (() => {
+    if (!isIdentity || endpoint === '') return null
     if (isOpenAi && !isAzureOpenAiEndpoint(endpoint)) {
-      return 'Entra auth only works with Azure OpenAI / AI Foundry endpoints (for example, *.openai.azure.com or *.ai.azure.com).'
+      return 'Identity-based auth only works with Azure OpenAI / AI Foundry endpoints (for example, *.openai.azure.com or *.ai.azure.com).'
     }
     if (isAzureML && !isAzureMlEndpoint(endpoint)) {
-      return 'Entra auth for AzureMLChatTarget only works with Azure ML managed online endpoints (for example, *.inference.ml.azure.com).'
+      return 'Identity-based auth for AzureMLChatTarget only works with Azure ML managed online endpoints (for example, *.inference.ml.azure.com).'
     }
     return null
   })()
-  const showEntraEndpointError = entraEndpointError !== null
+  const showIdentityEndpointError = identityEndpointError !== null
 
   // Fetch the available targets when the dialog opens with RoundRobin selected.
   // If the parent already passed targets, derive availableTargets from them
@@ -397,7 +397,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
         endpoint,
       }
       if (modelName) params.model_name = modelName
-      if (!isEntra && apiKey) params.api_key = apiKey
+      if (!isIdentity && apiKey) params.api_key = apiKey
 
       if (hasDifferentUnderlying && underlyingModel) params.underlying_model = underlyingModel
 
@@ -415,7 +415,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
       await targetsApi.createTarget({
         type: targetType,
         params,
-        ...(isEntra ? { auth_mode: 'entra' as const } : {}),
+        ...(isIdentity ? { auth_mode: 'identity' as const } : {}),
       })
 
       resetForm()
@@ -454,10 +454,10 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                     const next = data.value
                     setTargetType(next)
                     const nextEntry = catalogByType.get(next)
-                    const nextSupportsEntra = nextEntry
-                      ? nextEntry.supported_auth_modes.includes('entra')
-                      : defaultSupportsEntra(TARGET_FORM_SHAPES[next])
-                    if (!nextSupportsEntra) {
+                    const nextSupportsIdentity = nextEntry
+                      ? nextEntry.supported_auth_modes.includes('identity')
+                      : defaultSupportsIdentity(TARGET_FORM_SHAPES[next])
+                    if (!nextSupportsIdentity) {
                       setAuthMode('api_key')
                     }
                   }}
@@ -663,24 +663,24 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                     onChange={(_, data) => {
                       const next = data.value as AuthMode
                       setAuthMode(next)
-                      if (next === 'entra') setApiKey('')
+                      if (next === 'identity') setApiKey('')
                     }}
                   >
                     <Radio value="api_key" label="API Key" />
-                    <Radio value="entra" label="Microsoft Entra Authentication" />
+                    <Radio value="identity" label="Identity-based (Microsoft Entra ID)" />
                   </RadioGroup>
                 </Field>
               )}
 
-              {showEntraEndpointError && (
+              {showIdentityEndpointError && (
                 <MessageBar intent="error" className={styles.warningMessage}>
                   <MessageBarBody className={styles.warningMessageBody}>
-                    {entraEndpointError}
+                    {identityEndpointError}
                   </MessageBarBody>
                 </MessageBar>
               )}
 
-              {!isEntra && (
+              {!isIdentity && (
                 <Field label="API Key">
                   <Input
                     type="password"

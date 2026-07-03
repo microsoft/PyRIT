@@ -58,7 +58,7 @@ class TargetIdentifier(ComponentIdentifier):
     #: class attribute (not a constructor argument, not part of identity). Read by
     #: the registry so ``TargetMetadata`` can describe the class without building it.
     supported_auth_modes: Annotated[
-        list[Literal["api_key", "entra"]] | None,
+        list[Literal["api_key", "identity"]] | None,
         Evaluate.Exclude(),
         Param.ClassAttr(attr_name="supported_auth_modes"),
     ] = None

@@ -24,7 +24,7 @@ __all__ = [
 ]
 
 
-def _default_auth_modes() -> list[Literal["api_key", "entra"]]:
+def _default_auth_modes() -> list[Literal["api_key", "identity"]]:
     return ["api_key"]
 
 
@@ -36,7 +36,7 @@ class TargetCatalogEntry(BaseModel):
         default_factory=list,
         description="Constructor parameters for dynamic form generation",
     )
-    supported_auth_modes: list[Literal["api_key", "entra"]] = Field(
+    supported_auth_modes: list[Literal["api_key", "identity"]] = Field(
         default_factory=_default_auth_modes,
         description="Authentication modes this target type supports",
     )
@@ -61,11 +61,13 @@ class CreateTargetRequest(BaseModel):
 
     type: str = Field(..., description="Target type (e.g., 'OpenAIChatTarget')")
     params: dict[str, Any] = Field(default_factory=dict, description="Target constructor parameters")
-    auth_mode: Literal["api_key", "entra"] = Field(
+    auth_mode: Literal["api_key", "identity"] = Field(
         "api_key",
         description=(
             "Authentication mode. 'api_key' uses the api_key in params (default). "
-            "'entra' uses Microsoft Entra ID; requires an Azure endpoint and is "
-            "supported by OpenAI-family targets and AzureMLChatTarget."
+            "'identity' omits the key so the target authenticates itself via an ambient "
+            "Azure identity (Entra ID token or DefaultAzureCredential); requires an Azure "
+            "endpoint and is supported by OpenAI-family targets, AzureMLChatTarget, "
+            "AzureBlobStorageTarget, and PromptShieldTarget."
         ),
     )

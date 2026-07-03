@@ -105,7 +105,7 @@ export interface TargetListResponse {
 export interface CreateTargetRequest {
   type: string
   params: Record<string, unknown>
-  auth_mode?: 'api_key' | 'entra'
+  auth_mode?: 'api_key' | 'identity'
 }
 
 // --- Converters ---
@@ -156,7 +156,7 @@ export interface ConverterCatalogResponse {
 export interface TargetCatalogEntry {
   target_type: string
   parameters: Parameter[]
-  supported_auth_modes: ('api_key' | 'entra')[]
+  supported_auth_modes: ('api_key' | 'identity')[]
   description?: string | null
 }
 

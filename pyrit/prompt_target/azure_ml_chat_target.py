@@ -50,7 +50,7 @@ class AzureMLChatTarget(PromptTarget):
 
     # AML managed online endpoints can authenticate with a Microsoft Entra ID
     # token scoped to AML, so this target supports both auth modes.
-    supported_auth_modes: ClassVar[tuple[AuthMode, ...]] = ("api_key", "entra")
+    supported_auth_modes: ClassVar[tuple[AuthMode, ...]] = ("api_key", "identity")
 
     # Entra ID token scope for Azure Machine Learning managed online endpoints.
     _AZURE_ML_SCOPE: ClassVar[str] = "https://ml.azure.com/.default"

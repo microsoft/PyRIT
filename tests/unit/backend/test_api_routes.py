@@ -805,7 +805,7 @@ class TestTargetRoutes:
                     items=[
                         {
                             "target_type": "OpenAIChatTarget",
-                            "supported_auth_modes": ["api_key", "entra"],
+                            "supported_auth_modes": ["api_key", "identity"],
                         }
                     ]
                 )
@@ -817,7 +817,7 @@ class TestTargetRoutes:
             assert response.status_code == status.HTTP_200_OK
             data = response.json()
             assert data["items"][0]["target_type"] == "OpenAIChatTarget"
-            assert data["items"][0]["supported_auth_modes"] == ["api_key", "entra"]
+            assert data["items"][0]["supported_auth_modes"] == ["api_key", "identity"]
 
     def test_create_target_success(self, client: TestClient) -> None:
         """Test successful target creation."""

@@ -160,10 +160,11 @@ class TargetService:
         their base configuration (``endpoint`` / ``model_name`` / ``api_key``)
         through ``**kwargs``, which is not part of the registry's derived
         parameter contract, so they are constructed directly from the registry
-        class. Endpoint trust and Entra token minting are owned by the target
+        class. Endpoint trust and identity token minting are owned by the target
         classes themselves. This service only enforces the request-level auth
-        contract: for ``entra`` it confirms the target supports it and omits the
-        api_key so the target validates its own endpoint and mints the token.
+        contract: for ``identity`` it confirms the target supports it and omits
+        the api_key so the target validates its own endpoint and authenticates
+        itself.
 
         Args:
             request: The create target request with type, params, and auth_mode.
@@ -172,9 +173,9 @@ class TargetService:
             TargetInstance with the new target's details.
 
         Raises:
-            ValueError: If the target type is not registered or Entra auth is
+            ValueError: If the target type is not registered or identity auth is
                 requested but unsupported by the target type. Construction errors
-                (unknown params, incompatible inner targets, unrecognized Entra
+                (unknown params, incompatible inner targets, unrecognized identity
                 endpoints) are raised by the registry / target classes.
         """
         if request.type not in self._registry:
@@ -185,13 +186,12 @@ class TargetService:
         target_cls = self._registry.get_class(request.type)
         params: dict[str, Any] = dict(request.params)
 
-        if request.auth_mode == "entra":
-            if "entra" not in target_cls.supported_auth_modes:
+        if request.auth_mode == "identity":
+            if "identity" not in target_cls.supported_auth_modes:
                 raise ValueError(
-                    f"Target type '{request.type}' does not support Entra ID authentication. "
-                    "Supported types are OpenAI-family targets and AzureMLChatTarget."
+                    f"Target type '{request.type}' does not support identity-based authentication."
                 )
-            # Omit any api_key so the target validates its own endpoint and mints the token.
+            # Omit any api_key so the target validates its own endpoint and authenticates itself.
             params.pop("api_key", None)
 
         if self._has_reference_params(target_type=request.type):

@@ -52,7 +52,7 @@ class TargetMetadata(ClassRegistryEntry):
 
     @property
     def supported_auth_modes(self) -> tuple[str, ...]:
-        """Auth modes this target type accepts (e.g. ``"api_key"``, ``"entra"``)."""
+        """Auth modes this target type accepts (e.g. ``"api_key"``, ``"identity"``)."""
         return tuple(self.class_attributes.get("supported_auth_modes") or ())
 
 
