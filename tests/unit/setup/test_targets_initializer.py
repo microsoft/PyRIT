@@ -216,7 +216,7 @@ class TestTargetInitializerTargetConfigs:
         """Guard against typos: every ``registry_name`` in ``ENV_TARGET_CONFIGS`` must be unique.
 
         Duplicate names would silently overwrite each other when
-        ``TargetInitializer`` registers them (per ``BaseInstanceRegistry.register``
+        ``TargetInitializer`` registers them (per instance-registry ``register``
         semantics, characterized in ``test_target_registry.py``). Only the
         second entry would survive in the registry, which breaks downstream
         scenarios that resolve targets by name (e.g. ``AdversarialBenchmark``'s

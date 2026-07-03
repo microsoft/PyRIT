@@ -17,8 +17,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from pyrit.registry.base import ClassRegistryEntry
 from pyrit.registry.registry import Registry, _get_metadata_value, _matches_filters
+from pyrit.registry.registry_metadata import RegistryMetadata
 
 
 class SampleWidget:
@@ -43,7 +43,7 @@ class UnregisteredWidget:
         self.size = size
 
 
-class WidgetRegistry(Registry[object, ClassRegistryEntry]):
+class WidgetRegistry(Registry[object, RegistryMetadata]):
     """Minimal Registry subclass that keeps every base default."""
 
     def __init__(self, *, lazy_discovery: bool = True) -> None:
@@ -55,12 +55,12 @@ class WidgetRegistry(Registry[object, ClassRegistryEntry]):
         self.register_class(SampleWidget)
         self.register_class(UndocumentedWidget)
 
-    def _metadata_class(self) -> type[ClassRegistryEntry]:
-        return ClassRegistryEntry
+    def _metadata_class(self) -> type[RegistryMetadata]:
+        return RegistryMetadata
 
 
 @dataclass(frozen=True)
-class _TaggedMetadata(ClassRegistryEntry):
+class _TaggedMetadata(RegistryMetadata):
     tags: tuple[str, ...] = field(kw_only=True, default=())
 
 
@@ -195,7 +195,7 @@ def test_matches_filters_list_containment():
 
 
 def test_matches_filters_unknown_include_key_fails():
-    meta = ClassRegistryEntry(class_name="X", class_module="m")
+    meta = RegistryMetadata(class_name="X", class_module="m")
 
     assert not _matches_filters(meta, include_filters={"nope": "x"})
 
@@ -222,7 +222,7 @@ class _ConcreteWidget(_WidgetBase):
     """A concrete widget."""
 
 
-class _PackageDrivenRegistry(Registry[object, ClassRegistryEntry]):
+class _PackageDrivenRegistry(Registry[object, RegistryMetadata]):
     """Registry that uses the base's default ``_discover`` over a supplied package."""
 
     def __init__(self, *, package: ModuleType) -> None:
@@ -235,8 +235,8 @@ class _PackageDrivenRegistry(Registry[object, ClassRegistryEntry]):
     def _discovery_package(self) -> ModuleType:
         return self._package
 
-    def _metadata_class(self) -> type[ClassRegistryEntry]:
-        return ClassRegistryEntry
+    def _metadata_class(self) -> type[RegistryMetadata]:
+        return RegistryMetadata
 
 
 def test_discover_skips_spec_type_mock_exports():

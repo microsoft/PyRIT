@@ -87,9 +87,9 @@ class PyRITInitializer(ABC):
         Returns:
             str: A description of the configuration changes this initializer makes.
         """
-        from pyrit.registry.base import ClassRegistryEntry
+        from pyrit.registry.registry_metadata import RegistryMetadata
 
-        return ClassRegistryEntry.description_from_docstring(self.__class__, fallback=type(self).__name__)
+        return RegistryMetadata.description_from_docstring(self.__class__, fallback=type(self).__name__)
 
     @property
     def required_env_vars(self) -> list[str]:
@@ -171,28 +171,22 @@ class PyRITInitializer(ABC):
                 f"{', '.join(missing_vars)}"
             )
 
-        # Validate configured params
-        if self.params:
-            self._validate_params(params=self.params)
+        self.validate_params()
 
-    def _validate_params(self, *, params: dict[str, list[str]]) -> None:
+    def validate_params(self) -> None:
         """
-        Validate parameters against supported_parameters.
+        Validate the configured parameters against supported_parameters.
 
-        Checks that all provided params are declared in supported_parameters
-        and that all required params are present.
-
-        Args:
-            params: The parameters to validate.
+        Checks that every parameter in ``self.params`` is declared in
+        ``supported_parameters``. Unlike ``validate()``, this does not check
+        required environment variables, so it can be used to fail fast on
+        parameter shape at configuration time — before the environment is set up.
 
         Raises:
-            ValueError: If unknown parameters are provided or required parameters are missing.
+            ValueError: If unknown parameters are provided.
         """
-        supported = {p.name: p for p in self.supported_parameters}
-        supported_names = set(supported.keys())
-
-        # Check for unknown params
-        unknown = set(params.keys()) - supported_names
+        supported_names = {p.name for p in self.supported_parameters}
+        unknown = set(self.params.keys()) - supported_names
         if unknown:
             raise ValueError(
                 f"Initializer '{type(self).__name__}' received unknown parameter(s): {', '.join(sorted(unknown))}. "

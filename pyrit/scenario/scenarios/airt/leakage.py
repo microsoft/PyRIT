@@ -9,24 +9,22 @@ from typing import TYPE_CHECKING
 
 from pyrit.common import apply_defaults
 from pyrit.common.path import DATASETS_PATH, SCORER_SEED_PROMPT_PATH
-from pyrit.executor.attack import (
-    AttackConverterConfig,
-    PromptSendingAttack,
-)
+from pyrit.executor.attack import AttackConverterConfig, PromptSendingAttack
 from pyrit.prompt_converter import AddImageTextConverter, FirstLetterConverter
 from pyrit.prompt_normalizer import PromptConverterConfiguration
-from pyrit.registry.components.attack_technique_registry import (
-    AttackTechniqueRegistry,
-)
+from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
 from pyrit.registry.tag_query import TagQuery
 from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
 from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
+from pyrit.scenario.core.matrix_atomic_attack_builder import build_matrix_atomic_attacks
 from pyrit.scenario.core.scenario import Scenario
 from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
 
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from pyrit.scenario.core.atomic_attack import AtomicAttack
+    from pyrit.scenario.core.scenario_context import ScenarioContext
     from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
     from pyrit.score import TrueFalseScorer
 
@@ -144,20 +142,24 @@ class Leakage(Scenario):
             scenario_result_id=scenario_result_id,
         )
 
-    def _get_attack_technique_factories(self) -> dict[str, AttackTechniqueFactory]:
+    async def _build_atomic_attacks_async(self, *, context: ScenarioContext) -> list[AtomicAttack]:
         """
-        Return core + leakage-specific attack technique factories.
+        Build the Leakage atomic attacks from the selected core + leakage techniques.
 
-        Gets core factories from the base class, then merges in the
-        leakage-specific factories (kept local to this scenario so they don't
-        pollute the global registry).
+        Passes the leakage-specific factories (``first_letter``, ``image``) as
+        ``extra_factories`` — kept local to this scenario so they don't pollute the global
+        registry — and delegates the technique × dataset cross-product to
+        ``build_matrix_atomic_attacks``. The base owns baseline emission.
+
+        Args:
+            context (ScenarioContext): The resolved runtime inputs for this run.
 
         Returns:
-            dict[str, AttackTechniqueFactory]: Mapping of technique names to their factories.
+            list[AtomicAttack]: The generated atomic attacks.
         """
-        factories = super()._get_attack_technique_factories()
-
-        for factory in LEAKAGE_FACTORIES:
-            factories[factory.name] = factory
-
-        return factories
+        return build_matrix_atomic_attacks(
+            context=context,
+            objective_scorer=self._objective_scorer,
+            strategy_converters=self._strategy_converters,
+            extra_factories={factory.name: factory for factory in LEAKAGE_FACTORIES},
+        )

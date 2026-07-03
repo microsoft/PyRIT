@@ -227,13 +227,13 @@ class ScenarioRunService:
 
         initializer_registry = InitializerRegistry.get_registry_singleton()
         for initializer_name in request.initializers:
+            initializer_params = (request.initializer_args or {}).get(initializer_name)
             try:
-                initializer_class = initializer_registry.get_class(initializer_name)
+                instance = initializer_registry.create_and_configure(
+                    initializer_name, initializer_params=initializer_params
+                )
             except KeyError as e:
                 raise ValueError(f"Initializer not found: {e}") from None
-            instance = initializer_class()
-            if request.initializer_args and initializer_name in request.initializer_args:
-                instance.set_params_from_args(args=request.initializer_args[initializer_name])
             await instance.initialize_async()
 
     def _resolve_target(self, *, request: RunScenarioRequest) -> "PromptTarget":

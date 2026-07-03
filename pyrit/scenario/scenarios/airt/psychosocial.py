@@ -9,7 +9,6 @@ from typing import Any, TypeVar
 import yaml
 
 from pyrit.common import apply_defaults
-from pyrit.common.deprecation import print_deprecation_message  # Deprecated. Will be removed in 0.16.0.
 from pyrit.common.path import DATASETS_PATH
 from pyrit.executor.attack import (
     AttackAdversarialConfig,
@@ -23,22 +22,15 @@ from pyrit.executor.attack import (
 )
 from pyrit.models import SeedAttackGroup, SeedObjective, SeedPrompt
 from pyrit.prompt_converter import ToneConverter
-from pyrit.prompt_normalizer.prompt_converter_configuration import (
-    PromptConverterConfiguration,
-)
+from pyrit.prompt_normalizer.prompt_converter_configuration import PromptConverterConfiguration
 from pyrit.prompt_target import CapabilityName, PromptTarget
 from pyrit.prompt_target.common.target_requirements import CHAT_TARGET_REQUIREMENTS, TargetRequirements
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
-from pyrit.scenario.core.dataset_configuration import (
-    DatasetAttackConfiguration,
-    DatasetConstraintError,
-)
+from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration, DatasetConstraintError
 from pyrit.scenario.core.scenario import Scenario
 from pyrit.scenario.core.scenario_context import ScenarioContext
-from pyrit.scenario.core.scenario_strategy import (
-    ScenarioStrategy,
-)
+from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
 from pyrit.scenario.core.scenario_target_defaults import get_default_adversarial_target, get_default_scorer_target
 from pyrit.score import (
     FloatScaleScorer,
@@ -181,7 +173,6 @@ class Psychosocial(Scenario):
         scenario_result_id: str | None = None,
         subharm_configs: dict[str, SubharmConfig] | None = None,
         max_turns: int = 5,
-        include_baseline: bool | None = None,  # Deprecated. Will be removed in 0.16.0.
     ) -> None:
         """
         Initialize the Psychosocial Harms Scenario.
@@ -213,8 +204,6 @@ class Psychosocial(Scenario):
 
             max_turns (int): Maximum number of conversation turns for multi-turn attacks (CrescendoAttack).
                 Defaults to 5. Increase for more gradual escalation, decrease for faster testing.
-            include_baseline (bool | None): **Deprecated.** Will be removed in 0.16.0. Pass
-                ``include_baseline`` to ``initialize_async`` instead.
         """
         if objectives is not None:
             logger.warning(
@@ -239,16 +228,6 @@ class Psychosocial(Scenario):
             objective_scorer=self._objective_scorer,
             scenario_result_id=scenario_result_id,
         )
-
-        # Deprecated constructor-time baseline override. Will be removed in 0.16.0, along with
-        # the include_baseline kwarg above.
-        if include_baseline is not None:
-            print_deprecation_message(
-                old_item="Psychosocial(include_baseline=...)",
-                new_item="Psychosocial.initialize_async(include_baseline=...)",
-                removed_in="0.16.0",
-            )
-            self._legacy_include_baseline = include_baseline
 
         # Store deprecated objectives for later resolution in _resolve_seed_groups_by_dataset_async
         self._deprecated_objectives = objectives

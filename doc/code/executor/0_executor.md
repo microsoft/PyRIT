@@ -44,6 +44,9 @@ as it goes.
 - **[Prompt Generator](7_promptgen.ipynb)** — produces attack prompts (e.g. fuzzing, Anecdoctor) to
   augment datasets; some generate from a model alone, others probe a target to evolve effective
   prompts.
+- **[Modality Feedback](8_modality_feedback.ipynb)** — shows how `TargetCapabilities` determine
+  whether media is forwarded between objective and adversarial targets in multi-turn attacks, with a
+  two-seed Crescendo image-edit example.
 
 **[Attack Configuration](3_attack_configuration.ipynb)** isn't an executor — it's the cross-cutting
 inputs every attack accepts (objective vs. adversarial target, prepended conversations, multimodal

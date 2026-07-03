@@ -21,16 +21,10 @@ from pyrit.prompt_target import PromptTarget
 from pyrit.registry import TargetRegistry
 from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
 from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
-from pyrit.scenario.core.dataset_configuration import (
-    CompoundDatasetAttackConfiguration,
-)
-from pyrit.scenario.scenarios.airt.rapid_response import (
-    RapidResponse,
-)
+from pyrit.scenario.core.dataset_configuration import CompoundDatasetAttackConfiguration
+from pyrit.scenario.scenarios.airt.rapid_response import RapidResponse
 from pyrit.score import TrueFalseScorer
-from pyrit.setup.initializers.components.scenario_techniques import (
-    build_scenario_technique_factories,
-)
+from pyrit.setup.initializers.components.scenario_techniques import build_scenario_technique_factories
 
 # ---------------------------------------------------------------------------
 # Synthetic many-shot examples — prevents reading the real JSON during tests
@@ -295,7 +289,7 @@ class TestRapidResponseAttackGeneration:
             if strategies:
                 init_kwargs["scenario_strategies"] = strategies
             await scenario.initialize_async(**init_kwargs)
-            return await scenario._get_atomic_attacks_async()
+            return scenario._atomic_attacks
 
     async def test_default_strategy_produces_role_play_and_many_shot(
         self, mock_objective_target, mock_objective_scorer
@@ -397,7 +391,6 @@ class TestRapidResponseAttackGeneration:
                 scenario_strategies=[role_play],
                 strategy_converters={role_play.value: [converter]},
             )
-            await scenario._get_atomic_attacks_async()
 
         # ROLE_PLAY was selected with a converter modifier, so every resulting factory.create
         # call must receive the extra request converter.
@@ -457,7 +450,7 @@ class TestRapidResponseAttackGeneration:
             objective_scorer=mock_objective_scorer,
         )
         with pytest.raises(ValueError, match="Scenario not properly initialized"):
-            await scenario._get_atomic_attacks_async()
+            scenario._build_scenario_context(seed_groups_by_dataset={})
 
     async def test_unknown_technique_skipped_with_warning(self, mock_objective_target, mock_objective_scorer):
         """If a technique name has no factory, it's skipped (not an error)."""
@@ -493,7 +486,7 @@ class TestRapidResponseAttackGeneration:
                 scenario_strategies=[_strategy_class().ALL],
                 include_baseline=False,
             )
-            attacks = await scenario._get_atomic_attacks_async()
+            attacks = scenario._atomic_attacks
             # Only prompt_sending should have produced attacks
             assert len(attacks) == 1
             assert isinstance(attacks[0].attack_technique.attack, PromptSendingAttack)
@@ -519,8 +512,8 @@ class TestCoreTechniques:
     """Tests for shared AttackTechniqueFactory builders in scenario_techniques.py."""
 
     def test_instance_returns_all_factories(self, mock_objective_scorer):
-        scenario = RapidResponse(objective_scorer=mock_objective_scorer)
-        factories = scenario._get_attack_technique_factories()
+        registry = AttackTechniqueRegistry.get_registry_singleton()
+        factories = registry.get_factories()
         assert {"role_play", "many_shot", "tap"} <= set(factories.keys())
         assert factories["role_play"].attack_class is RolePlayAttack
         assert factories["many_shot"].attack_class is ManyShotJailbreakAttack
@@ -532,8 +525,8 @@ class TestCoreTechniques:
         The default adversarial target is resolved lazily inside ``create()``;
         it is not baked into the factory at construction time.
         """
-        scenario = RapidResponse(objective_scorer=mock_objective_scorer)
-        factories = scenario._get_attack_technique_factories()
+        registry = AttackTechniqueRegistry.get_registry_singleton()
+        factories = registry.get_factories()
         assert factories["role_play"].uses_adversarial is True
         assert factories["tap"].uses_adversarial is True
         assert factories["role_play"]._adversarial_chat is None
@@ -541,8 +534,8 @@ class TestCoreTechniques:
 
     def test_factories_always_use_default_adversarial(self, mock_objective_scorer):
         """Factories defer adversarial wiring to create()-time lazy resolution."""
-        scenario = RapidResponse(objective_scorer=mock_objective_scorer)
-        factories = scenario._get_attack_technique_factories()
+        registry = AttackTechniqueRegistry.get_registry_singleton()
+        factories = registry.get_factories()
 
         assert factories["role_play"]._adversarial_chat is None
         assert factories["tap"]._adversarial_chat is None
@@ -586,12 +579,6 @@ class TestRegistryIntegration:
         assert isinstance(factories, dict)
         assert {"role_play", "many_shot", "tap"} <= set(factories.keys())
         assert factories["role_play"].attack_class is RolePlayAttack
-
-    def test_scenario_base_class_reads_from_registry(self, mock_objective_scorer):
-        """Scenario._get_attack_technique_factories() reads from the registry."""
-        scenario = RapidResponse(objective_scorer=mock_objective_scorer)
-        factories = scenario._get_attack_technique_factories()
-        assert {"role_play", "many_shot", "tap"} <= set(factories.keys())
 
     def test_tags_assigned_correctly(self):
         registry = AttackTechniqueRegistry.get_registry_singleton()

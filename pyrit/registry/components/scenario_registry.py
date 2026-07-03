@@ -19,8 +19,8 @@ from typing import TYPE_CHECKING, Any
 
 from pyrit.models import class_name_to_snake_case
 from pyrit.models.identifiers.scenario_identifier import ScenarioIdentifier
-from pyrit.registry.base import ClassRegistryEntry
 from pyrit.registry.registry import Registry
+from pyrit.registry.registry_metadata import RegistryMetadata
 
 if TYPE_CHECKING:
     from types import ModuleType
@@ -31,7 +31,7 @@ if TYPE_CHECKING:
 
 
 @dataclass(frozen=True)
-class ScenarioMetadata(ClassRegistryEntry):
+class ScenarioMetadata(RegistryMetadata):
     """
     Metadata describing a registered Scenario class.
 
@@ -116,7 +116,7 @@ class ScenarioRegistry(Registry["Scenario", ScenarioMetadata]):
         Instantiates the scenario with no arguments and reads the strategy/dataset
         configuration off the instance. Every registered scenario MUST be no-arg
         instantiable (defer required-input validation to ``initialize_async`` or
-        ``_get_atomic_attacks_async``); otherwise this raises ``TypeError``.
+        ``_build_atomic_attacks_async``); otherwise this raises ``TypeError``.
 
         Args:
             name: The registry name of the scenario.
@@ -128,7 +128,7 @@ class ScenarioRegistry(Registry["Scenario", ScenarioMetadata]):
         Raises:
             TypeError: If ``cls()`` cannot be called with no arguments.
         """
-        description = ClassRegistryEntry.description_from_docstring(cls, fallback="No description available")
+        description = RegistryMetadata.description_from_docstring(cls, fallback="No description available")
 
         supported_parameters = tuple(cls.supported_parameters())
 
@@ -140,7 +140,7 @@ class ScenarioRegistry(Registry["Scenario", ScenarioMetadata]):
                 f"{name!r}) must be instantiable with no arguments so the registry can introspect "
                 f"its strategies and default dataset config. Make all constructor parameters "
                 f"optional (defaulting to None) and defer required-input validation to "
-                f"initialize_async() or _get_atomic_attacks_async(). Original error: {exc}"
+                f"initialize_async() or _build_atomic_attacks_async(). Original error: {exc}"
             ) from exc
 
         strategy_class = instance._strategy_class

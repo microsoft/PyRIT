@@ -11,20 +11,12 @@ from typing import TYPE_CHECKING, ClassVar
 
 from pyrit.analytics import get_cached_results_for_technique
 from pyrit.common import apply_defaults
-from pyrit.models import (
-    AttackOutcome,
-    AttackResult,
-    ObjectiveTargetEvaluationIdentifier,
-    ScenarioResult,
-)
+from pyrit.models import AttackOutcome, AttackResult, ObjectiveTargetEvaluationIdentifier, ScenarioResult
 from pyrit.models.parameter import Parameter
 from pyrit.registry import AttackTechniqueRegistry, TargetRegistry
 from pyrit.registry.tag_query import TagQuery
 from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
-from pyrit.scenario.core.matrix_atomic_attack_builder import (
-    MatrixAtomicAttackBuilder,
-    resolve_technique_factories,
-)
+from pyrit.scenario.core.matrix_atomic_attack_builder import MatrixAtomicAttackBuilder, resolve_technique_factories
 from pyrit.scenario.core.scenario import BaselineAttackPolicy, Scenario
 
 if TYPE_CHECKING:

@@ -529,8 +529,9 @@ class TestSupportedParameters:
                 pass
 
         init = StrictInit()
+        init.params = {"bogus": ["value"]}
         with pytest.raises(ValueError, match="unknown parameter"):
-            init._validate_params(params={"bogus": ["value"]})
+            init.validate_params()
 
     def test_validate_params_accepts_valid(self) -> None:
         """Test that valid params pass validation."""
@@ -549,8 +550,9 @@ class TestSupportedParameters:
                 pass
 
         init = ValidInit()
+        init.params = {"key": ["abc"], "mode": ["slow"]}
         # Should not raise
-        init._validate_params(params={"key": ["abc"], "mode": ["slow"]})
+        init.validate_params()
 
     def test_validate_checks_params_on_instance(self) -> None:
         """Test that validate() checks self.params."""

@@ -28,9 +28,9 @@ from typing import TYPE_CHECKING
 
 from pyrit.models.identifiers import ConverterIdentifier
 from pyrit.models.parameter import ComponentType
-from pyrit.registry.base import ClassRegistryEntry
 from pyrit.registry.instance_registry import DefaultInstanceRegistry, InstanceRegistry
 from pyrit.registry.registry import Registry
+from pyrit.registry.registry_metadata import RegistryMetadata
 
 if TYPE_CHECKING:
     from types import ModuleType
@@ -39,7 +39,7 @@ if TYPE_CHECKING:
 
 
 @dataclass(frozen=True)
-class ConverterMetadata(ClassRegistryEntry):
+class ConverterMetadata(RegistryMetadata):
     """
     Metadata describing a registered ``PromptConverter`` class.
 

@@ -374,6 +374,20 @@ class TestResolveTechniqueFactories:
             resolved = resolve_technique_factories(context=context)
         assert list(resolved.keys()) == ["alpha"]
 
+    def test_extra_factories_merged_and_override_registry(self):
+        registry_factories = {"alpha": _mock_factory(name="alpha")}
+        local_alpha = _mock_factory(name="alpha")
+        local_only = _mock_factory(name="local")
+        context = _context(strategies=[_strategy("alpha"), _strategy("local")])
+        with _patch_registry(registry_factories):
+            resolved = resolve_technique_factories(
+                context=context,
+                extra_factories={"alpha": local_alpha, "local": local_only},
+            )
+        assert list(resolved.keys()) == ["alpha", "local"]
+        assert resolved["alpha"] is local_alpha  # extra overrides the registry factory of the same name
+        assert resolved["local"] is local_only  # local-only factory is selectable without global registration
+
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestBuildMatrixAtomicAttacks:
@@ -429,3 +443,17 @@ class TestBuildMatrixAtomicAttacks:
         extra = factory.create.call_args.kwargs["extra_request_converters"]
         assert extra is not None
         assert len(extra) == 1
+
+    def test_extra_factories_used_for_selection(self):
+        context = _context(
+            strategies=[_strategy("local")],
+            seed_groups_by_dataset={"ds": [_seed_group(objective="o1")]},
+        )
+        # The selected technique exists only in extra_factories, not the registry.
+        with _patch_registry({"other": _mock_factory(name="other")}):
+            result = build_matrix_atomic_attacks(
+                context=context,
+                objective_scorer=MagicMock(spec=TrueFalseScorer),
+                extra_factories={"local": _mock_factory(name="local")},
+            )
+        assert [a.atomic_attack_name for a in result] == ["local_ds"]

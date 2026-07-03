@@ -136,7 +136,7 @@ class TestLeakageAttackGeneration:
         """Test that _get_atomic_attacks_async returns atomic attacks."""
         scenario = Leakage(objective_scorer=mock_objective_scorer)
         await scenario.initialize_async(objective_target=mock_objective_target, dataset_config=mock_dataset_config)
-        atomic_attacks = await scenario._get_atomic_attacks_async()
+        atomic_attacks = scenario._atomic_attacks
 
         assert len(atomic_attacks) > 0
         assert all(run.attack_technique is not None for run in atomic_attacks)
@@ -147,7 +147,7 @@ class TestLeakageAttackGeneration:
         """Test that attack runs include objectives for each seed prompt."""
         scenario = Leakage(objective_scorer=mock_objective_scorer)
         await scenario.initialize_async(objective_target=mock_objective_target, dataset_config=mock_dataset_config)
-        atomic_attacks = await scenario._get_atomic_attacks_async()
+        atomic_attacks = scenario._atomic_attacks
 
         for run in atomic_attacks:
             assert len(run.objectives) > 0

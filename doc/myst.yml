@@ -107,6 +107,7 @@ project:
             - file: code/executor/5_workflow.ipynb
             - file: code/executor/6_benchmark.ipynb
             - file: code/executor/7_promptgen.ipynb
+            - file: code/executor/8_modality_feedback.ipynb
         - file: code/targets/0_prompt_targets.md
           children:
             - file: code/targets/1_openai_chat_target.ipynb

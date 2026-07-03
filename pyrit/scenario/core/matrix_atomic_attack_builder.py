@@ -123,7 +123,11 @@ def build_baseline_atomic_attack(
     )
 
 
-def resolve_technique_factories(*, context: ScenarioContext) -> dict[str, AttackTechniqueFactory]:
+def resolve_technique_factories(
+    *,
+    context: ScenarioContext,
+    extra_factories: dict[str, AttackTechniqueFactory] | None = None,
+) -> dict[str, AttackTechniqueFactory]:
     """
     Resolve a run's selected strategies to their registered ``AttackTechniqueFactory`` instances.
 
@@ -133,6 +137,10 @@ def resolve_technique_factories(*, context: ScenarioContext) -> dict[str, Attack
 
     Args:
         context (ScenarioContext): The resolved runtime inputs for this run.
+        extra_factories (dict[str, AttackTechniqueFactory] | None): Scenario-local factories
+            merged on top of the registry before filtering, so a scenario can offer techniques
+            without registering them globally. Entries override registry factories of the same
+            name.
 
     Returns:
         dict[str, AttackTechniqueFactory]: Mapping of technique name to factory, ordered by
@@ -140,7 +148,9 @@ def resolve_technique_factories(*, context: ScenarioContext) -> dict[str, Attack
     """
     from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
 
-    all_factories = AttackTechniqueRegistry.get_registry_singleton().get_factories_or_raise()
+    all_factories = dict(AttackTechniqueRegistry.get_registry_singleton().get_factories_or_raise())
+    if extra_factories:
+        all_factories.update(extra_factories)
     return {
         strategy.value: all_factories[strategy.value]
         for strategy in context.scenario_strategies
@@ -154,6 +164,7 @@ def build_matrix_atomic_attacks(
     objective_scorer: Scorer,
     display_group_fn: Callable[[MatrixCombo], str] | None = None,
     strategy_converters: dict[str, list[PromptConverter]] | None = None,
+    extra_factories: dict[str, AttackTechniqueFactory] | None = None,
 ) -> list[AtomicAttack]:
     """
     Build a matrix-shaped scenario's atomic attacks from its resolved context in one call.
@@ -162,7 +173,7 @@ def build_matrix_atomic_attacks(
     technique × dataset cross-product: it resolves the selected strategies to factories
     (``resolve_technique_factories``) and hands them to ``MatrixAtomicAttackBuilder``
     with the context's target, labels, and per-dataset seed groups. The baseline is emitted
-    centrally by ``Scenario._get_atomic_attacks_async``, so this never prepends one.
+    centrally by ``Scenario.initialize_async``, so this never prepends one.
 
     Scenarios needing extra axes (adversarial targets, caching, converter stacks) call
     ``MatrixAtomicAttackBuilder`` directly instead.
@@ -176,6 +187,9 @@ def build_matrix_atomic_attacks(
             technique name to converters appended after that technique's converters. Pass a
             scenario's ``self._strategy_converters`` so per-technique converter overrides are
             preserved.
+        extra_factories (dict[str, AttackTechniqueFactory] | None): Scenario-local factories
+            merged on top of the registry (see ``resolve_technique_factories``), so a scenario
+            can offer techniques without registering them globally.
 
     Returns:
         list[AtomicAttack]: The generated atomic attacks (no baseline).
@@ -186,7 +200,7 @@ def build_matrix_atomic_attacks(
         memory_labels=context.memory_labels,
     )
     return builder.build(
-        technique_factories=resolve_technique_factories(context=context),
+        technique_factories=resolve_technique_factories(context=context, extra_factories=extra_factories),
         dataset_groups=context.seed_groups_by_dataset,
         display_group_fn=display_group_fn,
         strategy_converters=strategy_converters,

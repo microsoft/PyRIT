@@ -144,11 +144,10 @@ class Doctor(Scenario):
         """
         Build the Doctor atomic attacks from the selected Policy Puppetry techniques.
 
-        Overrides the base extension point (rather than riding the base default cross-product
-        via ``_get_attack_technique_factories``) so the Doctor-specific techniques stay local
-        to this scenario and never enter the global registry. Delegates the technique × dataset
-        cross-product to ``MatrixAtomicAttackBuilder``. The base owns baseline emission, so this
-        passes ``include_baseline=False``.
+        Builds the Doctor-specific technique factories locally (so they never enter the global
+        registry) and delegates the technique × dataset cross-product to
+        ``MatrixAtomicAttackBuilder``. The base owns baseline emission, so this passes
+        ``include_baseline=False``.
 
         Args:
             context (ScenarioContext): The resolved runtime inputs for this run.

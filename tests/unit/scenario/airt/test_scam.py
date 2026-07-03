@@ -9,11 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from pyrit.common.path import DATASETS_PATH
-from pyrit.executor.attack import (
-    ContextComplianceAttack,
-    RedTeamingAttack,
-    RolePlayAttack,
-)
+from pyrit.executor.attack import ContextComplianceAttack, RedTeamingAttack, RolePlayAttack
 from pyrit.executor.attack.core.attack_config import AttackScoringConfig
 from pyrit.models import ComponentIdentifier, SeedAttackGroup, SeedDataset, SeedObjective
 from pyrit.prompt_target import OpenAIChatTarget, PromptTarget
@@ -233,7 +229,7 @@ class TestScamAttackGeneration:
             scenario = Scam(objective_scorer=mock_objective_scorer)
 
             await scenario.initialize_async(objective_target=mock_objective_target, dataset_config=mock_dataset_config)
-            atomic_attacks = await scenario._get_atomic_attacks_async()
+            atomic_attacks = scenario._atomic_attacks
 
             assert len(atomic_attacks) > 0
             assert all(run.attack_technique is not None for run in atomic_attacks)
@@ -257,7 +253,7 @@ class TestScamAttackGeneration:
             dataset_config=mock_dataset_config,
             include_baseline=False,
         )
-        atomic_attacks = await scenario._get_atomic_attacks_async()
+        atomic_attacks = scenario._atomic_attacks
 
         for run in atomic_attacks:
             assert isinstance(run.attack_technique.attack, (ContextComplianceAttack, RolePlayAttack))
@@ -276,7 +272,7 @@ class TestScamAttackGeneration:
             dataset_config=mock_dataset_config,
             include_baseline=False,
         )
-        atomic_attacks = await scenario._get_atomic_attacks_async()
+        atomic_attacks = scenario._atomic_attacks
 
         for run in atomic_attacks:
             assert isinstance(run.attack_technique.attack, RedTeamingAttack)
@@ -295,7 +291,7 @@ class TestScamAttackGeneration:
         )
 
         await scenario.initialize_async(objective_target=mock_objective_target, dataset_config=mock_dataset_config)
-        atomic_attacks = await scenario._get_atomic_attacks_async()
+        atomic_attacks = scenario._atomic_attacks
 
         for run in atomic_attacks:
             assert len(run.objectives) == len(mock_memory_seeds)
@@ -315,7 +311,7 @@ class TestScamAttackGeneration:
         )
 
         await scenario.initialize_async(objective_target=mock_objective_target, dataset_config=mock_dataset_config)
-        atomic_attacks = await scenario._get_atomic_attacks_async()
+        atomic_attacks = scenario._atomic_attacks
         assert len(atomic_attacks) > 0
         assert all(run.attack_technique is not None for run in atomic_attacks)
 
@@ -343,7 +339,7 @@ class TestScamMaxTurnsParameter:
             dataset_config=mock_dataset_config,
             include_baseline=False,
         )
-        atomic_attacks = await scenario._get_atomic_attacks_async()
+        atomic_attacks = scenario._atomic_attacks
 
         for run in atomic_attacks:
             assert isinstance(run.attack_technique.attack, RedTeamingAttack)
@@ -362,7 +358,7 @@ class TestScamMaxTurnsParameter:
             dataset_config=mock_dataset_config,
             include_baseline=False,
         )
-        atomic_attacks = await scenario._get_atomic_attacks_async()
+        atomic_attacks = scenario._atomic_attacks
 
         for run in atomic_attacks:
             assert run.attack_technique.attack._max_turns == 10

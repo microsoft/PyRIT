@@ -225,7 +225,7 @@ class TestFoundryInitialization:
             mock_get_scorer.assert_called_once()
             assert scenario._attack_scoring_config.objective_scorer == mock_scorer_instance
 
-            # seed_groups are resolved lazily during _get_atomic_attacks_async
+            # seed_groups are resolved lazily during initialize_async
             assert scenario._attack_scoring_config.objective_scorer == mock_scorer_instance
 
     async def test_init_raises_exception_when_no_datasets_available(self, mock_objective_target, mock_objective_scorer):
@@ -233,7 +233,7 @@ class TestFoundryInitialization:
         # Don't mock _resolve_seed_groups, let it try to load from empty memory
         scenario = RedTeamAgent(attack_scoring_config=AttackScoringConfig(objective_scorer=mock_objective_scorer))
 
-        # Error should occur during initialize_async when _get_atomic_attacks_async resolves seed groups.
+        # Error should occur during initialize_async when it resolves seed groups.
         # Neutralize the provider fetch so the empty-memory path raises loudly instead of fetching.
         with patch(
             "pyrit.scenario.core.dataset_configuration.DatasetConfiguration._fetch_dataset_async",

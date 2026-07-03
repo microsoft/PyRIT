@@ -208,6 +208,47 @@ class MessagePiece(BaseModel):
         return self.response_error == "blocked"
 
     # ------------------------------------------------------------------ #
+    # Adversarial placeholder support
+    # ------------------------------------------------------------------ #
+    @classmethod
+    def adversarial_placeholder(cls, *, role: ChatMessageRole = "user") -> MessagePiece:
+        """
+        Build a placeholder text piece that signals the adversarial chat will
+        generate the text content at this position.
+
+        Intended for use inside ``AttackParameters.next_message`` when combining
+        a user-supplied seed (e.g. a base image to edit) with adversarial-generated
+        text on turn 1 of a multi-turn attack. A consumer that walks the message
+        pieces can call ``is_adversarial_placeholder`` to detect a slot and
+        replace its value with the generated text before sending the message.
+
+        Args:
+            role: The chat role to assign to the piece. Defaults to ``"user"``.
+
+        Returns:
+            A text ``MessagePiece`` flagged via ``prompt_metadata``.
+        """
+        return cls(
+            role=role,
+            original_value="",
+            original_value_data_type="text",
+            prompt_metadata={"adversarial_placeholder": True},
+        )
+
+    def is_adversarial_placeholder(self) -> bool:
+        """
+        Return ``True`` when this piece is a placeholder for adversarial-generated text.
+
+        Detection is based on the ``adversarial_placeholder`` flag set by
+        ``adversarial_placeholder``. Plain pieces (created without the flag)
+        always return ``False``.
+
+        Returns:
+            ``True`` if this piece should be filled in by an adversarial chat.
+        """
+        return bool(self.prompt_metadata.get("adversarial_placeholder"))
+
+    # ------------------------------------------------------------------ #
     # Deprecated method shims (removed in 0.16.0)
     # ------------------------------------------------------------------ #
     def to_dict(self) -> dict[str, Any]:
