@@ -14,7 +14,7 @@ Targets can be:
 
 import logging
 from functools import lru_cache
-from typing import Any
+from typing import Any, Literal, cast
 
 from pyrit.backend.mappers.target_mappers import target_object_to_instance
 from pyrit.backend.models.common import PaginationInfo
@@ -142,7 +142,7 @@ class TargetService:
             TargetCatalogEntry(
                 target_type=metadata.class_name,
                 parameters=[p for p in metadata.parameters if p.is_string_coercible],
-                supported_auth_modes=list(metadata.supported_auth_modes),
+                supported_auth_modes=cast(list[Literal["api_key", "identity"]], list(metadata.supported_auth_modes)),
                 description=metadata.class_description or None,
             )
             for metadata in self._registry.get_all_registered_class_metadata()
@@ -188,9 +188,7 @@ class TargetService:
 
         if request.auth_mode == "identity":
             if "identity" not in target_cls.supported_auth_modes:
-                raise ValueError(
-                    f"Target type '{request.type}' does not support identity-based authentication."
-                )
+                raise ValueError(f"Target type '{request.type}' does not support identity-based authentication.")
             # Omit any api_key so the target validates its own endpoint and authenticates itself.
             params.pop("api_key", None)
 
