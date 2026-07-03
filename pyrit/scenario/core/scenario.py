@@ -9,8 +9,6 @@ AtomicAttack instances sequentially, enabling comprehensive security testing cam
 """
 
 import asyncio
-import copy
-import json
 import logging
 import uuid
 from abc import ABC
@@ -37,6 +35,7 @@ from pyrit.memory.memory_models import ScenarioResultEntry
 from pyrit.models import (
     AttackOutcome,
     AttackResult,
+    ScenarioEvaluationIdentifier,
     ScenarioIdentifier,
     ScenarioResult,
     ScenarioRunState,
@@ -46,6 +45,9 @@ from pyrit.models.parameter import Parameter
 from pyrit.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_requirements import TargetRequirements
 from pyrit.registry import ScorerRegistry
+from pyrit.registry.resolution import (
+    resolve_declared_params,
+)
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
 from pyrit.scenario.core.matrix_atomic_attack_builder import (
@@ -73,6 +75,13 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+#: Param names a scenario must not declare via ``supported_parameters()``. These
+#: collide with promoted identity fields on ``ScenarioIdentifier`` and would be
+#: silently overwritten during identifier promotion. Only ``version`` is reserved
+#: today; a scenario's definition version is owned by the identifier, not a param.
+_RESERVED_SCENARIO_PARAM_NAMES: frozenset[str] = frozenset({"version"})
+
+
 class BaselineAttackPolicy(Enum):
     """
     Declares how a scenario type treats the default baseline atomic attack.
@@ -92,56 +101,6 @@ class BaselineAttackPolicy(Enum):
 
     #: Not supported. Explicit ``include_baseline=True`` at runtime raises ``ValueError``.
     Forbidden = "forbidden"
-
-
-def _assert_json_serializable(*, params: dict[str, Any]) -> None:
-    """
-    Raise if any value in ``params`` cannot round-trip through JSON.
-
-    Stage 5 stores ``params`` on ``ScenarioIdentifier.init_data`` for resume
-    validation; the underlying memory column is JSON. Catching unserializable
-    values here gives a clear error rather than a database failure.
-
-    Args:
-        params (dict[str, Any]): Effective parameters to validate.
-
-    Raises:
-        ValueError: If any value is not JSON-serializable.
-    """
-    try:
-        json.dumps(params)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(
-            f"Scenario params contain a non-JSON-serializable value (cannot persist for resume): {exc}. "
-            f"Use only JSON-safe types (str, int, float, bool, list, dict, None) for scenario parameters."
-        ) from exc
-
-
-def _format_param_key_diff(*, stored: dict[str, Any], current: dict[str, Any]) -> str:
-    """
-    Render the set-level difference between two param dicts as a short string.
-
-    Lists only key names (no values) so secrets or large blobs in scenario
-    parameters do not leak into logs.
-
-    Args:
-        stored (dict[str, Any]): Persisted params from the previous run.
-        current (dict[str, Any]): Effective params for the current run.
-
-    Returns:
-        str: A short summary like ``"added: x, y; removed: z; changed: max_turns"``.
-    """
-    parts: list[str] = []
-    added = sorted(set(current) - set(stored))
-    removed = sorted(set(stored) - set(current))
-    changed = sorted(k for k in set(stored) & set(current) if stored[k] != current[k])
-    if added:
-        parts.append(f"added: {', '.join(added)}")
-    if removed:
-        parts.append(f"removed: {', '.join(removed)}")
-    if changed:
-        parts.append(f"changed: {', '.join(changed)}")
-    return "; ".join(parts) if parts else "no diff details"
 
 
 class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even without abstract methods
@@ -239,9 +198,13 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
 
         description = ClassRegistryEntry.description_from_docstring(self.__class__)
 
-        self._identifier = ScenarioIdentifier(
-            name=type(self).__name__, scenario_version=version, description=description
-        )
+        # The scenario identifier is the canonical per-run identity: the scenario
+        # registry produces it and it is persisted on the ScenarioResult (carrying
+        # class name / version / resolved techniques / datasets / params and the
+        # objective_target / objective_scorer references). The display description
+        # and pyrit_version ride alongside it on the ScenarioResult.
+        self._version = version
+        self._description = description
 
         # Store strategy configuration for use in initialize_async
         self._strategy_class = strategy_class
@@ -277,9 +240,9 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
         # Maps atomic_attack_name → display_group for user-facing aggregation
         self._display_group_map: dict[str, str] = {}
 
-        # Custom parameters: declared via supported_parameters(), populated via set_params_from_args().
+        # Declared via supported_parameters(); resolved/populated by the registry
+        # helper (pyrit.registry.resolution). Subclasses read it in _get_atomic_attacks_async.
         self.params: dict[str, Any] = {}
-        self._declarations_validated: bool = False
 
         # Resolved effective baseline inclusion for the current run. Set in initialize_async
         # before _get_atomic_attacks_async is awaited so overrides can read it.
@@ -439,9 +402,11 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
         """
         Populate ``self.params`` from merged CLI / config arguments.
 
-        Coerces each value to its declared ``param_type``, validates, and
-        materializes declared defaults for params not in ``args``. Every
-        declared parameter is guaranteed a key in ``self.params`` after this
+        The scenario only **declares** its parameters via ``supported_parameters()``;
+        the coerce / validate / inject-defaults *mapping* is owned by the registry
+        layer (``pyrit.registry.resolution.resolve_declared_params``) so there is a
+        single implementation shared by the programmatic, CLI, and registry paths.
+        Every declared parameter is guaranteed a key in ``self.params`` after this
         call; params without a declared default land as ``None``.
 
         Args:
@@ -451,94 +416,22 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
 
         Raises:
             ValueError: Invalid declaration, unknown parameter, coercion
-                failure, or value not in ``choices``.
+                failure, value not in ``choices``, or a declared parameter using
+                a reserved scenario identity name (e.g. ``version``).
         """
         declared = list(self.supported_parameters())
-        if not self._declarations_validated:
-            self._validate_declarations(declared=declared)
-            self._declarations_validated = True
-
-        declared_by_name = {p.name: p for p in declared}
-
-        # None values are treated as absent so YAML `key: null` falls through to defaults.
-        supplied = {name: value for name, value in args.items() if value is not None}
-
-        coerced: dict[str, Any] = {}
-        for name, raw_value in supplied.items():
-            param = declared_by_name.get(name)
-            if param is None:
-                # Stash unknowns so _validate_params can list them all at once.
-                coerced[name] = raw_value
-                continue
-            coerced[name] = param.coerce_value(raw_value)
-
-        self._validate_params(params=coerced, declared=declared)
-
-        for param in declared:
-            if param.name in coerced:
-                continue
-            # Materialize every declared param so scenarios can rely on
-            # ``self.params[name]`` never raising ``KeyError``. Params declared
-            # without an explicit default land as None, and the scenario raises
-            # a domain-specific error at run time if it cannot proceed.
-            coerced[param.name] = (
-                copy.deepcopy(param.coerce_value(param.default)) if param.default is not None else None
-            )
-
-        self.params = coerced
-
-    def _validate_declarations(self, *, declared: list[Parameter]) -> None:
-        """
-        Validate the scenario's parameter declarations on first use.
-
-        Args:
-            declared (list[Parameter]): The ``supported_parameters()`` snapshot.
-
-        Raises:
-            ValueError: If declarations contain duplicate names, an
-                unsupported ``param_type``, or a default that fails coercion
-                (including membership for a constrained scalar).
-        """
-        seen: set[str] = set()
-        for param in declared:
-            if param.name in seen:
-                raise ValueError(f"Scenario '{type(self).__name__}' declares duplicate parameter name '{param.name}'.")
-            seen.add(param.name)
-
-            try:
-                param.validate()
-            except ValueError as exc:
-                raise ValueError(f"Scenario '{type(self).__name__}' {exc}") from exc
-
-            if param.default is not None:
-                try:
-                    param.coerce_value(param.default)
-                except ValueError as exc:
-                    raise ValueError(
-                        f"Scenario '{type(self).__name__}' parameter '{param.name}' has an invalid default: {exc}"
-                    ) from exc
-
-    def _validate_params(self, *, params: dict[str, Any], declared: list[Parameter]) -> None:
-        """
-        Validate supplied params against the scenario's declarations.
-
-        Args:
-            params (dict[str, Any]): Coerced (declared names) or raw (unknown) values.
-            declared (list[Parameter]): Declarations snapshot from the caller, so
-                the whole call sees one consistent view.
-
-        Raises:
-            ValueError: If any keys in ``params`` are not declared.
-        """
-        declared_names = {p.name for p in declared}
-
-        unknown = sorted(set(params.keys()) - declared_names)
-        if unknown:
+        reserved = sorted({p.name for p in declared} & _RESERVED_SCENARIO_PARAM_NAMES)
+        if reserved:
             raise ValueError(
-                f"Scenario '{type(self).__name__}' received unknown parameter(s): {', '.join(unknown)}. "
-                f"Supported parameters: "
-                f"{', '.join(sorted(declared_names)) if declared_names else 'none'}."
+                f"Scenario '{type(self).__name__}' declares reserved parameter(s) {reserved}; "
+                "these names are owned by the scenario identity and cannot be scenario params. "
+                "Rename the parameter."
             )
+        self.params = resolve_declared_params(
+            declared=declared,
+            raw_args=args,
+            owner=f"Scenario '{type(self).__name__}'",
+        )
 
     def _prepare_strategies(
         self,
@@ -668,12 +561,11 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
         self._scenario_strategies = self._prepare_strategies(scenario_strategies)
         self._strategy_converters = strategy_converters or {}
 
-        # Materialize declared defaults for programmatic callers that skip the
-        # explicit set_params_from_args step. Frontend-driven flows already
-        # call it (which sets _declarations_validated=True), so this is a no-op
-        # in that path.
-        if not self._declarations_validated:
-            self.set_params_from_args(args={})
+        # Resolve declared parameters through the single registry-owned path,
+        # materializing defaults for programmatic callers that skipped an explicit
+        # set_params_from_args. Re-resolving an already-resolved bag is idempotent,
+        # so the registry- and CLI-driven flows converge here without divergence.
+        self.set_params_from_args(args=self.params)
 
         self._atomic_attacks = await self._get_atomic_attacks_async()
 
@@ -695,12 +587,10 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
                 seed_groups = await self._dataset_config.get_seed_attack_groups_async()
             self._atomic_attacks.insert(0, self._build_baseline_atomic_attack(seed_groups=seed_groups))
 
-        # Snapshot params onto the identifier before the resume branch so the identifier
-        # is fully populated regardless of which branch we take. Deep-copy avoids sharing
-        # mutable state with self.params.
-        params_snapshot = copy.deepcopy(self.params)
-        _assert_json_serializable(params=params_snapshot)
-        self._identifier.init_data = params_snapshot
+        # Build the canonical scenario identifier once params/strategies/datasets
+        # are resolved, so both the resume check and the new-result branch share the
+        # same identity (and its eval hash).
+        scenario_identifier = self._build_scenario_identifier()
 
         # Check if we're resuming an existing scenario. Any divergence is a hard error
         # rather than a silent restart, so the original progress isn't orphaned without
@@ -714,7 +604,7 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
                     f"Drop scenario_result_id to start a new scenario."
                 )
 
-            self._validate_stored_scenario(stored_result=existing_results[0])
+            self._validate_stored_scenario(stored_result=existing_results[0], current_identifier=scenario_identifier)
             self._apply_persisted_objectives(stored_result=existing_results[0])
             return  # Valid resume - skip creating new scenario result
 
@@ -727,9 +617,8 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
         }
 
         result = ScenarioResult(
-            scenario_identifier=self._identifier,
-            objective_target_identifier=self._objective_target_identifier,
-            objective_scorer_identifier=self._objective_scorer_identifier,
+            scenario_identifier=scenario_identifier,
+            scenario_description=self._description,
             labels=self._memory_labels,
             attack_results=attack_results,
             scenario_run_state=ScenarioRunState.CREATED,
@@ -842,48 +731,64 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
             memory_labels=self._memory_labels,
         )
 
-    def _validate_stored_scenario(self, *, stored_result: ScenarioResult) -> None:
+    def _build_scenario_identifier(self) -> ScenarioIdentifier:
         """
-        Validate that a stored scenario result exactly matches the current scenario configuration.
+        Build the canonical ``ScenarioIdentifier`` for the current run.
+
+        Combines the definition version, the resolved technique / dataset
+        selection, the resolved scenario params, and the objective target / scorer
+        references into one identity whose eval hash backs resume drift detection.
+
+        Returns:
+            ScenarioIdentifier: The identifier describing this scenario run.
+        """
+        techniques = sorted({s.value for s in self._scenario_strategies})
+        datasets = list(self._dataset_config.dataset_names)
+        return ScenarioIdentifier.of(
+            self,
+            params=self.params,
+            version=self._version,
+            techniques=techniques,
+            datasets=datasets,
+            objective_target=self._objective_target_identifier,
+            objective_scorer=self._objective_scorer_identifier,
+        )
+
+    def _validate_stored_scenario(
+        self, *, stored_result: ScenarioResult, current_identifier: ScenarioIdentifier
+    ) -> None:
+        """
+        Validate that a stored scenario result matches the current configuration.
 
         Resume is opt-in via ``scenario_result_id``; any divergence from the stored
         result is treated as user error rather than a silent restart, since the
-        original progress would otherwise be orphaned without warning.
+        original progress would otherwise be orphaned without warning. Divergence is
+        detected by comparing behavioral eval hashes: the scenario class name /
+        module, version, resolved techniques / datasets, params, and objective
+        target / scorer all feed the hash, so a mismatch means either a different
+        scenario or a changed configuration.
 
         Args:
             stored_result (ScenarioResult): The scenario result retrieved from memory.
+            current_identifier (ScenarioIdentifier): Identifier for the current run.
 
         Raises:
-            ValueError: If the stored scenario name, version, or parameters do not
-                match the current configuration.
+            ValueError: If the stored scenario identity does not match the current one.
         """
-        stored_name = stored_result.scenario_identifier.name
-        stored_version = stored_result.scenario_identifier.version
+        # Compare behavioral eval hashes. The stored eval_hash is never trusted;
+        # ScenarioEvaluationIdentifier recomputes it from the stored identifier's
+        # class / params / children, matching how the current identifier is hashed.
+        # class_name and class_module both feed the hash, so this also catches a
+        # scenario_result_id that belongs to an entirely different scenario.
+        stored_eval_hash = ScenarioEvaluationIdentifier(stored_result.scenario_identifier).eval_hash
+        current_eval_hash = ScenarioEvaluationIdentifier(current_identifier).eval_hash
 
-        if stored_name != self._identifier.name:
+        if stored_eval_hash != current_eval_hash:
             raise ValueError(
-                f"Scenario result id '{self._scenario_result_id}' belongs to scenario '{stored_name}' "
-                f"but current scenario is '{self._identifier.name}'. "
-                f"Drop scenario_result_id to start a new scenario."
-            )
-
-        if stored_version != self._identifier.version:
-            raise ValueError(
-                f"Scenario result id '{self._scenario_result_id}' was created with "
-                f"{self._identifier.name} version {stored_version} but current version is "
-                f"{self._identifier.version}. Drop scenario_result_id to start a new scenario."
-            )
-
-        # Treat None (legacy result without persisted params) as empty. Compare both sides
-        # post-JSON-roundtrip so types that the memory column rewrites (tuple → list, non-str
-        # dict keys → str) don't surface as false mismatches under param_type=None.
-        stored_params = stored_result.scenario_identifier.init_data or {}
-        current_params_normalized = json.loads(json.dumps(self.params))
-        if stored_params != current_params_normalized:
-            diff = _format_param_key_diff(stored=stored_params, current=current_params_normalized)
-            raise ValueError(
-                f"Scenario result id '{self._scenario_result_id}' has mismatched parameters ({diff}). "
-                f"Drop scenario_result_id to start a new scenario, or pass matching parameters to resume."
+                f"Scenario result id '{self._scenario_result_id}' does not match the current "
+                f"'{type(self).__name__}' configuration (a different scenario, or its version, "
+                f"techniques, datasets, parameters, or objective target / scorer changed). "
+                f"Drop scenario_result_id to start a new scenario, or pass matching configuration to resume."
             )
 
         logger.info(
@@ -1141,7 +1046,7 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
 
         Example:
             >>> result = await scenario.run_async()
-            >>> print(f"Scenario: {result.scenario_identifier.name}")
+            >>> print(f"Scenario: {result.scenario_name}")
             >>> print(f"Total results: {len(result.attack_results)}")
         """
         if not self._atomic_attacks:

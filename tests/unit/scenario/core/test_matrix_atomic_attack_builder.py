@@ -15,6 +15,7 @@ cross-product for scenarios whose attacks form such a grid. These tests pin the 
 * optional baseline emission from the flattened seed groups.
 """
 
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -26,7 +27,10 @@ from pyrit.scenario.core.matrix_atomic_attack_builder import (
     MatrixAtomicAttackBuilder,
     MatrixCombo,
     build_baseline_atomic_attack,
+    build_matrix_atomic_attacks,
+    resolve_technique_factories,
 )
+from pyrit.scenario.core.scenario_context import ScenarioContext
 from pyrit.score import TrueFalseScorer
 
 
@@ -322,3 +326,106 @@ class TestMatrixStrategyConverters:
             dataset_groups={"ds": [_seed_group(objective="o1")]},
         )
         assert factory.create.call_args.kwargs["extra_request_converters"] is None
+
+
+def _strategy(value: str) -> SimpleNamespace:
+    """A minimal strategy stand-in exposing the ``.value`` the resolver reads."""
+    return SimpleNamespace(value=value)
+
+
+def _context(*, strategies, seed_groups_by_dataset=None) -> ScenarioContext:
+    return ScenarioContext(
+        objective_target=MagicMock(spec=PromptTarget),
+        scenario_strategies=strategies,
+        dataset_config=MagicMock(),
+        memory_labels={"op": "unit"},
+        seed_groups_by_dataset=seed_groups_by_dataset or {},
+    )
+
+
+def _patch_registry(factories: dict):
+    registry = MagicMock()
+    registry.get_factories_or_raise.return_value = factories
+    return patch(
+        "pyrit.registry.components.attack_technique_registry.AttackTechniqueRegistry.get_registry_singleton",
+        return_value=registry,
+    )
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestResolveTechniqueFactories:
+    """``resolve_technique_factories`` filters the registry to the selected strategies."""
+
+    def test_keeps_only_selected_in_order(self):
+        factories = {
+            "alpha": _mock_factory(name="alpha"),
+            "beta": _mock_factory(name="beta"),
+            "gamma": _mock_factory(name="gamma"),
+        }
+        context = _context(strategies=[_strategy("beta"), _strategy("alpha")])
+        with _patch_registry(factories):
+            resolved = resolve_technique_factories(context=context)
+        assert list(resolved.keys()) == ["beta", "alpha"]
+
+    def test_drops_strategies_without_factory(self):
+        factories = {"alpha": _mock_factory(name="alpha")}
+        context = _context(strategies=[_strategy("alpha"), _strategy("missing")])
+        with _patch_registry(factories):
+            resolved = resolve_technique_factories(context=context)
+        assert list(resolved.keys()) == ["alpha"]
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestBuildMatrixAtomicAttacks:
+    """``build_matrix_atomic_attacks`` wires the context into the builder in one call."""
+
+    def test_builds_cross_product_grouped_by_technique(self):
+        context = _context(
+            strategies=[_strategy("tech")],
+            seed_groups_by_dataset={"ds": [_seed_group(objective="o1")]},
+        )
+        with _patch_registry({"tech": _mock_factory(name="tech")}):
+            result = build_matrix_atomic_attacks(context=context, objective_scorer=MagicMock(spec=TrueFalseScorer))
+        assert [a.atomic_attack_name for a in result] == ["tech_ds"]
+        assert result[0].display_group == "tech"
+
+    def test_custom_display_group_fn(self):
+        context = _context(
+            strategies=[_strategy("tech")],
+            seed_groups_by_dataset={"ds": [_seed_group(objective="o1")]},
+        )
+        with _patch_registry({"tech": _mock_factory(name="tech")}):
+            result = build_matrix_atomic_attacks(
+                context=context,
+                objective_scorer=MagicMock(spec=TrueFalseScorer),
+                display_group_fn=lambda combo: combo.dataset_name,
+            )
+        assert result[0].display_group == "ds"
+
+    def test_no_baseline_emitted(self):
+        context = _context(
+            strategies=[_strategy("tech")],
+            seed_groups_by_dataset={"ds": [_seed_group(objective="o1")]},
+        )
+        with _patch_registry({"tech": _mock_factory(name="tech")}):
+            result = build_matrix_atomic_attacks(context=context, objective_scorer=MagicMock(spec=TrueFalseScorer))
+        assert all(a.atomic_attack_name != "baseline" for a in result)
+
+    def test_strategy_converters_forwarded(self):
+        from pyrit.prompt_converter import PromptConverter
+
+        context = _context(
+            strategies=[_strategy("tech")],
+            seed_groups_by_dataset={"ds": [_seed_group(objective="o1")]},
+        )
+        factory = _mock_factory(name="tech")
+        converter = MagicMock(spec=PromptConverter)
+        with _patch_registry({"tech": factory}):
+            build_matrix_atomic_attacks(
+                context=context,
+                objective_scorer=MagicMock(spec=TrueFalseScorer),
+                strategy_converters={"tech": [converter]},
+            )
+        extra = factory.create.call_args.kwargs["extra_request_converters"]
+        assert extra is not None
+        assert len(extra) == 1

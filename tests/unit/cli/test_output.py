@@ -22,6 +22,7 @@ from pyrit.models.catalog import (
     TargetCapabilitiesInfo,
     TargetInstance,
 )
+from unit.mocks import make_scenario_result
 
 # ---------------------------------------------------------------------------
 # Typed-object factory helpers
@@ -37,7 +38,6 @@ def _make_scenario(**overrides) -> RegisteredScenario:
         "aggregate_strategies": [],
         "all_strategies": [],
         "default_datasets": [],
-        "max_dataset_size": None,
         "supported_parameters": [],
     }
     defaults.update(overrides)
@@ -170,7 +170,6 @@ def test_print_scenario_list_full(capsys):
             all_strategies=["s1", "s2", "s3"],
             default_strategy="s1",
             default_datasets=["d1", "d2"],
-            max_dataset_size=50,
             supported_parameters=[
                 Parameter(
                     name="max_turns",
@@ -195,7 +194,7 @@ def test_print_scenario_list_full(capsys):
     assert "single_turn" in captured.out
     assert "Available Strategies (3)" in captured.out
     assert "Default Strategy: s1" in captured.out
-    assert "Default Datasets (2, max 50 per dataset)" in captured.out
+    assert "Default Datasets (2)" in captured.out
     assert "Supported Parameters" in captured.out
     assert "max_turns" in captured.out
     assert "mode" in captured.out
@@ -477,11 +476,8 @@ async def test_print_scenario_result_async_accepts_real_scenario_result():
         AttackOutcome,
         AttackResult,
         ComponentIdentifier,
-        ScenarioIdentifier,
-        ScenarioResult,
     )
 
-    identifier = ScenarioIdentifier(name="test.scenario", description="A test")
     target_identifier = ComponentIdentifier.model_validate(
         {"__type__": "FakeTarget", "__module__": "test.mod", "params": {}}
     )
@@ -493,8 +489,9 @@ async def test_print_scenario_result_async_accepts_real_scenario_result():
         execution_time_ms=150,
         timestamp=datetime(2025, 1, 1, tzinfo=timezone.utc),
     )
-    scenario_result = ScenarioResult(
-        scenario_identifier=identifier,
+    scenario_result = make_scenario_result(
+        scenario_name="test.scenario",
+        scenario_description="A test",
         objective_target_identifier=target_identifier,
         objective_scorer_identifier=None,
         attack_results={"strat_a": [attack]},

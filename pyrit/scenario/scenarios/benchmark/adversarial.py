@@ -21,7 +21,10 @@ from pyrit.models.parameter import Parameter
 from pyrit.registry import AttackTechniqueRegistry, TargetRegistry
 from pyrit.registry.tag_query import TagQuery
 from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
-from pyrit.scenario.core.matrix_atomic_attack_builder import MatrixAtomicAttackBuilder
+from pyrit.scenario.core.matrix_atomic_attack_builder import (
+    MatrixAtomicAttackBuilder,
+    resolve_technique_factories,
+)
 from pyrit.scenario.core.scenario import BaselineAttackPolicy, Scenario
 
 if TYPE_CHECKING:
@@ -229,12 +232,7 @@ class AdversarialBenchmark(Scenario):
             )
 
         resolved_targets = self._resolve_adversarial_targets(target_names=target_names)
-        all_factories = AttackTechniqueRegistry.get_registry_singleton().get_factories_or_raise()
-        technique_factories = {
-            strategy.value: all_factories[strategy.value]
-            for strategy in context.scenario_strategies
-            if strategy.value in all_factories
-        }
+        technique_factories = resolve_technique_factories(context=context)
 
         builder = MatrixAtomicAttackBuilder(
             objective_target=context.objective_target,

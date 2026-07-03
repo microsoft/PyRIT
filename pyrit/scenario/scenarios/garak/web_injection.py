@@ -4,7 +4,7 @@
 
 import logging
 import random
-from typing import ClassVar
+from typing import ClassVar, cast
 
 from pyrit.common import apply_defaults
 from pyrit.executor.attack.core.attack_config import AttackScoringConfig
@@ -13,7 +13,7 @@ from pyrit.memory import CentralMemory
 from pyrit.models import SeedAttackGroup, SeedObjective, SeedPrompt
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
-from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
+from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
 from pyrit.scenario.core.scenario import BaselineAttackPolicy, Scenario
 from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
 from pyrit.score import (
@@ -261,7 +261,7 @@ class WebInjection(Scenario):
             version=self.VERSION,
             strategy_class=WebInjectionStrategy,
             default_strategy=WebInjectionStrategy.DEFAULT,
-            default_dataset_config=DatasetConfiguration(
+            default_dataset_config=DatasetAttackConfiguration(
                 dataset_names=[
                     DATASET_EXAMPLE_DOMAINS,
                     DATASET_MARKDOWN_JS,
@@ -519,7 +519,11 @@ class WebInjection(Scenario):
         atomic_attacks: list[AtomicAttack] = []
         all_seed_groups: list[SeedAttackGroup] = []
 
-        for strategy in self._scenario_strategies:
+        # ``_scenario_strategies`` is typed as the base ``ScenarioStrategy`` on the
+        # ``Scenario`` base class, but this scenario only ever populates it with
+        # ``WebInjectionStrategy`` members (its ``strategy_class``).
+        strategies = cast("list[WebInjectionStrategy]", self._scenario_strategies)
+        for strategy in strategies:
             objective, prompts = self._build_prompts_for_strategy(
                 strategy=strategy, dataset_values=dataset_values, rng=rng
             )

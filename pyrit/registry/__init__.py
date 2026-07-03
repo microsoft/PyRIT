@@ -9,14 +9,14 @@ from pyrit.registry.class_registries import (
     ClassEntry,
     InitializerMetadata,
     InitializerRegistry,
-    ScenarioMetadata,
-    ScenarioRegistry,
 )
 from pyrit.registry.components import (
     AttackTechniqueMetadata,
     AttackTechniqueRegistry,
     ConverterMetadata,
     ConverterRegistry,
+    ScenarioMetadata,
+    ScenarioRegistry,
     ScorerMetadata,
     ScorerRegistry,
     TargetMetadata,

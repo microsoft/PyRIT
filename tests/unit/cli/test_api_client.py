@@ -21,6 +21,7 @@ from pyrit.models.catalog import (
     TargetCapabilitiesInfo,
     TargetInstance,
 )
+from unit.mocks import make_scenario_result
 
 
 @pytest.fixture()
@@ -60,7 +61,6 @@ def _scenario_payload(*, scenario_name: str = "s1") -> dict:
         "aggregate_strategies": [],
         "all_strategies": ["single_turn"],
         "default_datasets": [],
-        "max_dataset_size": None,
         "supported_parameters": [],
     }
 
@@ -145,7 +145,9 @@ async def test_async_context_manager_passes_custom_request_timeout(mock_httpx_cl
     fake_async_client_cls.assert_called_once_with(base_url="http://localhost:8000", timeout=120.0)
 
 
-async def test_async_context_manager_uses_default_when_request_timeout_is_none(mock_httpx_client):
+async def test_async_context_manager_uses_default_when_request_timeout_is_none(
+    mock_httpx_client,
+):
     c = PyRITApiClient(base_url="http://localhost:8000", request_timeout=None)
     fake_async_client_cls = MagicMock(return_value=mock_httpx_client)
     with patch("httpx.AsyncClient", fake_async_client_cls):
@@ -358,10 +360,10 @@ async def test_get_scenario_run_async_wraps_connect_error(client, mock_httpx_cli
 
 async def test_get_scenario_run_results_async(client, mock_httpx_client):
     # Build a minimal ScenarioResult.to_dict() payload that from_dict can deserialize.
-    from pyrit.models import ScenarioIdentifier, ScenarioResult, ScenarioRunState
+    from pyrit.models import ScenarioResult, ScenarioRunState
 
-    scenario_result = ScenarioResult(
-        scenario_identifier=ScenarioIdentifier(name="x"),
+    scenario_result = make_scenario_result(
+        scenario_name="x",
         objective_target_identifier=None,
         objective_scorer_identifier=None,
         attack_results={},

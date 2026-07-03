@@ -62,6 +62,7 @@ from pyrit.prompt_converter.negation_trap_converter import NegationTrapConverter
 from pyrit.prompt_converter.noise_converter import NoiseConverter
 from pyrit.prompt_converter.pdf_converter import PDFConverter
 from pyrit.prompt_converter.persuasion_converter import PersuasionConverter
+from pyrit.prompt_converter.policy_puppetry_converter import PolicyPuppetryConverter, PolicyPuppetryTemplate
 from pyrit.prompt_converter.prompt_converter import ConverterResult, PromptConverter, get_converter_modalities
 from pyrit.prompt_converter.qr_code_converter import QRCodeConverter
 from pyrit.prompt_converter.random_capital_letters_converter import RandomCapitalLettersConverter
@@ -201,6 +202,8 @@ __all__ = [
     "NoiseConverter",
     "PDFConverter",
     "PersuasionConverter",
+    "PolicyPuppetryConverter",
+    "PolicyPuppetryTemplate",
     "PositionSelectionStrategy",
     "PromptConverter",
     "ProportionSelectionStrategy",

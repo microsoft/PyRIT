@@ -18,6 +18,8 @@ This module provides:
 * ``AtomicAttackEvaluationIdentifier`` — attack-domain concrete subclass.
 * ``ObjectiveTargetEvaluationIdentifier`` — leaf-target subclass used by the
   analytics layer to key cached results by behavioral target configuration.
+* ``ScenarioEvaluationIdentifier`` — scenario-domain concrete subclass used to
+  key a scenario run's behavioral identity (for resume drift detection).
 """
 
 from __future__ import annotations
@@ -30,6 +32,7 @@ from pyrit.models.identifiers.atomic_attack_identifier import AtomicAttackIdenti
 from pyrit.models.identifiers.attack_identifier import AttackIdentifier
 from pyrit.models.identifiers.component_identifier import ComponentIdentifier, config_hash
 from pyrit.models.identifiers.evaluation_markers import EvalMarker, Exclude, Include, Unwrap
+from pyrit.models.identifiers.scenario_identifier import ScenarioIdentifier
 from pyrit.models.identifiers.scorer_identifier import ScorerIdentifier
 from pyrit.models.identifiers.target_identifier import TargetIdentifier
 
@@ -529,6 +532,21 @@ class ObjectiveTargetEvaluationIdentifier(EvaluationIdentifier):
     """
 
     EVAL_ROOT: ClassVar[type[ComponentIdentifier] | None] = TargetIdentifier
+
+
+class ScenarioEvaluationIdentifier(EvaluationIdentifier):
+    """
+    Evaluation identity for scenarios.
+
+    Rules are derived from ``ScenarioIdentifier``'s field markers: the definition
+    ``version`` and resolved ``techniques`` / ``datasets`` feed the hash, the
+    resolved scenario ``params`` are included, and the ``objective_target`` /
+    ``objective_scorer`` children contribute their full behavioral projection.
+    Two runs of the same scenario definition with the same configuration produce
+    the same eval hash, which backs resume drift detection.
+    """
+
+    EVAL_ROOT: ClassVar[type[ComponentIdentifier] | None] = ScenarioIdentifier
 
 
 def compute_inner_attack_eval_hash(*, attack: AttackStrategy[Any, Any]) -> str:

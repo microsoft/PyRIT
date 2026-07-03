@@ -106,8 +106,7 @@ def print_scenario_list(*, items: list[RegisteredScenario]) -> None:
         if sc.default_strategy:
             print(f"    Default Strategy: {sc.default_strategy}")
         if sc.default_datasets:
-            suffix = f", max {sc.max_dataset_size} per dataset" if sc.max_dataset_size else ""
-            print(f"    Default Datasets ({len(sc.default_datasets)}{suffix}):")
+            print(f"    Default Datasets ({len(sc.default_datasets)}):")
             print(_wrap(text=", ".join(sc.default_datasets), indent="      "))
         if sc.supported_parameters:
             print("    Supported Parameters:")

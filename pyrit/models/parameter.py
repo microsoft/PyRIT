@@ -25,12 +25,14 @@ class ComponentType(str, Enum):
 
     Each member maps one-to-one to a registry singleton that resolves references
     of that family by name (``TARGET`` → ``TargetRegistry``, ``CONVERTER`` →
-    ``ConverterRegistry``, ``SCORER`` → ``ScorerRegistry``).
+    ``ConverterRegistry``, ``SCORER`` → ``ScorerRegistry``, ``SCENARIO`` →
+    ``ScenarioRegistry``).
     """
 
     TARGET = "target"
     CONVERTER = "converter"
     SCORER = "scorer"
+    SCENARIO = "scenario"
 
 
 class ParameterDestination(str, Enum):
@@ -242,7 +244,7 @@ class Parameter(BaseModel):
             return _coerce_simple_value(param_name=self.name, annotation=param_type, raw_value=raw_value)
         return raw_value
 
-    def validate(self) -> None:
+    def validate(self) -> None:  # type: ignore[ty:invalid-method-override]
         """
         Reject a declaration with an unsupported ``param_type``.
 

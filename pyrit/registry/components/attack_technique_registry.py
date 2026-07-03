@@ -253,4 +253,7 @@ class AttackTechniqueRegistry(Registry["AttackTechniqueFactory", AttackTechnique
                     tags=tags,
                 )
 
-        logger.debug("Technique registration complete (%d total in registry)", len(self.instances))
+        logger.debug(
+            "Technique registration complete (%d total in registry)",
+            len(self.instances),
+        )

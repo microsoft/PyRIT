@@ -469,24 +469,30 @@ class ScenarioRunService:
 
     async def _initialize_scenario_async(self, *, request: RunScenarioRequest, init_kwargs: dict[str, Any]) -> Scenario:
         """
-        Instantiate the scenario and call initialize_async.
+        Build and initialize the scenario via the registry.
+
+        Delegates the full create + set-parameters + initialize lifecycle to
+        ``ScenarioRegistry.create_and_initialize_async`` so the registry owns
+        scenario creation and initialization. The run-specific common parameters
+        (target, strategies, dataset config, concurrency) are resolved by
+        ``_build_init_kwargs`` and forwarded as ``init_kwargs``.
 
         Args:
             request: The run request (for scenario_name, scenario_params, and
                 scenario_result_id).
-            init_kwargs: The kwargs to pass to scenario.initialize_async.
+            init_kwargs: The resolved common parameters to pass to
+                scenario.initialize_async.
 
         Returns:
             The fully initialized Scenario instance ready for run_async.
         """
-        constructor_kwargs: dict[str, Any] = {}
-        if request.scenario_result_id:
-            constructor_kwargs["scenario_result_id"] = request.scenario_result_id
         scenario_registry = ScenarioRegistry.get_registry_singleton()
-        scenario = scenario_registry.create_instance(request.scenario_name, **constructor_kwargs)
-        scenario.set_params_from_args(args=request.scenario_params or {})
-        await scenario.initialize_async(**init_kwargs)
-        return scenario
+        return await scenario_registry.create_and_initialize_async(
+            request.scenario_name,
+            scenario_params=request.scenario_params or {},
+            scenario_result_id=request.scenario_result_id or None,
+            **init_kwargs,
+        )
 
     async def _execute_run_async(self, *, scenario_result_id: str) -> None:
         """
@@ -579,8 +585,8 @@ class ScenarioRunService:
 
         return ScenarioRunSummary(
             scenario_result_id=scenario_result_id,
-            scenario_name=scenario_result.scenario_identifier.name,
-            scenario_version=scenario_result.scenario_identifier.version,
+            scenario_name=scenario_result.scenario_name,
+            scenario_version=scenario_result.scenario_version,
             status=status,
             created_at=scenario_result.creation_time,
             updated_at=scenario_result.completion_time or scenario_result.creation_time,

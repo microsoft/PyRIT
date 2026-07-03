@@ -18,16 +18,10 @@ from pyrit.registry.class_registries.initializer_registry import (
     InitializerMetadata,
     InitializerRegistry,
 )
-from pyrit.registry.class_registries.scenario_registry import (
-    ScenarioMetadata,
-    ScenarioRegistry,
-)
 
 __all__ = [
     "BaseClassRegistry",
     "ClassEntry",
-    "ScenarioRegistry",
-    "ScenarioMetadata",
     "InitializerRegistry",
     "InitializerMetadata",
 ]

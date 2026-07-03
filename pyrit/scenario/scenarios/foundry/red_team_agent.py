@@ -555,7 +555,7 @@ class RedTeamAgent(Scenario):
 
             # Create the adversarial config from self._adversarial_target
             attack_adversarial_config = AttackAdversarialConfig(target=self._adversarial_chat)
-            kwargs["attack_adversarial_config"] = attack_adversarial_config  # type: ignore[ty:invalid-assignment]
+            kwargs["attack_adversarial_config"] = attack_adversarial_config
 
         # Add attack-specific kwargs if provided
         if attack_kwargs:
