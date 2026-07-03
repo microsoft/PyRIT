@@ -21,7 +21,7 @@ import json
 import logging
 import shlex
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, get_args, get_origin
+from typing import TYPE_CHECKING, Any, get_args, get_origin
 
 from pyrit.common.cli_helpers import (
     CONFIG_FILE_HELP,
@@ -262,7 +262,10 @@ ARG_HELP = {
     "initialization_scripts": "Paths to custom Python initialization scripts to run before the scenario",
     "env_files": "Paths to environment files to load in order (e.g., .env.production .env.local). Later files "
     "override earlier ones.",
-    "scenario_strategies": "List of strategy names to run (e.g., base64 rot13)",
+    "scenario_strategies": "List of strategy names to run (e.g., base64 rot13). Append one or more "
+    "registered converters to a technique with ':converter.<name>' (repeatable), e.g. "
+    "role_play:converter.translation_spanish:converter.leetspeak. The converter is appended on top of "
+    "the technique's built-in converters. Use --list-converters to see registered converter names",
     "max_concurrency": "Maximum number of concurrent attack executions (must be >= 1)",
     "max_retries": "Maximum number of automatic retries on exception (must be >= 0)",
     "memory_labels": 'Additional labels as JSON string (e.g., \'{"experiment": "test1"}\')',
@@ -655,52 +658,23 @@ def extract_scenario_args(*, parsed: dict[str, Any]) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def build_parameters_from_api(*, api_params: list[dict[str, Any]]) -> list[Parameter] | None:
+def build_parameters_from_api(*, api_params: list[Parameter]) -> list[Parameter] | None:
     """
-    Build ``Parameter`` objects from a scenario catalog's ``supported_parameters``.
+    Return a scenario catalog's ``supported_parameters`` as coercion-ready ``Parameter`` objects.
 
-    Maps the display ``param_type`` string ("int", "float", "bool", "str",
-    "list[...]", "any") back to a concrete ``param_type`` so the shell parser
-    can apply per-element coercion and treat list params as ``multi_value``. A
-    ``choices`` list is reconstructed into a ``Literal[...]`` (the single source
-    of truth for an allowed set) — typed by the same base scalar.
+    The REST client deserializes catalog payloads directly into ``Parameter``,
+    which reconstructs each parameter's live ``param_type`` from its serialized
+    display fields (``type_name`` / ``choices`` / ``is_list``). The parameters are
+    therefore already coercion-ready, so the shell parser can apply per-element
+    coercion and treat list parameters as ``multi_value`` without further mapping.
 
     Args:
-        api_params: List of parameter dicts from ``GET /api/scenarios/catalog/{name}``.
+        api_params: Scenario-declared parameters from ``GET /api/scenarios/catalog/{name}``.
 
     Returns:
         list[Parameter] | None: Parameter list when ``api_params`` is non-empty, else ``None``.
     """
-    from pyrit.models.parameter import Parameter
-
-    if not api_params:
-        return None
-    type_map: dict[str, Any] = {"int": int, "float": float, "bool": bool, "str": str}
-    parameters: list[Parameter] = []
-    for p in api_params:
-        type_display = p.get("param_type", "")
-        is_list = bool(p.get("is_list"))
-        base_name = type_display.removeprefix("list[").rstrip("]") if is_list else type_display
-        base_type = type_map.get(base_name, str)
-
-        raw_choices = p.get("choices")
-        if raw_choices:
-            choice_param = Parameter(name=p["name"], description="", param_type=base_type)
-            members = tuple(choice_param.coerce_value(c) for c in raw_choices)
-            element_type: Any = Literal[members]  # ty: ignore[invalid-type-form]
-        else:
-            element_type = type_map.get(base_name) if is_list else type_map.get(type_display)
-
-        resolved_type: Any = list[element_type] if is_list else element_type  # type: ignore[valid-type]
-        parameters.append(
-            Parameter(
-                name=p["name"],
-                description=p.get("description", ""),
-                param_type=resolved_type,
-                default=p.get("default"),
-            )
-        )
-    return parameters
+    return list(api_params) or None
 
 
 def add_common_arguments(parser: argparse.ArgumentParser) -> None:

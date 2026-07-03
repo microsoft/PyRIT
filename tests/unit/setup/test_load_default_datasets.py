@@ -15,7 +15,7 @@ from pyrit.memory import CentralMemory
 from pyrit.models import SeedDataset
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry import ScenarioRegistry, TargetRegistry
-from pyrit.registry.object_registries.attack_technique_registry import AttackTechniqueRegistry
+from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
 from pyrit.setup.initializers.load_default_datasets import LoadDefaultDatasets
 from pyrit.setup.initializers.techniques import build_technique_factories
 
@@ -23,17 +23,17 @@ from pyrit.setup.initializers.techniques import build_technique_factories
 @pytest.fixture
 def populated_technique_registry():
     """Populate the technique + target registries so scenario metadata building succeeds."""
-    AttackTechniqueRegistry.reset_instance()
-    TargetRegistry.reset_instance()
+    AttackTechniqueRegistry.reset_registry_singleton()
+    TargetRegistry.reset_registry_singleton()
 
     adv_target = MagicMock(spec=PromptTarget)
     adv_target.capabilities.includes.return_value = True
-    TargetRegistry.get_registry_singleton().register_instance(adv_target, name="adversarial_chat")
+    TargetRegistry.get_registry_singleton().instances.register(adv_target, name="adversarial_chat")
 
     AttackTechniqueRegistry.get_registry_singleton().register_from_factories(build_technique_factories())
     yield
-    AttackTechniqueRegistry.reset_instance()
-    TargetRegistry.reset_instance()
+    AttackTechniqueRegistry.reset_registry_singleton()
+    TargetRegistry.reset_registry_singleton()
 
 
 @dataclass
@@ -64,7 +64,7 @@ class TestLoadDefaultDatasets:
         """Test initialization when no scenarios are registered."""
         initializer = LoadDefaultDatasets()
 
-        with patch.object(ScenarioRegistry, "list_metadata", return_value=[]):
+        with patch.object(ScenarioRegistry, "get_all_registered_class_metadata", return_value=[]):
             with patch.object(SeedDatasetProvider, "fetch_datasets_async", new_callable=AsyncMock) as mock_fetch:
                 with patch.object(CentralMemory, "get_memory_instance") as mock_memory:
                     mock_memory_instance = MagicMock()
@@ -82,7 +82,7 @@ class TestLoadDefaultDatasets:
 
         metadata = [_FakeMetadata(registry_name="mock_scenario", default_datasets=("dataset1", "dataset2"))]
 
-        with patch.object(ScenarioRegistry, "list_metadata", return_value=metadata):
+        with patch.object(ScenarioRegistry, "get_all_registered_class_metadata", return_value=metadata):
             with patch.object(SeedDatasetProvider, "fetch_datasets_async", new_callable=AsyncMock) as mock_fetch:
                 mock_dataset1 = MagicMock(spec=SeedDataset)
                 mock_dataset2 = MagicMock(spec=SeedDataset)
@@ -112,7 +112,7 @@ class TestLoadDefaultDatasets:
             _FakeMetadata(registry_name="scenario2", default_datasets=("dataset2", "dataset3")),
         ]
 
-        with patch.object(ScenarioRegistry, "list_metadata", return_value=metadata):
+        with patch.object(ScenarioRegistry, "get_all_registered_class_metadata", return_value=metadata):
             with patch.object(SeedDatasetProvider, "fetch_datasets_async", new_callable=AsyncMock) as mock_fetch:
                 mock_fetch.return_value = []
 
@@ -157,7 +157,7 @@ class TestLoadDefaultDatasets:
         ):
             registry = ScenarioRegistry.get_registry_singleton()
             registry._metadata_cache = None  # force rebuild under the patch
-            metadata_list = list(registry.list_metadata())
+            metadata_list = list(registry.get_all_registered_class_metadata())
 
         missing_datasets: list[str] = []
         for metadata in metadata_list:
@@ -178,7 +178,7 @@ class TestLoadDefaultDatasets:
 
         metadata = [_FakeMetadata(registry_name="empty_scenario", default_datasets=())]
 
-        with patch.object(ScenarioRegistry, "list_metadata", return_value=metadata):
+        with patch.object(ScenarioRegistry, "get_all_registered_class_metadata", return_value=metadata):
             with patch.object(SeedDatasetProvider, "fetch_datasets_async", new_callable=AsyncMock) as mock_fetch:
                 with patch.object(CentralMemory, "get_memory_instance") as mock_memory:
                     mock_memory_instance = MagicMock()
@@ -204,7 +204,7 @@ class TestLoadDefaultDatasetsParameters:
         initializer.params = {"dataset_names": ["alpha", "beta"]}
 
         with (
-            patch.object(ScenarioRegistry, "list_metadata") as mock_list_metadata,
+            patch.object(ScenarioRegistry, "get_all_registered_class_metadata") as mock_list_metadata,
             patch.object(SeedDatasetProvider, "get_all_dataset_names_async", new_callable=AsyncMock) as mock_names,
             patch.object(SeedDatasetProvider, "fetch_datasets_async", new_callable=AsyncMock) as mock_fetch,
             patch.object(CentralMemory, "get_memory_instance") as mock_memory,

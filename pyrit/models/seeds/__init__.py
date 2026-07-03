@@ -20,6 +20,7 @@ from pyrit.models.seeds.seed_attack_group import SeedAttackGroup
 from pyrit.models.seeds.seed_attack_technique_group import SeedAttackTechniqueGroup
 from pyrit.models.seeds.seed_dataset import SeedDataset
 from pyrit.models.seeds.seed_group import SeedGroup, SeedUnion
+from pyrit.models.seeds.seed_grouping import group_seeds_into_attack_groups
 from pyrit.models.seeds.seed_objective import SeedObjective
 from pyrit.models.seeds.seed_prompt import SeedPrompt
 from pyrit.models.seeds.seed_simulated_conversation import (
@@ -37,6 +38,7 @@ __all__ = [
     "load_seed_dataset_from_yaml",
     "load_seed_from_yaml",
     "load_seed_prompt_from_yaml_with_required_parameters",
+    "group_seeds_into_attack_groups",
     "NextMessageSystemPromptPaths",
     "Seed",
     "SeedAttackGroup",

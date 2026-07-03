@@ -105,7 +105,7 @@ class LoadDefaultDatasets(PyRITInitializer):
         registry = ScenarioRegistry.get_registry_singleton()
 
         all_default_datasets: list[str] = []
-        for metadata in registry.list_metadata():
+        for metadata in registry.get_all_registered_class_metadata():
             datasets = list(metadata.default_datasets)
             all_default_datasets.extend(datasets)
             logger.info(f"Scenario '{metadata.registry_name}' uses datasets: {datasets}")

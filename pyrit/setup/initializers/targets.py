@@ -676,11 +676,13 @@ class TargetInitializer(PyRITInitializer):
 
         target = config.target_class(**kwargs)
         registry = TargetRegistry.get_registry_singleton()
-        registry.register_instance(target, name=config.registry_name)
+        registry.instances.register(target, name=config.registry_name)
         if config.tags:
-            registry.add_tags(name=config.registry_name, tags=list(config.tags))
+            registry.instances.add_tags(name=config.registry_name, tags=list(config.tags))
         if config.default_objective_target:
-            registry.add_tags(name=config.registry_name, tags=[TargetInitializerTags.DEFAULT_OBJECTIVE_TARGET])
+            registry.instances.add_tags(
+                name=config.registry_name, tags=[TargetInitializerTags.DEFAULT_OBJECTIVE_TARGET]
+            )
         self._registered_names.append(config.registry_name)
         logger.info(f"Registered target: {config.registry_name}")
 
@@ -703,7 +705,7 @@ class TargetInitializer(PyRITInitializer):
         # Group registered targets by behavioral key.
         groups: dict[tuple[Any, ...], list[tuple[str, PromptTarget]]] = defaultdict(list)
         for name in self._registered_names:
-            target = registry.get_instance_by_name(name)
+            target = registry.instances.get(name)
             if target is None:
                 continue
             key = get_behavioral_key(target)
@@ -741,11 +743,11 @@ class TargetInitializer(PyRITInitializer):
 
             rr_name = generate_rr_name(key)
 
-            if rr_name in registry:
+            if rr_name in registry.instances:
                 logger.debug(f"Skipping auto-group {rr_name}: name already exists in registry")
                 continue
 
-            registry.register_instance(rr_target, name=rr_name)
+            registry.instances.register(rr_target, name=rr_name)
 
             logger.info(f"Auto-grouped round-robin target: {rr_name} (members: {member_names})")
 

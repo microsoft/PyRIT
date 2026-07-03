@@ -100,26 +100,33 @@ export interface CreateTargetRequest {
 
 // --- Converters ---
 
+export interface ConverterIdentifier {
+  class_name: string
+  class_module: string
+  hash: string
+  pyrit_version: string
+  supported_input_types?: string[] | null
+  supported_output_types?: string[] | null
+  // Converter-specific constructor params are inlined at the top level.
+  [key: string]: unknown
+}
+
 export interface ConverterInstance {
   converter_id: string
-  converter_type: string
-  display_name?: string | null
-  supported_input_types: string[]
-  supported_output_types: string[]
-  converter_specific_params?: Record<string, unknown> | null
-  sub_converter_ids?: string[] | null
+  identifier: ConverterIdentifier
 }
 
 export interface ConverterListResponse {
   items: ConverterInstance[]
 }
 
-export interface ConverterParameterSchema {
+export interface Parameter {
   name: string
   type_name: string
   required: boolean
-  default_value?: string | null
+  default?: string | null
   choices?: string[] | null
+  is_list?: boolean
   description?: string | null
 }
 
@@ -127,7 +134,7 @@ export interface ConverterCatalogEntry {
   converter_type: string
   supported_input_types: string[]
   supported_output_types: string[]
-  parameters: ConverterParameterSchema[]
+  parameters: Parameter[]
   is_llm_based: boolean
   description?: string | null
 }

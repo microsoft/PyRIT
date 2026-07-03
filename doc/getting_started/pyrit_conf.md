@@ -131,6 +131,10 @@ initializers:
   - name: load_default_datasets
 ```
 
+```{note}
+**`load_default_datasets` is optional.** Scenarios fetch their datasets from the registered provider on demand the first time they run, so you no longer need this initializer for everyday runs. Add it only when you want to preload every scenario's datasets up front — for example, to warm memory for repeated runs or to populate a database for offline use.
+```
+
 ### `initialization_scripts`
 
 Paths to custom Python scripts containing `PyRITInitializer` subclasses. Paths can be absolute or relative to the current working directory.

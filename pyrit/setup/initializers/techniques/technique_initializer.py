@@ -21,7 +21,7 @@ import logging
 from enum import Enum
 
 from pyrit.models.parameter import Parameter
-from pyrit.registry.object_registries.attack_technique_registry import (
+from pyrit.registry.components.attack_technique_registry import (
     AttackTechniqueRegistry,
 )
 from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory

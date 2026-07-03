@@ -6,7 +6,7 @@ Pre-warm the ScenarioRegistry metadata cache.
 
 Each registered ``Scenario`` is instantiated once so the registry can read the
 strategy class, default strategy, and default dataset configuration off the
-instance. The results are cached on ``BaseClassRegistry._metadata_cache``; the
+instance. The results are cached on ``Registry._metadata_cache``; the
 first ``--list-scenarios`` / GUI call is then a cache hit. Per-scenario
 instantiation failures surface loudly here at startup rather than later.
 """
@@ -25,5 +25,5 @@ class PreloadScenarioMetadata(PyRITInitializer):
     async def initialize_async(self) -> None:
         """Warm the scenario metadata cache."""
         registry = ScenarioRegistry.get_registry_singleton()
-        metadata = registry.list_metadata()
+        metadata = registry.get_all_registered_class_metadata()
         logger.info("Preloaded metadata for %d scenarios", len(metadata))

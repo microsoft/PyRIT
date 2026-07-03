@@ -13,7 +13,7 @@ from pyrit.executor.attack import PAIRAttack, PromptSendingAttack, RedTeamingAtt
 from pyrit.models import SeedPrompt
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry import TargetRegistry
-from pyrit.registry.object_registries.attack_technique_registry import AttackTechniqueRegistry
+from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
 from pyrit.score.true_false.self_ask_true_false_scorer import TrueFalseQuestionPaths
 from pyrit.setup.initializers import TechniqueInitializer
 from pyrit.setup.initializers.techniques import (
@@ -51,11 +51,11 @@ PERSONA_CRESCENDO_TECHNIQUE_NAMES: list[str] = [
 @pytest.fixture(autouse=True)
 def reset_registries():
     """Reset technique and target registries between tests."""
-    AttackTechniqueRegistry.reset_instance()
-    TargetRegistry.reset_instance()
+    AttackTechniqueRegistry.reset_registry_singleton()
+    TargetRegistry.reset_registry_singleton()
     yield
-    AttackTechniqueRegistry.reset_instance()
-    TargetRegistry.reset_instance()
+    AttackTechniqueRegistry.reset_registry_singleton()
+    TargetRegistry.reset_registry_singleton()
 
 
 @pytest.fixture
@@ -64,7 +64,7 @@ def mock_adversarial_target():
     target = MagicMock(spec=PromptTarget)
     target.capabilities.includes.return_value = True
     registry = TargetRegistry.get_registry_singleton()
-    registry.register_instance(target, name="adversarial_chat")
+    registry.instances.register(target, name="adversarial_chat")
     return target
 
 
@@ -255,7 +255,7 @@ class TestTechniqueInitializerRegistration:
         init = TechniqueInitializer()
         await init.initialize_async()
 
-        names = set(AttackTechniqueRegistry.get_registry_singleton().get_names())
+        names = set(AttackTechniqueRegistry.get_registry_singleton().instances.get_names())
         assert set(CORE_TECHNIQUE_NAMES) <= names
         assert "pair" not in names
         assert "violent_durian" not in names
@@ -272,7 +272,7 @@ class TestTechniqueInitializerRegistration:
         init.params = {"tags": ["extra"]}
         await init.initialize_async()
 
-        names = set(AttackTechniqueRegistry.get_registry_singleton().get_names())
+        names = set(AttackTechniqueRegistry.get_registry_singleton().instances.get_names())
         assert {"pair", "violent_durian"} <= names
 
     async def test_all_tag_registers_everything(self, mock_adversarial_target):
@@ -280,7 +280,7 @@ class TestTechniqueInitializerRegistration:
         init.params = {"tags": ["all"]}
         await init.initialize_async()
 
-        names = set(AttackTechniqueRegistry.get_registry_singleton().get_names())
+        names = set(AttackTechniqueRegistry.get_registry_singleton().instances.get_names())
         assert (set(CORE_TECHNIQUE_NAMES) | set(EXTRA_TECHNIQUE_NAMES)) <= names
 
     async def test_persona_factories_carry_seed_technique(self, mock_adversarial_target):
@@ -297,11 +297,11 @@ class TestTechniqueInitializerRegistration:
         await init.initialize_async()
 
         registry = AttackTechniqueRegistry.get_registry_singleton()
-        first_names = set(registry.get_names())
+        first_names = set(registry.instances.get_names())
         first_factory = registry.get_factories()["crescendo_movie_director"]
 
         await init.initialize_async()
-        second_names = set(registry.get_names())
+        second_names = set(registry.instances.get_names())
         second_factory = registry.get_factories()["crescendo_movie_director"]
 
         assert first_names == second_names
@@ -380,7 +380,7 @@ class TestViolentDurianTechnique:
         init.params = {"tags": ["extra"]}
         await init.initialize_async()
 
-        assert "violent_durian" in set(AttackTechniqueRegistry.get_registry_singleton().get_names())
+        assert "violent_durian" in set(AttackTechniqueRegistry.get_registry_singleton().instances.get_names())
 
 
 # ---------------------------------------------------------------------------
