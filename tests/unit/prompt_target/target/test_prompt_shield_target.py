@@ -154,9 +154,7 @@ def test_init_uses_identity_token_provider_for_azure_endpoint(sqlite_instance):
             "pyrit.prompt_target.prompt_shield_target.get_azure_token_provider",
             return_value=token_provider,
         ) as mock_provider:
-            target = PromptShieldTarget(
-                endpoint="https://myresource.cognitiveservices.azure.com", api_key=None
-            )
+            target = PromptShieldTarget(endpoint="https://myresource.cognitiveservices.azure.com", api_key=None)
 
     mock_provider.assert_called_once_with("https://cognitiveservices.azure.com/.default")
     assert target._api_key is token_provider
