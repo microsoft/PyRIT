@@ -11,7 +11,7 @@
 # %% [markdown]
 # # Listing Available Classes
 #
-# Use `get_names()` to see what's available, or `list_metadata()` for detailed information.
+# Use `get_class_names()` to see what's available, or `get_all_registered_class_metadata()` for detailed information.
 
 # %%
 from pyrit.registry import ScenarioRegistry
@@ -19,11 +19,11 @@ from pyrit.registry import ScenarioRegistry
 registry = ScenarioRegistry.get_registry_singleton()
 
 # Get all registered names
-names = registry.get_names()
+names = registry.get_class_names()
 print(f"Available scenarios: {names[:5]}...")  # Show first 5
 
 # Get detailed metadata
-metadata = registry.list_metadata()
+metadata = registry.get_all_registered_class_metadata()
 for item in metadata[:2]:  # Show first 2
     print(f"\n{item.class_name}:")
     print(f"  Description: {item.class_description[:80]}...")
@@ -92,11 +92,11 @@ from pyrit.registry import InitializerRegistry
 initializer_registry = InitializerRegistry.get_registry_singleton()
 
 # Get all registered names
-initializer_names = initializer_registry.get_names()
+initializer_names = initializer_registry.get_class_names()
 print(f"Available initializers: {initializer_names[:5]}...")  # Show first 5
 
 # Get detailed metadata
-for init_item in initializer_registry.list_metadata()[:2]:  # Show first 2
+for init_item in initializer_registry.get_all_registered_class_metadata()[:2]:  # Show first 2
     print(f"\n{init_item.registry_name}:")
     print(f"  Class: {init_item.class_name}")
     print(f"  Description: {init_item.class_description[:80]}...")

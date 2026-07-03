@@ -395,5 +395,5 @@ class TestTechniqueInitializerDiscovery:
         from pyrit.registry import InitializerRegistry
 
         registry = InitializerRegistry()
-        names = set(registry.get_names())
+        names = set(registry.get_class_names())
         assert "technique" in names

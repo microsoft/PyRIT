@@ -139,7 +139,7 @@ def mock_all_registries(mock_memory):
     mock_tr.instances.get_names.return_value = ["my_target"]
 
     mock_ir = MagicMock()
-    mock_ir.get_class.return_value = MagicMock(return_value=MagicMock(initialize_async=AsyncMock()))
+    mock_ir.create_and_configure.return_value = MagicMock(initialize_async=AsyncMock())
 
     # By default, return a matching DB result for get_run / list_runs queries
     db_result = _make_db_scenario_result()
@@ -215,7 +215,7 @@ class TestScenarioRunServiceStartRun:
         mock_sr.get_class.return_value = MagicMock()
 
         mock_ir = MagicMock()
-        mock_ir.get_class.side_effect = KeyError("'bad_init' not found")
+        mock_ir.create_and_configure.side_effect = KeyError("'bad_init' not found")
 
         with (
             patch(f"{_REGISTRY_PATCH_BASE}.ScenarioRegistry.get_registry_singleton", return_value=mock_sr),
@@ -468,7 +468,7 @@ class TestScenarioRunServiceStartRun:
         """Test that initializers are run during start_run_async."""
         service = ScenarioRunService()
         mock_ir = mock_all_registries["initializer_registry"]
-        mock_init_instance = mock_ir.get_class.return_value.return_value
+        mock_init_instance = mock_ir.create_and_configure.return_value
 
         response = await service.start_run_async(
             request=_make_request(initializers=["target", "load_default_datasets"])
