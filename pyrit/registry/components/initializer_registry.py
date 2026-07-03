@@ -250,19 +250,22 @@ class InitializerRegistry(Registry["PyRITInitializer", InitializerMetadata]):
                 required_env_vars=(),
             )
 
-    def create_and_configure(self, name: str, *, args: dict[str, Any] | None = None) -> PyRITInitializer:
+    def create_and_configure(
+        self, name: str, *, initializer_params: dict[str, Any] | None = None
+    ) -> PyRITInitializer:
         """
         Build and parameterize an initializer in one call.
 
-        Mirrors ``ScenarioRegistry.create_and_initialize_async``: the registry —
-        not the caller — owns the build → set-params → validate lifecycle. Unlike
-        scenarios, ``initialize_async`` is invoked later by the PyRIT init flow, so
-        this returns a *configured, not-yet-initialized* instance.
+        Parallels ``ScenarioRegistry.create_and_initialize_async`` (which takes
+        ``scenario_params``): the registry — not the caller — owns the
+        build → set-params → validate lifecycle. Unlike scenarios,
+        ``initialize_async`` is invoked later by the PyRIT init flow, so this stops
+        at ``configure`` and returns a *configured, not-yet-initialized* instance.
 
         Args:
             name (str): The registry name of the initializer (e.g. ``"objective_target"``).
-            args (dict[str, Any] | None): Declared parameters to set before
-                initialization. Coerced to ``self.params`` via
+            initializer_params (dict[str, Any] | None): Declared parameters to set
+                before initialization. Coerced to ``self.params`` via
                 ``set_params_from_args`` and validated against
                 ``supported_parameters``. Defaults to no parameters.
 
@@ -274,8 +277,8 @@ class InitializerRegistry(Registry["PyRITInitializer", InitializerMetadata]):
             ValueError: If the configured parameters are invalid.
         """
         instance = self.create_instance(name)
-        if args:
-            instance.set_params_from_args(args=args)
+        if initializer_params:
+            instance.set_params_from_args(args=initializer_params)
             instance._validate_params(params=instance.params)
         return instance
 

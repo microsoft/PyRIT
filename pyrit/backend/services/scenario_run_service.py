@@ -227,9 +227,11 @@ class ScenarioRunService:
 
         initializer_registry = InitializerRegistry.get_registry_singleton()
         for initializer_name in request.initializers:
-            args = (request.initializer_args or {}).get(initializer_name)
+            initializer_params = (request.initializer_args or {}).get(initializer_name)
             try:
-                instance = initializer_registry.create_and_configure(initializer_name, args=args)
+                instance = initializer_registry.create_and_configure(
+                    initializer_name, initializer_params=initializer_params
+                )
             except KeyError as e:
                 raise ValueError(f"Initializer not found: {e}") from None
             await instance.initialize_async()

@@ -479,7 +479,7 @@ class ConfigurationLoader(YamlLoadable):
 
         for config in self._initializer_configs:
             try:
-                instance = registry.create_and_configure(config.name, args=config.args)
+                instance = registry.create_and_configure(config.name, initializer_params=config.args)
             except KeyError as exc:
                 available = ", ".join(sorted(registry.get_class_names()))
                 raise ValueError(

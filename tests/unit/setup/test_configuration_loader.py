@@ -371,7 +371,7 @@ class TestConfigurationLoaderInitialization:
         await config.initialize_pyrit_async()
 
         # Verify registry was used to resolve and configure the initializer
-        mock_registry.create_and_configure.assert_called_once_with("simple", args=None)
+        mock_registry.create_and_configure.assert_called_once_with("simple", initializer_params=None)
 
         # Verify initialize was called with resolved initializers
         mock_init.assert_called_once()
