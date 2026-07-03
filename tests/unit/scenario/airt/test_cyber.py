@@ -11,15 +11,10 @@ from pyrit.executor.attack import RedTeamingAttack
 from pyrit.models import ComponentIdentifier, SeedAttackGroup, SeedObjective, SeedPrompt
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
-from pyrit.scenario.core.dataset_configuration import (
-    DatasetAttackConfiguration,
-    DatasetConfiguration,
-)
+from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration, DatasetConfiguration
 from pyrit.scenario.scenarios.airt.cyber import Cyber
 from pyrit.score import TrueFalseScorer
-from pyrit.setup.initializers.components.scenario_techniques import (
-    build_scenario_technique_factories,
-)
+from pyrit.setup.initializers.components.scenario_techniques import build_scenario_technique_factories
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -258,7 +253,7 @@ class TestCyberAttackGeneration:
             if strategies:
                 init_kwargs["scenario_strategies"] = strategies
             await scenario.initialize_async(**init_kwargs)
-            return await scenario._get_atomic_attacks_async()
+            return scenario._atomic_attacks
 
     async def test_all_strategy_produces_red_teaming(self, mock_objective_target, mock_objective_scorer):
         attacks = await self._init_and_get_attacks(
@@ -321,7 +316,7 @@ class TestCyberAttackGeneration:
     async def test_raises_when_not_initialized(self, mock_objective_scorer):
         scenario = Cyber(objective_scorer=mock_objective_scorer)
         with pytest.raises(ValueError, match="Scenario not properly initialized"):
-            await scenario._get_atomic_attacks_async()
+            scenario._build_scenario_context(seed_groups_by_dataset={})
 
 
 # ===========================================================================
@@ -349,17 +344,17 @@ class TestCyberRegistryIntegration:
     """Tests for attack technique registry wiring via Cyber scenario."""
 
     def test_cyber_factories_include_red_teaming(self, mock_objective_scorer):
-        scenario = Cyber(objective_scorer=mock_objective_scorer)
-        factories = scenario._get_attack_technique_factories()
-        # Cyber filters the registry to red_teaming; the PromptSendingAttack baseline
+        registry = AttackTechniqueRegistry.get_registry_singleton()
+        factories = registry.get_factories_or_raise()
+        # Cyber selects red_teaming from the registry; the PromptSendingAttack baseline
         # is contributed at runtime by BaselineAttackPolicy.Enabled, not by this dict.
         assert "red_teaming" in factories
         assert factories["red_teaming"].attack_class is RedTeamingAttack
 
     def test_red_teaming_factory_has_adversarial_config(self, mock_objective_scorer):
         """red_teaming factory advertises uses_adversarial (config resolved lazily at create())."""
-        scenario = Cyber(objective_scorer=mock_objective_scorer)
-        factories = scenario._get_attack_technique_factories()
+        registry = AttackTechniqueRegistry.get_registry_singleton()
+        factories = registry.get_factories_or_raise()
         assert factories["red_teaming"].uses_adversarial is True
         assert factories["red_teaming"]._adversarial_chat is None
 

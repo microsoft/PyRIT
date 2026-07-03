@@ -40,7 +40,10 @@ def _make_scenario(*, declared_params: list[Parameter]) -> Scenario:
         def supported_parameters(cls) -> list[Parameter]:
             return list(params_to_declare)
 
-        async def _get_atomic_attacks_async(self):
+        async def _resolve_seed_groups_by_dataset_async(self):
+            return {}
+
+        async def _build_atomic_attacks_async(self, *, context):
             return []
 
     mock_scorer = MagicMock(spec=Scorer)

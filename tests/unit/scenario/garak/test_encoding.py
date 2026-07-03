@@ -11,11 +11,7 @@ from pyrit.executor.attack import PromptSendingAttack
 from pyrit.models import ComponentIdentifier, SeedAttackGroup, SeedObjective, SeedPrompt
 from pyrit.prompt_converter import Base64Converter
 from pyrit.prompt_target import PromptTarget
-from pyrit.scenario import (
-    CompoundDatasetAttackConfiguration,
-    DatasetAttackConfiguration,
-    DatasetConfiguration,
-)
+from pyrit.scenario import CompoundDatasetAttackConfiguration, DatasetAttackConfiguration, DatasetConfiguration
 from pyrit.scenario.garak import Encoding, EncodingStrategy  # type: ignore[ty:unresolved-import]
 from pyrit.scenario.scenarios.garak.encoding import EncodingDatasetConfiguration
 from pyrit.score import DecodingScorer, TrueFalseScorer
@@ -231,7 +227,7 @@ class TestEncodingAtomicAttacks:
             )
 
             await scenario.initialize_async(objective_target=mock_objective_target, dataset_config=mock_dataset_config)
-            atomic_attacks = await scenario._get_atomic_attacks_async()
+            atomic_attacks = scenario._atomic_attacks
 
             # Should return multiple atomic attacks (one for each encoding type)
             assert len(atomic_attacks) > 0

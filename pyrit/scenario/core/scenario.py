@@ -11,7 +11,7 @@ AtomicAttack instances sequentially, enabling comprehensive security testing cam
 import asyncio
 import logging
 import uuid
-from abc import ABC
+from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from enum import Enum
 from pathlib import Path
@@ -27,7 +27,6 @@ except ImportError:  # pragma: no cover - exercised only on 3.10
 from tqdm.auto import tqdm
 
 from pyrit.common import REQUIRED_VALUE, apply_defaults
-from pyrit.common.deprecation import print_deprecation_message
 from pyrit.common.utils import to_sha256
 from pyrit.executor.attack import AttackExecutor
 from pyrit.memory import CentralMemory
@@ -45,15 +44,10 @@ from pyrit.models.parameter import Parameter
 from pyrit.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_requirements import TargetRequirements
 from pyrit.registry import ScorerRegistry
-from pyrit.registry.resolution import (
-    resolve_declared_params,
-)
+from pyrit.registry.resolution import resolve_declared_params
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
-from pyrit.scenario.core.matrix_atomic_attack_builder import (
-    MatrixAtomicAttackBuilder,
-    build_baseline_atomic_attack,
-)
+from pyrit.scenario.core.matrix_atomic_attack_builder import build_baseline_atomic_attack
 from pyrit.scenario.core.scenario_context import ScenarioContext
 from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
 from pyrit.scenario.core.scenario_target_defaults import get_default_scorer_target
@@ -70,7 +64,6 @@ from pyrit.score import (
 if TYPE_CHECKING:
     from pyrit.models import ComponentIdentifier
     from pyrit.prompt_converter import PromptConverter
-    from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
 
 logger = logging.getLogger(__name__)
 
@@ -103,7 +96,7 @@ class BaselineAttackPolicy(Enum):
     Forbidden = "forbidden"
 
 
-class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even without abstract methods
+class Scenario(ABC):
     """
     Groups and executes multiple AtomicAttack instances sequentially.
 
@@ -163,7 +156,6 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
         default_dataset_config: DatasetAttackConfiguration,
         objective_scorer: Scorer,
         scenario_result_id: uuid.UUID | str | None = None,
-        include_default_baseline: bool | None = None,  # Deprecated. Will be removed in 0.16.0.
     ) -> None:
         """
         Initialize a scenario.
@@ -182,14 +174,10 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
                 Can be either a UUID object or a string representation of a UUID.
                 If provided and found in memory, the scenario will resume from prior progress.
                 All other parameters must still match the stored scenario configuration.
-            include_default_baseline (bool | None): **Deprecated.** Will be removed in 0.16.0.
-                Pass ``include_baseline`` to ``initialize_async`` instead. When set, the value is
-                used as the effective ``include_baseline`` for the next ``initialize_async`` call
-                unless that call passes its own ``include_baseline``.
 
         Note:
             Attack runs are populated by calling initialize_async(), which invokes the
-            subclass's _get_atomic_attacks_async() method.
+            subclass's _build_atomic_attacks_async() method.
 
             The scenario description is automatically extracted from the class's docstring (__doc__)
             with whitespace normalized for display.
@@ -231,7 +219,7 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
         self._atomic_attacks: list[AtomicAttack] = []
         self._scenario_result_id: str | None = str(scenario_result_id) if scenario_result_id else None
 
-        # Store prepared strategies for use in _get_atomic_attacks_async
+        # Store prepared strategies for use in _build_atomic_attacks_async
         self._scenario_strategies: list[ScenarioStrategy] = []
 
         # Maps concrete technique name → extra request converters to append for that technique.
@@ -241,24 +229,12 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
         self._display_group_map: dict[str, str] = {}
 
         # Declared via supported_parameters(); resolved/populated by the registry
-        # helper (pyrit.registry.resolution). Subclasses read it in _get_atomic_attacks_async.
+        # helper (pyrit.registry.resolution). Subclasses read it in _build_atomic_attacks_async.
         self.params: dict[str, Any] = {}
 
         # Resolved effective baseline inclusion for the current run. Set in initialize_async
-        # before _get_atomic_attacks_async is awaited so overrides can read it.
+        # before _build_atomic_attacks_async is awaited so overrides can read it.
         self._include_baseline: bool = False
-
-        # Deprecated constructor-time baseline override. Will be removed in 0.16.0, along
-        # with the include_default_baseline kwarg above and the legacy fallback branch in
-        # initialize_async. Subclass shims set this attribute directly to avoid double-warning.
-        self._legacy_include_baseline: bool | None = None
-        if include_default_baseline is not None:
-            print_deprecation_message(
-                old_item="Scenario(include_default_baseline=...)",
-                new_item="Scenario.initialize_async(include_baseline=...)",
-                removed_in="0.16.0",
-            )
-            self._legacy_include_baseline = include_default_baseline
 
     @property
     def name(self) -> str:
@@ -286,64 +262,6 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
             list[Parameter]: Declared parameters (default: empty list).
         """
         return []
-
-    def _get_attack_technique_factories(self) -> dict[str, "AttackTechniqueFactory"]:
-        """
-        Return the attack technique factories for this scenario.
-
-        Each key is a technique name (matching a strategy enum value) and each
-        value is an ``AttackTechniqueFactory`` that can produce an
-        ``AttackTechnique`` for that technique.
-
-        The base implementation returns every factory currently registered in
-        the ``AttackTechniqueRegistry`` singleton. The canonical scenario
-        techniques are populated by ``ScenarioTechniqueInitializer``
-        (``pyrit.setup.initializers.components.scenario_techniques``); ensure
-        that initializer has run before scenarios use this method.
-        Subclasses may override to add, remove, or replace factories.
-
-        Returns:
-            dict[str, AttackTechniqueFactory]: Mapping of technique name to factory.
-
-        Raises:
-            RuntimeError: If the registry is empty (no initializer has run).
-        """
-        from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
-
-        registry = AttackTechniqueRegistry.get_registry_singleton()
-        return registry.get_factories_or_raise()
-
-    def _build_display_group(self, *, technique_name: str, seed_group_name: str) -> str:
-        """
-        Build the display-group label for an atomic attack.
-
-        Each ``AtomicAttack`` has a unique ``atomic_attack_name`` (e.g.
-        ``"prompt_sending_airt_hate"``) used for resume tracking.  However,
-        user-facing output (console printer, reports) often needs to
-        aggregate results along a *different* dimension — for example,
-        grouping by harm category rather than by technique.  The display
-        group provides that second grouping axis without affecting resume
-        behaviour.
-
-        The default groups by technique name.  Subclasses override to
-        change the aggregation axis:
-
-        - **By technique** (default): ``return technique_name``
-        - **By harm category / dataset**: ``return seed_group_name``
-        - **Cross-product**: ``return f"{technique_name}_{seed_group_name}"``
-
-        Note: ``seed_group_name`` is the dataset key from
-        ``DatasetAttackConfiguration.get_attack_groups_by_dataset_async()`` (e.g.
-        ``"airt_hate"``), not a ``SeedGroup`` object.
-
-        Args:
-            technique_name: The name of the attack technique.
-            seed_group_name: The dataset key from the dataset configuration.
-
-        Returns:
-            str: The display-group label.
-        """
-        return technique_name
 
     def _get_default_objective_scorer(self) -> TrueFalseScorer:
         # Deferred import to avoid circular dependency.
@@ -433,28 +351,6 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
             owner=f"Scenario '{type(self).__name__}'",
         )
 
-    def _prepare_strategies(
-        self,
-        strategies: Sequence[ScenarioStrategy] | None,
-    ) -> list[ScenarioStrategy]:
-        """
-        Resolve strategy inputs into a concrete list for this scenario.
-
-        The default implementation calls resolve() on the strategy class, which handles
-        None (use default), empty list (also use default), and aggregate expansion.
-
-        Subclasses with complex composition semantics (e.g., RedTeamAgent with
-        FoundryComposite) should override this to build their own composite types.
-
-        Args:
-            strategies: Strategy inputs from initialize_async. None or [] both mean use
-                default; otherwise a list of strategies to resolve.
-
-        Returns:
-            list[ScenarioStrategy]: Ordered, deduplicated concrete strategies.
-        """
-        return self._strategy_class.resolve(strategies, default=self._default_strategy)
-
     @apply_defaults
     async def initialize_async(
         self,
@@ -535,12 +431,6 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
         self._max_retries = max_retries
         self._memory_labels = memory_labels or {}
 
-        # Deprecated. Will be removed in 0.16.0. Honor the legacy constructor-time
-        # include_default_baseline (or subclass include_baseline) only when the caller did
-        # not supply a runtime value.
-        if include_baseline is None and self._legacy_include_baseline is not None:
-            include_baseline = self._legacy_include_baseline
-
         # Resolve the effective include_baseline. Forbidden is checked first so a forbidden
         # scenario type never silently inherits a True default; explicit-True on a forbidden
         # type is a hard error rather than a silent ignore. For the Enabled / Disabled states,
@@ -558,7 +448,7 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
         self._include_baseline = include_baseline
 
         # Prepare scenario strategies using the stored configuration
-        self._scenario_strategies = self._prepare_strategies(scenario_strategies)
+        self._scenario_strategies = self._strategy_class.resolve(scenario_strategies, default=self._default_strategy)
         self._strategy_converters = strategy_converters or {}
 
         # Resolve declared parameters through the single registry-owned path,
@@ -567,25 +457,16 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
         # so the registry- and CLI-driven flows converge here without divergence.
         self.set_params_from_args(args=self.params)
 
-        self._atomic_attacks = await self._get_atomic_attacks_async()
+        # Build atomic attacks: resolve the seed groups once, snapshot the resolved inputs
+        # into a ScenarioContext, and hand it to the subclass extension point. Baseline is
+        # emitted centrally (from context.seed_groups) so overrides never re-resolve seeds
+        # or hand-roll baseline emission.
+        seed_groups_by_dataset = await self._resolve_seed_groups_by_dataset_async()
+        context = self._build_scenario_context(seed_groups_by_dataset=seed_groups_by_dataset)
+        self._atomic_attacks = await self._build_atomic_attacks_async(context=context)
 
-        # Deprecation rescue. Will be removed in 0.16.0. If the override didn't emit baseline,
-        # warn and inject. Migrated overrides emit baseline themselves and bypass this branch.
-        # Reuse seeds from the first existing attack rather than re-resolving from
-        # dataset_config; re-resolution under max_dataset_size would draw a fresh sample
-        # (the very ADO 9012 bug this PR fixes). When no atomic attacks exist yet the
-        # rescue falls back to the dataset_config one-time resolution.
         if include_baseline and (not self._atomic_attacks or self._atomic_attacks[0].atomic_attack_name != "baseline"):
-            print_deprecation_message(
-                old_item=f"Implicit baseline injection for {type(self).__name__}._get_atomic_attacks_async()",
-                new_item="explicit emission via self._build_baseline_atomic_attack(seed_groups=...) in the override",
-                removed_in="0.16.0",
-            )
-            if self._atomic_attacks:
-                seed_groups = self._atomic_attacks[0].seed_groups
-            else:
-                seed_groups = await self._dataset_config.get_seed_attack_groups_async()
-            self._atomic_attacks.insert(0, self._build_baseline_atomic_attack(seed_groups=seed_groups))
+            self._atomic_attacks.insert(0, self._build_baseline_atomic_attack(seed_groups=list(context.seed_groups)))
 
         # Build the canonical scenario identifier once params/strategies/datasets
         # are resolved, so both the resume check and the new-result branch share the
@@ -945,47 +826,19 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
             seed_groups_by_dataset=seed_groups_by_dataset,
         )
 
-    async def _get_atomic_attacks_async(self) -> list[AtomicAttack]:
-        """
-        Build this scenario's atomic attacks (internal entry point called by ``initialize_async``).
-
-        Resolves the seed groups once, builds a ``ScenarioContext`` from the values resolved
-        in ``initialize_async``, and forwards to ``_build_atomic_attacks_async`` — the extension
-        point scenarios override to customize attack construction. The baseline is emitted
-        centrally here (when ``context.include_baseline`` is set) from ``context.seed_groups``,
-        so overrides never re-resolve seeds or hand-roll baseline emission. This stays a stable,
-        no-argument entry point for ``initialize_async`` and other internal callers.
-
-        Returns:
-            list[AtomicAttack]: The generated atomic attacks.
-
-        Raises:
-            ValueError: If the scenario has not been initialized.
-        """
-        seed_groups_by_dataset = await self._resolve_seed_groups_by_dataset_async()
-        context = self._build_scenario_context(seed_groups_by_dataset=seed_groups_by_dataset)
-        atomic_attacks = await self._build_atomic_attacks_async(context=context)
-
-        # Central baseline emission. Guarded so a scenario that still emits its own baseline
-        # (or an aggregate that legitimately has none) isn't given a duplicate.
-        if context.include_baseline and (not atomic_attacks or atomic_attacks[0].atomic_attack_name != "baseline"):
-            atomic_attacks.insert(0, self._build_baseline_atomic_attack(seed_groups=list(context.seed_groups)))
-
-        return atomic_attacks
-
+    @abstractmethod
     async def _build_atomic_attacks_async(self, *, context: ScenarioContext) -> list[AtomicAttack]:
         """
-        Build atomic attacks from the cross-product of selected techniques and datasets.
+        Build this scenario's atomic attacks from the resolved runtime inputs.
 
         This is the single extension point scenarios override to map techniques, datasets,
-        scorers, and any extra axes into ``AtomicAttack`` instances. The default
-        implementation delegates to ``MatrixAtomicAttackBuilder`` using the
-        ``_get_attack_technique_factories()`` and ``_build_display_group()`` hooks, producing
-        one ``AtomicAttack`` per (technique × dataset) pair.
+        scorers, and any extra axes into ``AtomicAttack`` instances. It is called once by
+        ``initialize_async`` after the objective target, scorer, strategies, dataset config,
+        labels, and baseline flag have been resolved and snapshot into ``context``.
 
-        Scenarios with custom construction (composite attacks, per-objective technique
-        selection, converter stacks) override this method and build their attacks from
-        ``context.seed_groups`` (or ``context.seed_groups_by_dataset``). The base owns baseline
+        Scenario authors build their attacks from ``context.seed_groups`` (or
+        ``context.seed_groups_by_dataset``) so sampling under ``max_dataset_size`` stays
+        consistent across every atomic attack and the baseline. The base owns baseline
         emission, so overrides never prepend one themselves.
 
         Args:
@@ -994,32 +847,7 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
         Returns:
             list[AtomicAttack]: The generated atomic attacks.
         """
-        selected_techniques = {s.value for s in context.scenario_strategies}
-        all_factories = self._get_attack_technique_factories()
-
-        technique_factories: dict[str, AttackTechniqueFactory] = {}
-        for technique_name in selected_techniques:
-            factory = all_factories.get(technique_name)
-            if factory is None:
-                logger.warning(f"No factory for technique '{technique_name}', skipping.")
-                continue
-            technique_factories[technique_name] = factory
-
-        builder = MatrixAtomicAttackBuilder(
-            objective_target=context.objective_target,
-            objective_scorer=self._objective_scorer,
-            memory_labels=context.memory_labels,
-        )
-        return builder.build(
-            technique_factories=technique_factories,
-            dataset_groups=context.seed_groups_by_dataset,
-            display_group_fn=lambda combo: self._build_display_group(
-                technique_name=combo.technique_name,
-                seed_group_name=combo.dataset_name,
-            ),
-            strategy_converters=self._strategy_converters,
-            include_baseline=False,
-        )
+        ...
 
     async def run_async(self) -> ScenarioResult:
         """

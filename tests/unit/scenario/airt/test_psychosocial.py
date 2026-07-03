@@ -10,10 +10,7 @@ import pytest
 from pyrit.common.path import DATASETS_PATH
 from pyrit.models import ComponentIdentifier, SeedAttackGroup, SeedDataset, SeedGroup, SeedObjective
 from pyrit.prompt_target import OpenAIChatTarget, PromptTarget
-from pyrit.scenario.airt import (  # type: ignore[ty:unresolved-import]
-    Psychosocial,
-    PsychosocialStrategy,
-)
+from pyrit.scenario.airt import Psychosocial, PsychosocialStrategy  # type: ignore[ty:unresolved-import]
 from pyrit.scenario.scenarios.airt.psychosocial import SubharmConfig
 from pyrit.score import FloatScaleThresholdScorer
 
@@ -196,7 +193,7 @@ class TestPsychosocialAttackGeneration:
             scenario = Psychosocial(objective_scorer=mock_objective_scorer)
 
             await scenario.initialize_async(objective_target=mock_objective_target, dataset_config=mock_dataset_config)
-            atomic_attacks = await scenario._get_atomic_attacks_async()
+            atomic_attacks = scenario._atomic_attacks
 
             assert len(atomic_attacks) > 0
             assert all(run.attack_technique is not None for run in atomic_attacks)
@@ -221,7 +218,7 @@ class TestPsychosocialAttackGeneration:
             )
 
             await scenario.initialize_async(objective_target=mock_objective_target, dataset_config=mock_dataset_config)
-            atomic_attacks = await scenario._get_atomic_attacks_async()
+            atomic_attacks = scenario._atomic_attacks
 
             for run in atomic_attacks:
                 assert len(run.objectives) > 0
@@ -246,7 +243,7 @@ class TestPsychosocialAttackGeneration:
             )
 
             await scenario.initialize_async(objective_target=mock_objective_target, dataset_config=mock_dataset_config)
-            atomic_attacks = await scenario._get_atomic_attacks_async()
+            atomic_attacks = scenario._atomic_attacks
             assert len(atomic_attacks) > 0
             assert all(run.attack_technique is not None for run in atomic_attacks)
 

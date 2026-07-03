@@ -15,13 +15,9 @@ from pyrit.models import SeedAttackGroup, SeedObjective
 from pyrit.models.identifiers import ComponentIdentifier
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
-from pyrit.scenario.core.dataset_configuration import (
-    CompoundDatasetAttackConfiguration,
-)
+from pyrit.scenario.core.dataset_configuration import CompoundDatasetAttackConfiguration
 from pyrit.scenario.core.scenario import BaselineAttackPolicy
-from pyrit.scenario.scenarios.adaptive.dispatcher import (
-    AdaptiveTechniqueDispatcher,
-)
+from pyrit.scenario.scenarios.adaptive.dispatcher import AdaptiveTechniqueDispatcher
 from pyrit.scenario.scenarios.adaptive.text_adaptive import TextAdaptive
 from pyrit.score import TrueFalseScorer
 
@@ -181,7 +177,7 @@ class TestTextAdaptiveAtomicAttacks:
                 objective_target=mock_objective_target,
                 include_baseline=False,
             )
-            return scenario, await scenario._get_atomic_attacks_async()
+            return scenario, scenario._atomic_attacks
 
     async def test_one_atomic_per_objective(self, mock_objective_target, mock_objective_scorer):
         groups = {
@@ -226,14 +222,12 @@ class TestTextAdaptiveAtomicAttacks:
             return_value=groups,
         ):
             scenario = TextAdaptive(objective_scorer=mock_objective_scorer)
-            await scenario.initialize_async(
-                objective_target=mock_objective_target,
-                include_baseline=False,
-            )
-            # Only spy on the explicit invocation so the initialize_async call
-            # doesn't double-count dispatchers.
+            # Spy on the dispatcher construction that initialize_async triggers.
             with patch.object(AdaptiveTechniqueDispatcher, "__init__", _spy_init):
-                await scenario._get_atomic_attacks_async()
+                await scenario.initialize_async(
+                    objective_target=mock_objective_target,
+                    include_baseline=False,
+                )
 
         # One dispatcher per dataset; all share the same selector identity.
         assert len(selectors_seen) == 2
@@ -277,14 +271,14 @@ class TestTextAdaptiveAtomicAttacks:
             return_value=groups,
         ):
             scenario = TextAdaptive(objective_scorer=mock_objective_scorer)
-            await scenario.initialize_async(
-                objective_target=mock_objective_target,
-                include_baseline=False,
-            )
-            # Force the factory map to be empty.
+            # Force the factory map to be empty; initialize_async builds the atomic
+            # attacks and must raise when no techniques are usable.
             with patch.object(scenario, "_get_attack_technique_factories", return_value={}):
                 with pytest.raises(ValueError, match="no usable techniques"):
-                    await scenario._get_atomic_attacks_async()
+                    await scenario.initialize_async(
+                        objective_target=mock_objective_target,
+                        include_baseline=False,
+                    )
 
     async def test_techniques_with_seed_technique_are_kept(self, mock_objective_target, mock_objective_scorer):
         """Factories that declare a ``seed_technique`` participate in the pool
