@@ -214,11 +214,10 @@ def _mock_api_client():
     """Create a mock PyRITApiClient with default response behaviors (typed wire-data)."""
     from datetime import datetime, timezone
 
-    from pyrit.models import ScenarioRunState
+    from pyrit.models import ScenarioRunState, TargetCapabilities
     from pyrit.models.catalog import (
         RegisteredScenario,
         ScenarioRunSummary,
-        TargetCapabilitiesInfo,
         TargetInstance,
     )
 
@@ -272,7 +271,7 @@ def _mock_api_client():
     client.__aenter__ = AsyncMock(return_value=client)
     client.__aexit__ = AsyncMock(return_value=None)
     # Marker so tests that re-shape the mock can find the unused TargetInstance helper.
-    _ = (TargetCapabilitiesInfo, TargetInstance)
+    _ = (TargetCapabilities, TargetInstance)
     return client
 
 

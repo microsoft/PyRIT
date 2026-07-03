@@ -67,26 +67,6 @@ class OpenAITarget(PromptTarget):
 
     _async_client: AsyncOpenAI | None = None
 
-    @classmethod
-    def get_api_key_environment_variable(cls) -> str | None:
-        """
-        Return the api-key env var for this concrete OpenAI target subclass.
-
-        The env var name is subclass-specific (e.g. ``OPENAI_CHAT_KEY``) and is
-        assigned in ``_set_openai_env_configuration_vars``. Resolve it without a
-        full construction by binding that setter to a bare instance.
-
-        Returns:
-            str | None: The api-key env var name, or None if it cannot be resolved.
-        """
-        try:
-            instance = cls.__new__(cls)
-            instance._set_openai_env_configuration_vars()
-        except Exception:
-            return None
-        env_var = getattr(instance, "api_key_environment_variable", None)
-        return env_var if isinstance(env_var, str) and env_var else None
-
     @property
     def _client(self) -> AsyncOpenAI:
         """

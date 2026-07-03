@@ -13,7 +13,7 @@ import pytest
 from pyrit.backend.models.targets import CreateTargetRequest
 from pyrit.backend.services.target_service import TargetService, get_target_service
 from pyrit.models import ComponentIdentifier
-from pyrit.prompt_target import PromptTarget
+from pyrit.prompt_target import PromptTarget, TargetCapabilities
 from pyrit.registry import TargetRegistry
 from unit.mocks import MockPromptTarget
 
@@ -44,6 +44,14 @@ def _mock_target_identifier(*, class_name: str = "MockTarget", **kwargs) -> Comp
     )
 
 
+def _mock_prompt_target(*, identifier: ComponentIdentifier | None = None) -> MagicMock:
+    """Create a MagicMock PromptTarget with an identifier and default capabilities."""
+    mock_target = MagicMock(spec=PromptTarget)
+    mock_target.get_identifier.return_value = identifier if identifier is not None else _mock_target_identifier()
+    mock_target.capabilities = TargetCapabilities()
+    return mock_target
+
+
 async def _test_token_provider() -> str:
     """Shared async token provider used in Entra authentication tests."""
     return "test-token"
@@ -66,15 +74,14 @@ class TestListTargets:
         service = TargetService()
 
         # Register a mock target
-        mock_target = MagicMock(spec=PromptTarget)
-        mock_target.get_identifier.return_value = _mock_target_identifier(endpoint="http://test")
+        mock_target = _mock_prompt_target(identifier=_mock_target_identifier(endpoint="http://test"))
         service._registry.instances.register(mock_target, name="target-1")
 
         result = await service.list_targets_async()
 
         assert len(result.items) == 1
         assert result.items[0].target_registry_name == "target-1"
-        assert result.items[0].target_type == "MockTarget"
+        assert result.items[0].identifier.class_name == "MockTarget"
         assert result.pagination.has_more is False
 
     async def test_list_targets_paginates_with_limit(self) -> None:
@@ -82,8 +89,7 @@ class TestListTargets:
         service = TargetService()
 
         for i in range(5):
-            mock_target = MagicMock(spec=PromptTarget)
-            mock_target.get_identifier.return_value = _mock_target_identifier()
+            mock_target = _mock_prompt_target()
             service._registry.instances.register(mock_target, name=f"target-{i}")
 
         result = await service.list_targets_async(limit=3)
@@ -98,8 +104,7 @@ class TestListTargets:
         service = TargetService()
 
         for i in range(5):
-            mock_target = MagicMock(spec=PromptTarget)
-            mock_target.get_identifier.return_value = _mock_target_identifier()
+            mock_target = _mock_prompt_target()
             service._registry.instances.register(mock_target, name=f"target-{i}")
 
         first_page = await service.list_targets_async(limit=2)
@@ -114,8 +119,7 @@ class TestListTargets:
         service = TargetService()
 
         for i in range(3):
-            mock_target = MagicMock(spec=PromptTarget)
-            mock_target.get_identifier.return_value = _mock_target_identifier()
+            mock_target = _mock_prompt_target()
             service._registry.instances.register(mock_target, name=f"target-{i}")
 
         first_page = await service.list_targets_async(limit=2)
@@ -141,21 +145,19 @@ class TestGetTarget:
         """Test that get_target returns target built from registry object."""
         service = TargetService()
 
-        mock_target = MagicMock(spec=PromptTarget)
-        mock_target.get_identifier.return_value = _mock_target_identifier()
+        mock_target = _mock_prompt_target()
         service._registry.instances.register(mock_target, name="target-1")
 
         result = await service.get_target_async(target_registry_name="target-1")
 
         assert result is not None
         assert result.target_registry_name == "target-1"
-        assert result.target_type == "MockTarget"
+        assert result.identifier.class_name == "MockTarget"
 
     async def test_list_targets_includes_extra_params_in_target_specific(self) -> None:
         """Test that extra identifier params (reasoning_effort etc.) appear in target_specific_params."""
         service = TargetService()
 
-        mock_target = MagicMock(spec=PromptTarget)
         identifier = ComponentIdentifier(
             class_name="OpenAIResponseTarget",
             class_module="pyrit.prompt_target",
@@ -168,14 +170,14 @@ class TestGetTarget:
                 "max_output_tokens": 4096,
             },
         )
-        mock_target.get_identifier.return_value = identifier
+        mock_target = _mock_prompt_target(identifier=identifier)
         service._registry.instances.register(mock_target, name="response-target")
 
         result = await service.list_targets_async()
 
         assert len(result.items) == 1
         target = result.items[0]
-        assert target.temperature == 1.0
+        assert target.identifier.temperature == 1.0
         assert target.target_specific_params is not None
         assert target.target_specific_params["reasoning_effort"] == "high"
         assert target.target_specific_params["reasoning_summary"] == "auto"
@@ -185,7 +187,6 @@ class TestGetTarget:
         """Test that get_target returns target_specific_params with extra identifier params."""
         service = TargetService()
 
-        mock_target = MagicMock(spec=PromptTarget)
         identifier = ComponentIdentifier(
             class_name="OpenAIChatTarget",
             class_module="pyrit.prompt_target",
@@ -196,7 +197,7 @@ class TestGetTarget:
                 "seed": 42,
             },
         )
-        mock_target.get_identifier.return_value = identifier
+        mock_target = _mock_prompt_target(identifier=identifier)
         service._registry.instances.register(mock_target, name="chat-target")
 
         result = await service.get_target_async(target_registry_name="chat-target")
@@ -251,7 +252,6 @@ class TestListTargetCatalog:
         openai_entry = next(item for item in result.items if item.target_type == "OpenAIChatTarget")
         assert "api_key" in openai_entry.supported_auth_modes
         assert "entra" in openai_entry.supported_auth_modes
-        assert openai_entry.api_key_env_var == "OPENAI_CHAT_KEY"
 
 
 class TestCreateTarget:
@@ -281,7 +281,7 @@ class TestCreateTarget:
         result = await service.create_target_async(request=request)
 
         assert result.target_registry_name is not None
-        assert result.target_type == "TextTarget"
+        assert result.identifier.class_name == "TextTarget"
 
     async def test_create_target_registers_in_registry(self, sqlite_instance) -> None:
         """Test that create_target registers object in registry."""
@@ -314,9 +314,9 @@ class TestCreateTarget:
 
             result = await service.create_target_async(request=request)
 
-            assert result.model_name == "claude-sonnet-4-6"
-            # underlying_model_name should be None since no underlying_model was passed
-            assert result.underlying_model_name is None
+            assert result.identifier.model_name == "claude-sonnet-4-6"
+            # underlying_model_name is empty since no underlying_model was passed
+            assert not result.identifier.underlying_model_name
 
     async def test_create_target_with_different_underlying_model(self, sqlite_instance) -> None:
         """Test that explicit underlying_model is used when it differs from model_name."""
@@ -334,8 +334,8 @@ class TestCreateTarget:
 
         result = await service.create_target_async(request=request)
 
-        assert result.model_name == "my-gpt4o-deployment"
-        assert result.underlying_model_name == "gpt-4o"
+        assert result.identifier.model_name == "my-gpt4o-deployment"
+        assert result.identifier.underlying_model_name == "gpt-4o"
 
 
 class TestCreateTargetEntraAuth:
@@ -484,94 +484,6 @@ class TestCreateTargetEntraAuth:
             await service.create_target_async(request=request)
 
 
-class TestCreateTargetApiKeyAuth:
-    """Test that auth_mode='api_key' strictly requires a key in params or environment."""
-
-    async def test_create_openai_target_api_key_mode_without_key_raises(self, sqlite_instance) -> None:
-        """Without an api_key (params or env), OpenAITarget would silently fall back to Entra;
-        the service must reject this so the user's explicit choice is honored."""
-        service = TargetService()
-
-        request = CreateTargetRequest(
-            type="OpenAIChatTarget",
-            params={
-                "model_name": "gpt-4o",
-                "endpoint": "https://test.openai.azure.com/",
-            },
-            auth_mode="api_key",
-        )
-
-        with patch.dict(os.environ, {}, clear=False):
-            os.environ.pop("OPENAI_CHAT_KEY", None)
-            with pytest.raises(ValueError, match="auth_mode='api_key' requires an API key"):
-                await service.create_target_async(request=request)
-
-    async def test_create_openai_target_api_key_mode_with_env_var_succeeds(self, sqlite_instance) -> None:
-        """An env-var-supplied key satisfies the api_key requirement."""
-        service = TargetService()
-
-        request = CreateTargetRequest(
-            type="OpenAIChatTarget",
-            params={
-                "model_name": "gpt-4o",
-                "endpoint": "https://test.openai.azure.com/",
-            },
-            auth_mode="api_key",
-        )
-
-        with patch.dict(os.environ, {"OPENAI_CHAT_KEY": "env-test-key"}):
-            result = await service.create_target_async(request=request)
-
-        assert result.target_type == "OpenAIChatTarget"
-
-    async def test_create_openai_target_api_key_mode_rejects_empty_key(self, sqlite_instance) -> None:
-        """An empty-string api_key counts as missing and must be rejected."""
-        service = TargetService()
-
-        request = CreateTargetRequest(
-            type="OpenAIChatTarget",
-            params={
-                "model_name": "gpt-4o",
-                "endpoint": "https://test.openai.azure.com/",
-                "api_key": "",
-            },
-            auth_mode="api_key",
-        )
-
-        with patch.dict(os.environ, {}, clear=False):
-            os.environ.pop("OPENAI_CHAT_KEY", None)
-            with pytest.raises(ValueError, match="auth_mode='api_key' requires an API key"):
-                await service.create_target_async(request=request)
-
-    async def test_create_azureml_target_api_key_mode_without_key_raises(self, sqlite_instance) -> None:
-        """AzureMLChatTarget in api_key mode also requires an explicit key."""
-        service = TargetService()
-
-        request = CreateTargetRequest(
-            type="AzureMLChatTarget",
-            params={"endpoint": "https://my-endpoint.eastus.inference.ml.azure.com/score"},
-            auth_mode="api_key",
-        )
-
-        with patch.dict(os.environ, {}, clear=False):
-            os.environ.pop("AZURE_ML_KEY", None)
-            with pytest.raises(ValueError, match="auth_mode='api_key' requires an API key"):
-                await service.create_target_async(request=request)
-
-    async def test_create_text_target_api_key_mode_skips_validation(self, sqlite_instance) -> None:
-        """Targets without an api_key_environment_variable (e.g. TextTarget) are unaffected."""
-        service = TargetService()
-
-        request = CreateTargetRequest(
-            type="TextTarget",
-            params={},
-            auth_mode="api_key",
-        )
-
-        result = await service.create_target_async(request=request)
-        assert result.target_type == "TextTarget"
-
-
 class TestCreateRoundRobinTarget:
     """Service-level tests for building RoundRobinTarget through the registry.
 
@@ -598,7 +510,7 @@ class TestCreateRoundRobinTarget:
 
         result = await service.create_target_async(request=rr_request)
 
-        assert result.target_type == "RoundRobinTarget"
+        assert result.identifier.class_name == "RoundRobinTarget"
         target_obj = service.get_target_object(target_registry_name=result.target_registry_name)
         assert target_obj._targets == [target_a, target_b]
         assert target_obj._weights == [2, 1]

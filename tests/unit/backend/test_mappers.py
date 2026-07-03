@@ -1316,7 +1316,8 @@ class TestTargetObjectToInstance:
 
     def test_maps_target_with_identifier(self) -> None:
         """Test mapping a target object that has get_identifier."""
-        target_obj = MagicMock()
+        target_obj = MagicMock(spec=PromptTarget)
+        target_obj.capabilities = TargetCapabilities()
         mock_identifier = ComponentIdentifier(
             class_name="OpenAIChatTarget",
             class_module="pyrit.prompt_target",
@@ -1331,19 +1332,20 @@ class TestTargetObjectToInstance:
         result = target_object_to_instance("t-1", target_obj)
 
         assert result.target_registry_name == "t-1"
-        assert result.target_type == "OpenAIChatTarget"
-        assert result.endpoint == "http://test"
-        assert result.model_name == "gpt-4"
-        assert result.temperature == 0.7
-        # identifier_hash is auto-populated by the ComponentIdentifier validator and
-        # surfaced on the DTO so the frontend can dedupe targets that resolve to the
+        assert result.identifier.class_name == "OpenAIChatTarget"
+        assert result.identifier.endpoint == "http://test"
+        assert result.identifier.model_name == "gpt-4"
+        assert result.identifier.temperature == 0.7
+        # hash is auto-populated by the ComponentIdentifier validator and surfaced on
+        # the embedded identifier so the frontend can dedupe targets that resolve to the
         # same underlying configuration.
-        assert result.identifier_hash is not None
-        assert result.identifier_hash == mock_identifier.hash
+        assert result.identifier.hash is not None
+        assert result.identifier.hash == mock_identifier.hash
 
     def test_no_endpoint_returns_none(self) -> None:
         """Test that missing endpoint returns None."""
-        target_obj = MagicMock()
+        target_obj = MagicMock(spec=PromptTarget)
+        target_obj.capabilities = TargetCapabilities()
         mock_identifier = ComponentIdentifier(
             class_name="TextTarget",
             class_module="pyrit.prompt_target",
@@ -1352,21 +1354,22 @@ class TestTargetObjectToInstance:
 
         result = target_object_to_instance("t-1", target_obj)
 
-        assert result.target_type == "TextTarget"
-        assert result.endpoint is None
-        assert result.model_name is None
+        assert result.identifier.class_name == "TextTarget"
+        assert result.identifier.endpoint is None
+        assert result.identifier.model_name is None
 
     def test_no_get_identifier_uses_class_name(self) -> None:
         """Test that target uses class name from identifier."""
-        target_obj = MagicMock()
+        target_obj = MagicMock(spec=PromptTarget)
+        target_obj.capabilities = TargetCapabilities()
         mock_identifier = ComponentIdentifier(class_name="FakeTarget", class_module="pyrit.prompt_target")
         target_obj.get_identifier.return_value = mock_identifier
 
         result = target_object_to_instance("t-1", target_obj)
 
-        assert result.target_type == "FakeTarget"
-        assert result.endpoint is None
-        assert result.model_name is None
+        assert result.identifier.class_name == "FakeTarget"
+        assert result.identifier.endpoint is None
+        assert result.identifier.model_name is None
 
     def test_supports_multi_turn_true_when_capability_set(self) -> None:
         """Test that targets with supports_multi_turn capability expose it via capabilities."""
@@ -1480,7 +1483,7 @@ class TestTargetObjectToInstance:
 
         result = target_object_to_instance("t-1", target_obj)
 
-        assert result.temperature == 1.0
+        assert result.identifier.temperature == 1.0
         assert result.target_specific_params is not None
         assert result.target_specific_params["reasoning_effort"] == "high"
         assert result.target_specific_params["reasoning_summary"] == "auto"
@@ -1504,8 +1507,8 @@ class TestTargetObjectToInstance:
 
         result = target_object_to_instance("t-1", target_obj)
 
-        assert result.temperature == 0.7
-        assert result.top_p == 0.9
+        assert result.identifier.temperature == 0.7
+        assert result.identifier.top_p == 0.9
         assert result.target_specific_params is None
 
     def test_none_valued_extra_params_excluded(self) -> None:
@@ -1576,8 +1579,8 @@ class TestTargetObjectToInstance:
 
         result = target_object_to_instance("t-1", target_obj)
 
-        assert result.temperature == 0.7
-        assert result.top_p == 0.9
+        assert result.identifier.temperature == 0.7
+        assert result.identifier.top_p == 0.9
         assert result.target_specific_params is not None
         assert result.target_specific_params["frequency_penalty"] == 0.5
         assert result.target_specific_params["presence_penalty"] == 0.3
@@ -1738,14 +1741,19 @@ class TestTargetObjectToInstanceRoundRobin:
 
         result = target_object_to_instance("rr-1", rr)
 
-        assert result.target_type == "RoundRobinTarget"
+        assert result.identifier.class_name == "RoundRobinTarget"
         assert result.inner_targets is not None
         assert len(result.inner_targets) == 2
-        assert result.inner_targets[0].endpoint == "https://a.openai.azure.com"
-        assert result.inner_targets[1].endpoint == "https://b.openai.azure.com"
+        assert result.inner_targets[0].identifier.endpoint == "https://a.openai.azure.com"
+        assert result.inner_targets[1].identifier.endpoint == "https://b.openai.azure.com"
 
-    def test_round_robin_hoists_model_name_when_all_inner_targets_match(self) -> None:
-        """model_name is hoisted only when all inner targets share the same deployment name."""
+    def test_round_robin_identifier_carries_no_model_name(self) -> None:
+        """The composite identifier owns no model_name; inner targets carry theirs.
+
+        Hoisting a shared model name for display is now the frontend's concern
+        (``targetIdentity.hoistFromInner``); the mapper faithfully reflects that a
+        RoundRobinTarget's own identifier has no model_name.
+        """
         from pyrit.prompt_target.round_robin_target import RoundRobinTarget
 
         rr = MagicMock(spec=RoundRobinTarget)
@@ -1776,11 +1784,14 @@ class TestTargetObjectToInstanceRoundRobin:
 
         result = target_object_to_instance("rr-2", rr)
 
-        assert result.model_name == "gpt-4o"
-        assert result.underlying_model_name == "gpt-4o"
+        assert result.identifier.model_name is None
+        assert result.identifier.underlying_model_name is None
+        assert result.inner_targets is not None
+        assert result.inner_targets[0].identifier.model_name == "gpt-4o"
+        assert result.inner_targets[1].identifier.underlying_model_name == "gpt-4o"
 
-    def test_round_robin_omits_model_name_when_inner_targets_differ(self) -> None:
-        """model_name is None when inner targets have different deployment names."""
+    def test_round_robin_inner_targets_retain_distinct_models(self) -> None:
+        """Inner targets keep their own deployment names; the mapper does not merge them."""
         from pyrit.prompt_target.round_robin_target import RoundRobinTarget
 
         rr = MagicMock(spec=RoundRobinTarget)
@@ -1811,10 +1822,10 @@ class TestTargetObjectToInstanceRoundRobin:
 
         result = target_object_to_instance("rr-3", rr)
 
-        # model_name should be None since deployments differ
-        assert result.model_name is None
-        # underlying_model_name should still be hoisted (they all share gpt-4o)
-        assert result.underlying_model_name == "gpt-4o"
+        assert result.identifier.model_name is None
+        assert result.inner_targets is not None
+        assert result.inner_targets[0].identifier.model_name == "deploy-japan"
+        assert result.inner_targets[1].identifier.model_name == "deploy-us"
 
     def test_non_round_robin_has_no_inner_targets(self) -> None:
         """Regular targets return None for inner_targets."""

@@ -13,7 +13,6 @@ Targets can be:
 """
 
 import logging
-import os
 from functools import lru_cache
 from typing import Any
 
@@ -26,7 +25,6 @@ from pyrit.backend.models.targets import (
     TargetListResponse,
 )
 from pyrit.models.catalog.target import TargetInstance
-from pyrit.prompt_target import PromptTarget
 from pyrit.registry import TargetRegistry
 
 logger = logging.getLogger(__name__)
@@ -148,7 +146,6 @@ class TargetService:
                     target_type=metadata.class_name,
                     parameters=[p for p in metadata.parameters if p.is_string_coercible],
                     supported_auth_modes=list(target_cls.supported_auth_modes),
-                    api_key_env_var=target_cls.get_api_key_environment_variable(),
                     description=metadata.class_description or None,
                 )
             )
@@ -200,8 +197,6 @@ class TargetService:
                 )
             # Omit any api_key so the target validates its own endpoint and mints the token.
             params.pop("api_key", None)
-        else:
-            self._validate_api_key_present(target_cls=target_cls, params=params)
 
         if self._has_reference_params(target_type=request.type):
             # e.g. RoundRobinTarget: `targets` is a list of registry names the
@@ -230,37 +225,6 @@ class TargetService:
         if metadata is None:
             return False
         return any(param.reference is not None for param in metadata.parameters)
-
-    @staticmethod
-    def _validate_api_key_present(*, target_cls: type[PromptTarget], params: dict[str, Any]) -> None:
-        """
-        Enforce that ``auth_mode='api_key'`` actually has a usable key.
-
-        Reads the target class's declarative api-key env var
-        (``get_api_key_environment_variable``). Targets that do not authenticate
-        via an api_key (e.g. ``TextTarget``) declare no env var and are skipped.
-
-        Args:
-            target_cls (type[PromptTarget]): The target class being instantiated.
-            params (dict[str, Any]): The constructor parameters from the request.
-
-        Raises:
-            ValueError: If the target authenticates via an API key but none was
-                provided in params or the relevant environment variable.
-        """
-        env_var = target_cls.get_api_key_environment_variable()
-        if env_var is None:
-            return
-        if params.get("api_key"):
-            return
-        if os.environ.get(env_var):
-            return
-
-        raise ValueError(
-            f"auth_mode='api_key' requires an API key but none was provided. "
-            f"Pass 'api_key' in params or set the {env_var} environment variable. "
-            "To authenticate with Microsoft Entra ID instead, set auth_mode='entra'."
-        )
 
 
 @lru_cache(maxsize=1)

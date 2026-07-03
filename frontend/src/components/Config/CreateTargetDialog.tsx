@@ -24,6 +24,12 @@ import { DeleteRegular } from '@fluentui/react-icons'
 import { targetsApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
 import type { TargetInstance, TargetCatalogEntry } from '@/types'
+import {
+  targetIdentifierHash,
+  targetModelName,
+  targetType as getTargetType,
+  targetUnderlyingModelName,
+} from '@/utils/targetIdentity'
 import { useCreateTargetDialogStyles } from './CreateTargetDialog.styles'
 import { MAX_WEIGHT, parseWeight } from './weightValidation'
 
@@ -133,7 +139,7 @@ interface SelectedInnerTarget {
  * TestFrontendBackendCompatibilitySync test guards against drift.
  */
 function effectiveUnderlyingModel(t: TargetInstance): string | null {
-  return t.underlying_model_name || t.model_name || null
+  return targetUnderlyingModelName(t) || targetModelName(t) || null
 }
 
 /**
@@ -149,10 +155,10 @@ function effectiveUnderlyingModel(t: TargetInstance): string | null {
  */
 function isCompatible(a: TargetInstance, b: TargetInstance): boolean {
   return (
-    a.target_type === b.target_type &&
+    getTargetType(a) === getTargetType(b) &&
     effectiveUnderlyingModel(a) === effectiveUnderlyingModel(b) &&
-    (a.temperature ?? null) === (b.temperature ?? null) &&
-    (a.top_p ?? null) === (b.top_p ?? null)
+    (a.identifier.temperature ?? null) === (b.identifier.temperature ?? null) &&
+    (a.identifier.top_p ?? null) === (b.identifier.top_p ?? null)
   )
 }
 
@@ -273,14 +279,17 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
     const selectedNames = new Set(selectedInnerTargets.map((t) => t.registryName))
     const selectedHashes = new Set(
       selectedInnerTargets
-        .map((sel) => availableTargets.find((t) => t.target_registry_name === sel.registryName)?.identifier_hash)
+        .map((sel) => {
+          const t = availableTargets.find((t) => t.target_registry_name === sel.registryName)
+          return t ? targetIdentifierHash(t) : null
+        })
         .filter((h): h is string => Boolean(h)),
     )
     const candidates = availableTargets.filter(
       (t) =>
-        t.target_type !== 'RoundRobinTarget' &&
+        getTargetType(t) !== 'RoundRobinTarget' &&
         !selectedNames.has(t.target_registry_name) &&
-        !(t.identifier_hash && selectedHashes.has(t.identifier_hash)),
+        !(targetIdentifierHash(t) && selectedHashes.has(targetIdentifierHash(t)!)),
     )
     // If nothing is selected yet, all non-RRT candidates are eligible
     if (selectedInnerTargets.length === 0) return candidates
@@ -478,8 +487,8 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                       </option>
                       {eligibleTargets.map((t) => (
                         <option key={t.target_registry_name} value={t.target_registry_name}>
-                          {t.target_registry_name} — {t.target_type}
-                          {t.model_name ? ` (${t.model_name})` : ''}
+                          {t.target_registry_name} — {getTargetType(t)}
+                          {targetModelName(t) ? ` (${targetModelName(t)})` : ''}
                         </option>
                       ))}
                     </Select>
@@ -508,7 +517,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                                   <Text size={200} style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis' }}>
                                     {target?.target_registry_name ?? sel.registryName}
-                                    {target?.model_name ? ` (${target.model_name})` : ''}
+                                    {target && targetModelName(target) ? ` (${targetModelName(target)})` : ''}
                                   </Text>
                                   <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                                     <Label size="small">Weight:</Label>

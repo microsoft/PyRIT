@@ -39,8 +39,8 @@ from pyrit.backend.models.targets import (
     TargetListResponse,
 )
 from pyrit.backend.routes.labels import get_label_options
-from pyrit.models import ConverterIdentifier, MessagePiece
-from pyrit.models.catalog.target import TargetCapabilitiesInfo, TargetInstance
+from pyrit.models import ConverterIdentifier, MessagePiece, TargetCapabilities, TargetIdentifier
+from pyrit.models.catalog.target import TargetInstance
 
 
 def _make_message_view(*, role: str = "user", value: str = "hello", sequence: int = 1) -> MessageView:
@@ -806,7 +806,6 @@ class TestTargetRoutes:
                         {
                             "target_type": "OpenAIChatTarget",
                             "supported_auth_modes": ["api_key", "entra"],
-                            "api_key_env_var": "OPENAI_CHAT_KEY",
                         }
                     ]
                 )
@@ -827,8 +826,8 @@ class TestTargetRoutes:
             mock_service.create_target_async = AsyncMock(
                 return_value=TargetInstance(
                     target_registry_name="target-1",
-                    target_type="TextTarget",
-                    capabilities=TargetCapabilitiesInfo(),
+                    identifier=TargetIdentifier(class_name="TextTarget"),
+                    capabilities=TargetCapabilities(),
                 )
             )
             mock_get_service.return_value = mock_service
@@ -877,8 +876,8 @@ class TestTargetRoutes:
             mock_service.get_target_async = AsyncMock(
                 return_value=TargetInstance(
                     target_registry_name="target-1",
-                    target_type="TextTarget",
-                    capabilities=TargetCapabilitiesInfo(),
+                    identifier=TargetIdentifier(class_name="TextTarget"),
+                    capabilities=TargetCapabilities(),
                 )
             )
             mock_get_service.return_value = mock_service
@@ -909,11 +908,13 @@ class TestTargetRoutes:
                     items=[
                         TargetInstance(
                             target_registry_name="azure_responses",
-                            target_type="OpenAIResponseTarget",
-                            endpoint="https://api.openai.com",
-                            model_name="o3",
-                            temperature=1.0,
-                            capabilities=TargetCapabilitiesInfo(supports_multi_turn=True),
+                            identifier=TargetIdentifier(
+                                class_name="OpenAIResponseTarget",
+                                endpoint="https://api.openai.com",
+                                model_name="o3",
+                                temperature=1.0,
+                            ),
+                            capabilities=TargetCapabilities(supports_multi_turn=True),
                             target_specific_params={
                                 "reasoning_effort": "high",
                                 "reasoning_summary": "auto",
@@ -942,11 +943,13 @@ class TestTargetRoutes:
             mock_service.get_target_async = AsyncMock(
                 return_value=TargetInstance(
                     target_registry_name="azure_chat",
-                    target_type="OpenAIChatTarget",
-                    endpoint="https://api.openai.com",
-                    model_name="gpt-4",
-                    temperature=0.7,
-                    capabilities=TargetCapabilitiesInfo(supports_multi_turn=True),
+                    identifier=TargetIdentifier(
+                        class_name="OpenAIChatTarget",
+                        endpoint="https://api.openai.com",
+                        model_name="gpt-4",
+                        temperature=0.7,
+                    ),
+                    capabilities=TargetCapabilities(supports_multi_turn=True),
                     target_specific_params={
                         "frequency_penalty": 0.5,
                         "presence_penalty": 0.3,

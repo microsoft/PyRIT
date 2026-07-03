@@ -58,23 +58,8 @@ class PromptTarget(Identifiable):
     # ``supported_auth_modes`` lists the auth modes the create-target API accepts
     # for this type. Base default is api-key only; families that can mint an Entra
     # ID token for their own endpoint (e.g. OpenAI, Azure ML) override this to add
-    # ``"entra"``. ``get_api_key_environment_variable`` names the env var that
-    # supplies the api_key, or None for targets that do not authenticate with one.
+    # ``"entra"``.
     supported_auth_modes: ClassVar[tuple[AuthMode, ...]] = ("api_key",)
-
-    @classmethod
-    def get_api_key_environment_variable(cls) -> str | None:
-        """
-        Return the name of the environment variable that supplies this target's
-        API key, or None if the target does not authenticate with an API key.
-
-        Used by the create-target service/catalog to decide whether an api_key is
-        required (and which env var to hint) without constructing the target.
-
-        Returns:
-            str | None: The api-key env var name, or None if the target uses none.
-        """
-        return None
 
     def __init_subclass__(cls, **kwargs: object) -> None:
         """

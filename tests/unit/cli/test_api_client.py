@@ -12,13 +12,12 @@ import httpx
 import pytest
 
 from pyrit.cli.api_client import PyRITApiClient, ServerNotAvailableError
-from pyrit.models import ScenarioRunState
+from pyrit.models import ScenarioRunState, TargetCapabilities
 from pyrit.models.catalog import (
     RegisteredInitializer,
     RegisteredScenario,
     RunScenarioRequest,
     ScenarioRunSummary,
-    TargetCapabilitiesInfo,
     TargetInstance,
 )
 from unit.mocks import make_scenario_result
@@ -78,17 +77,13 @@ def _initializer_payload(*, initializer_name: str = "x") -> dict:
 def _target_payload(*, target_registry_name: str = "t1") -> dict:
     return {
         "target_registry_name": target_registry_name,
-        "target_type": "OpenAIChatTarget",
-        "endpoint": None,
-        "model_name": None,
-        "underlying_model_name": None,
-        "temperature": None,
-        "top_p": None,
-        "max_requests_per_minute": None,
-        "capabilities": TargetCapabilitiesInfo().model_dump(mode="json"),
+        "identifier": {
+            "class_name": "OpenAIChatTarget",
+            "class_module": "pyrit.prompt_target",
+        },
+        "capabilities": TargetCapabilities().model_dump(mode="json"),
         "target_specific_params": None,
         "inner_targets": None,
-        "identifier_hash": None,
     }
 
 

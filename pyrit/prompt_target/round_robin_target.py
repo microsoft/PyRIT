@@ -70,11 +70,11 @@ class RoundRobinTarget(PromptTarget):
                 requests to the first target. Defaults to equal weight.
 
         Raises:
-            ValueError: If fewer than 2 targets are provided, fewer than 2 distinct
-                target instances remain after deduplication, targets are different
-                classes, a nested RoundRobinTarget is detected, weights length doesn't
-                match, weights contain non-positive values, inner targets have different
-                configurations, or targets lack required capabilities.
+            ValueError: If fewer than 2 targets are provided, the same target instance is
+                passed more than once, targets are different classes, a nested
+                RoundRobinTarget is detected, weights length doesn't match, weights contain
+                non-positive values, inner targets have different configurations, or targets
+                lack required capabilities.
         """
         if len(targets) < 2:
             raise ValueError(f"RoundRobinTarget requires at least 2 targets, got {len(targets)}.")
@@ -82,26 +82,16 @@ class RoundRobinTarget(PromptTarget):
         if any(isinstance(t, RoundRobinTarget) for t in targets):
             raise ValueError("Nesting RoundRobinTarget inside another RoundRobinTarget is not supported.")
 
+        # Reject the same target *instance* referenced more than once. We compare by object
+        # identity, not ComponentIdentifier hash: the hash excludes credentials (api_key),
+        # so two distinct targets that share an endpoint/model but use different keys (e.g.
+        # round-robining across accounts to spread rate limits) are legitimately different
+        # and must be allowed.
+        if len({id(t) for t in targets}) != len(targets):
+            raise ValueError("RoundRobinTarget received the same target instance more than once.")
+
         if weights is not None and len(weights) != len(targets):
             raise ValueError(f"weights length ({len(weights)}) must match targets length ({len(targets)}).")
-
-        # Deduplicate the same target *instance* referenced more than once (e.g. the
-        # build-from-registry-names path resolving two names to the same registered
-        # object): rotating over the literal same object twice is meaningless. We dedup
-        # by object identity, NOT by ComponentIdentifier hash, on purpose: the hash
-        # excludes credentials (api_key), so two genuinely distinct targets that share an
-        # endpoint/model but use different keys (e.g. round-robining across accounts to
-        # spread rate limits) must be preserved. Weights for dropped duplicates are
-        # dropped alongside their target. (Auto-grouping in TargetInitializer still dedups
-        # by hash upstream — that is a different, pool-discovery intent.)
-        targets, weights = self._deduplicate_targets(targets=targets, weights=weights)
-
-        if len(targets) < 2:
-            raise ValueError(
-                "RoundRobinTarget requires at least 2 distinct targets, but the provided targets "
-                f"resolved to {len(targets)} unique target instance(s) after deduplication. The same "
-                "target instance was referenced more than once."
-            )
 
         first_type = type(targets[0])
         mismatched = [(i, type(t).__name__) for i, t in enumerate(targets[1:], start=1) if type(t) is not first_type]
@@ -140,43 +130,6 @@ class RoundRobinTarget(PromptTarget):
         self._rotation: list[int] = list(itertools.chain.from_iterable([i] * w for i, w in enumerate(weights)))
 
         self._counter: int = 0
-
-    @staticmethod
-    def _deduplicate_targets(
-        *, targets: list[PromptTarget], weights: list[int] | None
-    ) -> tuple[list[PromptTarget], list[int] | None]:
-        """
-        Drop the same target *instance* referenced more than once.
-
-        Keeps the first occurrence of each distinct object (by identity); when
-        ``weights`` is provided, the weight of a dropped duplicate is dropped
-        alongside it. Deduplication is by object identity, not by
-        ``ComponentIdentifier.hash``: the hash excludes credentials, so
-        config-identical targets that differ only by api_key are intentionally
-        preserved.
-
-        Args:
-            targets (list[PromptTarget]): The inner targets, possibly with duplicates.
-            weights (list[int] | None): Optional weights aligned with ``targets``.
-
-        Returns:
-            tuple[list[PromptTarget], list[int] | None]: The deduplicated targets and
-            their aligned weights (or None if no weights were provided).
-        """
-        seen_ids: set[int] = set()
-        unique_targets: list[PromptTarget] = []
-        unique_weights: list[int] = []
-        for idx, target in enumerate(targets):
-            target_id = id(target)
-            if target_id in seen_ids:
-                logger.debug("Skipping duplicate target instance in RoundRobinTarget.")
-                continue
-            seen_ids.add(target_id)
-            unique_targets.append(target)
-            if weights is not None:
-                unique_weights.append(weights[idx])
-
-        return unique_targets, (unique_weights if weights is not None else None)
 
     def _next_target(self) -> PromptTarget:
         """

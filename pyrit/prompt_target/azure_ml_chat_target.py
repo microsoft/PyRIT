@@ -64,16 +64,6 @@ class AzureMLChatTarget(PromptTarget):
         )
     )
 
-    @classmethod
-    def get_api_key_environment_variable(cls) -> str | None:
-        """
-        Return the api-key env var (``AZURE_ML_KEY``) for this target.
-
-        Returns:
-            str | None: The api-key env var name.
-        """
-        return cls.api_key_environment_variable
-
     def __init__(
         self,
         *,

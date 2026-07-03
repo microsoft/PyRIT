@@ -22,7 +22,6 @@ from pyrit.models.catalog.scenario import (
     ScenarioRunSummary,
 )
 from pyrit.models.catalog.target import (
-    TargetCapabilitiesInfo,
     TargetInstance,
 )
 
@@ -31,6 +30,5 @@ __all__ = [
     "RegisteredScenario",
     "RunScenarioRequest",
     "ScenarioRunSummary",
-    "TargetCapabilitiesInfo",
     "TargetInstance",
 ]

@@ -14,12 +14,11 @@ from typing import Literal
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from pyrit.cli import _output
-from pyrit.models import Parameter, ScenarioRunState
+from pyrit.models import Parameter, ScenarioRunState, TargetCapabilities, TargetIdentifier
 from pyrit.models.catalog import (
     RegisteredInitializer,
     RegisteredScenario,
     ScenarioRunSummary,
-    TargetCapabilitiesInfo,
     TargetInstance,
 )
 from unit.mocks import make_scenario_result
@@ -57,19 +56,23 @@ def _make_initializer(**overrides) -> RegisteredInitializer:
 
 
 def _make_target(**overrides) -> TargetInstance:
+    """Build a ``TargetInstance``; identity kwargs (``target_type``/``endpoint``/
+    ``model_name``/...) are folded into the embedded ``TargetIdentifier``."""
+    if "target_type" in overrides:
+        overrides["class_name"] = overrides.pop("target_type")
+    identifier_kwargs = {
+        "class_name": overrides.pop("class_name", "X"),
+        "class_module": overrides.pop("class_module", "pyrit.prompt_target"),
+    }
+    for key in ("endpoint", "model_name", "underlying_model_name", "temperature", "top_p", "max_requests_per_minute"):
+        if key in overrides:
+            identifier_kwargs[key] = overrides.pop(key)
     defaults = {
         "target_registry_name": "t1",
-        "target_type": "X",
-        "endpoint": None,
-        "model_name": None,
-        "underlying_model_name": None,
-        "temperature": None,
-        "top_p": None,
-        "max_requests_per_minute": None,
-        "capabilities": TargetCapabilitiesInfo(),
+        "identifier": TargetIdentifier(**identifier_kwargs),
+        "capabilities": TargetCapabilities(),
         "target_specific_params": None,
         "inner_targets": None,
-        "identifier_hash": None,
     }
     defaults.update(overrides)
     return TargetInstance(**defaults)

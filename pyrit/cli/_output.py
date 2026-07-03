@@ -181,13 +181,14 @@ def print_target_list(*, items: list[TargetInstance]) -> None:
     print("\nRegistered Targets:")
     print("=" * 80)
     for tgt in items:
+        identifier = tgt.identifier
         _header(tgt.target_registry_name)
-        print(f"    Class: {tgt.target_type}")
-        model = tgt.underlying_model_name or tgt.model_name or ""
+        print(f"    Class: {identifier.class_name}")
+        model = identifier.underlying_model_name or identifier.model_name or ""
         if model:
             print(f"    Model: {model}")
-        if tgt.endpoint:
-            print(f"    Endpoint: {tgt.endpoint}")
+        if identifier.endpoint:
+            print(f"    Endpoint: {identifier.endpoint}")
     print("\n" + "=" * 80)
     print(f"\nTotal targets: {len(items)}")
 

@@ -4,9 +4,8 @@
 """
 REST envelopes and write-request types for the target endpoints.
 
-Canonical target catalog types (``TargetInstance``, ``TargetCapabilitiesInfo``)
-live in ``pyrit.models.catalog.target`` and should be imported from there
-directly.
+Canonical target catalog types (``TargetInstance``) live in
+``pyrit.models.catalog.target`` and should be imported from there directly.
 """
 
 from typing import Any, Literal
@@ -40,10 +39,6 @@ class TargetCatalogEntry(BaseModel):
     supported_auth_modes: list[Literal["api_key", "entra"]] = Field(
         default_factory=_default_auth_modes,
         description="Authentication modes this target type supports",
-    )
-    api_key_env_var: str | None = Field(
-        None,
-        description="Environment variable name that supplies this target's API key, if any",
     )
     description: str | None = Field(None, description="Short description of the target from its docstring")
 

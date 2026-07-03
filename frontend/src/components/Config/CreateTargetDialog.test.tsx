@@ -1,6 +1,7 @@
 import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { FluentProvider, webLightTheme } from "@fluentui/react-components";
+import { makeTarget } from "@/test-utils/targetFixtures";
 import CreateTargetDialog from "./CreateTargetDialog";
 import { parseWeight, MAX_WEIGHT } from "./weightValidation";
 import { targetsApi } from "@/services/api";
@@ -19,10 +20,10 @@ const mockedTargetsApi = targetsApi as jest.Mocked<typeof targetsApi>;
 // the shape returned by GET /targets/catalog.
 const TARGET_CATALOG = {
   items: [
-    { target_type: "OpenAIChatTarget", parameters: [], supported_auth_modes: ["api_key", "entra"], api_key_env_var: "OPENAI_CHAT_KEY" },
-    { target_type: "OpenAIResponseTarget", parameters: [], supported_auth_modes: ["api_key", "entra"], api_key_env_var: "OPENAI_RESPONSES_KEY" },
-    { target_type: "AzureMLChatTarget", parameters: [], supported_auth_modes: ["api_key", "entra"], api_key_env_var: "AZURE_ML_KEY" },
-    { target_type: "RoundRobinTarget", parameters: [], supported_auth_modes: ["api_key"], api_key_env_var: null },
+    { target_type: "OpenAIChatTarget", parameters: [], supported_auth_modes: ["api_key", "entra"] },
+    { target_type: "OpenAIResponseTarget", parameters: [], supported_auth_modes: ["api_key", "entra"] },
+    { target_type: "AzureMLChatTarget", parameters: [], supported_auth_modes: ["api_key", "entra"] },
+    { target_type: "RoundRobinTarget", parameters: [], supported_auth_modes: ["api_key"] },
   ],
 };
 
@@ -201,10 +202,10 @@ describe("CreateTargetDialog", () => {
   it("should create target and call onCreated on successful submit", async () => {
     const onCreated = jest.fn();
     const user = userEvent.setup();
-    mockedTargetsApi.createTarget.mockResolvedValue({
+    mockedTargetsApi.createTarget.mockResolvedValue(makeTarget({
       target_registry_name: "openai_chat_new",
       target_type: "OpenAIChatTarget",
-    });
+    }));
 
     render(
       <TestWrapper>
@@ -242,10 +243,10 @@ describe("CreateTargetDialog", () => {
   it("should send underlying_model when toggle is enabled", async () => {
     const onCreated = jest.fn();
     const user = userEvent.setup();
-    mockedTargetsApi.createTarget.mockResolvedValue({
+    mockedTargetsApi.createTarget.mockResolvedValue(makeTarget({
       target_registry_name: "azure_deployment",
       target_type: "OpenAIChatTarget",
-    });
+    }));
 
     render(
       <TestWrapper>
@@ -291,10 +292,10 @@ describe("CreateTargetDialog", () => {
   it("should not send underlying_model when toggle is off", async () => {
     const onCreated = jest.fn();
     const user = userEvent.setup();
-    mockedTargetsApi.createTarget.mockResolvedValue({
+    mockedTargetsApi.createTarget.mockResolvedValue(makeTarget({
       target_registry_name: "simple_target",
       target_type: "OpenAIChatTarget",
-    });
+    }));
 
     render(
       <TestWrapper>
@@ -358,10 +359,10 @@ describe("CreateTargetDialog", () => {
 
   it("should include API key in params when provided", async () => {
     const user = userEvent.setup();
-    mockedTargetsApi.createTarget.mockResolvedValue({
+    mockedTargetsApi.createTarget.mockResolvedValue(makeTarget({
       target_registry_name: "openai_chat_keyed",
       target_type: "OpenAIChatTarget",
-    });
+    }));
 
     render(
       <TestWrapper>
@@ -475,10 +476,10 @@ describe("CreateTargetDialog", () => {
   it("should create AzureMLChatTarget with AzureML-specific params", async () => {
     const onCreated = jest.fn();
     const user = userEvent.setup();
-    mockedTargetsApi.createTarget.mockResolvedValue({
+    mockedTargetsApi.createTarget.mockResolvedValue(makeTarget({
       target_registry_name: "azure_ml_llama",
       target_type: "AzureMLChatTarget",
-    });
+    }));
 
     render(
       <TestWrapper>
@@ -544,10 +545,10 @@ describe("CreateTargetDialog", () => {
   it("should send custom AzureML params when fields are modified", async () => {
     const onCreated = jest.fn();
     const user = userEvent.setup();
-    mockedTargetsApi.createTarget.mockResolvedValue({
+    mockedTargetsApi.createTarget.mockResolvedValue(makeTarget({
       target_registry_name: "azure_ml_custom",
       target_type: "AzureMLChatTarget",
-    });
+    }));
 
     render(
       <TestWrapper>
@@ -624,10 +625,10 @@ describe("CreateTargetDialog", () => {
   it("should hide the API Key field and omit api_key/include auth_mode when Entra is selected", async () => {
     const onCreated = jest.fn();
     const user = userEvent.setup();
-    mockedTargetsApi.createTarget.mockResolvedValue({
+    mockedTargetsApi.createTarget.mockResolvedValue(makeTarget({
       target_registry_name: "openai_chat_entra",
       target_type: "OpenAIChatTarget",
-    });
+    }));
 
     render(
       <TestWrapper>
@@ -678,10 +679,10 @@ describe("CreateTargetDialog", () => {
   it("should clear a previously-typed API key when switching to Entra", async () => {
     const onCreated = jest.fn();
     const user = userEvent.setup();
-    mockedTargetsApi.createTarget.mockResolvedValue({
+    mockedTargetsApi.createTarget.mockResolvedValue(makeTarget({
       target_registry_name: "openai_chat_entra",
       target_type: "OpenAIChatTarget",
-    });
+    }));
 
     render(
       <TestWrapper>
@@ -893,18 +894,18 @@ describe("CreateTargetDialog", () => {
         <CreateTargetDialog
           {...defaultProps}
           existingTargets={[
-            {
+            makeTarget({
               target_registry_name: "openai_a",
               target_type: "OpenAIChatTarget",
               model_name: "gpt-4o",
               endpoint: "https://a.openai.azure.com",
-            },
-            {
+            }),
+            makeTarget({
               target_registry_name: "openai_b",
               target_type: "OpenAIChatTarget",
               model_name: "gpt-4o",
               endpoint: "https://b.openai.azure.com",
-            },
+            }),
           ]}
         />
       </TestWrapper>
@@ -929,11 +930,11 @@ describe("CreateTargetDialog", () => {
         <CreateTargetDialog
           {...defaultProps}
           existingTargets={[
-            {
+            makeTarget({
               target_registry_name: "openai_a",
               target_type: "OpenAIChatTarget",
               model_name: "gpt-4o",
-            },
+            }),
           ]}
         />
       </TestWrapper>
@@ -956,27 +957,27 @@ describe("CreateTargetDialog", () => {
         <CreateTargetDialog
           {...defaultProps}
           existingTargets={[
-            {
+            makeTarget({
               target_registry_name: "openai_a",
               target_type: "OpenAIChatTarget",
               model_name: "gpt-4o",
               underlying_model_name: "gpt-4o",
               identifier_hash: "hash-a",
-            },
-            {
+            }),
+            makeTarget({
               target_registry_name: "openai_a_alias",
               target_type: "OpenAIChatTarget",
               model_name: "gpt-4o",
               underlying_model_name: "gpt-4o",
               identifier_hash: "hash-a",
-            },
-            {
+            }),
+            makeTarget({
               target_registry_name: "openai_b",
               target_type: "OpenAIChatTarget",
               model_name: "gpt-4o",
               underlying_model_name: "gpt-4o",
               identifier_hash: "hash-b",
-            },
+            }),
           ]}
         />
       </TestWrapper>
@@ -1011,24 +1012,24 @@ describe("CreateTargetDialog", () => {
         <CreateTargetDialog
           {...defaultProps}
           existingTargets={[
-            {
+            makeTarget({
               target_registry_name: "foundry_a",
               target_type: "OpenAIChatTarget",
               model_name: "DeepSeek-R1",
               identifier_hash: "hash-a",
-            },
-            {
+            }),
+            makeTarget({
               target_registry_name: "foundry_b",
               target_type: "OpenAIChatTarget",
               model_name: "Gemini",
               identifier_hash: "hash-b",
-            },
-            {
+            }),
+            makeTarget({
               target_registry_name: "foundry_c",
               target_type: "OpenAIChatTarget",
               model_name: "DeepSeek-R1",
               identifier_hash: "hash-c",
-            },
+            }),
           ]}
         />
       </TestWrapper>
@@ -1069,18 +1070,18 @@ describe("CreateTargetDialog", () => {
         <CreateTargetDialog
           {...defaultProps}
           existingTargets={[
-            {
+            makeTarget({
               target_registry_name: "a",
               target_type: "OpenAIChatTarget",
               model_name: "gpt-4o",
               identifier_hash: "hash-a",
-            },
-            {
+            }),
+            makeTarget({
               target_registry_name: "b",
               target_type: "OpenAIChatTarget",
               model_name: "gpt-4o",
               identifier_hash: "hash-b",
-            },
+            }),
           ]}
         />
       </TestWrapper>
@@ -1120,18 +1121,18 @@ describe("CreateTargetDialog", () => {
         <CreateTargetDialog
           {...defaultProps}
           existingTargets={[
-            {
+            makeTarget({
               target_registry_name: "a",
               target_type: "OpenAIChatTarget",
               model_name: "gpt-4o",
               identifier_hash: "hash-a",
-            },
-            {
+            }),
+            makeTarget({
               target_registry_name: "b",
               target_type: "OpenAIChatTarget",
               model_name: "gpt-4o",
               identifier_hash: "hash-b",
-            },
+            }),
           ]}
         />
       </TestWrapper>
