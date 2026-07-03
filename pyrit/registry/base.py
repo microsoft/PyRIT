@@ -98,9 +98,8 @@ class RegistryProtocol(Protocol[MetadataT]):
     """
     Protocol defining the common interface for all registries.
 
-    Both class registries (BaseClassRegistry) and object registries
-    (BaseInstanceRegistry) implement this interface, enabling code that
-    works with either registry type.
+    Registries implement this interface, enabling code that works with any
+    registry type.
 
     Type Parameters:
         MetadataT: The metadata dataclass type (e.g., ScenarioMetadata).
