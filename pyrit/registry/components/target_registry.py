@@ -27,9 +27,9 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from pyrit.models.identifiers import TargetIdentifier
-from pyrit.registry.base import ClassRegistryEntry
 from pyrit.registry.instance_registry import DefaultInstanceRegistry, InstanceRegistry
 from pyrit.registry.registry import Registry
+from pyrit.registry.registry_metadata import RegistryMetadata
 
 if TYPE_CHECKING:
     from types import ModuleType
@@ -38,7 +38,7 @@ if TYPE_CHECKING:
 
 
 @dataclass(frozen=True)
-class TargetMetadata(ClassRegistryEntry):
+class TargetMetadata(RegistryMetadata):
     """
     Metadata describing a registered ``PromptTarget`` class.
 

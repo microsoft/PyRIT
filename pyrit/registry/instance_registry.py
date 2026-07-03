@@ -416,7 +416,7 @@ class DefaultInstanceRegistry(Generic[T]):
         Returns:
             list[ComponentIdentifier]: The identifier metadata for each instance.
         """
-        from pyrit.registry.base import _matches_filters
+        from pyrit.registry.registry import _matches_filters
 
         if self._metadata_cache is None:
             self._metadata_cache = [

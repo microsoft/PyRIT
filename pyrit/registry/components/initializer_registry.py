@@ -25,9 +25,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from pyrit.models import class_name_to_snake_case, validate_registry_name
-from pyrit.registry.base import ClassRegistryEntry
 from pyrit.registry.discovery import discover_in_directory
 from pyrit.registry.registry import Registry
+from pyrit.registry.registry_metadata import RegistryMetadata
 
 # Compute PYRIT_PATH directly to avoid importing pyrit package
 # (which triggers heavy imports from __init__.py)
@@ -45,7 +45,7 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
-class InitializerMetadata(ClassRegistryEntry):
+class InitializerMetadata(RegistryMetadata):
     """
     Metadata describing a registered PyRITInitializer class.
 
@@ -228,7 +228,7 @@ class InitializerRegistry(Registry["PyRITInitializer", InitializerMetadata]):
         Returns:
             InitializerMetadata describing the initializer class.
         """
-        description = ClassRegistryEntry.description_from_docstring(cls, fallback="No description available")
+        description = RegistryMetadata.description_from_docstring(cls, fallback="No description available")
 
         try:
             instance = cls()
