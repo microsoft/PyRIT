@@ -16,10 +16,10 @@ REST clients (the CLI today, future external clients tomorrow). Because it
 ``Field(..., description=...)`` strings live here so they surface in the
 generated OpenAPI schema.
 
-Identity lives on the embedded :class:`~pyrit.models.TargetIdentifier` (class
+Identity lives on the embedded ``TargetIdentifier`` (class
 name, endpoint, model name, generation params, inner-target identifiers) and is
 *not* duplicated as flat fields on ``TargetInstance``. Capabilities live on the
-embedded :class:`~pyrit.models.TargetCapabilities`.
+embedded ``TargetCapabilities``.
 """
 
 from pydantic import BaseModel, Field

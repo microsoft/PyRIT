@@ -142,7 +142,7 @@ class TargetService:
             TargetCatalogEntry(
                 target_type=metadata.class_name,
                 parameters=[p for p in metadata.parameters if p.is_string_coercible],
-                supported_auth_modes=cast(list[Literal["api_key", "identity"]], list(metadata.supported_auth_modes)),
+                supported_auth_modes=cast("list[Literal['api_key', 'identity']]", list(metadata.supported_auth_modes)),
                 description=metadata.class_description or None,
             )
             for metadata in self._registry.get_all_registered_class_metadata()
