@@ -19,8 +19,8 @@ from typing import TYPE_CHECKING, Any
 
 from pyrit.models import class_name_to_snake_case
 from pyrit.models.identifiers.scenario_identifier import ScenarioIdentifier
-from pyrit.registry.base import ClassRegistryEntry
 from pyrit.registry.registry import Registry
+from pyrit.registry.registry_metadata import RegistryMetadata
 
 if TYPE_CHECKING:
     from types import ModuleType
@@ -31,7 +31,7 @@ if TYPE_CHECKING:
 
 
 @dataclass(frozen=True)
-class ScenarioMetadata(ClassRegistryEntry):
+class ScenarioMetadata(RegistryMetadata):
     """
     Metadata describing a registered Scenario class.
 
@@ -128,7 +128,7 @@ class ScenarioRegistry(Registry["Scenario", ScenarioMetadata]):
         Raises:
             TypeError: If ``cls()`` cannot be called with no arguments.
         """
-        description = ClassRegistryEntry.description_from_docstring(cls, fallback="No description available")
+        description = RegistryMetadata.description_from_docstring(cls, fallback="No description available")
 
         supported_parameters = tuple(cls.supported_parameters())
 

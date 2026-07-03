@@ -469,14 +469,14 @@ async def test_filename_extension_default(sqlite_instance):
 
 
 async def test_filename_extension_existing_pdf(sqlite_instance):
+    import shutil
     import tempfile
 
-    import requests
+    from pyrit.common.path import DATASETS_PATH
 
-    url = "https://raw.githubusercontent.com/microsoft/PyRIT/main/pyrit/datasets/prompt_converters/pdf_converters/fake_CV.pdf"
+    source_pdf = DATASETS_PATH / "prompt_converters" / "pdf_converters" / "fake_CV.pdf"
     with tempfile.NamedTemporaryFile(delete=False, suffix=".tmp") as tmp_file:
-        response = requests.get(url)
-        tmp_file.write(response.content)
+        shutil.copyfile(source_pdf, tmp_file.name)
 
     cv_pdf_path = Path(tmp_file.name)
 

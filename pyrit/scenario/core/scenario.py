@@ -194,9 +194,9 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
             The scenario description is automatically extracted from the class's docstring (__doc__)
             with whitespace normalized for display.
         """
-        from pyrit.registry.base import ClassRegistryEntry
+        from pyrit.registry.registry_metadata import RegistryMetadata
 
-        description = ClassRegistryEntry.description_from_docstring(self.__class__)
+        description = RegistryMetadata.description_from_docstring(self.__class__)
 
         # The scenario identifier is the canonical per-run identity: the scenario
         # registry produces it and it is persisted on the ScenarioResult (carrying

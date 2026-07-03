@@ -31,7 +31,7 @@ import logging
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
-from pyrit.registry.base import ClassRegistryEntry
+from pyrit.registry.registry_metadata import RegistryMetadata
 from pyrit.registry.resolution import (
     derive_parameters,
     resolve_constructor_args,
@@ -49,7 +49,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
-MetadataT = TypeVar("MetadataT", bound=ClassRegistryEntry)
+MetadataT = TypeVar("MetadataT", bound=RegistryMetadata)
 
 
 def _get_metadata_value(metadata: Any, key: str) -> tuple[bool, Any]:
@@ -325,7 +325,7 @@ class Registry(ABC, Generic[T, MetadataT]):
         Return the concrete metadata dataclass this registry builds.
 
         The base ``_build_metadata`` constructs this type from the common
-        ``ClassRegistryEntry`` fields. Subclasses whose metadata carries extra
+        ``RegistryMetadata`` fields. Subclasses whose metadata carries extra
         fields beyond the common shape override ``_build_metadata`` instead.
 
         Returns:
@@ -336,7 +336,7 @@ class Registry(ABC, Generic[T, MetadataT]):
         """
         Build the metadata descriptor for a registered class.
 
-        Populates the common ``ClassRegistryEntry`` fields — name/module, a
+        Populates the common ``RegistryMetadata`` fields — name/module, a
         first-paragraph description, the derived ``Parameter`` build contract, and
         any ``Param.ClassAttr`` class attributes — into the registry's
         ``_metadata_class``. Subclasses needing extra fields override this.

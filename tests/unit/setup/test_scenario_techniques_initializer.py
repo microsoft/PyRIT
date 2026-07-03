@@ -330,5 +330,5 @@ class TestScenarioTechniqueInitializerDiscovery:
         from pyrit.registry import InitializerRegistry
 
         registry = InitializerRegistry()
-        names = set(registry.get_names())
+        names = set(registry.get_class_names())
         assert "scenario_technique" in names

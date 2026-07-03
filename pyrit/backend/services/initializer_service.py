@@ -69,7 +69,7 @@ class InitializerService:
         Returns:
             ListRegisteredInitializersResponse with paginated initializer summaries.
         """
-        all_metadata = self._registry.list_metadata()
+        all_metadata = self._registry.get_all_registered_class_metadata()
         all_summaries = [_metadata_to_registered_initializer(m) for m in all_metadata]
 
         page, has_more = self._paginate(items=all_summaries, cursor=cursor, limit=limit)
@@ -90,7 +90,7 @@ class InitializerService:
         Returns:
             RegisteredInitializer if found, None otherwise.
         """
-        all_metadata = self._registry.list_metadata()
+        all_metadata = self._registry.get_all_registered_class_metadata()
         for metadata in all_metadata:
             if metadata.registry_name == initializer_name:
                 return _metadata_to_registered_initializer(metadata)

@@ -478,19 +478,13 @@ class ConfigurationLoader(YamlLoadable):
         logging.getLogger(__name__).info("Running %d initializer(s)...", len(self._initializer_configs))
 
         for config in self._initializer_configs:
-            initializer_class = registry.get_class(config.name)
-            if initializer_class is None:
-                available = ", ".join(sorted(registry.get_names()))
+            try:
+                instance = registry.create_and_configure(config.name, initializer_params=config.args)
+            except KeyError as exc:
+                available = ", ".join(sorted(registry.get_class_names()))
                 raise ValueError(
                     f"Initializer '{config.name}' not found in registry.\nAvailable initializers: {available}"
-                )
-
-            # Instantiate and set params if provided
-            instance = initializer_class()
-            if config.args:
-                instance.set_params_from_args(args=config.args)
-                # Validate params early against supported_parameters to fail fast
-                instance._validate_params(params=instance.params)
+                ) from exc
 
             resolved.append(instance)
 
