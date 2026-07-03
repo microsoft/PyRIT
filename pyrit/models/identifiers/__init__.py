@@ -14,7 +14,12 @@ from pyrit.models.identifiers.class_name_utils import (
     snake_case_to_class_name,
     validate_registry_name,
 )
-from pyrit.models.identifiers.component_identifier import ComponentIdentifier, Identifiable, config_hash
+from pyrit.models.identifiers.component_identifier import (
+    ComponentIdentifier,
+    Identifiable,
+    JSONValue,
+    config_hash,
+)
 from pyrit.models.identifiers.converter_identifier import ConverterIdentifier
 from pyrit.models.identifiers.evaluation_identifier import (
     TARGET_EVAL_PARAM_FALLBACKS,
@@ -55,6 +60,7 @@ __all__ = [
     "Exclude",
     "Identifiable",
     "Include",
+    "JSONValue",
     "ObjectiveTargetEvaluationIdentifier",
     "REGISTRY_NAME_PATTERN",
     "Param",

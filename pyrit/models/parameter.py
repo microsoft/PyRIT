@@ -244,7 +244,7 @@ class Parameter(BaseModel):
             return _coerce_simple_value(param_name=self.name, annotation=param_type, raw_value=raw_value)
         return raw_value
 
-    def validate(self) -> None:
+    def validate(self) -> None:  # type: ignore[ty:invalid-method-override]
         """
         Reject a declaration with an unsupported ``param_type``.
 

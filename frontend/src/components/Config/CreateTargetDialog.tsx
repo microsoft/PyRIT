@@ -720,7 +720,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                 (isRoundRobin
                   ? selectedInnerTargets.length < 2 ||
                     selectedInnerTargets.some((t) => !parseWeight(t.weightInput).ok)
-                  : !endpoint || showEntraEndpointError)
+                  : !endpoint || showIdentityEndpointError)
               }
             >
               {submitting ? 'Creating...' : 'Create Target'}

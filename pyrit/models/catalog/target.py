@@ -22,10 +22,9 @@ name, endpoint, model name, generation params, inner-target identifiers) and is
 embedded :class:`~pyrit.models.TargetCapabilities`.
 """
 
-from typing import Any
-
 from pydantic import BaseModel, Field
 
+from pyrit.models.identifiers.component_identifier import JSONValue
 from pyrit.models.identifiers.target_identifier import TargetIdentifier
 from pyrit.models.target_capabilities import TargetCapabilities
 
@@ -54,7 +53,7 @@ class TargetInstance(BaseModel):
         ),
     )
     capabilities: TargetCapabilities = Field(..., description="Structured snapshot of target capabilities")
-    target_specific_params: dict[str, Any] | None = Field(
+    target_specific_params: dict[str, JSONValue] | None = Field(
         None,
         description="Non-promoted constructor parameters, curated for display (e.g., RoundRobin weights)",
     )

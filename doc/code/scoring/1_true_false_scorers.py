@@ -62,6 +62,11 @@ print(f"[keyword] meth synthesis terms -> {hit.get_value()}")
 # - **`SQLInjectionOutputScorer`** — `UNION SELECT`, `;DROP TABLE`, `';--`.
 # - **`ShellCommandOutputScorer`** — `curl ... | sh`, `rm -rf /`, reverse shells.
 # - **`PathTraversalOutputScorer`** — `../../etc/passwd` and similar walks to sensitive files.
+# - **`SSRFOutputScorer`** — `169.254.169.254` metadata, `http://localhost`/RFC1918 targets, `gopher://` schemes.
+# - **`SSTIOutputScorer`** — `{{7*7}}`/`${7*7}` eval probes, `__class__`/`__globals__` gadget chains.
+# - **`XXEOutputScorer`** — `<!ENTITY ... SYSTEM>` external entities, `<!DOCTYPE ...[<!ENTITY>]>` subsets.
+# - **`OpenRedirectOutputScorer`** — `redirect=//evil`, `%2f%2f` bypasses, `https://trusted@evil` userinfo confusion.
+# - **`LDAPInjectionOutputScorer`** — `*)(uid=*)` filter breaks, `)(objectClass=*)` clauses, `)|(` operator injection.
 #
 # Like `CredentialLeakScorer`, each ships a default `patterns` set; pass your own `patterns`
 # dict to replace it entirely.

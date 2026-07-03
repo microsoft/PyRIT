@@ -2430,6 +2430,144 @@ class TestAttackServiceAdditionalCoverage:
         assert len(persisted_converters) == 1
         assert persisted_converters[0]["class_name"] == "NewConverter"
 
+    async def test_converter_merge_all_duplicates_does_not_rewrite_identifier(self, attack_service, mock_memory):
+        """When every new converter is already present, the identifier is left untouched."""
+        from pyrit.backend.models.attacks import AttackSummary, ConversationMessagesResponse
+
+        existing_converter = ComponentIdentifier(
+            class_name="ExistingConverter",
+            class_module="pyrit.prompt_converter",
+            params={"supported_input_types": ("text",), "supported_output_types": ("text",)},
+        )
+        duplicate_converter = ComponentIdentifier(
+            class_name="ExistingConverter",
+            class_module="pyrit.prompt_converter",
+            params={"supported_input_types": ("text",), "supported_output_types": ("text",)},
+        )
+
+        ar = make_attack_result(conversation_id="attack-1")
+        strategy = ar.get_attack_strategy_identifier()
+        ar.atomic_attack_identifier = AtomicAttackIdentifier.build(
+            attack_identifier=ComponentIdentifier(
+                class_name="ManualAttack",
+                class_module="pyrit.backend",
+                children={
+                    "objective_target": strategy.get_child("objective_target") if strategy else None,
+                    "request_converters": [existing_converter],
+                },
+            ),
+        )
+
+        mock_memory.get_attack_results.return_value = [ar]
+        mock_memory.get_message_pieces.return_value = []
+
+        request = AddMessageRequest(
+            role="user",
+            pieces=[MessagePieceRequest(original_value="Hello")],
+            target_conversation_id="attack-1",
+            send=False,
+            converter_ids=["c-1"],
+        )
+
+        with (
+            patch("pyrit.backend.services.attack_service.get_converter_service") as mock_get_converter_service,
+            patch.object(
+                attack_service,
+                "get_attack_async",
+                new=AsyncMock(
+                    return_value=AttackSummary(
+                        attack_result_id="ar-attack-1",
+                        conversation_id="attack-1",
+                        objective="test objective",
+                        message_count=0,
+                        labels={},
+                        created_at=datetime.now(timezone.utc),
+                        updated_at=datetime.now(timezone.utc),
+                    )
+                ),
+            ),
+            patch.object(
+                attack_service,
+                "get_conversation_messages_async",
+                new=AsyncMock(return_value=ConversationMessagesResponse(conversation_id="attack-1", messages=[])),
+            ),
+        ):
+            mock_converter_service = MagicMock()
+            mock_converter_service.get_converter_objects_for_ids.return_value = [
+                MagicMock(get_identifier=MagicMock(return_value=duplicate_converter)),
+            ]
+            mock_get_converter_service.return_value = mock_converter_service
+
+            await attack_service.add_message_async(attack_result_id="attack-1", request=request)
+
+        update_fields = mock_memory.update_attack_result_by_id.call_args[1]["update_fields"]
+        assert "atomic_attack_identifier" not in update_fields
+
+    async def test_converter_merge_preserves_sibling_children_hash(self, attack_service, mock_memory):
+        """Merging a converter must not disturb sibling children (objective_target keeps its hash)."""
+        from pyrit.backend.models.attacks import AttackSummary, ConversationMessagesResponse
+
+        new_converter = ComponentIdentifier(
+            class_name="NewConverter",
+            class_module="pyrit.prompt_converter",
+            params={"supported_input_types": ("text",), "supported_output_types": ("text",)},
+        )
+
+        ar = make_attack_result(conversation_id="attack-1")
+        strategy = ar.get_attack_strategy_identifier()
+        objective_target = strategy.get_child("objective_target") if strategy else None
+        assert objective_target is not None
+        original_target_hash = objective_target.hash
+
+        mock_memory.get_attack_results.return_value = [ar]
+        mock_memory.get_message_pieces.return_value = []
+
+        request = AddMessageRequest(
+            role="user",
+            pieces=[MessagePieceRequest(original_value="Hello")],
+            target_conversation_id="attack-1",
+            send=False,
+            converter_ids=["c-1"],
+        )
+
+        with (
+            patch("pyrit.backend.services.attack_service.get_converter_service") as mock_get_converter_service,
+            patch.object(
+                attack_service,
+                "get_attack_async",
+                new=AsyncMock(
+                    return_value=AttackSummary(
+                        attack_result_id="ar-attack-1",
+                        conversation_id="attack-1",
+                        objective="test objective",
+                        message_count=0,
+                        labels={},
+                        created_at=datetime.now(timezone.utc),
+                        updated_at=datetime.now(timezone.utc),
+                    )
+                ),
+            ),
+            patch.object(
+                attack_service,
+                "get_conversation_messages_async",
+                new=AsyncMock(return_value=ConversationMessagesResponse(conversation_id="attack-1", messages=[])),
+            ),
+        ):
+            mock_converter_service = MagicMock()
+            mock_converter_service.get_converter_objects_for_ids.return_value = [
+                MagicMock(get_identifier=MagicMock(return_value=new_converter)),
+            ]
+            mock_get_converter_service.return_value = mock_converter_service
+
+            await attack_service.add_message_async(attack_result_id="attack-1", request=request)
+
+        update_fields = mock_memory.update_attack_result_by_id.call_args[1]["update_fields"]
+        rebuilt = AtomicAttackIdentifier.model_validate(update_fields["atomic_attack_identifier"])
+        rebuilt_attack = rebuilt.get_child("attack_technique").get_child("attack")
+        assert rebuilt_attack.get_child("objective_target").hash == original_target_hash
+        merged_converter_classes = [c.class_name for c in rebuilt_attack.get_child_list("request_converters")]
+        assert merged_converter_classes == ["NewConverter"]
+
     def test_duplicate_conversation_up_to_adds_pieces_when_present(self, attack_service, mock_memory):
         """Should duplicate up to cutoff and persist duplicated pieces only when returned."""
         source_messages = [
