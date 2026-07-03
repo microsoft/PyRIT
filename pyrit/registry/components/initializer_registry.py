@@ -225,9 +225,7 @@ class InitializerRegistry(Registry["PyRITInitializer", InitializerMetadata]):
                 required_env_vars=(),
             )
 
-    def create_and_configure(
-        self, name: str, *, initializer_params: dict[str, Any] | None = None
-    ) -> PyRITInitializer:
+    def create_and_configure(self, name: str, *, initializer_params: dict[str, Any] | None = None) -> PyRITInitializer:
         """
         Build and parameterize an initializer in one call.
 

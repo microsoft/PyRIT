@@ -219,9 +219,7 @@ def _write_initializer_script(directory: Path, filename: str, *class_names: str)
     body = "from pyrit.setup.initializers.pyrit_initializer import PyRITInitializer\n\n"
     for class_name in class_names:
         body += (
-            f"class {class_name}(PyRITInitializer):\n"
-            f"    async def initialize_async(self) -> None:\n"
-            f"        pass\n\n"
+            f"class {class_name}(PyRITInitializer):\n    async def initialize_async(self) -> None:\n        pass\n\n"
         )
     script_path = directory / filename
     script_path.write_text(body)
