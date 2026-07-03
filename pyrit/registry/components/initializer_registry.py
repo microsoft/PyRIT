@@ -125,7 +125,7 @@ class InitializerRegistry(Registry["PyRITInitializer", InitializerMetadata]):
                     builtin=True,
                 )
 
-    def _process_file(self, *, file_path: Path, base_class: type, builtin: bool = False) -> None:
+    def _process_file(self, *, file_path: Path, base_class: type[PyRITInitializer], builtin: bool = False) -> None:
         """
         Load a single Python file and register the initializers it defines.
 
@@ -278,7 +278,9 @@ class InitializerRegistry(Registry["PyRITInitializer", InitializerMetadata]):
         return module
 
     @staticmethod
-    def _module_defined_initializers(*, module: ModuleType, base_class: type) -> list[type]:
+    def _module_defined_initializers(
+        *, module: ModuleType, base_class: type[PyRITInitializer]
+    ) -> list[type[PyRITInitializer]]:
         """
         Find concrete ``PyRITInitializer`` subclasses defined in *module*.
 
