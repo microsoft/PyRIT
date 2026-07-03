@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 import pytest
 
+from pyrit.models.parameter import Parameter
 from pyrit.registry.components.initializer_registry import PYRIT_PATH, InitializerRegistry
 from pyrit.setup.initializers.pyrit_initializer import PyRITInitializer
 
@@ -263,3 +264,53 @@ def test_create_from_script_paths_missing_file_raises(lazy_registry):
     """Test that a missing script path raises FileNotFoundError."""
     with pytest.raises(FileNotFoundError):
         lazy_registry.create_from_script_paths(script_paths=["definitely_missing_script.py"])
+
+
+# ============================================================================
+# create_and_configure Tests
+# ============================================================================
+
+
+class _ParamInitializer(PyRITInitializer):
+    """An initializer that accepts a single declared parameter."""
+
+    @property
+    def supported_parameters(self) -> list[Parameter]:
+        return [Parameter(name="mode", description="Operation mode", default="fast")]
+
+    async def initialize_async(self) -> None:
+        pass
+
+
+def test_create_and_configure_builds_and_sets_params(lazy_registry):
+    """Test that create_and_configure returns a configured instance with params set."""
+    lazy_registry.register_class(_ParamInitializer, name="param_init")
+
+    instance = lazy_registry.create_and_configure("param_init", initializer_params={"mode": "slow"})
+
+    assert isinstance(instance, _ParamInitializer)
+    assert instance.params == {"mode": ["slow"]}
+
+
+def test_create_and_configure_without_params_leaves_instance_unconfigured(lazy_registry):
+    """Test that create_and_configure returns an unconfigured instance when no params are given."""
+    lazy_registry.register_class(_ParamInitializer, name="param_init")
+
+    instance = lazy_registry.create_and_configure("param_init")
+
+    assert isinstance(instance, _ParamInitializer)
+    assert instance.params == {}
+
+
+def test_create_and_configure_unknown_param_raises_value_error(lazy_registry):
+    """Test that an unknown parameter raises ValueError during configuration."""
+    lazy_registry.register_class(_ParamInitializer, name="param_init")
+
+    with pytest.raises(ValueError, match="unknown parameter"):
+        lazy_registry.create_and_configure("param_init", initializer_params={"bogus": "x"})
+
+
+def test_create_and_configure_unknown_name_raises_key_error(lazy_registry):
+    """Test that an unregistered name raises KeyError."""
+    with pytest.raises(KeyError):
+        lazy_registry.create_and_configure("does_not_exist")

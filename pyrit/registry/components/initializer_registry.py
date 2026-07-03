@@ -80,17 +80,10 @@ class InitializerRegistry(Registry["PyRITInitializer", InitializerMetadata]):
                 If None, defaults to pyrit/setup/initializers (discovers all).
             lazy_discovery: If True, discovery is deferred until first access.
                 Defaults to False for backwards compatibility.
-
-        Raises:
-            ValueError: If the discovery path could not be resolved.
         """
-        self._discovery_path = discovery_path
-        if self._discovery_path is None:
-            self._discovery_path = Path(PYRIT_PATH) / "setup" / "initializers"
-
-        # At this point _discovery_path is guaranteed to be a Path
-        if self._discovery_path is None:
-            raise ValueError("self._discovery_path is not initialized")
+        self._discovery_path: Path = (
+            discovery_path if discovery_path is not None else Path(PYRIT_PATH) / "setup" / "initializers"
+        )
 
         self._builtin_names: set[str] = set()
         super().__init__(lazy_discovery=lazy_discovery)
@@ -111,7 +104,6 @@ class InitializerRegistry(Registry["PyRITInitializer", InitializerMetadata]):
     def _discover(self) -> None:
         """Discover all initializers from the specified discovery path."""
         discovery_path = self._discovery_path
-        assert discovery_path is not None  # Set in __init__
 
         if not discovery_path.exists():
             logger.warning(f"Initializers directory not found: {discovery_path}")
@@ -135,38 +127,21 @@ class InitializerRegistry(Registry["PyRITInitializer", InitializerMetadata]):
 
     def _process_file(self, *, file_path: Path, base_class: type, builtin: bool = False) -> None:
         """
-        Process a Python file to extract initializer subclasses.
+        Load a single Python file and register the initializers it defines.
 
         Args:
             file_path: Path to the Python file to process.
             base_class: The PyRITInitializer base class.
             builtin: Whether discovered classes should be marked as built-in.
         """
-        short_name = file_path.stem
-
         try:
-            spec = importlib.util.spec_from_file_location(f"initializer.{short_name}", file_path)
-            if not spec or not spec.loader:
-                return
-
-            module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(module)
-
-            for attr_name in dir(module):
-                attr = getattr(module, attr_name)
-                if (
-                    inspect.isclass(attr)
-                    and issubclass(attr, base_class)
-                    and attr is not base_class
-                    and not inspect.isabstract(attr)
-                ):
-                    self._register_initializer(
-                        initializer_class=attr,
-                        builtin=builtin,
-                    )
-
+            module = self._load_module_from_path(file_path=file_path, module_name=f"initializer.{file_path.stem}")
         except Exception as e:
-            logger.warning(f"Failed to load initializer module {short_name}: {e}")
+            logger.warning(f"Failed to load initializer module {file_path.stem}: {e}")
+            return
+
+        for initializer_class in self._module_defined_initializers(module=module, base_class=base_class):
+            self._register_initializer(initializer_class=initializer_class, builtin=builtin)
 
     def _register_initializer(
         self,
@@ -279,7 +254,7 @@ class InitializerRegistry(Registry["PyRITInitializer", InitializerMetadata]):
         instance = self.create_instance(name)
         if initializer_params:
             instance.set_params_from_args(args=initializer_params)
-            instance._validate_params(params=instance.params)
+            instance.validate_params()
         return instance
 
     @staticmethod
