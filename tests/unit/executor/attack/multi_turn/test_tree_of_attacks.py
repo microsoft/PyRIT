@@ -1499,6 +1499,13 @@ class TestTreeOfAttacksNode:
         prompt_normalizer = MagicMock(spec=PromptNormalizer)
         components_with_normalizer = node_components.copy()
         components_with_normalizer["prompt_normalizer"] = prompt_normalizer
+        components_with_normalizer["adversarial_chat"].configuration.capabilities.input_modalities = frozenset(
+            {frozenset({"text"}), frozenset({"text", "image_path"})}
+        )
+        components_with_normalizer["modality_router"] = _ModalityFeedbackRouter(
+            adversarial_chat=components_with_normalizer["adversarial_chat"],
+            objective_target=components_with_normalizer["objective_target"],
+        )
         node = _TreeOfAttacksNode(**components_with_normalizer)
 
         schema = {"type": "object", "properties": {"next_message": {"type": "string"}}}
@@ -1508,9 +1515,30 @@ class TestTreeOfAttacksNode:
             return_value=Message.from_prompt(prompt='{"next_message": "x"}', role="assistant")
         )
 
-        await node._send_to_adversarial_chat_async(prompt_text="Test prompt")
+        seed_message = Message(
+            message_pieces=[
+                MessagePiece(
+                    role="user",
+                    original_value="",
+                    original_value_data_type="text",
+                    conversation_id="tap-seed-forwarding-conv",
+                    prompt_metadata={"adversarial_placeholder": True},
+                ),
+                MessagePiece(
+                    role="user",
+                    original_value="/path/to/seed.png",
+                    original_value_data_type="image_path",
+                    conversation_id="tap-seed-forwarding-conv",
+                ),
+            ]
+        )
+
+        await node._send_to_adversarial_chat_async(prompt_text="Test prompt", seed_message=seed_message)
 
         sent_message = prompt_normalizer.send_prompt_async.call_args.kwargs["message"]
+        assert len(sent_message.message_pieces) == 2
+        assert sent_message.message_pieces[1].original_value_data_type == "image_path"
+        assert sent_message.message_pieces[1].original_value == "/path/to/seed.png"
         metadata = sent_message.message_pieces[0].prompt_metadata
         assert metadata["response_format"] == "json"
         assert metadata[JSON_SCHEMA_METADATA_KEY] == schema

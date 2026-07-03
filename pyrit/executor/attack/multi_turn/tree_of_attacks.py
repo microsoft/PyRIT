@@ -634,7 +634,10 @@ class _TreeOfAttacksNode:
         has_placeholder = any(piece.is_adversarial_placeholder() for piece in initial_prompt.message_pieces)
         if has_placeholder:
             assert self._objective is not None
-            adversarial_text = await self._generate_red_teaming_prompt_async(objective=self._objective)
+            adversarial_text = await self._generate_red_teaming_prompt_async(
+                objective=self._objective,
+                seed_message=initial_prompt,
+            )
             message = self._modality_router.fill_adversarial_placeholders(
                 message=initial_prompt,
                 adversarial_text=adversarial_text,
@@ -881,7 +884,12 @@ class _TreeOfAttacksNode:
         return duplicate_node
 
     @pyrit_json_retry
-    async def _generate_red_teaming_prompt_async(self, objective: str) -> str:
+    async def _generate_red_teaming_prompt_async(
+        self,
+        *,
+        objective: str,
+        seed_message: Message | None = None,
+    ) -> str:
         """
         Generate an adversarial prompt using the red teaming chat.
 
@@ -901,6 +909,8 @@ class _TreeOfAttacksNode:
         Args:
             objective (str): The attack objective describing what the attacker wants to achieve.
                 This guides both the system prompt configuration and prompt generation.
+            seed_message (Message | None): Optional first-turn seed message whose
+                media pieces should be forwarded to the adversarial chat.
 
         Returns:
             str: The generated adversarial prompt text extracted from the JSON response.
@@ -915,7 +925,10 @@ class _TreeOfAttacksNode:
             - Sets self.off_topic to True if prompt is still off-topic after all retries
         """
         # Generate initial prompt
-        prompt: str = await self._generate_single_red_teaming_prompt_async(objective)
+        prompt: str = await self._generate_single_red_teaming_prompt_async(
+            objective=objective,
+            seed_message=seed_message,
+        )
 
         # If no on-topic scorer, return the prompt as-is
         if not self._on_topic_scorer:
@@ -944,7 +957,10 @@ class _TreeOfAttacksNode:
             )
 
             # Send feedback to adversarial chat and get new prompt
-            adversarial_response = await self._send_to_adversarial_chat_async(feedback_prompt)
+            adversarial_response = await self._send_to_adversarial_chat_async(
+                prompt_text=feedback_prompt,
+                seed_message=seed_message,
+            )
             prompt = self._parse_red_teaming_response(adversarial_response)
 
         # Final check after all retries
@@ -956,7 +972,12 @@ class _TreeOfAttacksNode:
         return prompt
 
     @pyrit_json_retry
-    async def _generate_single_red_teaming_prompt_async(self, objective: str) -> str:
+    async def _generate_single_red_teaming_prompt_async(
+        self,
+        *,
+        objective: str,
+        seed_message: Message | None = None,
+    ) -> str:
         """
         Generate a single adversarial prompt from the red teaming chat.
 
@@ -966,6 +987,8 @@ class _TreeOfAttacksNode:
 
         Args:
             objective (str): The attack objective.
+            seed_message (Message | None): Optional first-turn seed message whose
+                media pieces should be forwarded to the adversarial chat.
 
         Returns:
             str: The generated adversarial prompt text.
@@ -977,7 +1000,10 @@ class _TreeOfAttacksNode:
             prompt_text = await self._generate_subsequent_turn_prompt_async(objective)
 
         # Send to adversarial chat and get JSON response
-        adversarial_response = await self._send_to_adversarial_chat_async(prompt_text)
+        adversarial_response = await self._send_to_adversarial_chat_async(
+            prompt_text=prompt_text,
+            seed_message=seed_message,
+        )
 
         # Parse and return the prompt from the response
         return self._parse_red_teaming_response(adversarial_response)
@@ -1141,7 +1167,12 @@ class _TreeOfAttacksNode:
             return str(normalize_score_to_float(scores[0]))
         return "unavailable"
 
-    async def _send_to_adversarial_chat_async(self, prompt_text: str) -> str:
+    async def _send_to_adversarial_chat_async(
+        self,
+        *,
+        prompt_text: str,
+        seed_message: Message | None = None,
+    ) -> str:
         """
         Send a prompt to the adversarial chat and get the response.
 
@@ -1158,6 +1189,8 @@ class _TreeOfAttacksNode:
             prompt_text (str): The text to send to the adversarial chat. This could be either
                 the initial seed prompt or a template-generated prompt containing conversation
                 history and scores.
+            seed_message (Message | None): Optional first-turn seed message whose
+                media pieces should be forwarded to the adversarial chat.
 
         Returns:
             str: The raw response from the adversarial chat, expected to be JSON formatted.
@@ -1176,6 +1209,7 @@ class _TreeOfAttacksNode:
         message = self._modality_router.build_adversarial_input_message(
             text=prompt_text,
             last_response=self.last_response,
+            seed_message=seed_message,
             prompt_metadata=prompt_metadata,
         )
 

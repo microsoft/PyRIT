@@ -472,6 +472,7 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
         *,
         context: CrescendoAttackContext,
         refused_text: str,
+        seed_message: Message | None = None,
     ) -> str:
         """
         Generate the next attack prompt using the adversarial chat.
@@ -479,6 +480,8 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
         Args:
             context (CrescendoAttackContext): The attack context.
             refused_text (str): Text that was refused by the target (if any).
+            seed_message (Message | None): Optional first-turn seed message
+                whose media pieces should be forwarded to the adversarial chat.
 
         Returns:
             str: The generated attack prompt.
@@ -487,7 +490,11 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
         prompt_text = self._build_adversarial_prompt(context=context, refused_text=refused_text)
 
         # Send prompt to adversarial chat and get response
-        response_text = await self._send_prompt_to_adversarial_chat_async(prompt_text=prompt_text, context=context)
+        response_text = await self._send_prompt_to_adversarial_chat_async(
+            prompt_text=prompt_text,
+            context=context,
+            seed_message=seed_message,
+        )
 
         # Parse and validate the response
         return self._parse_adversarial_response(response_text)
@@ -548,6 +555,7 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
         *,
         prompt_text: str,
         context: CrescendoAttackContext,
+        seed_message: Message | None = None,
     ) -> str:
         """
         Send a prompt to the adversarial chat and get the response.
@@ -555,6 +563,8 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
         Args:
             prompt_text (str): The prompt text to send.
             context (CrescendoAttackContext): The attack context.
+            seed_message (Message | None): Optional first-turn seed message
+                whose media pieces should be forwarded to the adversarial chat.
 
         Returns:
             str: The response text from the adversarial chat.
@@ -573,6 +583,7 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
         message = self._modality_router.build_adversarial_input_message(
             text=prompt_text,
             last_response=context.last_response,
+            seed_message=seed_message,
             prompt_metadata=prompt_metadata,
         )
 
@@ -840,6 +851,7 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
         prompt_text = await self._get_attack_prompt_async(
             context=context,
             refused_text=context.refused_text or "",
+            seed_message=next_message,
         )
 
         if next_message is not None:

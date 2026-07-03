@@ -2142,6 +2142,9 @@ class TestModalityRouterIntegration:
         mock_objective_target.configuration.capabilities.input_modalities = frozenset(
             {frozenset({"text", "image_path"})}
         )
+        mock_adversarial_chat.configuration.capabilities.input_modalities = frozenset(
+            {frozenset({"text"}), frozenset({"text", "image_path"})}
+        )
 
         shared_conv = "edit-conv"
         seed_message = Message(
@@ -2180,6 +2183,12 @@ class TestModalityRouterIntegration:
         assert basic_context.next_message is None
         # Adversarial chat WAS called (placeholder branch routes through it).
         mock_prompt_normalizer.send_prompt_async.assert_called_once()
+        sent_prompt_message = mock_prompt_normalizer.send_prompt_async.call_args.kwargs["message"]
+        assert len(sent_prompt_message.message_pieces) == 2
+        assert sent_prompt_message.message_pieces[0].original_value_data_type == "text"
+        assert sent_prompt_message.message_pieces[0].original_value == "seed text"
+        assert sent_prompt_message.message_pieces[1].original_value_data_type == "image_path"
+        assert sent_prompt_message.message_pieces[1].original_value == "/path/to/seed.png"
         # Resulting message has the adversarial text in place of the placeholder, plus the seed.
         assert len(result.message_pieces) == 2
         assert result.message_pieces[0].original_value == sample_response.get_value()

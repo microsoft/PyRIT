@@ -429,6 +429,7 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
         prompt_message = self._modality_router.build_adversarial_input_message(
             text=prompt_text,
             last_response=context.last_response,
+            seed_message=next_message,
         )
         logger.debug(f"Sending prompt to adversarial chat: {prompt_text[:50]}...")
 

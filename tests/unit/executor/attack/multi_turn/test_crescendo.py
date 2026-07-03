@@ -890,6 +890,9 @@ class TestPromptGeneration:
         basic_context: CrescendoAttackContext,
     ):
         """The shared adversarial_chat JSON schema is forwarded to the target via metadata."""
+        mock_adversarial_chat.configuration.capabilities.input_modalities = frozenset(
+            {frozenset({"text"}), frozenset({"text", "image_path"})}
+        )
         attack = CrescendoTestHelper.create_attack(
             objective_target=mock_objective_target,
             adversarial_chat=mock_adversarial_chat,
@@ -903,9 +906,34 @@ class TestPromptGeneration:
             text=create_adversarial_json_response()
         )
 
-        await attack._send_prompt_to_adversarial_chat_async(prompt_text="Test prompt", context=basic_context)
+        seed_message = Message(
+            message_pieces=[
+                MessagePiece(
+                    role="user",
+                    original_value="",
+                    original_value_data_type="text",
+                    conversation_id="crescendo-seed-forwarding-conv",
+                    prompt_metadata={"adversarial_placeholder": True},
+                ),
+                MessagePiece(
+                    role="user",
+                    original_value="/path/to/seed.png",
+                    original_value_data_type="image_path",
+                    conversation_id="crescendo-seed-forwarding-conv",
+                ),
+            ]
+        )
+
+        await attack._send_prompt_to_adversarial_chat_async(
+            prompt_text="Test prompt",
+            context=basic_context,
+            seed_message=seed_message,
+        )
 
         sent_message = mock_prompt_normalizer.send_prompt_async.call_args.kwargs["message"]
+        assert len(sent_message.message_pieces) == 2
+        assert sent_message.message_pieces[1].original_value_data_type == "image_path"
+        assert sent_message.message_pieces[1].original_value == "/path/to/seed.png"
         metadata = sent_message.message_pieces[0].prompt_metadata
         assert metadata["response_format"] == "json"
         assert metadata[JSON_SCHEMA_METADATA_KEY] == schema
@@ -2526,10 +2554,17 @@ class TestModalityRouterIntegration:
         )
         context.next_message = seed_message
 
-        with patch.object(attack, "_get_attack_prompt_async", new_callable=AsyncMock, return_value="seed text"):
+        with patch.object(
+            attack, "_get_attack_prompt_async", new_callable=AsyncMock, return_value="seed text"
+        ) as mock_get:
             result = await attack._generate_next_prompt_async(context=context)
 
         assert context.next_message is None
+        mock_get.assert_awaited_once_with(
+            context=context,
+            refused_text="",
+            seed_message=seed_message,
+        )
         assert len(result.message_pieces) == 2
         assert result.message_pieces[0].original_value == "seed text"
         assert result.message_pieces[0].original_value_data_type == "text"

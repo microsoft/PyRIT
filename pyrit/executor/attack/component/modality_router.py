@@ -33,11 +33,12 @@ class _ModalityFeedbackRouter:
     Multimodal-aware behavior is driven entirely by the targets' declared
     ``input_modalities``:
 
-    * **Adversarial direction.** When the objective target produces a non-text
-      response (image, audio, video, ...) the router attaches the media piece
-      to the adversarial chat's feedback message only if the adversarial
-      target advertises a ``{text, <data_type>}`` input combo. Otherwise it
-      falls back to a text-only message.
+    * **Adversarial direction.** The router can attach both first-turn seed
+      media (from ``next_message``) and subsequent objective-response media
+      (image, audio, video, ...) to the adversarial chat's feedback message,
+      but only for data types where the adversarial target advertises a
+      ``{text, <data_type>}`` input combo. Otherwise it falls back to a
+      text-only message.
     * **Objective direction.** On turn 0 the router either uses the
       adversarial-generated text alone (when the objective accepts ``{text}``)
       or combines it with the seed media supplied via
@@ -140,29 +141,39 @@ class _ModalityFeedbackRouter:
         *,
         text: str,
         last_response: Message | None,
+        seed_message: Message | None = None,
         prompt_metadata: dict[str, Any] | None = None,
     ) -> Message:
         """
         Build the ``Message`` to send to the adversarial chat for this turn.
 
-        Includes the previous response's media piece iff the adversarial target
-        advertises a ``{text, <data_type>}`` input combo for that piece's data
-        type. Otherwise returns a text-only message.
+        Includes first-turn seed media from ``seed_message`` and previous-response
+        media from ``last_response`` iff the adversarial target advertises a
+        ``{text, <data_type>}`` input combo for those data types. Otherwise
+        returns a text-only message.
 
         Args:
             text: The textual feedback (scorer rationale or similar) to send.
             last_response: The most recent objective-target response, or
                 ``None`` when no response is available yet.
+            seed_message: Optional seed message (typically
+                ``AttackParameters.next_message``) whose media pieces should be
+                forwarded to the adversarial chat on first turn.
             prompt_metadata: Optional metadata to attach to the text piece
                 (e.g., Crescendo's ``{"response_format": "json"}`` hint).
 
         Returns:
             A user-role ``Message`` ready to send to the adversarial chat.
         """
-        media_pieces = self._select_forwardable_media_pieces(
-            last_response=last_response,
+        seed_media_pieces = self._select_forwardable_media_pieces(
+            message=seed_message,
             allowed_media_types=self._adversarial_media_types_with_text,
         )
+        response_media_pieces = self._select_forwardable_media_pieces(
+            message=last_response,
+            allowed_media_types=self._adversarial_media_types_with_text,
+        )
+        media_pieces = [*seed_media_pieces, *response_media_pieces]
         if not media_pieces:
             return Message.from_prompt(prompt=text, role="user", prompt_metadata=prompt_metadata)
         return self._build_multimodal_message(
@@ -264,7 +275,7 @@ class _ModalityFeedbackRouter:
             return Message.from_prompt(prompt=text, role="user")
 
         media_pieces = self._select_forwardable_media_pieces(
-            last_response=last_response,
+            message=last_response,
             allowed_media_types=self._objective_media_types_with_text,
         )
         if not media_pieces:
@@ -286,26 +297,24 @@ class _ModalityFeedbackRouter:
     @staticmethod
     def _select_forwardable_media_pieces(
         *,
-        last_response: Message | None,
+        message: Message | None,
         allowed_media_types: frozenset[PromptDataType],
     ) -> list[MessagePiece]:
         """
-        Return the subset of ``last_response`` media pieces eligible for forwarding.
+        Return the subset of ``message`` media pieces eligible for forwarding.
 
         Args:
-            last_response: The most recent target response, or ``None``.
+            message: The source message (seed or response), or ``None``.
             allowed_media_types: Data types the consumer accepts together with text.
 
         Returns:
-            The subset of ``last_response`` media pieces whose data type is in
+            The subset of ``message`` media pieces whose data type is in
             ``allowed_media_types``. Empty when nothing matches or
-            ``last_response`` is ``None``.
+            ``message`` is ``None``.
         """
-        if last_response is None or not allowed_media_types:
+        if message is None or not allowed_media_types:
             return []
-        return [
-            piece for piece in last_response.message_pieces if piece.converted_value_data_type in allowed_media_types
-        ]
+        return [piece for piece in message.message_pieces if piece.converted_value_data_type in allowed_media_types]
 
     @staticmethod
     def _build_multimodal_message(

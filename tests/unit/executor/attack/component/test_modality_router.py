@@ -170,6 +170,41 @@ class TestBuildAdversarialInputMessage:
         assert len(msg.message_pieces) == 1
         assert msg.get_value() == "initial prompt"
 
+    def test_seed_media_is_forwarded_to_adversarial_when_supported(self):
+        router = _ModalityFeedbackRouter(
+            adversarial_chat=_build_target(input_modalities=[{"text"}, {"text", "image_path"}]),
+            objective_target=_build_target(input_modalities=[{"text"}, {"text", "image_path"}]),
+        )
+        seed_message = Message(
+            message_pieces=[
+                MessagePiece(
+                    role="user",
+                    original_value="",
+                    original_value_data_type="text",
+                    conversation_id="seed-forwarding-conv",
+                    prompt_metadata={"adversarial_placeholder": True},
+                ),
+                MessagePiece(
+                    role="user",
+                    original_value="/tmp/seed.png",
+                    original_value_data_type="image_path",
+                    conversation_id="seed-forwarding-conv",
+                ),
+            ]
+        )
+
+        msg = router.build_adversarial_input_message(
+            text="seed-aware prompt",
+            last_response=None,
+            seed_message=seed_message,
+        )
+
+        assert len(msg.message_pieces) == 2
+        assert msg.message_pieces[0].original_value_data_type == "text"
+        assert msg.message_pieces[0].original_value == "seed-aware prompt"
+        assert msg.message_pieces[1].original_value_data_type == "image_path"
+        assert msg.message_pieces[1].original_value == "/tmp/seed.png"
+
     def test_response_media_type_not_supported_falls_back(self):
         # Adversarial accepts {text, image_path} but the response is audio_path.
         router = _ModalityFeedbackRouter(
