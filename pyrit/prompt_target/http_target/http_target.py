@@ -189,23 +189,22 @@ class HTTPTarget(PromptTarget):
             cleanup_client = True
 
         try:
-            match http_body:
-                case dict():
-                    response = await client.request(
-                        method=http_method,
-                        url=url,
-                        headers=header_dict,
-                        data=http_body,
-                        follow_redirects=True,
-                    )
-                case str():
-                    response = await client.request(
-                        method=http_method,
-                        url=url,
-                        headers=header_dict,
-                        content=http_body,
-                        follow_redirects=True,
-                    )
+            if isinstance(http_body, dict):
+                response = await client.request(
+                    method=http_method,
+                    url=url,
+                    headers=header_dict,
+                    data=http_body,
+                    follow_redirects=True,
+                )
+            else:
+                response = await client.request(
+                    method=http_method,
+                    url=url,
+                    headers=header_dict,
+                    content=http_body,
+                    follow_redirects=True,
+                )
 
             response_content = response.content
 

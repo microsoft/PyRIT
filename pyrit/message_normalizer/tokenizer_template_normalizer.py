@@ -126,7 +126,9 @@ class TokenizerTemplateNormalizer(MessageStringNormalizer):
 
         return cast(
             "PreTrainedTokenizerBase",
-            transformers.AutoTokenizer.from_pretrained(model_name, token=token or None),
+            transformers.AutoTokenizer.from_pretrained(  # ty: ignore[possibly-missing-attribute]
+                model_name, token=token or None
+            ),
         )
 
     @classmethod

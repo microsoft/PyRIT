@@ -1,6 +1,7 @@
 import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { FluentProvider, webLightTheme } from "@fluentui/react-components";
+import { makeTarget } from "@/test-utils/targetFixtures";
 import CreateTargetDialog from "./CreateTargetDialog";
 import { parseWeight, MAX_WEIGHT } from "./weightValidation";
 import { targetsApi } from "@/services/api";
@@ -8,10 +9,23 @@ import { targetsApi } from "@/services/api";
 jest.mock("@/services/api", () => ({
   targetsApi: {
     createTarget: jest.fn(),
+    listTargetCatalog: jest.fn(),
+    listTargets: jest.fn(),
   },
 }));
 
 const mockedTargetsApi = targetsApi as jest.Mocked<typeof targetsApi>;
+
+// Representative target catalog covering the types the dialog renders. Mirrors
+// the shape returned by GET /targets/catalog.
+const TARGET_CATALOG = {
+  items: [
+    { target_type: "OpenAIChatTarget", parameters: [], supported_auth_modes: ["api_key", "identity"] },
+    { target_type: "OpenAIResponseTarget", parameters: [], supported_auth_modes: ["api_key", "identity"] },
+    { target_type: "AzureMLChatTarget", parameters: [], supported_auth_modes: ["api_key", "identity"] },
+    { target_type: "RoundRobinTarget", parameters: [], supported_auth_modes: ["api_key"] },
+  ],
+};
 
 const TestWrapper: React.FC<{ children: React.ReactNode }> = ({
   children,
@@ -104,6 +118,13 @@ describe("CreateTargetDialog", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    mockedTargetsApi.listTargetCatalog.mockResolvedValue(
+      TARGET_CATALOG as unknown as Awaited<ReturnType<typeof mockedTargetsApi.listTargetCatalog>>,
+    );
+    mockedTargetsApi.listTargets.mockResolvedValue({
+      items: [],
+      pagination: { limit: 200, has_more: false, next_cursor: null, prev_cursor: null },
+    } as unknown as Awaited<ReturnType<typeof mockedTargetsApi.listTargets>>);
   });
 
   it("should render dialog when open", () => {
@@ -150,16 +171,16 @@ describe("CreateTargetDialog", () => {
 
     // No type is chosen yet, so authentication option is not visible yet, but plain API Key input is.
     expect(
-      screen.queryByRole("radio", { name: /Microsoft Entra Authentication/ })
+      screen.queryByRole("radio", { name: /Identity-based/ })
     ).not.toBeInTheDocument();
     expect(
       screen.getByPlaceholderText("API key (stored in memory only)")
     ).toBeInTheDocument();
 
-    // Selecting an Entra-capable type should reveal the Authentication field.
+    // Selecting an identity-capable type should reveal the Authentication field.
     await selectTargetType(user, "OpenAIChatTarget");
     expect(
-      screen.getByRole("radio", { name: /Microsoft Entra Authentication/ })
+      screen.getByRole("radio", { name: /Identity-based/ })
     ).toBeInTheDocument();
   });
 
@@ -181,10 +202,10 @@ describe("CreateTargetDialog", () => {
   it("should create target and call onCreated on successful submit", async () => {
     const onCreated = jest.fn();
     const user = userEvent.setup();
-    mockedTargetsApi.createTarget.mockResolvedValue({
+    mockedTargetsApi.createTarget.mockResolvedValue(makeTarget({
       target_registry_name: "openai_chat_new",
       target_type: "OpenAIChatTarget",
-    });
+    }));
 
     render(
       <TestWrapper>
@@ -222,10 +243,10 @@ describe("CreateTargetDialog", () => {
   it("should send underlying_model when toggle is enabled", async () => {
     const onCreated = jest.fn();
     const user = userEvent.setup();
-    mockedTargetsApi.createTarget.mockResolvedValue({
+    mockedTargetsApi.createTarget.mockResolvedValue(makeTarget({
       target_registry_name: "azure_deployment",
       target_type: "OpenAIChatTarget",
-    });
+    }));
 
     render(
       <TestWrapper>
@@ -271,10 +292,10 @@ describe("CreateTargetDialog", () => {
   it("should not send underlying_model when toggle is off", async () => {
     const onCreated = jest.fn();
     const user = userEvent.setup();
-    mockedTargetsApi.createTarget.mockResolvedValue({
+    mockedTargetsApi.createTarget.mockResolvedValue(makeTarget({
       target_registry_name: "simple_target",
       target_type: "OpenAIChatTarget",
-    });
+    }));
 
     render(
       <TestWrapper>
@@ -338,10 +359,10 @@ describe("CreateTargetDialog", () => {
 
   it("should include API key in params when provided", async () => {
     const user = userEvent.setup();
-    mockedTargetsApi.createTarget.mockResolvedValue({
+    mockedTargetsApi.createTarget.mockResolvedValue(makeTarget({
       target_registry_name: "openai_chat_keyed",
       target_type: "OpenAIChatTarget",
-    });
+    }));
 
     render(
       <TestWrapper>
@@ -455,10 +476,10 @@ describe("CreateTargetDialog", () => {
   it("should create AzureMLChatTarget with AzureML-specific params", async () => {
     const onCreated = jest.fn();
     const user = userEvent.setup();
-    mockedTargetsApi.createTarget.mockResolvedValue({
+    mockedTargetsApi.createTarget.mockResolvedValue(makeTarget({
       target_registry_name: "azure_ml_llama",
       target_type: "AzureMLChatTarget",
-    });
+    }));
 
     render(
       <TestWrapper>
@@ -524,10 +545,10 @@ describe("CreateTargetDialog", () => {
   it("should send custom AzureML params when fields are modified", async () => {
     const onCreated = jest.fn();
     const user = userEvent.setup();
-    mockedTargetsApi.createTarget.mockResolvedValue({
+    mockedTargetsApi.createTarget.mockResolvedValue(makeTarget({
       target_registry_name: "azure_ml_custom",
       target_type: "AzureMLChatTarget",
-    });
+    }));
 
     render(
       <TestWrapper>
@@ -601,13 +622,13 @@ describe("CreateTargetDialog", () => {
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
-  it("should hide the API Key field and omit api_key/include auth_mode when Entra is selected", async () => {
+  it("should hide the API Key field and omit api_key/include auth_mode when identity is selected", async () => {
     const onCreated = jest.fn();
     const user = userEvent.setup();
-    mockedTargetsApi.createTarget.mockResolvedValue({
-      target_registry_name: "openai_chat_entra",
+    mockedTargetsApi.createTarget.mockResolvedValue(makeTarget({
+      target_registry_name: "openai_chat_identity",
       target_type: "OpenAIChatTarget",
-    });
+    }));
 
     render(
       <TestWrapper>
@@ -629,14 +650,14 @@ describe("CreateTargetDialog", () => {
       screen.getByPlaceholderText("API key (stored in memory only)")
     ).toBeInTheDocument();
 
-    // Select Entra option.
+    // Select identity option.
     await user.click(
       screen.getByRole("radio", {
-        name: /Microsoft Entra Authentication/,
+        name: /Identity-based/,
       })
     );
 
-    // check that API Key field is hidden when Entra mode is selected.
+    // check that API Key field is hidden when identity mode is selected.
     expect(
       screen.queryByPlaceholderText("API key (stored in memory only)")
     ).not.toBeInTheDocument();
@@ -649,19 +670,19 @@ describe("CreateTargetDialog", () => {
         params: {
           endpoint: "https://my-resource.openai.azure.com/",
         },
-        auth_mode: "entra",
+        auth_mode: "identity",
       });
       expect(onCreated).toHaveBeenCalled();
     });
   });
 
-  it("should clear a previously-typed API key when switching to Entra", async () => {
+  it("should clear a previously-typed API key when switching to identity", async () => {
     const onCreated = jest.fn();
     const user = userEvent.setup();
-    mockedTargetsApi.createTarget.mockResolvedValue({
-      target_registry_name: "openai_chat_entra",
+    mockedTargetsApi.createTarget.mockResolvedValue(makeTarget({
+      target_registry_name: "openai_chat_identity",
       target_type: "OpenAIChatTarget",
-    });
+    }));
 
     render(
       <TestWrapper>
@@ -678,26 +699,26 @@ describe("CreateTargetDialog", () => {
       target: { value: "https://my-resource.openai.azure.com/" },
     });
 
-    // Type a key, then switch to Entra option.
+    // Type a key, then switch to identity option.
     fireEvent.change(
       screen.getByPlaceholderText("API key (stored in memory only)"),
       { target: { value: "sk-typed-before-switch" } }
     );
 
     await user.click(
-      screen.getByRole("radio", { name: /Microsoft Entra Authentication/ })
+      screen.getByRole("radio", { name: /Identity-based/ })
     );
 
     await user.click(screen.getByText("Create Target"));
 
     await waitFor(() => {
       const call = mockedTargetsApi.createTarget.mock.calls[0][0];
-      expect(call.auth_mode).toBe("entra");
+      expect(call.auth_mode).toBe("identity");
       expect(call.params).not.toHaveProperty("api_key");
     });
   });
 
-  it("should warn the user when Entra is selected for a non-Azure OpenAI endpoint", async () => {
+  it("should warn the user when identity is selected for a non-Azure OpenAI endpoint", async () => {
     const user = userEvent.setup();
 
     render(
@@ -714,15 +735,15 @@ describe("CreateTargetDialog", () => {
     fireEvent.change(endpointInput, { target: { value: "https://api.openai.com/" } });
 
     await user.click(
-      screen.getByRole("radio", { name: /Microsoft Entra Authentication/ })
+      screen.getByRole("radio", { name: /Identity-based/ })
     );
 
     expect(
-      screen.getByText(/Entra auth only works with Azure OpenAI/)
+      screen.getByText(/Identity-based auth only works with Azure OpenAI/)
     ).toBeInTheDocument();
   });
 
-  it("should NOT warn when Entra is selected for a recognized Azure endpoint", async () => {
+  it("should NOT warn when identity is selected for a recognized Azure endpoint", async () => {
     const user = userEvent.setup();
 
     render(
@@ -741,15 +762,15 @@ describe("CreateTargetDialog", () => {
     });
 
     await user.click(
-      screen.getByRole("radio", { name: /Microsoft Entra Authentication/ })
+      screen.getByRole("radio", { name: /Identity-based/ })
     );
 
     expect(
-      screen.queryByText(/Entra auth only works with Azure OpenAI/)
+      screen.queryByText(/Identity-based auth only works with Azure OpenAI/)
     ).not.toBeInTheDocument();
   });
 
-  it("should disable Create Target and skip API call for Entra + non-Azure OpenAI endpoint", async () => {
+  it("should disable Create Target and skip API call for identity + non-Azure OpenAI endpoint", async () => {
     const user = userEvent.setup();
 
     render(
@@ -766,7 +787,7 @@ describe("CreateTargetDialog", () => {
     fireEvent.change(endpointInput, { target: { value: "https://api.test.com/" } });
 
     await user.click(
-      screen.getByRole("radio", { name: /Microsoft Entra Authentication/ })
+      screen.getByRole("radio", { name: /Identity-based/ })
     );
 
     const createButton = screen.getByText("Create Target").closest("button");
@@ -777,7 +798,7 @@ describe("CreateTargetDialog", () => {
     expect(mockedTargetsApi.createTarget).not.toHaveBeenCalled();
   });
 
-  it("should warn the user when Entra is selected for a non-AML endpoint on AzureMLChatTarget", async () => {
+  it("should warn the user when identity is selected for a non-AML endpoint on AzureMLChatTarget", async () => {
     const user = userEvent.setup();
 
     render(
@@ -796,17 +817,17 @@ describe("CreateTargetDialog", () => {
     });
 
     await user.click(
-      screen.getByRole("radio", { name: /Microsoft Entra Authentication/ })
+      screen.getByRole("radio", { name: /Identity-based/ })
     );
 
     expect(
       screen.getByText(
-        /Entra auth for AzureMLChatTarget only works with Azure ML managed online endpoints/
+        /Identity-based auth for AzureMLChatTarget only works with Azure ML managed online endpoints/
       )
     ).toBeInTheDocument();
   });
 
-  it("should NOT warn when Entra is selected for a recognized AML endpoint", async () => {
+  it("should NOT warn when identity is selected for a recognized AML endpoint", async () => {
     const user = userEvent.setup();
 
     render(
@@ -825,17 +846,17 @@ describe("CreateTargetDialog", () => {
     });
 
     await user.click(
-      screen.getByRole("radio", { name: /Microsoft Entra Authentication/ })
+      screen.getByRole("radio", { name: /Identity-based/ })
     );
 
     expect(
       screen.queryByText(
-        /Entra auth for AzureMLChatTarget only works with Azure ML managed online endpoints/
+        /Identity-based auth for AzureMLChatTarget only works with Azure ML managed online endpoints/
       )
     ).not.toBeInTheDocument();
   });
 
-  it("should disable Create Target and skip API call for Entra + non-AML endpoint on AzureMLChatTarget", async () => {
+  it("should disable Create Target and skip API call for identity + non-AML endpoint on AzureMLChatTarget", async () => {
     const user = userEvent.setup();
 
     render(
@@ -854,7 +875,7 @@ describe("CreateTargetDialog", () => {
     });
 
     await user.click(
-      screen.getByRole("radio", { name: /Microsoft Entra Authentication/ })
+      screen.getByRole("radio", { name: /Identity-based/ })
     );
 
     const createButton = screen.getByText("Create Target").closest("button");
@@ -873,18 +894,18 @@ describe("CreateTargetDialog", () => {
         <CreateTargetDialog
           {...defaultProps}
           existingTargets={[
-            {
+            makeTarget({
               target_registry_name: "openai_a",
               target_type: "OpenAIChatTarget",
               model_name: "gpt-4o",
               endpoint: "https://a.openai.azure.com",
-            },
-            {
+            }),
+            makeTarget({
               target_registry_name: "openai_b",
               target_type: "OpenAIChatTarget",
               model_name: "gpt-4o",
               endpoint: "https://b.openai.azure.com",
-            },
+            }),
           ]}
         />
       </TestWrapper>
@@ -909,11 +930,11 @@ describe("CreateTargetDialog", () => {
         <CreateTargetDialog
           {...defaultProps}
           existingTargets={[
-            {
+            makeTarget({
               target_registry_name: "openai_a",
               target_type: "OpenAIChatTarget",
               model_name: "gpt-4o",
-            },
+            }),
           ]}
         />
       </TestWrapper>
@@ -936,27 +957,27 @@ describe("CreateTargetDialog", () => {
         <CreateTargetDialog
           {...defaultProps}
           existingTargets={[
-            {
+            makeTarget({
               target_registry_name: "openai_a",
               target_type: "OpenAIChatTarget",
               model_name: "gpt-4o",
               underlying_model_name: "gpt-4o",
               identifier_hash: "hash-a",
-            },
-            {
+            }),
+            makeTarget({
               target_registry_name: "openai_a_alias",
               target_type: "OpenAIChatTarget",
               model_name: "gpt-4o",
               underlying_model_name: "gpt-4o",
               identifier_hash: "hash-a",
-            },
-            {
+            }),
+            makeTarget({
               target_registry_name: "openai_b",
               target_type: "OpenAIChatTarget",
               model_name: "gpt-4o",
               underlying_model_name: "gpt-4o",
               identifier_hash: "hash-b",
-            },
+            }),
           ]}
         />
       </TestWrapper>
@@ -991,24 +1012,24 @@ describe("CreateTargetDialog", () => {
         <CreateTargetDialog
           {...defaultProps}
           existingTargets={[
-            {
+            makeTarget({
               target_registry_name: "foundry_a",
               target_type: "OpenAIChatTarget",
               model_name: "DeepSeek-R1",
               identifier_hash: "hash-a",
-            },
-            {
+            }),
+            makeTarget({
               target_registry_name: "foundry_b",
               target_type: "OpenAIChatTarget",
               model_name: "Gemini",
               identifier_hash: "hash-b",
-            },
-            {
+            }),
+            makeTarget({
               target_registry_name: "foundry_c",
               target_type: "OpenAIChatTarget",
               model_name: "DeepSeek-R1",
               identifier_hash: "hash-c",
-            },
+            }),
           ]}
         />
       </TestWrapper>
@@ -1049,18 +1070,18 @@ describe("CreateTargetDialog", () => {
         <CreateTargetDialog
           {...defaultProps}
           existingTargets={[
-            {
+            makeTarget({
               target_registry_name: "a",
               target_type: "OpenAIChatTarget",
               model_name: "gpt-4o",
               identifier_hash: "hash-a",
-            },
-            {
+            }),
+            makeTarget({
               target_registry_name: "b",
               target_type: "OpenAIChatTarget",
               model_name: "gpt-4o",
               identifier_hash: "hash-b",
-            },
+            }),
           ]}
         />
       </TestWrapper>
@@ -1100,18 +1121,18 @@ describe("CreateTargetDialog", () => {
         <CreateTargetDialog
           {...defaultProps}
           existingTargets={[
-            {
+            makeTarget({
               target_registry_name: "a",
               target_type: "OpenAIChatTarget",
               model_name: "gpt-4o",
               identifier_hash: "hash-a",
-            },
-            {
+            }),
+            makeTarget({
               target_registry_name: "b",
               target_type: "OpenAIChatTarget",
               model_name: "gpt-4o",
               identifier_hash: "hash-b",
-            },
+            }),
           ]}
         />
       </TestWrapper>
@@ -1199,6 +1220,7 @@ describe("CreateTargetDialog", () => {
     );
     const call = mockedTargetsApi.createTarget.mock.calls[0][0];
     expect(call.type).toBe("RoundRobinTarget");
+    expect(call.params?.targets).toEqual(["a", "b"]);
     expect(call.params?.weights).toEqual([7, 42]);
   }, 30000);
 

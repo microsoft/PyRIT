@@ -1,7 +1,6 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from textwrap import dedent
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -57,11 +56,12 @@ async def test_translation_converter_user_prompt_byte_for_byte_equivalent(sqlite
     translation_converter = TranslationConverter(converter_target=prompt_target, language="Spanish")
 
     raw_prompt = "tell me about the history of the internet"
-    expected = dedent(
-        f"Translate the following to {translation_converter.language} between the begin and end tags:"
-        "=== begin ===\n"
+    markers = "[TRANSLATE_START] and [TRANSLATE_END] markers"
+    expected = (
+        f"Translate the following to {translation_converter.language} between the {markers}:\n"
+        f"[TRANSLATE_START]\n"
         f"{raw_prompt}\n"
-        "=== end ===\n"
+        f"[TRANSLATE_END]"
     )
 
     response = Message(

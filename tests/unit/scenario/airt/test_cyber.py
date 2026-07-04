@@ -3,19 +3,19 @@
 
 """Tests for the Cyber scenario (refactored to technique registry pattern)."""
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from pyrit.executor.attack import RedTeamingAttack
 from pyrit.models import ComponentIdentifier, SeedAttackGroup, SeedObjective, SeedPrompt
 from pyrit.prompt_target import PromptTarget
-from pyrit.registry.object_registries.attack_technique_registry import AttackTechniqueRegistry
-from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
+from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
+from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration, DatasetConfiguration
 from pyrit.scenario.scenarios.airt.cyber import Cyber
 from pyrit.score import TrueFalseScorer
-from pyrit.setup.initializers.components.scenario_techniques import (
-    build_scenario_technique_factories,
+from pyrit.setup.initializers.techniques import (
+    build_technique_factories,
 )
 
 # ---------------------------------------------------------------------------
@@ -65,27 +65,27 @@ def reset_technique_registry():
     """Reset registries, populate scenario factories, and clear cached strategy class.
 
     Registers a mock adversarial target under ``adversarial_chat`` in
-    ``TargetRegistry`` so ``build_scenario_technique_factories`` can resolve
+    ``TargetRegistry`` so ``build_technique_factories`` can resolve
     it without falling back to ``OpenAIChatTarget`` (which would require
     central memory).
     """
     from pyrit.registry import TargetRegistry
     from pyrit.scenario.scenarios.airt.cyber import _build_cyber_strategy
 
-    AttackTechniqueRegistry.reset_instance()
-    TargetRegistry.reset_instance()
+    AttackTechniqueRegistry.reset_registry_singleton()
+    TargetRegistry.reset_registry_singleton()
     _build_cyber_strategy.cache_clear()
 
     adv_target = MagicMock(spec=PromptTarget)
     adv_target.capabilities.includes.return_value = True
     target_registry = TargetRegistry.get_registry_singleton()
-    target_registry.register_instance(adv_target, name="adversarial_chat")
+    target_registry.instances.register(adv_target, name="adversarial_chat")
 
     technique_registry = AttackTechniqueRegistry.get_registry_singleton()
-    technique_registry.register_from_factories(build_scenario_technique_factories())
+    technique_registry.register_from_factories(build_technique_factories())
     yield
-    AttackTechniqueRegistry.reset_instance()
-    TargetRegistry.reset_instance()
+    AttackTechniqueRegistry.reset_registry_singleton()
+    TargetRegistry.reset_registry_singleton()
     _build_cyber_strategy.cache_clear()
 
 
@@ -140,7 +140,7 @@ class TestCyberBasic:
     def test_default_dataset_config_has_malware_dataset(self):
         config = Cyber()._default_dataset_config
         assert isinstance(config, DatasetConfiguration)
-        names = config.get_default_dataset_names()
+        names = config.dataset_names
         assert "airt_malware" in names
         assert len(names) == 1
 
@@ -161,7 +161,10 @@ class TestCyberBasic:
         assert scenario.name == "Cyber"
 
     @patch.object(
-        DatasetConfiguration, "get_seed_attack_groups", return_value={"malware": _make_seed_groups("malware")}
+        DatasetAttackConfiguration,
+        "get_attack_groups_by_dataset_async",
+        new_callable=AsyncMock,
+        return_value={"malware": _make_seed_groups("malware")},
     )
     async def test_initialization_defaults_to_all_strategy(
         self,
@@ -179,11 +182,20 @@ class TestCyberBasic:
     async def test_initialize_raises_when_no_datasets(self, mock_objective_target, mock_objective_scorer):
         """Dataset resolution fails from empty memory."""
         scenario = Cyber(objective_scorer=mock_objective_scorer)
-        with pytest.raises(ValueError, match="DatasetConfiguration has no seed_groups"):
-            await scenario.initialize_async(objective_target=mock_objective_target)
+        # Neutralize the provider fetch so the empty-memory path raises loudly instead of fetching
+        # the real default dataset from the provider.
+        with patch(
+            "pyrit.scenario.core.dataset_configuration.DatasetConfiguration._fetch_dataset_async",
+            new_callable=AsyncMock,
+        ):
+            with pytest.raises(ValueError, match="could not be loaded"):
+                await scenario.initialize_async(objective_target=mock_objective_target)
 
     @patch.object(
-        DatasetConfiguration, "get_seed_attack_groups", return_value={"malware": _make_seed_groups("malware")}
+        DatasetAttackConfiguration,
+        "get_attack_groups_by_dataset_async",
+        new_callable=AsyncMock,
+        return_value={"malware": _make_seed_groups("malware")},
     )
     async def test_memory_labels_stored(
         self,
@@ -197,7 +209,10 @@ class TestCyberBasic:
         assert scenario._memory_labels == labels
 
     @patch.object(
-        DatasetConfiguration, "get_seed_attack_groups", return_value={"malware": _make_seed_groups("malware")}
+        DatasetAttackConfiguration,
+        "get_attack_groups_by_dataset_async",
+        new_callable=AsyncMock,
+        return_value={"malware": _make_seed_groups("malware")},
     )
     async def test_initialize_async_with_max_concurrency(
         self,
@@ -229,13 +244,18 @@ class TestCyberAttackGeneration:
     ):
         """Helper: initialize scenario and return atomic attacks."""
         groups = seed_groups or {"malware": _make_seed_groups("malware")}
-        with patch.object(DatasetConfiguration, "get_seed_attack_groups", return_value=groups):
+        with patch.object(
+            DatasetAttackConfiguration,
+            "get_attack_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value=groups,
+        ):
             scenario = Cyber(objective_scorer=mock_objective_scorer)
             init_kwargs = {"objective_target": mock_objective_target, "include_baseline": False}
             if strategies:
                 init_kwargs["scenario_strategies"] = strategies
             await scenario.initialize_async(**init_kwargs)
-            return await scenario._get_atomic_attacks_async()
+            return scenario._atomic_attacks
 
     async def test_all_strategy_produces_red_teaming(self, mock_objective_target, mock_objective_scorer):
         attacks = await self._init_and_get_attacks(
@@ -298,7 +318,7 @@ class TestCyberAttackGeneration:
     async def test_raises_when_not_initialized(self, mock_objective_scorer):
         scenario = Cyber(objective_scorer=mock_objective_scorer)
         with pytest.raises(ValueError, match="Scenario not properly initialized"):
-            await scenario._get_atomic_attacks_async()
+            scenario._build_scenario_context(seed_groups_by_dataset={})
 
 
 # ===========================================================================
@@ -326,23 +346,23 @@ class TestCyberRegistryIntegration:
     """Tests for attack technique registry wiring via Cyber scenario."""
 
     def test_cyber_factories_include_red_teaming(self, mock_objective_scorer):
-        scenario = Cyber(objective_scorer=mock_objective_scorer)
-        factories = scenario._get_attack_technique_factories()
-        # Cyber filters the registry to red_teaming; the PromptSendingAttack baseline
+        registry = AttackTechniqueRegistry.get_registry_singleton()
+        factories = registry.get_factories_or_raise()
+        # Cyber selects red_teaming from the registry; the PromptSendingAttack baseline
         # is contributed at runtime by BaselineAttackPolicy.Enabled, not by this dict.
         assert "red_teaming" in factories
         assert factories["red_teaming"].attack_class is RedTeamingAttack
 
     def test_red_teaming_factory_has_adversarial_config(self, mock_objective_scorer):
         """red_teaming factory advertises uses_adversarial (config resolved lazily at create())."""
-        scenario = Cyber(objective_scorer=mock_objective_scorer)
-        factories = scenario._get_attack_technique_factories()
+        registry = AttackTechniqueRegistry.get_registry_singleton()
+        factories = registry.get_factories_or_raise()
         assert factories["red_teaming"].uses_adversarial is True
         assert factories["red_teaming"]._adversarial_chat is None
 
     def test_register_idempotent(self):
         """Registering the scenario technique factories twice doesn't duplicate entries."""
         registry = AttackTechniqueRegistry.get_registry_singleton()
-        registry.register_from_factories(build_scenario_technique_factories())
-        registry.register_from_factories(build_scenario_technique_factories())
-        assert len([n for n in registry.get_names() if n == "red_teaming"]) == 1
+        registry.register_from_factories(build_technique_factories())
+        registry.register_from_factories(build_technique_factories())
+        assert len([n for n in registry.instances.get_names() if n == "red_teaming"]) == 1

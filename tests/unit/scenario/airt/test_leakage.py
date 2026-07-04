@@ -4,7 +4,7 @@
 """Tests for the Leakage class."""
 
 import pathlib
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -12,13 +12,13 @@ from pyrit.common.path import DATASETS_PATH
 from pyrit.models import ComponentIdentifier, SeedAttackGroup, SeedDataset, SeedObjective
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry import TargetRegistry
-from pyrit.registry.object_registries.attack_technique_registry import AttackTechniqueRegistry
-from pyrit.scenario import DatasetConfiguration
+from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
+from pyrit.scenario import DatasetAttackConfiguration
 from pyrit.scenario.airt import Leakage  # type: ignore[ty:unresolved-import]
 from pyrit.scenario.core import BaselineAttackPolicy
 from pyrit.scenario.scenarios.airt.leakage import _build_leakage_strategy
 from pyrit.score import TrueFalseCompositeScorer
-from pyrit.setup.initializers.components.scenario_techniques import build_scenario_technique_factories
+from pyrit.setup.initializers.techniques import build_technique_factories
 
 
 def _mock_scorer_id(name: str = "MockObjectiveScorer") -> ComponentIdentifier:
@@ -48,11 +48,9 @@ def mock_memory_seeds():
 def mock_dataset_config(mock_memory_seeds):
     """Create a mock dataset config that returns the seed groups."""
     seed_groups = [SeedAttackGroup(seeds=[seed]) for seed in mock_memory_seeds]
-    mock_config = MagicMock(spec=DatasetConfiguration)
-    mock_config.get_all_seed_attack_groups.return_value = seed_groups
-    mock_config.get_seed_attack_groups.return_value = {"airt_leakage": seed_groups}
-    mock_config.get_default_dataset_names.return_value = ["airt_leakage"]
-    mock_config.has_data_source.return_value = True
+    mock_config = MagicMock(spec=DatasetAttackConfiguration)
+    mock_config.get_attack_groups_by_dataset_async = AsyncMock(return_value={"airt_leakage": seed_groups})
+    mock_config.dataset_names = ["airt_leakage"]
     return mock_config
 
 
@@ -89,19 +87,19 @@ FIXTURES = ["patch_central_database", "mock_runtime_env"]
 @pytest.fixture(autouse=True)
 def reset_technique_registry():
     """Reset registries and populate scenario factories for each test."""
-    AttackTechniqueRegistry.reset_instance()
-    TargetRegistry.reset_instance()
+    AttackTechniqueRegistry.reset_registry_singleton()
+    TargetRegistry.reset_registry_singleton()
     _build_leakage_strategy.cache_clear()
 
     adv_target = MagicMock(spec=PromptTarget)
     adv_target.capabilities.includes.return_value = True
-    TargetRegistry.get_registry_singleton().register_instance(adv_target, name="adversarial_chat")
+    TargetRegistry.get_registry_singleton().instances.register(adv_target, name="adversarial_chat")
 
     technique_registry = AttackTechniqueRegistry.get_registry_singleton()
-    technique_registry.register_from_factories(build_scenario_technique_factories())
+    technique_registry.register_from_factories(build_technique_factories())
     yield
-    AttackTechniqueRegistry.reset_instance()
-    TargetRegistry.reset_instance()
+    AttackTechniqueRegistry.reset_registry_singleton()
+    TargetRegistry.reset_registry_singleton()
     _build_leakage_strategy.cache_clear()
 
 
@@ -138,7 +136,7 @@ class TestLeakageAttackGeneration:
         """Test that _get_atomic_attacks_async returns atomic attacks."""
         scenario = Leakage(objective_scorer=mock_objective_scorer)
         await scenario.initialize_async(objective_target=mock_objective_target, dataset_config=mock_dataset_config)
-        atomic_attacks = await scenario._get_atomic_attacks_async()
+        atomic_attacks = scenario._atomic_attacks
 
         assert len(atomic_attacks) > 0
         assert all(run.attack_technique is not None for run in atomic_attacks)
@@ -149,7 +147,7 @@ class TestLeakageAttackGeneration:
         """Test that attack runs include objectives for each seed prompt."""
         scenario = Leakage(objective_scorer=mock_objective_scorer)
         await scenario.initialize_async(objective_target=mock_objective_target, dataset_config=mock_dataset_config)
-        atomic_attacks = await scenario._get_atomic_attacks_async()
+        atomic_attacks = scenario._atomic_attacks
 
         for run in atomic_attacks:
             assert len(run.objectives) > 0

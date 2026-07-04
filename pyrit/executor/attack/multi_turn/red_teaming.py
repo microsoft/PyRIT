@@ -17,6 +17,7 @@ from pyrit.executor.attack.component import (
     ConversationManager,
     get_adversarial_chat_messages,
 )
+from pyrit.executor.attack.component.modality_router import _ModalityFeedbackRouter
 from pyrit.executor.attack.core.attack_config import (
     DEFAULT_ADVERSARIAL_FIRST_MESSAGE,
     DEFAULT_ADVERSARIAL_PROMPT_TEMPLATE,
@@ -149,6 +150,15 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
         except ValueError as exc:
             raise ValueError(f"RedTeamingAttack {exc}") from exc
 
+        # Router that decides — based on each target's declared capabilities —
+        # whether prior media should travel back to the adversarial chat or
+        # forward to the objective target, and that fills in adversarial
+        # placeholders when ``next_message`` carries seed media.
+        self._modality_router = _ModalityFeedbackRouter(
+            adversarial_chat=self._adversarial_chat,
+            objective_target=objective_target,
+        )
+
         self._adversarial_chat_system_prompt_template = resolve_adversarial_system_prompt(
             config=attack_adversarial_config,
             default_system_prompt_path=RTASystemPromptPaths.TEXT_GENERATION.value,
@@ -229,6 +239,10 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
         for validator, error_msg in validators:
             if not validator():
                 raise ValueError(error_msg)
+
+        # Fail fast if the objective target requires media on turn 0 but
+        # ``next_message`` does not supply any (i.e. edit-only mode without a seed).
+        self._modality_router.validate_first_turn_seed(next_message=context.next_message)
 
     async def _setup_async(self, *, context: MultiTurnAttackContext[Any]) -> None:
         """
@@ -381,24 +395,35 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
         error states, or the custom prompt if it is available. It integrates feedback from the
         scorer when available, and handles blocked or error responses by returning fallback prompts.
 
+        Three branches:
+
+        1. ``next_message`` is set with no adversarial placeholder pieces — the message is sent
+           to the objective target as-is, bypassing the adversarial chat entirely (this is the
+           pre-existing first-turn override).
+        2. ``next_message`` is set with adversarial-placeholder pieces — the adversarial chat
+           generates text which the router then substitutes into the placeholder slots, allowing
+           a caller to supply seed media (e.g. an image to edit) alongside adversarial text.
+        3. ``next_message`` is unset — the adversarial chat generates text from the previous
+           response's feedback (or the seed prompt on turn 1), and the router builds the
+           objective request including prior media when the target accepts it.
+
         Args:
             context (MultiTurnAttackContext): The attack context containing the current state and configuration.
 
         Returns:
-            Message: The message to send to the objective target, preserving multimodal content
-                when provided via next_message.
+            Message: The message to send to the objective target.
 
         Raises:
             ValueError: If no response is received from the adversarial chat.
         """
-        # If custom message provided, use it and bypass adversarial chat generation
-        # Return the full Message to preserve multimodal content (images, audio, etc.)
-        if context.next_message:
-            logger.debug("Using custom message, bypassing adversarial chat")
-            message = context.next_message
-            # Clear to prevent reuse
+        next_message = context.next_message
+        if next_message is not None:
+            # Clear immediately to prevent reuse on subsequent turns.
             context.next_message = None
-            return message
+            has_placeholder = any(piece.is_adversarial_placeholder() for piece in next_message.message_pieces)
+            if not has_placeholder:
+                logger.debug("Using custom message, bypassing adversarial chat")
+                return next_message
 
         # Generate prompt using adversarial chat. A manager scoped to this adversarial
         # conversation forwards the shared JSON schema and parses ``next_message`` when the
@@ -415,20 +440,40 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
             objective_target_conversation_id=context.session.conversation_id,
             attack_strategy_name=self.__class__.__name__,
             memory_labels=context.memory_labels,
+            modality_router=self._modality_router,
+            use_score_as_feedback=self._use_score_as_feedback,
         )
 
         # No objective-target response yet: open the conversation with the first message.
         # Otherwise fold the latest response and its score into the next adversarial prompt.
+        # The manager attaches seed / prior-response media to the adversarial turn when the
+        # adversarial target's declared capabilities allow it (via the injected modality router).
         if not context.last_response:
-            reply = await adversarial_manager.get_first_message_async()
+            reply = await adversarial_manager.get_first_message_async(seed_message=next_message)
         else:
             reply = await adversarial_manager.get_next_message_async(
                 score=context.last_score,
                 last_response=context.last_response,
+                seed_message=next_message,
             )
 
-        # Return as a user message for sending to objective target
-        return Message.from_prompt(prompt=reply.next_message, role="user")
+        adversarial_text = reply.next_message
+
+        if next_message is not None:
+            # Placeholder branch: substitute adversarial text into the seed message so
+            # caller-supplied seed media travels to the objective target alongside the text.
+            return self._modality_router.fill_adversarial_placeholders(
+                message=next_message,
+                adversarial_text=adversarial_text,
+            )
+
+        # Build the objective request, forwarding prior response media when the objective
+        # target's declared capabilities accept it.
+        return self._modality_router.build_objective_input_message(
+            text=adversarial_text,
+            last_response=context.last_response,
+            turn_index=context.executed_turns,
+        )
 
     async def _send_prompt_to_objective_target_async(
         self,

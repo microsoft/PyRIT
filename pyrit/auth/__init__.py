@@ -15,6 +15,8 @@ from pyrit.auth.azure_auth import (
     get_azure_openai_auth,
     get_azure_token_provider,
     get_default_azure_scope,
+    is_azure_ml_endpoint,
+    is_azure_openai_endpoint,
 )
 from pyrit.auth.azure_storage_auth import AzureStorageAuth
 from pyrit.auth.copilot_authenticator import CopilotAuthenticator
@@ -33,4 +35,6 @@ __all__ = [
     "get_azure_async_token_provider",
     "get_default_azure_scope",
     "get_azure_openai_auth",
+    "is_azure_ml_endpoint",
+    "is_azure_openai_endpoint",
 ]

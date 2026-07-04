@@ -304,7 +304,7 @@ from pyrit.prompt_target import discover_target_capabilities_async
 def _ok_response():
     return [
         Message(
-            [
+            message_pieces=[
                 MessagePiece(
                     role="assistant",
                     original_value="ok",

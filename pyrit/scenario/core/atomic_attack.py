@@ -13,20 +13,21 @@ times when that may not be possible or make sense. So this class exists to
 have a common interface for scenarios.
 """
 
+from __future__ import annotations
+
 import logging
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any
 
 from pyrit.common.deprecation import print_deprecation_message
 from pyrit.common.utils import to_sha256
 from pyrit.executor.attack import AttackExecutor, AttackStrategy
-from pyrit.executor.attack.core.attack_executor import AttackExecutorResult
 from pyrit.executor.attack.core.attack_result_attribution import AttackResultAttribution
 from pyrit.memory import CentralMemory
-from pyrit.memory.memory_models import MAX_IDENTIFIER_VALUE_LENGTH
 from pyrit.models import AtomicAttackEvaluationIdentifier, AtomicAttackIdentifier, AttackResult, SeedAttackGroup
 from pyrit.scenario.core.attack_technique import AttackTechnique
 
 if TYPE_CHECKING:
+    from pyrit.executor.attack.core.attack_executor import AttackExecutorResult
     from pyrit.prompt_target import PromptTarget
     from pyrit.score import TrueFalseScorer
 
@@ -57,8 +58,8 @@ class AtomicAttack:
         attack_technique: AttackTechnique | None = None,
         attack: AttackStrategy[Any, Any] | None = None,
         seed_groups: list[SeedAttackGroup],
-        adversarial_chat: Optional["PromptTarget"] = None,
-        objective_scorer: Optional["TrueFalseScorer"] = None,
+        adversarial_chat: PromptTarget | None = None,
+        objective_scorer: TrueFalseScorer | None = None,
         memory_labels: dict[str, str] | None = None,
         **attack_execute_params: Any,
     ) -> None:
@@ -187,7 +188,7 @@ class AtomicAttack:
 
     @property
     def attack_technique(self) -> AttackTechnique:
-        """Get the attack technique for this atomic attack."""
+        """The attack technique for this atomic attack."""
         return self._attack_technique
 
     @property
@@ -212,7 +213,7 @@ class AtomicAttack:
     @property
     def objectives(self) -> list[str]:
         """
-        Get the objectives from the seed groups.
+        The objectives from the seed groups.
 
         Returns:
             list[str]: List of objectives from all seed groups.
@@ -222,7 +223,7 @@ class AtomicAttack:
     @property
     def seed_groups(self) -> list[SeedAttackGroup]:
         """
-        Get a copy of the seed groups list for this atomic attack.
+        A copy of the seed groups list for this atomic attack.
 
         Returns:
             list[SeedAttackGroup]: A copy of the seed groups list.
@@ -439,9 +440,8 @@ class AtomicAttack:
                 )
 
                 # Persist the enriched identifier back to the database.
-                # Set eval_hash before truncation so it survives the DB round-trip.
-                if identifier.eval_hash is None:
-                    identifier = identifier.with_eval_hash(AtomicAttackEvaluationIdentifier(identifier).eval_hash)
+                # Stamp eval_hash so it lands in the stored JSON for DB-level filtering.
+                identifier = identifier.with_eval_hash(AtomicAttackEvaluationIdentifier(identifier).eval_hash)
 
                 result.atomic_attack_identifier = identifier
 
@@ -449,8 +449,6 @@ class AtomicAttack:
                     memory.update_attack_result_by_id(
                         attack_result_id=result.attack_result_id,
                         update_fields={
-                            "atomic_attack_identifier": identifier.model_dump(
-                                context={"max_value_length": MAX_IDENTIFIER_VALUE_LENGTH},
-                            ),
+                            "atomic_attack_identifier": identifier.model_dump(),
                         },
                     )

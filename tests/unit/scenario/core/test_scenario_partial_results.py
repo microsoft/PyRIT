@@ -109,7 +109,10 @@ class ConcreteScenario(Scenario):
         super().__init__(strategy_class=strategy_class, objective_scorer=objective_scorer, **kwargs)
         self._test_atomic_attacks = atomic_attacks_to_return or []
 
-    async def _get_atomic_attacks_async(self):
+    async def _resolve_seed_groups_by_dataset_async(self):
+        return {}
+
+    async def _build_atomic_attacks_async(self, *, context):
         return self._test_atomic_attacks
 
 

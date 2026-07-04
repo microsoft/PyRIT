@@ -9,7 +9,7 @@ import json
 import logging
 import re
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 from uuid import uuid4
 
 from pyrit.exceptions import (
@@ -32,6 +32,8 @@ from pyrit.models import (
 from pyrit.prompt_normalizer import PromptNormalizer
 
 if TYPE_CHECKING:
+    from pyrit.executor.attack.component.modality_router import _ModalityFeedbackRouter
+    from pyrit.models import PromptDataType
     from pyrit.prompt_target import PromptTarget
 
 logger = logging.getLogger(__name__)
@@ -116,8 +118,14 @@ class _MessageView:
         pieces = self._message.message_pieces
         return bool(pieces) and pieces[0].has_error()
 
+    @property
+    def response_error(self) -> str:
+        """The first message piece's response-error code (``"none"`` when absent)."""
+        pieces = self._message.message_pieces
+        return pieces[0].response_error if pieces else "none"
+
     def __getattr__(self, data_type: str) -> _MessageBucket:
-        return _MessageBucket(self._message.get_pieces_by_type(data_type=data_type))
+        return _MessageBucket(self._message.get_pieces_by_type(data_type=cast("PromptDataType", data_type)))
 
 
 def _build_adversarial_prompt_metadata(*, response_json_schema: JsonSchemaDefinition | None) -> dict[str, Any]:
@@ -228,6 +236,8 @@ class AdversarialConversationManager:
         objective_target_conversation_id: str | None = None,
         attack_strategy_name: str | None = None,
         memory_labels: dict[str, str] | None = None,
+        modality_router: _ModalityFeedbackRouter | None = None,
+        use_score_as_feedback: bool = False,
     ) -> None:
         """
         Initialize the adversarial conversation manager.
@@ -254,6 +264,13 @@ class AdversarialConversationManager:
                 execution-context correlation).
             attack_strategy_name: Name of the calling attack strategy (for execution context).
             memory_labels: Optional memory labels to attach to each request.
+            modality_router: Optional capability-aware router. When provided, the outgoing
+                adversarial message is built via ``build_adversarial_input_message`` so first-turn
+                seed media and prior objective-response media are forwarded to the adversarial chat
+                when its declared capabilities allow it. When None, a text-only message is sent.
+            use_score_as_feedback: When True, ``adversarial_prompt_template`` receives a truthy
+                ``use_score_as_feedback`` flag so the default template appends the scorer rationale
+                to the adversarial-chat feedback. Defaults to False.
         """
         self._adversarial_target = adversarial_target
         self._system_prompt = system_prompt
@@ -266,6 +283,8 @@ class AdversarialConversationManager:
         self._objective_target_conversation_id = objective_target_conversation_id
         self._attack_strategy_name = attack_strategy_name
         self._memory_labels = memory_labels
+        self._modality_router = modality_router
+        self._use_score_as_feedback = use_score_as_feedback
 
         # The single response schema is resolved from the system prompt / first-message
         # template (raising if both declare one), so callers never pass it in.
@@ -333,12 +352,12 @@ class AdversarialConversationManager:
             raise ValueError("No objective configured to render the first message")
         return template.render_template_value_silent(objective=self._objective)
 
-    def _render_adversarial_prompt(self, *, score: Score, last_response: Message) -> str:
+    def _render_adversarial_prompt(self, *, score: Score | None, last_response: Message) -> str:
         """
         Render the per-turn adversarial prompt from the objective target's response and score.
 
         Args:
-            score: The score for ``last_response``.
+            score: The score for ``last_response``, or None when the turn was not scored.
             last_response: The objective target's latest response.
 
         Returns:
@@ -348,9 +367,10 @@ class AdversarialConversationManager:
             objective=self._objective,
             score=score,
             message=_MessageView(last_response),
+            use_score_as_feedback=self._use_score_as_feedback,
         )
 
-    async def get_first_message_async(self) -> AdversarialReply:
+    async def get_first_message_async(self, *, seed_message: Message | None = None) -> AdversarialReply:
         """
         Get the opening adversarial-chat message for this conversation.
 
@@ -367,13 +387,17 @@ class AdversarialConversationManager:
                 received from the adversarial chat.
             InvalidJsonException: If a schema is declared but the reply is invalid.
         """
-        return await self._send_and_parse_async(prompt_text=self._render_first_message())
+        return await self._send_and_parse_async(
+            prompt_text=self._render_first_message(),
+            seed_message=seed_message,
+        )
 
     async def get_next_message_async(
         self,
         *,
-        score: Score,
+        score: Score | None,
         last_response: Message,
+        seed_message: Message | None = None,
     ) -> AdversarialReply:
         """
         Get the next message from the adversarial chat for this conversation.
@@ -383,9 +407,12 @@ class AdversarialConversationManager:
         conversation id.
 
         Args:
-            score: The score for ``last_response``.
+            score: The score for ``last_response``, or None when the turn was not scored
+                (e.g. intermediate turns with ``score_last_turn_only``).
             last_response: The objective target's latest response — the message the
                 adversarial chat reacts to this turn.
+            seed_message: Optional seed message whose media pieces should be forwarded to the
+                adversarial chat when a ``modality_router`` is configured.
 
         Returns:
             AdversarialReply: ``next_message`` plus parsed extras (schema path) or the raw
@@ -397,10 +424,20 @@ class AdversarialConversationManager:
                 or is missing/has unexpected keys.
         """
         prompt_text = self._render_adversarial_prompt(score=score, last_response=last_response)
-        return await self._send_and_parse_async(prompt_text=prompt_text)
+        return await self._send_and_parse_async(
+            prompt_text=prompt_text,
+            last_response=last_response,
+            seed_message=seed_message,
+        )
 
     @pyrit_json_retry
-    async def _send_and_parse_async(self, *, prompt_text: str) -> AdversarialReply:
+    async def _send_and_parse_async(
+        self,
+        *,
+        prompt_text: str,
+        last_response: Message | None = None,
+        seed_message: Message | None = None,
+    ) -> AdversarialReply:
         """
         Send one user turn to the adversarial chat and parse its reply.
 
@@ -409,8 +446,15 @@ class AdversarialConversationManager:
         re-sends the turn until it parses or the attempt budget is exhausted. When
         ``raise_on_invalid_json`` is False, an unparseable reply is returned as raw text instead.
 
+        When a ``modality_router`` is configured, the outgoing message is built via
+        ``build_adversarial_input_message`` so first-turn seed media (``seed_message``) and prior
+        objective-response media (``last_response``) are forwarded to the adversarial chat when its
+        declared capabilities allow it; otherwise a text-only message is sent.
+
         Args:
             prompt_text: The text to send to the adversarial chat.
+            last_response: The objective target's latest response, whose media may be forwarded.
+            seed_message: The seed message whose media may be forwarded on the first turn.
 
         Returns:
             AdversarialReply: ``next_message`` plus parsed extras (schema path) or the raw
@@ -423,11 +467,19 @@ class AdversarialConversationManager:
         """
         prompt_metadata = _build_adversarial_prompt_metadata(response_json_schema=self._response_json_schema)
 
-        message = Message.from_prompt(
-            prompt=prompt_text,
-            role="user",
-            prompt_metadata=prompt_metadata or None,
-        )
+        if self._modality_router is not None:
+            message = self._modality_router.build_adversarial_input_message(
+                text=prompt_text,
+                last_response=last_response,
+                seed_message=seed_message,
+                prompt_metadata=prompt_metadata or None,
+            )
+        else:
+            message = Message.from_prompt(
+                prompt=prompt_text,
+                role="user",
+                prompt_metadata=prompt_metadata or None,
+            )
 
         with execution_context(
             component_role=ComponentRole.ADVERSARIAL_CHAT,

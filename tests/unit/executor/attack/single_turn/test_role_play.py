@@ -454,7 +454,7 @@ class TestRolePlayAttackAdversarialIdentity:
         assert config is not None
         assert config.target is mock_adversarial_chat_target
         # RolePlay uses its own definition files, not the adversarial seed prompt.
-        assert config.seed_prompt is None
+        assert config.first_message is None
 
     def test_get_attack_adversarial_config_returns_none_without_target(self, role_play_attack):
         role_play_attack._adversarial_chat = None

@@ -3,11 +3,15 @@
 
 import logging
 from collections.abc import Awaitable, Callable
-from typing import Any, cast
+from typing import Any, ClassVar, cast
 
 from httpx import HTTPStatusError
 
-from pyrit.auth import ensure_async_token_provider
+from pyrit.auth import (
+    ensure_async_token_provider,
+    get_azure_async_token_provider,
+    is_azure_ml_endpoint,
+)
 from pyrit.common import default_values, net_utility
 from pyrit.exceptions import (
     EmptyResponseException,
@@ -21,7 +25,7 @@ from pyrit.models import (
     Message,
     construct_response_from_request,
 )
-from pyrit.prompt_target.common.prompt_target import PromptTarget
+from pyrit.prompt_target.common.prompt_target import AuthMode, PromptTarget
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.prompt_target.common.utils import limit_requests_per_minute, validate_temperature, validate_top_p
@@ -43,6 +47,13 @@ class AzureMLChatTarget(PromptTarget):
 
     endpoint_uri_environment_variable: str = "AZURE_ML_MANAGED_ENDPOINT"
     api_key_environment_variable: str = "AZURE_ML_KEY"
+
+    # AML managed online endpoints can authenticate with a Microsoft Entra ID
+    # token scoped to AML, so this target supports both auth modes.
+    supported_auth_modes: ClassVar[tuple[AuthMode, ...]] = ("api_key", "identity")
+
+    # Entra ID token scope for Azure Machine Learning managed online endpoints.
+    _AZURE_ML_SCOPE: ClassVar[str] = "https://ml.azure.com/.default"
 
     _DEFAULT_CONFIGURATION: TargetConfiguration = TargetConfiguration(
         capabilities=TargetCapabilities(
@@ -164,6 +175,11 @@ class AzureMLChatTarget(PromptTarget):
                 The API key for accessing the Azure ML endpoint, or a callable
                 which returns a bearer token, or None to fall back to the
                 ``AZURE_ML_KEY`` env variable.
+
+        Raises:
+            ValueError: If no api_key is supplied (via parameter or environment
+                variable) and the endpoint is not a recognized Azure ML managed
+                online endpoint for which Entra ID authentication can be used.
         """
         self._endpoint = default_values.get_required_value(
             env_var_name=self.endpoint_uri_environment_variable, passed_value=endpoint
@@ -176,9 +192,27 @@ class AzureMLChatTarget(PromptTarget):
             self._api_key = ""
             return
 
-        self._api_key_provider = None
-        self._api_key = default_values.get_required_value(
+        api_key_value = default_values.get_non_required_value(
             env_var_name=self.api_key_environment_variable, passed_value=api_key
+        )
+        if api_key_value:
+            self._api_key_provider = None
+            self._api_key = api_key_value
+            return
+
+        # No key supplied: fall back to Microsoft Entra ID, but only for a
+        # recognized AML managed online endpoint so a bearer token is never
+        # minted for an arbitrary host.
+        if is_azure_ml_endpoint(self._endpoint):
+            normalized = ensure_async_token_provider(get_azure_async_token_provider(self._AZURE_ML_SCOPE))
+            self._api_key_provider = cast("Callable[[], Awaitable[str]]", normalized)
+            self._api_key = ""
+            return
+
+        raise ValueError(
+            f"Environment variable {self.api_key_environment_variable} is required unless the endpoint is a "
+            "recognized Azure ML managed online endpoint (*.inference.ml.azure.com), for which Entra ID "
+            "authentication is used automatically. Pass an api_key or a token provider callable instead."
         )
 
     @limit_requests_per_minute

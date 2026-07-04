@@ -18,7 +18,6 @@ from pyrit.memory.memory_models import (
     ScoreEntry,
     SeedEntry,
     UTCDateTime,
-    _dump_identifier,
     _load_identifier,
 )
 from pyrit.models import (
@@ -29,13 +28,13 @@ from pyrit.models import (
     ConversationReference,
     ConversationType,
     MessagePiece,
-    ScenarioIdentifier,
     ScenarioResult,
     Score,
     SeedObjective,
     SeedPrompt,
     SeedSimulatedConversation,
 )
+from unit.mocks import make_scenario_result
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -140,10 +139,6 @@ def test_utcdatetime_passes_through_none():
 # ---------------------------------------------------------------------------
 
 
-def test_dump_identifier_returns_none_for_none():
-    assert _dump_identifier(None) is None
-
-
 def test_load_identifier_returns_none_for_falsy():
     assert _load_identifier(None) is None
     assert _load_identifier({}) is None
@@ -151,7 +146,7 @@ def test_load_identifier_returns_none_for_falsy():
 
 def test_dump_then_load_identifier_round_trips():
     identifier = ComponentIdentifier(class_name="MyConverter", class_module="pyrit.converters", pyrit_version="0.1.0")
-    stored = _dump_identifier(identifier)
+    stored = identifier.model_dump()
     assert stored is not None
     loaded = _load_identifier(stored)
     assert loaded is not None
@@ -161,7 +156,7 @@ def test_dump_then_load_identifier_round_trips():
 
 def test_load_identifier_injects_pyrit_version():
     identifier = ComponentIdentifier(class_name="MyConverter", class_module="pyrit.converters", pyrit_version="0.1.0")
-    stored = _dump_identifier(identifier)
+    stored = identifier.model_dump()
     loaded = _load_identifier(stored, pyrit_version="9.9.9")
     assert loaded is not None
     assert loaded.pyrit_version == "9.9.9"
@@ -402,7 +397,10 @@ class TestSeedEntry:
             name="obj1",
             dataset_name="ds",
             added_by="tester",
-            metadata={SEED_RESPONSE_JSON_SCHEMA_METADATA_KEY: "sneaky", "owned": "by-caller"},
+            metadata={
+                SEED_RESPONSE_JSON_SCHEMA_METADATA_KEY: "sneaky",
+                "owned": "by-caller",
+            },
         )
         entry = SeedEntry(entry=obj)
         assert SEED_RESPONSE_JSON_SCHEMA_METADATA_KEY not in entry.prompt_metadata
@@ -419,7 +417,10 @@ class TestSeedEntry:
             num_turns=3,
             adversarial_chat_system_prompt_path="/path/to/adversarial.yaml",
             simulated_target_system_prompt_path="/path/to/target.yaml",
-            metadata={SEED_RESPONSE_JSON_SCHEMA_METADATA_KEY: "sneaky", "owned": "by-caller"},
+            metadata={
+                SEED_RESPONSE_JSON_SCHEMA_METADATA_KEY: "sneaky",
+                "owned": "by-caller",
+            },
         )
         entry = SeedEntry(entry=config)
         assert SEED_RESPONSE_JSON_SCHEMA_METADATA_KEY not in entry.prompt_metadata
@@ -551,7 +552,8 @@ class TestAttackResultEntry:
 class TestScenarioResultEntry:
     def _make_scenario_result(self, **overrides) -> ScenarioResult:
         defaults = {
-            "scenario_identifier": ScenarioIdentifier(name="test_scenario", description="desc"),
+            "scenario_name": "test_scenario",
+            "scenario_description": "desc",
             "objective_target_identifier": ComponentIdentifier(class_name="MockTarget", class_module="tests.mocks"),
             "attack_results": {},
             "objective_scorer_identifier": ComponentIdentifier(class_name="MockScorer", class_module="pyrit.score"),
@@ -561,7 +563,7 @@ class TestScenarioResultEntry:
             "completion_time": datetime.now(tz=timezone.utc),
         }
         defaults.update(overrides)
-        return ScenarioResult(**defaults)
+        return make_scenario_result(**defaults)
 
     def test_init_from_scenario_result(self):
         sr = self._make_scenario_result()
@@ -575,7 +577,7 @@ class TestScenarioResultEntry:
         sr = self._make_scenario_result()
         entry = ScenarioResultEntry(entry=sr)
         recovered = entry.get_scenario_result()
-        assert recovered.scenario_identifier.name == "test_scenario"
+        assert recovered.scenario_name == "test_scenario"
         assert recovered.scenario_run_state == "COMPLETED"
         # attack_results should be empty after roundtrip (populated by memory_interface)
         assert recovered.attack_results == {}

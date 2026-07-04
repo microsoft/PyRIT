@@ -134,15 +134,14 @@ class Scorer(Identifiable, abc.ABC):
             ComponentIdentifier: The identity with ``eval_hash`` set.
         """
         identifier = super().get_identifier()
-        if identifier.eval_hash is None:
-            identifier = identifier.with_eval_hash(ScorerEvaluationIdentifier(identifier).eval_hash)
-            self._identifier = identifier
+        identifier = identifier.with_eval_hash(ScorerEvaluationIdentifier(identifier).eval_hash)
+        self._identifier = identifier
         return identifier
 
     @property
     def scorer_type(self) -> ScoreType:
         """
-        Get the scorer type based on class hierarchy.
+        The scorer type based on class hierarchy.
 
         Returns:
             ScoreType: "true_false" for TrueFalseScorer subclasses,

@@ -162,7 +162,7 @@ class _EquityMedQADataset(_RemoteDatasetLoader):
     @property
     @override
     def dataset_name(self) -> str:
-        """Return the dataset name."""
+        """The dataset name."""
         return "equitymedqa"
 
     @override

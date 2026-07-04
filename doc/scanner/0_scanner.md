@@ -23,7 +23,7 @@ PyRIT provides two command-line interfaces:
 
 ```bash
 # Run the Foundry RedTeamAgent scenario against your configured target
-pyrit_scan foundry.red_team_agent --target openai_chat --initializers target load_default_datasets --strategies base64
+pyrit_scan foundry.red_team_agent --target openai_chat --initializers target --strategies base64
 ```
 
 ## Built-in Scenarios

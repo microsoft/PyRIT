@@ -9,6 +9,7 @@ import pytest
 
 from pyrit.executor.attack import AttackConverterConfig, RTASystemPromptPaths
 from pyrit.executor.attack.multi_turn.simulated_conversation import (
+    _generate_next_message_async,
     generate_simulated_conversation_async,
 )
 from pyrit.models import (
@@ -572,15 +573,13 @@ class TestGenerateSimulatedConversationAsync:
 
         conversation_id = str(uuid.uuid4())
 
-        # Create the expected response from the adversarial chat for generating next message
+        # DIRECT template declares no schema and instructs raw-text output, so the adversarial
+        # chat returns the message text directly (no JSON wrapping).
         next_message_response = Message(
             message_pieces=[
                 MessagePiece(
                     role="assistant",  # LLM responds as assistant, we convert to user
-                    original_value=(
-                        '{"next_message": "Generated next user message", '
-                        '"rationale": "advance objective", "last_response_summary": "prior"}'
-                    ),
+                    original_value="Generated next user message",
                     original_value_data_type="text",
                     conversation_id=str(uuid.uuid4()),
                 )
@@ -649,10 +648,7 @@ class TestGenerateSimulatedConversationAsync:
             message_pieces=[
                 MessagePiece(
                     role="assistant",
-                    original_value=(
-                        '{"next_message": "Generated message", '
-                        '"rationale": "advance objective", "last_response_summary": "prior"}'
-                    ),
+                    original_value="Generated message",
                     original_value_data_type="text",
                     conversation_id=str(uuid.uuid4()),
                 )
@@ -741,3 +737,99 @@ class TestGenerateSimulatedConversationAsync:
                 # Verify the first prompt starts at sequence 5
                 assert result[0].sequence == 5
                 assert result[1].sequence == 6
+
+
+class TestGenerateNextMessageAsync:
+    """Tests for the _generate_next_message_async helper's schema vs raw-text handling."""
+
+    async def test_raw_text_template_flips_response_to_user(self, mock_adversarial_chat: MagicMock):
+        """A no-schema (raw-text) template returns the adversarial reply flipped to the user role."""
+        raw_reply = Message(
+            message_pieces=[
+                MessagePiece(
+                    role="assistant",
+                    original_value="continue the story please",
+                    original_value_data_type="text",
+                )
+            ]
+        )
+        mock_adversarial_chat.send_prompt_async = AsyncMock(return_value=[raw_reply])
+
+        with patch(
+            "pyrit.executor.attack.multi_turn.simulated_conversation.ConversationContextNormalizer"
+        ) as mock_normalizer_cls:
+            mock_normalizer_cls.return_value.normalize_string_async = AsyncMock(return_value="ctx")
+
+            result = await _generate_next_message_async(
+                objective="obj",
+                conversation_messages=[],
+                adversarial_chat=mock_adversarial_chat,
+                next_message_system_prompt_path=NextMessageSystemPromptPaths.DIRECT.value,
+            )
+
+        assert result.get_value() == "continue the story please"
+        assert result.message_pieces[0].role == "user"
+        # No schema declared -> no response_format metadata forwarded to the adversarial chat.
+        sent_message = mock_adversarial_chat.send_prompt_async.call_args.kwargs["message"]
+        assert not sent_message.message_pieces[0].prompt_metadata
+
+    async def test_schema_template_parses_next_message(self, mock_adversarial_chat: MagicMock):
+        """A schema-declaring template parses ``next_message`` out of the JSON reply."""
+        json_reply = Message(
+            message_pieces=[
+                MessagePiece(
+                    role="assistant",
+                    original_value=(
+                        '{"next_message": "parsed user message", '
+                        '"rationale": "advance", "last_response_summary": "prior"}'
+                    ),
+                    original_value_data_type="text",
+                )
+            ]
+        )
+        mock_adversarial_chat.send_prompt_async = AsyncMock(return_value=[json_reply])
+
+        mock_template = MagicMock()
+        mock_template.response_json_schema = {"type": "object"}
+        mock_template.render_template_value.return_value = "SYS"
+
+        with (
+            patch(
+                "pyrit.executor.attack.multi_turn.simulated_conversation.ConversationContextNormalizer"
+            ) as mock_normalizer_cls,
+            patch(
+                "pyrit.executor.attack.multi_turn.simulated_conversation.SeedPrompt.from_yaml_with_required_parameters",
+                return_value=mock_template,
+            ),
+        ):
+            mock_normalizer_cls.return_value.normalize_string_async = AsyncMock(return_value="ctx")
+
+            result = await _generate_next_message_async(
+                objective="obj",
+                conversation_messages=[],
+                adversarial_chat=mock_adversarial_chat,
+                next_message_system_prompt_path="unused.yaml",
+            )
+
+        assert result.get_value() == "parsed user message"
+        assert result.message_pieces[0].role == "user"
+        # Schema declared -> response_format metadata forwarded so schema-aware targets constrain output.
+        sent_message = mock_adversarial_chat.send_prompt_async.call_args.kwargs["message"]
+        assert sent_message.message_pieces[0].prompt_metadata.get("response_format") == "json"
+
+    async def test_raises_when_no_response(self, mock_adversarial_chat: MagicMock):
+        """A missing adversarial response raises a clear ValueError."""
+        mock_adversarial_chat.send_prompt_async = AsyncMock(return_value=[])
+
+        with patch(
+            "pyrit.executor.attack.multi_turn.simulated_conversation.ConversationContextNormalizer"
+        ) as mock_normalizer_cls:
+            mock_normalizer_cls.return_value.normalize_string_async = AsyncMock(return_value="ctx")
+
+            with pytest.raises(ValueError, match="No response received"):
+                await _generate_next_message_async(
+                    objective="obj",
+                    conversation_messages=[],
+                    adversarial_chat=mock_adversarial_chat,
+                    next_message_system_prompt_path=NextMessageSystemPromptPaths.DIRECT.value,
+                )

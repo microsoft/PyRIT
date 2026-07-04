@@ -13,8 +13,9 @@ from functools import lru_cache
 
 from pyrit.backend.models.common import PaginationInfo
 from pyrit.backend.models.initializers import (
-    InitializerParameterSummary,
     ListRegisteredInitializersResponse,
+)
+from pyrit.models.catalog.initializer import (
     RegisteredInitializer,
 )
 from pyrit.registry import InitializerMetadata, InitializerRegistry
@@ -37,14 +38,7 @@ def _metadata_to_registered_initializer(metadata: InitializerMetadata) -> Regist
         initializer_type=metadata.class_name,
         description=metadata.class_description,
         required_env_vars=list(metadata.required_env_vars),
-        supported_parameters=[
-            InitializerParameterSummary(
-                name=name,
-                description=desc,
-                default=default,
-            )
-            for name, desc, default in metadata.supported_parameters
-        ],
+        supported_parameters=list(metadata.supported_parameters),
     )
 
 
@@ -75,7 +69,7 @@ class InitializerService:
         Returns:
             ListRegisteredInitializersResponse with paginated initializer summaries.
         """
-        all_metadata = self._registry.list_metadata()
+        all_metadata = self._registry.get_all_registered_class_metadata()
         all_summaries = [_metadata_to_registered_initializer(m) for m in all_metadata]
 
         page, has_more = self._paginate(items=all_summaries, cursor=cursor, limit=limit)
@@ -96,7 +90,7 @@ class InitializerService:
         Returns:
             RegisteredInitializer if found, None otherwise.
         """
-        all_metadata = self._registry.list_metadata()
+        all_metadata = self._registry.get_all_registered_class_metadata()
         for metadata in all_metadata:
             if metadata.registry_name == initializer_name:
                 return _metadata_to_registered_initializer(metadata)

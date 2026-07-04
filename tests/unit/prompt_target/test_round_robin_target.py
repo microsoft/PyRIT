@@ -31,6 +31,13 @@ def test_init_rejects_nested_round_robin():
 
 
 @pytest.mark.usefixtures("patch_central_database")
+def test_init_rejects_duplicate_instance():
+    t1 = MockPromptTarget()
+    with pytest.raises(ValueError, match="same target instance more than once"):
+        RoundRobinTarget(targets=[t1, t1])
+
+
+@pytest.mark.usefixtures("patch_central_database")
 def test_init_rejects_mixed_classes():
     from pyrit.prompt_target import TextTarget
 

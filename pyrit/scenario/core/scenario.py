@@ -9,16 +9,13 @@ AtomicAttack instances sequentially, enabling comprehensive security testing cam
 """
 
 import asyncio
-import copy
-import json
 import logging
-import textwrap
 import uuid
-from abc import ABC
+from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, cast, get_origin
+from typing import TYPE_CHECKING, Any, ClassVar
 
 try:
     # Built-in on Python 3.11+. Fall back to the ``exceptiongroup`` backport on 3.10
@@ -29,22 +26,29 @@ except ImportError:  # pragma: no cover - exercised only on 3.10
 
 from tqdm.auto import tqdm
 
-from pyrit.common import REQUIRED_VALUE, Parameter, apply_defaults
-from pyrit.common.deprecation import print_deprecation_message
-from pyrit.common.parameter import coerce_value, validate_param_type
+from pyrit.common import REQUIRED_VALUE, apply_defaults
 from pyrit.common.utils import to_sha256
 from pyrit.executor.attack import AttackExecutor
-from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
 from pyrit.memory import CentralMemory
 from pyrit.memory.memory_models import ScenarioResultEntry
-from pyrit.models import AttackOutcome, AttackResult, SeedAttackGroup
-from pyrit.models.scenario_result import ScenarioIdentifier, ScenarioResult, ScenarioRunState
+from pyrit.models import (
+    AttackOutcome,
+    AttackResult,
+    ScenarioEvaluationIdentifier,
+    ScenarioIdentifier,
+    ScenarioResult,
+    ScenarioRunState,
+    SeedAttackGroup,
+)
+from pyrit.models.parameter import Parameter
 from pyrit.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_requirements import TargetRequirements
 from pyrit.registry import ScorerRegistry
+from pyrit.registry.resolution import resolve_declared_params
 from pyrit.scenario.core.atomic_attack import AtomicAttack
-from pyrit.scenario.core.attack_technique import AttackTechnique
-from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
+from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
+from pyrit.scenario.core.matrix_atomic_attack_builder import build_baseline_atomic_attack
+from pyrit.scenario.core.scenario_context import ScenarioContext
 from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
 from pyrit.scenario.core.scenario_target_defaults import get_default_scorer_target
 from pyrit.score import (
@@ -59,9 +63,16 @@ from pyrit.score import (
 
 if TYPE_CHECKING:
     from pyrit.models import ComponentIdentifier
-    from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
+    from pyrit.prompt_converter import PromptConverter
 
 logger = logging.getLogger(__name__)
+
+
+#: Param names a scenario must not declare via ``supported_parameters()``. These
+#: collide with promoted identity fields on ``ScenarioIdentifier`` and would be
+#: silently overwritten during identifier promotion. Only ``version`` is reserved
+#: today; a scenario's definition version is owned by the identifier, not a param.
+_RESERVED_SCENARIO_PARAM_NAMES: frozenset[str] = frozenset({"version"})
 
 
 class BaselineAttackPolicy(Enum):
@@ -85,57 +96,7 @@ class BaselineAttackPolicy(Enum):
     Forbidden = "forbidden"
 
 
-def _assert_json_serializable(*, params: dict[str, Any]) -> None:
-    """
-    Raise if any value in ``params`` cannot round-trip through JSON.
-
-    Stage 5 stores ``params`` on ``ScenarioIdentifier.init_data`` for resume
-    validation; the underlying memory column is JSON. Catching unserializable
-    values here gives a clear error rather than a database failure.
-
-    Args:
-        params (dict[str, Any]): Effective parameters to validate.
-
-    Raises:
-        ValueError: If any value is not JSON-serializable.
-    """
-    try:
-        json.dumps(params)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(
-            f"Scenario params contain a non-JSON-serializable value (cannot persist for resume): {exc}. "
-            f"Use only JSON-safe types (str, int, float, bool, list, dict, None) for scenario parameters."
-        ) from exc
-
-
-def _format_param_key_diff(*, stored: dict[str, Any], current: dict[str, Any]) -> str:
-    """
-    Render the set-level difference between two param dicts as a short string.
-
-    Lists only key names (no values) so secrets or large blobs in scenario
-    parameters do not leak into logs.
-
-    Args:
-        stored (dict[str, Any]): Persisted params from the previous run.
-        current (dict[str, Any]): Effective params for the current run.
-
-    Returns:
-        str: A short summary like ``"added: x, y; removed: z; changed: max_turns"``.
-    """
-    parts: list[str] = []
-    added = sorted(set(current) - set(stored))
-    removed = sorted(set(stored) - set(current))
-    changed = sorted(k for k in set(stored) & set(current) if stored[k] != current[k])
-    if added:
-        parts.append(f"added: {', '.join(added)}")
-    if removed:
-        parts.append(f"removed: {', '.join(removed)}")
-    if changed:
-        parts.append(f"changed: {', '.join(changed)}")
-    return "; ".join(parts) if parts else "no diff details"
-
-
-class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even without abstract methods
+class Scenario(ABC):
     """
     Groups and executes multiple AtomicAttack instances sequentially.
 
@@ -192,10 +153,9 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
         version: int,
         strategy_class: type[ScenarioStrategy],
         default_strategy: ScenarioStrategy,
-        default_dataset_config: DatasetConfiguration,
+        default_dataset_config: DatasetAttackConfiguration,
         objective_scorer: Scorer,
         scenario_result_id: uuid.UUID | str | None = None,
-        include_default_baseline: bool | None = None,  # Deprecated. Will be removed in 0.16.0.
     ) -> None:
         """
         Initialize a scenario.
@@ -207,32 +167,32 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
             default_strategy (ScenarioStrategy): The default strategy member used when no
                 ``scenario_strategies`` are passed to ``initialize_async``. Usually an aggregate
                 member like ``MyStrategy.ALL`` or ``MyStrategy.DEFAULT``.
-            default_dataset_config (DatasetConfiguration): The default dataset configuration used
+            default_dataset_config (DatasetAttackConfiguration): The default dataset configuration used
                 when no ``dataset_config`` is passed to ``initialize_async``.
             objective_scorer (Scorer): The objective scorer used to evaluate attack results.
             scenario_result_id (uuid.UUID | str | None): Optional ID of an existing scenario result to resume.
                 Can be either a UUID object or a string representation of a UUID.
                 If provided and found in memory, the scenario will resume from prior progress.
                 All other parameters must still match the stored scenario configuration.
-            include_default_baseline (bool | None): **Deprecated.** Will be removed in 0.16.0.
-                Pass ``include_baseline`` to ``initialize_async`` instead. When set, the value is
-                used as the effective ``include_baseline`` for the next ``initialize_async`` call
-                unless that call passes its own ``include_baseline``.
 
         Note:
             Attack runs are populated by calling initialize_async(), which invokes the
-            subclass's _get_atomic_attacks_async() method.
+            subclass's _build_atomic_attacks_async() method.
 
             The scenario description is automatically extracted from the class's docstring (__doc__)
             with whitespace normalized for display.
         """
-        from pyrit.registry.base import ClassRegistryEntry
+        from pyrit.registry.registry_metadata import RegistryMetadata
 
-        description = ClassRegistryEntry.description_from_docstring(self.__class__)
+        description = RegistryMetadata.description_from_docstring(self.__class__)
 
-        self._identifier = ScenarioIdentifier(
-            name=type(self).__name__, scenario_version=version, description=description
-        )
+        # The scenario identifier is the canonical per-run identity: the scenario
+        # registry produces it and it is persisted on the ScenarioResult (carrying
+        # class name / version / resolved techniques / datasets / params and the
+        # objective_target / objective_scorer references). The display description
+        # and pyrit_version ride alongside it on the ScenarioResult.
+        self._version = version
+        self._description = description
 
         # Store strategy configuration for use in initialize_async
         self._strategy_class = strategy_class
@@ -246,6 +206,11 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
         self._max_concurrency: int | None = None
         self._max_retries: int = 0
 
+        # Effective dataset configuration for the current run. initialize_async reassigns
+        # this to the caller-supplied config (or the default); defaulting it here means the
+        # attribute always exists for context construction.
+        self._dataset_config: DatasetAttackConfiguration = default_dataset_config
+
         self._objective_scorer = objective_scorer
         self._objective_scorer_identifier = objective_scorer.get_identifier()
 
@@ -254,40 +219,31 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
         self._atomic_attacks: list[AtomicAttack] = []
         self._scenario_result_id: str | None = str(scenario_result_id) if scenario_result_id else None
 
-        # Store prepared strategies for use in _get_atomic_attacks_async
+        # Store prepared strategies for use in _build_atomic_attacks_async
         self._scenario_strategies: list[ScenarioStrategy] = []
+
+        # Maps concrete technique name → extra request converters to append for that technique.
+        self._strategy_converters: dict[str, list[PromptConverter]] = {}
 
         # Maps atomic_attack_name → display_group for user-facing aggregation
         self._display_group_map: dict[str, str] = {}
 
-        # Custom parameters: declared via supported_parameters(), populated via set_params_from_args().
+        # Declared via supported_parameters(); resolved/populated by the registry
+        # helper (pyrit.registry.resolution). Subclasses read it in _build_atomic_attacks_async.
         self.params: dict[str, Any] = {}
-        self._declarations_validated: bool = False
 
         # Resolved effective baseline inclusion for the current run. Set in initialize_async
-        # before _get_atomic_attacks_async is awaited so overrides can read it.
+        # before _build_atomic_attacks_async is awaited so overrides can read it.
         self._include_baseline: bool = False
-
-        # Deprecated constructor-time baseline override. Will be removed in 0.16.0, along
-        # with the include_default_baseline kwarg above and the legacy fallback branch in
-        # initialize_async. Subclass shims set this attribute directly to avoid double-warning.
-        self._legacy_include_baseline: bool | None = None
-        if include_default_baseline is not None:
-            print_deprecation_message(
-                old_item="Scenario(include_default_baseline=...)",
-                new_item="Scenario.initialize_async(include_baseline=...)",
-                removed_in="0.16.0",
-            )
-            self._legacy_include_baseline = include_default_baseline
 
     @property
     def name(self) -> str:
-        """Get the name of the scenario."""
+        """The name of the scenario."""
         return self._name
 
     @property
     def atomic_attack_count(self) -> int:
-        """Get the number of atomic attacks in this scenario."""
+        """The number of atomic attacks in this scenario."""
         return len(self._atomic_attacks)
 
     @classmethod
@@ -307,73 +263,17 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
         """
         return []
 
-    def _get_attack_technique_factories(self) -> dict[str, "AttackTechniqueFactory"]:
-        """
-        Return the attack technique factories for this scenario.
-
-        Each key is a technique name (matching a strategy enum value) and each
-        value is an ``AttackTechniqueFactory`` that can produce an
-        ``AttackTechnique`` for that technique.
-
-        The base implementation returns every factory currently registered in
-        the ``AttackTechniqueRegistry`` singleton. The canonical scenario
-        techniques are populated by ``ScenarioTechniqueInitializer``
-        (``pyrit.setup.initializers.components.scenario_techniques``); ensure
-        that initializer has run before scenarios use this method.
-        Subclasses may override to add, remove, or replace factories.
-
-        Returns:
-            dict[str, AttackTechniqueFactory]: Mapping of technique name to factory.
-
-        Raises:
-            RuntimeError: If the registry is empty (no initializer has run).
-        """
-        from pyrit.registry.object_registries.attack_technique_registry import AttackTechniqueRegistry
-
-        registry = AttackTechniqueRegistry.get_registry_singleton()
-        return registry.get_factories_or_raise()
-
-    def _build_display_group(self, *, technique_name: str, seed_group_name: str) -> str:
-        """
-        Build the display-group label for an atomic attack.
-
-        Each ``AtomicAttack`` has a unique ``atomic_attack_name`` (e.g.
-        ``"prompt_sending_airt_hate"``) used for resume tracking.  However,
-        user-facing output (console printer, reports) often needs to
-        aggregate results along a *different* dimension — for example,
-        grouping by harm category rather than by technique.  The display
-        group provides that second grouping axis without affecting resume
-        behaviour.
-
-        The default groups by technique name.  Subclasses override to
-        change the aggregation axis:
-
-        - **By technique** (default): ``return technique_name``
-        - **By harm category / dataset**: ``return seed_group_name``
-        - **Cross-product**: ``return f"{technique_name}_{seed_group_name}"``
-
-        Note: ``seed_group_name`` is the dataset key from
-        ``DatasetConfiguration.get_seed_attack_groups()`` (e.g.
-        ``"airt_hate"``), not a ``SeedGroup`` object.
-
-        Args:
-            technique_name: The name of the attack technique.
-            seed_group_name: The dataset key from the dataset configuration.
-
-        Returns:
-            str: The display-group label.
-        """
-        return technique_name
-
     def _get_default_objective_scorer(self) -> TrueFalseScorer:
         # Deferred import to avoid circular dependency.
-        from pyrit.setup.initializers.components.scorers import ScorerInitializerTags
+        from pyrit.setup.initializers.scorers import ScorerInitializerTags
 
         # first check if the registry has a default objective scorer
         # if available either itself, or its chat target will be used
         chat_target: PromptTarget | None = None
         registry_default_scorer: TrueFalseScorer | None = None
-        entries = ScorerRegistry.get_registry_singleton().get_by_tag(tag=ScorerInitializerTags.DEFAULT_OBJECTIVE_SCORER)
+        entries = ScorerRegistry.get_registry_singleton().instances.get_by_tag(
+            tag=ScorerInitializerTags.DEFAULT_OBJECTIVE_SCORER
+        )
         if entries and isinstance(entries[0].instance, TrueFalseScorer):
             registry_default_scorer = entries[0].instance
             chat_target = registry_default_scorer.get_chat_target()
@@ -420,9 +320,11 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
         """
         Populate ``self.params`` from merged CLI / config arguments.
 
-        Coerces each value to its declared ``param_type``, validates, and
-        materializes declared defaults for params not in ``args``. Every
-        declared parameter is guaranteed a key in ``self.params`` after this
+        The scenario only **declares** its parameters via ``supported_parameters()``;
+        the coerce / validate / inject-defaults *mapping* is owned by the registry
+        layer (``pyrit.registry.resolution.resolve_declared_params``) so there is a
+        single implementation shared by the programmatic, CLI, and registry paths.
+        Every declared parameter is guaranteed a key in ``self.params`` after this
         call; params without a declared default land as ``None``.
 
         Args:
@@ -432,143 +334,22 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
 
         Raises:
             ValueError: Invalid declaration, unknown parameter, coercion
-                failure, or value not in ``choices``.
+                failure, value not in ``choices``, or a declared parameter using
+                a reserved scenario identity name (e.g. ``version``).
         """
         declared = list(self.supported_parameters())
-        if not self._declarations_validated:
-            self._validate_declarations(declared=declared)
-            self._declarations_validated = True
-
-        declared_by_name = {p.name: p for p in declared}
-
-        # None values are treated as absent so YAML `key: null` falls through to defaults.
-        supplied = {name: value for name, value in args.items() if value is not None}
-
-        coerced: dict[str, Any] = {}
-        for name, raw_value in supplied.items():
-            param = declared_by_name.get(name)
-            if param is None:
-                # Stash unknowns so _validate_params can list them all at once.
-                coerced[name] = raw_value
-                continue
-            coerced[name] = coerce_value(param=param, raw_value=raw_value)
-
-        self._validate_params(params=coerced, declared=declared)
-
-        for param in declared:
-            if param.name in coerced:
-                continue
-            # Materialize every declared param so scenarios can rely on
-            # ``self.params[name]`` never raising ``KeyError``. Params declared
-            # without an explicit default land as None, and the scenario raises
-            # a domain-specific error at run time if it cannot proceed.
-            coerced[param.name] = (
-                copy.deepcopy(coerce_value(param=param, raw_value=param.default)) if param.default is not None else None
-            )
-
-        self.params = coerced
-
-    def _validate_declarations(self, *, declared: list[Parameter]) -> None:
-        """
-        Validate the scenario's parameter declarations on first use.
-
-        Args:
-            declared (list[Parameter]): The ``supported_parameters()`` snapshot.
-
-        Raises:
-            ValueError: If declarations contain duplicate names, an
-                unsupported ``param_type``, ``choices`` not coercible to
-                ``param_type``, or a default that fails coercion / is not
-                in ``choices``.
-        """
-        seen: set[str] = set()
-        for param in declared:
-            if param.name in seen:
-                raise ValueError(f"Scenario '{type(self).__name__}' declares duplicate parameter name '{param.name}'.")
-            seen.add(param.name)
-
-            try:
-                validate_param_type(param=param)
-            except ValueError as exc:
-                raise ValueError(f"Scenario '{type(self).__name__}' {exc}") from exc
-
-            if param.choices is not None and get_origin(param.param_type) is list:
-                # argparse `nargs='+'` applies choices per-item; core checks the whole list.
-                # Reject the combination until we reconcile the semantics.
-                raise ValueError(
-                    f"Scenario '{type(self).__name__}' parameter '{param.name}' declares choices on a list "
-                    f"param_type ({param.param_type!r}); this combination is not supported. "
-                    f"Use a scalar param_type with choices, or omit choices on list params."
-                )
-
-            if param.choices is not None and param.param_type is not None:
-                # Each choice must be coercible — fail at declaration time, not user time.
-                for choice in param.choices:
-                    try:
-                        coerce_value(param=param, raw_value=choice)
-                    except ValueError as exc:
-                        raise ValueError(
-                            f"Scenario '{type(self).__name__}' parameter '{param.name}' choice "
-                            f"{choice!r} is not coercible to {param.param_type!r}: {exc}"
-                        ) from exc
-
-            if param.default is not None:
-                try:
-                    coerced_default = coerce_value(param=param, raw_value=param.default)
-                except ValueError as exc:
-                    raise ValueError(
-                        f"Scenario '{type(self).__name__}' parameter '{param.name}' has an invalid default: {exc}"
-                    ) from exc
-
-                if param.choices is not None and coerced_default not in param.choices:
-                    raise ValueError(
-                        f"Scenario '{type(self).__name__}' parameter '{param.name}' default "
-                        f"{param.default!r} is not in declared choices {param.choices!r}."
-                    )
-
-    def _validate_params(self, *, params: dict[str, Any], declared: list[Parameter]) -> None:
-        """
-        Validate supplied params against the scenario's declarations.
-
-        Args:
-            params (dict[str, Any]): Coerced (declared names) or raw (unknown) values.
-            declared (list[Parameter]): Declarations snapshot from the caller, so
-                the whole call sees one consistent view.
-
-        Raises:
-            ValueError: If any keys in ``params`` are not declared.
-        """
-        declared_names = {p.name for p in declared}
-
-        unknown = sorted(set(params.keys()) - declared_names)
-        if unknown:
+        reserved = sorted({p.name for p in declared} & _RESERVED_SCENARIO_PARAM_NAMES)
+        if reserved:
             raise ValueError(
-                f"Scenario '{type(self).__name__}' received unknown parameter(s): {', '.join(unknown)}. "
-                f"Supported parameters: "
-                f"{', '.join(sorted(declared_names)) if declared_names else 'none'}."
+                f"Scenario '{type(self).__name__}' declares reserved parameter(s) {reserved}; "
+                "these names are owned by the scenario identity and cannot be scenario params. "
+                "Rename the parameter."
             )
-
-    def _prepare_strategies(
-        self,
-        strategies: Sequence[ScenarioStrategy] | None,
-    ) -> list[ScenarioStrategy]:
-        """
-        Resolve strategy inputs into a concrete list for this scenario.
-
-        The default implementation calls resolve() on the strategy class, which handles
-        None (use default), empty list (also use default), and aggregate expansion.
-
-        Subclasses with complex composition semantics (e.g., RedTeamAgent with
-        FoundryComposite) should override this to build their own composite types.
-
-        Args:
-            strategies: Strategy inputs from initialize_async. None or [] both mean use
-                default; otherwise a list of strategies to resolve.
-
-        Returns:
-            list[ScenarioStrategy]: Ordered, deduplicated concrete strategies.
-        """
-        return self._strategy_class.resolve(strategies, default=self._default_strategy)
+        self.params = resolve_declared_params(
+            declared=declared,
+            raw_args=args,
+            owner=f"Scenario '{type(self).__name__}'",
+        )
 
     @apply_defaults
     async def initialize_async(
@@ -576,7 +357,8 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
         *,
         objective_target: PromptTarget = REQUIRED_VALUE,  # type: ignore[ty:invalid-parameter-default]
         scenario_strategies: Sequence[ScenarioStrategy] | None = None,
-        dataset_config: DatasetConfiguration | None = None,
+        strategy_converters: dict[str, list["PromptConverter"]] | None = None,
+        dataset_config: DatasetAttackConfiguration | None = None,
         max_concurrency: int = 4,
         max_retries: int = 0,
         memory_labels: dict[str, str] | None = None,
@@ -598,7 +380,12 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
             scenario_strategies (Sequence[ScenarioStrategy] | None): The strategies to execute.
                 Can be a list of ScenarioStrategy enum members. If None, uses the default aggregate
                 from the scenario's configuration.
-            dataset_config (DatasetConfiguration | None): Configuration for the dataset source.
+            strategy_converters (dict[str, list[PromptConverter]] | None): Optional mapping from
+                concrete technique name (``ScenarioStrategy.value``) to a list of request converters
+                to append on top of that technique's built-in converters. Techniques not present in
+                the mapping are left unchanged. Aggregate strategy names must already be expanded to
+                concrete technique names by the caller.
+            dataset_config (DatasetAttackConfiguration | None): Configuration for the dataset source.
                 Use this to specify dataset names or maximum dataset size from the CLI.
                 If not provided, scenarios use their constructor-supplied default_dataset_config.
             max_concurrency (int): Maximum number of concurrent units of work for the scenario.
@@ -644,12 +431,6 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
         self._max_retries = max_retries
         self._memory_labels = memory_labels or {}
 
-        # Deprecated. Will be removed in 0.16.0. Honor the legacy constructor-time
-        # include_default_baseline (or subclass include_baseline) only when the caller did
-        # not supply a runtime value.
-        if include_baseline is None and self._legacy_include_baseline is not None:
-            include_baseline = self._legacy_include_baseline
-
         # Resolve the effective include_baseline. Forbidden is checked first so a forbidden
         # scenario type never silently inherits a True default; explicit-True on a forbidden
         # type is a hard error rather than a silent ignore. For the Enabled / Disabled states,
@@ -667,41 +448,30 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
         self._include_baseline = include_baseline
 
         # Prepare scenario strategies using the stored configuration
-        self._scenario_strategies = self._prepare_strategies(scenario_strategies)
+        self._scenario_strategies = self._strategy_class.resolve(scenario_strategies, default=self._default_strategy)
+        self._strategy_converters = strategy_converters or {}
 
-        # Materialize declared defaults for programmatic callers that skip the
-        # explicit set_params_from_args step. Frontend-driven flows already
-        # call it (which sets _declarations_validated=True), so this is a no-op
-        # in that path.
-        if not self._declarations_validated:
-            self.set_params_from_args(args={})
+        # Resolve declared parameters through the single registry-owned path,
+        # materializing defaults for programmatic callers that skipped an explicit
+        # set_params_from_args. Re-resolving an already-resolved bag is idempotent,
+        # so the registry- and CLI-driven flows converge here without divergence.
+        self.set_params_from_args(args=self.params)
 
-        self._atomic_attacks = await self._get_atomic_attacks_async()
+        # Build atomic attacks: resolve the seed groups once, snapshot the resolved inputs
+        # into a ScenarioContext, and hand it to the subclass extension point. Baseline is
+        # emitted centrally (from context.seed_groups) so overrides never re-resolve seeds
+        # or hand-roll baseline emission.
+        seed_groups_by_dataset = await self._resolve_seed_groups_by_dataset_async()
+        context = self._build_scenario_context(seed_groups_by_dataset=seed_groups_by_dataset)
+        self._atomic_attacks = await self._build_atomic_attacks_async(context=context)
 
-        # Deprecation rescue. Will be removed in 0.16.0. If the override didn't emit baseline,
-        # warn and inject. Migrated overrides emit baseline themselves and bypass this branch.
-        # Reuse seeds from the first existing attack rather than re-resolving from
-        # dataset_config; re-resolution under max_dataset_size would draw a fresh sample
-        # (the very ADO 9012 bug this PR fixes). When no atomic attacks exist yet the
-        # rescue falls back to the dataset_config one-time resolution.
         if include_baseline and (not self._atomic_attacks or self._atomic_attacks[0].atomic_attack_name != "baseline"):
-            print_deprecation_message(
-                old_item=f"Implicit baseline injection for {type(self).__name__}._get_atomic_attacks_async()",
-                new_item="explicit emission via self._build_baseline_atomic_attack(seed_groups=...) in the override",
-                removed_in="0.16.0",
-            )
-            if self._atomic_attacks:
-                seed_groups = self._atomic_attacks[0].seed_groups
-            else:
-                seed_groups = self._dataset_config.get_all_seed_attack_groups()
-            self._atomic_attacks.insert(0, self._build_baseline_atomic_attack(seed_groups=seed_groups))
+            self._atomic_attacks.insert(0, self._build_baseline_atomic_attack(seed_groups=list(context.seed_groups)))
 
-        # Snapshot params onto the identifier before the resume branch so the identifier
-        # is fully populated regardless of which branch we take. Deep-copy avoids sharing
-        # mutable state with self.params.
-        params_snapshot = copy.deepcopy(self.params)
-        _assert_json_serializable(params=params_snapshot)
-        self._identifier.init_data = params_snapshot
+        # Build the canonical scenario identifier once params/strategies/datasets
+        # are resolved, so both the resume check and the new-result branch share the
+        # same identity (and its eval hash).
+        scenario_identifier = self._build_scenario_identifier()
 
         # Check if we're resuming an existing scenario. Any divergence is a hard error
         # rather than a silent restart, so the original progress isn't orphaned without
@@ -715,7 +485,7 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
                     f"Drop scenario_result_id to start a new scenario."
                 )
 
-            self._validate_stored_scenario(stored_result=existing_results[0])
+            self._validate_stored_scenario(stored_result=existing_results[0], current_identifier=scenario_identifier)
             self._apply_persisted_objectives(stored_result=existing_results[0])
             return  # Valid resume - skip creating new scenario result
 
@@ -728,9 +498,8 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
         }
 
         result = ScenarioResult(
-            scenario_identifier=self._identifier,
-            objective_target_identifier=self._objective_target_identifier,
-            objective_scorer_identifier=self._objective_scorer_identifier,
+            scenario_identifier=scenario_identifier,
+            scenario_description=self._description,
             labels=self._memory_labels,
             attack_results=attack_results,
             scenario_run_state=ScenarioRunState.CREATED,
@@ -836,75 +605,71 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
         if self._objective_scorer is None:
             raise ValueError("Objective scorer is required to create baseline attack.")
 
-        from pyrit.executor.attack.core.attack_config import AttackScoringConfig
-
-        attack = PromptSendingAttack(
+        return build_baseline_atomic_attack(
             objective_target=self._objective_target,
-            attack_scoring_config=AttackScoringConfig(objective_scorer=cast("TrueFalseScorer", self._objective_scorer)),
-        )
-
-        return AtomicAttack(
-            atomic_attack_name="baseline",
-            attack_technique=AttackTechnique(attack=attack),
+            objective_scorer=self._objective_scorer,
             seed_groups=seed_groups,
             memory_labels=self._memory_labels,
         )
 
-    def _raise_dataset_exception(self) -> None:
-        error_msg = textwrap.dedent(
-            f"""
-            Dataset is not available or failed to load.
-            Scenarios require datasets loaded in CentralMemory or to be passed explicitly.
-            Either load the datasets into the database before running the scenario, or for
-            example datasets, you can use the `load_default_datasets` initializer.
-
-            Required datasets: {", ".join(self._default_dataset_config.get_default_dataset_names())}
-            """
-        )
-        raise ValueError(error_msg)
-
-    def _validate_stored_scenario(self, *, stored_result: ScenarioResult) -> None:
+    def _build_scenario_identifier(self) -> ScenarioIdentifier:
         """
-        Validate that a stored scenario result exactly matches the current scenario configuration.
+        Build the canonical ``ScenarioIdentifier`` for the current run.
+
+        Combines the definition version, the resolved technique / dataset
+        selection, the resolved scenario params, and the objective target / scorer
+        references into one identity whose eval hash backs resume drift detection.
+
+        Returns:
+            ScenarioIdentifier: The identifier describing this scenario run.
+        """
+        techniques = sorted({s.value for s in self._scenario_strategies})
+        datasets = list(self._dataset_config.dataset_names)
+        return ScenarioIdentifier.of(
+            self,
+            params=self.params,
+            version=self._version,
+            techniques=techniques,
+            datasets=datasets,
+            objective_target=self._objective_target_identifier,
+            objective_scorer=self._objective_scorer_identifier,
+        )
+
+    def _validate_stored_scenario(
+        self, *, stored_result: ScenarioResult, current_identifier: ScenarioIdentifier
+    ) -> None:
+        """
+        Validate that a stored scenario result matches the current configuration.
 
         Resume is opt-in via ``scenario_result_id``; any divergence from the stored
         result is treated as user error rather than a silent restart, since the
-        original progress would otherwise be orphaned without warning.
+        original progress would otherwise be orphaned without warning. Divergence is
+        detected by comparing behavioral eval hashes: the scenario class name /
+        module, version, resolved techniques / datasets, params, and objective
+        target / scorer all feed the hash, so a mismatch means either a different
+        scenario or a changed configuration.
 
         Args:
             stored_result (ScenarioResult): The scenario result retrieved from memory.
+            current_identifier (ScenarioIdentifier): Identifier for the current run.
 
         Raises:
-            ValueError: If the stored scenario name, version, or parameters do not
-                match the current configuration.
+            ValueError: If the stored scenario identity does not match the current one.
         """
-        stored_name = stored_result.scenario_identifier.name
-        stored_version = stored_result.scenario_identifier.version
+        # Compare behavioral eval hashes. The stored eval_hash is never trusted;
+        # ScenarioEvaluationIdentifier recomputes it from the stored identifier's
+        # class / params / children, matching how the current identifier is hashed.
+        # class_name and class_module both feed the hash, so this also catches a
+        # scenario_result_id that belongs to an entirely different scenario.
+        stored_eval_hash = ScenarioEvaluationIdentifier(stored_result.scenario_identifier).eval_hash
+        current_eval_hash = ScenarioEvaluationIdentifier(current_identifier).eval_hash
 
-        if stored_name != self._identifier.name:
+        if stored_eval_hash != current_eval_hash:
             raise ValueError(
-                f"Scenario result id '{self._scenario_result_id}' belongs to scenario '{stored_name}' "
-                f"but current scenario is '{self._identifier.name}'. "
-                f"Drop scenario_result_id to start a new scenario."
-            )
-
-        if stored_version != self._identifier.version:
-            raise ValueError(
-                f"Scenario result id '{self._scenario_result_id}' was created with "
-                f"{self._identifier.name} version {stored_version} but current version is "
-                f"{self._identifier.version}. Drop scenario_result_id to start a new scenario."
-            )
-
-        # Treat None (legacy result without persisted params) as empty. Compare both sides
-        # post-JSON-roundtrip so types that the memory column rewrites (tuple → list, non-str
-        # dict keys → str) don't surface as false mismatches under param_type=None.
-        stored_params = stored_result.scenario_identifier.init_data or {}
-        current_params_normalized = json.loads(json.dumps(self.params))
-        if stored_params != current_params_normalized:
-            diff = _format_param_key_diff(stored=stored_params, current=current_params_normalized)
-            raise ValueError(
-                f"Scenario result id '{self._scenario_result_id}' has mismatched parameters ({diff}). "
-                f"Drop scenario_result_id to start a new scenario, or pass matching parameters to resume."
+                f"Scenario result id '{self._scenario_result_id}' does not match the current "
+                f"'{type(self).__name__}' configuration (a different scenario, or its version, "
+                f"techniques, datasets, parameters, or objective target / scorer changed). "
+                f"Drop scenario_result_id to start a new scenario, or pass matching configuration to resume."
             )
 
         logger.info(
@@ -1007,22 +772,39 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
 
         return remaining_attacks
 
-    async def _get_atomic_attacks_async(self) -> list[AtomicAttack]:
+    async def _resolve_seed_groups_by_dataset_async(self) -> dict[str, list[SeedAttackGroup]]:
         """
-        Build atomic attacks from the cross-product of selected techniques and datasets.
+        Resolve the seed groups this scenario attacks, keyed by originating dataset.
 
-        Uses ``_get_attack_technique_factories()`` to obtain factories, then
-        iterates over every (technique, dataset) pair to create an
-        ``AtomicAttack`` for each.  Grouping for display is controlled by
-        ``_build_display_group()``.
+        This is the single place seed resolution happens for a run. The base ``Scenario``
+        calls it once in the bridge, flattens the result into ``context.seed_groups``, and
+        reuses the same population for every atomic attack and the baseline — so sampling
+        under ``max_dataset_size`` stays consistent across all of them.
 
-        Subclasses that do **not** use the factory/registry pattern should
-        override this method entirely. Overrides that want baseline support
-        must call ``self._build_baseline_atomic_attack`` with the strategy
-        seeds.
+        Override to inject seeds from an alternate source (e.g. deprecated ``objectives``)
+        or to filter the resolved groups before attacks are built.
 
         Returns:
-            list[AtomicAttack]: The generated atomic attacks.
+            dict[str, list[SeedAttackGroup]]: Seed groups keyed by dataset name.
+        """
+        return await self._dataset_config.get_attack_groups_by_dataset_async()
+
+    def _build_scenario_context(self, *, seed_groups_by_dataset: dict[str, list[SeedAttackGroup]]) -> ScenarioContext:
+        """
+        Snapshot the resolved runtime inputs into a ``ScenarioContext``.
+
+        Called after ``initialize_async`` has populated the objective target, scorer,
+        strategies, dataset config, labels, and baseline flag. The resulting context is
+        handed to ``_build_atomic_attacks_async`` so scenario authors never read
+        half-initialized ``self._*`` state to build attacks.
+
+        Args:
+            seed_groups_by_dataset (dict[str, list[SeedAttackGroup]]): Seed groups already
+                resolved once (see ``_resolve_seed_groups_by_dataset_async``). The flat
+                ``context.seed_groups`` is derived from these so both views share one sample.
+
+        Returns:
+            ScenarioContext: The immutable inputs for atomic-attack construction.
 
         Raises:
             ValueError: If the scenario has not been initialized.
@@ -1032,68 +814,40 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
                 "Scenario not properly initialized. Call await scenario.initialize_async() before running."
             )
 
-        from pyrit.executor.attack import AttackScoringConfig
+        seed_groups = [group for groups in seed_groups_by_dataset.values() for group in groups]
 
-        selected_techniques = {s.value for s in self._scenario_strategies}
+        return ScenarioContext(
+            objective_target=self._objective_target,
+            scenario_strategies=tuple(self._scenario_strategies),
+            dataset_config=self._dataset_config,
+            memory_labels=dict(self._memory_labels),
+            include_baseline=self._include_baseline,
+            seed_groups=seed_groups,
+            seed_groups_by_dataset=seed_groups_by_dataset,
+        )
 
-        factories = self._get_attack_technique_factories()
-        seed_groups_by_dataset = self._dataset_config.get_seed_attack_groups()
+    @abstractmethod
+    async def _build_atomic_attacks_async(self, *, context: ScenarioContext) -> list[AtomicAttack]:
+        """
+        Build this scenario's atomic attacks from the resolved runtime inputs.
 
-        scoring_config = AttackScoringConfig(objective_scorer=cast("TrueFalseScorer", self._objective_scorer))
+        This is the single extension point scenarios override to map techniques, datasets,
+        scorers, and any extra axes into ``AtomicAttack`` instances. It is called once by
+        ``initialize_async`` after the objective target, scorer, strategies, dataset config,
+        labels, and baseline flag have been resolved and snapshot into ``context``.
 
-        atomic_attacks: list[AtomicAttack] = []
-        for technique_name in selected_techniques:
-            factory = factories.get(technique_name)
-            if factory is None:
-                logger.warning(f"No factory for technique '{technique_name}', skipping.")
-                continue
+        Scenario authors build their attacks from ``context.seed_groups`` (or
+        ``context.seed_groups_by_dataset``) so sampling under ``max_dataset_size`` stays
+        consistent across every atomic attack and the baseline. The base owns baseline
+        emission, so overrides never prepend one themselves.
 
-            for dataset_name, seed_groups in seed_groups_by_dataset.items():
-                if factory.seed_technique is not None:
-                    compatible_groups = SeedAttackGroup.filter_compatible(
-                        seed_groups=seed_groups,
-                        technique=factory.seed_technique,
-                    )
-                    skipped = len(seed_groups) - len(compatible_groups)
-                    if skipped:
-                        logger.info(
-                            f"Skipped {skipped} seed group(s) from '{dataset_name}' for technique "
-                            f"'{technique_name}' (prompt sequences overlap with simulated conversation)."
-                        )
-                    if not compatible_groups:
-                        logger.warning(
-                            f"No compatible seed groups in '{dataset_name}' for technique "
-                            f"'{technique_name}', skipping this (technique, dataset) pair."
-                        )
-                        continue
-                else:
-                    compatible_groups = list(seed_groups)
+        Args:
+            context (ScenarioContext): The resolved runtime inputs for this run.
 
-                attack_technique = factory.create(
-                    objective_target=self._objective_target,
-                    attack_scoring_config=scoring_config,
-                )
-                display_group = self._build_display_group(
-                    technique_name=technique_name,
-                    seed_group_name=dataset_name,
-                )
-                atomic_attacks.append(
-                    AtomicAttack(
-                        atomic_attack_name=f"{technique_name}_{dataset_name}",
-                        attack_technique=attack_technique,
-                        seed_groups=list(compatible_groups),
-                        adversarial_chat=factory.adversarial_chat,
-                        objective_scorer=cast("TrueFalseScorer", self._objective_scorer),
-                        memory_labels=self._memory_labels,
-                        display_group=display_group,
-                    )
-                )
-
-        if self._include_baseline:
-            all_seed_groups = [g for groups in seed_groups_by_dataset.values() for g in groups]
-            atomic_attacks.insert(0, self._build_baseline_atomic_attack(seed_groups=all_seed_groups))
-
-        return atomic_attacks
+        Returns:
+            list[AtomicAttack]: The generated atomic attacks.
+        """
+        ...
 
     async def run_async(self) -> ScenarioResult:
         """
@@ -1120,7 +874,7 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
 
         Example:
             >>> result = await scenario.run_async()
-            >>> print(f"Scenario: {result.scenario_identifier.name}")
+            >>> print(f"Scenario: {result.scenario_name}")
             >>> print(f"Total results: {len(result.attack_results)}")
         """
         if not self._atomic_attacks:

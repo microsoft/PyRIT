@@ -58,7 +58,7 @@ class RandomTranslationConverter(LLMGenericTextConverter, WordLevelConverter):
             raise ValueError(
                 "converter_target is required for LLM-based converters. "
                 "Either pass it explicitly or configure a default via PyRIT initialization "
-                "(e.g., initialize_pyrit_async with SimpleInitializer or AIRTInitializer)."
+                "(e.g., initialize_pyrit_async with TargetInitializer)."
             )
         # set to default strategy if not provided
         system_prompt_template = (

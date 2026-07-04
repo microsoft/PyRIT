@@ -25,7 +25,7 @@ pyrit_shell --config-file ./.pyrit_conf
 pyrit_shell --log-level DEBUG
 
 # Load initializers at startup
-pyrit_shell --initializers load_default_datasets
+pyrit_shell --initializers target
 
 # Load custom initialization scripts
 pyrit_shell --initialization-scripts ./my_config.py
@@ -40,6 +40,7 @@ Once starting the shell, you will see the list of commands you have access to. S
 | `list-scenarios` | List all available scenarios |
 | `list-initializers` | List all available initializers |
 | `list-targets` | List all available targets from the registry |
+| `list-converters` | List all registered converter instances |
 | `run <scenario> [options]` | Run a scenario with optional parameters |
 | `scenario-history` | List all previous scenario runs in this session |
 | `print-scenario [N]` | Print detailed results for scenario run(s) |
@@ -54,32 +55,47 @@ The `run` command executes scenarios with the same options as `pyrit_scan`:
 ### Basic Usage
 
 ```bash
-pyrit> run foundry.red_team_agent --target my_target --initializers target load_default_datasets
+pyrit> run foundry.red_team_agent --target my_target --initializers target
 ```
 
 ### With Strategies
 
 ```bash
-pyrit> run garak.encoding --target my_target --initializers target load_default_datasets --strategies base64 rot13
+pyrit> run garak.encoding --target my_target --initializers target --strategies base64 rot13
 
-pyrit> run foundry.red_team_agent --target my_target --initializers target load_default_datasets -s jailbreak crescendo
+pyrit> run foundry.red_team_agent --target my_target --initializers target -s jailbreak crescendo
+```
+
+### Attaching Converters to a Technique
+
+Append a registered converter instance to a single technique (or an aggregate strategy) with the
+`<technique>:converter.<name>` syntax. The converter is added to the request side of every attack
+the technique produces, on top of any converters the technique already bakes in. Use
+`list-converters` to discover the registered converter names:
+
+```bash
+# Add the registered "translation_spanish" converter to role_play only
+pyrit> run airt.rapid_response --target my_target --initializers target load_default_datasets -s role_play:converter.translation_spanish
+
+# Chain multiple converters (applied in order) and combine with plain strategies
+pyrit> run airt.rapid_response --target my_target --initializers target load_default_datasets -s role_play:converter.translation_spanish:converter.base64 many_shot
 ```
 
 ### With Runtime Parameters
 
 ```bash
 # Set concurrency and retries
-pyrit> run foundry.red_team_agent --target my_target --initializers target load_default_datasets --max-concurrency 10 --max-retries 3
+pyrit> run foundry.red_team_agent --target my_target --initializers target --max-concurrency 10 --max-retries 3
 
 # Add memory labels for tracking
-pyrit> run garak.encoding --target my_target --initializers target load_default_datasets --memory-labels '{"experiment":"test1","version":"v2"}'
+pyrit> run garak.encoding --target my_target --initializers target --memory-labels '{"experiment":"test1","version":"v2"}'
 ```
 
 ### Override Defaults Per-Run
 
 ```bash
 # Override log level for this run only
-pyrit> run garak.encoding --target my_target --initializers target load_default_datasets --log-level DEBUG
+pyrit> run garak.encoding --target my_target --initializers target --log-level DEBUG
 ```
 
 ### Run Command Options
@@ -119,9 +135,9 @@ pyrit> scenario-history
 
 Scenario Run History:
 ================================================================================
-1) foundry.red_team_agent --initializers target load_default_datasets --strategies base64
-2) garak.encoding --initializers target load_default_datasets --strategies rot13
-3) foundry.red_team_agent --initializers target load_default_datasets -s jailbreak
+1) foundry.red_team_agent --initializers target --strategies base64
+2) garak.encoding --initializers target --strategies rot13
+3) foundry.red_team_agent --initializers target -s jailbreak
 ================================================================================
 
 Total runs: 3
@@ -135,7 +151,7 @@ The shell excels at interactive testing workflows:
 
 ```bash
 # Start shell with defaults
-pyrit_shell --initializers target load_default_datasets
+pyrit_shell --initializers target
 
 # Quick exploration
 pyrit> list-scenarios
@@ -166,7 +182,7 @@ pyrit> print-scenario 2
 
 2. **Use short strategy aliases** with `-s`:
    ```bash
-   pyrit> run foundry.red_team_agent --initializers target load_default_datasets -s base64 rot13
+   pyrit> run foundry.red_team_agent --initializers target -s base64 rot13
    ```
 
 3. **Review history regularly** to track what you've tested:

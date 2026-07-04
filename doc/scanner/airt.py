@@ -40,7 +40,7 @@ objective_target = OpenAIChatTarget()
 #
 # ```bash
 # pyrit_scan airt.rapid_response \
-#   --initializers target load_default_datasets \
+#   --initializers target \
 #   --target openai_chat \
 #   --strategies role_play \
 #   --dataset-names airt_hate \
@@ -123,7 +123,7 @@ await output_scenario_async(scenario_result)
 #
 # ```bash
 # pyrit_scan airt.cyber \
-#   --initializers target load_default_datasets \
+#   --initializers target \
 #   --target openai_chat \
 #   --strategies multi_turn \
 #   --max-dataset-size 1
@@ -156,7 +156,7 @@ await output_scenario_async(scenario_result)
 #
 # ```bash
 # pyrit_scan airt.jailbreak \
-#   --initializers target load_default_datasets \
+#   --initializers target \
 #   --target openai_chat \
 #   --strategies prompt_sending \
 #   --max-dataset-size 1
@@ -236,7 +236,7 @@ await output_scenario_async(scenario_result)
 #
 # ```bash
 # pyrit_scan airt.scam \
-#   --initializers target load_default_datasets \
+#   --initializers target \
 #   --target openai_chat \
 #   --strategies context_compliance \
 #   --max-dataset-size 1
