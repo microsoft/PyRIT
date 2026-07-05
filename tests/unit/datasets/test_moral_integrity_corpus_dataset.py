@@ -40,8 +40,13 @@ class TestMICDataset:
         assert result.dataset_name == "moral_integrity_corpus"
         assert result.seeds[0].value == "Is lying okay?"
         assert result.seeds[0].data_type == "text"
-        assert result.seeds[0].harm_categories == ["fairness"]
-        assert result.seeds[2].harm_categories == ["care", "liberty"]
+        # MIC moral-foundation labels are not a harm taxonomy: harm_categories is left
+        # empty and the native label is preserved in metadata (mapping flagged unclear).
+        assert result.seeds[0].harm_categories == []
+        assert result.seeds[0].metadata["moral"] == "fairness"
+        assert result.seeds[0].metadata["harm_mapping_status"] == "unclear"
+        assert result.seeds[2].harm_categories == []
+        assert result.seeds[2].metadata["moral"] == "care|liberty"
         assert "Caleb Ziems" in result.seeds[0].authors
 
     async def test_fetch_dataset_deduplicates(self):

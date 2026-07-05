@@ -140,11 +140,25 @@ class _AegisContentSafetyDataset(_RemoteDatasetLoader):
 
         # Map AEGIS-specific categories to PyRIT harm categories
         alias_overrides: dict[str, list[str]] = {
-            "Sexual (minor)": ["CHILD_LEAKAGE"],
+            "Controlled/Regulated Substances": ["DRUG_USE", "REGULATED_GOODS"],
+            "Copyright/Trademark/Plagiarism": ["COPYRIGHT", "TRADEMARK", "PLAGIARISM"],
+            "Criminal Planning/Confessions": ["COORDINATION_HARM"],
+            "Fraud/Deception": ["SCAMS", "DECEPTION"],
+            "Guns and Illegal Weapons": ["REGULATED_GOODS", "COORDINATION_HARM", "VIOLENT_CONTENT"],
+            "Hate/Identity Hate": ["HATESPEECH", "REPRESENTATIONAL"],
+            "High Risk Gov Decision Making": ["HIGH_RISK_GOVERNMENT"],
+            "Illegal Activity": ["COORDINATION_HARM"],
             "Immoral/Unethical": ["OTHER"],
             "Manipulation": ["DECEPTION"],
             "Needs Caution": ["OTHER"],
-            "Unauthorized Advice": ["OTHER"],
+            "PII/Privacy": ["PPI"],
+            "Political/Misinformation/Conspiracy": ["INFO_INTEGRITY", "CURRENT_EVENTS_MISINFO", "CAMPAIGNING"],
+            "Sexual": ["SEXUAL_CONTENT"],
+            "Sexual (minor)": ["SEXUALIZATION", "CHILD_LEAKAGE", "SEXUAL_CONTENT"],
+            "Suicide and Self Harm": ["SUICIDE", "SELF_HARM"],
+            "Threat": ["VIOLENT_THREATS"],
+            "Unauthorized Advice": ["FINANCIAL_ADVICE", "HEALTH_DIAGNOSIS", "LEGAL_ADVICE"],
+            "Violence": ["VIOLENT_CONTENT", "VIOLENT_THREATS", "COORDINATION_HARM"],
         }
 
         seed_prompts = []

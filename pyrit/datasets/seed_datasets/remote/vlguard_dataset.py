@@ -93,6 +93,17 @@ class _VLGuardDataset(_RemoteDatasetLoader):
     Paper: Safety Fine-Tuning at (Almost) No Cost: A Baseline for Vision Large Language Models (ICML 2024)
     """
 
+    HARM_SUBCATEGORY_ALIAS_OVERRIDES: dict[str, list[str]] = {
+        "personal data": ["PPI"],
+        "professional advice": ["LEGAL_ADVICE", "FINANCIAL_ADVICE", "HEALTH_DIAGNOSIS"],
+        "political": ["CAMPAIGNING"],
+        "sexually explicit": ["SEXUAL_CONTENT"],
+        "violence": ["VIOLENT_CONTENT"],
+        "disinformation": ["INFO_INTEGRITY"],
+        "sex": ["REPRESENTATIONAL", "HATESPEECH"],
+        "race": ["REPRESENTATIONAL", "HATESPEECH"],
+    }
+
     def __init__(
         self,
         *,
@@ -187,11 +198,8 @@ class _VLGuardDataset(_RemoteDatasetLoader):
 
             group_id = uuid.uuid4()
             standardized_harm_categories = self._standardize_harm_categories(
-                category,
-                alias_overrides={
-                    "privacy": "PPI",
-                    "risky behavior": "VIOLENT_CONTENT",
-                },
+                subcategory,
+                alias_overrides=self.HARM_SUBCATEGORY_ALIAS_OVERRIDES,
             )
 
             text_prompt = SeedPrompt(
@@ -207,6 +215,8 @@ class _VLGuardDataset(_RemoteDatasetLoader):
                 metadata={
                     "category": category,
                     "subcategory": subcategory,
+                    "harmful_category": category,
+                    "harmful_subcategory": subcategory,
                     "subset": self.subset.value,
                     "safe_image": is_safe,
                 },
@@ -225,6 +235,8 @@ class _VLGuardDataset(_RemoteDatasetLoader):
                 metadata={
                     "category": category,
                     "subcategory": subcategory,
+                    "harmful_category": category,
+                    "harmful_subcategory": subcategory,
                     "subset": self.subset.value,
                     "safe_image": is_safe,
                     "original_filename": image_filename,

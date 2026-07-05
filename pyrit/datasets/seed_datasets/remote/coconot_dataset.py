@@ -5,6 +5,7 @@ import logging
 from enum import Enum
 
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
+    UNCLEAR_HARM_MAPPING_DATASET_NAMES,
     _RemoteDatasetLoader,
 )
 from pyrit.models import SeedDataset, SeedObjective
@@ -184,12 +185,17 @@ class _CoCoNotBaseDataset(_RemoteDatasetLoader):
         if response:
             metadata["response"] = response
 
-        standardized_categories = self._standardize_harm_categories(category)
+        # CoCoNot's noncompliance taxonomy (incomplete/unsupported/indeterminate/
+        # humanizing/safety) is not a harm taxonomy, so harm categories are left
+        # empty and flagged unclear while the native category stays in metadata.
+        mapping_is_unclear = self.dataset_name in UNCLEAR_HARM_MAPPING_DATASET_NAMES
+        metadata["harm_mapping_status"] = "unclear" if mapping_is_unclear else "mapped"
+        harm_categories = [] if mapping_is_unclear else self._standardize_harm_categories(category)
 
         return SeedObjective(
             value=row["prompt"],
             dataset_name=self.dataset_name,
-            harm_categories=standardized_categories,
+            harm_categories=harm_categories,
             description=self.DEFAULT_DESCRIPTION,
             source=source_url,
             authors=_AUTHORS,

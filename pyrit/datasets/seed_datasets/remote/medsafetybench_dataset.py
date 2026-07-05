@@ -134,6 +134,11 @@ class _MedSafetyBenchDataset(_RemoteDatasetLoader):
                             f"category {category}, type {file_type}."
                         ),
                         source=source,
+                        metadata={
+                            "medsafety_category": category,
+                            "model_type": model_type,
+                            "file_type": file_type,
+                        },
                     )
                 )
 

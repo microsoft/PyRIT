@@ -59,12 +59,31 @@ class _SOSBenchDataset(_RemoteDatasetLoader):
             cache=cache,
         )
 
+        # Map SOSBench's six scientific domains to PyRIT harm categories. Keys must
+        # match the dataset's actual ``subject`` values ("medical"/"pharmacy", not
+        # "medicine"/"pharmacology"). The mapping reflects the content each domain
+        # actually contains: biology/medical prompts are infectious-disease and
+        # health misinformation (PUBLIC_HEALTH), physics prompts concern radioactive
+        # isotopes (CBRN, radiological), pharmacy prompts synthesize designer drugs
+        # (PSEUDO_PHARMA), and chemistry prompts describe hazardous synthesis (CBRN).
+        alias_overrides: dict[str, list[str]] = {
+            "chemistry": ["CBRN"],
+            "biology": ["PUBLIC_HEALTH"],
+            "physics": ["CBRN"],
+            "medical": ["PUBLIC_HEALTH"],
+            "pharmacy": ["PSEUDO_PHARMA"],
+            "psychology": ["MENTAL_HEALTH"],
+        }
+
         seed_prompts = [
             SeedPrompt(
                 value=item["goal"],
                 data_type="text",
                 dataset_name=self.dataset_name,
-                harm_categories=self._standardize_harm_categories(item.get("subject")),
+                harm_categories=self._standardize_harm_categories(
+                    item.get("subject"),
+                    alias_overrides=alias_overrides,
+                ),
                 description=(
                     "SOSBench is a regulation-grounded, hazard-focused benchmark encompassing "
                     "six high-risk scientific domains: chemistry, biology, medicine, pharmacology, "

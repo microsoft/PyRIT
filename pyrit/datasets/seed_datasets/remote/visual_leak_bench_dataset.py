@@ -232,7 +232,6 @@ class _VisualLeakBenchDataset(_RemoteDatasetLoader):
                 self._standardize_harm_categories(
                     harm_categories,
                     alias_overrides={
-                        "ocr_injection": "DECEPTION",
                         "pii_leakage": "PPI",
                         "email": "PPI",
                         "dob": "PPI",
@@ -301,12 +300,11 @@ class _VisualLeakBenchDataset(_RemoteDatasetLoader):
             list[str]: List of harm category strings.
         """
         if category_str == VisualLeakBenchCategory.OCR_INJECTION.value:
-            return ["ocr_injection"]
+            return []
         if category_str == VisualLeakBenchCategory.PII_LEAKAGE.value:
-            categories = ["pii_leakage"]
             if pii_type_str:
-                categories.append(pii_type_str.lower().replace(" ", "_"))
-            return categories
+                return [pii_type_str.lower().replace(" ", "_")]
+            return ["pii_leakage"]
         return [category_str.lower().replace(" ", "_")]
 
     def _get_query_prompt(self, category_str: str) -> str:

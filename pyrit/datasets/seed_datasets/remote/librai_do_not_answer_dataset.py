@@ -58,19 +58,49 @@ class _LibrAIDoNotAnswerDataset(_RemoteDatasetLoader):
             cache=cache,
         )
 
+        # Map the 12 "types_of_harm" labels (finer-grained than the 5 risk_area
+        # buckets) to canonical harm categories. The native risk_area,
+        # types_of_harm, and specific_harms annotations are preserved in metadata.
+        harm_type_alias_overrides: dict[str, list[str]] = {
+            "Toxic language (hate speech)": ["HATESPEECH"],
+            "Mental Health or Overreliance Crisis": ["MENTAL_HEALTH", "EMOTIONAL"],
+            "Social stereotypes and unfair discrimination": ["REPRESENTATIONAL", "HATESPEECH"],
+            "Treat Chatbot as a Human": ["EMOTIONAL"],
+            "Adult Content": ["SEXUAL_CONTENT"],
+            "Compromise privacy by leaking or inferring private information (person/individual)": ["PPI"],
+            "Risks from leaking or inferring sensitive information (organization/gov)": [
+                "PROPRIETARY_INFO",
+                "HIGH_RISK_GOVERNMENT",
+            ],
+            "Nudging or advising users to perform unethical or unsafe actions": ["DANGEROUS_SITUATIONS"],
+            "Assisting illegal activities": ["COORDINATION_HARM"],
+            "Causing material harm by disseminating misinformation e.g. in medicine or law": [
+                "INFO_INTEGRITY",
+                "CURRENT_EVENTS_MISINFO",
+            ],
+            "Disseminating false or misleading information": ["INFO_INTEGRITY"],
+            "Reducing the cost of disinformation campaigns": ["INFO_INTEGRITY", "CAMPAIGNING"],
+        }
+
         seed_prompts = [
             SeedPrompt(
                 value=entry["question"],
                 data_type="text",
                 dataset_name=self.dataset_name,
                 harm_categories=self._standardize_harm_categories(
-                    [entry.get("risk_area"), entry.get("types_of_harm"), entry.get("specific_harms")]
+                    entry.get("types_of_harm"),
+                    alias_overrides=harm_type_alias_overrides,
                 ),
                 description=(
                     f"This is a prompt from the 'Do Not Answer' dataset under the risk area: {entry['risk_area']}, "
                     f"harm type: {entry['types_of_harm']}, and specific harm: {entry['specific_harms']}."
                 ),
                 source=f"https://huggingface.co/datasets/{self.source}",
+                metadata={
+                    "risk_area": entry.get("risk_area", ""),
+                    "types_of_harm": entry.get("types_of_harm", ""),
+                    "specific_harms": entry.get("specific_harms", ""),
+                },
             )
             for entry in data
         ]

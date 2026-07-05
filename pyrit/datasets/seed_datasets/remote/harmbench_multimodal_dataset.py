@@ -104,11 +104,14 @@ class _HarmBenchMultimodalDataset(_RemoteDatasetLoader):
 
         prompts = []
         failed_image_count = 0
-        harm_category_alias_overrides: dict[str, str | list[str]] = {
-            "cybercrime_intrusion": ["ILLEGAL", "MALWARE"],
-            "chemical_biological": "CBRN",
-            "harassment_bullying": "HARASSMENT",
-            "misinformation_disinformation": "INFO_INTEGRITY",
+        harm_category_alias_overrides: dict[str, list[str]] = {
+            "chemical_biological": ["CBRN"],
+            "cybercrime_intrusion": ["COORDINATION_HARM", "MALWARE"],
+            "harassment_bullying": ["HARASSMENT", "HATESPEECH", "REPRESENTATIONAL"],
+            "illegal": ["COORDINATION_HARM"],
+            "misinformation_disinformation": ["INFO_INTEGRITY"],
+            "harmful": ["OTHER"],
+            "copyright": ["COPYRIGHT"],
         }
 
         for example in examples:
@@ -170,6 +173,7 @@ class _HarmBenchMultimodalDataset(_RemoteDatasetLoader):
                 sequence=0,
                 metadata={
                     "behavior_id": behavior_id,
+                    "semantic_category": semantic_category,
                     "image_description": image_description,
                     "redacted_image_description": redacted_description,
                     "original_image_url": image_url,
@@ -189,6 +193,7 @@ class _HarmBenchMultimodalDataset(_RemoteDatasetLoader):
                 sequence=0,
                 metadata={
                     "behavior_id": behavior_id,
+                    "semantic_category": semantic_category,
                 },
                 authors=[
                     "Mantas Mazeika",

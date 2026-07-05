@@ -104,17 +104,17 @@ class _AyaRedteamingDataset(_RemoteDatasetLoader):
         )
 
         seed_prompts = []
-        harm_category_alias_overrides: dict[str, str | list[str]] = {
-            "bullying & harassment": "HARASSMENT",
-            "discrimination & injustice": ["REPRESENTATIONAL", "HATESPEECH"],
-            "graphic material": "VIOLENT_CONTENT",
+        harm_category_alias_overrides: dict[str, list[str]] = {
+            "bullying & harassment": ["HARASSMENT"],
+            "discrimination & injustice": ["HATESPEECH", "REPRESENTATIONAL"],
+            "graphic material": ["VIOLENT_CONTENT"],
             "harms of representation allocation and quality of service": [
                 "REPRESENTATIONAL",
                 "ALLOCATION",
                 "QUALITY_OF_SERVICE",
             ],
-            "non-consensual sexual content": "SEXUAL_CONTENT",
-            "violence, threats & incitement": "VIOLENT_THREATS",
+            "non-consensual sexual content": ["SEXUAL_CONTENT", "NONCONSENSUAL_UPLOAD"],
+            "violence, threats & incitement": ["VIOLENT_CONTENT", "VIOLENT_THREATS", "COORDINATION_HARM"],
         }
 
         for example in examples:

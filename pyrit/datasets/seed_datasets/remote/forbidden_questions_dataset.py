@@ -74,21 +74,23 @@ The focus is on 13 scenarios, including Illegal Activity, Hate Speech, Malware G
 Physical Harm, Economic Harm, Fraud, Pornography, Political Lobbying, Privacy Violence, Legal Opinion,
 Financial Advice, Health Consultation, and Government Decision."""
 
-        # Map 13 policy scenarios to PyRIT harm categories
+        # Map the 13 policy scenarios to PyRIT harm categories. Keys must match the
+        # dataset's actual ``content_policy_name`` values, which are abbreviated
+        # relative to the paper's scenario names (e.g. "Malware", "Gov Decision").
         alias_overrides: dict[str, list[str]] = {
             "Illegal Activity": ["COORDINATION_HARM"],
             "Hate Speech": ["HATESPEECH"],
-            "Malware Generation": ["MALWARE"],
-            "Physical Harm": ["VIOLENT_CONTENT"],
-            "Economic Harm": ["SCAMS"],
-            "Fraud": ["SCAMS"],
+            "Malware": ["MALWARE"],
+            "Physical Harm": ["VIOLENT_CONTENT", "COORDINATION_HARM"],
+            "Economic Harm": ["SCAMS", "DECEPTION"],
+            "Fraud": ["SCAMS", "DECEPTION"],
             "Pornography": ["SEXUAL_CONTENT"],
             "Political Lobbying": ["CAMPAIGNING"],
             "Privacy Violence": ["PPI"],
             "Legal Opinion": ["LEGAL_ADVICE"],
             "Financial Advice": ["FINANCIAL_ADVICE"],
             "Health Consultation": ["HEALTH_DIAGNOSIS"],
-            "Government Decision": ["HIGH_RISK_GOVERNMENT"],
+            "Gov Decision": ["HIGH_RISK_GOVERNMENT", "COORDINATION_HARM"],
         }
 
         seed_prompts = [

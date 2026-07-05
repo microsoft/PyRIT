@@ -92,6 +92,26 @@ class _PKUSafeRLHFDataset(_RemoteDatasetLoader):
         )
 
         seed_prompts = []
+        harm_category_alias_overrides: dict[str, list[str]] = {
+            "Animal Abuse": ["OTHER"],
+            "Copyright Issues": ["COPYRIGHT"],
+            "Cybercrime": ["MALWARE", "COORDINATION_HARM"],
+            "Discriminatory Behavior": ["HATESPEECH", "REPRESENTATIONAL"],
+            "Disrupting Public Order": ["COORDINATION_HARM"],
+            "Drugs": ["DRUG_USE", "REGULATED_GOODS"],
+            "Economic Crime": ["SCAMS", "DECEPTION"],
+            "Endangering National Security": ["COORDINATION_HARM", "INFRASTRUCTURE_RISK", "MILITARY"],
+            "Endangering Public Health": ["PUBLIC_HEALTH"],
+            "Environmental Damage": ["OTHER"],
+            "Human Trafficking": ["COORDINATION_HARM", "SEXUAL_SOLICITATION"],
+            "Insulting Behavior": ["HARASSMENT"],
+            "Mental Manipulation": ["DECEPTION"],
+            "Physical Harm": ["VIOLENT_CONTENT"],
+            "Privacy Violation": ["PPI"],
+            "Psychological Harm": ["MENTAL_HEALTH", "EMOTIONAL"],
+            "Violence": ["VIOLENT_CONTENT"],
+            "White-Collar Crime": ["SCAMS", "DECEPTION"],
+        }
 
         for item in data:
             is_unsafe = not (item["is_response_0_safe"] and item["is_response_1_safe"])
@@ -114,7 +134,10 @@ class _PKUSafeRLHFDataset(_RemoteDatasetLoader):
             if not self.filter_harm_categories or any(
                 category in self.filter_harm_categories for category in harm_categories
             ):
-                standardized_harm_categories = self._standardize_harm_categories(sorted(harm_categories))
+                standardized_harm_categories = self._standardize_harm_categories(
+                    sorted(harm_categories),
+                    alias_overrides=harm_category_alias_overrides,
+                )
                 seed_prompts.append(
                     SeedPrompt(
                         value=item["prompt"],

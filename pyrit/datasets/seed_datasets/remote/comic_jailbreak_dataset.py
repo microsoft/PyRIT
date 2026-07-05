@@ -81,16 +81,38 @@ class _ComicJailbreakDataset(_RemoteDatasetLoader):
     )
     TEMPLATE_NAMES: tuple[str, ...] = tuple(COMIC_JAILBREAK_TEMPLATES.keys())
     PAPER_URL: str = "https://arxiv.org/abs/2603.21697"
+    HARM_CATEGORY_ALIAS_OVERRIDES: dict[str, list[str]] = {
+        "disinformation": ["INFO_INTEGRITY"],
+        "economic harm": ["SCAMS"],
+        "expert advice": ["HEALTH_DIAGNOSIS", "LEGAL_ADVICE", "FINANCIAL_ADVICE"],
+        "fraud/deception": ["SCAMS", "DECEPTION"],
+        "government decision-making": ["HIGH_RISK_GOVERNMENT"],
+        "harassment/discrimination": ["HARASSMENT", "HATESPEECH", "REPRESENTATIONAL"],
+        "illegal": ["COORDINATION_HARM"],
+        "malware": ["MALWARE"],
+        "malware-hacking": ["MALWARE"],
+        "malware/hacking": ["MALWARE"],
+        "misinformation": ["INFO_INTEGRITY"],
+        "physical harm": ["VIOLENT_CONTENT", "COORDINATION_HARM"],
+        "privacy": ["PPI"],
+        "sexual": ["SEXUAL_CONTENT"],
+        "sexual-adult": ["SEXUAL_CONTENT"],
+        "sexual/adult content": ["SEXUAL_CONTENT"],
+        "violence": ["VIOLENT_CONTENT"],
+    }
 
     # Metadata
     harm_categories: tuple[str, ...] = (
-        "harassment",
-        "violence",
-        "illegal",
-        "malware",
-        "misinformation",
-        "sexual",
+        "disinformation",
+        "economic harm",
+        "expert advice",
+        "fraud/deception",
+        "government decision-making",
+        "harassment/discrimination",
+        "malware/hacking",
+        "physical harm",
         "privacy",
+        "sexual/adult content",
     )
     modalities: tuple[str, ...] = ("text", "image")
     size: str = "large"  # 300 goals × 5 templates
@@ -180,15 +202,7 @@ class _ComicJailbreakDataset(_RemoteDatasetLoader):
             category = example.get("Category", "").strip()
             harm_categories = self._standardize_harm_categories(
                 category,
-                alias_overrides={
-                    "harassment/discrimination": ["HARASSMENT", "REPRESENTATIONAL", "HATESPEECH"],
-                    "misinformation": "INFO_INTEGRITY",
-                    "sexual": "SEXUAL_CONTENT",
-                    "privacy": "PPI",
-                    "illegal": "ILLEGAL",
-                    "violence": "VIOLENT_CONTENT",
-                    "malware": "MALWARE",
-                },
+                alias_overrides=self.HARM_CATEGORY_ALIAS_OVERRIDES,
             )
 
             for template_name in self.templates:
@@ -210,6 +224,7 @@ class _ComicJailbreakDataset(_RemoteDatasetLoader):
                     image_path=rendered_path,
                     harm_categories=harm_categories,
                     goal=goal,
+                    category=category,
                     template_name=template_name,
                     behavior=example.get("Behavior", ""),
                 )
@@ -224,6 +239,7 @@ class _ComicJailbreakDataset(_RemoteDatasetLoader):
         image_path: str,
         harm_categories: list[str],
         goal: str,
+        category: str,
         template_name: str,
         behavior: str,
     ) -> list[Seed]:
@@ -237,6 +253,7 @@ class _ComicJailbreakDataset(_RemoteDatasetLoader):
             image_path: Local path to the rendered comic image.
             harm_categories: Harm category labels from the dataset.
             goal: The harmful goal text.
+            category: The native ComicJailbreak category label.
             template_name: Which comic template was used.
             behavior: The behavior label from the dataset.
 
@@ -247,6 +264,7 @@ class _ComicJailbreakDataset(_RemoteDatasetLoader):
         """
         group_id = uuid.uuid4()
         metadata: dict[str, str | int] = {
+            "category": category,
             "goal": goal,
             "template": template_name,
             "behavior": behavior,
@@ -261,6 +279,7 @@ class _ComicJailbreakDataset(_RemoteDatasetLoader):
             authors=_AUTHORS,
             source=self.PAPER_URL,
             prompt_group_id=group_id,
+            metadata=metadata,
         )
 
         image_prompt = SeedPrompt(

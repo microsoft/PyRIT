@@ -29,6 +29,12 @@ class _ORBenchBaseDataset(_RemoteDatasetLoader):
     HF_DATASET_NAME: str = "bench-llm/OR-Bench"
     CONFIG: str
     DESCRIPTION: str
+    # or-bench-80k and or-bench-hard-1k are BENIGN over-refusal prompts: their `category`
+    # names the harm domain the *safe* prompt superficially resembles, not an actual harm,
+    # so harm_categories is left empty. Only or-bench-toxic contains genuinely harmful
+    # prompts, so only that subset maps `category` to the canonical taxonomy.
+    MAPS_HARM_CATEGORIES: bool = False
+    HARM_ALIAS_OVERRIDES: dict[str, list[str]] = {}
 
     def __init__(self, *, split: str = "train") -> None:
         """
@@ -72,11 +78,16 @@ class _ORBenchBaseDataset(_RemoteDatasetLoader):
                 value=item["prompt"],
                 data_type="text",
                 dataset_name=self.dataset_name,
-                harm_categories=self._standardize_harm_categories(item.get("category")),
+                harm_categories=(
+                    self._standardize_harm_categories(item.get("category"), alias_overrides=self.HARM_ALIAS_OVERRIDES)
+                    if self.MAPS_HARM_CATEGORIES
+                    else []
+                ),
                 description=self.DESCRIPTION,
                 source=source_url,
                 authors=authors,
                 groups=groups,
+                metadata={"category": item.get("category", "")},
             )
             for item in data
         ]
@@ -136,6 +147,15 @@ class _ORBenchToxicDataset(_ORBenchBaseDataset):
     """
 
     CONFIG: str = "or-bench-toxic"
+    # Unlike the benign 80k/hard subsets, or-bench-toxic prompts are genuinely harmful,
+    # so their `category` is a real harm domain and is standardized to the taxonomy.
+    MAPS_HARM_CATEGORIES: bool = True
+    HARM_ALIAS_OVERRIDES: dict[str, list[str]] = {
+        "hate": ["HATESPEECH", "REPRESENTATIONAL"],
+        "privacy": ["PPI"],
+        "harmful": ["OTHER"],
+        "unethical": ["OTHER"],
+    }
     DESCRIPTION: str = (
         "OR-Bench Toxic contains toxic prompts that language models should correctly refuse. "
         "Used as a contrast set to evaluate refusal calibration."

@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import json
 import logging
 
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
@@ -30,6 +31,34 @@ class _BeaverTailsDataset(_RemoteDatasetLoader):
     """
 
     HF_DATASET_NAME: str = "PKU-Alignment/BeaverTails"
+    HARM_CATEGORY_ALIAS_OVERRIDES: dict[str, list[str]] = {
+        "aiding_and_abetting": ["COORDINATION_HARM"],
+        "animal_abuse": ["OTHER"],
+        "banned_substance": ["DRUG_USE", "REGULATED_GOODS"],
+        "child_abuse": ["GROOMING", "SEXUAL_CONTENT", "CHILD_LEAKAGE"],
+        "controversial_topics": ["OTHER"],
+        "discrimination": ["REPRESENTATIONAL", "HATESPEECH"],
+        "drug_abuse": ["DRUG_USE"],
+        "financial_crime": ["SCAMS", "COORDINATION_HARM"],
+        "hate_speech": ["HATESPEECH"],
+        "incitement": ["VIOLENT_THREATS"],
+        "injustice": ["REPRESENTATIONAL", "HATESPEECH"],
+        "laws_and_safety": ["INFO_INTEGRITY"],
+        "misinformation_regarding_ethics": ["INFO_INTEGRITY"],
+        "non_violent_unethical_behavior": ["OTHER"],
+        "offensive_language": ["HATESPEECH"],
+        "organized_crime": ["COORDINATION_HARM"],
+        "politics": ["OTHER"],
+        "privacy_violation": ["PPI"],
+        "property_crime": ["COORDINATION_HARM"],
+        "self_harm": ["SELF_HARM"],
+        "sexually_explicit": ["SEXUAL_CONTENT"],
+        "stereotype": ["REPRESENTATIONAL", "HATESPEECH"],
+        "terrorism": ["VIOLENT_EXTREMISM"],
+        "theft": ["COORDINATION_HARM"],
+        "violence": ["VIOLENT_CONTENT", "VIOLENT_THREATS", "COORDINATION_HARM"],
+        "weapons": ["REGULATED_GOODS"],
+    }
 
     def __init__(
         self,
@@ -104,13 +133,7 @@ class _BeaverTailsDataset(_RemoteDatasetLoader):
                 dict.fromkeys(
                     self._standardize_harm_categories(
                         raw_harm_categories,
-                        alias_overrides={
-                            "financial_crime": "ILLEGAL",
-                            "property_crime": "ILLEGAL",
-                            "theft": "ILLEGAL",
-                            "aiding_and_abetting": "COORDINATION_HARM",
-                            "incitement": "VIOLENT_THREATS",
-                        },
+                        alias_overrides=self.HARM_CATEGORY_ALIAS_OVERRIDES,
                     )
                 )
             )
@@ -125,6 +148,10 @@ class _BeaverTailsDataset(_RemoteDatasetLoader):
                     source=source_url,
                     authors=authors,
                     groups=groups,
+                    metadata={
+                        "beaver_tails_categories": ",".join(raw_harm_categories),
+                        "beaver_tails_category_flags": json.dumps(item["category"], sort_keys=True),
+                    },
                 )
             )
 

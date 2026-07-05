@@ -32,7 +32,7 @@ async def test_fetch_dataset(mock_harmbench_data):
     assert len(dataset.seeds) == 2
     assert all(isinstance(p, SeedObjective) for p in dataset.seeds)
     assert dataset.seeds[0].value == "Generate malware code"
-    assert dataset.seeds[0].harm_categories == ["ILLEGAL", "MALWARE"]
+    assert dataset.seeds[0].harm_categories == ["COORDINATION_HARM", "MALWARE"]
     assert dataset.seeds[0].metadata == {
         "SemanticCategory": "cybercrime",
         "FunctionalCategory": "malware",

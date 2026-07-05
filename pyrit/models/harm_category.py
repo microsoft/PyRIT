@@ -23,6 +23,7 @@ except ImportError:  # Python 3.10 and below
 
 
 _HARM_CATEGORY_ALIASES: dict[str, object] = {}
+HARM_CATEGORY_TAXONOMY_VERSION = "v1.0.0"
 
 with open(os.path.join(os.path.dirname(__file__), "harm_category_definitions.yaml")) as f:
     _HARM_CATEGORY_DEFINITIONS: dict[str, str] = yaml.safe_load(f).get("definitions", {})
@@ -31,10 +32,12 @@ with open(os.path.join(os.path.dirname(__file__), "harm_category_definitions.yam
 class HarmCategory(StrEnum):
     """Standardized harm category taxonomy for seed classification and attack evaluation."""
 
-    VERSION = "v1.0.0"
-
     HATESPEECH = "Hate Speech"
     HARASSMENT = "Harassment"
+    SEXUALIZATION = "Sexualization"
+    GROOMING = "Grooming"
+    CHILD_LEAKAGE = "Child Leakage"
+    DANGEROUS_SITUATIONS = "Dangerous Situations"
     VIOLENT_CONTENT = "Graphic Violence and Gore"
     SEXUAL_CONTENT = "Pornography & Sexual Content"
     PROFANITY = "Profanity"
@@ -91,7 +94,6 @@ class HarmCategory(StrEnum):
     EMOTIONAL = "Emotional"
     PROTECTED_INFERENCE = "Legally-Protected Attributes"
     EMOTION_INFERENCE = "Emotion"
-    ILLEGAL = "Illegal Activity"
     OTHER = "Other"
 
     @classmethod
@@ -103,38 +105,54 @@ class HarmCategory(StrEnum):
             {
                 "ableism": [cls.REPRESENTATIONAL, cls.HATESPEECH],
                 "bias": [cls.REPRESENTATIONAL, cls.HATESPEECH],
-                "biology": cls.CBRN,
-                "bullying": cls.HARASSMENT,
-                "chemistry": cls.CBRN,
-                "copyright issues": cls.COPYRIGHT,
+                "biology": [cls.CBRN],
+                "bullying": [cls.HARASSMENT],
+                "chemistry": [cls.CBRN],
+                "controlled/regulated substances": [cls.DRUG_USE],
+                "copyright issues": [cls.COPYRIGHT],
+                "copyright/trademark/plagiarism": [cls.COPYRIGHT, cls.TRADEMARK, cls.PLAGIARISM],
+                "criminal planning/confessions": [cls.COORDINATION_HARM],
                 "discriminatory behavior": [cls.REPRESENTATIONAL, cls.HATESPEECH],
                 "discrimination": [cls.REPRESENTATIONAL, cls.HATESPEECH],
-                "drugs": cls.DRUG_USE,
-                "economic crime": cls.ILLEGAL,
-                "endangering national security": cls.HIGH_RISK_GOVERNMENT,
-                "endangering public health": cls.PUBLIC_HEALTH,
+                "drugs": [cls.DRUG_USE],
+                "economic crime": [cls.SCAMS, cls.DECEPTION],
+                "endangering national security": [cls.HIGH_RISK_GOVERNMENT],
+                "endangering public health": [cls.PUBLIC_HEALTH],
+                "fraud/deception": [cls.SCAMS, cls.DECEPTION],
+                "guns and illegal weapons": [cls.MILITARY],
+                "hate/identity hate": [cls.HATESPEECH, cls.REPRESENTATIONAL],
+                "high risk gov decision making": [cls.HIGH_RISK_GOVERNMENT],
                 "homophobia": [cls.REPRESENTATIONAL, cls.HATESPEECH],
-                "human trafficking": cls.COORDINATION_HARM,
-                "illegal": cls.ILLEGAL,
-                "insulting behavior": cls.HARASSMENT,
-                "medicine": cls.PUBLIC_HEALTH,
-                "mental manipulation": cls.MENTAL_HEALTH,
+                "human trafficking": [cls.COORDINATION_HARM],
+                "illegal": [cls.COORDINATION_HARM],
+                "insulting behavior": [cls.HARASSMENT],
+                "medicine": [cls.PUBLIC_HEALTH],
+                "mental manipulation": [cls.MENTAL_HEALTH],
                 "misogyny": [cls.REPRESENTATIONAL, cls.HATESPEECH],
-                "pharmacology": cls.PSEUDO_PHARMA,
-                "physical harm": cls.VIOLENT_CONTENT,
-                "physics": cls.HIGH_RISK_GOVERNMENT,
-                "privacy violation": cls.PPI,
-                "psychological harm": cls.EMOTIONAL,
-                "psychology": cls.MENTAL_HEALTH,
+                "pharmacology": [cls.PSEUDO_PHARMA],
+                "physical harm": [cls.VIOLENT_CONTENT],
+                "physics": [cls.HIGH_RISK_GOVERNMENT],
+                "pii/privacy": [cls.PPI],
+                "political/misinformation/conspiracy": [cls.INFO_INTEGRITY, cls.CAMPAIGNING],
+                "privacy violation": [cls.PPI],
+                "psychological harm": [cls.EMOTIONAL],
+                "psychology": [cls.MENTAL_HEALTH],
                 "racism": [cls.REPRESENTATIONAL, cls.HATESPEECH],
                 "religious discrimination": [cls.REPRESENTATIONAL, cls.HATESPEECH],
                 "sexism": [cls.REPRESENTATIONAL, cls.HATESPEECH],
-                "sexual content": cls.SEXUAL_CONTENT,
+                "sexual": [cls.SEXUAL_CONTENT],
+                "sexual content": [cls.SEXUAL_CONTENT],
                 "sexual violence": [cls.SEXUAL_CONTENT, cls.VIOLENT_CONTENT],
-                "stereotyping": cls.REPRESENTATIONAL,
-                "violent": cls.VIOLENT_CONTENT,
-                "violence": cls.VIOLENT_CONTENT,
-                "white-collar crime": cls.ILLEGAL,
+                "sexualization": [cls.SEXUALIZATION],
+                "stereotyping": [cls.REPRESENTATIONAL],
+                "suicide and self harm": [cls.SUICIDE, cls.SELF_HARM],
+                "threat": [cls.VIOLENT_THREATS],
+                "grooming": [cls.GROOMING],
+                "child leakage": [cls.CHILD_LEAKAGE],
+                "dangerous situations": [cls.DANGEROUS_SITUATIONS],
+                "violent": [cls.VIOLENT_CONTENT],
+                "violence": [cls.VIOLENT_CONTENT],
+                "white-collar crime": [cls.SCAMS, cls.DECEPTION],
             }
         )
 
@@ -164,10 +182,10 @@ class HarmCategory(StrEnum):
         strict: bool = False,
     ) -> list["HarmCategory"]:
         """
-        Convert an alias/override mapping value to one or more canonical categories.
+        Convert an alias/override mapping value (list of strings) to canonical categories.
 
         Args:
-            alias_value: Single string or list/tuple of strings mapping to canonical categories.
+            alias_value: List or tuple of strings mapping to canonical categories.
             strict: If True, raise ValueError for unmapped strings. Otherwise fallback to OTHER.
 
         Returns:

@@ -60,8 +60,9 @@ class TestSGXSTestDataset:
         for seed in dataset.seeds:
             assert seed.metadata is not None
             assert seed.metadata["label"] == "unsafe"
-            assert seed.harm_categories is not None and len(seed.harm_categories) == 1
-            assert seed.metadata["category"] == seed.harm_categories[0]
+            # The hazard `category` is preserved in metadata; no harm category is derived.
+            assert seed.harm_categories == []
+            assert seed.metadata["category"]
             assert seed.dataset_name == "sgxstest"
 
     async def test_fetch_dataset_safe_only(self, mock_sgxstest_data):

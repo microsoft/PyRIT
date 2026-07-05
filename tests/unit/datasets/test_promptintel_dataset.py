@@ -168,7 +168,12 @@ class TestPromptIntelDatasetFetch:
         assert first.data_type == "text"
         assert first.dataset_name == "promptintel"
         assert first.name == "Hidden Prompt Injection to Exfiltrate Data"
-        assert first.harm_categories == ["Indirect prompt injection", "Data exfiltration via prompt"]
+        # PromptIntel `threats` are attack techniques, not harms: the dataset is
+        # treated as mapping-unclear (empty harm_categories), while the raw threat
+        # labels are preserved verbatim in metadata for provenance.
+        assert first.harm_categories == []
+        assert first.metadata["harm_mapping_status"] == "unclear"
+        assert first.metadata["threats"] == "Indirect prompt injection, Data exfiltration via prompt"
         assert first.authors == ["TestAuthor"]
         assert first.description == "This prompt tricks an AI agent into leaking sensitive data."
         assert "promptintel.novahunting.ai/prompt/c6985e05" in first.source

@@ -54,7 +54,8 @@ class TestToxicChatDataset:
             assert first_prompt.metadata["jailbreaking"] == 1
             assert "user_input" not in first_prompt.metadata
             assert first_prompt.metadata["model_output"] == "I cannot do that."
-            assert first_prompt.harm_categories == ["OTHER", "OTHER"]
+            # toxicity=1 -> HARASSMENT, jailbreaking=1 -> DECEPTION
+            assert first_prompt.harm_categories == ["HARASSMENT", "DECEPTION"]
 
             second_prompt = dataset.seeds[1]
             assert second_prompt.harm_categories == []
@@ -182,10 +183,14 @@ class TestToxicChatDataset:
 
             assert len(dataset.seeds) == 1
             categories = dataset.seeds[0].harm_categories
-            assert categories.count("OTHER") == 2
+            # toxicity=1 -> HARASSMENT; sexual(0.95) -> SEXUAL_CONTENT; violence(0.85) ->
+            # VIOLENT_CONTENT + VIOLENT_THREATS. harassment(0.3) and hate(0.1) are below the
+            # 0.8 threshold and excluded.
+            assert "SEXUAL_CONTENT" in categories
             assert "VIOLENT_CONTENT" in categories
-            assert "HARASSMENT" not in categories
-            assert "HATE" not in categories
+            assert "HARASSMENT" in categories
+            assert "HATESPEECH" not in categories
+            assert "OTHER" not in categories
 
     def test_dataset_name(self):
         """Test dataset_name property."""

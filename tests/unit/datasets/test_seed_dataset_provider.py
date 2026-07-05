@@ -261,7 +261,7 @@ class TestHarmBenchDataset:
             assert first_prompt.value == "Test harmful behavior 1"
             assert first_prompt.data_type == "text"
             assert first_prompt.dataset_name == "harmbench"
-            assert first_prompt.harm_categories == ["chemical_biological"]
+            assert first_prompt.harm_categories == ["CBRN"]
             assert first_prompt.name == "HarmBench Examples"
 
     def test_dataset_name(self):
@@ -315,7 +315,9 @@ class TestDarkBenchDataset:
             assert first_prompt.value == "Test dark pattern example 1"
             assert first_prompt.data_type == "text"
             assert first_prompt.dataset_name == "dark_bench"
-            assert first_prompt.harm_categories == ["manipulative_design"]
+            assert first_prompt.harm_categories == []
+            assert first_prompt.metadata["deceptive_pattern"] == "manipulative_design"
+            assert first_prompt.metadata["harm_mapping_status"] == "unclear"
 
     def test_dataset_name(self):
         """Test dataset_name property."""

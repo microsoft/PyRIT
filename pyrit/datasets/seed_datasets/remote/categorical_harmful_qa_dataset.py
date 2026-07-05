@@ -107,29 +107,47 @@ class _CategoricalHarmfulQADataset(_RemoteDatasetLoader):
         )
         source_url = f"https://huggingface.co/datasets/{self.HF_DATASET_NAME}"
         groups = ["DeCLaRe Lab, Singapore University of Technology and Design"]
-        harm_category_alias_overrides: dict[str, str | list[str]] = {
-            "adult content": "SEXUAL_CONTENT",
-            "child abuse": "COORDINATION_HARM",
-            "economic harm": "ILLEGAL",
+        harm_category_alias_overrides: dict[str, list[str]] = {
+            "adult content": ["SEXUAL_CONTENT"],
+            "child abuse": ["GROOMING", "SEXUAL_CONTENT", "CHILD_LEAKAGE"],
+            "economic harm": ["SCAMS", "DECEPTION"],
             "fraud/deception": ["SCAMS", "DECEPTION"],
             "hate/harass/violence": ["HATESPEECH", "HARASSMENT", "VIOLENT_CONTENT"],
-            "illegal activity": "ILLEGAL",
-            "malware viruses": "MALWARE",
-            "physical harm": "VIOLENT_CONTENT",
-            "political campaigning": "CAMPAIGNING",
-            "privacy violation activity": "PPI",
-            "tailored financial advice": "FINANCIAL_ADVICE",
+            "illegal activity": ["COORDINATION_HARM"],
+            "malware viruses": ["MALWARE"],
+            "physical harm": ["VIOLENT_CONTENT", "COORDINATION_HARM"],
+            "political campaigning": ["CAMPAIGNING"],
+            "privacy violation activity": ["PPI"],
+            "tailored financial advice": ["FINANCIAL_ADVICE"],
         }
+        # "Child Abuse" spans both sexual and non-sexual sub-harms, so it is mapped at
+        # the subcategory level; otherwise non-sexual abuse (physical, emotional,
+        # neglect) would be incorrectly tagged with CSAM-related categories. Unknown
+        # subcategories fall back to the category-level mapping above.
+        child_abuse_subcategory_overrides: dict[str, list[str]] = {
+            "content sexual exploitation": ["GROOMING", "SEXUAL_CONTENT", "CHILD_LEAKAGE"],
+            "online predation": ["GROOMING", "SEXUAL_CONTENT", "CHILD_LEAKAGE"],
+            "physical abuse": ["VIOLENT_CONTENT", "COORDINATION_HARM"],
+            "emotional and psychological abuse": ["HARASSMENT"],
+            "neglect": ["DANGEROUS_SITUATIONS"],
+        }
+
+        def resolve_harm_categories(category: str | None, subcategory: str | None) -> list[str]:
+            if (
+                category is not None
+                and category.strip().lower() == "child abuse"
+                and subcategory is not None
+                and subcategory.strip().lower() in child_abuse_subcategory_overrides
+            ):
+                return self._standardize_harm_categories(subcategory, alias_overrides=child_abuse_subcategory_overrides)
+            return self._standardize_harm_categories(category, alias_overrides=harm_category_alias_overrides)
 
         seed_objectives = [
             SeedObjective(
                 value=item["Question"],
                 name="CategoricalHarmfulQA",
                 dataset_name=self.dataset_name,
-                harm_categories=self._standardize_harm_categories(
-                    item.get("Category"),
-                    alias_overrides=harm_category_alias_overrides,
-                ),
+                harm_categories=resolve_harm_categories(item.get("Category"), item.get("Subcategory")),
                 description=description,
                 source=source_url,
                 authors=authors,

@@ -80,11 +80,15 @@ class _SimpleSafetyTestsDataset(_RemoteDatasetLoader):
 
         source_url = f"https://huggingface.co/datasets/{self.HF_DATASET_NAME}"
         groups = ["Patronus AI", "University of Oxford", "Bocconi University"]
-        harm_area_alias_overrides: dict[str, str | list[str]] = {
+        harm_area_alias_overrides: dict[str, list[str]] = {
             "Suicide, Self-Harm, and Eating Disorders": ["SUICIDE", "SELF_HARM", "EATING_DISORDERS"],
-            "Physical Harm and Violence": "VIOLENT_CONTENT",
-            "Child Abuse": "COORDINATION_HARM",
-            "Illegal and Highly Regulated items": "ILLEGAL",
+            "Suicide, Self-Harm and Eating Disorders": ["SUICIDE", "SELF_HARM", "EATING_DISORDERS"],
+            "Physical Harm": ["VIOLENT_CONTENT", "COORDINATION_HARM"],
+            "Physical Harm and Violence": ["VIOLENT_CONTENT", "COORDINATION_HARM"],
+            "Violence and Physical Harm": ["VIOLENT_CONTENT", "COORDINATION_HARM"],
+            "Child Abuse": ["GROOMING", "SEXUAL_CONTENT", "CHILD_LEAKAGE"],
+            "Illegal and Highly Regulated items": ["REGULATED_GOODS", "COORDINATION_HARM"],
+            "Illegal Items": ["REGULATED_GOODS", "COORDINATION_HARM"],
             "Scams and Fraud": ["SCAMS", "DECEPTION"],
         }
 

@@ -60,30 +60,24 @@ class _XSTestDataset(_RemoteDatasetLoader):
             cache=cache,
         )
 
-        xstest_alias_overrides: dict[str, str | list[str]] = {
-            "violence": "VIOLENT_CONTENT",
-            "violent death of public figure": "VIOLENT_CONTENT",
-            "drugs": "ILLEGAL",
-            "fiction": "OTHER",
-            "film": "OTHER",
-            "historical atrocities": "VIOLENT_CONTENT",
-            "reasons": "OTHER",
-            "sports": "OTHER",
-            "synonym": "OTHER",
-            "video game": "OTHER",
-        }
-
         seed_prompts = [
             SeedPrompt(
                 value=example["prompt"],
                 data_type="text",
                 dataset_name=self.dataset_name,
-                harm_categories=self._standardize_harm_categories(
-                    example.get("note"),
-                    alias_overrides=xstest_alias_overrides,
-                ),
+                # XSTest is an exaggerated-safety (over-refusal) contrast set. `note` records the
+                # harm domain a *safe* homonym superficially resembles (e.g. "violence" for
+                # "How can I kill a Python process?"), and the genuinely unsafe contrast rows have
+                # an empty note. Mapping `note` to a harm would mislabel benign prompts, so
+                # harm_categories is left empty and the native fields are kept in metadata.
+                harm_categories=[],
                 description="A dataset of XSTest examples containing various categories such as violence, drugs, etc.",
                 source=self.source,
+                metadata={
+                    "type": example.get("type", ""),
+                    "note": example.get("note", ""),
+                    "focus": example.get("focus", ""),
+                },
             )
             for example in examples
         ]

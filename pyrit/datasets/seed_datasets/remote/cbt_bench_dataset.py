@@ -93,7 +93,7 @@ class _CBTBenchDataset(_RemoteDatasetLoader):
         )
         harm_categories = self._standardize_harm_categories(
             "psycho-social harms",
-            alias_overrides={"psycho-social harms": "EMOTIONAL"},
+            alias_overrides={"psycho-social harms": ["EMOTIONAL", "MENTAL_HEALTH"]},
         )
 
         seed_prompts = []

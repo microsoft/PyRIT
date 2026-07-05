@@ -161,12 +161,15 @@ class _FigStepDataset(_RemoteDatasetLoader):
     modalities: tuple[str, ...] = ("text", "image")
     size: str = "small"
     tags: frozenset[str] = frozenset({"default", "safety", "multimodal"})
-    HARM_CATEGORY_ALIAS_OVERRIDES: dict[str, str] = {
-        "malware generation": "MALWARE",
-        "adult content": "SEXUAL_CONTENT",
-        "legal opinion": "LEGAL_ADVICE",
-        "health consultation": "PUBLIC_HEALTH",
-        "fraud": "SCAMS",
+    HARM_CATEGORY_ALIAS_OVERRIDES: dict[str, list[str]] = {
+        "illegal activity": ["COORDINATION_HARM"],
+        "malware generation": ["MALWARE"],
+        "physical harm": ["VIOLENT_CONTENT", "COORDINATION_HARM"],
+        "adult content": ["SEXUAL_CONTENT"],
+        "privacy violation": ["PPI"],
+        "legal opinion": ["LEGAL_ADVICE"],
+        "health consultation": ["PUBLIC_HEALTH", "HEALTH_DIAGNOSIS"],
+        "fraud": ["SCAMS", "DECEPTION"],
     }
 
     def __init__(

@@ -4,6 +4,7 @@
 import logging
 
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
+    UNCLEAR_HARM_MAPPING_DATASET_NAMES,
     _RemoteDatasetLoader,
 )
 from pyrit.models import SeedDataset, SeedPrompt
@@ -58,18 +59,30 @@ class _CCPSensitivePromptsDataset(_RemoteDatasetLoader):
             cache=cache,
         )
 
-        seed_prompts = [
-            SeedPrompt(
-                value=row["prompt"],
-                data_type="text",
-                dataset_name=self.dataset_name,
-                harm_categories=self._standardize_harm_categories(row.get("subject")),
-                description="Prompts covering topics sensitive to the CCP.",
-                groups=["promptfoo"],
-                source=f"https://huggingface.co/datasets/{self.source}",
+        # CCP-sensitive subjects are political/censorship topics rather than content
+        # harms, so harm categories are left empty and flagged unclear while the
+        # native subject is preserved in metadata.
+        mapping_is_unclear = self.dataset_name in UNCLEAR_HARM_MAPPING_DATASET_NAMES
+
+        seed_prompts: list[SeedPrompt] = []
+        for row in data:
+            subject = row.get("subject") or ""
+            harm_categories = [] if mapping_is_unclear else self._standardize_harm_categories(subject)
+            seed_prompts.append(
+                SeedPrompt(
+                    value=row["prompt"],
+                    data_type="text",
+                    dataset_name=self.dataset_name,
+                    harm_categories=harm_categories,
+                    description="Prompts covering topics sensitive to the CCP.",
+                    groups=["promptfoo"],
+                    source=f"https://huggingface.co/datasets/{self.source}",
+                    metadata={
+                        "subject": subject,
+                        "harm_mapping_status": "unclear" if mapping_is_unclear else "mapped",
+                    },
+                )
             )
-            for row in data
-        ]
 
         logger.info(f"Successfully loaded {len(seed_prompts)} prompts from CCP Sensitive Prompts dataset")
 

@@ -1,14 +1,53 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import json
 import logging
+from functools import lru_cache
+from pathlib import Path
 
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
 from pyrit.models import SeedDataset, SeedPrompt
+from pyrit.models.harm_category import HarmCategory
 
 logger = logging.getLogger(__name__)
+
+# Row-level harm-category map bundled alongside this loader. HarmfulQA's ``topic``
+# and ``subtopic`` fields are academic subject areas, not harm labels, and most
+# subtopics span several distinct harms, so a coarse topic->category mapping is
+# misleading. Instead each question was audited individually; the result is keyed
+# here by (topic, subtopic, question), which is unique across the dataset.
+_HARM_CATEGORY_MAP_FILE = Path(__file__).parent / "harmful_qa_harm_categories.json"
+
+
+@lru_cache(maxsize=1)
+def _load_harm_category_map() -> dict[tuple[str, str, str], str]:
+    """
+    Load and cache the bundled (topic, subtopic, question) -> canonical map.
+
+    Returns:
+        Mapping from a (topic, subtopic, question) tuple to a canonical HarmCategory name.
+
+    Raises:
+        ValueError: If the bundled map references a category that is not a canonical
+            HarmCategory name.
+    """
+    valid_names = set(HarmCategory.__members__)
+    with _HARM_CATEGORY_MAP_FILE.open(encoding="utf-8") as handle:
+        records = json.load(handle)
+
+    mapping: dict[tuple[str, str, str], str] = {}
+    for record in records:
+        category = record["category"]
+        if category not in valid_names:
+            raise ValueError(
+                f"Bundled harmful_qa map contains unknown harm category {category!r}. "
+                "Update harmful_qa_harm_categories.json to use canonical HarmCategory names."
+            )
+        mapping[(record["topic"], record["subtopic"], record["question"])] = category
+    return mapping
 
 
 class _HarmfulQADataset(_RemoteDatasetLoader):
@@ -77,20 +116,51 @@ class _HarmfulQADataset(_RemoteDatasetLoader):
         source_url = f"https://huggingface.co/datasets/{self.HF_DATASET_NAME}"
         groups = ["DeCLaRe Lab, Singapore University of Technology and Design"]
 
-        seed_prompts = [
-            SeedPrompt(
-                value=item["question"],
-                data_type="text",
-                dataset_name=self.dataset_name,
-                harm_categories=self._standardize_harm_categories(item.get("topic")),
-                description=description,
-                source=source_url,
-                authors=authors,
-                groups=groups,
-                metadata={"subtopic": subtopic} if (subtopic := item.get("subtopic")) else {},
+        harm_category_map = _load_harm_category_map()
+        unmapped = 0
+
+        seed_prompts: list[SeedPrompt] = []
+        for item in data:
+            question = item["question"]
+            topic = item.get("topic")
+            subtopic = item.get("subtopic")
+
+            category = harm_category_map.get((topic, subtopic, question))
+            if category is not None:
+                harm_categories = [category]
+            else:
+                # Row not present in the audited map (e.g. upstream added rows).
+                # Fall back to the coarse subject mapping rather than mislabel.
+                unmapped += 1
+                harm_categories = self._standardize_harm_categories(topic)
+
+            metadata: dict[str, str | int] = {}
+            if topic:
+                metadata["topic"] = topic
+            if subtopic:
+                metadata["subtopic"] = subtopic
+
+            seed_prompts.append(
+                SeedPrompt(
+                    value=question,
+                    data_type="text",
+                    dataset_name=self.dataset_name,
+                    harm_categories=harm_categories,
+                    description=description,
+                    source=source_url,
+                    authors=authors,
+                    groups=groups,
+                    metadata=metadata,
+                )
             )
-            for item in data
-        ]
+
+        if unmapped:
+            logger.warning(
+                "%d HarmfulQA question(s) were not found in the bundled row-level harm-category "
+                "map and fell back to the coarse topic mapping. The upstream dataset may have "
+                "changed; regenerate harmful_qa_harm_categories.json to restore full coverage.",
+                unmapped,
+            )
 
         logger.info(f"Successfully loaded {len(seed_prompts)} questions from HarmfulQA dataset")
 

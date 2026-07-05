@@ -121,12 +121,29 @@ class _ToxicChatDataset(_RemoteDatasetLoader):
         groups = ["UC San Diego"]
 
         seed_prompts: list[SeedPrompt] = []
+        # toxicity/jailbreaking flags plus OpenAI-moderation category names are not in the
+        # generic alias table, so map them (and broaden the too-narrow "violence") here.
+        toxic_chat_alias_overrides: dict[str, list[str]] = {
+            "toxicity": ["HARASSMENT"],
+            "jailbreaking": ["DECEPTION"],
+            "hate": ["HATESPEECH", "REPRESENTATIONAL"],
+            "hate/threatening": ["HATESPEECH", "VIOLENT_THREATS"],
+            "harassment/threatening": ["HARASSMENT", "VIOLENT_THREATS"],
+            "self-harm/intent": ["SELF_HARM"],
+            "self-harm/instructions": ["SELF_HARM"],
+            "sexual/minors": ["SEXUALIZATION", "SEXUAL_CONTENT"],
+            "violence": ["VIOLENT_CONTENT", "VIOLENT_THREATS"],
+            "violence/graphic": ["VIOLENT_CONTENT"],
+        }
         for item in data:
             user_input = item["user_input"]
             raw_harm_categories = self._extract_harm_categories(item)
 
             # Standardize harm categories
-            standardized_categories = self._standardize_harm_categories(raw_harm_categories)
+            standardized_categories = self._standardize_harm_categories(
+                raw_harm_categories,
+                alias_overrides=toxic_chat_alias_overrides,
+            )
 
             # Preserve full row metadata except fields projected to top-level seed fields.
             metadata: dict[str, str | int] = {}

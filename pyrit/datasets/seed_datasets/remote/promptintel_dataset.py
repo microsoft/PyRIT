@@ -10,6 +10,7 @@ from typing import Any, Optional
 import requests
 
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
+    UNCLEAR_HARM_MAPPING_DATASET_NAMES,
     _RemoteDatasetLoader,
 )
 from pyrit.models import SeedDataset, SeedPrompt
@@ -219,6 +220,15 @@ class _PromptIntelDataset(_RemoteDatasetLoader):
             display_names = [_CATEGORY_DISPLAY_NAMES.get(c, c) for c in categories if isinstance(c, str)]
             metadata["categories"] = ", ".join(display_names)
 
+        # Preserve the dataset's native attack-technique labels for provenance and
+        # searchability. PromptIntel's ``threats`` describe how an attack is delivered
+        # (e.g. "Jailbreak", "Direct prompt injection") rather than the resulting harm,
+        # so they are kept verbatim here even though the dataset is treated as
+        # harm-mapping-unclear.
+        threats = record.get("threats", [])
+        if threats:
+            metadata["threats"] = ", ".join(t for t in threats if isinstance(t, str))
+
         tags = record.get("tags", [])
         if tags:
             metadata["tags"] = ", ".join(tags)
@@ -267,23 +277,20 @@ class _PromptIntelDataset(_RemoteDatasetLoader):
 
         record_id = record.get("id", "")
 
-        # Build common fields
-        threats = record.get("threats", [])
-        standardized_harm_categories = self._standardize_harm_categories(
-            threats,
-            alias_overrides={
-                "indirect prompt injection": "DECEPTION",
-                "data exfiltration via prompt": "PROPRIETARY_INFO",
-                "jailbreak": "DECEPTION",
-            },
-        )
-        harm_categories = standardized_harm_categories if standardized_harm_categories else None
+        # PromptIntel's ``threats`` taxonomy is a registry of attack techniques
+        # (jailbreak, prompt injection, obfuscation, ...) rather than a harm taxonomy,
+        # so it does not map cleanly onto the canonical harm categories. Treat the
+        # dataset as mapping-unclear: emit empty harm_categories and stamp the status
+        # in metadata, while preserving the raw ``threats`` labels (see _build_metadata).
+        mapping_is_unclear = self.dataset_name in UNCLEAR_HARM_MAPPING_DATASET_NAMES
+        harm_categories: list[str] = []
         author = record.get("author", "")
         authors = [author] if author else None
         date_added = self._parse_datetime(record.get("created_at"))
         source_url = f"{self.PROMPT_WEB_URL}/{record_id}"
         impact_description = record.get("impact_description", "")
         metadata = self._build_metadata(record)
+        metadata["harm_mapping_status"] = "unclear" if mapping_is_unclear else "mapped"
 
         # Escape Jinja2 template syntax in the prompt text
         escaped_prompt = prompt_value

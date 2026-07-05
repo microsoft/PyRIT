@@ -73,10 +73,16 @@ class _HarmBenchDataset(_RemoteDatasetLoader):
         )
 
         # Validate and process examples
-        harm_category_alias_overrides: dict[str, str | list[str]] = {
-            "cybercrime": ["ILLEGAL", "MALWARE"],
-            "chemical_biological": "CBRN",
-            "illegal_activity": "ILLEGAL",
+        harm_category_alias_overrides: dict[str, list[str]] = {
+            "chemical_biological": ["CBRN"],
+            "cybercrime_intrusion": ["COORDINATION_HARM", "MALWARE"],
+            "cybercrime": ["COORDINATION_HARM", "MALWARE"],
+            "harassment_bullying": ["HARASSMENT"],
+            "illegal": ["COORDINATION_HARM"],
+            "illegal_activity": ["COORDINATION_HARM"],
+            "misinformation_disinformation": ["INFO_INTEGRITY"],
+            "harmful": ["OTHER"],
+            "copyright": ["COPYRIGHT"],
         }
 
         seeds = []

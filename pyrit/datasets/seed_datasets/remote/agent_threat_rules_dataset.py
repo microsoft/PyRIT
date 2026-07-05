@@ -6,6 +6,7 @@ from enum import Enum
 from typing import Literal, Optional
 
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
+    UNCLEAR_HARM_MAPPING_DATASET_NAMES,
     _RemoteDatasetLoader,
 )
 from pyrit.models import SeedDataset, SeedPrompt
@@ -117,14 +118,12 @@ class _AgentThreatRulesDataset(_RemoteDatasetLoader):
     Passing an empty list is rejected — pass ``None`` to disable a filter.
     """
 
-    # Class-attribute metadata picked up by SeedDatasetMetadata. Derived from
-    # _RULE_ID_TO_CATEGORY so the categories the loader claims to cover always
-    # match the categories it actually produces — same single-source-of-truth
-    # rationale as the enum-typed dict above.
-    harm_categories: list[str] = sorted({c.value for c in _RULE_ID_TO_CATEGORY.values()})
+    # ATR categories are agent-security technique labels, not content-harm
+    # labels, so this loader intentionally leaves harm categories empty.
+    harm_categories: list[str] = []
     modalities: list[str] = ["text"]
     size: str = "large"  # 1,054 seeds
-    tags: set[str] = {"safety", "agent_security", "prompt_injection"}
+    tags: set[str] = {"safety", "agent_security", "prompt_injection", "unclear_harm_mapping"}
 
     def __init__(
         self,
@@ -232,21 +231,10 @@ class _AgentThreatRulesDataset(_RemoteDatasetLoader):
             source_type=self.source_type,
             cache=cache,
         )
+        mapping_is_unclear = self.dataset_name in UNCLEAR_HARM_MAPPING_DATASET_NAMES
 
         authors = ["Kuan-Hsin Lin", "ATR Community"]
         source_url = "https://github.com/Agent-Threat-Rule/agent-threat-rules"
-        harm_category_alias_overrides: dict[str, str | list[str]] = {
-            "prompt-injection": "DECEPTION",
-            "tool-poisoning": "INSECURE_CODE",
-            "context-exfiltration": ["PROPRIETARY_INFO", "PPI"],
-            "agent-manipulation": "DECEPTION",
-            "privilege-escalation": "INSECURE_CODE",
-            "skill-compromise": "INSECURE_CODE",
-            "data-poisoning": "INSECURE_CODE",
-            "excessive-autonomy": "HIGH_RISK_GOVERNMENT",
-            "model-abuse": "INSECURE_CODE",
-            "model-security": "INSECURE_CODE",
-        }
 
         seeds: list[SeedPrompt] = []
         skipped_unknown_rule = 0
@@ -266,10 +254,6 @@ class _AgentThreatRulesDataset(_RemoteDatasetLoader):
                 continue
 
             category_value = category.value
-            standardized_categories = self._standardize_harm_categories(
-                category_value,
-                alias_overrides=harm_category_alias_overrides,
-            )
 
             if self._categories and category_value not in self._categories:
                 continue
@@ -287,6 +271,7 @@ class _AgentThreatRulesDataset(_RemoteDatasetLoader):
                 "variation_type": example["variation_type"],
                 "atr_id": example["id"],
                 "atr_category": category_value,
+                "harm_mapping_status": "unclear" if mapping_is_unclear else "mapped",
             }
 
             # Per-rule description so downstream consumers reading metadata see
@@ -303,7 +288,7 @@ class _AgentThreatRulesDataset(_RemoteDatasetLoader):
                     data_type="text",
                     name=rule_id,
                     dataset_name=self.dataset_name,
-                    harm_categories=standardized_categories,
+                    harm_categories=[],
                     description=description,
                     authors=authors,
                     source=source_url,

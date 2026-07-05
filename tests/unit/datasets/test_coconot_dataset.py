@@ -169,7 +169,8 @@ class TestCoCoNotRefusalDataset:
         assert first.metadata["subcategory"] == "personification"
         assert first.metadata["subset"] == "original"
         assert first.metadata["split"] == "train"
-        assert first.harm_categories == ["Humanizing requests"]
+        assert first.harm_categories == []
+        assert first.metadata["harm_mapping_status"] == "unclear"
         assert first.dataset_name == "coconot_refusal"
 
     async def test_category_filter(

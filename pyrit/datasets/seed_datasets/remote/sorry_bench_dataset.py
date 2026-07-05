@@ -171,15 +171,62 @@ class _SorryBenchDataset(_RemoteDatasetLoader):
                 "data_type": "text",
                 "name": "Sorry-Bench 2025-03",
             }
-            harm_category_alias_overrides: dict[str, str | list[str]] = {
-                "malware code generation": "MALWARE",
-                "fraud": "SCAMS",
+            # sorry-bench-202503 stores `category` as a 1-indexed number ("1".."44"),
+            # not the human-readable name. Map it back to the name so filtering,
+            # metadata and harm-category standardization all operate on the label.
+            category_num_to_name = {str(i): name for i, name in enumerate(self.VALID_CATEGORIES, start=1)}
+            harm_category_alias_overrides: dict[str, list[str]] = {
+                "personal insulting words": ["HARASSMENT"],
+                "social-group insulting words": ["HATESPEECH", "REPRESENTATIONAL"],
+                "threatening words": ["VIOLENT_THREATS"],
+                "lewd and obscene words": ["SEXUAL_CONTENT", "PROFANITY"],
+                "libelous words": ["REPUTATIONAL_DAMAGE"],
+                "self-harm": ["SELF_HARM"],
+                "violent crimes": ["COORDINATION_HARM", "VIOLENT_THREATS"],
+                "harassment": ["HARASSMENT"],
+                "sexual crimes": ["COORDINATION_HARM", "SEXUAL_CONTENT"],
+                "property crimes": ["COORDINATION_HARM"],
+                "public order crimes": ["COORDINATION_HARM"],
+                "system intrusion": ["MALWARE"],
+                "malware code generation": ["MALWARE"],
+                "fraud": ["SCAMS", "DECEPTION"],
+                "financial crimes": ["SCAMS", "DECEPTION"],
+                "ip infringement": ["COPYRIGHT", "TRADEMARK"],
+                "pii violations": ["PPI"],
+                "illegal crafting": ["COORDINATION_HARM", "REGULATED_GOODS"],
+                "terrorism": ["VIOLENT_EXTREMISM"],
+                "child-related crimes": ["GROOMING", "SEXUALIZATION"],
+                "animal-related crimes": ["COORDINATION_HARM"],
+                "environmental crimes": ["COORDINATION_HARM"],
+                "evasion of law enforcement": ["COORDINATION_HARM"],
+                "human elimination": ["VIOLENT_THREATS", "COORDINATION_HARM"],
+                "advice on adult content": ["SEXUAL_CONTENT"],
+                "sexual explicit content generation": ["SEXUAL_CONTENT"],
+                "non-sexual explicit content generation": ["VIOLENT_CONTENT"],
+                "fake news generation": ["INFO_INTEGRITY"],
+                "false advertising": ["DECEPTION", "SCAMS"],
+                "advice on discrimination behaviors": ["REPRESENTATIONAL", "HATESPEECH"],
+                "military use": ["MILITARY"],
+                "political belief promotion": ["CAMPAIGNING"],
+                "ethical belief promotion": ["OTHER"],
+                "religion promotion": ["OTHER"],
+                "social stereotype promotion": ["REPRESENTATIONAL", "HATESPEECH"],
+                "extremist content promotion": ["VIOLENT_EXTREMISM"],
+                "conspiracy theories promotion": ["INFO_INTEGRITY"],
+                "false common knowledge promotion": ["INFO_INTEGRITY"],
+                "harmful & unhealthy behaviors promotion": ["DANGEROUS_SITUATIONS", "PUBLIC_HEALTH"],
+                "medical advice": ["HEALTH_DIAGNOSIS", "PUBLIC_HEALTH"],
+                "financial advice": ["FINANCIAL_ADVICE"],
+                "legal consulting advice": ["LEGAL_ADVICE"],
+                "governance decision advice": ["HIGH_RISK_GOVERNMENT"],
+                "dangerous machinery operation advice": ["DANGEROUS_SITUATIONS"],
             }
 
             seed_prompts = []
 
             for item in data:
-                category = item.get("category", "")
+                raw_category = str(item.get("category", "")).strip()
+                category = category_num_to_name.get(raw_category, raw_category)
                 item_prompt_style = item.get("prompt_style", "")
                 turns = [t for t in item.get("turns", []) if t is not None]
                 question_id = item.get("question_id")
@@ -210,6 +257,7 @@ class _SorryBenchDataset(_RemoteDatasetLoader):
                     groups=[item_prompt_style] if item_prompt_style else [],
                     metadata={
                         "sorry_bench_category": category,
+                        "sorry_bench_category_id": raw_category,
                         "prompt_style": item_prompt_style,
                         "question_id": question_id,
                     },

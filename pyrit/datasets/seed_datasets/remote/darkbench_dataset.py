@@ -2,6 +2,7 @@
 # Licensed under the MIT license.
 
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
+    UNCLEAR_HARM_MAPPING_DATASET_NAMES,
     _RemoteDatasetLoader,
 )
 from pyrit.models import SeedDataset, SeedPrompt
@@ -71,39 +72,45 @@ class _DarkBenchDataset(_RemoteDatasetLoader):
         )
 
         # Process into SeedPrompts
-        seed_prompts = [
-            SeedPrompt(
-                value=item["Example"],
-                data_type="text",
-                name="",
-                dataset_name=self.dataset_name,
-                harm_categories=self._standardize_harm_categories(
-                    item.get("Deceptive Pattern"),
-                    alias_overrides={
-                        "forced action": "DECEPTION",
-                        "hidden subscription": "DECEPTION",
-                        "manipulative_design": "DECEPTION",
-                        "forced_action": "DECEPTION",
-                    },
-                ),
-                description=(
-                    "DarkBench is a comprehensive benchmark designed to detect dark design patterns in large "
-                    "language models (LLMs). Dark patterns are manipulative techniques that influence user "
-                    "behavior, often against the user's best interests. The benchmark comprises 660 prompts "
-                    "across six categories of dark patterns, which the researchers used to evaluate 14 different "
-                    "models from leading AI companies including OpenAI, Anthropic, Meta, Mistral, and Google."
-                ),
-                source="https://huggingface.co/datasets/apart/darkbench",
-                authors=[
-                    "Esben Kran",
-                    "Jord Nguyen",
-                    "Akash Kundu",
-                    "Sami Jawhar",
-                    "Jinsuk Park",
-                    "Mateusz Maria Jurewicz",
-                ],
-            )
-            for item in data
+        mapping_is_unclear = self.dataset_name in UNCLEAR_HARM_MAPPING_DATASET_NAMES
+        description = (
+            "DarkBench is a comprehensive benchmark designed to detect dark design patterns in large "
+            "language models (LLMs). Dark patterns are manipulative techniques that influence user "
+            "behavior, often against the user's best interests. The benchmark comprises 660 prompts "
+            "across six categories of dark patterns, which the researchers used to evaluate 14 different "
+            "models from leading AI companies including OpenAI, Anthropic, Meta, Mistral, and Google."
+        )
+        authors = [
+            "Esben Kran",
+            "Jord Nguyen",
+            "Akash Kundu",
+            "Sami Jawhar",
+            "Jinsuk Park",
+            "Mateusz Maria Jurewicz",
         ]
+
+        seed_prompts: list[SeedPrompt] = []
+        for item in data:
+            # DarkBench's dark-pattern types (Brand bias, Sycophancy, Sneaking, ...)
+            # are not a harm taxonomy, so harm categories are left empty and flagged
+            # unclear while the native pattern label is preserved in metadata.
+            deceptive_pattern = item.get("Deceptive Pattern") or ""
+            harm_categories = [] if mapping_is_unclear else self._standardize_harm_categories(deceptive_pattern)
+            seed_prompts.append(
+                SeedPrompt(
+                    value=item["Example"],
+                    data_type="text",
+                    name="",
+                    dataset_name=self.dataset_name,
+                    harm_categories=harm_categories,
+                    description=description,
+                    source="https://huggingface.co/datasets/apart/darkbench",
+                    authors=authors,
+                    metadata={
+                        "deceptive_pattern": deceptive_pattern,
+                        "harm_mapping_status": "unclear" if mapping_is_unclear else "mapped",
+                    },
+                )
+            )
 
         return SeedDataset(seeds=seed_prompts, dataset_name=self.dataset_name)

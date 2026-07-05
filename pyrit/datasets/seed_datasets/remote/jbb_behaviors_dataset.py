@@ -24,6 +24,19 @@ class _JBBBehaviorsDataset(_RemoteDatasetLoader):
     before using these prompts against production LLMs.
     """
 
+    HARM_CATEGORY_ALIAS_OVERRIDES: dict[str, list[str]] = {
+        "disinformation": ["INFO_INTEGRITY"],
+        "economic harm": ["SCAMS"],
+        "expert advice": ["HEALTH_DIAGNOSIS", "LEGAL_ADVICE", "FINANCIAL_ADVICE"],
+        "fraud/deception": ["SCAMS", "DECEPTION"],
+        "government decision-making": ["HIGH_RISK_GOVERNMENT"],
+        "harassment/discrimination": ["HARASSMENT", "HATESPEECH", "REPRESENTATIONAL"],
+        "malware/hacking": ["MALWARE"],
+        "physical harm": ["VIOLENT_CONTENT", "COORDINATION_HARM"],
+        "privacy": ["PPI"],
+        "sexual/adult content": ["SEXUAL_CONTENT"],
+    }
+
     def __init__(
         self,
         *,
@@ -95,9 +108,10 @@ class _JBBBehaviorsDataset(_RemoteDatasetLoader):
                     logger.warning("[JBB-Behaviors] Skipping item with empty behavior field")
                     continue
 
-                # Map JBB categories to PyRIT harm categories
-                harm_categories = self._map_jbb_category_to_harm_category(category)
-                standardized_categories = self._standardize_harm_categories(harm_categories)
+                standardized_categories = self._standardize_harm_categories(
+                    category,
+                    alias_overrides=self.HARM_CATEGORY_ALIAS_OVERRIDES,
+                )
 
                 # Create SeedPrompt object with all metadata
                 seed_prompt = SeedPrompt(
@@ -123,103 +137,3 @@ class _JBBBehaviorsDataset(_RemoteDatasetLoader):
         except Exception as e:
             logger.error(f"Failed to load JBB-Behaviors dataset: {str(e)}")
             raise Exception(f"Error loading JBB-Behaviors dataset: {str(e)}") from e
-
-    def _map_jbb_category_to_harm_category(self, jbb_category: str) -> list[str]:
-        """
-        Map JBB categories to PyRIT harm categories.
-
-        Args:
-            jbb_category: The category from the JBB dataset.
-
-        Returns:
-            List of corresponding PyRIT harm categories.
-        """
-        # Based on common harm taxonomies and JailbreakBench paper categories
-        category_mapping = {
-            # Violence and harm
-            "violence": ["violence"],
-            "physical_harm": ["violence", "physical_harm"],
-            "weapons": ["violence", "weapons"],
-            "terrorism": ["violence", "terrorism"],
-            # Hate and harassment
-            "hate": ["hate"],
-            "harassment": ["harassment"],
-            "bullying": ["harassment", "bullying"],
-            "discrimination": ["discrimination"],
-            "bias": ["bias", "discrimination"],
-            # Sexual content
-            "sexual": ["sexual"],
-            "adult_content": ["sexual"],
-            "non_consensual": ["sexual", "non_consensual"],
-            # Self-harm and suicide
-            "self_harm": ["self_harm"],
-            "suicide": ["self_harm", "suicide"],
-            "eating_disorders": ["self_harm", "eating_disorders"],
-            # Criminal activities
-            "criminal": ["criminal_planning"],
-            "illegal": ["illegal_activity"],
-            "fraud": ["criminal_planning", "fraud"],
-            "theft": ["criminal_planning", "theft"],
-            "cybercrime": ["criminal_planning", "cybercrime"],
-            # Privacy and personal information
-            "privacy": ["privacy"],
-            "personal_info": ["privacy", "personal_information"],
-            "doxxing": ["privacy", "doxxing"],
-            # Deception and misinformation
-            "deception": ["deception"],
-            "misinformation": ["misinformation"],
-            "conspiracy": ["misinformation", "conspiracy"],
-            "fake_news": ["misinformation"],
-            # Unethical behavior
-            "unethical": ["unethical"],
-            "manipulation": ["unethical", "manipulation"],
-            "exploitation": ["unethical", "exploitation"],
-            # Substance abuse
-            "drugs": ["substance_abuse"],
-            "alcohol": ["substance_abuse"],
-            # Financial harm
-            "financial_harm": ["financial_harm"],
-            "scams": ["financial_harm", "scams"],
-            # Child safety
-            "child_abuse": ["child_safety"],
-            "grooming": ["child_safety", "grooming"],
-            # Government and political
-            "government": ["government"],
-            "political": ["political"],
-            "election": ["political", "election"],
-        }
-
-        if not jbb_category or not jbb_category.strip():
-            return ["unknown"]
-
-        # Convert to lowercase for case-insensitive matching
-        jbb_category_lower = jbb_category.lower().strip()
-
-        # Try exact match first
-        if jbb_category_lower in category_mapping:
-            return category_mapping[jbb_category_lower]
-
-        # Try partial matching for compound categories
-        matched_categories = set()
-        for key, harm_cats in category_mapping.items():
-            if key in jbb_category_lower or jbb_category_lower in key:
-                matched_categories.update(harm_cats)
-
-        if matched_categories:
-            return list(matched_categories)
-
-        # Special handling for common patterns
-        if any(term in jbb_category_lower for term in ["violent", "kill", "murder", "bomb"]):
-            return ["violence"]
-        if any(term in jbb_category_lower for term in ["hate", "racist", "sexist"]):
-            return ["hate", "discrimination"]
-        if any(term in jbb_category_lower for term in ["sexual", "porn", "nsfw"]):
-            return ["sexual"]
-        if any(term in jbb_category_lower for term in ["illegal", "crime", "criminal"]):
-            return ["criminal_planning", "illegal_activity"]
-        if any(term in jbb_category_lower for term in ["harm", "hurt", "damage"]):
-            return ["violence", "harm"]
-
-        # Default: use the original JBB category
-        logger.info(f"[JBB-Behaviors] Using JBB category '{jbb_category}' as harm category")
-        return [jbb_category_lower]

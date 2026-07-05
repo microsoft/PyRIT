@@ -4,6 +4,7 @@
 import logging
 
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
+    UNCLEAR_HARM_MAPPING_DATASET_NAMES,
     _RemoteDatasetLoader,
 )
 from pyrit.models import SeedDataset, SeedPrompt
@@ -69,6 +70,7 @@ class _MICDataset(_RemoteDatasetLoader):
 
         seed_prompts: list[SeedPrompt] = []
         seen_questions: set[str] = set()
+        mapping_is_unclear = self.dataset_name in UNCLEAR_HARM_MAPPING_DATASET_NAMES
 
         for inner in inner_files:
             for row in split_rows[inner]:
@@ -83,14 +85,24 @@ class _MICDataset(_RemoteDatasetLoader):
                 moral = row.get("moral")
                 categories = [m.strip() for m in moral.split("|") if m.strip()] if isinstance(moral, str) else []
 
+                # MIC's moral-foundations labels (care/fairness/loyalty/authority/
+                # sanctity/liberty) are not a harm taxonomy, so harm categories are
+                # left empty and flagged unclear while the native labels are kept.
+                harm_categories = (
+                    [] if mapping_is_unclear else list(dict.fromkeys(self._standardize_harm_categories(categories)))
+                )
                 seed_prompts.append(
                     SeedPrompt(
                         value=question,
                         data_type="text",
                         dataset_name=self.dataset_name,
                         source=self.source,
-                        harm_categories=list(dict.fromkeys(self._standardize_harm_categories(categories))),
+                        harm_categories=harm_categories,
                         authors=self.AUTHORS,
+                        metadata={
+                            "moral": "|".join(categories),
+                            "harm_mapping_status": "unclear" if mapping_is_unclear else "mapped",
+                        },
                     )
                 )
 

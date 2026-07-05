@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import json
 import logging
 import re
 
@@ -31,6 +32,96 @@ class _SaladBenchDataset(_RemoteDatasetLoader):
     """
 
     HF_DATASET_NAME: str = "walledai/SaladBench"
+    HARM_CATEGORY_ALIAS_OVERRIDES: dict[str, list[str]] = {
+        "academic dishonesty": ["PLAGIARISM"],
+        "adult content": ["SEXUAL_CONTENT"],
+        "age stereotyping": ["HATESPEECH", "REPRESENTATIONAL"],
+        "biological and chemical harms": ["CBRN"],
+        "campaign materials": ["CAMPAIGNING"],
+        "child abuse": ["GROOMING", "SEXUAL_CONTENT", "CHILD_LEAKAGE"],
+        "common sense": ["DANGEROUS_SITUATIONS"],
+        "copyright infringement": ["COPYRIGHT"],
+        "cyber attack": ["MALWARE", "COORDINATION_HARM"],
+        "defamation": ["REPUTATIONAL_DAMAGE"],
+        "defamation someone": ["REPUTATIONAL_DAMAGE"],
+        "disability stereotyping": ["HATESPEECH", "REPRESENTATIONAL"],
+        "disinformation": ["INFO_INTEGRITY"],
+        "dissemination of dangerous information": ["DANGEROUS_SITUATIONS"],
+        "drug-related crimes": ["DRUG_USE", "REGULATED_GOODS", "COORDINATION_HARM"],
+        "enjoying someone else's pain": ["HARASSMENT"],
+        "environmental crimes": ["COORDINATION_HARM"],
+        "erosion of trust in public information": ["INFO_INTEGRITY"],
+        "erotic chat": ["SEXUAL_CONTENT", "SEXUAL_SOLICITATION"],
+        "fake news": ["INFO_INTEGRITY"],
+        "fake online content": ["DECEPTION", "INFO_INTEGRITY"],
+        "fake review generation": ["DECEPTION", "REPUTATIONAL_DAMAGE"],
+        "financial crimes": ["SCAMS", "COORDINATION_HARM"],
+        "financial data leaks": ["PPI", "PROPRIETARY_INFO"],
+        "financial fraud": ["SCAMS", "DECEPTION"],
+        "forge identity": ["IMPERSONATION", "FAKE_ACCOUNTS"],
+        "fraud or deceptive action": ["SCAMS", "DECEPTION"],
+        "gambling": ["GAMBLING"],
+        "gender stereotyping": ["HATESPEECH", "REPRESENTATIONAL"],
+        "government secrets": ["HIGH_RISK_GOVERNMENT", "PROPRIETARY_INFO"],
+        "group defamation": ["HATESPEECH", "REPUTATIONAL_DAMAGE", "REPRESENTATIONAL"],
+        "harass, threaten, or bully an individual": ["HARASSMENT", "VIOLENT_THREATS"],
+        "hate speech": ["HATESPEECH"],
+        "historical revisionism": ["HISTORICAL_EVENTS_BIAS", "INFO_INTEGRITY"],
+        "human autonomy & integrity": ["COVERT_TARGETED", "DECEPTION"],
+        "illegal activities": ["COORDINATION_HARM"],
+        "illegal drugs and regulated/controlled substances": ["DRUG_USE", "REGULATED_GOODS"],
+        "illegal law advice": ["LEGAL_ADVICE", "COORDINATION_HARM"],
+        "illegitimate surveillance": ["COVERT_TARGETED", "PPI"],
+        "inferring personal information": ["PROTECTED_INFERENCE", "PPI"],
+        "influence operations": ["INFO_INTEGRITY", "COVERT_TARGETED"],
+        "information & safety": ["DANGEROUS_SITUATIONS"],
+        "insult": ["HARASSMENT", "PROFANITY"],
+        "labor issues": ["ALLOCATION"],
+        "law advice": ["LEGAL_ADVICE"],
+        "leaking private information": ["PPI"],
+        "location stereotyping": ["HATESPEECH", "REPRESENTATIONAL"],
+        "malicious use": ["COORDINATION_HARM"],
+        "malware generation": ["MALWARE"],
+        "management or operation of critical infrastructure": ["INFRASTRUCTURE_RISK"],
+        "manipulation of public opinion": ["INFO_INTEGRITY", "COVERT_TARGETED"],
+        "medical advice": ["HEALTH_DIAGNOSIS"],
+        "mimicking writing style": ["IMPERSONATION"],
+        "misinformation harms": ["INFO_INTEGRITY"],
+        "multi-level marketing": ["MLM"],
+        "paypal lending": ["LENDING"],
+        "persuasion and manipulation": ["COVERT_TARGETED", "DECEPTION"],
+        "plagiarism": ["PLAGIARISM"],
+        "pornography": ["SEXUAL_CONTENT"],
+        "privacy infringement": ["PPI"],
+        "propagating misconceptions/false beliefs": ["INFO_INTEGRITY"],
+        "pseudo-pharmaceuticals": ["PSEUDO_PHARMA"],
+        "psychological manipulation": ["EMOTIONAL", "COVERT_TARGETED"],
+        "racial and ethnic stereotyping": ["HATESPEECH", "REPRESENTATIONAL"],
+        "radicalization": ["VIOLENT_EXTREMISM"],
+        "religious stereotyping": ["HATESPEECH", "REPRESENTATIONAL"],
+        "representation & toxicity": ["HATESPEECH", "REPRESENTATIONAL"],
+        "risky financial practices": ["FINANCIAL_ADVICE", "FINANCIAL_ELIGIBILITY"],
+        "scams": ["SCAMS"],
+        "science denialism": ["INFO_INTEGRITY", "PUBLIC_HEALTH"],
+        "security threats": ["DANGEROUS_SITUATIONS", "INFRASTRUCTURE_RISK"],
+        "self-harm": ["SELF_HARM"],
+        "sexual activity": ["SEXUAL_CONTENT", "SEXUAL_SOLICITATION"],
+        "sexual offenses": ["SEXUAL_CONTENT", "SEXUAL_SOLICITATION", "NONCONSENSUAL_UPLOAD"],
+        "social media rumors": ["INFO_INTEGRITY"],
+        "socioeconomic harms": ["ALLOCATION"],
+        "spam": ["SPAM"],
+        "terrorism": ["VIOLENT_EXTREMISM", "COORDINATION_HARM"],
+        "theft": ["COORDINATION_HARM"],
+        "toxic content": ["HARASSMENT", "HATESPEECH", "PROFANITY"],
+        "trade affairs": ["ALLOCATION"],
+        "trade and compliance": ["COORDINATION_HARM"],
+        "traffic and driving offenses": ["COORDINATION_HARM"],
+        "unfair representation": ["REPRESENTATIONAL", "ALLOCATION"],
+        "violation of personal property": ["COORDINATION_HARM"],
+        "violent content": ["VIOLENT_CONTENT"],
+        "violent crimes": ["VIOLENT_CONTENT", "VIOLENT_THREATS", "COORDINATION_HARM"],
+        "weapon generation and transportation": ["REGULATED_GOODS"],
+    }
 
     def __init__(
         self,
@@ -110,29 +201,34 @@ class _SaladBenchDataset(_RemoteDatasetLoader):
             "Chinese University of Hong Kong",
             "The Hong Kong Polytechnic University",
         ]
-        harm_category_alias_overrides: dict[str, str | list[str]] = {
-            "representation & toxicity": "REPRESENTATIONAL",
-            "illegal activities": "ILLEGAL",
-            "malicious use": "OTHER",
-        }
 
-        seed_prompts = [
-            SeedPrompt(
-                value=item["prompt"],
-                data_type="text",
-                dataset_name=self.dataset_name,
-                harm_categories=self._standardize_harm_categories(
-                    [self._parse_category(c) for c in item["categories"]],
-                    alias_overrides=harm_category_alias_overrides,
-                ),
-                description=description,
-                source=source_url,
-                authors=authors,
-                groups=groups,
-                metadata={"original_source": src} if (src := item.get("source")) else {},
+        seed_prompts = []
+        for item in data:
+            parsed_categories = [self._parse_category(c) for c in item["categories"]]
+            metadata: dict[str, str | int] = {"categories": json.dumps(item["categories"])}
+            if source := item.get("source"):
+                metadata["original_source"] = source
+
+            seed_prompts.append(
+                SeedPrompt(
+                    value=item["prompt"],
+                    data_type="text",
+                    dataset_name=self.dataset_name,
+                    harm_categories=list(
+                        dict.fromkeys(
+                            self._standardize_harm_categories(
+                                parsed_categories,
+                                alias_overrides=self.HARM_CATEGORY_ALIAS_OVERRIDES,
+                            )
+                        )
+                    ),
+                    description=description,
+                    source=source_url,
+                    authors=authors,
+                    groups=groups,
+                    metadata=metadata,
+                )
             )
-            for item in data
-        ]
 
         logger.info(f"Successfully loaded {len(seed_prompts)} prompts from SALAD-Bench dataset")
 

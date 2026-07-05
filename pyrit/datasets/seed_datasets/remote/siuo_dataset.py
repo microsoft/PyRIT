@@ -105,6 +105,19 @@ class _SIUODataset(_RemoteDatasetLoader):
     size: str = "medium"
     tags: frozenset[str] = frozenset({"default", "safety", "multimodal"})
 
+    HARM_CATEGORY_ALIAS_OVERRIDES: dict[str, list[str]] = {
+        "illegal activities & crime": ["COORDINATION_HARM"],
+        "illegal activity": ["COORDINATION_HARM"],
+        "privacy violation": ["PPI"],
+        "morality": ["OTHER"],
+        "dangerous behavior": ["DANGEROUS_SITUATIONS"],
+        "discrimination & stereotyping": ["REPRESENTATIONAL", "HATESPEECH"],
+        "information misinterpretation": ["INFO_INTEGRITY"],
+        "religion beliefs": ["PROTECTED_INFERENCE"],
+        "controversial topics, politics": ["INFO_INTEGRITY"],
+        "controversial politics": ["INFO_INTEGRITY"],
+    }
+
     def __init__(
         self,
         *,
@@ -225,19 +238,7 @@ class _SIUODataset(_RemoteDatasetLoader):
         category = example["category"]
         image_filename = example["image"]
         safety_warning = example["safety_warning"]
-        harm_category_alias_overrides: dict[str, str | list[str]] = {
-            "illegal activities & crime": "ILLEGAL",
-            "dangerous behavior": "VIOLENT_CONTENT",
-            "discrimination & stereotyping": ["REPRESENTATIONAL", "HATESPEECH"],
-            "information misinterpretation": "INFO_INTEGRITY",
-            "controversial topics, politics": "CAMPAIGNING",
-            "morality": "OTHER",
-            "religion beliefs": "OTHER",
-        }
-        standardized_harm_categories = self._standardize_harm_categories(
-            category,
-            alias_overrides=harm_category_alias_overrides,
-        )
+        standardized_harm_categories = self._standardize_category(category)
 
         image_url = f"{self.IMAGE_BASE_URL}{image_filename}"
         image_stem = image_filename.rsplit(".", 1)[0]
@@ -263,6 +264,7 @@ class _SIUODataset(_RemoteDatasetLoader):
             groups=_GROUPS,
             source=self.PAPER_URL,
             prompt_group_id=group_id,
+            metadata=metadata,
         )
 
         text_prompt = SeedPrompt(
@@ -296,6 +298,15 @@ class _SIUODataset(_RemoteDatasetLoader):
         )
 
         return [objective, text_prompt, image_prompt]
+
+    def _standardize_category(self, category: str) -> list[str]:
+        if category.strip().lower() == SIUOCategory.SELF_HARM.value:
+            return ["SELF_HARM", "SUICIDE"]
+
+        return self._standardize_harm_categories(
+            category,
+            alias_overrides=self.HARM_CATEGORY_ALIAS_OVERRIDES,
+        )
 
     async def _fetch_and_save_image_async(self, *, image_url: str, image_stem: str) -> str:
         """

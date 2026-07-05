@@ -125,11 +125,43 @@ class _MSTSDataset(_RemoteDatasetLoader):
         "Suicide & Self-Harm",
         "Other",
     ]
-    HARM_CATEGORY_ALIAS_OVERRIDES: dict[str, str | list[str]] = {
-        "violent crimes": "VIOLENT_CONTENT",
-        "non-violent crimes": "ILLEGAL",
-        "sex-related crimes": "SEXUAL_CONTENT",
+    HARM_CATEGORY_ALIAS_OVERRIDES: dict[str, list[str]] = {
+        "violent crimes": ["VIOLENT_CONTENT"],
+        "non-violent crimes": ["COORDINATION_HARM"],
+        "sex-related crimes": ["SEXUAL_CONTENT"],
         "suicide & self-harm": ["SUICIDE", "SELF_HARM"],
+        "other": ["OTHER"],
+    }
+    # The 21 fine-grained hazard_subcategory values resolve far more precisely than
+    # the 5 top-level hazard_category buckets (e.g. the "Other" bucket splits into
+    # "Conspiracy theories" -> INFO_INTEGRITY and "Gross behaviour" -> OTHER). When a
+    # row's subcategory is present and recognized it takes precedence; otherwise the
+    # loader falls back to the coarse hazard_category mapping above.
+    HAZARD_SUBCATEGORY_ALIAS_OVERRIDES: dict[str, list[str]] = {
+        "property damage": ["COORDINATION_HARM"],
+        "sale, purchase or ownership of illegal, regulated or unregistered items": [
+            "REGULATED_GOODS",
+            "COORDINATION_HARM",
+        ],
+        "environmental pollution": ["OTHER"],
+        "production of illegal, regulated or unregistered items": ["REGULATED_GOODS", "COORDINATION_HARM"],
+        "reckless endangerment": ["DANGEROUS_SITUATIONS"],
+        "dangerous challenges": ["DANGEROUS_SITUATIONS"],
+        "scams & fraud": ["SCAMS", "DECEPTION"],
+        "self-harm": ["SELF_HARM"],
+        "physical assault": ["VIOLENT_CONTENT"],
+        "murder": ["VIOLENT_CONTENT"],
+        "gross behaviour": ["OTHER"],
+        "sexual harassment": ["HARASSMENT", "SEXUAL_SOLICITATION"],
+        "trespassing": ["COORDINATION_HARM"],
+        "terror": ["VIOLENT_EXTREMISM", "COORDINATION_HARM"],
+        "conspiracy theories": ["INFO_INTEGRITY"],
+        "eating disorders": ["EATING_DISORDERS", "SELF_HARM"],
+        "suicide": ["SUICIDE", "SELF_HARM"],
+        "sexual assault": ["SEXUAL_CONTENT", "VIOLENT_CONTENT"],
+        "indecent exposure": ["SEXUAL_CONTENT"],
+        "theft": ["COORDINATION_HARM"],
+        "mass violence": ["VIOLENT_CONTENT", "VIOLENT_EXTREMISM"],
     }
     modalities: list[str] = ["text", "image"]
     size: str = "large"
@@ -317,10 +349,17 @@ class _MSTSDataset(_RemoteDatasetLoader):
         )
 
         group_id = uuid.uuid4()
-        harm_categories = self._standardize_harm_categories(
-            hazard_category,
-            alias_overrides=self.HARM_CATEGORY_ALIAS_OVERRIDES,
-        )
+        subcategory_key = hazard_subcategory.strip().lower()
+        if subcategory_key in self.HAZARD_SUBCATEGORY_ALIAS_OVERRIDES:
+            harm_categories = self._standardize_harm_categories(
+                hazard_subcategory,
+                alias_overrides=self.HAZARD_SUBCATEGORY_ALIAS_OVERRIDES,
+            )
+        else:
+            harm_categories = self._standardize_harm_categories(
+                hazard_category,
+                alias_overrides=self.HARM_CATEGORY_ALIAS_OVERRIDES,
+            )
         metadata: dict[str, str | int] = {
             "case_id": case_id,
             "image_id": image_id,

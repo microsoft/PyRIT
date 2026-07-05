@@ -116,6 +116,7 @@ from pyrit.datasets.seed_datasets.remote.red_team_social_bias_dataset import (
     _RedTeamSocialBiasDataset,
 )  # noqa: F401
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
+    UNCLEAR_HARM_MAPPING_DATASET_NAMES,
     _RemoteDatasetLoader,
 )
 from pyrit.datasets.seed_datasets.remote.salad_bench_dataset import (
@@ -178,6 +179,7 @@ __all__ = [
     "PromptIntelSeverity",
     "SGXSTestLabel",
     "SIUOCategory",
+    "UNCLEAR_HARM_MAPPING_DATASET_NAMES",
     "VLGuardCategory",
     "VLGuardSubcategory",
     "VLGuardSubset",
