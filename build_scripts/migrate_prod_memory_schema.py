@@ -55,6 +55,22 @@ def _print_success(message: str) -> None:
     print(f"{_GREEN}{message}{_RESET}")
 
 
+def _get_db_revision(engine) -> str | None:
+    """Read the current Alembic revision from the database, or None if not versioned."""
+    from sqlalchemy import inspect as sa_inspect
+    from sqlalchemy import text
+
+    from pyrit.memory.migration import PYRIT_MEMORY_ALEMBIC_VERSION_TABLE
+
+    inspector = sa_inspect(engine)
+    if PYRIT_MEMORY_ALEMBIC_VERSION_TABLE not in inspector.get_table_names():
+        return None
+    with engine.connect() as conn:
+        result = conn.execute(text(f"SELECT version_num FROM {PYRIT_MEMORY_ALEMBIC_VERSION_TABLE}"))
+        row = result.fetchone()
+        return row[0] if row else None
+
+
 def _check_release_environment() -> list[str]:
     """
     Validate that the script is running in a proper release environment.
@@ -142,6 +158,7 @@ def main() -> int:
 
     # Construct AzureSQLMemory with skip_schema_migration=True to bypass the runtime guard,
     # then explicitly run migration.
+    import logging
     import os
 
     from pyrit.memory import AzureSQLMemory
@@ -152,12 +169,27 @@ def main() -> int:
         return 1
 
     try:
-        memory = AzureSQLMemory(
-            connection_string=prod_conn,
-            skip_schema_migration=True,
-        )
+        # Suppress the constructor's pre-migration schema-mismatch warning: it's expected
+        # here (we're about to migrate) and would be misleading noise.
+        azure_logger = logging.getLogger("pyrit.memory.azure_sql_memory")
+        previous_level = azure_logger.level
+        azure_logger.setLevel(logging.ERROR)
+        try:
+            memory = AzureSQLMemory(
+                connection_string=prod_conn,
+                skip_schema_migration=True,
+            )
+        finally:
+            azure_logger.setLevel(previous_level)
+
+        before = _get_db_revision(memory.engine)
+        print(f"Database revision before migration: {before or '(none — fresh database)'}")
         print("Running schema migration...")
         memory._run_schema_migration()
+        after = _get_db_revision(memory.engine)
+        print(f"Database revision after migration:  {after}")
+        if before == after:
+            print("No revision change (already up to date).")
         _print_success("Production schema migration completed and verified successfully.")
         return 0
     except Exception as e:
