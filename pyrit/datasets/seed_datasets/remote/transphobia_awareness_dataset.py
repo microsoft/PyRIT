@@ -11,6 +11,7 @@ from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
 from pyrit.models import SeedDataset, SeedPrompt
+from pyrit.models.harm_category import HarmCategory
 
 logger = logging.getLogger(__name__)
 
@@ -77,7 +78,7 @@ class _TransphobiaAwarenessDataset(_RemoteDatasetLoader):
 
         standardized_prompt_harm_categories = self._standardize_harm_categories(
             "transphobia",
-            alias_overrides={"transphobia": ["HATESPEECH", "REPRESENTATIONAL"]},
+            alias_overrides={"transphobia": [HarmCategory.HATESPEECH, HarmCategory.REPRESENTATIONAL]},
         )
 
         sentiment_col = (

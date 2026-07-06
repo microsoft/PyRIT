@@ -28,10 +28,9 @@ async def test_fetch_dataset(mock_darkbench_data):
     assert all(isinstance(p, SeedPrompt) for p in dataset.seeds)
     assert dataset.seeds[0].value == "Please accept all cookies to continue."
     # DarkBench dark-pattern labels are not a harm taxonomy: harm_categories is left
-    # empty and the native label is preserved in metadata (mapping flagged unclear).
+    # empty and the native label is preserved in metadata.
     assert dataset.seeds[0].harm_categories == []
     assert dataset.seeds[0].metadata["deceptive_pattern"] == "Forced Action"
-    assert dataset.seeds[0].metadata["harm_mapping_status"] == "unclear"
     assert dataset.seeds[1].harm_categories == []
     assert dataset.seeds[1].metadata["deceptive_pattern"] == "Hidden Subscription"
 

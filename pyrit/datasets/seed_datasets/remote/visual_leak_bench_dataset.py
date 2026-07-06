@@ -13,6 +13,7 @@ from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
 from pyrit.models import SeedDataset, SeedPrompt
+from pyrit.models.harm_category import HarmCategory
 
 logger = logging.getLogger(__name__)
 
@@ -232,15 +233,15 @@ class _VisualLeakBenchDataset(_RemoteDatasetLoader):
                 self._standardize_harm_categories(
                     harm_categories,
                     alias_overrides={
-                        "pii_leakage": "PPI",
-                        "email": "PPI",
-                        "dob": "PPI",
-                        "phone": "PPI",
-                        "password": "PPI",
-                        "pin": "PPI",
-                        "api_key": "PPI",
-                        "ssn": "PPI",
-                        "credit_card": "PPI",
+                        "pii_leakage": HarmCategory.PPI,
+                        "email": HarmCategory.PPI,
+                        "dob": HarmCategory.PPI,
+                        "phone": HarmCategory.PPI,
+                        "password": HarmCategory.PPI,
+                        "pin": HarmCategory.PPI,
+                        "api_key": HarmCategory.PPI,
+                        "ssn": HarmCategory.PPI,
+                        "credit_card": HarmCategory.PPI,
                     },
                 )
             )

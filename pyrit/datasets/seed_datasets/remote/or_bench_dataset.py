@@ -2,11 +2,13 @@
 # Licensed under the MIT license.
 
 import logging
+from typing import cast
 
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
 from pyrit.models import SeedDataset, SeedPrompt
+from pyrit.models.harm_category import HarmCategory
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +36,7 @@ class _ORBenchBaseDataset(_RemoteDatasetLoader):
     # so harm_categories is left empty. Only or-bench-toxic contains genuinely harmful
     # prompts, so only that subset maps `category` to the canonical taxonomy.
     MAPS_HARM_CATEGORIES: bool = False
-    HARM_ALIAS_OVERRIDES: dict[str, list[str]] = {}
+    HARM_ALIAS_OVERRIDES: dict[str, list[HarmCategory]] = cast("dict[str, list[HarmCategory]]", {})
 
     def __init__(self, *, split: str = "train") -> None:
         """
@@ -150,12 +152,15 @@ class _ORBenchToxicDataset(_ORBenchBaseDataset):
     # Unlike the benign 80k/hard subsets, or-bench-toxic prompts are genuinely harmful,
     # so their `category` is a real harm domain and is standardized to the taxonomy.
     MAPS_HARM_CATEGORIES: bool = True
-    HARM_ALIAS_OVERRIDES: dict[str, list[str]] = {
-        "hate": ["HATESPEECH", "REPRESENTATIONAL"],
-        "privacy": ["PPI"],
-        "harmful": ["OTHER"],
-        "unethical": ["OTHER"],
-    }
+    HARM_ALIAS_OVERRIDES: dict[str, list[HarmCategory]] = cast(
+        "dict[str, list[HarmCategory]]",
+        {
+            "hate": [HarmCategory.HATESPEECH, HarmCategory.REPRESENTATIONAL],
+            "privacy": [HarmCategory.PPI],
+            "harmful": [HarmCategory.OTHER],
+            "unethical": [HarmCategory.OTHER],
+        },
+    )
     DESCRIPTION: str = (
         "OR-Bench Toxic contains toxic prompts that language models should correctly refuse. "
         "Used as a contrast set to evaluate refusal calibration."

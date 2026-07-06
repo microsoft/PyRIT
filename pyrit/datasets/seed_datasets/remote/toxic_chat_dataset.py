@@ -3,12 +3,13 @@
 
 import json
 import logging
-from typing import Any
+from typing import Any, cast
 
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
 from pyrit.models import SeedDataset, SeedPrompt
+from pyrit.models.harm_category import HarmCategory
 
 logger = logging.getLogger(__name__)
 
@@ -123,18 +124,21 @@ class _ToxicChatDataset(_RemoteDatasetLoader):
         seed_prompts: list[SeedPrompt] = []
         # toxicity/jailbreaking flags plus OpenAI-moderation category names are not in the
         # generic alias table, so map them (and broaden the too-narrow "violence") here.
-        toxic_chat_alias_overrides: dict[str, list[str]] = {
-            "toxicity": ["HARASSMENT"],
-            "jailbreaking": ["DECEPTION"],
-            "hate": ["HATESPEECH", "REPRESENTATIONAL"],
-            "hate/threatening": ["HATESPEECH", "VIOLENT_THREATS"],
-            "harassment/threatening": ["HARASSMENT", "VIOLENT_THREATS"],
-            "self-harm/intent": ["SELF_HARM"],
-            "self-harm/instructions": ["SELF_HARM"],
-            "sexual/minors": ["SEXUALIZATION", "SEXUAL_CONTENT"],
-            "violence": ["VIOLENT_CONTENT", "VIOLENT_THREATS"],
-            "violence/graphic": ["VIOLENT_CONTENT"],
-        }
+        toxic_chat_alias_overrides: dict[str, list[HarmCategory]] = cast(
+            "dict[str, list[HarmCategory]]",
+            {
+                "toxicity": [HarmCategory.HARASSMENT],
+                "jailbreaking": [HarmCategory.DECEPTION],
+                "hate": [HarmCategory.HATESPEECH, HarmCategory.REPRESENTATIONAL],
+                "hate/threatening": [HarmCategory.HATESPEECH, HarmCategory.VIOLENT_THREATS],
+                "harassment/threatening": [HarmCategory.HARASSMENT, HarmCategory.VIOLENT_THREATS],
+                "self-harm/intent": [HarmCategory.SELF_HARM],
+                "self-harm/instructions": [HarmCategory.SELF_HARM],
+                "sexual/minors": [HarmCategory.SEXUALIZATION, HarmCategory.SEXUAL_CONTENT],
+                "violence": [HarmCategory.VIOLENT_CONTENT, HarmCategory.VIOLENT_THREATS],
+                "violence/graphic": [HarmCategory.VIOLENT_CONTENT],
+            },
+        )
         for item in data:
             user_input = item["user_input"]
             raw_harm_categories = self._extract_harm_categories(item)

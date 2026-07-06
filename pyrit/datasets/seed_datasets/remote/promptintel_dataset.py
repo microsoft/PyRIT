@@ -10,7 +10,6 @@ from typing import Any, Optional
 import requests
 
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
-    UNCLEAR_HARM_MAPPING_DATASET_NAMES,
     _RemoteDatasetLoader,
 )
 from pyrit.models import SeedDataset, SeedPrompt
@@ -279,10 +278,8 @@ class _PromptIntelDataset(_RemoteDatasetLoader):
 
         # PromptIntel's ``threats`` taxonomy is a registry of attack techniques
         # (jailbreak, prompt injection, obfuscation, ...) rather than a harm taxonomy,
-        # so it does not map cleanly onto the canonical harm categories. Treat the
-        # dataset as mapping-unclear: emit empty harm_categories and stamp the status
-        # in metadata, while preserving the raw ``threats`` labels (see _build_metadata).
-        mapping_is_unclear = self.dataset_name in UNCLEAR_HARM_MAPPING_DATASET_NAMES
+        # so it does not map cleanly onto the canonical harm categories. Emit empty
+        # harm_categories while preserving the raw ``threats`` labels (see _build_metadata).
         harm_categories: list[str] = []
         author = record.get("author", "")
         authors = [author] if author else None
@@ -290,7 +287,6 @@ class _PromptIntelDataset(_RemoteDatasetLoader):
         source_url = f"{self.PROMPT_WEB_URL}/{record_id}"
         impact_description = record.get("impact_description", "")
         metadata = self._build_metadata(record)
-        metadata["harm_mapping_status"] = "unclear" if mapping_is_unclear else "mapped"
 
         # Escape Jinja2 template syntax in the prompt text
         escaped_prompt = prompt_value

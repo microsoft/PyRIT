@@ -4,7 +4,7 @@
 import logging
 import uuid
 from enum import Enum
-from typing import Literal, Optional
+from typing import Literal, Optional, cast
 
 from pyrit.datasets.seed_datasets.remote._image_cache import (
     fetch_and_cache_image_async,
@@ -13,6 +13,7 @@ from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
 from pyrit.models import SeedDataset, SeedPrompt
+from pyrit.models.harm_category import HarmCategory
 
 logger = logging.getLogger(__name__)
 
@@ -104,15 +105,22 @@ class _HarmBenchMultimodalDataset(_RemoteDatasetLoader):
 
         prompts = []
         failed_image_count = 0
-        harm_category_alias_overrides: dict[str, list[str]] = {
-            "chemical_biological": ["CBRN"],
-            "cybercrime_intrusion": ["COORDINATION_HARM", "MALWARE"],
-            "harassment_bullying": ["HARASSMENT", "HATESPEECH", "REPRESENTATIONAL"],
-            "illegal": ["COORDINATION_HARM"],
-            "misinformation_disinformation": ["INFO_INTEGRITY"],
-            "harmful": ["OTHER"],
-            "copyright": ["COPYRIGHT"],
-        }
+        harm_category_alias_overrides: dict[str, list[HarmCategory]] = cast(
+            "dict[str, list[HarmCategory]]",
+            {
+                "chemical_biological": [HarmCategory.CBRN],
+                "cybercrime_intrusion": [HarmCategory.COORDINATION_HARM, HarmCategory.MALWARE],
+                "harassment_bullying": [
+                    HarmCategory.HARASSMENT,
+                    HarmCategory.HATESPEECH,
+                    HarmCategory.REPRESENTATIONAL,
+                ],
+                "illegal": [HarmCategory.COORDINATION_HARM],
+                "misinformation_disinformation": [HarmCategory.INFO_INTEGRITY],
+                "harmful": [HarmCategory.OTHER],
+                "copyright": [HarmCategory.COPYRIGHT],
+            },
+        )
 
         for example in examples:
             missing_keys = required_keys - example.keys()

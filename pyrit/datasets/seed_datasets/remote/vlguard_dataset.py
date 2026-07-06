@@ -8,6 +8,7 @@ import uuid
 import zipfile
 from enum import Enum
 from pathlib import Path
+from typing import cast
 
 from huggingface_hub import hf_hub_download
 
@@ -16,6 +17,7 @@ from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
 from pyrit.models import SeedDataset, SeedPrompt
+from pyrit.models.harm_category import HarmCategory
 
 logger = logging.getLogger(__name__)
 
@@ -93,16 +95,23 @@ class _VLGuardDataset(_RemoteDatasetLoader):
     Paper: Safety Fine-Tuning at (Almost) No Cost: A Baseline for Vision Large Language Models (ICML 2024)
     """
 
-    HARM_SUBCATEGORY_ALIAS_OVERRIDES: dict[str, list[str]] = {
-        "personal data": ["PPI"],
-        "professional advice": ["LEGAL_ADVICE", "FINANCIAL_ADVICE", "HEALTH_DIAGNOSIS"],
-        "political": ["CAMPAIGNING"],
-        "sexually explicit": ["SEXUAL_CONTENT"],
-        "violence": ["VIOLENT_CONTENT"],
-        "disinformation": ["INFO_INTEGRITY"],
-        "sex": ["REPRESENTATIONAL", "HATESPEECH"],
-        "race": ["REPRESENTATIONAL", "HATESPEECH"],
-    }
+    HARM_SUBCATEGORY_ALIAS_OVERRIDES: dict[str, list[HarmCategory]] = cast(
+        "dict[str, list[HarmCategory]]",
+        {
+            "personal data": [HarmCategory.PPI],
+            "professional advice": [
+                HarmCategory.LEGAL_ADVICE,
+                HarmCategory.FINANCIAL_ADVICE,
+                HarmCategory.HEALTH_DIAGNOSIS,
+            ],
+            "political": [HarmCategory.CAMPAIGNING],
+            "sexually explicit": [HarmCategory.SEXUAL_CONTENT],
+            "violence": [HarmCategory.VIOLENT_CONTENT],
+            "disinformation": [HarmCategory.INFO_INTEGRITY],
+            "sex": [HarmCategory.REPRESENTATIONAL, HarmCategory.HATESPEECH],
+            "race": [HarmCategory.REPRESENTATIONAL, HarmCategory.HATESPEECH],
+        },
+    )
 
     def __init__(
         self,

@@ -317,7 +317,6 @@ class TestDarkBenchDataset:
             assert first_prompt.dataset_name == "dark_bench"
             assert first_prompt.harm_categories == []
             assert first_prompt.metadata["deceptive_pattern"] == "manipulative_design"
-            assert first_prompt.metadata["harm_mapping_status"] == "unclear"
 
     def test_dataset_name(self):
         """Test dataset_name property."""

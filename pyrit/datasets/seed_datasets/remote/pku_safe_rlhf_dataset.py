@@ -2,12 +2,13 @@
 # Licensed under the MIT license.
 
 import logging
-from typing import Literal, Optional
+from typing import Literal, Optional, cast
 
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
 from pyrit.models import SeedDataset, SeedPrompt
+from pyrit.models.harm_category import HarmCategory
 
 logger = logging.getLogger(__name__)
 
@@ -92,26 +93,33 @@ class _PKUSafeRLHFDataset(_RemoteDatasetLoader):
         )
 
         seed_prompts = []
-        harm_category_alias_overrides: dict[str, list[str]] = {
-            "Animal Abuse": ["OTHER"],
-            "Copyright Issues": ["COPYRIGHT"],
-            "Cybercrime": ["MALWARE", "COORDINATION_HARM"],
-            "Discriminatory Behavior": ["HATESPEECH", "REPRESENTATIONAL"],
-            "Disrupting Public Order": ["COORDINATION_HARM"],
-            "Drugs": ["DRUG_USE", "REGULATED_GOODS"],
-            "Economic Crime": ["SCAMS", "DECEPTION"],
-            "Endangering National Security": ["COORDINATION_HARM", "INFRASTRUCTURE_RISK", "MILITARY"],
-            "Endangering Public Health": ["PUBLIC_HEALTH"],
-            "Environmental Damage": ["OTHER"],
-            "Human Trafficking": ["COORDINATION_HARM", "SEXUAL_SOLICITATION"],
-            "Insulting Behavior": ["HARASSMENT"],
-            "Mental Manipulation": ["DECEPTION"],
-            "Physical Harm": ["VIOLENT_CONTENT"],
-            "Privacy Violation": ["PPI"],
-            "Psychological Harm": ["MENTAL_HEALTH", "EMOTIONAL"],
-            "Violence": ["VIOLENT_CONTENT"],
-            "White-Collar Crime": ["SCAMS", "DECEPTION"],
-        }
+        harm_category_alias_overrides: dict[str, list[HarmCategory]] = cast(
+            "dict[str, list[HarmCategory]]",
+            {
+                "Animal Abuse": [HarmCategory.OTHER],
+                "Copyright Issues": [HarmCategory.COPYRIGHT],
+                "Cybercrime": [HarmCategory.MALWARE, HarmCategory.COORDINATION_HARM],
+                "Discriminatory Behavior": [HarmCategory.HATESPEECH, HarmCategory.REPRESENTATIONAL],
+                "Disrupting Public Order": [HarmCategory.COORDINATION_HARM],
+                "Drugs": [HarmCategory.DRUG_USE, HarmCategory.REGULATED_GOODS],
+                "Economic Crime": [HarmCategory.SCAMS, HarmCategory.DECEPTION],
+                "Endangering National Security": [
+                    HarmCategory.COORDINATION_HARM,
+                    HarmCategory.INFRASTRUCTURE_RISK,
+                    HarmCategory.MILITARY,
+                ],
+                "Endangering Public Health": [HarmCategory.PUBLIC_HEALTH],
+                "Environmental Damage": [HarmCategory.OTHER],
+                "Human Trafficking": [HarmCategory.COORDINATION_HARM, HarmCategory.SEXUAL_SOLICITATION],
+                "Insulting Behavior": [HarmCategory.HARASSMENT],
+                "Mental Manipulation": [HarmCategory.DECEPTION],
+                "Physical Harm": [HarmCategory.VIOLENT_CONTENT],
+                "Privacy Violation": [HarmCategory.PPI],
+                "Psychological Harm": [HarmCategory.MENTAL_HEALTH, HarmCategory.EMOTIONAL],
+                "Violence": [HarmCategory.VIOLENT_CONTENT],
+                "White-Collar Crime": [HarmCategory.SCAMS, HarmCategory.DECEPTION],
+            },
+        )
 
         for item in data:
             is_unsafe = not (item["is_response_0_safe"] and item["is_response_1_safe"])

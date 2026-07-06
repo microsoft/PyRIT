@@ -9,7 +9,7 @@ import uuid
 import zipfile
 from enum import Enum
 from pathlib import Path
-from typing import Literal, Optional
+from typing import Literal, Optional, cast
 
 from pyrit.common.net_utility import make_request_and_raise_if_error_async
 from pyrit.common.path import DB_DATA_PATH
@@ -20,6 +20,7 @@ from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
 from pyrit.models import Seed, SeedDataset, SeedObjective, SeedPrompt
+from pyrit.models.harm_category import HarmCategory
 
 logger = logging.getLogger(__name__)
 
@@ -161,16 +162,19 @@ class _FigStepDataset(_RemoteDatasetLoader):
     modalities: tuple[str, ...] = ("text", "image")
     size: str = "small"
     tags: frozenset[str] = frozenset({"default", "safety", "multimodal"})
-    HARM_CATEGORY_ALIAS_OVERRIDES: dict[str, list[str]] = {
-        "illegal activity": ["COORDINATION_HARM"],
-        "malware generation": ["MALWARE"],
-        "physical harm": ["VIOLENT_CONTENT", "COORDINATION_HARM"],
-        "adult content": ["SEXUAL_CONTENT"],
-        "privacy violation": ["PPI"],
-        "legal opinion": ["LEGAL_ADVICE"],
-        "health consultation": ["PUBLIC_HEALTH", "HEALTH_DIAGNOSIS"],
-        "fraud": ["SCAMS", "DECEPTION"],
-    }
+    HARM_CATEGORY_ALIAS_OVERRIDES: dict[str, list[HarmCategory]] = cast(
+        "dict[str, list[HarmCategory]]",
+        {
+            "illegal activity": [HarmCategory.COORDINATION_HARM],
+            "malware generation": [HarmCategory.MALWARE],
+            "physical harm": [HarmCategory.VIOLENT_CONTENT, HarmCategory.COORDINATION_HARM],
+            "adult content": [HarmCategory.SEXUAL_CONTENT],
+            "privacy violation": [HarmCategory.PPI],
+            "legal opinion": [HarmCategory.LEGAL_ADVICE],
+            "health consultation": [HarmCategory.PUBLIC_HEALTH, HarmCategory.HEALTH_DIAGNOSIS],
+            "fraud": [HarmCategory.SCAMS, HarmCategory.DECEPTION],
+        },
+    )
 
     def __init__(
         self,

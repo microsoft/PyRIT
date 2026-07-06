@@ -9,6 +9,7 @@ from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
 from pyrit.models import SeedDataset, SeedPrompt
+from pyrit.models.harm_category import HarmCategory
 
 logger = logging.getLogger(__name__)
 
@@ -133,7 +134,7 @@ class _EquityMedQADataset(_RemoteDatasetLoader):
         unique_prompts = list(set(prompts))
         standardized_harm_categories = self._standardize_harm_categories(
             "health_bias",
-            alias_overrides={"health_bias": "REPRESENTATIONAL"},
+            alias_overrides={"health_bias": HarmCategory.REPRESENTATIONAL},
         )
 
         seed_prompts = [

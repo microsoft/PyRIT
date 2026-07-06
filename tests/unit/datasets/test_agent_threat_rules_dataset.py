@@ -112,7 +112,6 @@ async def test_seed_prompt_fields_populated(mock_atr_data: list[dict[str, str]])
     assert first.metadata["detection_field"] == "user_input"
     assert first.metadata["variation_type"] == "original"
     assert first.metadata["atr_id"] == "orig-0"
-    assert first.metadata["harm_mapping_status"] == "unclear"
 
 
 async def test_fetch_dataset_missing_keys_raises() -> None:
@@ -268,11 +267,6 @@ def test_rule_id_mapping_uses_enum() -> None:
 
 
 def test_harm_categories_matches_rule_id_mapping() -> None:
-    # ATR labels are security-technique families, so the loader keeps
-    # harm categories empty and is tracked in the explicit unclear-mapping list.
-    from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
-        UNCLEAR_HARM_MAPPING_DATASET_NAMES,
-    )
-
+    # ATR labels are security-technique families, not content harms, so the loader
+    # keeps harm categories empty.
     assert _AgentThreatRulesDataset.harm_categories == []
-    assert "agent_threat_rules" in UNCLEAR_HARM_MAPPING_DATASET_NAMES

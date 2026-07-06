@@ -2,11 +2,13 @@
 # Licensed under the MIT license.
 
 import logging
+from typing import cast
 
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
 from pyrit.models import SeedDataset, SeedPrompt
+from pyrit.models.harm_category import HarmCategory
 
 logger = logging.getLogger(__name__)
 
@@ -24,18 +26,25 @@ class _JBBBehaviorsDataset(_RemoteDatasetLoader):
     before using these prompts against production LLMs.
     """
 
-    HARM_CATEGORY_ALIAS_OVERRIDES: dict[str, list[str]] = {
-        "disinformation": ["INFO_INTEGRITY"],
-        "economic harm": ["SCAMS"],
-        "expert advice": ["HEALTH_DIAGNOSIS", "LEGAL_ADVICE", "FINANCIAL_ADVICE"],
-        "fraud/deception": ["SCAMS", "DECEPTION"],
-        "government decision-making": ["HIGH_RISK_GOVERNMENT"],
-        "harassment/discrimination": ["HARASSMENT", "HATESPEECH", "REPRESENTATIONAL"],
-        "malware/hacking": ["MALWARE"],
-        "physical harm": ["VIOLENT_CONTENT", "COORDINATION_HARM"],
-        "privacy": ["PPI"],
-        "sexual/adult content": ["SEXUAL_CONTENT"],
-    }
+    HARM_CATEGORY_ALIAS_OVERRIDES: dict[str, list[HarmCategory]] = cast(
+        "dict[str, list[HarmCategory]]",
+        {
+            "disinformation": [HarmCategory.INFO_INTEGRITY],
+            "economic harm": [HarmCategory.SCAMS],
+            "expert advice": [HarmCategory.HEALTH_DIAGNOSIS, HarmCategory.LEGAL_ADVICE, HarmCategory.FINANCIAL_ADVICE],
+            "fraud/deception": [HarmCategory.SCAMS, HarmCategory.DECEPTION],
+            "government decision-making": [HarmCategory.HIGH_RISK_GOVERNMENT],
+            "harassment/discrimination": [
+                HarmCategory.HARASSMENT,
+                HarmCategory.HATESPEECH,
+                HarmCategory.REPRESENTATIONAL,
+            ],
+            "malware/hacking": [HarmCategory.MALWARE],
+            "physical harm": [HarmCategory.VIOLENT_CONTENT, HarmCategory.COORDINATION_HARM],
+            "privacy": [HarmCategory.PPI],
+            "sexual/adult content": [HarmCategory.SEXUAL_CONTENT],
+        },
+    )
 
     def __init__(
         self,

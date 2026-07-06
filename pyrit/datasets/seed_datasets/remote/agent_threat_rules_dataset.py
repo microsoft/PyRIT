@@ -6,7 +6,6 @@ from enum import Enum
 from typing import Literal, Optional
 
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
-    UNCLEAR_HARM_MAPPING_DATASET_NAMES,
     _RemoteDatasetLoader,
 )
 from pyrit.models import SeedDataset, SeedPrompt
@@ -110,8 +109,8 @@ class _AgentThreatRulesDataset(_RemoteDatasetLoader):
     upstream metadata fields (``original_rule_id``, ``technique``,
     ``detection_field``, ``variation_type``) are preserved on
     ``SeedPrompt.metadata`` so downstream consumers can route, filter, or
-    score by them. ``harm_categories`` is set to the rule's ATR category
-    (single-element list).
+    score by them. ATR categories are agent-security technique labels rather
+    than content-harm labels, so ``harm_categories`` is intentionally empty.
 
     The optional ``categories``, ``techniques``, ``detection_fields``, and
     ``variation_types`` arguments narrow the dataset client-side after fetch.
@@ -123,7 +122,7 @@ class _AgentThreatRulesDataset(_RemoteDatasetLoader):
     harm_categories: list[str] = []
     modalities: list[str] = ["text"]
     size: str = "large"  # 1,054 seeds
-    tags: set[str] = {"safety", "agent_security", "prompt_injection", "unclear_harm_mapping"}
+    tags: set[str] = {"safety", "agent_security", "prompt_injection"}
 
     def __init__(
         self,
@@ -231,7 +230,6 @@ class _AgentThreatRulesDataset(_RemoteDatasetLoader):
             source_type=self.source_type,
             cache=cache,
         )
-        mapping_is_unclear = self.dataset_name in UNCLEAR_HARM_MAPPING_DATASET_NAMES
 
         authors = ["Kuan-Hsin Lin", "ATR Community"]
         source_url = "https://github.com/Agent-Threat-Rule/agent-threat-rules"
@@ -271,7 +269,6 @@ class _AgentThreatRulesDataset(_RemoteDatasetLoader):
                 "variation_type": example["variation_type"],
                 "atr_id": example["id"],
                 "atr_category": category_value,
-                "harm_mapping_status": "unclear" if mapping_is_unclear else "mapped",
             }
 
             # Per-rule description so downstream consumers reading metadata see

@@ -3,11 +3,13 @@
 
 import json
 import logging
+from typing import cast
 
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
 from pyrit.models import SeedDataset, SeedPrompt
+from pyrit.models.harm_category import HarmCategory
 
 logger = logging.getLogger(__name__)
 
@@ -31,34 +33,37 @@ class _BeaverTailsDataset(_RemoteDatasetLoader):
     """
 
     HF_DATASET_NAME: str = "PKU-Alignment/BeaverTails"
-    HARM_CATEGORY_ALIAS_OVERRIDES: dict[str, list[str]] = {
-        "aiding_and_abetting": ["COORDINATION_HARM"],
-        "animal_abuse": ["OTHER"],
-        "banned_substance": ["DRUG_USE", "REGULATED_GOODS"],
-        "child_abuse": ["GROOMING", "SEXUAL_CONTENT", "CHILD_LEAKAGE"],
-        "controversial_topics": ["OTHER"],
-        "discrimination": ["REPRESENTATIONAL", "HATESPEECH"],
-        "drug_abuse": ["DRUG_USE"],
-        "financial_crime": ["SCAMS", "COORDINATION_HARM"],
-        "hate_speech": ["HATESPEECH"],
-        "incitement": ["VIOLENT_THREATS"],
-        "injustice": ["REPRESENTATIONAL", "HATESPEECH"],
-        "laws_and_safety": ["INFO_INTEGRITY"],
-        "misinformation_regarding_ethics": ["INFO_INTEGRITY"],
-        "non_violent_unethical_behavior": ["OTHER"],
-        "offensive_language": ["HATESPEECH"],
-        "organized_crime": ["COORDINATION_HARM"],
-        "politics": ["OTHER"],
-        "privacy_violation": ["PPI"],
-        "property_crime": ["COORDINATION_HARM"],
-        "self_harm": ["SELF_HARM"],
-        "sexually_explicit": ["SEXUAL_CONTENT"],
-        "stereotype": ["REPRESENTATIONAL", "HATESPEECH"],
-        "terrorism": ["VIOLENT_EXTREMISM"],
-        "theft": ["COORDINATION_HARM"],
-        "violence": ["VIOLENT_CONTENT", "VIOLENT_THREATS", "COORDINATION_HARM"],
-        "weapons": ["REGULATED_GOODS"],
-    }
+    HARM_CATEGORY_ALIAS_OVERRIDES: dict[str, list[HarmCategory]] = cast(
+        "dict[str, list[HarmCategory]]",
+        {
+            "aiding_and_abetting": [HarmCategory.COORDINATION_HARM],
+            "animal_abuse": [HarmCategory.OTHER],
+            "banned_substance": [HarmCategory.DRUG_USE, HarmCategory.REGULATED_GOODS],
+            "child_abuse": [HarmCategory.GROOMING, HarmCategory.SEXUAL_CONTENT, HarmCategory.CHILD_LEAKAGE],
+            "controversial_topics": [HarmCategory.OTHER],
+            "discrimination": [HarmCategory.REPRESENTATIONAL, HarmCategory.HATESPEECH],
+            "drug_abuse": [HarmCategory.DRUG_USE],
+            "financial_crime": [HarmCategory.SCAMS, HarmCategory.COORDINATION_HARM],
+            "hate_speech": [HarmCategory.HATESPEECH],
+            "incitement": [HarmCategory.VIOLENT_THREATS],
+            "injustice": [HarmCategory.REPRESENTATIONAL, HarmCategory.HATESPEECH],
+            "laws_and_safety": [HarmCategory.INFO_INTEGRITY],
+            "misinformation_regarding_ethics": [HarmCategory.INFO_INTEGRITY],
+            "non_violent_unethical_behavior": [HarmCategory.OTHER],
+            "offensive_language": [HarmCategory.HATESPEECH],
+            "organized_crime": [HarmCategory.COORDINATION_HARM],
+            "politics": [HarmCategory.OTHER],
+            "privacy_violation": [HarmCategory.PPI],
+            "property_crime": [HarmCategory.COORDINATION_HARM],
+            "self_harm": [HarmCategory.SELF_HARM],
+            "sexually_explicit": [HarmCategory.SEXUAL_CONTENT],
+            "stereotype": [HarmCategory.REPRESENTATIONAL, HarmCategory.HATESPEECH],
+            "terrorism": [HarmCategory.VIOLENT_EXTREMISM],
+            "theft": [HarmCategory.COORDINATION_HARM],
+            "violence": [HarmCategory.VIOLENT_CONTENT, HarmCategory.VIOLENT_THREATS, HarmCategory.COORDINATION_HARM],
+            "weapons": [HarmCategory.REGULATED_GOODS],
+        },
+    )
 
     def __init__(
         self,

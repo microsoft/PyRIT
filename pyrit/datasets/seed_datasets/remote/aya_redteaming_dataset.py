@@ -3,12 +3,13 @@
 
 import ast
 import logging
-from typing import Literal, Optional
+from typing import Literal, Optional, cast
 
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
 from pyrit.models import SeedDataset, SeedPrompt
+from pyrit.models.harm_category import HarmCategory
 
 logger = logging.getLogger(__name__)
 
@@ -104,18 +105,25 @@ class _AyaRedteamingDataset(_RemoteDatasetLoader):
         )
 
         seed_prompts = []
-        harm_category_alias_overrides: dict[str, list[str]] = {
-            "bullying & harassment": ["HARASSMENT"],
-            "discrimination & injustice": ["HATESPEECH", "REPRESENTATIONAL"],
-            "graphic material": ["VIOLENT_CONTENT"],
-            "harms of representation allocation and quality of service": [
-                "REPRESENTATIONAL",
-                "ALLOCATION",
-                "QUALITY_OF_SERVICE",
-            ],
-            "non-consensual sexual content": ["SEXUAL_CONTENT", "NONCONSENSUAL_UPLOAD"],
-            "violence, threats & incitement": ["VIOLENT_CONTENT", "VIOLENT_THREATS", "COORDINATION_HARM"],
-        }
+        harm_category_alias_overrides: dict[str, list[HarmCategory]] = cast(
+            "dict[str, list[HarmCategory]]",
+            {
+                "bullying & harassment": [HarmCategory.HARASSMENT],
+                "discrimination & injustice": [HarmCategory.HATESPEECH, HarmCategory.REPRESENTATIONAL],
+                "graphic material": [HarmCategory.VIOLENT_CONTENT],
+                "harms of representation allocation and quality of service": [
+                    HarmCategory.REPRESENTATIONAL,
+                    HarmCategory.ALLOCATION,
+                    HarmCategory.QUALITY_OF_SERVICE,
+                ],
+                "non-consensual sexual content": [HarmCategory.SEXUAL_CONTENT, HarmCategory.NONCONSENSUAL_UPLOAD],
+                "violence, threats & incitement": [
+                    HarmCategory.VIOLENT_CONTENT,
+                    HarmCategory.VIOLENT_THREATS,
+                    HarmCategory.COORDINATION_HARM,
+                ],
+            },
+        )
 
         for example in examples:
             categories = ast.literal_eval(example["harm_category"])

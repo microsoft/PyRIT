@@ -41,22 +41,6 @@ FILE_TYPE_HANDLERS: dict[str, dict[str, Callable[..., Any]]] = {
     "txt": {"read": read_txt, "write": write_txt},
 }
 
-# Dataset loaders whose source taxonomy does not map cleanly to the canonical
-# harm taxonomy and should be treated as mapping-unclear. Such loaders emit
-# empty ``harm_categories`` and stamp ``harm_mapping_status: "unclear"`` in
-# metadata while preserving the dataset's own native label for provenance.
-UNCLEAR_HARM_MAPPING_DATASET_NAMES: frozenset[str] = frozenset(
-    {
-        "agent_threat_rules",
-        "ccp_sensitive_prompts",
-        "coconot_refusal",
-        "coconot_contrast",
-        "dark_bench",
-        "moral_integrity_corpus",
-        "promptintel",
-    }
-)
-
 
 class _RemoteDatasetLoader(SeedDatasetProvider, ABC):
     """

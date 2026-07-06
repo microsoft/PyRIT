@@ -4,7 +4,7 @@
 import logging
 import uuid
 from enum import Enum
-from typing import Literal, Optional
+from typing import Literal, Optional, cast
 
 from pyrit.datasets.seed_datasets.remote._image_cache import (
     fetch_and_cache_image_async,
@@ -13,6 +13,7 @@ from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
 from pyrit.models import SeedDataset, SeedPrompt
+from pyrit.models.harm_category import HarmCategory
 
 logger = logging.getLogger(__name__)
 
@@ -52,23 +53,26 @@ class _VLSUMultimodalDataset(_RemoteDatasetLoader):
     Reference: [@palaskar2025vlsu]
     """
 
-    HARM_CATEGORY_ALIAS_OVERRIDES: dict[str, list[str]] = {
-        "c1: slurs, hate speech, hate symbols": ["HATESPEECH", "REPRESENTATIONAL"],
-        "c2: discrimination and unequal treatment": ["REPRESENTATIONAL", "HATESPEECH"],
-        "c3: drug abuse": ["DRUG_USE"],
-        "c4: self-harm and suicide": ["SELF_HARM", "SUICIDE"],
-        "c5: animal violence and gore": ["VIOLENT_CONTENT"],
-        "c6: adult explicit sexual material": ["SEXUAL_CONTENT"],
-        "c7: adult racy material": ["SEXUAL_CONTENT"],
-        "c8: warfare and armed conflicts": ["MILITARY"],
-        "c9: interpersonal violence": ["VIOLENT_CONTENT"],
-        "c10: weapons and dangerous objects": ["MILITARY"],
-        "c11: gore and graphic content": ["VIOLENT_CONTENT"],
-        "c12: terrorism and violent extremism": ["VIOLENT_EXTREMISM"],
-        "c13: jailbreaks": ["DECEPTION"],
-        "c14: inauthentic practices/fraud": ["DECEPTION", "SCAMS"],
-        "c15: human exploitation": ["COORDINATION_HARM"],
-    }
+    HARM_CATEGORY_ALIAS_OVERRIDES: dict[str, list[HarmCategory]] = cast(
+        "dict[str, list[HarmCategory]]",
+        {
+            "c1: slurs, hate speech, hate symbols": [HarmCategory.HATESPEECH, HarmCategory.REPRESENTATIONAL],
+            "c2: discrimination and unequal treatment": [HarmCategory.REPRESENTATIONAL, HarmCategory.HATESPEECH],
+            "c3: drug abuse": [HarmCategory.DRUG_USE],
+            "c4: self-harm and suicide": [HarmCategory.SELF_HARM, HarmCategory.SUICIDE],
+            "c5: animal violence and gore": [HarmCategory.VIOLENT_CONTENT],
+            "c6: adult explicit sexual material": [HarmCategory.SEXUAL_CONTENT],
+            "c7: adult racy material": [HarmCategory.SEXUAL_CONTENT],
+            "c8: warfare and armed conflicts": [HarmCategory.MILITARY],
+            "c9: interpersonal violence": [HarmCategory.VIOLENT_CONTENT],
+            "c10: weapons and dangerous objects": [HarmCategory.MILITARY],
+            "c11: gore and graphic content": [HarmCategory.VIOLENT_CONTENT],
+            "c12: terrorism and violent extremism": [HarmCategory.VIOLENT_EXTREMISM],
+            "c13: jailbreaks": [HarmCategory.DECEPTION],
+            "c14: inauthentic practices/fraud": [HarmCategory.DECEPTION, HarmCategory.SCAMS],
+            "c15: human exploitation": [HarmCategory.COORDINATION_HARM],
+        },
+    )
     COMBINED_CATEGORY_CORRECTIONS: dict[str, str] = {
         "2aa9226c-201d-458d-9b2e-0aa36845c763": VLSUCategory.HUMAN_EXPLOITATION.value,
     }

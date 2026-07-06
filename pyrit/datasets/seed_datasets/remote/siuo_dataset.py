@@ -4,7 +4,7 @@
 import logging
 import uuid
 from enum import Enum
-from typing import Literal, Optional
+from typing import Literal, Optional, cast
 
 from pyrit.datasets.seed_datasets.remote._image_cache import (
     fetch_and_cache_image_async,
@@ -13,6 +13,7 @@ from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
 from pyrit.models import Seed, SeedDataset, SeedObjective, SeedPrompt
+from pyrit.models.harm_category import HarmCategory
 
 logger = logging.getLogger(__name__)
 
@@ -105,18 +106,21 @@ class _SIUODataset(_RemoteDatasetLoader):
     size: str = "medium"
     tags: frozenset[str] = frozenset({"default", "safety", "multimodal"})
 
-    HARM_CATEGORY_ALIAS_OVERRIDES: dict[str, list[str]] = {
-        "illegal activities & crime": ["COORDINATION_HARM"],
-        "illegal activity": ["COORDINATION_HARM"],
-        "privacy violation": ["PPI"],
-        "morality": ["OTHER"],
-        "dangerous behavior": ["DANGEROUS_SITUATIONS"],
-        "discrimination & stereotyping": ["REPRESENTATIONAL", "HATESPEECH"],
-        "information misinterpretation": ["INFO_INTEGRITY"],
-        "religion beliefs": ["PROTECTED_INFERENCE"],
-        "controversial topics, politics": ["INFO_INTEGRITY"],
-        "controversial politics": ["INFO_INTEGRITY"],
-    }
+    HARM_CATEGORY_ALIAS_OVERRIDES: dict[str, list[HarmCategory]] = cast(
+        "dict[str, list[HarmCategory]]",
+        {
+            "illegal activities & crime": [HarmCategory.COORDINATION_HARM],
+            "illegal activity": [HarmCategory.COORDINATION_HARM],
+            "privacy violation": [HarmCategory.PPI],
+            "morality": [HarmCategory.OTHER],
+            "dangerous behavior": [HarmCategory.DANGEROUS_SITUATIONS],
+            "discrimination & stereotyping": [HarmCategory.REPRESENTATIONAL, HarmCategory.HATESPEECH],
+            "information misinterpretation": [HarmCategory.INFO_INTEGRITY],
+            "religion beliefs": [HarmCategory.PROTECTED_INFERENCE],
+            "controversial topics, politics": [HarmCategory.INFO_INTEGRITY],
+            "controversial politics": [HarmCategory.INFO_INTEGRITY],
+        },
+    )
 
     def __init__(
         self,

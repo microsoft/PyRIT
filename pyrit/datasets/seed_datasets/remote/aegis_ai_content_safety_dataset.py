@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 import logging
-from typing import Literal, Optional
+from typing import Literal, Optional, cast
 
 from datasets import load_dataset
 
@@ -10,6 +10,7 @@ from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
 from pyrit.models import SeedDataset, SeedPrompt
+from pyrit.models.harm_category import HarmCategory
 
 logger = logging.getLogger(__name__)
 
@@ -139,27 +140,50 @@ class _AegisContentSafetyDataset(_RemoteDatasetLoader):
         hf_dataset = load_dataset("nvidia/Aegis-AI-Content-Safety-Dataset-2.0")
 
         # Map AEGIS-specific categories to PyRIT harm categories
-        alias_overrides: dict[str, list[str]] = {
-            "Controlled/Regulated Substances": ["DRUG_USE", "REGULATED_GOODS"],
-            "Copyright/Trademark/Plagiarism": ["COPYRIGHT", "TRADEMARK", "PLAGIARISM"],
-            "Criminal Planning/Confessions": ["COORDINATION_HARM"],
-            "Fraud/Deception": ["SCAMS", "DECEPTION"],
-            "Guns and Illegal Weapons": ["REGULATED_GOODS", "COORDINATION_HARM", "VIOLENT_CONTENT"],
-            "Hate/Identity Hate": ["HATESPEECH", "REPRESENTATIONAL"],
-            "High Risk Gov Decision Making": ["HIGH_RISK_GOVERNMENT"],
-            "Illegal Activity": ["COORDINATION_HARM"],
-            "Immoral/Unethical": ["OTHER"],
-            "Manipulation": ["DECEPTION"],
-            "Needs Caution": ["OTHER"],
-            "PII/Privacy": ["PPI"],
-            "Political/Misinformation/Conspiracy": ["INFO_INTEGRITY", "CURRENT_EVENTS_MISINFO", "CAMPAIGNING"],
-            "Sexual": ["SEXUAL_CONTENT"],
-            "Sexual (minor)": ["SEXUALIZATION", "CHILD_LEAKAGE", "SEXUAL_CONTENT"],
-            "Suicide and Self Harm": ["SUICIDE", "SELF_HARM"],
-            "Threat": ["VIOLENT_THREATS"],
-            "Unauthorized Advice": ["FINANCIAL_ADVICE", "HEALTH_DIAGNOSIS", "LEGAL_ADVICE"],
-            "Violence": ["VIOLENT_CONTENT", "VIOLENT_THREATS", "COORDINATION_HARM"],
-        }
+        alias_overrides: dict[str, list[HarmCategory]] = cast(
+            "dict[str, list[HarmCategory]]",
+            {
+                "Controlled/Regulated Substances": [HarmCategory.DRUG_USE, HarmCategory.REGULATED_GOODS],
+                "Copyright/Trademark/Plagiarism": [
+                    HarmCategory.COPYRIGHT,
+                    HarmCategory.TRADEMARK,
+                    HarmCategory.PLAGIARISM,
+                ],
+                "Criminal Planning/Confessions": [HarmCategory.COORDINATION_HARM],
+                "Fraud/Deception": [HarmCategory.SCAMS, HarmCategory.DECEPTION],
+                "Guns and Illegal Weapons": [
+                    HarmCategory.REGULATED_GOODS,
+                    HarmCategory.COORDINATION_HARM,
+                    HarmCategory.VIOLENT_CONTENT,
+                ],
+                "Hate/Identity Hate": [HarmCategory.HATESPEECH, HarmCategory.REPRESENTATIONAL],
+                "High Risk Gov Decision Making": [HarmCategory.HIGH_RISK_GOVERNMENT],
+                "Illegal Activity": [HarmCategory.COORDINATION_HARM],
+                "Immoral/Unethical": [HarmCategory.OTHER],
+                "Manipulation": [HarmCategory.DECEPTION],
+                "Needs Caution": [HarmCategory.OTHER],
+                "PII/Privacy": [HarmCategory.PPI],
+                "Political/Misinformation/Conspiracy": [
+                    HarmCategory.INFO_INTEGRITY,
+                    HarmCategory.CURRENT_EVENTS_MISINFO,
+                    HarmCategory.CAMPAIGNING,
+                ],
+                "Sexual": [HarmCategory.SEXUAL_CONTENT],
+                "Sexual (minor)": [HarmCategory.SEXUALIZATION, HarmCategory.CHILD_LEAKAGE, HarmCategory.SEXUAL_CONTENT],
+                "Suicide and Self Harm": [HarmCategory.SUICIDE, HarmCategory.SELF_HARM],
+                "Threat": [HarmCategory.VIOLENT_THREATS],
+                "Unauthorized Advice": [
+                    HarmCategory.FINANCIAL_ADVICE,
+                    HarmCategory.HEALTH_DIAGNOSIS,
+                    HarmCategory.LEGAL_ADVICE,
+                ],
+                "Violence": [
+                    HarmCategory.VIOLENT_CONTENT,
+                    HarmCategory.VIOLENT_THREATS,
+                    HarmCategory.COORDINATION_HARM,
+                ],
+            },
+        )
 
         seed_prompts = []
 

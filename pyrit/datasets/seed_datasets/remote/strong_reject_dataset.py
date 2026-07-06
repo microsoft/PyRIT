@@ -1,12 +1,13 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from typing import Literal
+from typing import Literal, cast
 
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
 from pyrit.models import SeedDataset, SeedObjective
+from pyrit.models.harm_category import HarmCategory
 
 
 class _StrongRejectDataset(_RemoteDatasetLoader):
@@ -42,14 +43,21 @@ class _StrongRejectDataset(_RemoteDatasetLoader):
     modalities: list[str] = ["text"]
     size: str = "medium"  # 313 seeds
     tags: set[str] = {"jailbreak", "safety"}
-    HARM_CATEGORY_ALIAS_OVERRIDES: dict[str, list[str]] = {
-        "disinformation and deception": ["INFO_INTEGRITY", "DECEPTION"],
-        "hate, harassment and discrimination": ["HATESPEECH", "HARASSMENT", "REPRESENTATIONAL"],
-        "illegal goods and services": ["REGULATED_GOODS", "COORDINATION_HARM"],
-        "non-violent crimes": ["COORDINATION_HARM", "SCAMS"],
-        "sexual content": ["SEXUAL_CONTENT"],
-        "violence": ["VIOLENT_CONTENT", "VIOLENT_THREATS", "COORDINATION_HARM"],
-    }
+    HARM_CATEGORY_ALIAS_OVERRIDES: dict[str, list[HarmCategory]] = cast(
+        "dict[str, list[HarmCategory]]",
+        {
+            "disinformation and deception": [HarmCategory.INFO_INTEGRITY, HarmCategory.DECEPTION],
+            "hate, harassment and discrimination": [
+                HarmCategory.HATESPEECH,
+                HarmCategory.HARASSMENT,
+                HarmCategory.REPRESENTATIONAL,
+            ],
+            "illegal goods and services": [HarmCategory.REGULATED_GOODS, HarmCategory.COORDINATION_HARM],
+            "non-violent crimes": [HarmCategory.COORDINATION_HARM, HarmCategory.SCAMS],
+            "sexual content": [HarmCategory.SEXUAL_CONTENT],
+            "violence": [HarmCategory.VIOLENT_CONTENT, HarmCategory.VIOLENT_THREATS, HarmCategory.COORDINATION_HARM],
+        },
+    )
 
     def __init__(
         self,

@@ -1,12 +1,13 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from typing import Literal
+from typing import Literal, cast
 
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
 from pyrit.models import SeedDataset, SeedObjective
+from pyrit.models.harm_category import HarmCategory
 
 
 class _HarmBenchDataset(_RemoteDatasetLoader):
@@ -73,17 +74,20 @@ class _HarmBenchDataset(_RemoteDatasetLoader):
         )
 
         # Validate and process examples
-        harm_category_alias_overrides: dict[str, list[str]] = {
-            "chemical_biological": ["CBRN"],
-            "cybercrime_intrusion": ["COORDINATION_HARM", "MALWARE"],
-            "cybercrime": ["COORDINATION_HARM", "MALWARE"],
-            "harassment_bullying": ["HARASSMENT"],
-            "illegal": ["COORDINATION_HARM"],
-            "illegal_activity": ["COORDINATION_HARM"],
-            "misinformation_disinformation": ["INFO_INTEGRITY"],
-            "harmful": ["OTHER"],
-            "copyright": ["COPYRIGHT"],
-        }
+        harm_category_alias_overrides: dict[str, list[HarmCategory]] = cast(
+            "dict[str, list[HarmCategory]]",
+            {
+                "chemical_biological": [HarmCategory.CBRN],
+                "cybercrime_intrusion": [HarmCategory.COORDINATION_HARM, HarmCategory.MALWARE],
+                "cybercrime": [HarmCategory.COORDINATION_HARM, HarmCategory.MALWARE],
+                "harassment_bullying": [HarmCategory.HARASSMENT],
+                "illegal": [HarmCategory.COORDINATION_HARM],
+                "illegal_activity": [HarmCategory.COORDINATION_HARM],
+                "misinformation_disinformation": [HarmCategory.INFO_INTEGRITY],
+                "harmful": [HarmCategory.OTHER],
+                "copyright": [HarmCategory.COPYRIGHT],
+            },
+        )
 
         seeds = []
         for example in examples:

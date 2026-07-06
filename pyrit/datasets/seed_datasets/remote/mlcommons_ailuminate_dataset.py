@@ -2,12 +2,13 @@
 # Licensed under the MIT license.
 
 import logging
-from typing import Literal
+from typing import Literal, cast
 
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
 from pyrit.models import SeedDataset, SeedPrompt
+from pyrit.models.harm_category import HarmCategory
 
 logger = logging.getLogger(__name__)
 
@@ -82,38 +83,45 @@ class _MLCommonsAILuminateDataset(_RemoteDatasetLoader):
             source_type=self.source_type,
             cache=cache,
         )
-        harm_category_alias_overrides: dict[str, list[str]] = {
-            "vcr": ["VIOLENT_CONTENT"],
-            "violent crimes": ["VIOLENT_CONTENT"],
-            "src": ["SEXUAL_CONTENT"],
-            "sex-related crimes": ["SEXUAL_CONTENT"],
-            "cse": ["SEXUAL_CONTENT", "GROOMING"],
-            "child sexual exploitation": ["SEXUAL_CONTENT", "GROOMING"],
-            "ssh": ["SUICIDE", "SELF_HARM"],
-            "suicide & self-harm": ["SUICIDE", "SELF_HARM"],
-            "iwp": ["CBRN", "MILITARY"],
-            "indiscriminate weapons (cbrne)": ["CBRN", "MILITARY"],
-            "ipv": ["COPYRIGHT", "TRADEMARK", "PLAGIARISM"],
-            "intellectual property violations": ["COPYRIGHT", "TRADEMARK", "PLAGIARISM"],
-            "dfm": ["REPUTATIONAL_DAMAGE"],
-            "defamation": ["REPUTATIONAL_DAMAGE"],
-            "ncr": ["COORDINATION_HARM"],
-            "non-violent crimes": ["COORDINATION_HARM"],
-            "hte": ["HATESPEECH", "HARASSMENT"],
-            "hate": ["HATESPEECH", "HARASSMENT"],
-            "prv": ["PPI"],
-            "privacy violations": ["PPI"],
-            "spc_ele": ["CAMPAIGNING"],
-            "specialized advice; elections": ["CAMPAIGNING"],
-            "spc_fin": ["FINANCIAL_ADVICE"],
-            "specialized advice; financial": ["FINANCIAL_ADVICE"],
-            "spc_hlt": ["PUBLIC_HEALTH"],
-            "specialized advice; health": ["PUBLIC_HEALTH"],
-            "sxc_prn": ["SEXUAL_CONTENT"],
-            "sexual content; pornographic": ["SEXUAL_CONTENT"],
-            "spc_lgl": ["LEGAL_ADVICE"],
-            "specialized advice; legal": ["LEGAL_ADVICE"],
-        }
+        harm_category_alias_overrides: dict[str, list[HarmCategory]] = cast(
+            "dict[str, list[HarmCategory]]",
+            {
+                "vcr": [HarmCategory.VIOLENT_CONTENT],
+                "violent crimes": [HarmCategory.VIOLENT_CONTENT],
+                "src": [HarmCategory.SEXUAL_CONTENT],
+                "sex-related crimes": [HarmCategory.SEXUAL_CONTENT],
+                "cse": [HarmCategory.SEXUAL_CONTENT, HarmCategory.GROOMING],
+                "child sexual exploitation": [HarmCategory.SEXUAL_CONTENT, HarmCategory.GROOMING],
+                "ssh": [HarmCategory.SUICIDE, HarmCategory.SELF_HARM],
+                "suicide & self-harm": [HarmCategory.SUICIDE, HarmCategory.SELF_HARM],
+                "iwp": [HarmCategory.CBRN, HarmCategory.MILITARY],
+                "indiscriminate weapons (cbrne)": [HarmCategory.CBRN, HarmCategory.MILITARY],
+                "ipv": [HarmCategory.COPYRIGHT, HarmCategory.TRADEMARK, HarmCategory.PLAGIARISM],
+                "intellectual property violations": [
+                    HarmCategory.COPYRIGHT,
+                    HarmCategory.TRADEMARK,
+                    HarmCategory.PLAGIARISM,
+                ],
+                "dfm": [HarmCategory.REPUTATIONAL_DAMAGE],
+                "defamation": [HarmCategory.REPUTATIONAL_DAMAGE],
+                "ncr": [HarmCategory.COORDINATION_HARM],
+                "non-violent crimes": [HarmCategory.COORDINATION_HARM],
+                "hte": [HarmCategory.HATESPEECH, HarmCategory.HARASSMENT],
+                "hate": [HarmCategory.HATESPEECH, HarmCategory.HARASSMENT],
+                "prv": [HarmCategory.PPI],
+                "privacy violations": [HarmCategory.PPI],
+                "spc_ele": [HarmCategory.CAMPAIGNING],
+                "specialized advice; elections": [HarmCategory.CAMPAIGNING],
+                "spc_fin": [HarmCategory.FINANCIAL_ADVICE],
+                "specialized advice; financial": [HarmCategory.FINANCIAL_ADVICE],
+                "spc_hlt": [HarmCategory.PUBLIC_HEALTH],
+                "specialized advice; health": [HarmCategory.PUBLIC_HEALTH],
+                "sxc_prn": [HarmCategory.SEXUAL_CONTENT],
+                "sexual content; pornographic": [HarmCategory.SEXUAL_CONTENT],
+                "spc_lgl": [HarmCategory.LEGAL_ADVICE],
+                "specialized advice; legal": [HarmCategory.LEGAL_ADVICE],
+            },
+        )
 
         seed_prompts = [
             SeedPrompt(

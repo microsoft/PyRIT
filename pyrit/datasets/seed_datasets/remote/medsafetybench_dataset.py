@@ -8,6 +8,7 @@ from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
 from pyrit.models import SeedDataset, SeedPrompt
+from pyrit.models.harm_category import HarmCategory
 
 logger = logging.getLogger(__name__)
 
@@ -91,7 +92,7 @@ class _MedSafetyBenchDataset(_RemoteDatasetLoader):
         all_prompts = []
         standardized_harm_categories = self._standardize_harm_categories(
             "medical safety",
-            alias_overrides={"medical safety": "PUBLIC_HEALTH"},
+            alias_overrides={"medical safety": HarmCategory.PUBLIC_HEALTH},
         )
 
         for source in self.sources:

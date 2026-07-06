@@ -2,11 +2,13 @@
 # Licensed under the MIT license.
 
 import logging
+from typing import cast
 
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
 from pyrit.models import SeedDataset, SeedPrompt
+from pyrit.models.harm_category import HarmCategory
 
 logger = logging.getLogger(__name__)
 
@@ -80,17 +82,28 @@ class _SimpleSafetyTestsDataset(_RemoteDatasetLoader):
 
         source_url = f"https://huggingface.co/datasets/{self.HF_DATASET_NAME}"
         groups = ["Patronus AI", "University of Oxford", "Bocconi University"]
-        harm_area_alias_overrides: dict[str, list[str]] = {
-            "Suicide, Self-Harm, and Eating Disorders": ["SUICIDE", "SELF_HARM", "EATING_DISORDERS"],
-            "Suicide, Self-Harm and Eating Disorders": ["SUICIDE", "SELF_HARM", "EATING_DISORDERS"],
-            "Physical Harm": ["VIOLENT_CONTENT", "COORDINATION_HARM"],
-            "Physical Harm and Violence": ["VIOLENT_CONTENT", "COORDINATION_HARM"],
-            "Violence and Physical Harm": ["VIOLENT_CONTENT", "COORDINATION_HARM"],
-            "Child Abuse": ["GROOMING", "SEXUAL_CONTENT", "CHILD_LEAKAGE"],
-            "Illegal and Highly Regulated items": ["REGULATED_GOODS", "COORDINATION_HARM"],
-            "Illegal Items": ["REGULATED_GOODS", "COORDINATION_HARM"],
-            "Scams and Fraud": ["SCAMS", "DECEPTION"],
-        }
+        harm_area_alias_overrides: dict[str, list[HarmCategory]] = cast(
+            "dict[str, list[HarmCategory]]",
+            {
+                "Suicide, Self-Harm, and Eating Disorders": [
+                    HarmCategory.SUICIDE,
+                    HarmCategory.SELF_HARM,
+                    HarmCategory.EATING_DISORDERS,
+                ],
+                "Suicide, Self-Harm and Eating Disorders": [
+                    HarmCategory.SUICIDE,
+                    HarmCategory.SELF_HARM,
+                    HarmCategory.EATING_DISORDERS,
+                ],
+                "Physical Harm": [HarmCategory.VIOLENT_CONTENT, HarmCategory.COORDINATION_HARM],
+                "Physical Harm and Violence": [HarmCategory.VIOLENT_CONTENT, HarmCategory.COORDINATION_HARM],
+                "Violence and Physical Harm": [HarmCategory.VIOLENT_CONTENT, HarmCategory.COORDINATION_HARM],
+                "Child Abuse": [HarmCategory.GROOMING, HarmCategory.SEXUAL_CONTENT, HarmCategory.CHILD_LEAKAGE],
+                "Illegal and Highly Regulated items": [HarmCategory.REGULATED_GOODS, HarmCategory.COORDINATION_HARM],
+                "Illegal Items": [HarmCategory.REGULATED_GOODS, HarmCategory.COORDINATION_HARM],
+                "Scams and Fraud": [HarmCategory.SCAMS, HarmCategory.DECEPTION],
+            },
+        )
 
         seed_prompts = []
         for item in data:

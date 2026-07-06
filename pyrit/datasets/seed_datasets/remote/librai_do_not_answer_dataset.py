@@ -2,11 +2,13 @@
 # Licensed under the MIT license.
 
 import logging
+from typing import cast
 
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
 from pyrit.models import SeedDataset, SeedPrompt
+from pyrit.models.harm_category import HarmCategory
 
 logger = logging.getLogger(__name__)
 
@@ -61,26 +63,37 @@ class _LibrAIDoNotAnswerDataset(_RemoteDatasetLoader):
         # Map the 12 "types_of_harm" labels (finer-grained than the 5 risk_area
         # buckets) to canonical harm categories. The native risk_area,
         # types_of_harm, and specific_harms annotations are preserved in metadata.
-        harm_type_alias_overrides: dict[str, list[str]] = {
-            "Toxic language (hate speech)": ["HATESPEECH"],
-            "Mental Health or Overreliance Crisis": ["MENTAL_HEALTH", "EMOTIONAL"],
-            "Social stereotypes and unfair discrimination": ["REPRESENTATIONAL", "HATESPEECH"],
-            "Treat Chatbot as a Human": ["EMOTIONAL"],
-            "Adult Content": ["SEXUAL_CONTENT"],
-            "Compromise privacy by leaking or inferring private information (person/individual)": ["PPI"],
-            "Risks from leaking or inferring sensitive information (organization/gov)": [
-                "PROPRIETARY_INFO",
-                "HIGH_RISK_GOVERNMENT",
-            ],
-            "Nudging or advising users to perform unethical or unsafe actions": ["DANGEROUS_SITUATIONS"],
-            "Assisting illegal activities": ["COORDINATION_HARM"],
-            "Causing material harm by disseminating misinformation e.g. in medicine or law": [
-                "INFO_INTEGRITY",
-                "CURRENT_EVENTS_MISINFO",
-            ],
-            "Disseminating false or misleading information": ["INFO_INTEGRITY"],
-            "Reducing the cost of disinformation campaigns": ["INFO_INTEGRITY", "CAMPAIGNING"],
-        }
+        harm_type_alias_overrides: dict[str, list[HarmCategory]] = cast(
+            "dict[str, list[HarmCategory]]",
+            {
+                "Toxic language (hate speech)": [HarmCategory.HATESPEECH],
+                "Mental Health or Overreliance Crisis": [HarmCategory.MENTAL_HEALTH, HarmCategory.EMOTIONAL],
+                "Social stereotypes and unfair discrimination": [
+                    HarmCategory.REPRESENTATIONAL,
+                    HarmCategory.HATESPEECH,
+                ],
+                "Treat Chatbot as a Human": [HarmCategory.EMOTIONAL],
+                "Adult Content": [HarmCategory.SEXUAL_CONTENT],
+                "Compromise privacy by leaking or inferring private information (person/individual)": [
+                    HarmCategory.PPI
+                ],
+                "Risks from leaking or inferring sensitive information (organization/gov)": [
+                    HarmCategory.PROPRIETARY_INFO,
+                    HarmCategory.HIGH_RISK_GOVERNMENT,
+                ],
+                "Nudging or advising users to perform unethical or unsafe actions": [HarmCategory.DANGEROUS_SITUATIONS],
+                "Assisting illegal activities": [HarmCategory.COORDINATION_HARM],
+                "Causing material harm by disseminating misinformation e.g. in medicine or law": [
+                    HarmCategory.INFO_INTEGRITY,
+                    HarmCategory.CURRENT_EVENTS_MISINFO,
+                ],
+                "Disseminating false or misleading information": [HarmCategory.INFO_INTEGRITY],
+                "Reducing the cost of disinformation campaigns": [
+                    HarmCategory.INFO_INTEGRITY,
+                    HarmCategory.CAMPAIGNING,
+                ],
+            },
+        )
 
         seed_prompts = [
             SeedPrompt(

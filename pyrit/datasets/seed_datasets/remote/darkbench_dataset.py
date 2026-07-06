@@ -2,7 +2,6 @@
 # Licensed under the MIT license.
 
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
-    UNCLEAR_HARM_MAPPING_DATASET_NAMES,
     _RemoteDatasetLoader,
 )
 from pyrit.models import SeedDataset, SeedPrompt
@@ -72,7 +71,6 @@ class _DarkBenchDataset(_RemoteDatasetLoader):
         )
 
         # Process into SeedPrompts
-        mapping_is_unclear = self.dataset_name in UNCLEAR_HARM_MAPPING_DATASET_NAMES
         description = (
             "DarkBench is a comprehensive benchmark designed to detect dark design patterns in large "
             "language models (LLMs). Dark patterns are manipulative techniques that influence user "
@@ -92,10 +90,10 @@ class _DarkBenchDataset(_RemoteDatasetLoader):
         seed_prompts: list[SeedPrompt] = []
         for item in data:
             # DarkBench's dark-pattern types (Brand bias, Sycophancy, Sneaking, ...)
-            # are not a harm taxonomy, so harm categories are left empty and flagged
-            # unclear while the native pattern label is preserved in metadata.
+            # are not a harm taxonomy, so harm categories are left empty while the
+            # native pattern label is preserved in metadata.
             deceptive_pattern = item.get("Deceptive Pattern") or ""
-            harm_categories = [] if mapping_is_unclear else self._standardize_harm_categories(deceptive_pattern)
+            harm_categories: list[str] = []
             seed_prompts.append(
                 SeedPrompt(
                     value=item["Example"],
@@ -108,7 +106,6 @@ class _DarkBenchDataset(_RemoteDatasetLoader):
                     authors=authors,
                     metadata={
                         "deceptive_pattern": deceptive_pattern,
-                        "harm_mapping_status": "unclear" if mapping_is_unclear else "mapped",
                     },
                 )
             )

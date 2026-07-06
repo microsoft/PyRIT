@@ -4,7 +4,7 @@
 import logging
 import uuid
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, cast
 
 from pyrit.datasets.seed_datasets.remote._image_cache import (
     fetch_and_cache_image_async,
@@ -13,6 +13,7 @@ from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
 from pyrit.models import Seed, SeedDataset, SeedObjective, SeedPrompt
+from pyrit.models.harm_category import HarmCategory
 
 logger = logging.getLogger(__name__)
 
@@ -81,25 +82,32 @@ class _ComicJailbreakDataset(_RemoteDatasetLoader):
     )
     TEMPLATE_NAMES: tuple[str, ...] = tuple(COMIC_JAILBREAK_TEMPLATES.keys())
     PAPER_URL: str = "https://arxiv.org/abs/2603.21697"
-    HARM_CATEGORY_ALIAS_OVERRIDES: dict[str, list[str]] = {
-        "disinformation": ["INFO_INTEGRITY"],
-        "economic harm": ["SCAMS"],
-        "expert advice": ["HEALTH_DIAGNOSIS", "LEGAL_ADVICE", "FINANCIAL_ADVICE"],
-        "fraud/deception": ["SCAMS", "DECEPTION"],
-        "government decision-making": ["HIGH_RISK_GOVERNMENT"],
-        "harassment/discrimination": ["HARASSMENT", "HATESPEECH", "REPRESENTATIONAL"],
-        "illegal": ["COORDINATION_HARM"],
-        "malware": ["MALWARE"],
-        "malware-hacking": ["MALWARE"],
-        "malware/hacking": ["MALWARE"],
-        "misinformation": ["INFO_INTEGRITY"],
-        "physical harm": ["VIOLENT_CONTENT", "COORDINATION_HARM"],
-        "privacy": ["PPI"],
-        "sexual": ["SEXUAL_CONTENT"],
-        "sexual-adult": ["SEXUAL_CONTENT"],
-        "sexual/adult content": ["SEXUAL_CONTENT"],
-        "violence": ["VIOLENT_CONTENT"],
-    }
+    HARM_CATEGORY_ALIAS_OVERRIDES: dict[str, list[HarmCategory]] = cast(
+        "dict[str, list[HarmCategory]]",
+        {
+            "disinformation": [HarmCategory.INFO_INTEGRITY],
+            "economic harm": [HarmCategory.SCAMS],
+            "expert advice": [HarmCategory.HEALTH_DIAGNOSIS, HarmCategory.LEGAL_ADVICE, HarmCategory.FINANCIAL_ADVICE],
+            "fraud/deception": [HarmCategory.SCAMS, HarmCategory.DECEPTION],
+            "government decision-making": [HarmCategory.HIGH_RISK_GOVERNMENT],
+            "harassment/discrimination": [
+                HarmCategory.HARASSMENT,
+                HarmCategory.HATESPEECH,
+                HarmCategory.REPRESENTATIONAL,
+            ],
+            "illegal": [HarmCategory.COORDINATION_HARM],
+            "malware": [HarmCategory.MALWARE],
+            "malware-hacking": [HarmCategory.MALWARE],
+            "malware/hacking": [HarmCategory.MALWARE],
+            "misinformation": [HarmCategory.INFO_INTEGRITY],
+            "physical harm": [HarmCategory.VIOLENT_CONTENT, HarmCategory.COORDINATION_HARM],
+            "privacy": [HarmCategory.PPI],
+            "sexual": [HarmCategory.SEXUAL_CONTENT],
+            "sexual-adult": [HarmCategory.SEXUAL_CONTENT],
+            "sexual/adult content": [HarmCategory.SEXUAL_CONTENT],
+            "violence": [HarmCategory.VIOLENT_CONTENT],
+        },
+    )
 
     # Metadata
     harm_categories: tuple[str, ...] = (

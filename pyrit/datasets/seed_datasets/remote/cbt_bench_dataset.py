@@ -8,6 +8,7 @@ from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
 from pyrit.models import SeedDataset, SeedPrompt
+from pyrit.models.harm_category import HarmCategory
 
 logger = logging.getLogger(__name__)
 
@@ -91,10 +92,7 @@ class _CBTBenchDataset(_RemoteDatasetLoader):
             "in assisting Cognitive Behavioral Therapy (CBT). The dataset covers basic CBT knowledge, "
             "cognitive model understanding, and therapeutic response generation."
         )
-        harm_categories = self._standardize_harm_categories(
-            "psycho-social harms",
-            alias_overrides={"psycho-social harms": ["EMOTIONAL", "MENTAL_HEALTH"]},
-        )
+        harm_categories = self._standardize_harm_categories([HarmCategory.EMOTIONAL, HarmCategory.MENTAL_HEALTH])
 
         seed_prompts = []
 

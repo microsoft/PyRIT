@@ -2,11 +2,13 @@
 # Licensed under the MIT license.
 
 import logging
+from typing import cast
 
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
 from pyrit.models import SeedDataset, SeedPrompt
+from pyrit.models.harm_category import HarmCategory
 
 logger = logging.getLogger(__name__)
 
@@ -66,14 +68,17 @@ class _SOSBenchDataset(_RemoteDatasetLoader):
         # health misinformation (PUBLIC_HEALTH), physics prompts concern radioactive
         # isotopes (CBRN, radiological), pharmacy prompts synthesize designer drugs
         # (PSEUDO_PHARMA), and chemistry prompts describe hazardous synthesis (CBRN).
-        alias_overrides: dict[str, list[str]] = {
-            "chemistry": ["CBRN"],
-            "biology": ["PUBLIC_HEALTH"],
-            "physics": ["CBRN"],
-            "medical": ["PUBLIC_HEALTH"],
-            "pharmacy": ["PSEUDO_PHARMA"],
-            "psychology": ["MENTAL_HEALTH"],
-        }
+        alias_overrides: dict[str, list[HarmCategory]] = cast(
+            "dict[str, list[HarmCategory]]",
+            {
+                "chemistry": [HarmCategory.CBRN],
+                "biology": [HarmCategory.PUBLIC_HEALTH],
+                "physics": [HarmCategory.CBRN],
+                "medical": [HarmCategory.PUBLIC_HEALTH],
+                "pharmacy": [HarmCategory.PSEUDO_PHARMA],
+                "psychology": [HarmCategory.MENTAL_HEALTH],
+            },
+        )
 
         seed_prompts = [
             SeedPrompt(
