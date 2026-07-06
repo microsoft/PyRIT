@@ -3,9 +3,7 @@
 
 from __future__ import annotations
 
-import json
 import logging
-import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -14,15 +12,14 @@ from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
 from pyrit.common.path import EXECUTOR_SEED_PROMPT_PATH
 from pyrit.exceptions import (
     ComponentRole,
-    InvalidJsonException,
     execution_context,
     pyrit_json_retry,
-    remove_markdown_json,
 )
 from pyrit.executor.attack.component import (
     ConversationManager,
     PrependedConversationConfig,
 )
+from pyrit.executor.attack.component.adversarial_conversation_manager import _parse_adversarial_reply
 from pyrit.executor.attack.component.modality_router import _ModalityFeedbackRouter
 from pyrit.executor.attack.core import (
     AttackAdversarialConfig,
@@ -604,65 +601,25 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
         if not response:
             raise ValueError("No response received from adversarial chat")
 
-        response_text = response.get_value()
-        return remove_markdown_json(response_text)
+        return response.get_value()
 
     def _parse_adversarial_response(self, response_text: str) -> str:
         """
-        Parse and validate the JSON response from the adversarial chat.
+        Parse the JSON response from the adversarial chat and return the next attack prompt.
 
-        Keys are normalized from camelCase to snake_case before validation, so
-        backends that drift to ``nextMessage`` still parse correctly
-        without burning retries on a casing mismatch.
+        Delegates to the shared ``_parse_adversarial_reply`` so Crescendo validates against the same
+        ``adversarial_chat`` schema — normalizing camelCase, stripping markdown, and enforcing the
+        required keys — as every other adversarial-chat executor, raising ``InvalidJsonException`` on a
+        malformed or non-conforming reply rather than hand-rolling its own parser.
 
         Args:
             response_text (str): The response text to parse.
 
         Returns:
-            str: The generated question from the response.
-
-        Raises:
-            InvalidJsonException: If the response is not valid JSON or missing required keys.
+            str: The generated question (``next_message``) from the response.
         """
-        expected_keys = {"next_message", "rationale", "last_response_summary"}
-
-        try:
-            parsed_output = json.loads(response_text)
-
-            normalized_output = {self._camel_to_snake(key): value for key, value in parsed_output.items()}
-
-            missing_keys = expected_keys - set(normalized_output.keys())
-            if missing_keys:
-                raise InvalidJsonException(
-                    message=f"Missing required keys {missing_keys} in JSON response: {response_text}"
-                )
-
-            extra_keys = set(normalized_output.keys()) - expected_keys
-            if extra_keys:
-                raise InvalidJsonException(
-                    message=f"Unexpected keys {extra_keys} found in JSON response: {response_text}"
-                )
-
-            return str(normalized_output["next_message"])
-
-        except json.JSONDecodeError as e:
-            raise InvalidJsonException(message=f"Invalid JSON encountered: {response_text}") from e
-
-    @staticmethod
-    def _camel_to_snake(name: str) -> str:
-        """
-        Convert a ``camelCase`` or ``PascalCase`` identifier to ``snake_case``.
-
-        Existing snake_case identifiers are returned unchanged.
-
-        Args:
-            name (str): The identifier to convert.
-
-        Returns:
-            str: The snake_case form of ``name``.
-        """
-        intermediate = re.sub(r"(.)([A-Z][a-z]+)", r"\1_\2", name)
-        return re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", intermediate).lower()
+        schema = self._adversarial_chat_system_prompt_template.response_json_schema
+        return _parse_adversarial_reply(response_text, schema=schema).next_message
 
     async def _send_prompt_to_objective_target_async(
         self,

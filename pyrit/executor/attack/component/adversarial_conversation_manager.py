@@ -165,22 +165,26 @@ def _build_adversarial_prompt_metadata(*, response_json_schema: JsonSchemaDefini
     return {"response_format": "json", JSON_SCHEMA_METADATA_KEY: response_json_schema}
 
 
-def _parse_adversarial_reply(response_text: str, *, schema: JsonSchemaDefinition) -> AdversarialReply:
+def _parse_adversarial_reply(response_text: str, *, schema: JsonSchemaDefinition | None = None) -> AdversarialReply:
     """
     Parse and validate a JSON reply against the shared ``adversarial_chat`` ``schema``.
 
-    Required and permitted keys are read from ``schema`` itself — its ``required`` list and
-    ``properties`` map, honoring ``additionalProperties`` — rather than a hard-coded copy, so the
-    schema stays the single source of truth and the parser cannot drift from ``adversarial_chat.yaml``.
-    It is the same schema the manager forwards to constrain the target, so the reply is validated
-    against exactly what was requested. Markdown code fences are stripped and keys are normalized from
-    camelCase to snake_case before validation, so a backend that drifts to ``nextMessage`` still parses
-    without burning a retry. ``next_message`` is the one field the attack loop consumes and is always
-    required; ``rationale`` / ``last_response_summary`` carry the attacker's own reasoning.
+    This is the one parser shared by every adversarial-chat executor (Red Teaming, Crescendo, TAP,
+    PAIR, Simulated Conversation): they resolve the same ``adversarial_chat`` schema from their prompt
+    and hand the reply here, so validation and normalization stay consistent instead of each attack
+    hand-rolling its own. Required and permitted keys are read from ``schema`` itself — its ``required``
+    list and ``properties`` map, honoring ``additionalProperties`` — rather than a hard-coded copy, so
+    the schema stays the single source of truth and cannot drift from ``adversarial_chat.yaml``. When
+    ``schema`` is None (no declared schema), only the ``next_message`` invariant is enforced. Markdown
+    code fences are stripped and keys are normalized from camelCase to snake_case before validation, so
+    a backend that drifts to ``nextMessage`` still parses without burning a retry. ``next_message`` is
+    the one field the attack loop consumes and is always required; ``rationale`` /
+    ``last_response_summary`` carry the attacker's own reasoning.
 
     Args:
         response_text: The raw adversarial-chat reply.
-        schema: The resolved response JSON schema to validate against.
+        schema: The resolved response JSON schema to validate against, or None to enforce only the
+            ``next_message`` invariant.
 
     Returns:
         AdversarialReply: The parsed message and reasoning fields.
@@ -197,16 +201,17 @@ def _parse_adversarial_reply(response_text: str, *, schema: JsonSchemaDefinition
 
     normalized = {_camel_to_snake(key): value for key, value in parsed.items()}
 
-    required_keys = {_camel_to_snake(key) for key in schema.get("required", [])}
-    missing_keys = required_keys - normalized.keys()
-    if missing_keys:
-        raise InvalidJsonException(message=f"Missing required keys {missing_keys} in JSON response: {cleaned}")
+    if schema is not None:
+        required_keys = {_camel_to_snake(key) for key in schema.get("required", [])}
+        missing_keys = required_keys - normalized.keys()
+        if missing_keys:
+            raise InvalidJsonException(message=f"Missing required keys {missing_keys} in JSON response: {cleaned}")
 
-    if schema.get("additionalProperties", True) is False:
-        allowed_keys = {_camel_to_snake(key) for key in schema.get("properties", {})}
-        extra_keys = normalized.keys() - allowed_keys
-        if extra_keys:
-            raise InvalidJsonException(message=f"Unexpected keys {extra_keys} found in JSON response: {cleaned}")
+        if schema.get("additionalProperties", True) is False:
+            allowed_keys = {_camel_to_snake(key) for key in schema.get("properties", {})}
+            extra_keys = normalized.keys() - allowed_keys
+            if extra_keys:
+                raise InvalidJsonException(message=f"Unexpected keys {extra_keys} found in JSON response: {cleaned}")
 
     if _NEXT_MESSAGE_KEY not in normalized:
         raise InvalidJsonException(

@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import asyncio
 import enum
-import json
 import logging
 import uuid
 from dataclasses import dataclass, field
@@ -22,13 +21,13 @@ from pyrit.exceptions import (
     execution_context,
     get_retry_max_num_attempts,
     pyrit_json_retry,
-    remove_markdown_json,
 )
 from pyrit.executor.attack.component import (
     ConversationManager,
     PrependedConversationConfig,
     get_prepended_turn_count,
 )
+from pyrit.executor.attack.component.adversarial_conversation_manager import _parse_adversarial_reply
 from pyrit.executor.attack.component.conversation_manager import (
     build_conversation_context_string_async,
 )
@@ -1232,16 +1231,13 @@ class _TreeOfAttacksNode:
 
     def _parse_red_teaming_response(self, red_teaming_response: str) -> str:
         """
-        Extract the prompt field from JSON response.
+        Extract the next attack prompt from the adversarial chat's JSON response.
 
-        This method parses the structured response from the adversarial chat to extract
-        the generated attack prompt. The adversarial chat is expected to return JSON with
-        at least a "next_message" field containing the attack text. The method handles common
-        formatting issues like markdown wrappers that LLMs sometimes add around JSON.
-
-        The parsing is strict - the response must be valid JSON and must contain the
-        required "next_message" field. This ensures the TAP algorithm receives well-formed
-        prompts for attacking the objective target.
+        Delegates to the shared ``_parse_adversarial_reply`` so TAP/PAIR validate against the same
+        ``adversarial_chat`` schema — normalizing camelCase, stripping markdown, and enforcing the
+        required keys — as every other adversarial-chat executor, rather than hand-rolling their own
+        parser. The parsing is strict: a malformed or non-conforming reply raises
+        ``InvalidJsonException`` so the TAP algorithm never proceeds on a bad prompt.
 
         Args:
             red_teaming_response (str): The raw response from the red teaming chat, expected
@@ -1249,33 +1245,11 @@ class _TreeOfAttacksNode:
                 least {"next_message": "attack text"}.
 
         Returns:
-            str: The prompt extracted from the JSON response. This is the actual attack
-                text that will be sent to the objective target.
-
-        Raises:
-            InvalidJsonException: If the response is not valid JSON after removing markdown
-                formatting, or if the parsed JSON does not contain a "next_message" field.
+            str: The prompt (``next_message``) extracted from the JSON response. This is the actual
+                attack text that will be sent to the objective target.
         """
-        # Remove markdown formatting if present
-        red_teaming_response = remove_markdown_json(red_teaming_response)
-
-        try:
-            red_teaming_response_dict = json.loads(red_teaming_response)
-        except json.JSONDecodeError:
-            logger.error(f"The response from the red teaming chat is not in JSON format: {red_teaming_response}")
-            raise InvalidJsonException(
-                message="The response from the red teaming chat is not in JSON format."
-            ) from None
-
-        try:
-            return cast("str", red_teaming_response_dict["next_message"])
-        except KeyError:
-            logger.error(
-                f"The response from the red teaming chat does not contain next_message: {red_teaming_response}"
-            )
-            raise InvalidJsonException(
-                message="The response from the red teaming chat does not contain a next_message."
-            ) from None
+        schema = self._adversarial_chat_system_seed_prompt.response_json_schema
+        return _parse_adversarial_reply(red_teaming_response, schema=schema).next_message
 
     def __str__(self) -> str:
         """

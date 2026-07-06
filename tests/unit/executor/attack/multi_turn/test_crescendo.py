@@ -989,21 +989,6 @@ class TestPromptGeneration:
             result = attack._parse_adversarial_response(response_json)
             assert isinstance(result, str)
 
-    @pytest.mark.parametrize(
-        "raw,expected",
-        [
-            ("next_message", "next_message"),
-            ("nextMessage", "next_message"),
-            ("NextMessage", "next_message"),
-            ("rationale", "rationale"),
-            ("lastResponseSummary", "last_response_summary"),
-            ("", ""),
-        ],
-    )
-    def test_camel_to_snake_handles_common_cases(self, raw: str, expected: str) -> None:
-        """``_camel_to_snake`` normalizes camelCase / PascalCase and leaves snake_case alone."""
-        assert CrescendoAttack._camel_to_snake(raw) == expected
-
     def test_parse_adversarial_response_accepts_camel_case_keys(
         self,
         mock_objective_target: MagicMock,

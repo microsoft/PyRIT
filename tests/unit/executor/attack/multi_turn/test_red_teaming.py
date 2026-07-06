@@ -1222,6 +1222,57 @@ class TestAttackExecution:
         assert mock_send.call_count == 3
         assert mock_score.call_count == 3
 
+    async def test_perform_builds_adversarial_manager_once_and_threads_it(
+        self,
+        mock_objective_target: MagicMock,
+        mock_objective_scorer: MagicMock,
+        mock_adversarial_chat: MagicMock,
+        mock_prompt_normalizer: MagicMock,
+        basic_context: MultiTurnAttackContext,
+        sample_response: Message,
+        failure_score: Score,
+    ):
+        """The adversarial manager is built once per run and the same instance is reused every turn.
+
+        Regression guard for the build-once refactor: the manager's conversation scope (ids,
+        objective, memory labels) is fixed for the run, so rebuilding it each turn would waste work
+        and risk drift. This pins that _perform_async builds it exactly once and threads that same
+        instance into every _generate_next_prompt_async call.
+        """
+        adversarial_config = AttackAdversarialConfig(target=mock_adversarial_chat)
+        scoring_config = AttackScoringConfig(objective_scorer=mock_objective_scorer)
+
+        attack = RedTeamingAttack(
+            objective_target=mock_objective_target,
+            attack_adversarial_config=adversarial_config,
+            attack_scoring_config=scoring_config,
+            prompt_normalizer=mock_prompt_normalizer,
+            max_turns=3,
+        )
+
+        sentinel_manager = MagicMock()
+
+        with (
+            patch.object(attack, "_build_adversarial_manager", return_value=sentinel_manager) as mock_build,
+            patch.object(
+                attack, "_generate_next_prompt_async", new_callable=AsyncMock, return_value="Attack prompt"
+            ) as mock_generate,
+            patch.object(
+                attack,
+                "_send_prompt_to_objective_target_async",
+                new_callable=AsyncMock,
+                return_value=sample_response,
+            ),
+            patch.object(attack, "_score_response_async", new_callable=AsyncMock, return_value=failure_score),
+        ):
+            await attack._perform_async(context=basic_context)
+
+        # Built exactly once for the whole run, not once per turn.
+        mock_build.assert_called_once()
+        # Every turn received that same manager instance.
+        assert mock_generate.call_count == 3
+        assert all(call.kwargs["adversarial_manager"] is sentinel_manager for call in mock_generate.call_args_list)
+
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestAttackLifecycle:

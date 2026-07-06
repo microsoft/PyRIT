@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from pyrit.exceptions import InvalidJsonException
 from pyrit.executor.attack import AttackConverterConfig, RTASystemPromptPaths
 from pyrit.executor.attack.multi_turn.simulated_conversation import (
     _generate_next_message_async,
@@ -816,6 +817,46 @@ class TestGenerateNextMessageAsync:
         # Schema declared -> response_format metadata forwarded so schema-aware targets constrain output.
         sent_message = mock_adversarial_chat.send_prompt_async.call_args.kwargs["message"]
         assert sent_message.message_pieces[0].prompt_metadata.get("response_format") == "json"
+
+    async def test_schema_template_invalid_json_raises(self, mock_adversarial_chat: MagicMock):
+        """A schema-declaring template surfaces a malformed JSON reply as InvalidJsonException.
+
+        Unlike crescendo/TAP, this helper is not wrapped in ``pyrit_json_retry``, so a bad reply on
+        the schema path propagates directly rather than being retried.
+        """
+        bad_reply = Message(
+            message_pieces=[
+                MessagePiece(
+                    role="assistant",
+                    original_value="not valid json",
+                    original_value_data_type="text",
+                )
+            ]
+        )
+        mock_adversarial_chat.send_prompt_async = AsyncMock(return_value=[bad_reply])
+
+        mock_template = MagicMock()
+        mock_template.response_json_schema = {"type": "object"}
+        mock_template.render_template_value.return_value = "SYS"
+
+        with (
+            patch(
+                "pyrit.executor.attack.multi_turn.simulated_conversation.ConversationContextNormalizer"
+            ) as mock_normalizer_cls,
+            patch(
+                "pyrit.executor.attack.multi_turn.simulated_conversation.SeedPrompt.from_yaml_with_required_parameters",
+                return_value=mock_template,
+            ),
+        ):
+            mock_normalizer_cls.return_value.normalize_string_async = AsyncMock(return_value="ctx")
+
+            with pytest.raises(InvalidJsonException):
+                await _generate_next_message_async(
+                    objective="obj",
+                    conversation_messages=[],
+                    adversarial_chat=mock_adversarial_chat,
+                    next_message_system_prompt_path="unused.yaml",
+                )
 
     async def test_raises_when_no_response(self, mock_adversarial_chat: MagicMock):
         """A missing adversarial response raises a clear ValueError."""

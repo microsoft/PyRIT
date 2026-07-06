@@ -47,6 +47,20 @@ from pyrit.score.score_utils import normalize_score_to_float
 logger = logging.getLogger(__name__)
 
 
+# Mirrors the shipped ``adversarial_chat.yaml``: every key required, no extras allowed. Used to
+# exercise the strict validation TAP/PAIR now inherit by delegating to the shared parser.
+_STRICT_ADVERSARIAL_CHAT_SCHEMA: dict = {
+    "type": "object",
+    "properties": {
+        "next_message": {"type": "string"},
+        "rationale": {"type": "string"},
+        "last_response_summary": {"type": "string"},
+    },
+    "required": ["next_message", "rationale", "last_response_summary"],
+    "additionalProperties": False,
+}
+
+
 @dataclass
 class NodeMockConfig:
     """Configuration for creating mock _TreeOfAttacksNode objects."""
@@ -1471,6 +1485,78 @@ class TestTreeOfAttacksNode:
         assert child_node.node_id != parent_node.node_id
         assert child_node.parent_id == parent_node.node_id
         assert child_node.completed is False
+
+    def _node_with_schema(self, node_components, schema):
+        """Build a real node whose adversarial system prompt advertises ``schema``.
+
+        The parser reads its schema from ``_adversarial_chat_system_seed_prompt.response_json_schema``,
+        so overriding it here lets the tests drive the real (un-mocked) ``_parse_red_teaming_response``
+        through both the strict shipped-schema path and the schemaless custom-prompt path.
+        """
+        node = _TreeOfAttacksNode(**node_components)
+        node._adversarial_chat_system_seed_prompt.response_json_schema = schema
+        return node
+
+    def test_parse_red_teaming_response_returns_next_message_with_strict_schema(self, node_components):
+        """A schema-compliant reply yields the next_message the node forwards to the objective target."""
+        node = self._node_with_schema(node_components, _STRICT_ADVERSARIAL_CHAT_SCHEMA)
+        reply = json.dumps({"next_message": "attack text", "rationale": "why", "last_response_summary": "summary"})
+
+        assert node._parse_red_teaming_response(reply) == "attack text"
+
+    def test_parse_red_teaming_response_accepts_camel_case_keys(self, node_components):
+        """TAP/PAIR historically hand-rolled a parser that never normalized camelCase. Delegating to the
+        shared parser closes that exact gap, so a schema-aware adversarial model that emits ``nextMessage``
+        no longer breaks the node the way it once broke a crescendo CI run."""
+        node = self._node_with_schema(node_components, _STRICT_ADVERSARIAL_CHAT_SCHEMA)
+        reply = json.dumps({"nextMessage": "attack text", "rationale": "why", "lastResponseSummary": "summary"})
+
+        assert node._parse_red_teaming_response(reply) == "attack text"
+
+    def test_parse_red_teaming_response_strict_schema_rejects_missing_key(self, node_components):
+        """With the shipped schema present the node enforces every required key, so a reply carrying only
+        next_message now raises instead of silently proceeding as the old TAP parser did."""
+        node = self._node_with_schema(node_components, _STRICT_ADVERSARIAL_CHAT_SCHEMA)
+
+        with pytest.raises(InvalidJsonException, match="Missing required keys"):
+            node._parse_red_teaming_response('{"next_message": "x"}')
+
+    def test_parse_red_teaming_response_strict_schema_rejects_extra_key(self, node_components):
+        """``additionalProperties: false`` from the shipped schema is enforced through the node parser."""
+        node = self._node_with_schema(node_components, _STRICT_ADVERSARIAL_CHAT_SCHEMA)
+        reply = json.dumps(
+            {
+                "next_message": "x",
+                "rationale": "why",
+                "last_response_summary": "summary",
+                "surprise": "nope",
+            }
+        )
+
+        with pytest.raises(InvalidJsonException, match="Unexpected keys"):
+            node._parse_red_teaming_response(reply)
+
+    def test_parse_red_teaming_response_without_schema_stays_lax(self, node_components):
+        """Schemaless custom adversarial prompts keep the permissive contract: only next_message is
+        required, so a single-key reply is still accepted and no custom-prompt path regresses."""
+        node = self._node_with_schema(node_components, None)
+
+        assert node._parse_red_teaming_response('{"next_message": "x"}') == "x"
+
+    def test_parse_red_teaming_response_strips_markdown_fencing(self, node_components):
+        """Adversarial models routinely wrap JSON in ```json fences; the shared parser strips them."""
+        node = self._node_with_schema(node_components, _STRICT_ADVERSARIAL_CHAT_SCHEMA)
+        payload = json.dumps({"next_message": "attack text", "rationale": "why", "last_response_summary": "summary"})
+        reply = f"```json\n{payload}\n```"
+
+        assert node._parse_red_teaming_response(reply) == "attack text"
+
+    def test_parse_red_teaming_response_invalid_json_raises(self, node_components):
+        """A non-JSON reply raises InvalidJsonException so @pyrit_json_retry can retry the turn."""
+        node = self._node_with_schema(node_components, _STRICT_ADVERSARIAL_CHAT_SCHEMA)
+
+        with pytest.raises(InvalidJsonException, match="Invalid JSON"):
+            node._parse_red_teaming_response("not json at all")
 
     async def test_node_send_prompt_json_error_handling(self, node_components):
         """Test handling of JSON parsing errors in send_prompt_async."""

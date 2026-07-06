@@ -153,6 +153,14 @@ def test_parse_reply_requires_next_message_even_without_required_list():
         _parse_adversarial_reply('{"surprise": "x"}', schema=OTHER_SCHEMA)
 
 
+def test_parse_reply_coerces_non_string_next_message():
+    # A non-enforcing target can emit a JSON number for next_message; the attack loop needs a
+    # str, so the value is coerced rather than rejected (matches crescendo's own str() handling).
+    numeric = '{"next_message": 42, "rationale": "r", "last_response_summary": "s"}'
+    reply = _parse_adversarial_reply(numeric, schema=SCHEMA)
+    assert reply.next_message == "42"
+
+
 # --- init / schema resolution ------------------------------------------------
 
 
