@@ -6,7 +6,6 @@ import io
 import logging
 import re
 import uuid
-import zipfile
 from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar, Literal
@@ -15,6 +14,7 @@ from typing_extensions import override
 
 from pyrit.common.net_utility import make_request_and_raise_if_error_async
 from pyrit.common.path import DB_DATA_PATH
+from pyrit.common.safe_extract import safe_extract_zip
 from pyrit.datasets.seed_datasets.remote._image_cache import (
     fetch_and_cache_image_async,
 )
@@ -565,9 +565,7 @@ class _FigStepDataset(_RemoteDatasetLoader):
         zip_bytes = response.content
 
         def _extract() -> None:
-            extract_dir.mkdir(parents=True, exist_ok=True)
-            with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
-                zf.extractall(extract_dir)
+            safe_extract_zip(source=io.BytesIO(zip_bytes), dest_dir=extract_dir)
 
         await asyncio.to_thread(_extract)
         return extract_dir

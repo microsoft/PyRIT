@@ -18,7 +18,31 @@ from pyrit.backend.services.scenario_run_service import (
 )
 from pyrit.models import AttackOutcome, ScenarioRunState
 from pyrit.models.catalog.scenario import RunScenarioRequest
+from pyrit.prompt_converter import PromptConverter
 from pyrit.scenario.core import DatasetAttackConfiguration, DatasetConfiguration
+from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
+
+
+class _StubStrategy(ScenarioStrategy):
+    """Minimal concrete ScenarioStrategy used to exercise converter-token parsing."""
+
+    ALL = ("all", {"all"})
+    EASY = ("easy", {"easy"})
+    ROLE_PLAY = ("role_play", {"easy"})
+    SINGLE_TURN = ("single_turn", {"easy"})
+
+    @classmethod
+    def get_aggregate_tags(cls) -> set[str]:
+        return {"all", "easy"}
+
+
+def _patch_converter_registry(instances: dict[str, Any]):
+    """Patch the converter registry singleton so ``.instances`` reflects ``instances``."""
+    reg = MagicMock()
+    reg.instances.get.side_effect = lambda name: instances.get(name)
+    reg.instances.get_names.return_value = list(instances.keys())
+    return patch.object(_svc_mod.ConverterRegistry, "get_registry_singleton", return_value=reg)
+
 
 _REGISTRY_PATCH_BASE = "pyrit.registry"
 _MEMORY_PATCH = "pyrit.memory.CentralMemory.get_memory_instance"
@@ -64,8 +88,8 @@ def _make_db_scenario_result(
     """Create a mock ScenarioResult as returned by CentralMemory."""
     sr = MagicMock()
     sr.id = result_id
-    sr.scenario_identifier.name = scenario_name
-    sr.scenario_identifier.version = 1
+    sr.scenario_name = scenario_name
+    sr.scenario_version = 1
     sr.scenario_run_state = run_state
     sr.get_strategies_used.return_value = []
     sr.attack_results = attack_results or {}
@@ -108,13 +132,14 @@ def mock_all_registries(mock_memory):
     mock_sr = MagicMock()
     mock_sr.get_class.return_value = mock_scenario_class
     mock_sr.create_instance.return_value = mock_scenario_instance
+    mock_sr.create_and_initialize_async = AsyncMock(return_value=mock_scenario_instance)
 
     mock_tr = MagicMock()
     mock_tr.instances.get.return_value = MagicMock()
     mock_tr.instances.get_names.return_value = ["my_target"]
 
     mock_ir = MagicMock()
-    mock_ir.get_class.return_value = MagicMock(return_value=MagicMock(initialize_async=AsyncMock()))
+    mock_ir.create_and_configure.return_value = MagicMock(initialize_async=AsyncMock())
 
     # By default, return a matching DB result for get_run / list_runs queries
     db_result = _make_db_scenario_result()
@@ -190,7 +215,7 @@ class TestScenarioRunServiceStartRun:
         mock_sr.get_class.return_value = MagicMock()
 
         mock_ir = MagicMock()
-        mock_ir.get_class.side_effect = KeyError("'bad_init' not found")
+        mock_ir.create_and_configure.side_effect = KeyError("'bad_init' not found")
 
         with (
             patch(f"{_REGISTRY_PATCH_BASE}.ScenarioRegistry.get_registry_singleton", return_value=mock_sr),
@@ -261,7 +286,7 @@ class TestScenarioRunServiceStartRun:
         service = ScenarioRunService()
         await service.start_run_async(request=_make_request(strategies=["strat_a", "strat_b"]))
 
-        init_call = scenario_instance.initialize_async.await_args
+        init_call = mock_all_registries["scenario_registry"].create_and_initialize_async.await_args
         assert init_call.kwargs["scenario_strategies"] == [strategy_a, strategy_b]
 
     async def test_start_run_max_dataset_size_uses_default_config(self, mock_all_registries) -> None:
@@ -276,7 +301,7 @@ class TestScenarioRunServiceStartRun:
 
         # max_dataset_size on the default config was overridden
         assert default_config.max_dataset_size == 5
-        init_call = scenario_instance.initialize_async.await_args
+        init_call = mock_all_registries["scenario_registry"].create_and_initialize_async.await_args
         assert init_call.kwargs["dataset_config"] is default_config
 
     async def test_start_run_dataset_names_preserves_subclass_config_type(self, mock_all_registries) -> None:
@@ -299,7 +324,7 @@ class TestScenarioRunServiceStartRun:
         service = ScenarioRunService()
         await service.start_run_async(request=_make_request(dataset_names=["custom_a", "custom_b"], max_dataset_size=3))
 
-        init_call = scenario_instance.initialize_async.await_args
+        init_call = mock_all_registries["scenario_registry"].create_and_initialize_async.await_args
         built_config = init_call.kwargs["dataset_config"]
 
         # Type is preserved (this is the regression assertion)
@@ -325,7 +350,7 @@ class TestScenarioRunServiceStartRun:
         service = ScenarioRunService()
         await service.start_run_async(request=_make_request(dataset_names=["only_this"]))
 
-        init_call = scenario_instance.initialize_async.await_args
+        init_call = mock_all_registries["scenario_registry"].create_and_initialize_async.await_args
         built_config = init_call.kwargs["dataset_config"]
         assert type(built_config) is _MarkerDatasetConfiguration
         assert built_config.dataset_names == ["only_this"]
@@ -351,7 +376,7 @@ class TestScenarioRunServiceStartRun:
         with caplog.at_level("WARNING", logger=_svc_mod.logger.name):
             await service.start_run_async(request=_make_request(dataset_names=["custom"]))
 
-        init_call = scenario_instance.initialize_async.await_args
+        init_call = mock_all_registries["scenario_registry"].create_and_initialize_async.await_args
         built_config = init_call.kwargs["dataset_config"]
 
         # Fallback is the generic base class, not the subclass
@@ -407,7 +432,9 @@ class TestScenarioRunServiceStartRun:
         service = ScenarioRunService()
         await service.start_run_async(request=_make_request(dataset_names=["a", "b"], max_dataset_size=7))
 
-        built_config = scenario_instance.initialize_async.await_args.kwargs["dataset_config"]
+        built_config = mock_all_registries["scenario_registry"].create_and_initialize_async.await_args.kwargs[
+            "dataset_config"
+        ]
         assert type(built_config) is _MarkerDatasetConfiguration
         assert built_config.dataset_names == ["a", "b"]
         assert built_config.max_dataset_size == 7
@@ -416,17 +443,18 @@ class TestScenarioRunServiceStartRun:
         """Test that exceeding concurrent run limit raises ValueError."""
         service = ScenarioRunService()
         scenario_instance = mock_all_registries["scenario_instance"]
+        mock_sr = mock_all_registries["scenario_registry"]
 
         # Each call needs a unique scenario_result_id
         call_count = 0
-        original_init = scenario_instance.initialize_async
 
-        async def _set_unique_id(**kwargs: object) -> None:
+        async def _set_unique_id(*args: object, **kwargs: object) -> object:
             nonlocal call_count
             call_count += 1
             scenario_instance._scenario_result_id = f"sr-uuid-{call_count}"
+            return scenario_instance
 
-        scenario_instance.initialize_async = AsyncMock(side_effect=_set_unique_id)
+        mock_sr.create_and_initialize_async = AsyncMock(side_effect=_set_unique_id)
 
         # Fill up to the limit
         for _ in range(_DEFAULT_MAX_CONCURRENT_RUNS):
@@ -440,7 +468,7 @@ class TestScenarioRunServiceStartRun:
         """Test that initializers are run during start_run_async."""
         service = ScenarioRunService()
         mock_ir = mock_all_registries["initializer_registry"]
-        mock_init_instance = mock_ir.get_class.return_value.return_value
+        mock_init_instance = mock_ir.create_and_configure.return_value
 
         response = await service.start_run_async(
             request=_make_request(initializers=["target", "load_default_datasets"])
@@ -450,25 +478,27 @@ class TestScenarioRunServiceStartRun:
         assert mock_init_instance.initialize_async.await_count == 2
 
     async def test_start_run_passes_scenario_result_id_for_resume(self, mock_all_registries) -> None:
-        """Test that scenario_result_id is passed to the registry constructor for resumption."""
+        """Test that scenario_result_id is passed to the registry for resumption."""
         service = ScenarioRunService()
         mock_sr = mock_all_registries["scenario_registry"]
 
         response = await service.start_run_async(request=_make_request(scenario_result_id="existing-result-uuid"))
 
         assert response.status == ScenarioRunState.IN_PROGRESS
-        mock_sr.create_instance.assert_called_once_with(
-            "foundry.red_team_agent", scenario_result_id="existing-result-uuid"
-        )
+        call = mock_sr.create_and_initialize_async.await_args
+        assert call.args[0] == "foundry.red_team_agent"
+        assert call.kwargs["scenario_result_id"] == "existing-result-uuid"
 
     async def test_start_run_omits_scenario_result_id_when_none(self, mock_all_registries) -> None:
-        """Test that scenario_result_id is not passed to the registry constructor when not provided."""
+        """Test that scenario_result_id is None when not provided in the request."""
         service = ScenarioRunService()
         mock_sr = mock_all_registries["scenario_registry"]
 
         await service.start_run_async(request=_make_request())
 
-        mock_sr.create_instance.assert_called_once_with("foundry.red_team_agent")
+        call = mock_sr.create_and_initialize_async.await_args
+        assert call.args[0] == "foundry.red_team_agent"
+        assert call.kwargs["scenario_result_id"] is None
 
 
 class TestScenarioRunServiceGetRun:
@@ -787,3 +817,108 @@ class TestScenarioRunServiceProgressReporting:
         assert fetched.completed_attacks == 1
         assert fetched.strategies_used == ["attack_a"]
         assert fetched.objective_achieved_rate == 100
+
+
+class TestResolveStrategiesAndConverters:
+    """Tests for per-technique converter resolution from ``--strategies`` tokens."""
+
+    def test_plain_strategy_no_converters(self, mock_memory) -> None:
+        service = ScenarioRunService()
+        with _patch_converter_registry({}):
+            enums, converters = service._resolve_strategies_and_converters(
+                tokens=["role_play"], strategy_class=_StubStrategy, scenario_name="x"
+            )
+        assert enums == [_StubStrategy.ROLE_PLAY]
+        assert converters == {}
+
+    def test_single_converter_appended(self, mock_memory) -> None:
+        conv = MagicMock(spec=PromptConverter)
+        service = ScenarioRunService()
+        with _patch_converter_registry({"translation_spanish": conv}):
+            enums, converters = service._resolve_strategies_and_converters(
+                tokens=["role_play:converter.translation_spanish"],
+                strategy_class=_StubStrategy,
+                scenario_name="x",
+            )
+        assert enums == [_StubStrategy.ROLE_PLAY]
+        assert converters == {"role_play": [conv]}
+
+    def test_aggregate_token_applies_converter_to_all_concrete(self, mock_memory) -> None:
+        conv = MagicMock(spec=PromptConverter)
+        service = ScenarioRunService()
+        with _patch_converter_registry({"c1": conv}):
+            enums, converters = service._resolve_strategies_and_converters(
+                tokens=["easy:converter.c1"], strategy_class=_StubStrategy, scenario_name="x"
+            )
+        assert enums == [_StubStrategy.EASY]
+        assert converters == {"role_play": [conv], "single_turn": [conv]}
+
+    def test_multiple_converters_preserve_order(self, mock_memory) -> None:
+        c1 = MagicMock(spec=PromptConverter)
+        c2 = MagicMock(spec=PromptConverter)
+        service = ScenarioRunService()
+        with _patch_converter_registry({"c1": c1, "c2": c2}):
+            _, converters = service._resolve_strategies_and_converters(
+                tokens=["role_play:converter.c1:converter.c2"],
+                strategy_class=_StubStrategy,
+                scenario_name="x",
+            )
+        assert converters == {"role_play": [c1, c2]}
+
+    def test_overlapping_tokens_append_in_order(self, mock_memory) -> None:
+        c1 = MagicMock(spec=PromptConverter)
+        c2 = MagicMock(spec=PromptConverter)
+        service = ScenarioRunService()
+        with _patch_converter_registry({"c1": c1, "c2": c2}):
+            _, converters = service._resolve_strategies_and_converters(
+                tokens=["easy:converter.c1", "role_play:converter.c2"],
+                strategy_class=_StubStrategy,
+                scenario_name="x",
+            )
+        # role_play is targeted by both the aggregate token and the concrete token.
+        assert converters["role_play"] == [c1, c2]
+        assert converters["single_turn"] == [c1]
+
+    def test_unknown_converter_raises(self, mock_memory) -> None:
+        service = ScenarioRunService()
+        with _patch_converter_registry({"known": MagicMock(spec=PromptConverter)}):
+            with pytest.raises(ValueError, match="not a registered converter"):
+                service._resolve_strategies_and_converters(
+                    tokens=["role_play:converter.missing"],
+                    strategy_class=_StubStrategy,
+                    scenario_name="x",
+                )
+
+    def test_unknown_modifier_prefix_raises(self, mock_memory) -> None:
+        service = ScenarioRunService()
+        with _patch_converter_registry({}):
+            with pytest.raises(ValueError, match="Unknown strategy modifier"):
+                service._resolve_strategies_and_converters(
+                    tokens=["role_play:scorer.something"],
+                    strategy_class=_StubStrategy,
+                    scenario_name="x",
+                )
+
+    def test_unknown_base_strategy_raises(self, mock_memory) -> None:
+        service = ScenarioRunService()
+        with _patch_converter_registry({}):
+            with pytest.raises(ValueError, match="not found for scenario"):
+                service._resolve_strategies_and_converters(
+                    tokens=["nope:converter.c1"],
+                    strategy_class=_StubStrategy,
+                    scenario_name="x",
+                )
+
+    async def test_start_run_forwards_strategy_converters(self, mock_all_registries) -> None:
+        """A converter token is resolved and forwarded through the registry as ``strategy_converters``."""
+        conv = MagicMock(spec=PromptConverter)
+        scenario_instance = mock_all_registries["scenario_instance"]
+        scenario_instance._strategy_class = _StubStrategy
+
+        service = ScenarioRunService()
+        with _patch_converter_registry({"translation_spanish": conv}):
+            await service.start_run_async(request=_make_request(strategies=["role_play:converter.translation_spanish"]))
+
+        init_call = mock_all_registries["scenario_registry"].create_and_initialize_async.await_args
+        assert init_call.kwargs["scenario_strategies"] == [_StubStrategy.ROLE_PLAY]
+        assert init_call.kwargs["strategy_converters"] == {"role_play": [conv]}

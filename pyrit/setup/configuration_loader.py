@@ -24,7 +24,7 @@ from pyrit.setup.initialization import (
 )
 
 if TYPE_CHECKING:
-    from pyrit.setup.initializers.pyrit_initializer import PyRITInitializer
+    from pyrit.setup.pyrit_initializer import PyRITInitializer
 
 
 # Type alias for YAML-serializable values that can be passed as initializer args
@@ -111,10 +111,11 @@ class ConfigurationLoader(YamlLoadable):
         memory_db_type: sqlite
 
         initializers:
-          - simple
-          - name: airt
+          - scorer
+          - name: target
             args:
-              some_param: value
+              tags:
+                - default
 
         initialization_scripts:
           - /path/to/custom_initializer.py
@@ -478,19 +479,13 @@ class ConfigurationLoader(YamlLoadable):
         logging.getLogger(__name__).info("Running %d initializer(s)...", len(self._initializer_configs))
 
         for config in self._initializer_configs:
-            initializer_class = registry.get_class(config.name)
-            if initializer_class is None:
-                available = ", ".join(sorted(registry.get_names()))
+            try:
+                instance = registry.create_and_configure(config.name, initializer_params=config.args)
+            except KeyError as exc:
+                available = ", ".join(sorted(registry.get_class_names()))
                 raise ValueError(
                     f"Initializer '{config.name}' not found in registry.\nAvailable initializers: {available}"
-                )
-
-            # Instantiate and set params if provided
-            instance = initializer_class()
-            if config.args:
-                instance.set_params_from_args(args=config.args)
-                # Validate params early against supported_parameters to fail fast
-                instance._validate_params(params=instance.params)
+                ) from exc
 
             resolved.append(instance)
 

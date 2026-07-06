@@ -59,13 +59,12 @@
 #    - Each enum member represents an **attack technique** (the *how* of an attack)
 #    - Each member is defined as `(value, tags)` where value is a string and tags is a set of strings
 #    - Include an `ALL` aggregate strategy that expands to all available strategies
-#    - Optionally override `_prepare_strategies()` for custom composition logic (see `FoundryComposite`)
 #
 # 2. **Scenario Class**: Extend `Scenario` and pass these to `super().__init__()`:
 #    - `strategy_class`: Your strategy enum class
 #    - `default_strategy`: The default strategy (typically `YourStrategy.ALL` or `YourStrategy.DEFAULT`)
-#    - The base class provides a default `_get_atomic_attacks_async()` that uses the factory/registry
-#      pattern. Override it only if your scenario needs custom attack construction logic.
+#    - Implement `_build_atomic_attacks_async(context)` — the single abstract extension point.
+#      Matrix-shaped scenarios delegate to `build_matrix_atomic_attacks(context=...)` in one line.
 #
 # 3. **Default Dataset**: Pass `default_dataset_config=` to `super().__init__()` to specify the datasets your scenario uses out of the box.
 #    - Returns a `DatasetConfiguration` with one or more named datasets (e.g., `DatasetConfiguration(dataset_names=["my_dataset"])`)
@@ -91,9 +90,10 @@
 #
 # ### Example Structure
 #
-# The simplest approach uses the **factory/registry pattern**: define your strategy,
-# dataset config, and constructor — the base class handles building atomic attacks
-# automatically from registered attack techniques.
+# The construction path: define your strategy, dataset config, and constructor, then
+# implement `_build_atomic_attacks_async(context)`. Matrix-shaped scenarios delegate to the
+# `build_matrix_atomic_attacks` helper, which builds atomic attacks automatically from the
+# registered attack techniques.
 # %%
 
 from pyrit.common import apply_defaults
@@ -102,12 +102,13 @@ from pyrit.scenario import (
     Scenario,
     ScenarioStrategy,
 )
+from pyrit.scenario.core.matrix_atomic_attack_builder import build_matrix_atomic_attacks
 from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
 from pyrit.setup import initialize_pyrit_async
-from pyrit.setup.initializers.components import ScenarioTechniqueInitializer
+from pyrit.setup.initializers.techniques import TechniqueInitializer
 
 await initialize_pyrit_async(memory_db_type="InMemory")  # type: ignore [top-level-await]
-await ScenarioTechniqueInitializer().initialize_async()  # type: ignore [top-level-await]
+await TechniqueInitializer().initialize_async()  # type: ignore [top-level-await]
 
 
 class MyStrategy(ScenarioStrategy):
@@ -144,14 +145,15 @@ class MyScenario(Scenario):
             scenario_result_id=scenario_result_id,
         )
 
-    # Optional: override _build_display_group to customize result grouping.
-    # Default groups by technique name; override to group by dataset instead:
-    def _build_display_group(self, *, technique_name: str, seed_group_name: str) -> str:
-        return seed_group_name
-
-    # No _get_atomic_attacks_async override needed!
-    # The base class builds attacks from the (technique x dataset) cross-product
-    # using the factory/registry pattern automatically.
+    # Implement the single abstract extension point. Matrix-shaped scenarios delegate
+    # to build_matrix_atomic_attacks; pass display_group_fn to customize result grouping
+    # (default groups by technique; here we group by dataset instead).
+    async def _build_atomic_attacks_async(self, *, context):
+        return build_matrix_atomic_attacks(
+            context=context,
+            objective_scorer=self._objective_scorer,
+            display_group_fn=lambda combo: combo.dataset_name,
+        )
 
 
 # %% [markdown]

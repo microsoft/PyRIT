@@ -4,15 +4,20 @@
 import json
 import logging
 from collections.abc import Callable
-from typing import Any, Literal
+from typing import Any, ClassVar, Literal
 
+from pyrit.auth import (
+    get_azure_token_provider,
+    get_default_azure_scope,
+    is_azure_openai_endpoint,
+)
 from pyrit.common import default_values, net_utility
 from pyrit.models import (
     ComponentIdentifier,
     Message,
     construct_response_from_request,
 )
-from pyrit.prompt_target.common.prompt_target import PromptTarget
+from pyrit.prompt_target.common.prompt_target import AuthMode, PromptTarget
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.prompt_target.common.utils import limit_requests_per_minute
 
@@ -49,6 +54,10 @@ class PromptShieldTarget(PromptTarget):
     ENDPOINT_URI_ENVIRONMENT_VARIABLE: str = "AZURE_CONTENT_SAFETY_API_ENDPOINT"
     API_KEY_ENVIRONMENT_VARIABLE: str = "AZURE_CONTENT_SAFETY_API_KEY"
 
+    # A subscription key is the "api_key"; with no key a recognized Azure Content
+    # Safety endpoint falls back to an Entra ID token provider (identity-based auth).
+    supported_auth_modes: ClassVar[tuple[AuthMode, ...]] = ("api_key", "identity")
+
     _endpoint: str
     _api_key: str | Callable[[], str] | None
     _api_version: str
@@ -77,8 +86,10 @@ class PromptShieldTarget(PromptTarget):
                 Defaults to the `ENDPOINT_URI_ENVIRONMENT_VARIABLE` environment variable.
             api_key (str | Callable[[], str | Awaitable[str]], Optional):
                 The API key for accessing the Azure Content Safety service,
-                or a callable that returns an access token. For Azure endpoints with Entra authentication,
-                pass a token provider from pyrit.auth
+                or a callable that returns an access token. For recognized Azure endpoints
+                (``*.cognitiveservices.azure.com``) with no key provided, an Entra ID token
+                provider is minted automatically (identity-based auth). To supply your own
+                token provider, pass one from pyrit.auth
                 (e.g., get_azure_token_provider('https://cognitiveservices.azure.com/.default')).
                 Defaults to the `API_KEY_ENVIRONMENT_VARIABLE` environment variable.
             api_version (str, Optional): The version of the Azure Content Safety API. Defaults to "2024-09-01".
@@ -92,7 +103,8 @@ class PromptShieldTarget(PromptTarget):
                 this target instance. Defaults to None.
 
         Raises:
-            ValueError: If the endpoint value is not provided.
+            ValueError: If the endpoint value is not provided, or if no API key is
+                provided for a non-Azure Content Safety endpoint.
         """
         endpoint_value = default_values.get_required_value(
             env_var_name=self.ENDPOINT_URI_ENVIRONMENT_VARIABLE, passed_value=endpoint
@@ -107,13 +119,25 @@ class PromptShieldTarget(PromptTarget):
 
         self._api_version = api_version or "2024-09-01"
 
-        # API key is required - either from parameter or environment variable
-        _api_key_value = default_values.get_required_value(
-            env_var_name=self.API_KEY_ENVIRONMENT_VARIABLE, passed_value=api_key
-        )
-        if _api_key_value is None:
-            raise ValueError("API key is required")
-        self._api_key = _api_key_value
+        # Resolve authentication: an explicit key or token-provider callable, the
+        # env var, or — for a recognized Azure Content Safety endpoint with no key —
+        # an Entra ID token provider minted for the endpoint (identity-based auth).
+        if api_key is not None and callable(api_key):
+            self._api_key = api_key
+        else:
+            api_key_value = default_values.get_non_required_value(
+                env_var_name=self.API_KEY_ENVIRONMENT_VARIABLE, passed_value=api_key
+            )
+            if api_key_value:
+                self._api_key = api_key_value
+            elif is_azure_openai_endpoint(endpoint_value):
+                self._api_key = get_azure_token_provider(get_default_azure_scope(endpoint_value))
+            else:
+                raise ValueError(
+                    "API key is required for non-Azure Content Safety endpoints. For recognized Azure "
+                    "endpoints (*.cognitiveservices.azure.com), identity-based authentication is used "
+                    "automatically."
+                )
 
         self._force_entry_field: PromptShieldEntryField = field
 

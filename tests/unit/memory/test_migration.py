@@ -253,9 +253,10 @@ def _seed_pre_migration_scenario(connection, *, scenario_id, manifest_json):
         text(
             'INSERT INTO "ScenarioResultEntries" '
             "(id, scenario_name, scenario_description, scenario_version, pyrit_version, "
-            "objective_target_identifier, scenario_run_state, attack_results_json, "
+            "objective_target_identifier, scenario_init_data, scenario_run_state, attack_results_json, "
             "number_tries, completion_time, timestamp) "
-            "VALUES (:id, :name, '', 1, '0.14.0.dev0', '{}', 'COMPLETED', :manifest, 0, '2026-05-18', '2026-05-18')"
+            "VALUES (:id, :name, '', 1, '0.14.0.dev0', '{}', '{}', 'COMPLETED', :manifest, 0, "
+            "'2026-05-18', '2026-05-18')"
         ),
         {"id": scenario_id, "name": "Backfill Test", "manifest": manifest_json},
     )
@@ -419,9 +420,9 @@ def test_backfill_is_idempotent_and_does_not_clobber_existing_linkage():
                     text(
                         'INSERT INTO "ScenarioResultEntries" '
                         "(id, scenario_name, scenario_description, scenario_version, pyrit_version, "
-                        "objective_target_identifier, scenario_run_state, attack_results_json, "
+                        "objective_target_identifier, scenario_init_data, scenario_run_state, attack_results_json, "
                         "number_tries, completion_time, timestamp) "
-                        "VALUES (:id, 'Other', '', 1, '0.14.0.dev0', '{}', 'COMPLETED', :manifest, 0, "
+                        "VALUES (:id, 'Other', '', 1, '0.14.0.dev0', '{}', '{}', 'COMPLETED', :manifest, 0, "
                         "'2026-05-18', '2026-05-18')"
                     ),
                     {"id": str(uuid.uuid4()), "manifest": json.dumps({"x": ["conv-shared"]})},

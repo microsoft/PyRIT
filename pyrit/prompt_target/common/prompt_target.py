@@ -3,7 +3,7 @@
 
 import abc
 import logging
-from typing import Any, final
+from typing import Any, ClassVar, Literal, final
 
 from pyrit.common.deprecation import print_deprecation_message
 from pyrit.memory import CentralMemory, MemoryInterface
@@ -17,6 +17,13 @@ from pyrit.prompt_target.common.target_capabilities import (
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 
 logger = logging.getLogger(__name__)
+
+# Authentication modes a target can expose to the create-target catalog / API.
+# ``api_key`` passes a key (from params or the target's env var); ``identity``
+# omits the key so the target authenticates itself via an ambient Azure identity
+# (e.g. minting a Microsoft Entra ID token for its own endpoint, or falling back
+# to ``DefaultAzureCredential``).
+AuthMode = Literal["api_key", "identity"]
 
 
 class PromptTarget(Identifiable):
@@ -45,6 +52,19 @@ class PromptTarget(Identifiable):
     # Per-instance overrides are also possible via the ``custom_configuration``
     # constructor parameter, which takes precedence over the class-level value.
     _DEFAULT_CONFIGURATION: TargetConfiguration = TargetConfiguration(capabilities=TargetCapabilities())
+
+    # Declarative auth facts consumed by the create-target service and catalog.
+    # Kept off ``TargetCapabilities`` (auth is a construction/credential axis, not
+    # a message-handling capability) and out of the identity hash. It is surfaced
+    # on ``TargetIdentifier`` only as a ``Param.ClassAttr`` (``Evaluate.Exclude``)
+    # so the registry can read it into ``TargetMetadata`` without building an
+    # instance — never as an identity input or a constructor argument.
+    #
+    # ``supported_auth_modes`` lists the auth modes the create-target API accepts
+    # for this type. Base default is api-key only; targets that can authenticate
+    # via an ambient Azure identity when given no key (e.g. OpenAI, Azure ML,
+    # Azure Blob Storage, Prompt Shield) override this to add ``"identity"``.
+    supported_auth_modes: ClassVar[tuple[AuthMode, ...]] = ("api_key",)
 
     def __init_subclass__(cls, **kwargs: object) -> None:
         """

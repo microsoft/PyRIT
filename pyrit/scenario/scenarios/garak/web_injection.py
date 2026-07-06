@@ -1,10 +1,11 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+from __future__ import annotations
 
 import logging
 import random
-from typing import ClassVar
+from typing import TYPE_CHECKING, ClassVar, cast
 
 from pyrit.common import apply_defaults
 from pyrit.executor.attack.core.attack_config import AttackScoringConfig
@@ -13,16 +14,15 @@ from pyrit.memory import CentralMemory
 from pyrit.models import SeedAttackGroup, SeedObjective, SeedPrompt
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
-from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
+from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
 from pyrit.scenario.core.scenario import BaselineAttackPolicy, Scenario
 from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
-from pyrit.score import (
-    TrueFalseCompositeScorer,
-    TrueFalseScoreAggregator,
-    TrueFalseScorer,
-)
+from pyrit.score import TrueFalseCompositeScorer, TrueFalseScoreAggregator, TrueFalseScorer
 from pyrit.score.true_false.regex.markdown_injection import MarkdownInjectionScorer
 from pyrit.score.true_false.regex.xss_output_scorer import XSSOutputScorer
+
+if TYPE_CHECKING:
+    from pyrit.scenario.core.scenario_context import ScenarioContext
 
 logger = logging.getLogger(__name__)
 
@@ -261,7 +261,7 @@ class WebInjection(Scenario):
             version=self.VERSION,
             strategy_class=WebInjectionStrategy,
             default_strategy=WebInjectionStrategy.DEFAULT,
-            default_dataset_config=DatasetConfiguration(
+            default_dataset_config=DatasetAttackConfiguration(
                 dataset_names=[
                     DATASET_EXAMPLE_DOMAINS,
                     DATASET_MARKDOWN_JS,
@@ -498,28 +498,30 @@ class WebInjection(Scenario):
             return self._xss_scoring_config
         return self._exfil_scoring_config
 
-    async def _get_atomic_attacks_async(self) -> list[AtomicAttack]:
+    async def _resolve_seed_groups_by_dataset_async(self) -> dict[str, list[SeedAttackGroup]]:
         """
-        Build one AtomicAttack per selected strategy, plus an optional baseline.
+        Generate the injection prompts and wrap them into seed groups, keyed by strategy.
+
+        WebInjection synthesizes its seeds (rather than resolving them from a
+        ``DatasetAttackConfiguration``): each strategy renders its own objective and prompt
+        set from the raw garak datasets. Resolving them here means the base owns the single
+        seed sample used for both the atomic attacks and the central baseline.
 
         Returns:
-            list[AtomicAttack]: The atomic attacks for this scenario.
+            dict[str, list[SeedAttackGroup]]: Seed groups keyed by strategy value.
 
         Raises:
-            ValueError: If the scenario is not initialized or no prompts were generated.
+            ValueError: If no prompts were generated for any selected strategy.
         """
-        if self._objective_target is None:
-            raise ValueError(
-                "Scenario not properly initialized. Call await scenario.initialize_async() before running."
-            )
-
         dataset_values = self._load_dataset_values()
         rng = random.Random(self._random_seed)
 
-        atomic_attacks: list[AtomicAttack] = []
-        all_seed_groups: list[SeedAttackGroup] = []
-
-        for strategy in self._scenario_strategies:
+        seed_groups_by_strategy: dict[str, list[SeedAttackGroup]] = {}
+        # ``_scenario_strategies`` is typed as the base ``ScenarioStrategy`` on the
+        # ``Scenario`` base class, but this scenario only ever populates it with
+        # ``WebInjectionStrategy`` members (its ``strategy_class``).
+        strategies = cast("list[WebInjectionStrategy]", self._scenario_strategies)
+        for strategy in strategies:
             objective, prompts = self._build_prompts_for_strategy(
                 strategy=strategy, dataset_values=dataset_values, rng=rng
             )
@@ -528,10 +530,40 @@ class WebInjection(Scenario):
                 continue
 
             seed_groups = self._build_seed_groups(objective=objective, prompts=prompts)
-            all_seed_groups.extend(seed_groups)
+            if seed_groups:
+                seed_groups_by_strategy[strategy.value] = seed_groups
 
+        if not seed_groups_by_strategy:
+            raise ValueError(
+                "WebInjection scenario produced no prompts. Ensure the garak web-injection datasets "
+                "(garak_example_domains_xss, garak_markdown_js, garak_web_html_js, "
+                "garak_xss_normal_instructions) are loaded into CentralMemory before running."
+            )
+
+        return seed_groups_by_strategy
+
+    async def _build_atomic_attacks_async(self, *, context: ScenarioContext) -> list[AtomicAttack]:
+        """
+        Build one AtomicAttack per selected strategy from the resolved seed groups.
+
+        The base owns baseline emission (from ``context.seed_groups``), so this never
+        prepends one itself.
+
+        Args:
+            context (ScenarioContext): The resolved runtime inputs for this run.
+
+        Returns:
+            list[AtomicAttack]: The atomic attacks for this scenario.
+        """
+        strategies_by_value = {
+            strategy.value: strategy for strategy in cast("list[WebInjectionStrategy]", context.scenario_strategies)
+        }
+
+        atomic_attacks: list[AtomicAttack] = []
+        for name, seed_groups in context.seed_groups_by_dataset.items():
+            strategy = strategies_by_value[name]
             attack = PromptSendingAttack(
-                objective_target=self._objective_target,
+                objective_target=context.objective_target,
                 attack_scoring_config=self._scoring_config_for_strategy(strategy),
             )
             atomic_attacks.append(
@@ -539,18 +571,8 @@ class WebInjection(Scenario):
                     atomic_attack_name=strategy.value,
                     attack_technique=AttackTechnique(attack=attack),
                     seed_groups=seed_groups,
-                    memory_labels=self._memory_labels,
+                    memory_labels=context.memory_labels,
                 )
             )
-
-        if not atomic_attacks:
-            raise ValueError(
-                "WebInjection scenario produced no prompts. Ensure the garak web-injection datasets "
-                "(garak_example_domains_xss, garak_markdown_js, garak_web_html_js, "
-                "garak_xss_normal_instructions) are loaded into CentralMemory before running."
-            )
-
-        if self._include_baseline and all_seed_groups:
-            atomic_attacks.insert(0, self._build_baseline_atomic_attack(seed_groups=all_seed_groups))
 
         return atomic_attacks

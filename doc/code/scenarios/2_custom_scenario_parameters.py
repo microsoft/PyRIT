@@ -49,10 +49,10 @@
 # %%
 from pyrit.scenario.airt.scam import Scam
 from pyrit.setup import initialize_pyrit_async
-from pyrit.setup.initializers.components import ScenarioTechniqueInitializer
+from pyrit.setup.initializers.techniques import TechniqueInitializer
 
 await initialize_pyrit_async(memory_db_type="InMemory")  # type: ignore [top-level-await]
-await ScenarioTechniqueInitializer().initialize_async()  # type: ignore [top-level-await]
+await TechniqueInitializer().initialize_async()  # type: ignore [top-level-await]
 
 for param in Scam.supported_parameters():
     print(param)

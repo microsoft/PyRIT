@@ -9,7 +9,7 @@ import pytest
 from pyrit.prompt_target import OpenAIChatTarget
 from pyrit.registry import TargetRegistry
 from pyrit.setup.initializers import TargetInitializer
-from pyrit.setup.initializers.components.targets import TARGET_CONFIGS, generate_rr_name, get_behavioral_key
+from pyrit.setup.initializers.targets import TARGET_CONFIGS, generate_rr_name, get_behavioral_key
 
 
 class TestTargetInitializerBasic:
@@ -120,9 +120,7 @@ class TestTargetInitializerInitialize:
         """Test that PromptShieldTarget is registered without model_name (it doesn't use one)."""
         os.environ["AZURE_CONTENT_SAFETY_API_ENDPOINT"] = "https://test.cognitiveservices.azure.com"
 
-        with patch(
-            "pyrit.setup.initializers.components.targets.get_azure_token_provider", return_value=lambda: "mock-token"
-        ):
+        with patch("pyrit.setup.initializers.targets.get_azure_token_provider", return_value=lambda: "mock-token"):
             init = TargetInitializer()
             await init.initialize_async()
 
@@ -135,9 +133,7 @@ class TestTargetInitializerInitialize:
         os.environ["AZURE_OPENAI_GPT4O_MODEL"] = "my-deployment-name"
         os.environ["AZURE_OPENAI_GPT4O_UNDERLYING_MODEL"] = "gpt-4o"
 
-        with patch(
-            "pyrit.setup.initializers.components.targets.get_azure_openai_auth", return_value=lambda: "mock-token"
-        ):
+        with patch("pyrit.setup.initializers.targets.get_azure_openai_auth", return_value=lambda: "mock-token"):
             init = TargetInitializer()
             await init.initialize_async()
 
@@ -169,9 +165,7 @@ class TestTargetInitializerInitialize:
         def mock_token_provider() -> str:
             return "mock-token"
 
-        with patch(
-            "pyrit.setup.initializers.components.targets.get_azure_openai_auth", return_value=mock_token_provider
-        ):
+        with patch("pyrit.setup.initializers.targets.get_azure_openai_auth", return_value=mock_token_provider):
             init = TargetInitializer()
             await init.initialize_async()
 
@@ -216,7 +210,7 @@ class TestTargetInitializerTargetConfigs:
         """Guard against typos: every ``registry_name`` in ``ENV_TARGET_CONFIGS`` must be unique.
 
         Duplicate names would silently overwrite each other when
-        ``TargetInitializer`` registers them (per ``BaseInstanceRegistry.register``
+        ``TargetInitializer`` registers them (per instance-registry ``register``
         semantics, characterized in ``test_target_registry.py``). Only the
         second entry would survive in the registry, which breaks downstream
         scenarios that resolve targets by name (e.g. ``AdversarialBenchmark``'s
@@ -379,7 +373,7 @@ class TestTargetInitializerDefaultObjectiveTarget:
 
     async def test_openai_chat_registered_with_default_tag(self) -> None:
         """Test that openai_chat target is tagged as DEFAULT_OBJECTIVE_TARGET."""
-        from pyrit.setup.initializers.components.targets import TargetInitializerTags
+        from pyrit.setup.initializers.targets import TargetInitializerTags
 
         os.environ["OPENAI_CHAT_ENDPOINT"] = "https://api.openai.com/v1"
         os.environ["OPENAI_CHAT_KEY"] = "test_key"
@@ -397,7 +391,7 @@ class TestTargetInitializerDefaultObjectiveTarget:
 
     async def test_no_default_tag_when_env_vars_missing(self) -> None:
         """Test that no DEFAULT_OBJECTIVE_TARGET is tagged when openai_chat env vars missing."""
-        from pyrit.setup.initializers.components.targets import TargetInitializerTags
+        from pyrit.setup.initializers.targets import TargetInitializerTags
 
         init = TargetInitializer()
         await init.initialize_async()
@@ -447,7 +441,7 @@ class TestTargetInitializerConfigTagPropagation:
         ``TargetConfig.tags`` should be added to the registry entry so the entire
         ``TargetInitializerTags`` enum is queryable post-registration.
         """
-        from pyrit.setup.initializers.components.targets import TargetInitializerTags
+        from pyrit.setup.initializers.targets import TargetInitializerTags
 
         os.environ["OBJECTIVE_SCORER_CHAT_ENDPOINT"] = "https://test.openai.azure.com"
         os.environ["OBJECTIVE_SCORER_CHAT_KEY"] = "test_key"
@@ -473,7 +467,7 @@ class TestTargetInitializerConfigTagPropagation:
         """An empty ``config.tags`` list must not trigger an ``add_tags`` call (no spurious empty-list passes)."""
         from unittest.mock import MagicMock, patch
 
-        from pyrit.setup.initializers.components.targets import TargetConfig, TargetInitializer
+        from pyrit.setup.initializers.targets import TargetConfig, TargetInitializer
 
         config = TargetConfig(
             registry_name="empty_tags_target",
@@ -501,7 +495,7 @@ class TestTargetInitializerConfigTagPropagation:
         Regression: ``default_objective_target=True`` must still add the ``DEFAULT_OBJECTIVE_TARGET``
         tag alongside any ``config.tags``.
         """
-        from pyrit.setup.initializers.components.targets import TargetInitializerTags
+        from pyrit.setup.initializers.targets import TargetInitializerTags
 
         os.environ["OPENAI_CHAT_ENDPOINT"] = "https://api.openai.com/v1"
         os.environ["OPENAI_CHAT_KEY"] = "test_key"
@@ -557,7 +551,7 @@ class TestTargetInitializerAdversarialChatVariants:
     @pytest.mark.parametrize(("registry_name", "env_prefix"), ADVERSARIAL_CHAT_VARIANTS)
     async def test_variant_registers_with_default_tag(self, registry_name: str, env_prefix: str) -> None:
         """Each variant registers with the ``DEFAULT`` tag when its env vars are set."""
-        from pyrit.setup.initializers.components.targets import TargetInitializerTags
+        from pyrit.setup.initializers.targets import TargetInitializerTags
 
         self._set_variant_env_vars(env_prefix)
 
@@ -590,7 +584,7 @@ class TestTargetInitializerAdversarialChatVariants:
         os.environ[f"{env_prefix}_KEY"] = "test_key"
 
         try:
-            with caplog.at_level(logging.WARNING, logger="pyrit.setup.initializers.components.targets"):
+            with caplog.at_level(logging.WARNING, logger="pyrit.setup.initializers.targets"):
                 init = TargetInitializer()
                 await init.initialize_async()
 
@@ -615,7 +609,7 @@ class TestTargetInitializerAdversarialChatVariants:
         ``_register_target``, this test will catch it. Tracked as
         ``duplicate-registry-name`` in failure_mode_followups.
         """
-        from pyrit.setup.initializers.components.targets import TargetInitializerTags
+        from pyrit.setup.initializers.targets import TargetInitializerTags
 
         for _, prefix in ADVERSARIAL_CHAT_VARIANTS:
             self._set_variant_env_vars(prefix)

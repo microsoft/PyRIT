@@ -10,7 +10,7 @@ from pyrit.prompt_target import OpenAIChatTarget
 from pyrit.registry import ScorerRegistry, TargetRegistry
 from pyrit.score import LikertScalePaths
 from pyrit.setup.initializers import ScorerInitializer
-from pyrit.setup.initializers.components.scorers import (
+from pyrit.setup.initializers.scorers import (
     GPT4O_TARGET,
     GPT4O_TEMP0_TARGET,
     GPT4O_TEMP9_TARGET,
@@ -270,7 +270,7 @@ class TestScorerInitializerBestObjective:
         registry.instances.register(target, name=name)
         return target
 
-    @patch("pyrit.setup.initializers.components.scorers.find_objective_metrics_by_eval_hash")
+    @patch("pyrit.setup.initializers.scorers.find_objective_metrics_by_eval_hash")
     async def test_best_objective_tags_best_scorer(self, mock_find_metrics) -> None:
         """Test that _tag_best_objective tags the scorer with highest F1."""
         self._register_mock_target(name=GPT4O_TARGET)
@@ -286,7 +286,7 @@ class TestScorerInitializerBestObjective:
         results = registry.instances.get_by_tag(tag=ScorerInitializerTags.BEST_OBJECTIVE)
         assert len(results) >= 1
 
-    @patch("pyrit.setup.initializers.components.scorers.find_objective_metrics_by_eval_hash")
+    @patch("pyrit.setup.initializers.scorers.find_objective_metrics_by_eval_hash")
     async def test_best_objective_no_metrics_falls_back_to_category(self, mock_find_metrics) -> None:
         """Test that best objective falls back to composite category when no metrics."""
         self._register_mock_target(name=GPT4O_TARGET)
@@ -305,7 +305,7 @@ class TestScorerInitializerBestObjective:
         else:
             assert len(results) == 0
 
-    @patch("pyrit.setup.initializers.components.scorers.find_objective_metrics_by_eval_hash")
+    @patch("pyrit.setup.initializers.scorers.find_objective_metrics_by_eval_hash")
     async def test_best_objective_picks_highest_f1(self, mock_find_metrics) -> None:
         """Test that the scorer with the highest F1 score gets tagged."""
         self._register_mock_target(name=GPT4O_TARGET)
@@ -329,7 +329,7 @@ class TestScorerInitializerBestObjective:
         assert len(results) == 1
         assert ScorerInitializerTags.DEFAULT_OBJECTIVE_SCORER in results[0].tags
 
-    @patch("pyrit.setup.initializers.components.scorers.find_objective_metrics_by_eval_hash")
+    @patch("pyrit.setup.initializers.scorers.find_objective_metrics_by_eval_hash")
     async def test_best_objective_does_not_add_extra_entry(self, mock_find_metrics) -> None:
         """Test that tagging best objective doesn't increase registry count."""
         self._register_mock_target(name=GPT4O_TARGET)

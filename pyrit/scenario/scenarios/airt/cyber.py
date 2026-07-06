@@ -8,14 +8,16 @@ from functools import cache
 from typing import TYPE_CHECKING
 
 from pyrit.common import apply_defaults
-from pyrit.common.deprecation import print_deprecation_message  # Deprecated. Will be removed in 0.16.0.
 from pyrit.common.path import SCORER_SEED_PROMPT_PATH
 from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
+from pyrit.scenario.core.matrix_atomic_attack_builder import build_matrix_atomic_attacks
 from pyrit.scenario.core.scenario import Scenario
 
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from pyrit.scenario.core.atomic_attack import AtomicAttack
+    from pyrit.scenario.core.scenario_context import ScenarioContext
     from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
     from pyrit.score import TrueFalseScorer
 
@@ -80,7 +82,6 @@ class Cyber(Scenario):
         *,
         objective_scorer: TrueFalseScorer | None = None,
         scenario_result_id: str | None = None,
-        include_baseline: bool | None = None,  # Deprecated. Will be removed in 0.16.0.
     ) -> None:
         """
         Initialize the cyber harms scenario.
@@ -89,8 +90,6 @@ class Cyber(Scenario):
             objective_scorer (TrueFalseScorer | None): Objective scorer for malware detection. If not
                 provided, defaults to a composite scorer using malware detection + refusal backstop.
             scenario_result_id (str | None): Optional ID of an existing scenario result to resume.
-            include_baseline (bool | None): **Deprecated.** Will be removed in 0.16.0. Pass
-                ``include_baseline`` to ``initialize_async`` instead.
         """
         self._objective_scorer: TrueFalseScorer = (
             objective_scorer if objective_scorer else self._get_default_objective_scorer()
@@ -107,12 +106,21 @@ class Cyber(Scenario):
             scenario_result_id=scenario_result_id,
         )
 
-        # Deprecated constructor-time baseline override. Will be removed in 0.16.0, along with
-        # the include_baseline kwarg above.
-        if include_baseline is not None:
-            print_deprecation_message(
-                old_item="Cyber(include_baseline=...)",
-                new_item="Cyber.initialize_async(include_baseline=...)",
-                removed_in="0.16.0",
-            )
-            self._legacy_include_baseline = include_baseline
+    async def _build_atomic_attacks_async(self, *, context: ScenarioContext) -> list[AtomicAttack]:
+        """
+        Build the technique × dataset atomic attacks for Cyber, grouped by technique.
+
+        The baseline is emitted centrally by the base ``initialize_async``, so this override
+        never prepends one.
+
+        Args:
+            context (ScenarioContext): The resolved runtime inputs for this run.
+
+        Returns:
+            list[AtomicAttack]: The generated atomic attacks.
+        """
+        return build_matrix_atomic_attacks(
+            context=context,
+            objective_scorer=self._objective_scorer,
+            strategy_converters=self._strategy_converters,
+        )

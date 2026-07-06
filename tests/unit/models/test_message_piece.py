@@ -802,6 +802,41 @@ def test_message_piece_has_error_and_is_blocked_consistency():
     assert blocked_entry.is_blocked() is True
     assert blocked_entry.has_error() is True
 
+
+def test_adversarial_placeholder_factory_defaults():
+    piece = MessagePiece.adversarial_placeholder()
+
+    assert piece.role == "user"
+    assert piece.original_value == ""
+    assert piece.original_value_data_type == "text"
+    assert piece.is_adversarial_placeholder() is True
+    assert piece.prompt_metadata.get("adversarial_placeholder") is True
+
+
+@pytest.mark.parametrize("role", ["user", "assistant", "system"])
+def test_adversarial_placeholder_factory_custom_role(role):
+    piece = MessagePiece.adversarial_placeholder(role=role)
+
+    assert piece.role == role
+    assert piece.is_adversarial_placeholder() is True
+
+
+def test_is_adversarial_placeholder_returns_false_for_plain_piece():
+    plain = MessagePiece(role="user", original_value="hello")
+
+    assert plain.is_adversarial_placeholder() is False
+    assert "adversarial_placeholder" not in plain.prompt_metadata
+
+
+def test_is_adversarial_placeholder_returns_false_when_flag_is_false():
+    piece = MessagePiece(
+        role="user",
+        original_value="",
+        prompt_metadata={"adversarial_placeholder": False},
+    )
+
+    assert piece.is_adversarial_placeholder() is False
+
     # Test that not all errors are blocks
     error_entry = MessagePiece(
         role="assistant",

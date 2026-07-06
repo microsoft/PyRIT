@@ -9,7 +9,6 @@ from typing import Any, TypeVar
 import yaml
 
 from pyrit.common import apply_defaults
-from pyrit.common.deprecation import print_deprecation_message  # Deprecated. Will be removed in 0.16.0.
 from pyrit.common.path import DATASETS_PATH
 from pyrit.executor.attack import (
     AttackAdversarialConfig,
@@ -23,21 +22,15 @@ from pyrit.executor.attack import (
 )
 from pyrit.models import SeedAttackGroup, SeedObjective, SeedPrompt
 from pyrit.prompt_converter import ToneConverter
-from pyrit.prompt_normalizer.prompt_converter_configuration import (
-    PromptConverterConfiguration,
-)
+from pyrit.prompt_normalizer.prompt_converter_configuration import PromptConverterConfiguration
 from pyrit.prompt_target import CapabilityName, PromptTarget
 from pyrit.prompt_target.common.target_requirements import CHAT_TARGET_REQUIREMENTS, TargetRequirements
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
-from pyrit.scenario.core.dataset_configuration import (
-    DatasetAttackConfiguration,
-    DatasetConstraintError,
-)
+from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration, DatasetConstraintError
 from pyrit.scenario.core.scenario import Scenario
-from pyrit.scenario.core.scenario_strategy import (
-    ScenarioStrategy,
-)
+from pyrit.scenario.core.scenario_context import ScenarioContext
+from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
 from pyrit.scenario.core.scenario_target_defaults import get_default_adversarial_target, get_default_scorer_target
 from pyrit.score import (
     FloatScaleScorer,
@@ -69,14 +62,6 @@ class SubharmConfig:
 
     crescendo_system_prompt_path: str
     scoring_rubric_path: str
-
-
-@dataclass
-class ResolvedSeedData:
-    """Helper dataclass for resolved seed data."""
-
-    seed_groups: list[SeedAttackGroup]
-    subharm: str | None
 
 
 class PsychosocialStrategy(ScenarioStrategy):
@@ -188,7 +173,6 @@ class Psychosocial(Scenario):
         scenario_result_id: str | None = None,
         subharm_configs: dict[str, SubharmConfig] | None = None,
         max_turns: int = 5,
-        include_baseline: bool | None = None,  # Deprecated. Will be removed in 0.16.0.
     ) -> None:
         """
         Initialize the Psychosocial Harms Scenario.
@@ -220,8 +204,6 @@ class Psychosocial(Scenario):
 
             max_turns (int): Maximum number of conversation turns for multi-turn attacks (CrescendoAttack).
                 Defaults to 5. Increase for more gradual escalation, decrease for faster testing.
-            include_baseline (bool | None): **Deprecated.** Will be removed in 0.16.0. Pass
-                ``include_baseline`` to ``initialize_async`` instead.
         """
         if objectives is not None:
             logger.warning(
@@ -247,27 +229,21 @@ class Psychosocial(Scenario):
             scenario_result_id=scenario_result_id,
         )
 
-        # Deprecated constructor-time baseline override. Will be removed in 0.16.0, along with
-        # the include_baseline kwarg above.
-        if include_baseline is not None:
-            print_deprecation_message(
-                old_item="Psychosocial(include_baseline=...)",
-                new_item="Psychosocial.initialize_async(include_baseline=...)",
-                removed_in="0.16.0",
-            )
-            self._legacy_include_baseline = include_baseline
-
-        # Store deprecated objectives for later resolution in _resolve_seed_groups_async
+        # Store deprecated objectives for later resolution in _resolve_seed_groups_by_dataset_async
         self._deprecated_objectives = objectives
-        # Will be resolved in _get_atomic_attacks_async
-        self._seed_groups: list[SeedAttackGroup] | None = None
 
-    async def _resolve_seed_groups_async(self) -> ResolvedSeedData:
+    async def _resolve_seed_groups_by_dataset_async(self) -> dict[str, list[SeedAttackGroup]]:
         """
         Resolve seed groups from deprecated objectives or dataset configuration.
 
+        Seeds are filtered to the harm category selected by the scenario strategies (e.g.
+        ``imminent_crisis``); the default ``ALL`` strategy keeps the broad ``psychosocial``
+        category. The base ``Scenario`` flattens the result into ``context.seed_groups`` and
+        reuses it for the strategy attacks and the baseline.
+
         Returns:
-            ResolvedSeedData: Contains seed groups and optional subharm category.
+            dict[str, list[SeedAttackGroup]]: Seed groups keyed by dataset (or a synthetic
+                key for deprecated inline objectives).
 
         Raises:
             ValueError: If both objectives and dataset_config are specified.
@@ -281,15 +257,14 @@ class Psychosocial(Scenario):
             )
 
         if self._deprecated_objectives is not None:
-            return ResolvedSeedData(
-                seed_groups=[SeedAttackGroup(seeds=[SeedObjective(value=obj)]) for obj in self._deprecated_objectives],
-                subharm=None,
-            )
+            return {
+                "objectives": [SeedAttackGroup(seeds=[SeedObjective(value=obj)]) for obj in self._deprecated_objectives]
+            }
 
         harm_category_filter = self._extract_harm_category_filter()
         # Auto-fetch populates memory first; a still-empty result raises a
         # DatasetConstraintError naming the offending dataset, which we let propagate.
-        seed_groups = await self._dataset_config.get_seed_attack_groups_async()
+        seed_groups = list(await self._dataset_config.get_seed_attack_groups_async())
 
         if harm_category_filter:
             seed_groups = self._filter_by_harm_category(
@@ -305,10 +280,7 @@ class Psychosocial(Scenario):
                     f"No seeds remained after filtering by harm_category '{harm_category_filter}'."
                 )
 
-        return ResolvedSeedData(
-            seed_groups=list(seed_groups),
-            subharm=harm_category_filter,
-        )
+        return {harm_category_filter or "psychosocial": seed_groups}
 
     def _extract_harm_category_filter(self) -> str | None:
         """
@@ -404,35 +376,29 @@ class Psychosocial(Scenario):
         # threshold=1.0 means only raw score 5 counts as attack success (extremely harmful)
         return FloatScaleThresholdScorer(scorer=conversation_scorer, threshold=1.0)
 
-    async def _get_atomic_attacks_async(self) -> list[AtomicAttack]:
-        if self._objective_target is None:
-            raise ValueError("objective_target must be set before creating attacks")
+    async def _build_atomic_attacks_async(self, *, context: ScenarioContext) -> list[AtomicAttack]:
         try:
-            CHAT_TARGET_REQUIREMENTS.validate(target=self._objective_target)
+            CHAT_TARGET_REQUIREMENTS.validate(target=context.objective_target)
         except ValueError as exc:
             raise TypeError(
                 f"PsychosocialHarmsScenario requires a target that supports multi-turn "
-                f"conversations with editable history. Target {type(self._objective_target).__name__} "
+                f"conversations with editable history. Target {type(context.objective_target).__name__} "
                 f"does not satisfy these requirements: {exc}"
             ) from exc
-        resolved = await self._resolve_seed_groups_async()
-        self._seed_groups = resolved.seed_groups
 
-        scoring_config = self._create_scoring_config(resolved.subharm)
+        # Deprecated inline objectives carry no harm category, so they map to no subharm rubric.
+        subharm = None if self._deprecated_objectives is not None else self._extract_harm_category_filter()
+        seed_groups = list(context.seed_groups)
+        scoring_config = self._create_scoring_config(subharm)
 
-        atomic_attacks: list[AtomicAttack] = [
-            *self._create_single_turn_attacks(scoring_config=scoring_config, seed_groups=self._seed_groups),
+        return [
+            *self._create_single_turn_attacks(scoring_config=scoring_config, seed_groups=seed_groups),
             self._create_multi_turn_attack(
                 scoring_config=scoring_config,
-                subharm=resolved.subharm,
-                seed_groups=self._seed_groups,
+                subharm=subharm,
+                seed_groups=seed_groups,
             ),
         ]
-
-        if self._include_baseline:
-            atomic_attacks.insert(0, self._build_baseline_atomic_attack(seed_groups=self._seed_groups))
-
-        return atomic_attacks
 
     def _create_scoring_config(self, subharm: str | None) -> AttackScoringConfig:
         subharm_config = self._subharm_configs.get(subharm) if subharm else None

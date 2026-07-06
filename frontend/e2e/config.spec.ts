@@ -1,16 +1,17 @@
 import { test, expect, type Page } from "@playwright/test";
+import { makeTarget, type FlatTarget } from "./_targets";
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
 /** Return a mock targets list response. */
-function mockTargetsList(items: Record<string, unknown>[] = []) {
+function mockTargetsList(items: FlatTarget[] = []) {
   return {
     status: 200,
     contentType: "application/json",
     body: JSON.stringify({
-      items,
+      items: items.map(makeTarget),
       pagination: { limit: 200, has_more: false, next_cursor: null, prev_cursor: null },
     }),
   };
@@ -138,7 +139,7 @@ test.describe("Target Configuration Page", () => {
 
 test.describe("Create Target Dialog", () => {
   test("should create a target through the dialog", async ({ page }) => {
-    let createdTarget: Record<string, unknown> | null = null;
+    let createdTarget: FlatTarget | null = null;
 
     await page.route(/\/api\/targets/, async (route) => {
       if (route.request().method() === "POST") {

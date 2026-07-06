@@ -35,12 +35,7 @@ from typing import TYPE_CHECKING, TypeVar
 
 from pyrit.common.deprecation import print_deprecation_message
 from pyrit.memory import CentralMemory
-from pyrit.models import (
-    Seed,
-    SeedAttackGroup,
-    SeedGroup,
-    group_seeds_into_attack_groups,
-)
+from pyrit.models import Seed, SeedAttackGroup, SeedGroup, group_seeds_into_attack_groups
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence

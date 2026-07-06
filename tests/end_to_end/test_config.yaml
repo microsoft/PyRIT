@@ -11,4 +11,4 @@ memory_db_type: in_memory
 # (target, load_default_datasets) are still passed via the CLI invocation in
 # test_scenarios.py.
 initializers:
-  - scenario_technique
+  - technique

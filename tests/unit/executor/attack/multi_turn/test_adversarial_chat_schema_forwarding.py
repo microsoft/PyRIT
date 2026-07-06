@@ -14,6 +14,7 @@ assert.
 from unit.mocks import MockPromptTarget
 
 from pyrit.executor.attack import AttackAdversarialConfig, AttackParameters
+from pyrit.executor.attack.component.modality_router import _ModalityFeedbackRouter
 from pyrit.executor.attack.multi_turn.crescendo import (
     ConversationSession,
     CrescendoAttack,
@@ -83,6 +84,7 @@ async def test_tap_forwards_schema_to_adversarial_target(patch_central_database)
         auxiliary_scorers=[],
         attack_id=attack.get_identifier(),
         attack_strategy_name="TreeOfAttacksWithPruningAttack",
+        modality_router=_ModalityFeedbackRouter(adversarial_chat=adversarial, objective_target=objective),
     )
 
     await node._send_to_adversarial_chat_async(prompt_text="hello")

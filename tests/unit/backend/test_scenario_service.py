@@ -5,6 +5,7 @@
 Tests for backend scenario service and routes.
 """
 
+from typing import Literal
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -14,10 +15,13 @@ from fastapi.testclient import TestClient
 from pyrit.backend.main import app
 from pyrit.backend.models.common import PaginationInfo
 from pyrit.backend.models.scenarios import ListRegisteredScenariosResponse
-from pyrit.backend.services.scenario_service import ScenarioService, get_scenario_service
+from pyrit.backend.services.scenario_service import (
+    ScenarioService,
+    get_scenario_service,
+)
+from pyrit.models import Parameter
 from pyrit.models.catalog.scenario import RegisteredScenario
 from pyrit.registry import ScenarioMetadata
-from pyrit.registry.class_registries.scenario_registry import ScenarioParameterMetadata
 
 
 @pytest.fixture
@@ -43,7 +47,6 @@ def _make_scenario_metadata(
     all_strategies: tuple[str, ...] = ("role_play", "many_shot"),
     aggregate_strategies: tuple[str, ...] = ("all", "default"),
     default_datasets: tuple[str, ...] = ("test_dataset",),
-    max_dataset_size: int | None = None,
 ) -> ScenarioMetadata:
     """Create a ScenarioMetadata instance for testing."""
     return ScenarioMetadata(
@@ -55,7 +58,6 @@ def _make_scenario_metadata(
         all_strategies=all_strategies,
         aggregate_strategies=aggregate_strategies,
         default_datasets=default_datasets,
-        max_dataset_size=max_dataset_size,
     )
 
 
@@ -72,7 +74,7 @@ class TestScenarioServiceListScenarios:
         with patch.object(ScenarioService, "__init__", lambda self: None):
             service = ScenarioService()
             service._registry = MagicMock()
-            service._registry.list_metadata.return_value = []
+            service._registry.get_all_registered_class_metadata.return_value = []
 
             result = await service.list_scenarios_async()
 
@@ -86,7 +88,7 @@ class TestScenarioServiceListScenarios:
         with patch.object(ScenarioService, "__init__", lambda self: None):
             service = ScenarioService()
             service._registry = MagicMock()
-            service._registry.list_metadata.return_value = [metadata]
+            service._registry.get_all_registered_class_metadata.return_value = [metadata]
 
             result = await service.list_scenarios_async()
 
@@ -98,7 +100,6 @@ class TestScenarioServiceListScenarios:
             assert result.items[0].aggregate_strategies == ["all", "default"]
             assert result.items[0].all_strategies == ["role_play", "many_shot"]
             assert result.items[0].default_datasets == ["test_dataset"]
-            assert result.items[0].max_dataset_size is None
 
     async def test_list_scenarios_paginates_with_limit(self) -> None:
         """Test that list respects the limit parameter."""
@@ -109,7 +110,7 @@ class TestScenarioServiceListScenarios:
         with patch.object(ScenarioService, "__init__", lambda self: None):
             service = ScenarioService()
             service._registry = MagicMock()
-            service._registry.list_metadata.return_value = metadata_list
+            service._registry.get_all_registered_class_metadata.return_value = metadata_list
 
             result = await service.list_scenarios_async(limit=3)
 
@@ -126,7 +127,7 @@ class TestScenarioServiceListScenarios:
         with patch.object(ScenarioService, "__init__", lambda self: None):
             service = ScenarioService()
             service._registry = MagicMock()
-            service._registry.list_metadata.return_value = metadata_list
+            service._registry.get_all_registered_class_metadata.return_value = metadata_list
 
             result = await service.list_scenarios_async(limit=2, cursor="test.scenario_1")
 
@@ -144,26 +145,13 @@ class TestScenarioServiceListScenarios:
         with patch.object(ScenarioService, "__init__", lambda self: None):
             service = ScenarioService()
             service._registry = MagicMock()
-            service._registry.list_metadata.return_value = metadata_list
+            service._registry.get_all_registered_class_metadata.return_value = metadata_list
 
             result = await service.list_scenarios_async(limit=5)
 
             assert len(result.items) == 3
             assert result.pagination.has_more is False
             assert result.pagination.next_cursor is None
-
-    async def test_list_scenarios_includes_max_dataset_size(self) -> None:
-        """Test that max_dataset_size is included in response."""
-        metadata = _make_scenario_metadata(max_dataset_size=10)
-
-        with patch.object(ScenarioService, "__init__", lambda self: None):
-            service = ScenarioService()
-            service._registry = MagicMock()
-            service._registry.list_metadata.return_value = [metadata]
-
-            result = await service.list_scenarios_async()
-
-            assert result.items[0].max_dataset_size == 10
 
 
 class TestScenarioServiceGetScenario:
@@ -176,7 +164,7 @@ class TestScenarioServiceGetScenario:
         with patch.object(ScenarioService, "__init__", lambda self: None):
             service = ScenarioService()
             service._registry = MagicMock()
-            service._registry.list_metadata.return_value = [metadata]
+            service._registry.get_registered_class_metadata.return_value = metadata
 
             result = await service.get_scenario_async(scenario_name="foundry.red_team_agent")
 
@@ -188,7 +176,7 @@ class TestScenarioServiceGetScenario:
         with patch.object(ScenarioService, "__init__", lambda self: None):
             service = ScenarioService()
             service._registry = MagicMock()
-            service._registry.list_metadata.return_value = []
+            service._registry.get_registered_class_metadata.return_value = None
 
             result = await service.get_scenario_async(scenario_name="nonexistent")
 
@@ -232,7 +220,6 @@ class TestScenarioRoutes:
             aggregate_strategies=["all", "default"],
             all_strategies=["role_play", "many_shot"],
             default_datasets=["airt_hate"],
-            max_dataset_size=10,
         )
 
         with patch("pyrit.backend.routes.scenarios.get_scenario_service") as mock_get_service:
@@ -257,7 +244,6 @@ class TestScenarioRoutes:
             assert item["aggregate_strategies"] == ["all", "default"]
             assert item["all_strategies"] == ["role_play", "many_shot"]
             assert item["default_datasets"] == ["airt_hate"]
-            assert item["max_dataset_size"] == 10
 
     def test_list_scenarios_passes_pagination_params(self, client: TestClient) -> None:
         """Test that pagination params are forwarded to service."""
@@ -286,7 +272,6 @@ class TestScenarioRoutes:
             aggregate_strategies=["all"],
             all_strategies=["role_play"],
             default_datasets=["airt_hate"],
-            max_dataset_size=None,
         )
 
         with patch("pyrit.backend.routes.scenarios.get_scenario_service") as mock_get_service:
@@ -321,7 +306,6 @@ class TestScenarioRoutes:
             aggregate_strategies=["all"],
             all_strategies=["base64", "rot13"],
             default_datasets=[],
-            max_dataset_size=None,
         )
 
         with patch("pyrit.backend.routes.scenarios.get_scenario_service") as mock_get_service:
@@ -355,21 +339,18 @@ class TestScenarioServiceSupportedParameters:
             all_strategies=("role_play",),
             aggregate_strategies=("all",),
             default_datasets=("test_dataset",),
-            max_dataset_size=None,
             supported_parameters=(
-                ScenarioParameterMetadata(
+                Parameter(
                     name="max_turns",
                     description="Maximum number of turns",
                     default=5,
-                    param_type="int",
-                    choices=None,
+                    param_type=int,
                 ),
-                ScenarioParameterMetadata(
+                Parameter(
                     name="mode",
                     description="Execution mode",
                     default="fast",
-                    param_type="str",
-                    choices=["fast", "slow"],
+                    param_type=Literal["fast", "slow"],
                 ),
             ),
         )
@@ -377,7 +358,7 @@ class TestScenarioServiceSupportedParameters:
         with patch.object(ScenarioService, "__init__", lambda self: None):
             service = ScenarioService()
             service._registry = MagicMock()
-            service._registry.list_metadata.return_value = [metadata]
+            service._registry.get_all_registered_class_metadata.return_value = [metadata]
 
             result = await service.list_scenarios_async()
 
@@ -387,15 +368,15 @@ class TestScenarioServiceSupportedParameters:
 
             assert params[0].name == "max_turns"
             assert params[0].description == "Maximum number of turns"
-            assert params[0].default == "5"
-            assert params[0].param_type == "int"
+            assert params[0].model_dump()["default"] == "5"
+            assert params[0].type_name == "int"
             assert params[0].choices is None
             assert params[0].is_list is False
 
             assert params[1].name == "mode"
             assert params[1].description == "Execution mode"
-            assert params[1].default == "'fast'"
-            assert params[1].param_type == "str"
+            assert params[1].model_dump()["default"] == "fast"
+            assert params[1].type_name == "str"
             assert params[1].choices == ["fast", "slow"]
             assert params[1].is_list is False
 
@@ -406,7 +387,7 @@ class TestScenarioServiceSupportedParameters:
         with patch.object(ScenarioService, "__init__", lambda self: None):
             service = ScenarioService()
             service._registry = MagicMock()
-            service._registry.list_metadata.return_value = [metadata]
+            service._registry.get_all_registered_class_metadata.return_value = [metadata]
 
             result = await service.list_scenarios_async()
 
@@ -423,14 +404,12 @@ class TestScenarioServiceSupportedParameters:
             all_strategies=("all",),
             aggregate_strategies=("all",),
             default_datasets=(),
-            max_dataset_size=None,
             supported_parameters=(
-                ScenarioParameterMetadata(
+                Parameter(
                     name="optional_param",
                     description="An optional param",
                     default=None,
-                    param_type="str",
-                    choices=None,
+                    param_type=str,
                 ),
             ),
         )
@@ -438,9 +417,10 @@ class TestScenarioServiceSupportedParameters:
         with patch.object(ScenarioService, "__init__", lambda self: None):
             service = ScenarioService()
             service._registry = MagicMock()
-            service._registry.list_metadata.return_value = [metadata]
+            service._registry.get_all_registered_class_metadata.return_value = [metadata]
 
             result = await service.list_scenarios_async()
 
             param = result.items[0].supported_parameters[0]
             assert param.default is None
+            assert param.model_dump()["default"] is None

@@ -27,9 +27,9 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from pyrit.models.identifiers import TargetIdentifier
-from pyrit.registry.base import ClassRegistryEntry
 from pyrit.registry.instance_registry import DefaultInstanceRegistry, InstanceRegistry
 from pyrit.registry.registry import Registry
+from pyrit.registry.registry_metadata import RegistryMetadata
 
 if TYPE_CHECKING:
     from types import ModuleType
@@ -38,14 +38,22 @@ if TYPE_CHECKING:
 
 
 @dataclass(frozen=True)
-class TargetMetadata(ClassRegistryEntry):
+class TargetMetadata(RegistryMetadata):
     """
     Metadata describing a registered ``PromptTarget`` class.
 
     Carries the derived ``parameters`` build contract (the same list the resolver
-    consumes to build an instance). Use ``TargetRegistry.get_class()`` to get the
-    actual class or ``create_instance()`` to build a configured instance.
+    consumes to build an instance) and, via ``class_attributes`` on the base, the
+    target's declarative auth facts. ``supported_auth_modes`` is projected from
+    those rather than stored, so the entry can never drift from the class. Use
+    ``TargetRegistry.get_class()`` to get the actual class or ``create_instance()``
+    to build a configured instance.
     """
+
+    @property
+    def supported_auth_modes(self) -> tuple[str, ...]:
+        """Auth modes this target type accepts (e.g. ``"api_key"``, ``"identity"``)."""
+        return tuple(self.class_attributes.get("supported_auth_modes") or ())
 
 
 class TargetRegistry(Registry["PromptTarget", TargetMetadata]):

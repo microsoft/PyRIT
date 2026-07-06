@@ -529,8 +529,9 @@ class TestSupportedParameters:
                 pass
 
         init = StrictInit()
+        init.params = {"bogus": ["value"]}
         with pytest.raises(ValueError, match="unknown parameter"):
-            init._validate_params(params={"bogus": ["value"]})
+            init.validate_params()
 
     def test_validate_params_accepts_valid(self) -> None:
         """Test that valid params pass validation."""
@@ -549,8 +550,9 @@ class TestSupportedParameters:
                 pass
 
         init = ValidInit()
+        init.params = {"key": ["abc"], "mode": ["slow"]}
         # Should not raise
-        init._validate_params(params={"key": ["abc"], "mode": ["slow"]})
+        init.validate_params()
 
     def test_validate_checks_params_on_instance(self) -> None:
         """Test that validate() checks self.params."""
@@ -609,7 +611,7 @@ class TestInitializerParameterDeprecation:
 
     The alias is exposed from two import paths and both must emit the warning:
       - ``from pyrit.setup.initializers import InitializerParameter`` (package level)
-      - ``from pyrit.setup.initializers.pyrit_initializer import InitializerParameter``
+      - ``from pyrit.setup.pyrit_initializer import InitializerParameter``
         (canonical defining module — the path most likely seen in IDE "go to
         definition" jumps and older sample notebooks)
     """
@@ -637,7 +639,7 @@ class TestInitializerParameterDeprecation:
 
     def test_canonical_module_alias_emits_deprecation_warning(self) -> None:
         """Accessing InitializerParameter on pyrit_initializer also emits the warning."""
-        import pyrit.setup.initializers.pyrit_initializer as pyrit_initializer_module
+        import pyrit.setup.pyrit_initializer as pyrit_initializer_module
 
         with pytest.warns(DeprecationWarning, match=r"will be removed in 0\.16\.0"):
             value = pyrit_initializer_module.InitializerParameter
@@ -653,7 +655,7 @@ class TestInitializerParameterDeprecation:
 
     def test_canonical_module_unknown_attribute_still_raises(self) -> None:
         """The pyrit_initializer __getattr__ shim must not swallow missing attributes."""
-        import pyrit.setup.initializers.pyrit_initializer as pyrit_initializer_module
+        import pyrit.setup.pyrit_initializer as pyrit_initializer_module
 
         with pytest.raises(AttributeError, match="has no attribute 'NonExistentSymbol'"):
             _ = pyrit_initializer_module.NonExistentSymbol

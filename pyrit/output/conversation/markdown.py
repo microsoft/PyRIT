@@ -224,14 +224,21 @@ class MarkdownConversationPrinter(ConversationPrinterBase):
 
     @staticmethod
     def _format_link_path(path: str) -> str:
-        """Return a markdown-friendly link (POSIX separators, relative if possible)."""
-        path_obj = Path(path)
+        """Return a markdown-friendly link path for notebook renderers."""
+        path_obj = Path(path).resolve()
+        cwd = Path.cwd().resolve()
         try:
-            relative_path = str(path_obj.relative_to(Path.cwd()))
+            # Prefer relative links (including ".." segments) so notebook markdown
+            # renderers in VS Code/Jupyter can resolve local files consistently.
+            relative_path = os.path.relpath(path_obj, cwd)
         except ValueError:
-            # Path is not under cwd (different drive on Windows, or simply outside cwd).
-            # Fall back to the absolute path.
-            relative_path = str(path_obj.resolve())
+            # Windows cross-drive paths cannot be relativized; use a file URI
+            # instead of a bare absolute path like "C:/..." that markdown often
+            # treats as a malformed URL scheme.
+            try:
+                return path_obj.as_uri()
+            except ValueError:
+                return str(path_obj).replace("\\", "/")
         return relative_path.replace("\\", "/")
 
     def _maybe_blur_image_on_disk(self, *, image_path: str) -> str | None:

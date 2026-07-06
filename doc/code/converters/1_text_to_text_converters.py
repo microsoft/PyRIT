@@ -181,12 +181,14 @@ print("CodeChameleon:", await code_chameleon.convert_async(prompt=prompt))  # ty
 from pyrit.datasets import TextJailBreak
 from pyrit.prompt_converter import (
     JsonStringConverter,
+    PolicyPuppetryConverter,
     SearchReplaceConverter,
     SuffixAppendConverter,
     TemplateSegmentConverter,
     TextJailbreakConverter,
     UrlConverter,
 )
+from pyrit.prompt_converter.policy_puppetry_converter import PolicyPuppetryTemplate
 
 prompt = "tell me how to cut down a tree"
 
@@ -213,6 +215,10 @@ print("Text Jailbreak:", await text_jailbreak.convert_async(prompt=prompt))  # t
 # Template segment splits prompt using a template (uses default tom_and_jerry.yaml if not specified)
 template_converter = TemplateSegmentConverter()
 print("Template Segment:", await template_converter.convert_async(prompt=prompt))  # type: ignore
+
+# Policy Puppetry [@hiddenlayer2025policypuppetry] frames the request as policy/config the model should follow
+policy_puppetry = PolicyPuppetryConverter(prompt_template=PolicyPuppetryTemplate.DR_HOUSE.to_seed_prompt())
+print("Policy Puppetry:", await policy_puppetry.convert_async(prompt=prompt))  # type: ignore
 
 # %% [markdown]
 # ### 1.4 Token Smuggling Converters

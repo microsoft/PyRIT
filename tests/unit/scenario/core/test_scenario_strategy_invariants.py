@@ -36,7 +36,7 @@ def _reset_registries():
     from pyrit.registry import TargetRegistry
     from pyrit.scenario.scenarios.airt.cyber import Cyber
     from pyrit.scenario.scenarios.airt.rapid_response import RapidResponse
-    from pyrit.setup.initializers.components.scenario_techniques import build_scenario_technique_factories
+    from pyrit.setup.initializers.techniques import build_technique_factories
 
     AttackTechniqueRegistry.reset_registry_singleton()
     TargetRegistry.reset_registry_singleton()
@@ -46,7 +46,7 @@ def _reset_registries():
     adv_target = MagicMock(spec=PromptTarget)
     adv_target.capabilities.includes.return_value = True
     TargetRegistry.get_registry_singleton().instances.register(adv_target, name="adversarial_chat")
-    AttackTechniqueRegistry.get_registry_singleton().register_from_factories(build_scenario_technique_factories())
+    AttackTechniqueRegistry.get_registry_singleton().register_from_factories(build_technique_factories())
     yield
     AttackTechniqueRegistry.reset_registry_singleton()
     TargetRegistry.reset_registry_singleton()

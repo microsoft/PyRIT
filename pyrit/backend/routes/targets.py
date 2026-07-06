@@ -13,6 +13,7 @@ from fastapi import APIRouter, HTTPException, Query, status
 from pyrit.backend.models.common import ProblemDetail
 from pyrit.backend.models.targets import (
     CreateTargetRequest,
+    TargetCatalogResponse,
     TargetListResponse,
 )
 from pyrit.backend.services.target_service import get_target_service
@@ -44,15 +45,38 @@ async def list_targets(  # pyrit-async-suffix-exempt
     return await service.list_targets_async(limit=limit, cursor=cursor)
 
 
+@router.get(
+    "/catalog",
+    response_model=TargetCatalogResponse,
+    responses={
+        500: {"model": ProblemDetail, "description": "Internal server error"},
+    },
+)
+async def list_target_catalog() -> TargetCatalogResponse:  # pyrit-async-suffix-exempt
+    """
+    List all available target types from the backend target registry.
+
+    Returns:
+        TargetCatalogResponse: List of available target types.
+    """
+    service = get_target_service()
+    return await service.list_target_catalog_async()
+
+
 @router.post(
     "",
     response_model=TargetInstance,
     status_code=status.HTTP_201_CREATED,
     responses={
-        400: {"model": ProblemDetail, "description": "Invalid target type or parameters"},
+        400: {
+            "model": ProblemDetail,
+            "description": "Invalid target type or parameters",
+        },
     },
 )
-async def create_target(request: CreateTargetRequest) -> TargetInstance:  # pyrit-async-suffix-exempt
+async def create_target(
+    request: CreateTargetRequest,
+) -> TargetInstance:  # pyrit-async-suffix-exempt
     """
     Create a new target instance.
 
@@ -87,7 +111,9 @@ async def create_target(request: CreateTargetRequest) -> TargetInstance:  # pyri
         404: {"model": ProblemDetail, "description": "Target not found"},
     },
 )
-async def get_target(target_registry_name: str) -> TargetInstance:  # pyrit-async-suffix-exempt
+async def get_target(
+    target_registry_name: str,
+) -> TargetInstance:  # pyrit-async-suffix-exempt
     """
     Get a target instance by registry name.
 

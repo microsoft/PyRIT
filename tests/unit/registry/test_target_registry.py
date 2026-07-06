@@ -299,6 +299,17 @@ class TestClassMetadata:
         meta = self._metadata_for(registry, "RoundRobinTarget")
         assert any(p.is_reference_to(ComponentType.TARGET) for p in meta.parameters)
 
+    def test_metadata_supported_auth_modes_projects_class_attribute(self, registry: TargetRegistry):
+        # Identity-capable targets expose both modes; api-key-only targets expose one.
+        assert self._metadata_for(registry, "OpenAIChatTarget").supported_auth_modes == ("api_key", "identity")
+        assert self._metadata_for(registry, "TextTarget").supported_auth_modes == ("api_key",)
+
+    def test_metadata_supported_auth_modes_sourced_from_class_attributes(self, registry: TargetRegistry):
+        # Auth modes are read off the class via Param.ClassAttr, not a fabricated instance.
+        meta = self._metadata_for(registry, "OpenAIChatTarget")
+        assert "supported_auth_modes" in meta.class_attributes
+        assert meta.class_attributes["supported_auth_modes"] == ("api_key", "identity")
+
 
 class TestRegistrationGate:
     """The identifier blueprint must line up with a resolvable contract for every target."""

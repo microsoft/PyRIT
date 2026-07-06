@@ -14,27 +14,21 @@ envelopes, RFC 7807 problem details, GUI-only request bodies) stay in
 """
 
 from pyrit.models.catalog.initializer import (
-    InitializerParameterSummary,
     RegisteredInitializer,
 )
 from pyrit.models.catalog.scenario import (
     RegisteredScenario,
     RunScenarioRequest,
-    ScenarioParameterSummary,
     ScenarioRunSummary,
 )
 from pyrit.models.catalog.target import (
-    TargetCapabilitiesInfo,
     TargetInstance,
 )
 
 __all__ = [
-    "InitializerParameterSummary",
     "RegisteredInitializer",
     "RegisteredScenario",
     "RunScenarioRequest",
-    "ScenarioParameterSummary",
     "ScenarioRunSummary",
-    "TargetCapabilitiesInfo",
     "TargetInstance",
 ]

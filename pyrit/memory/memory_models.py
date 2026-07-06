@@ -45,6 +45,7 @@ from pyrit.models import (
     EvaluationIdentifier,
     MessagePiece,
     PromptDataType,
+    ScenarioEvaluationIdentifier,
     ScenarioIdentifier,
     ScenarioResult,
     ScenarioRunState,
@@ -1102,7 +1103,8 @@ class ScenarioResultEntry(Base):
         scenario_description (str): Optional detailed description of the scenario.
         scenario_version (int): Version number of the scenario definition (default: 1).
         pyrit_version (str): Version of PyRIT framework used during scenario execution.
-        scenario_init_data (dict): Optional initialization parameters used to configure the scenario.
+        scenario_identifier (dict): Canonical scenario identity (class name, version,
+            techniques, datasets, resolved params, objective target / scorer children).
         objective_target_identifier (dict): Identifier for the target being evaluated in the scenario.
         objective_scorer_identifier (dict): Optional identifier for the scorer used to evaluate results.
         scenario_run_state (str): Current execution state of the scenario
@@ -1130,7 +1132,9 @@ class ScenarioResultEntry(Base):
     scenario_description = mapped_column(Unicode, nullable=True)
     scenario_version = mapped_column(INTEGER, nullable=False, default=1)
     pyrit_version = mapped_column(String, nullable=False)
-    scenario_init_data: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    #: Canonical scenario identity (class name, version, techniques, datasets,
+    #: resolved params, objective target / scorer children) with its eval hash.
+    scenario_identifier: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
     objective_target_identifier: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
     objective_scorer_identifier: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     scenario_run_state: Mapped[str] = mapped_column(String, nullable=False, default="CREATED")
@@ -1161,24 +1165,32 @@ class ScenarioResultEntry(Base):
             entry (ScenarioResult): The scenario result object to convert into a database entry.
         """
         self.id = entry.id
-        self.scenario_name = entry.scenario_identifier.name
-        self.scenario_description = entry.scenario_identifier.description
-        self.scenario_version = entry.scenario_identifier.version
-        self.pyrit_version = entry.scenario_identifier.pyrit_version
-        self.scenario_init_data = entry.scenario_identifier.init_data
+        self.scenario_name = entry.scenario_name
+        self.scenario_description = entry.scenario_description
+        self.scenario_version = entry.scenario_version
+        self.pyrit_version = entry.pyrit_version
+
+        # Stamp the canonical scenario identifier's eval_hash fresh and store it.
+        # The denormalized target / scorer columns are populated from the same
+        # identifier for DB-level filtering (never a value trusted from storage).
+        scenario_identifier = entry.scenario_identifier.with_eval_hash(
+            ScenarioEvaluationIdentifier(entry.scenario_identifier).eval_hash
+        )
+        self.scenario_identifier = scenario_identifier.model_dump()
+
         # Convert ComponentIdentifier to dict for JSON storage
+        target_identifier = entry.objective_target_identifier
         self.objective_target_identifier = (  # type: ignore[ty:invalid-assignment]
-            entry.objective_target_identifier.model_dump() if entry.objective_target_identifier else None
+            target_identifier.model_dump() if target_identifier else None
         )
         # Always recompute eval_hash before dumping so the stored JSON carries the
         # freshly computed value for DB-level filtering (never a value from storage).
-        if entry.objective_scorer_identifier:
-            entry.objective_scorer_identifier = entry.objective_scorer_identifier.with_eval_hash(
-                ScorerEvaluationIdentifier(entry.objective_scorer_identifier).eval_hash
+        scorer_identifier = entry.objective_scorer_identifier
+        if scorer_identifier:
+            scorer_identifier = scorer_identifier.with_eval_hash(
+                ScorerEvaluationIdentifier(scorer_identifier).eval_hash
             )
-        self.objective_scorer_identifier = (
-            entry.objective_scorer_identifier.model_dump() if entry.objective_scorer_identifier else None
-        )
+        self.objective_scorer_identifier = scorer_identifier.model_dump() if scorer_identifier else None
         self.scenario_run_state = entry.scenario_run_state.value
         self.labels = entry.labels
         self.number_tries = entry.number_tries
@@ -1211,29 +1223,22 @@ class ScenarioResultEntry(Base):
         Returns:
             ScenarioResult object with scenario metadata but empty attack_results
         """
-        # Recreate ScenarioIdentifier with the stored pyrit_version
+        # The canonical scenario identity (name / version / techniques / datasets /
+        # params / target / scorer children) is stored as one JSON column and
+        # reconstructed here as a typed ScenarioIdentifier. eval_hash is recomputed
+        # on reload (never trusted from storage). The denormalized target / scorer
+        # columns exist only for DB-level filtering, so they aren't read back here.
         stored_version = self.pyrit_version or LEGACY_PYRIT_VERSION
-        scenario_identifier = ScenarioIdentifier(
-            name=self.scenario_name,
-            description=self.scenario_description or "",
-            scenario_version=self.scenario_version,
-            init_data=self.scenario_init_data,
-            pyrit_version=stored_version,
-        )
 
         # Return empty attack_results - will be populated by memory_interface
         attack_results: dict[str, list[AttackResult]] = {}
 
-        # Convert dict back to ComponentIdentifier with the stored pyrit_version;
-        # eval_hash is recomputed on reload via ScorerEvaluationIdentifier.
-        scorer_identifier = _load_identifier(
-            self.objective_scorer_identifier,
-            pyrit_version=stored_version,
-            eval_identifier_cls=ScorerEvaluationIdentifier,
+        base_identifier = ComponentIdentifier.model_validate(
+            {**self.scenario_identifier, "pyrit_version": stored_version}
         )
-
-        # Convert dict back to ComponentIdentifier for reconstruction
-        target_identifier = _load_identifier(self.objective_target_identifier)
+        scenario_identifier = ScenarioIdentifier.from_component_identifier(
+            base_identifier.with_eval_hash(ScenarioEvaluationIdentifier(base_identifier).eval_hash)
+        )
 
         # Deserialize display_group_map if stored
         display_group_map: dict[str, str] | None = None
@@ -1243,9 +1248,8 @@ class ScenarioResultEntry(Base):
         return ScenarioResult(
             id=self.id,
             scenario_identifier=scenario_identifier,
-            objective_target_identifier=target_identifier,
+            scenario_description=self.scenario_description or "",
             attack_results=attack_results,
-            objective_scorer_identifier=scorer_identifier,
             scenario_run_state=ScenarioRunState(self.scenario_run_state),
             labels=self.labels or {},
             creation_time=self.timestamp,

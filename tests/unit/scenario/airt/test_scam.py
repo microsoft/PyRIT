@@ -9,11 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from pyrit.common.path import DATASETS_PATH
-from pyrit.executor.attack import (
-    ContextComplianceAttack,
-    RedTeamingAttack,
-    RolePlayAttack,
-)
+from pyrit.executor.attack import ContextComplianceAttack, RedTeamingAttack, RolePlayAttack
 from pyrit.executor.attack.core.attack_config import AttackScoringConfig
 from pyrit.models import ComponentIdentifier, SeedAttackGroup, SeedDataset, SeedObjective
 from pyrit.prompt_target import OpenAIChatTarget, PromptTarget
@@ -59,6 +55,7 @@ def mock_dataset_config(mock_memory_seed_groups):
     seed_attack_groups = list(mock_memory_seed_groups)
     mock_config = MagicMock(spec=DatasetAttackConfiguration)
     mock_config.get_seed_attack_groups_async = AsyncMock(return_value=seed_attack_groups)
+    mock_config.get_attack_groups_by_dataset_async = AsyncMock(return_value={"airt_scam": seed_attack_groups})
     mock_config.dataset_names = ["airt_scam"]
     return mock_config
 
@@ -129,7 +126,10 @@ class TestScamInitialization:
         mock_memory_seed_groups: list[SeedAttackGroup],
     ) -> None:
         with patch.object(
-            Scam, "_resolve_seed_groups_async", new_callable=AsyncMock, return_value=mock_memory_seed_groups
+            Scam,
+            "_resolve_seed_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value={"memory": mock_memory_seed_groups},
         ):
             scenario = Scam(objective_scorer=mock_objective_scorer)
 
@@ -139,7 +139,10 @@ class TestScamInitialization:
     def test_init_with_default_scorer(self, mock_memory_seed_groups) -> None:
         """Test initialization with default scorer."""
         with patch.object(
-            Scam, "_resolve_seed_groups_async", new_callable=AsyncMock, return_value=mock_memory_seed_groups
+            Scam,
+            "_resolve_seed_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value={"memory": mock_memory_seed_groups},
         ):
             scenario = Scam()
             assert scenario._objective_scorer_identifier
@@ -149,7 +152,10 @@ class TestScamInitialization:
         scorer = MagicMock(spec=TrueFalseCompositeScorer)
 
         with patch.object(
-            Scam, "_resolve_seed_groups_async", new_callable=AsyncMock, return_value=mock_memory_seed_groups
+            Scam,
+            "_resolve_seed_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value={"memory": mock_memory_seed_groups},
         ):
             scenario = Scam(objective_scorer=scorer)
             assert isinstance(scenario._scorer_config, AttackScoringConfig)
@@ -158,7 +164,10 @@ class TestScamInitialization:
         self, *, mock_objective_scorer: TrueFalseCompositeScorer, mock_memory_seed_groups: list[SeedAttackGroup]
     ) -> None:
         with patch.object(
-            Scam, "_resolve_seed_groups_async", new_callable=AsyncMock, return_value=mock_memory_seed_groups
+            Scam,
+            "_resolve_seed_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value={"memory": mock_memory_seed_groups},
         ):
             scenario = Scam(objective_scorer=mock_objective_scorer)
 
@@ -172,7 +181,10 @@ class TestScamInitialization:
         adversarial_chat.get_identifier.return_value = _mock_target_id("CustomAdversary")
 
         with patch.object(
-            Scam, "_resolve_seed_groups_async", new_callable=AsyncMock, return_value=mock_memory_seed_groups
+            Scam,
+            "_resolve_seed_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value={"memory": mock_memory_seed_groups},
         ):
             scenario = Scam(
                 adversarial_chat=adversarial_chat,
@@ -209,12 +221,15 @@ class TestScamAttackGeneration:
     ):
         """Test that _get_atomic_attacks_async returns atomic attacks."""
         with patch.object(
-            Scam, "_resolve_seed_groups_async", new_callable=AsyncMock, return_value=mock_memory_seed_groups
+            Scam,
+            "_resolve_seed_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value={"memory": mock_memory_seed_groups},
         ):
             scenario = Scam(objective_scorer=mock_objective_scorer)
 
             await scenario.initialize_async(objective_target=mock_objective_target, dataset_config=mock_dataset_config)
-            atomic_attacks = await scenario._get_atomic_attacks_async()
+            atomic_attacks = scenario._atomic_attacks
 
             assert len(atomic_attacks) > 0
             assert all(run.attack_technique is not None for run in atomic_attacks)
@@ -238,7 +253,7 @@ class TestScamAttackGeneration:
             dataset_config=mock_dataset_config,
             include_baseline=False,
         )
-        atomic_attacks = await scenario._get_atomic_attacks_async()
+        atomic_attacks = scenario._atomic_attacks
 
         for run in atomic_attacks:
             assert isinstance(run.attack_technique.attack, (ContextComplianceAttack, RolePlayAttack))
@@ -257,7 +272,7 @@ class TestScamAttackGeneration:
             dataset_config=mock_dataset_config,
             include_baseline=False,
         )
-        atomic_attacks = await scenario._get_atomic_attacks_async()
+        atomic_attacks = scenario._atomic_attacks
 
         for run in atomic_attacks:
             assert isinstance(run.attack_technique.attack, RedTeamingAttack)
@@ -276,7 +291,7 @@ class TestScamAttackGeneration:
         )
 
         await scenario.initialize_async(objective_target=mock_objective_target, dataset_config=mock_dataset_config)
-        atomic_attacks = await scenario._get_atomic_attacks_async()
+        atomic_attacks = scenario._atomic_attacks
 
         for run in atomic_attacks:
             assert len(run.objectives) == len(mock_memory_seeds)
@@ -296,7 +311,7 @@ class TestScamAttackGeneration:
         )
 
         await scenario.initialize_async(objective_target=mock_objective_target, dataset_config=mock_dataset_config)
-        atomic_attacks = await scenario._get_atomic_attacks_async()
+        atomic_attacks = scenario._atomic_attacks
         assert len(atomic_attacks) > 0
         assert all(run.attack_technique is not None for run in atomic_attacks)
 
@@ -324,7 +339,7 @@ class TestScamMaxTurnsParameter:
             dataset_config=mock_dataset_config,
             include_baseline=False,
         )
-        atomic_attacks = await scenario._get_atomic_attacks_async()
+        atomic_attacks = scenario._atomic_attacks
 
         for run in atomic_attacks:
             assert isinstance(run.attack_technique.attack, RedTeamingAttack)
@@ -343,7 +358,7 @@ class TestScamMaxTurnsParameter:
             dataset_config=mock_dataset_config,
             include_baseline=False,
         )
-        atomic_attacks = await scenario._get_atomic_attacks_async()
+        atomic_attacks = scenario._atomic_attacks
 
         for run in atomic_attacks:
             assert run.attack_technique.attack._max_turns == 10
@@ -363,7 +378,10 @@ class TestScamLifecycle:
     ) -> None:
         """Test initialization with custom max_concurrency."""
         with patch.object(
-            Scam, "_resolve_seed_groups_async", new_callable=AsyncMock, return_value=mock_memory_seed_groups
+            Scam,
+            "_resolve_seed_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value={"memory": mock_memory_seed_groups},
         ):
             scenario = Scam(objective_scorer=mock_objective_scorer)
             await scenario.initialize_async(
@@ -383,7 +401,10 @@ class TestScamLifecycle:
         memory_labels = {"type": "scam", "category": "scenario"}
 
         with patch.object(
-            Scam, "_resolve_seed_groups_async", new_callable=AsyncMock, return_value=mock_memory_seed_groups
+            Scam,
+            "_resolve_seed_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value={"memory": mock_memory_seed_groups},
         ):
             scenario = Scam(objective_scorer=mock_objective_scorer)
             await scenario.initialize_async(
@@ -419,7 +440,10 @@ class TestScamProperties:
     ) -> None:
         """Test that all three targets (adversarial, object, scorer) are distinct."""
         with patch.object(
-            Scam, "_resolve_seed_groups_async", new_callable=AsyncMock, return_value=mock_memory_seed_groups
+            Scam,
+            "_resolve_seed_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value={"memory": mock_memory_seed_groups},
         ):
             scenario = Scam()
             await scenario.initialize_async(objective_target=mock_objective_target, dataset_config=mock_dataset_config)
@@ -445,8 +469,8 @@ class TestScamBaselineUniformity:
         seed_groups = [SeedAttackGroup(seeds=[SeedObjective(value=f"obj{i}")]) for i in range(10)]
         config = DatasetAttackConfiguration(seed_groups=seed_groups, max_dataset_size=3)
 
-        first_sample = seed_groups[:3]
-        second_sample = seed_groups[5:8]
+        first_sample = [("inline", group) for group in seed_groups[:3]]
+        second_sample = [("inline", group) for group in seed_groups[5:8]]
         with patch(
             "pyrit.scenario.core.dataset_configuration.random.sample",
             side_effect=[first_sample, second_sample],

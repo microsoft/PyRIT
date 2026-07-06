@@ -13,6 +13,22 @@ import pytest
 
 from pyrit.cli import _config_reader as pyrit_scan_config_reader
 from pyrit.cli import pyrit_scan
+from pyrit.models import Parameter
+from unit.mocks import make_scenario_result
+
+
+def _sp(*, name, description="", default=None, param_type="str", choices=None, is_list=False) -> Parameter:
+    """Build a real Parameter from the legacy Summary-style kwargs (param_type as a string)."""
+    return Parameter.model_validate(
+        {
+            "name": name,
+            "description": description,
+            "default": default,
+            "type_name": param_type,
+            "choices": choices,
+            "is_list": is_list,
+        }
+    )
 
 
 class TestParseArgs:
@@ -43,6 +59,10 @@ class TestParseArgs:
     def test_parse_args_with_add_initializer(self):
         args = pyrit_scan.parse_args(["--add-initializer", "script1.py", "script2.py"])
         assert args.add_initializer == ["script1.py", "script2.py"]
+
+    def test_parse_args_list_datasets(self):
+        args = pyrit_scan.parse_args(["--list-datasets"])
+        assert args.list_datasets is True
 
     def test_parse_args_with_strategies(self):
         args = pyrit_scan.parse_args(["test_scenario", "--strategies", "s1", "s2"])
@@ -119,6 +139,10 @@ class TestParseArgs:
         args = pyrit_scan.parse_args(["--list-targets"])
         assert args.list_targets is True
 
+    def test_parse_args_with_list_converters(self):
+        args = pyrit_scan.parse_args(["--list-converters"])
+        assert args.list_converters is True
+
     def test_parse_args_with_server_url(self):
         args = pyrit_scan.parse_args(["--list-scenarios", "--server-url", "http://remote:9000"])
         assert args.server_url == "http://remote:9000"
@@ -145,7 +169,12 @@ class TestExtractScenarioArgs:
 
     def test_scenario_keys_extracted_with_prefix_stripped(self):
         result = pyrit_scan._extract_scenario_args(
-            parsed=Namespace(scenario_name="x", config_file=None, scenario__max_turns=10, scenario__mode="fast")
+            parsed=Namespace(
+                scenario_name="x",
+                config_file=None,
+                scenario__max_turns=10,
+                scenario__mode="fast",
+            )
         )
         assert result == {"max_turns": 10, "mode": "fast"}
 
@@ -158,8 +187,6 @@ def _make_scenario_result():
         AttackOutcome,
         AttackResult,
         ComponentIdentifier,
-        ScenarioIdentifier,
-        ScenarioResult,
         ScenarioRunState,
     )
 
@@ -171,8 +198,9 @@ def _make_scenario_result():
         execution_time_ms=10,
         timestamp=datetime(2025, 1, 1, tzinfo=timezone.utc),
     )
-    return ScenarioResult(
-        scenario_identifier=ScenarioIdentifier(name="test_scenario", description="A test"),
+    return make_scenario_result(
+        scenario_name="test_scenario",
+        scenario_description="A test",
         objective_target_identifier=ComponentIdentifier.model_validate(
             {"__type__": "FakeTarget", "__module__": "test.mod", "params": {}}
         ),
@@ -186,11 +214,10 @@ def _mock_api_client():
     """Create a mock PyRITApiClient with default response behaviors (typed wire-data)."""
     from datetime import datetime, timezone
 
-    from pyrit.models import ScenarioRunState
+    from pyrit.models import ScenarioRunState, TargetCapabilities
     from pyrit.models.catalog import (
         RegisteredScenario,
         ScenarioRunSummary,
-        TargetCapabilitiesInfo,
         TargetInstance,
     )
 
@@ -201,6 +228,8 @@ def _mock_api_client():
     client.list_scenarios_async.return_value = []
     client.list_initializers_async.return_value = []
     client.list_targets_async.return_value = []
+    client.list_datasets_async.return_value = {"items": []}
+    client.list_converters_async.return_value = {"items": []}
     client.get_scenario_async.return_value = RegisteredScenario(
         scenario_name="test_scenario",
         scenario_type="X",
@@ -209,7 +238,6 @@ def _mock_api_client():
         aggregate_strategies=[],
         all_strategies=[],
         default_datasets=[],
-        max_dataset_size=None,
         supported_parameters=[],
     )
     client.start_scenario_run_async.return_value = ScenarioRunSummary(
@@ -243,14 +271,18 @@ def _mock_api_client():
     client.__aenter__ = AsyncMock(return_value=client)
     client.__aexit__ = AsyncMock(return_value=None)
     # Marker so tests that re-shape the mock can find the unused TargetInstance helper.
-    _ = (TargetCapabilitiesInfo, TargetInstance)
+    _ = (TargetCapabilities, TargetInstance)
     return client
 
 
 class TestMain:
     """Tests for main function (thin REST client)."""
 
-    @patch("pyrit.cli._server_launcher.ServerLauncher.probe_health_async", new_callable=AsyncMock, return_value=True)
+    @patch(
+        "pyrit.cli._server_launcher.ServerLauncher.probe_health_async",
+        new_callable=AsyncMock,
+        return_value=True,
+    )
     @patch("pyrit.cli.api_client.PyRITApiClient")
     def test_main_list_scenarios(self, mock_client_class, mock_probe):
         """Test main with --list-scenarios flag."""
@@ -262,7 +294,11 @@ class TestMain:
         assert result == 0
         mock_client.list_scenarios_async.assert_awaited_once()
 
-    @patch("pyrit.cli._server_launcher.ServerLauncher.probe_health_async", new_callable=AsyncMock, return_value=True)
+    @patch(
+        "pyrit.cli._server_launcher.ServerLauncher.probe_health_async",
+        new_callable=AsyncMock,
+        return_value=True,
+    )
     @patch("pyrit.cli.api_client.PyRITApiClient")
     def test_main_list_initializers(self, mock_client_class, mock_probe):
         """Test main with --list-initializers flag."""
@@ -274,7 +310,11 @@ class TestMain:
         assert result == 0
         mock_client.list_initializers_async.assert_awaited_once()
 
-    @patch("pyrit.cli._server_launcher.ServerLauncher.probe_health_async", new_callable=AsyncMock, return_value=True)
+    @patch(
+        "pyrit.cli._server_launcher.ServerLauncher.probe_health_async",
+        new_callable=AsyncMock,
+        return_value=True,
+    )
     @patch("pyrit.cli.api_client.PyRITApiClient")
     def test_main_list_targets(self, mock_client_class, mock_probe):
         """Test main with --list-targets flag."""
@@ -286,12 +326,40 @@ class TestMain:
         assert result == 0
         mock_client.list_targets_async.assert_awaited_once()
 
+    @patch("pyrit.cli._server_launcher.ServerLauncher.probe_health_async", new_callable=AsyncMock, return_value=True)
+    @patch("pyrit.cli.api_client.PyRITApiClient")
+    def test_main_list_converters(self, mock_client_class, mock_probe):
+        """Test main with --list-converters flag."""
+        mock_client = _mock_api_client()
+        mock_client_class.return_value = mock_client
+
+        result = pyrit_scan.main(["--list-converters"])
+
+        assert result == 0
+        mock_client.list_converters_async.assert_awaited_once()
+
+    @patch("pyrit.cli._server_launcher.ServerLauncher.probe_health_async", new_callable=AsyncMock, return_value=True)
+    @patch("pyrit.cli.api_client.PyRITApiClient")
+    def test_main_list_datasets(self, mock_client_class, mock_probe):
+        """Test main with --list-datasets flag."""
+        mock_client = _mock_api_client()
+        mock_client_class.return_value = mock_client
+
+        result = pyrit_scan.main(["--list-datasets"])
+
+        assert result == 0
+        mock_client.list_datasets_async.assert_awaited_once()
+
     def test_main_no_args_shows_help(self):
         """Test main with no arguments shows help."""
         result = pyrit_scan.main([])
         assert result == 0  # shows help and exits
 
-    @patch("pyrit.cli._server_launcher.ServerLauncher.probe_health_async", new_callable=AsyncMock, return_value=True)
+    @patch(
+        "pyrit.cli._server_launcher.ServerLauncher.probe_health_async",
+        new_callable=AsyncMock,
+        return_value=True,
+    )
     @patch("pyrit.cli.api_client.PyRITApiClient")
     @patch("pyrit.cli._output.print_scenario_result_async", new_callable=AsyncMock)
     def test_main_run_scenario(self, _mock_print, mock_client_class, mock_probe):
@@ -305,7 +373,11 @@ class TestMain:
         mock_client.get_scenario_async.assert_awaited_once()
         mock_client.start_scenario_run_async.assert_awaited_once()
 
-    @patch("pyrit.cli._server_launcher.ServerLauncher.probe_health_async", new_callable=AsyncMock, return_value=True)
+    @patch(
+        "pyrit.cli._server_launcher.ServerLauncher.probe_health_async",
+        new_callable=AsyncMock,
+        return_value=True,
+    )
     @patch("pyrit.cli.api_client.PyRITApiClient")
     @patch("pyrit.cli._output.print_scenario_result_async", new_callable=AsyncMock)
     def test_main_run_scenario_with_initializers(self, _mock_print, mock_client_class, mock_probe):
@@ -320,7 +392,11 @@ class TestMain:
         request = call_kwargs["request"]
         assert request.initializers == ["target", "datasets"]
 
-    @patch("pyrit.cli._server_launcher.ServerLauncher.probe_health_async", new_callable=AsyncMock, return_value=False)
+    @patch(
+        "pyrit.cli._server_launcher.ServerLauncher.probe_health_async",
+        new_callable=AsyncMock,
+        return_value=False,
+    )
     def test_main_server_not_available(self, mock_probe, capsys):
         """Test main when server is not available."""
         result = pyrit_scan.main(["--list-scenarios"])
@@ -333,13 +409,21 @@ class TestMain:
         """A malformed --config-file should fail loudly, not silently use defaults."""
         bad = tmp_path / "bad.yaml"
         bad.write_text(": :\nnot yaml: [unbalanced\n", encoding="utf-8")
-        with patch.object(pyrit_scan_config_reader, "_DEFAULT_CONFIG_FILE", tmp_path / "missing_default.yaml"):
+        with patch.object(
+            pyrit_scan_config_reader,
+            "_DEFAULT_CONFIG_FILE",
+            tmp_path / "missing_default.yaml",
+        ):
             result = pyrit_scan.main(["--list-scenarios", "--config-file", str(bad)])
 
         assert result == 1
         assert "not valid YAML" in capsys.readouterr().err
 
-    @patch("pyrit.cli._server_launcher.ServerLauncher.probe_health_async", new_callable=AsyncMock, return_value=False)
+    @patch(
+        "pyrit.cli._server_launcher.ServerLauncher.probe_health_async",
+        new_callable=AsyncMock,
+        return_value=False,
+    )
     def test_main_stop_server(self, mock_probe, capsys):
         """Test main with --stop-server."""
         result = pyrit_scan.main(["--stop-server"])
@@ -348,7 +432,11 @@ class TestMain:
         captured = capsys.readouterr()
         assert "No server running" in captured.out
 
-    @patch("pyrit.cli._server_launcher.ServerLauncher.probe_health_async", new_callable=AsyncMock, return_value=True)
+    @patch(
+        "pyrit.cli._server_launcher.ServerLauncher.probe_health_async",
+        new_callable=AsyncMock,
+        return_value=True,
+    )
     @patch("pyrit.cli.api_client.PyRITApiClient")
     def test_main_scenario_not_found(self, mock_client_class, mock_probe, capsys):
         """Test main when scenario is not found on server."""
@@ -362,7 +450,11 @@ class TestMain:
         captured = capsys.readouterr()
         assert "not found" in captured.out
 
-    @patch("pyrit.cli._server_launcher.ServerLauncher.probe_health_async", new_callable=AsyncMock, return_value=True)
+    @patch(
+        "pyrit.cli._server_launcher.ServerLauncher.probe_health_async",
+        new_callable=AsyncMock,
+        return_value=True,
+    )
     @patch("pyrit.cli.api_client.PyRITApiClient")
     def test_main_failed_scenario(self, mock_client_class, mock_probe):
         """Test main when scenario run fails."""
@@ -471,14 +563,12 @@ class TestAddScenarioParamsFromApi:
     def test_adds_unseen_params_as_optional_flags(self):
         from argparse import ArgumentParser
 
-        from pyrit.models.catalog import ScenarioParameterSummary
-
         parser = ArgumentParser()
         pyrit_scan._add_scenario_params_from_api(
             parser=parser,
             params=[
-                ScenarioParameterSummary(name="max_turns", description="Max turns.", param_type="str"),
-                ScenarioParameterSummary(name="mode", description="Mode.", param_type="str"),
+                _sp(name="max_turns", description="Max turns.", param_type="str"),
+                _sp(name="mode", description="Mode.", param_type="str"),
             ],
         )
         parsed = parser.parse_args(["--max-turns", "5", "--mode", "fast"])
@@ -488,13 +578,11 @@ class TestAddScenarioParamsFromApi:
     def test_skips_params_that_collide_with_existing_flags(self):
         from argparse import ArgumentParser
 
-        from pyrit.models.catalog import ScenarioParameterSummary
-
         parser = ArgumentParser()
         parser.add_argument("--target")
         pyrit_scan._add_scenario_params_from_api(
             parser=parser,
-            params=[ScenarioParameterSummary(name="target", description="...", param_type="str")],
+            params=[_sp(name="target", description="...", param_type="str")],
         )
         parsed = parser.parse_args(["--target", "x"])
         # Original --target wins; no scenario__target added.
@@ -508,7 +596,10 @@ class TestBuildRunRequest:
     def test_includes_initializer_args(self):
         parsed = Namespace(
             target="t",
-            initializers=[{"name": "openai_target", "args": {"model": "gpt-4"}}, "datasets"],
+            initializers=[
+                {"name": "openai_target", "args": {"model": "gpt-4"}},
+                "datasets",
+            ],
             scenario_strategies=None,
             max_concurrency=None,
             max_retries=None,
@@ -688,12 +779,10 @@ class TestScenarioParamCoercion:
     def test_list_param_uses_nargs_plus(self):
         from argparse import ArgumentParser
 
-        from pyrit.models.catalog import ScenarioParameterSummary
-
         parser = ArgumentParser()
         pyrit_scan._add_scenario_params_from_api(
             parser=parser,
-            params=[ScenarioParameterSummary(name="items", description="...", param_type="list[str]", is_list=True)],
+            params=[_sp(name="items", description="...", param_type="list[str]", is_list=True)],
         )
         parsed = parser.parse_args(["--items", "a", "b", "c"])
         assert parsed.scenario__items == ["a", "b", "c"]
@@ -701,12 +790,10 @@ class TestScenarioParamCoercion:
     def test_int_param_is_coerced(self):
         from argparse import ArgumentParser
 
-        from pyrit.models.catalog import ScenarioParameterSummary
-
         parser = ArgumentParser()
         pyrit_scan._add_scenario_params_from_api(
             parser=parser,
-            params=[ScenarioParameterSummary(name="max_turns", description="...", param_type="int")],
+            params=[_sp(name="max_turns", description="...", param_type="int")],
         )
         parsed = parser.parse_args(["--max-turns", "7"])
         assert parsed.scenario__max_turns == 7
@@ -714,12 +801,10 @@ class TestScenarioParamCoercion:
     def test_int_param_invalid_value_rejected_client_side(self, capsys):
         from argparse import ArgumentParser
 
-        from pyrit.models.catalog import ScenarioParameterSummary
-
         parser = ArgumentParser()
         pyrit_scan._add_scenario_params_from_api(
             parser=parser,
-            params=[ScenarioParameterSummary(name="max_turns", description="...", param_type="int")],
+            params=[_sp(name="max_turns", description="...", param_type="int")],
         )
         with pytest.raises(SystemExit):
             parser.parse_args(["--max-turns", "not-an-int"])
@@ -728,12 +813,10 @@ class TestScenarioParamCoercion:
     def test_bool_param_rejects_invalid_value_client_side(self, capsys):
         from argparse import ArgumentParser
 
-        from pyrit.models.catalog import ScenarioParameterSummary
-
         parser = ArgumentParser()
         pyrit_scan._add_scenario_params_from_api(
             parser=parser,
-            params=[ScenarioParameterSummary(name="dry_run", description="...", param_type="bool")],
+            params=[_sp(name="dry_run", description="...", param_type="bool")],
         )
 
         parsed = parser.parse_args(["--dry-run", "false"])
@@ -756,14 +839,10 @@ class TestScenarioParamCoercion:
     def test_list_int_param_coerces_each_value(self):
         from argparse import ArgumentParser
 
-        from pyrit.models.catalog import ScenarioParameterSummary
-
         parser = ArgumentParser()
         pyrit_scan._add_scenario_params_from_api(
             parser=parser,
-            params=[
-                ScenarioParameterSummary(name="sample_ids", description="...", param_type="list[int]", is_list=True)
-            ],
+            params=[_sp(name="sample_ids", description="...", param_type="list[int]", is_list=True)],
         )
 
         parsed = parser.parse_args(["--sample-ids", "1", "2", "3"])
@@ -772,14 +851,10 @@ class TestScenarioParamCoercion:
     def test_typed_choices_are_compared_after_coercion(self):
         from argparse import ArgumentParser
 
-        from pyrit.models.catalog import ScenarioParameterSummary
-
         parser = ArgumentParser()
         pyrit_scan._add_scenario_params_from_api(
             parser=parser,
-            params=[
-                ScenarioParameterSummary(name="max_turns", description="...", param_type="int", choices=["1", "2"])
-            ],
+            params=[_sp(name="max_turns", description="...", param_type="int", choices=["1", "2"])],
         )
 
         parsed = parser.parse_args(["--max-turns", "1"])
@@ -788,14 +863,10 @@ class TestScenarioParamCoercion:
     def test_choices_validated_client_side(self, capsys):
         from argparse import ArgumentParser
 
-        from pyrit.models.catalog import ScenarioParameterSummary
-
         parser = ArgumentParser()
         pyrit_scan._add_scenario_params_from_api(
             parser=parser,
-            params=[
-                ScenarioParameterSummary(name="mode", description="...", param_type="str", choices=["fast", "slow"])
-            ],
+            params=[_sp(name="mode", description="...", param_type="str", choices=["fast", "slow"])],
         )
         parsed = parser.parse_args(["--mode", "fast"])
         assert parsed.scenario__mode == "fast"
@@ -814,7 +885,11 @@ class TestMainExtraPaths:
         captured = capsys.readouterr()
         assert "PyRIT Scanner" in captured.out or "usage" in captured.out.lower()
 
-    @patch("pyrit.cli._server_launcher.ServerLauncher.probe_health_async", new_callable=AsyncMock, return_value=True)
+    @patch(
+        "pyrit.cli._server_launcher.ServerLauncher.probe_health_async",
+        new_callable=AsyncMock,
+        return_value=True,
+    )
     @patch("pyrit.cli.api_client.PyRITApiClient")
     def test_main_scenario_not_found_lists_available(self, mock_client_class, _mock_probe, capsys):
         from pyrit.models.catalog import RegisteredScenario
@@ -830,7 +905,6 @@ class TestMainExtraPaths:
                 aggregate_strategies=[],
                 all_strategies=[],
                 default_datasets=[],
-                max_dataset_size=None,
             ),
             RegisteredScenario(
                 scenario_name="alt_b",
@@ -840,7 +914,6 @@ class TestMainExtraPaths:
                 aggregate_strategies=[],
                 all_strategies=[],
                 default_datasets=[],
-                max_dataset_size=None,
             ),
         ]
         mock_client_class.return_value = mock_client
@@ -851,7 +924,11 @@ class TestMainExtraPaths:
         assert "alt_a" in captured.out
         assert "alt_b" in captured.out
 
-    @patch("pyrit.cli._server_launcher.ServerLauncher.probe_health_async", new_callable=AsyncMock, return_value=True)
+    @patch(
+        "pyrit.cli._server_launcher.ServerLauncher.probe_health_async",
+        new_callable=AsyncMock,
+        return_value=True,
+    )
     @patch("pyrit.cli.api_client.PyRITApiClient")
     def test_main_start_scenario_failure(self, mock_client_class, _mock_probe, capsys):
         mock_client = _mock_api_client()
@@ -863,7 +940,11 @@ class TestMainExtraPaths:
         captured = capsys.readouterr()
         assert "server full" in captured.out
 
-    @patch("pyrit.cli._server_launcher.ServerLauncher.probe_health_async", new_callable=AsyncMock, return_value=True)
+    @patch(
+        "pyrit.cli._server_launcher.ServerLauncher.probe_health_async",
+        new_callable=AsyncMock,
+        return_value=True,
+    )
     @patch("pyrit.cli.api_client.PyRITApiClient")
     def test_main_run_results_failure_is_hard_error(self, mock_client_class, _mock_probe, capsys):
         mock_client = _mock_api_client()
@@ -880,7 +961,11 @@ class TestMainExtraPaths:
         # The summary printer should still be used as a fallback for context.
         assert "test_scenario" in captured.out
 
-    @patch("pyrit.cli._server_launcher.ServerLauncher.probe_health_async", new_callable=AsyncMock, return_value=True)
+    @patch(
+        "pyrit.cli._server_launcher.ServerLauncher.probe_health_async",
+        new_callable=AsyncMock,
+        return_value=True,
+    )
     @patch("pyrit.cli.api_client.PyRITApiClient")
     def test_main_start_server_only_prints_url_and_returns_zero(self, mock_client_class, _mock_probe, capsys):
         result = pyrit_scan.main(["--start-server"])
@@ -911,7 +996,11 @@ class TestMainExtraPaths:
         out = capsys.readouterr().out
         assert "could not identify" in out
 
-    @patch("pyrit.cli._server_launcher.ServerLauncher.probe_health_async", new_callable=AsyncMock, return_value=True)
+    @patch(
+        "pyrit.cli._server_launcher.ServerLauncher.probe_health_async",
+        new_callable=AsyncMock,
+        return_value=True,
+    )
     @patch("pyrit.cli.api_client.PyRITApiClient")
     def test_main_add_initializer_missing_file(self, mock_client_class, _mock_probe, capsys, tmp_path):
         mock_client = _mock_api_client()
@@ -922,7 +1011,11 @@ class TestMainExtraPaths:
         assert result == 1
         assert "File not found" in capsys.readouterr().out
 
-    @patch("pyrit.cli._server_launcher.ServerLauncher.probe_health_async", new_callable=AsyncMock, return_value=True)
+    @patch(
+        "pyrit.cli._server_launcher.ServerLauncher.probe_health_async",
+        new_callable=AsyncMock,
+        return_value=True,
+    )
     @patch("pyrit.cli.api_client.PyRITApiClient")
     def test_main_add_initializer_success(self, mock_client_class, _mock_probe, capsys, tmp_path):
         mock_client = _mock_api_client()
@@ -937,7 +1030,11 @@ class TestMainExtraPaths:
         assert "Registered initializer 'myinit'" in capsys.readouterr().out
         mock_client.register_initializer_async.assert_awaited_once()
 
-    @patch("pyrit.cli._server_launcher.ServerLauncher.probe_health_async", new_callable=AsyncMock, return_value=True)
+    @patch(
+        "pyrit.cli._server_launcher.ServerLauncher.probe_health_async",
+        new_callable=AsyncMock,
+        return_value=True,
+    )
     @patch("pyrit.cli.api_client.PyRITApiClient")
     def test_main_add_initializer_server_disabled(self, mock_client_class, _mock_probe, capsys, tmp_path):
         from pyrit.cli.api_client import ServerNotAvailableError
@@ -965,18 +1062,17 @@ class TestScenarioParamFlow:
         from pyrit.models import ScenarioRunState
         from pyrit.models.catalog import (
             RegisteredScenario,
-            ScenarioParameterSummary,
             ScenarioRunSummary,
         )
 
         now = datetime(2025, 1, 1, tzinfo=timezone.utc)
-        typed_params: list[ScenarioParameterSummary] = []
+        typed_params: list[Parameter] = []
         for p in supported_params or []:
-            if isinstance(p, ScenarioParameterSummary):
+            if isinstance(p, Parameter):
                 typed_params.append(p)
             else:
                 typed_params.append(
-                    ScenarioParameterSummary(
+                    _sp(
                         name=p["name"],
                         description=p.get("description", ""),
                         default=p.get("default"),
@@ -996,7 +1092,6 @@ class TestScenarioParamFlow:
                 aggregate_strategies=[],
                 all_strategies=[],
                 default_datasets=[],
-                max_dataset_size=None,
             )
         ]
         client.get_scenario_async.return_value = RegisteredScenario(
@@ -1007,7 +1102,6 @@ class TestScenarioParamFlow:
             aggregate_strategies=[],
             all_strategies=[],
             default_datasets=[],
-            max_dataset_size=None,
             supported_parameters=typed_params,
         )
         client.start_scenario_run_async.return_value = ScenarioRunSummary(
@@ -1033,7 +1127,11 @@ class TestScenarioParamFlow:
         client.__aexit__ = AsyncMock(return_value=None)
         return client
 
-    @patch("pyrit.cli._server_launcher.ServerLauncher.probe_health_async", new_callable=AsyncMock, return_value=True)
+    @patch(
+        "pyrit.cli._server_launcher.ServerLauncher.probe_health_async",
+        new_callable=AsyncMock,
+        return_value=True,
+    )
     @patch("pyrit.cli.api_client.PyRITApiClient")
     @patch("pyrit.cli._output.print_scenario_result_async", new_callable=AsyncMock)
     @patch("pyrit.cli._output.print_scenario_run_progress")
@@ -1047,7 +1145,11 @@ class TestScenarioParamFlow:
         sent_request = client.start_scenario_run_async.call_args.kwargs["request"]
         assert sent_request.scenario_params == {"max_turns": "7"}
 
-    @patch("pyrit.cli._server_launcher.ServerLauncher.probe_health_async", new_callable=AsyncMock, return_value=True)
+    @patch(
+        "pyrit.cli._server_launcher.ServerLauncher.probe_health_async",
+        new_callable=AsyncMock,
+        return_value=True,
+    )
     @patch("pyrit.cli.api_client.PyRITApiClient")
     @patch("pyrit.cli._output.print_scenario_result_async", new_callable=AsyncMock)
     @patch("pyrit.cli._output.print_scenario_run_progress")
@@ -1057,7 +1159,12 @@ class TestScenarioParamFlow:
         client = self._build_mock_client(
             supported_params=[
                 {"name": "dry_run", "description": "...", "param_type": "bool"},
-                {"name": "sample_ids", "description": "...", "param_type": "list[int]", "is_list": True},
+                {
+                    "name": "sample_ids",
+                    "description": "...",
+                    "param_type": "list[int]",
+                    "is_list": True,
+                },
             ]
         )
         mock_client_class.return_value = client
@@ -1068,7 +1175,11 @@ class TestScenarioParamFlow:
         sent_request = client.start_scenario_run_async.call_args.kwargs["request"]
         assert sent_request.scenario_params == {"dry_run": True, "sample_ids": [1, 2]}
 
-    @patch("pyrit.cli._server_launcher.ServerLauncher.probe_health_async", new_callable=AsyncMock, return_value=True)
+    @patch(
+        "pyrit.cli._server_launcher.ServerLauncher.probe_health_async",
+        new_callable=AsyncMock,
+        return_value=True,
+    )
     @patch("pyrit.cli.api_client.PyRITApiClient")
     @patch("pyrit.cli._output.print_scenario_result_async", new_callable=AsyncMock)
     @patch("pyrit.cli._output.print_scenario_run_progress")
@@ -1081,7 +1192,11 @@ class TestScenarioParamFlow:
         assert result == 1
         client.start_scenario_run_async.assert_not_called()
 
-    @patch("pyrit.cli._server_launcher.ServerLauncher.probe_health_async", new_callable=AsyncMock, return_value=True)
+    @patch(
+        "pyrit.cli._server_launcher.ServerLauncher.probe_health_async",
+        new_callable=AsyncMock,
+        return_value=True,
+    )
     @patch("pyrit.cli.api_client.PyRITApiClient")
     @patch("pyrit.cli._output.print_scenario_result_async", new_callable=AsyncMock)
     @patch("pyrit.cli._output.print_scenario_run_progress")

@@ -92,7 +92,7 @@ Example:
 
 ```yaml
 initializers:
-  - simple
+  - scorer
   - name: target
     args:
       tags:
@@ -108,9 +108,10 @@ Most users should enable the following initializers. These are what the `.pyrit_
 
 | Initializer | What It Registers | When You Need It |
 |---|---|---|
-| `simple` | Baseline defaults for converters, scorers, and attack configs using your `OPENAI_CHAT_*` env vars | Always — provides the foundation for most PyRIT operations |
 | `target` | Prompt targets (OpenAI, Azure, AML, etc.) into the `TargetRegistry` | **Required for `pyrit_scan`** and any registry-based workflows |
 | `scorer` | Scorers (refusal, content safety, harm-category, Likert, etc.) into the `ScorerRegistry` | **Required for automated scoring** and `pyrit_scan` evaluations |
+| `technique` | Attack techniques into the `AttackTechniqueRegistry` | **Required for `pyrit_scan` scenarios** that select techniques |
+| `load_default_datasets` | Seed datasets for all registered scenarios into memory | **Required for `pyrit_scan` scenarios** — they need data to run |
 
 ```{note}
 **Execution order follows listing order.** Initializers execute in the order they appear in the config. Ensure dependencies are satisfied — for example, list `target` before `scorer` since scorers need targets to be registered first.
@@ -120,13 +121,14 @@ The recommended config:
 
 ```yaml
 initializers:
-  - name: simple
-  - name: scorer
   - name: target
     args:
       tags:
         - default
         - scorer
+  - name: scorer
+  - name: technique
+  - name: load_default_datasets
 ```
 
 ```{note}
@@ -196,7 +198,7 @@ The 3-layer model above determines **which config values are selected**. Once re
 3. Memory database is configured (from `memory_db_type`)
 4. Initializers are executed in listed order
 
-Because initializers run last, they can modify anything set up in earlier steps — including environment variables and the memory instance. In practice, built-in initializers like `simple` and `airt` only call `set_default_value` and `set_global_variable` and do not touch memory or environment variables. However, a custom initializer could override those if needed. When this happens, the initializer's changes take effect because it runs after the other settings have been applied.
+Because initializers run last, they can modify anything set up in earlier steps — including environment variables and the memory instance. In practice, built-in initializers like `target` and `scorer` only call `set_default_value` and `set_global_variable` and do not touch memory or environment variables. However, a custom initializer could override those if needed. When this happens, the initializer's changes take effect because it runs after the other settings have been applied.
 
 ## Usage
 
@@ -235,7 +237,7 @@ from pyrit.setup import ConfigurationLoader
 config = ConfigurationLoader.load_with_overrides(
     config_file=Path("./my_project.yaml"),  # Layer 2: explicit config file (omit to skip)
     memory_db_type="in_memory",             # Layer 3: override database type
-    initializers=["simple"],                # Layer 3: override initializers
+    initializers=["target", "scorer"],      # Layer 3: override initializers
 )
 
 await config.initialize_pyrit_async()
@@ -253,7 +255,14 @@ memory_db_type: sqlite
 # Built-in initializers to run
 # Each can be a string or a dict with name + args
 initializers:
-  - simple
+  - name: target
+    args:
+      tags:
+        - default
+        - scorer
+  - name: scorer
+  - name: technique
+  - name: load_default_datasets
 
 # Custom initialization scripts (optional)
 # Omit or set to null for no scripts; [] to explicitly load nothing
