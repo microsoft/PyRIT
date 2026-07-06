@@ -60,8 +60,6 @@ def _cmd_check() -> None:
 
 def _cmd_head() -> None:
     """Print the current Alembic head revision ID."""
-    from pathlib import Path
-
     from alembic.config import Config
     from alembic.script import ScriptDirectory
 
