@@ -8,7 +8,10 @@ import pytest
 
 from pyrit.exceptions import InvalidJsonException
 from pyrit.executor.attack.component.adversarial_conversation_manager import (
+    _BLOCKED_FEEDBACK_TEXT,
+    _EMPTY_FEEDBACK_TEXT,
     AdversarialConversationManager,
+    _build_adversarial_feedback_text,
     _build_adversarial_prompt_metadata,
     _parse_adversarial_reply,
 )
@@ -17,6 +20,7 @@ from pyrit.models import (
     ComponentIdentifier,
     Message,
     MessagePiece,
+    Score,
     SeedPrompt,
 )
 from pyrit.prompt_normalizer import PromptNormalizer
@@ -61,7 +65,7 @@ def _first_message(value: str = "open {{ objective }}", *, schema: dict | None =
     return SeedPrompt(value=value, data_type="text", response_json_schema=schema, is_jinja_template=True)
 
 
-def _per_turn(value: str = "{{ message.text.converted_value }}") -> SeedPrompt:
+def _per_turn(value: str = "{{ feedback_text }}") -> SeedPrompt:
     return SeedPrompt(value=value, data_type="text", is_jinja_template=True)
 
 
@@ -280,13 +284,10 @@ class TestGetNextMessageAsync:
         sent = normalizer.send_prompt_async.call_args.kwargs["message"]
         assert sent.message_pieces[0].prompt_metadata[JSON_SCHEMA_METADATA_KEY] == SCHEMA
 
-    async def test_renders_template_with_objective_score_and_feedback(self):
+    async def test_renders_template_with_objective_and_feedback_text(self):
         normalizer = _normalizer("raw")
         manager = _manager(
-            adversarial_prompt_template=_per_turn(
-                "OBJ={{ objective }}|FB={{ use_score_as_feedback }}|R={{ score.score_rationale }}|"
-                "T={{ message.text.converted_value }}"
-            ),
+            adversarial_prompt_template=_per_turn("OBJ={{ objective }}|FB={{ feedback_text }}"),
             objective="my objective",
             use_score_as_feedback=True,
             prompt_normalizer=normalizer,
@@ -294,7 +295,7 @@ class TestGetNextMessageAsync:
         score = SimpleNamespace(score_value="true", score_rationale="because")
         await manager.get_next_message_async(score=score, last_response=_response_message("target text"))
         sent = normalizer.send_prompt_async.call_args.kwargs["message"]
-        assert sent.message_pieces[0].converted_value == "OBJ=my objective|FB=True|R=because|T=target text"
+        assert sent.message_pieces[0].converted_value == "OBJ=my objective|FB=target text\n\nbecause"
 
     async def test_no_response_raises(self):
         manager = _manager(prompt_normalizer=_normalizer(None))
@@ -363,7 +364,7 @@ class TestModalityRouterIntegration:
     async def test_no_router_sends_text_only_message(self):
         normalizer = _normalizer("raw")
         manager = _manager(
-            adversarial_prompt_template=_per_turn("prompt: {{ message.text.converted_value }}"),
+            adversarial_prompt_template=_per_turn("prompt: {{ feedback_text }}"),
             prompt_normalizer=normalizer,
         )
         await manager.get_next_message_async(score=None, last_response=_response_message("hi there"))
@@ -379,3 +380,96 @@ def test_adversarial_reply_is_message_constructible():
     reply = _parse_adversarial_reply(VALID_JSON)
     message = Message.from_prompt(prompt=reply.next_message, role="user")
     assert message.get_value() == "hello target"
+
+
+# --- feedback text -----------------------------------------------------------
+
+
+def _feedback_score(rationale: str = "because") -> Score:
+    return Score(
+        score_type="true_false",
+        score_value="false",
+        score_category=["test"],
+        score_value_description="d",
+        score_rationale=rationale,
+        score_metadata={},
+        message_piece_id="00000000-0000-0000-0000-000000000000",
+    )
+
+
+def _multi_piece_response(*specs: tuple[str, str, str]) -> Message:
+    """Build a multi-piece response from ``(value, data_type, error)`` specs sharing a conversation."""
+    conversation_id = "00000000-0000-0000-0000-000000000001"
+    pieces = []
+    for value, data_type, error in specs:
+        piece = MessagePiece(
+            role="assistant",
+            original_value=value,
+            original_value_data_type=data_type,
+            conversation_id=conversation_id,
+        )
+        piece.response_error = error
+        pieces.append(piece)
+    return Message(message_pieces=pieces)
+
+
+class TestBuildAdversarialFeedbackText:
+    """Coverage for the per-turn feedback text the manager renders into the adversarial prompt."""
+
+    def test_blocked_returns_rewrite_notice(self):
+        message = _response_message("", error="blocked")
+        result = _build_adversarial_feedback_text(last_response=message, score=None, use_score_as_feedback=False)
+        assert result == _BLOCKED_FEEDBACK_TEXT
+
+    def test_error_surfaces_error_code(self):
+        message = _response_message("", error="processing")
+        result = _build_adversarial_feedback_text(last_response=message, score=None, use_score_as_feedback=False)
+        assert result == "Request to target failed: processing"
+
+    def test_text_passed_through(self):
+        message = _response_message("hello")
+        result = _build_adversarial_feedback_text(last_response=message, score=None, use_score_as_feedback=False)
+        assert result == "hello"
+
+    def test_text_appends_rationale_when_enabled(self):
+        message = _response_message("hello")
+        result = _build_adversarial_feedback_text(
+            last_response=message, score=_feedback_score("why"), use_score_as_feedback=True
+        )
+        assert result == "hello\n\nwhy"
+
+    def test_text_ignores_rationale_when_disabled(self):
+        message = _response_message("hello")
+        result = _build_adversarial_feedback_text(
+            last_response=message, score=_feedback_score("why"), use_score_as_feedback=False
+        )
+        assert result == "hello"
+
+    def test_non_text_response_uses_rationale_only(self):
+        message = _response_message("/tmp/out.png", data_type="image_path")
+        result = _build_adversarial_feedback_text(
+            last_response=message, score=_feedback_score("why"), use_score_as_feedback=True
+        )
+        assert result == "why"
+
+    def test_empty_response_nudges_to_continue(self):
+        message = _response_message("/tmp/out.png", data_type="image_path")
+        result = _build_adversarial_feedback_text(last_response=message, score=None, use_score_as_feedback=False)
+        assert result == _EMPTY_FEEDBACK_TEXT
+
+    def test_blocked_piece_after_clean_piece_is_detected(self):
+        """A blocked later piece is not masked by an earlier clean text piece (any-piece semantics)."""
+        message = _multi_piece_response(("some text", "text", "none"), ("", "text", "blocked"))
+        result = _build_adversarial_feedback_text(last_response=message, score=None, use_score_as_feedback=False)
+        assert result == _BLOCKED_FEEDBACK_TEXT
+
+    def test_error_piece_after_clean_piece_is_detected(self):
+        """An errored later piece is not masked by an earlier clean piece (any-piece semantics)."""
+        message = _multi_piece_response(("some text", "text", "none"), ("", "text", "processing"))
+        result = _build_adversarial_feedback_text(last_response=message, score=None, use_score_as_feedback=False)
+        assert result == "Request to target failed: processing"
+
+    def test_multiple_text_pieces_are_joined(self):
+        message = _multi_piece_response(("first", "text", "none"), ("second", "text", "none"))
+        result = _build_adversarial_feedback_text(last_response=message, score=None, use_score_as_feedback=False)
+        assert result == "first\nsecond"

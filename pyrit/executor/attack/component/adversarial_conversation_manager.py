@@ -9,7 +9,7 @@ import json
 import logging
 import re
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from pyrit.exceptions import (
@@ -33,7 +33,6 @@ from pyrit.prompt_normalizer import PromptNormalizer
 
 if TYPE_CHECKING:
     from pyrit.executor.attack.component.modality_router import _ModalityFeedbackRouter
-    from pyrit.models import PromptDataType
     from pyrit.prompt_target import PromptTarget
 
 logger = logging.getLogger(__name__)
@@ -72,60 +71,78 @@ def _camel_to_snake(name: str) -> str:
     return re.sub(r"(?<!^)(?=[A-Z])", "_", name).lower()
 
 
-class _MessageBucket:
+# Feedback strings for objective-target responses that carry no usable text.
+_BLOCKED_FEEDBACK_TEXT = (
+    "Request to target failed: blocked. Please rewrite your prompt to avoid getting blocked next time."
+)
+_EMPTY_FEEDBACK_TEXT = "The previous response was empty. Please continue."
+
+
+def _joined_text_value(message: Message) -> str:
     """
-    The message pieces of a single data type, exposed for template rendering.
+    Join the converted values of the message's text pieces with newlines.
 
-    Empty buckets render as blank text so a template like ``{{ message.text.converted_value }}``
-    is safe even when the objective target returned no piece of that data type.
+    Args:
+        message: The message whose text pieces to read.
+
+    Returns:
+        The newline-joined text (empty when the message has no text pieces).
     """
-
-    def __init__(self, pieces: list[Any]) -> None:
-        self._pieces = pieces
-
-    @property
-    def converted_value(self) -> str:
-        """The converted values of all pieces in this bucket, newline-joined."""
-        return "\n".join(p.converted_value for p in self._pieces if p.converted_value)
-
-    @property
-    def original_value(self) -> str:
-        """The original values of all pieces in this bucket, newline-joined."""
-        return "\n".join(p.original_value for p in self._pieces if p.original_value)
+    pieces = message.get_pieces_by_type(data_type="text")
+    return "\n".join(piece.converted_value for piece in pieces if piece.converted_value)
 
 
-class _MessageView:
+def _first_response_error(message: Message) -> str:
     """
-    A data-type-bucketed view over a ``Message`` for adversarial-prompt templates.
+    Find the response-error code of the first errored piece.
 
-    ``message.text`` / ``message.image_path`` / ... each yield a ``_MessageBucket`` for that
-    converted-value data type (empty when absent). ``message.is_blocked`` / ``message.has_error``
-    surface the first piece's status for Jinja conditionals.
+    Args:
+        message: The message to scan for an errored piece.
+
+    Returns:
+        The first errored piece's response-error code, or ``"none"`` when no piece errored.
     """
+    for piece in message.message_pieces:
+        if piece.has_error():
+            return piece.response_error
+    return "none"
 
-    def __init__(self, message: Message) -> None:
-        self._message = message
 
-    @property
-    def is_blocked(self) -> bool:
-        """Whether the first message piece is a blocked response."""
-        pieces = self._message.message_pieces
-        return bool(pieces) and pieces[0].is_blocked()
+def _build_adversarial_feedback_text(
+    *,
+    last_response: Message,
+    score: Score | None,
+    use_score_as_feedback: bool,
+) -> str:
+    """
+    Build the per-turn feedback text handed to the adversarial chat from the objective response.
 
-    @property
-    def has_error(self) -> bool:
-        """Whether the first message piece carries an error."""
-        pieces = self._message.message_pieces
-        return bool(pieces) and pieces[0].has_error()
+    Blocked and errored responses are detected across *all* message pieces, so a blocked or
+    errored piece is never masked by an earlier clean one, and yield a short failure notice.
+    Otherwise the objective target's text is used, optionally with the scorer rationale appended
+    when ``use_score_as_feedback`` is enabled; a response with neither text nor usable feedback
+    nudges the adversarial chat to continue.
 
-    @property
-    def response_error(self) -> str:
-        """The first message piece's response-error code (``"none"`` when absent)."""
-        pieces = self._message.message_pieces
-        return pieces[0].response_error if pieces else "none"
+    Args:
+        last_response: The objective target's latest response.
+        score: The score for ``last_response``, or None when the turn was not scored.
+        use_score_as_feedback: Whether to append the scorer rationale as feedback.
 
-    def __getattr__(self, data_type: str) -> _MessageBucket:
-        return _MessageBucket(self._message.get_pieces_by_type(data_type=cast("PromptDataType", data_type)))
+    Returns:
+        The feedback text to render into the adversarial prompt.
+    """
+    if any(piece.is_blocked() for piece in last_response.message_pieces):
+        return _BLOCKED_FEEDBACK_TEXT
+    if last_response.is_error():
+        return f"Request to target failed: {_first_response_error(last_response)}"
+
+    text = _joined_text_value(last_response)
+    rationale = score.score_rationale if use_score_as_feedback and score is not None and score.score_rationale else None
+    if text:
+        return f"{text}\n\n{rationale}" if rationale else text
+    if rationale:
+        return rationale
+    return _EMPTY_FEEDBACK_TEXT
 
 
 def _build_adversarial_prompt_metadata(*, response_json_schema: JsonSchemaDefinition | None) -> dict[str, Any]:
@@ -210,9 +227,9 @@ class AdversarialConversationManager:
     conversation id, the attack strategy name, and memory labels) is supplied once at
     construction time and reused for every turn, so ``get_next_message_async`` only needs
     the objective target's latest response and its score. The manager folds these into the
-    adversarial prompt itself via ``adversarial_prompt_template`` (rendering ``objective``,
-    ``score``, and a data-type-bucketed ``message`` view), so callers no longer hand-roll
-    that text.
+    adversarial prompt itself: it computes the per-turn feedback text in Python (handling
+    blocked/error/empty responses and optional score feedback) and renders it into
+    ``adversarial_prompt_template`` as ``feedback_text``, so callers no longer hand-roll that text.
 
     First message: ``adversarial_first_prompt_template`` is the *first* user turn sent to the
     adversarial chat (rendered with ``{{ objective }}``) when there is no objective-target
@@ -248,10 +265,10 @@ class AdversarialConversationManager:
             adversarial_first_prompt_template: The first message sent to the adversarial chat
                 when there is no objective-target response yet (rendered with ``{{ objective }}``),
                 or None for strategies that have no first-message seed.
-            adversarial_prompt_template: Template rendered each turn to build the text handed
-                to the adversarial chat from the objective target's latest response. Receives
-                ``objective``, ``score``, and a data-type-bucketed ``message`` view. Defaults are
-                applied by ``AttackAdversarialConfig``; the manager expects a resolved template.
+            adversarial_prompt_template: Template rendered each turn to wrap the computed
+                per-turn feedback text. Receives ``feedback_text`` and ``objective`` and is
+                rendered strictly. Defaults are applied by ``AttackAdversarialConfig``; the
+                manager expects a resolved template.
             raise_on_invalid_json: When True (default) and a response schema is declared, a reply
                 that fails to match the shared ``adversarial_chat`` schema raises
                 ``InvalidJsonException`` (retried via ``pyrit_json_retry``). When False, the raw
@@ -268,9 +285,8 @@ class AdversarialConversationManager:
                 adversarial message is built via ``build_adversarial_input_message`` so first-turn
                 seed media and prior objective-response media are forwarded to the adversarial chat
                 when its declared capabilities allow it. When None, a text-only message is sent.
-            use_score_as_feedback: When True, ``adversarial_prompt_template`` receives a truthy
-                ``use_score_as_feedback`` flag so the default template appends the scorer rationale
-                to the adversarial-chat feedback. Defaults to False.
+            use_score_as_feedback: When True, the computed per-turn ``feedback_text`` appends the
+                scorer rationale to the objective target's response. Defaults to False.
         """
         self._adversarial_target = adversarial_target
         self._system_prompt = system_prompt
@@ -356,6 +372,11 @@ class AdversarialConversationManager:
         """
         Render the per-turn adversarial prompt from the objective target's response and score.
 
+        The blocked/error/empty/score-feedback branching is computed in Python via
+        ``_build_adversarial_feedback_text``; the resulting ``feedback_text`` (plus ``objective``)
+        is rendered into ``adversarial_prompt_template``. Rendering is strict, so a template that
+        references any other variable raises rather than silently producing empty output.
+
         Args:
             score: The score for ``last_response``, or None when the turn was not scored.
             last_response: The objective target's latest response.
@@ -363,11 +384,14 @@ class AdversarialConversationManager:
         Returns:
             The rendered adversarial-chat prompt text.
         """
-        return self._adversarial_prompt_template.render_template_value_silent(
-            objective=self._objective,
+        feedback_text = _build_adversarial_feedback_text(
+            last_response=last_response,
             score=score,
-            message=_MessageView(last_response),
             use_score_as_feedback=self._use_score_as_feedback,
+        )
+        return self._adversarial_prompt_template.render_template_value(
+            feedback_text=feedback_text,
+            objective=self._objective,
         )
 
     async def get_first_message_async(self, *, seed_message: Message | None = None) -> AdversarialReply:
