@@ -171,11 +171,11 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
         # Initialize utilities
         self._prompt_normalizer = prompt_normalizer or PromptNormalizer()
 
-        # Resolve the single response JSON schema (if any) declared on the adversarial system
-        # prompt or first message up front so a conflicting declaration fails fast at construction.
-        # A fresh AdversarialConversationManager is built per turn (one per adversarial
-        # conversation) in ``_generate_next_prompt_async`` with the per-run conversation context.
-        self._adversarial_response_json_schema = resolve_adversarial_json_schema(
+        # Validate up front that a response JSON schema is declared on at most one of the
+        # adversarial system prompt / first message, so a conflicting declaration fails fast at
+        # construction. The per-execution AdversarialConversationManager re-resolves and owns the
+        # schema thereafter, so the result is intentionally discarded here.
+        resolve_adversarial_json_schema(
             system_prompt=self._adversarial_chat_system_prompt_template,
             first_message=self._adversarial_chat_first_message,
         )
@@ -343,12 +343,19 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
         # Track achievement status locally to avoid concurrency issues
         achieved_objective = False
 
+        # Build the adversarial conversation manager once for this execution and reuse it across
+        # turns. Its conversation scope (ids, objective, memory labels) is fixed for the run, so
+        # there is no need to rebuild it each turn.
+        adversarial_manager = self._build_adversarial_manager(context=context)
+
         # Execute conversation turns
         while context.executed_turns < self._max_turns and (self._score_last_turn_only or not achieved_objective):
             logger.info(f"Executing turn {context.executed_turns + 1}/{self._max_turns}")
 
             # Determine what to send next
-            message_to_send = await self._generate_next_prompt_async(context=context)
+            message_to_send = await self._generate_next_prompt_async(
+                context=context, adversarial_manager=adversarial_manager
+            )
 
             # Send the generated message to the objective target
             context.last_response = await self._send_prompt_to_objective_target_async(
@@ -387,7 +394,42 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
         """Clean up after attack execution."""
         # Nothing to be done here, no-op
 
-    async def _generate_next_prompt_async(self, context: MultiTurnAttackContext[Any]) -> Message:
+    def _build_adversarial_manager(self, *, context: MultiTurnAttackContext[Any]) -> AdversarialConversationManager:
+        """
+        Build the adversarial conversation manager for this execution.
+
+        The manager is scoped to a single run's adversarial conversation — its conversation ids,
+        objective, and memory labels come from ``context`` — so it is built once per execution and
+        reused across turns rather than rebuilt each turn.
+
+        Args:
+            context (MultiTurnAttackContext): The attack context supplying the per-run conversation
+                ids, objective, and memory labels.
+
+        Returns:
+            AdversarialConversationManager: The manager driving this run's adversarial chat.
+        """
+        return AdversarialConversationManager(
+            adversarial_target=self._adversarial_chat,
+            system_prompt=self._adversarial_chat_system_prompt_template,
+            first_message=self._adversarial_chat_first_message,
+            adversarial_prompt_template=self._adversarial_prompt_template,
+            prompt_normalizer=self._prompt_normalizer,
+            conversation_id=context.session.adversarial_chat_conversation_id,
+            objective=context.objective,
+            objective_target_conversation_id=context.session.conversation_id,
+            attack_strategy_name=self.__class__.__name__,
+            memory_labels=context.memory_labels,
+            modality_router=self._modality_router,
+            use_score_as_feedback=self._use_score_as_feedback,
+        )
+
+    async def _generate_next_prompt_async(
+        self,
+        context: MultiTurnAttackContext[Any],
+        *,
+        adversarial_manager: AdversarialConversationManager | None = None,
+    ) -> Message:
         """
         Generate the next prompt to be sent to the target during the red teaming attack.
 
@@ -409,6 +451,9 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
 
         Args:
             context (MultiTurnAttackContext): The attack context containing the current state and configuration.
+            adversarial_manager (AdversarialConversationManager | None): The manager driving this
+                run's adversarial chat. Supplied by ``_perform_async`` so it is built once per
+                execution; when ``None`` (e.g. a direct call) it is built on demand from ``context``.
 
         Returns:
             Message: The message to send to the objective target.
@@ -425,24 +470,12 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
                 logger.debug("Using custom message, bypassing adversarial chat")
                 return next_message
 
-        # Generate prompt using adversarial chat. A manager scoped to this adversarial
-        # conversation forwards the shared JSON schema and parses ``next_message`` when the
+        # Generate prompt using adversarial chat. The manager (scoped to this execution's
+        # adversarial conversation) resolves the JSON schema and parses ``next_message`` when the
         # adversarial system prompt declares one; otherwise it returns the raw text unchanged.
         logger.debug(f"Generating prompt for turn {context.executed_turns + 1}")
-        adversarial_manager = AdversarialConversationManager(
-            adversarial_target=self._adversarial_chat,
-            system_prompt=self._adversarial_chat_system_prompt_template,
-            adversarial_first_prompt_template=self._adversarial_chat_first_message,
-            adversarial_prompt_template=self._adversarial_prompt_template,
-            prompt_normalizer=self._prompt_normalizer,
-            conversation_id=context.session.adversarial_chat_conversation_id,
-            objective=context.objective,
-            objective_target_conversation_id=context.session.conversation_id,
-            attack_strategy_name=self.__class__.__name__,
-            memory_labels=context.memory_labels,
-            modality_router=self._modality_router,
-            use_score_as_feedback=self._use_score_as_feedback,
-        )
+        if adversarial_manager is None:
+            adversarial_manager = self._build_adversarial_manager(context=context)
 
         # No objective-target response yet: open the conversation with the first message.
         # Otherwise fold the latest response and its score into the next adversarial prompt.

@@ -37,9 +37,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Keys of the shared ``adversarial_chat`` JSON schema. The attack loop consumes
-# ``next_message``; the other two carry the attacker's own reasoning.
-_EXPECTED_KEYS = {"next_message", "rationale", "last_response_summary"}
+# The one field of the adversarial-chat schema that the attack loop consumes; the other
+# declared fields carry the attacker's own reasoning. The full set of required/permitted keys
+# is taken from the resolved schema itself at parse time (see ``_parse_adversarial_reply``).
+_NEXT_MESSAGE_KEY = "next_message"
 
 
 @dataclass
@@ -164,22 +165,29 @@ def _build_adversarial_prompt_metadata(*, response_json_schema: JsonSchemaDefini
     return {"response_format": "json", JSON_SCHEMA_METADATA_KEY: response_json_schema}
 
 
-def _parse_adversarial_reply(response_text: str) -> AdversarialReply:
+def _parse_adversarial_reply(response_text: str, *, schema: JsonSchemaDefinition) -> AdversarialReply:
     """
-    Parse and validate a JSON reply against the shared ``adversarial_chat`` schema.
+    Parse and validate a JSON reply against the shared ``adversarial_chat`` ``schema``.
 
-    Markdown code fences are stripped and keys are normalized from camelCase to snake_case
-    before validation, so a backend that drifts to ``nextMessage`` still parses without
-    burning a retry.
+    Required and permitted keys are read from ``schema`` itself — its ``required`` list and
+    ``properties`` map, honoring ``additionalProperties`` — rather than a hard-coded copy, so the
+    schema stays the single source of truth and the parser cannot drift from ``adversarial_chat.yaml``.
+    It is the same schema the manager forwards to constrain the target, so the reply is validated
+    against exactly what was requested. Markdown code fences are stripped and keys are normalized from
+    camelCase to snake_case before validation, so a backend that drifts to ``nextMessage`` still parses
+    without burning a retry. ``next_message`` is the one field the attack loop consumes and is always
+    required; ``rationale`` / ``last_response_summary`` carry the attacker's own reasoning.
 
     Args:
         response_text: The raw adversarial-chat reply.
+        schema: The resolved response JSON schema to validate against.
 
     Returns:
         AdversarialReply: The parsed message and reasoning fields.
 
     Raises:
-        InvalidJsonException: If the reply is not valid JSON or has missing/extra keys.
+        InvalidJsonException: If the reply is not valid JSON, is missing a required key, carries a
+            key the schema forbids, or omits ``next_message``.
     """
     cleaned = remove_markdown_json(response_text)
     try:
@@ -189,16 +197,24 @@ def _parse_adversarial_reply(response_text: str) -> AdversarialReply:
 
     normalized = {_camel_to_snake(key): value for key, value in parsed.items()}
 
-    missing_keys = _EXPECTED_KEYS - set(normalized.keys())
+    required_keys = {_camel_to_snake(key) for key in schema.get("required", [])}
+    missing_keys = required_keys - normalized.keys()
     if missing_keys:
         raise InvalidJsonException(message=f"Missing required keys {missing_keys} in JSON response: {cleaned}")
 
-    extra_keys = set(normalized.keys()) - _EXPECTED_KEYS
-    if extra_keys:
-        raise InvalidJsonException(message=f"Unexpected keys {extra_keys} found in JSON response: {cleaned}")
+    if schema.get("additionalProperties", True) is False:
+        allowed_keys = {_camel_to_snake(key) for key in schema.get("properties", {})}
+        extra_keys = normalized.keys() - allowed_keys
+        if extra_keys:
+            raise InvalidJsonException(message=f"Unexpected keys {extra_keys} found in JSON response: {cleaned}")
+
+    if _NEXT_MESSAGE_KEY not in normalized:
+        raise InvalidJsonException(
+            message=f"Response is missing the '{_NEXT_MESSAGE_KEY}' field the attack loop sends: {cleaned}"
+        )
 
     return AdversarialReply(
-        next_message=str(normalized["next_message"]),
+        next_message=str(normalized[_NEXT_MESSAGE_KEY]),
         rationale=normalized.get("rationale"),
         last_response_summary=normalized.get("last_response_summary"),
         raw=response_text,
@@ -231,7 +247,7 @@ class AdversarialConversationManager:
     blocked/error/empty responses and optional score feedback) and renders it into
     ``adversarial_prompt_template`` as ``feedback_text``, so callers no longer hand-roll that text.
 
-    First message: ``adversarial_first_prompt_template`` is the *first* user turn sent to the
+    First message: ``first_message`` is the *first* user turn sent to the
     adversarial chat (rendered with ``{{ objective }}``) when there is no objective-target
     response yet; it is not re-sent on later turns.
 
@@ -244,7 +260,7 @@ class AdversarialConversationManager:
         *,
         adversarial_target: PromptTarget,
         system_prompt: SeedPrompt,
-        adversarial_first_prompt_template: SeedPrompt | None = None,
+        first_message: SeedPrompt | None = None,
         adversarial_prompt_template: SeedPrompt,
         raise_on_invalid_json: bool = True,
         prompt_normalizer: PromptNormalizer | None = None,
@@ -262,17 +278,17 @@ class AdversarialConversationManager:
         Args:
             adversarial_target: The adversarial chat target to send turns to.
             system_prompt: The resolved adversarial system-prompt SeedPrompt.
-            adversarial_first_prompt_template: The first message sent to the adversarial chat
-                when there is no objective-target response yet (rendered with ``{{ objective }}``),
-                or None for strategies that have no first-message seed.
+            first_message: The first message sent to the adversarial chat when there is no
+                objective-target response yet (rendered with ``{{ objective }}``), or None for
+                strategies that have no first-message seed.
             adversarial_prompt_template: Template rendered each turn to wrap the computed
                 per-turn feedback text. Receives ``feedback_text`` and ``objective`` and is
                 rendered strictly. Defaults are applied by ``AttackAdversarialConfig``; the
                 manager expects a resolved template.
             raise_on_invalid_json: When True (default) and a response schema is declared, a reply
-                that fails to match the shared ``adversarial_chat`` schema raises
-                ``InvalidJsonException`` (retried via ``pyrit_json_retry``). When False, the raw
-                reply text is returned as ``next_message`` instead of raising.
+                that fails to match the declared schema raises ``InvalidJsonException`` (retried via
+                ``pyrit_json_retry``). When False, the raw reply text is returned as ``next_message``
+                instead of raising.
             prompt_normalizer: The prompt normalizer to send through. Defaults to a new one.
             conversation_id: The adversarial-chat conversation id this manager drives. A fresh
                 id is generated when None.
@@ -287,10 +303,15 @@ class AdversarialConversationManager:
                 when its declared capabilities allow it. When None, a text-only message is sent.
             use_score_as_feedback: When True, the computed per-turn ``feedback_text`` appends the
                 scorer rationale to the objective target's response. Defaults to False.
+
+        Raises:
+            ValueError: If a response JSON schema is declared on both the system prompt and the
+                first message, or if a declared schema omits the ``next_message`` property that the
+                attack loop consumes.
         """
         self._adversarial_target = adversarial_target
         self._system_prompt = system_prompt
-        self._adversarial_first_prompt_template = adversarial_first_prompt_template
+        self._first_message = first_message
         self._adversarial_prompt_template = adversarial_prompt_template
         self._raise_on_invalid_json = raise_on_invalid_json
         self._prompt_normalizer = prompt_normalizer or PromptNormalizer()
@@ -306,8 +327,16 @@ class AdversarialConversationManager:
         # template (raising if both declare one), so callers never pass it in.
         self._response_json_schema = resolve_adversarial_json_schema(
             system_prompt=system_prompt,
-            first_message=adversarial_first_prompt_template,
+            first_message=first_message,
         )
+        # The attack loop consumes ``next_message``, so a declared schema that omits that
+        # property cannot drive this manager — fail fast at construction rather than mid-run.
+        declared_schema = self._response_json_schema
+        if declared_schema is not None and _NEXT_MESSAGE_KEY not in declared_schema.get("properties", {}):
+            raise ValueError(
+                f"The adversarial response schema must declare a '{_NEXT_MESSAGE_KEY}' property; "
+                "it is the field the attack loop sends to the objective target."
+            )
 
     @property
     def adversarial_target(self) -> PromptTarget:
@@ -320,9 +349,9 @@ class AdversarialConversationManager:
         return self._system_prompt
 
     @property
-    def adversarial_first_prompt_template(self) -> SeedPrompt | None:
+    def first_message(self) -> SeedPrompt | None:
         """The resolved adversarial first-message SeedPrompt, if any."""
-        return self._adversarial_first_prompt_template
+        return self._first_message
 
     @property
     def adversarial_prompt_template(self) -> SeedPrompt:
@@ -360,7 +389,7 @@ class AdversarialConversationManager:
             ValueError: If no first message is configured, or the first message references
                 ``objective`` but none was configured.
         """
-        template = self._adversarial_first_prompt_template
+        template = self._first_message
         if template is None:
             raise ValueError("No first message configured on AdversarialConversationManager")
         needs_objective = "objective" in (template.parameters or []) or "objective" in template.value
@@ -524,13 +553,14 @@ class AdversarialConversationManager:
 
         raw = response.get_value()
 
-        if self._response_json_schema is None:
+        schema = self._response_json_schema
+        if schema is None:
             return AdversarialReply(next_message=raw, raw=raw)
 
         if not self._raise_on_invalid_json:
             try:
-                return _parse_adversarial_reply(raw)
+                return _parse_adversarial_reply(raw, schema=schema)
             except InvalidJsonException:
                 return AdversarialReply(next_message=raw, raw=raw)
 
-        return _parse_adversarial_reply(raw)
+        return _parse_adversarial_reply(raw, schema=schema)

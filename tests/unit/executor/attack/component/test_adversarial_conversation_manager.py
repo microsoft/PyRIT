@@ -110,7 +110,7 @@ def test_build_metadata_forwards_schema():
 
 
 def test_parse_reply_happy_path():
-    reply = _parse_adversarial_reply(VALID_JSON)
+    reply = _parse_adversarial_reply(VALID_JSON, schema=SCHEMA)
     assert reply.next_message == "hello target"
     assert reply.rationale == "build rapport"
     assert reply.last_response_summary == "no prior response"
@@ -119,31 +119,38 @@ def test_parse_reply_happy_path():
 
 def test_parse_reply_normalizes_camel_case():
     camel = '{"nextMessage": "hi", "rationale": "r", "lastResponseSummary": "s"}'
-    reply = _parse_adversarial_reply(camel)
+    reply = _parse_adversarial_reply(camel, schema=SCHEMA)
     assert reply.next_message == "hi"
     assert reply.last_response_summary == "s"
 
 
 def test_parse_reply_strips_markdown_fences():
     wrapped = f"```json\n{VALID_JSON}\n```"
-    reply = _parse_adversarial_reply(wrapped)
+    reply = _parse_adversarial_reply(wrapped, schema=SCHEMA)
     assert reply.next_message == "hello target"
 
 
 def test_parse_reply_invalid_json_raises():
     with pytest.raises(InvalidJsonException):
-        _parse_adversarial_reply("not json at all")
+        _parse_adversarial_reply("not json at all", schema=SCHEMA)
 
 
 def test_parse_reply_missing_key_raises():
     with pytest.raises(InvalidJsonException, match="Missing required keys"):
-        _parse_adversarial_reply('{"next_message": "hi", "rationale": "r"}')
+        _parse_adversarial_reply('{"next_message": "hi", "rationale": "r"}', schema=SCHEMA)
 
 
 def test_parse_reply_extra_key_raises():
     extra = '{"next_message": "hi", "rationale": "r", "last_response_summary": "s", "surprise": "x"}'
     with pytest.raises(InvalidJsonException, match="Unexpected keys"):
-        _parse_adversarial_reply(extra)
+        _parse_adversarial_reply(extra, schema=SCHEMA)
+
+
+def test_parse_reply_requires_next_message_even_without_required_list():
+    # A schema with no ``required`` list still cannot omit next_message: it is the field the
+    # attack loop sends to the objective target.
+    with pytest.raises(InvalidJsonException, match="next_message"):
+        _parse_adversarial_reply('{"surprise": "x"}', schema=OTHER_SCHEMA)
 
 
 # --- init / schema resolution ------------------------------------------------
@@ -158,7 +165,7 @@ class TestManagerInit:
     def test_resolves_schema_from_first_message(self):
         manager = _manager(
             system_prompt=_system_prompt(schema=None),
-            adversarial_first_prompt_template=_first_message(schema=SCHEMA),
+            first_message=_first_message(schema=SCHEMA),
         )
         assert manager.has_schema is True
         assert manager.response_json_schema == SCHEMA
@@ -172,7 +179,7 @@ class TestManagerInit:
         with pytest.raises(ValueError, match="only one of them"):
             _manager(
                 system_prompt=_system_prompt(schema=SCHEMA),
-                adversarial_first_prompt_template=_first_message(schema=OTHER_SCHEMA),
+                first_message=_first_message(schema=OTHER_SCHEMA),
             )
 
     def test_conversation_id_generated_when_omitted(self):
@@ -188,11 +195,11 @@ class TestManagerInit:
         manager = _manager(
             adversarial_target=target,
             adversarial_prompt_template=per_turn,
-            adversarial_first_prompt_template=first,
+            first_message=first,
         )
         assert manager.adversarial_target is target
         assert manager.adversarial_prompt_template is per_turn
-        assert manager.adversarial_first_prompt_template is first
+        assert manager.first_message is first
 
 
 # --- first-message rendering -------------------------------------------------
@@ -201,19 +208,19 @@ class TestManagerInit:
 class TestRenderFirstMessage:
     def test_renders_objective(self):
         manager = _manager(
-            adversarial_first_prompt_template=_first_message("open {{ objective }}"),
+            first_message=_first_message("open {{ objective }}"),
             objective="the goal",
         )
         assert manager._render_first_message() == "open the goal"
 
     def test_without_template_raises(self):
-        manager = _manager(adversarial_first_prompt_template=None)
+        manager = _manager(first_message=None)
         with pytest.raises(ValueError, match="No first message configured"):
             manager._render_first_message()
 
     def test_without_objective_raises_when_needed(self):
         manager = _manager(
-            adversarial_first_prompt_template=_first_message("open {{ objective }}"),
+            first_message=_first_message("open {{ objective }}"),
             objective=None,
         )
         with pytest.raises(ValueError, match="No objective configured"):
@@ -221,7 +228,7 @@ class TestRenderFirstMessage:
 
     def test_renders_static_first_message_without_objective(self):
         manager = _manager(
-            adversarial_first_prompt_template=_first_message("static opening"),
+            first_message=_first_message("static opening"),
             objective=None,
         )
         assert manager._render_first_message() == "static opening"
@@ -234,7 +241,7 @@ class TestGetFirstMessageAsync:
     async def test_raw_path_sends_rendered_first_message(self):
         normalizer = _normalizer("raw opening")
         manager = _manager(
-            adversarial_first_prompt_template=_first_message("open {{ objective }}"),
+            first_message=_first_message("open {{ objective }}"),
             objective="the goal",
             prompt_normalizer=normalizer,
         )
@@ -247,7 +254,7 @@ class TestGetFirstMessageAsync:
         normalizer = _normalizer(VALID_JSON)
         manager = _manager(
             system_prompt=_system_prompt(schema=None),
-            adversarial_first_prompt_template=_first_message("open {{ objective }}", schema=SCHEMA),
+            first_message=_first_message("open {{ objective }}", schema=SCHEMA),
             objective="the goal",
             prompt_normalizer=normalizer,
         )
@@ -257,7 +264,7 @@ class TestGetFirstMessageAsync:
         assert sent.message_pieces[0].prompt_metadata[JSON_SCHEMA_METADATA_KEY] == SCHEMA
 
     async def test_no_template_raises(self):
-        manager = _manager(adversarial_first_prompt_template=None, prompt_normalizer=_normalizer("x"))
+        manager = _manager(first_message=None, prompt_normalizer=_normalizer("x"))
         with pytest.raises(ValueError, match="No first message configured"):
             await manager.get_first_message_async()
 
@@ -348,7 +355,7 @@ class TestModalityRouterIntegration:
         router.build_adversarial_input_message.return_value = routed
         seed = _response_message("seed media")
         manager = _manager(
-            adversarial_first_prompt_template=_first_message("open {{ objective }}"),
+            first_message=_first_message("open {{ objective }}"),
             objective="goal",
             prompt_normalizer=normalizer,
             modality_router=router,
@@ -377,7 +384,7 @@ class TestModalityRouterIntegration:
 
 def test_adversarial_reply_is_message_constructible():
     # Guards that next_message round-trips into a user Message for the objective target.
-    reply = _parse_adversarial_reply(VALID_JSON)
+    reply = _parse_adversarial_reply(VALID_JSON, schema=SCHEMA)
     message = Message.from_prompt(prompt=reply.next_message, role="user")
     assert message.get_value() == "hello target"
 

@@ -244,7 +244,7 @@ async def _generate_next_message_async(
     # When a schema is declared, parse ``next_message`` out of the JSON reply and return it
     # as a fresh user message. Otherwise, flip the raw response to a user message unchanged.
     if response_json_schema is not None:
-        reply = _parse_adversarial_reply(response.get_value())
+        reply = _parse_adversarial_reply(response.get_value(), schema=response_json_schema)
         return Message.from_prompt(role="user", prompt=reply.next_message)
 
     # Change the role from assistant to user since this is a user message to be sent to the target

@@ -66,8 +66,6 @@ class AttackAdversarialConfig:
     including the target chat model, system prompt, and seed prompt for the attack.
     """
 
-    _DEFAULT_SEED_PROMPT = ""
-
     # Adversarial chat target for the attack
     target: PromptTarget
 
@@ -80,9 +78,8 @@ class AttackAdversarialConfig:
     # do not use a first message.
     first_message: str | SeedPrompt | None = DEFAULT_ADVERSARIAL_FIRST_MESSAGE
 
-    # Template rendered each turn to build the text handed to the adversarial chat from the
-    # objective target's latest response. Receives ``objective``, ``score``, and a
-    # data-type-bucketed ``message`` view (e.g. {{ message.text.converted_value }}).
+    # Template rendered each turn to wrap the per-turn feedback text the manager computes from
+    # the objective target's latest response. Receives ``feedback_text`` and ``objective``.
     adversarial_prompt_template: str | SeedPrompt | None = DEFAULT_ADVERSARIAL_PROMPT_TEMPLATE
 
     # System prompt for the adversarial chat target, as an inline Jinja template string or a
