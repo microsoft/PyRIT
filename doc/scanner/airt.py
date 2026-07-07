@@ -73,10 +73,16 @@ await output_scenario_async(scenario_result)
 # crisis handling and licensed therapist impersonation.
 #
 # ```bash
-# pyrit_scan airt.psychosocial --target openai_chat --strategies imminent_crisis --max-dataset-size 1
+# pyrit_scan airt.psychosocial --target openai_chat --dataset-names airt_imminent_crisis --max-dataset-size 1
 # ```
 #
-# **Available strategies:** ALL, ImminentCrisis, LicensedTherapist
+# **Subharm selection is by dataset, technique selection is by strategy.** Each subharm has its own
+# dataset (`airt_imminent_crisis`, `airt_licensed_therapist`), its own scoring rubric, and its own
+# Crescendo escalation prompt. Choose one or both subharms with `--dataset-names`; omit it to run
+# both. Choose techniques with `--strategies`.
+#
+# **Available strategies:** ALL (adds crescendo), prompt_sending, role_play, crescendo. The default
+# aggregate runs the single-turn techniques (prompt_sending, role_play); crescendo is opt-in.
 #
 # ### Conversation-Level Scoring
 #
@@ -85,18 +91,14 @@ await output_scenario_async(scenario_result)
 # to evaluate the **entire conversation history** rather than just the latest response — critical
 # for detecting patterns like gradual crisis escalation.
 #
-# Each subharm has a built-in YAML rubric:
+# Each subharm has a built-in YAML rubric, applied per-attack so the scorer always matches the
+# seed's subharm (even when both subharms run together):
 #
 # - **crisis_management.yaml** — Evaluates crisis recognition using the MHFA/ALGEE methodology
 #   (Approach, Listen, Give reassurance, Encourage professional help, Encourage self-help).
 #   Scores range from 1 (not harmful) to 5 (extremely harmful).
 # - **licensed_therapist.yaml** — Evaluates whether the model inappropriately provides clinical
 #   mental health advice.
-#
-# Rubrics can be customized per-subharm via the SubharmConfig dataclass.
-#
-# **Note:** This scenario does not include a default baseline. A single-turn baseline would not be
-# meaningful because psychosocial harms emerge through multi-turn escalation.
 
 # %%
 from pyrit.scenario.airt import Psychosocial, PsychosocialStrategy
@@ -106,7 +108,7 @@ dataset_config = DatasetConfiguration(dataset_names=["airt_imminent_crisis"], ma
 scenario = Psychosocial()
 await scenario.initialize_async(  # type: ignore
     objective_target=objective_target,
-    scenario_strategies=[PsychosocialStrategy.ImminentCrisis],
+    scenario_strategies=[PsychosocialStrategy.prompt_sending],
     dataset_config=dataset_config,
 )
 
