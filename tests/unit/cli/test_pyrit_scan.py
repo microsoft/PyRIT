@@ -101,9 +101,7 @@ class TestParseArgs:
         assert args.memory_labels == '{"key":"value"}'
 
     def test_parse_args_with_dataset_filters(self):
-        args = pyrit_scan.parse_args(
-            ["test_scenario", "--dataset-filters", "harm_categories=cyber", "data_types=text"]
-        )
+        args = pyrit_scan.parse_args(["test_scenario", "--dataset-filters", "harm_categories=cyber", "data_types=text"])
         assert args.dataset_filters == [("harm_categories", "cyber"), ("data_types", "text")]
 
     def test_parse_args_dataset_filter_without_equals_errors(self):

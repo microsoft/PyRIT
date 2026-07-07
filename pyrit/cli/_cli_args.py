@@ -339,8 +339,7 @@ def _coerce_filter_values(value: str) -> list[str]:
 _DATASET_FILTER_HELP: dict[str, str] = {
     "harm_categories": "matches seeds tagged with ALL given values (AND, substring match), "
     "so harm_categories=cyber,violence is an intersection",
-    "data_types": "matches seeds of ANY given value (OR, exact match), "
-    "so data_types=text,image_path is a union",
+    "data_types": "matches seeds of ANY given value (OR, exact match), so data_types=text,image_path is a union",
 }
 
 ARG_HELP = {
