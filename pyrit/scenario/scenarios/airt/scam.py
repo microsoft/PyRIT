@@ -49,7 +49,10 @@ class ScamStrategy(ScenarioStrategy):
     - ALL: Every technique (both single-turn and the multi-turn PersuasiveRedTeamingAttack).
     - DEFAULT: The single-turn techniques (ContextCompliance, RolePlay). Excludes the multi-turn
         PersuasiveRedTeamingAttack so the default run stays fast; opt into it via ALL or MULTI_TURN.
-    - SINGLE_TURN / MULTI_TURN: Group techniques by turn count.
+    - SINGLE_TURN / MULTI_TURN: Group techniques by turn count. DEFAULT intentionally shares
+        membership with SINGLE_TURN today (both are the single-turn techniques); they are kept
+        distinct because DEFAULT is the recommended fast default while SINGLE_TURN is a turn-count
+        grouping, and their membership may diverge later.
     """
 
     ALL = ("all", {"all"})
@@ -57,9 +60,6 @@ class ScamStrategy(ScenarioStrategy):
     SINGLE_TURN = ("single_turn", {"single_turn"})
     MULTI_TURN = ("multi_turn", {"multi_turn"})
 
-    # DEFAULT intentionally shares membership with SINGLE_TURN today (both single-turn
-    # techniques). They are kept distinct because DEFAULT is the recommended fast default
-    # while SINGLE_TURN is a turn-count grouping; their membership may diverge later.
     ContextCompliance = ("context_compliance", {"single_turn", "default"})
     RolePlay = ("role_play", {"single_turn", "default"})
     PersuasiveRedTeamingAttack = ("persuasive_rta", {"multi_turn"})
