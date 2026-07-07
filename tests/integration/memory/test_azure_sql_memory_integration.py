@@ -8,7 +8,6 @@ from uuid import uuid4
 
 import numpy as np
 from sqlalchemy.exc import SQLAlchemyError
-from unit.mocks import make_scenario_result
 
 from pyrit.memory import AzureSQLMemory
 from pyrit.memory.memory_models import (
@@ -22,6 +21,8 @@ from pyrit.models import (
     AttackResult,
     ComponentIdentifier,
     MessagePiece,
+    ScenarioIdentifier,
+    ScenarioResult,
     SeedPrompt,
 )
 
@@ -71,6 +72,47 @@ def get_test_scorer_identifier(**kwargs) -> ComponentIdentifier:
         class_module=kwargs.get("class_module", "tests.integration.memory.test_azure_sql_memory_integration"),
         params={k: v for k, v in params.items() if v is not None},
     )
+
+
+def make_scenario_result(
+    *,
+    scenario_name: str = "TestScenario",
+    scenario_version: int = 1,
+    objective_target_identifier: ComponentIdentifier | None = None,
+    objective_scorer_identifier: ComponentIdentifier | None = None,
+    pyrit_version: str | None = None,
+    **kwargs,
+) -> ScenarioResult:
+    """
+    Build a ScenarioResult for integration tests from flat identity kwargs.
+
+    The identity kwargs are folded into a ScenarioIdentifier; all other kwargs
+    (e.g. attack_results, labels, completion_time) pass through to ScenarioResult.
+
+    Args:
+        scenario_name (str): The scenario class name. Defaults to "TestScenario".
+        scenario_version (int): The scenario version. Defaults to 1.
+        objective_target_identifier (ComponentIdentifier | None): The objective target identifier.
+        objective_scorer_identifier (ComponentIdentifier | None): The objective scorer identifier.
+        pyrit_version (str | None): The PyRIT version to record on the identifier.
+        **kwargs: Additional keyword arguments passed through to ScenarioResult.
+
+    Returns:
+        ScenarioResult: The constructed scenario result.
+    """
+    extra: dict = {}
+    if pyrit_version is not None:
+        extra["pyrit_version"] = pyrit_version
+    identifier = ScenarioIdentifier(
+        class_name=scenario_name,
+        class_module="tests.integration.memory.test_azure_sql_memory_integration",
+        version=scenario_version,
+        params={},
+        objective_target=objective_target_identifier,
+        objective_scorer=objective_scorer_identifier,
+        **extra,
+    )
+    return ScenarioResult(scenario_identifier=identifier, **kwargs)
 
 
 @contextmanager
