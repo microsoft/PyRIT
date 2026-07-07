@@ -369,7 +369,12 @@ class PyRITShell(cmd.Cmd):
             print("Usage: run <scenario_name> --target <name> [options]")
             return
 
-        from pyrit.cli._cli_args import build_parameters_from_api, extract_scenario_args, parse_run_arguments
+        from pyrit.cli._cli_args import (
+            build_parameters_from_api,
+            collapse_dataset_filters,
+            extract_scenario_args,
+            parse_run_arguments,
+        )
         from pyrit.cli._output import (
             print_scenario_result_async,
             print_scenario_run_progress,
@@ -433,7 +438,7 @@ class PyRITShell(cmd.Cmd):
         if args.get("max_dataset_size") is not None:
             request_kwargs["max_dataset_size"] = args["max_dataset_size"]
         if args.get("dataset_filters"):
-            request_kwargs["dataset_filters"] = dict(args["dataset_filters"])
+            request_kwargs["dataset_filters"] = collapse_dataset_filters(args["dataset_filters"])
         if args.get("memory_labels"):
             request_kwargs["labels"] = args["memory_labels"]
 

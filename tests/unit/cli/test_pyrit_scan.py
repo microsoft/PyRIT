@@ -658,6 +658,21 @@ class TestBuildRunRequest:
         request = pyrit_scan._build_run_request(parsed_args=parsed, scenario_name="s")
         assert request.dataset_filters == {"harm_categories": "cyber", "data_types": "text"}
 
+    def test_duplicate_dataset_filter_key_raises(self):
+        parsed = Namespace(
+            target="t",
+            initializers=None,
+            scenario_strategies=None,
+            max_concurrency=None,
+            max_retries=None,
+            dataset_names=None,
+            max_dataset_size=None,
+            dataset_filters=[("harm_categories", "cyber"), ("harm_categories", "violence")],
+            memory_labels=None,
+        )
+        with pytest.raises(ValueError, match="Duplicate dataset filter 'harm_categories'"):
+            pyrit_scan._build_run_request(parsed_args=parsed, scenario_name="s")
+
     def test_includes_scenario_declared_params(self):
         parsed = Namespace(
             target=None,

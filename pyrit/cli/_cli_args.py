@@ -278,6 +278,34 @@ def parse_dataset_filter(arg: str) -> tuple[str, str]:
     return key, value
 
 
+def collapse_dataset_filters(tokens: list[tuple[str, str]]) -> dict[str, str]:
+    """
+    Fold parsed ``KEY=VALUE`` dataset-filter tokens into a dict, rejecting duplicate keys.
+
+    Repeating a key (e.g. ``harm_categories=cyber harm_categories=violence``) would otherwise be
+    silently collapsed by ``dict(...)`` to the last value, dropping earlier constraints. Since
+    list-valued filters accept comma-separated values, a repeated key is almost certainly a
+    mistake, so this fails loud instead.
+
+    Args:
+        tokens (list[tuple[str, str]]): The parsed ``(key, value)`` pairs.
+
+    Returns:
+        dict[str, str]: The collapsed filter mapping.
+
+    Raises:
+        ValueError: If any key appears more than once.
+    """
+    filters: dict[str, str] = {}
+    for key, value in tokens:
+        if key in filters:
+            raise ValueError(
+                f"Duplicate dataset filter '{key}'; combine values with commas: {key}={filters[key]},{value}"
+            )
+        filters[key] = value
+    return filters
+
+
 # ---------------------------------------------------------------------------
 # Shared argument help text
 # ---------------------------------------------------------------------------
