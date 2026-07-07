@@ -151,34 +151,38 @@ await output_scenario_async(scenario_result)
 # %% [markdown]
 # ## Jailbreak
 #
-# Tests target resilience against template-based jailbreak attacks using various prompt injection
-# templates.
+# Tests target resilience against template-based jailbreak attacks across three axes: **objectives**
+# (harmful behaviors, via `--dataset-names`, default HarmBench), **techniques** (how each jailbroken
+# objective is delivered — default is to "just send" it; the shared techniques like `role_play` and
+# `many_shot` are also selectable via `--strategies`), and **jailbreaks** (which templates to apply,
+# a random sample by default).
 #
 # ```bash
 # pyrit_scan airt.jailbreak \
-#   --initializers target \
+#   --initializers target load_default_datasets techniques \
 #   --target openai_chat \
-#   --strategies simple \
+#   --num-templates 1 \
 #   --max-dataset-size 1
 # ```
 #
-# **Available strategies:** ALL, SIMPLE, COMPLEX, PromptSending, ManyShot, SkeletonKey, RolePlay
+# **Available strategies (techniques):** the default is `prompt_sending` ("just send"); the shared
+# `core` techniques (`role_play`, `many_shot`, `tap`, `crescendo`, …) are selectable via
+# `--strategies`, plus the `single_turn` / `multi_turn` / `all` aggregates.
 #
-# By default the scenario randomly samples `num_templates` jailbreak templates (default: 10 of the
-# 162 available) to keep runs fast and predictable — so the fast path above needs only `--strategies
-# simple --max-dataset-size 1`. Pass `--num-templates N` to widen or narrow coverage, or
-# `--num-attempts N` to repeat each template. The specific templates chosen for a run are printed in
-# the scenario output under **Scenario Inputs** and persisted to `scenario_result.metadata`.
+# By default the scenario randomly samples `num_templates` jailbreak templates (default: 10) to keep
+# runs fast and predictable. Pass `--num-templates N` to widen or narrow coverage, `jailbreak_names`
+# to pin specific templates, or `--num-attempts N` to repeat each template. The specific templates
+# chosen for a run are printed in the scenario output under **Scenario Inputs** and persisted to
+# `scenario_result.metadata`.
 
 # %%
-from pyrit.scenario.airt import Jailbreak, JailbreakStrategy
+from pyrit.scenario.airt import Jailbreak
 
-dataset_config = DatasetConfiguration(dataset_names=["airt_harms"], max_dataset_size=1)
+dataset_config = DatasetConfiguration(dataset_names=["harmbench"], max_dataset_size=1)
 
-scenario = Jailbreak()
+scenario = Jailbreak(num_templates=2)
 await scenario.initialize_async(  # type: ignore
     objective_target=objective_target,
-    scenario_strategies=[JailbreakStrategy.SIMPLE],
     dataset_config=dataset_config,
 )
 

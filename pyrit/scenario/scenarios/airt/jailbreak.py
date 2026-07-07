@@ -2,28 +2,29 @@
 # Licensed under the MIT license.
 
 import logging
+from functools import cache
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from pyrit.common import apply_defaults
 from pyrit.datasets import TextJailBreak
-from pyrit.executor.attack.core.attack_config import AttackAdversarialConfig, AttackConverterConfig, AttackScoringConfig
-from pyrit.executor.attack.single_turn.many_shot_jailbreak import ManyShotJailbreakAttack
 from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
-from pyrit.executor.attack.single_turn.role_play import RolePlayAttack, RolePlayPaths
-from pyrit.executor.attack.single_turn.skeleton_key import SkeletonKeyAttack
-from pyrit.models import Parameter, SeedAttackGroup
-from pyrit.prompt_converter import TextJailbreakConverter
-from pyrit.prompt_normalizer import PromptConverterConfiguration
-from pyrit.prompt_target.common.prompt_target import PromptTarget
+from pyrit.models import Parameter
+from pyrit.prompt_converter import PromptConverter, TextJailbreakConverter
 from pyrit.scenario.core.atomic_attack import AtomicAttack
-from pyrit.scenario.core.attack_technique import AttackTechnique
+from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
 from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
+from pyrit.scenario.core.matrix_atomic_attack_builder import (
+    MatrixAtomicAttackBuilder,
+    MatrixCombo,
+    resolve_technique_factories,
+)
 from pyrit.scenario.core.scenario import Scenario
 from pyrit.scenario.core.scenario_context import ScenarioContext
-from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
-from pyrit.scenario.core.scenario_target_defaults import get_default_adversarial_target
 from pyrit.score import TrueFalseScorer
+
+if TYPE_CHECKING:
+    from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
 
 logger = logging.getLogger(__name__)
 
@@ -35,67 +36,86 @@ class _Unset:
 _UNSET = _Unset()
 
 
-class JailbreakStrategy(ScenarioStrategy):
+def _prompt_sending_factory() -> AttackTechniqueFactory:
     """
-    Strategy for jailbreak attacks.
+    Build the scenario-local "just send" technique factory.
 
-    The SIMPLE strategy just sends the jailbroken prompt and records the response. It is meant to
-    expose an obvious way of using this scenario without worrying about additional tweaks and changes
-    to the prompt.
+    The shared ``core`` technique catalog intentionally omits a bare
+    ``PromptSendingAttack`` (the central baseline covers it), but Jailbreak's
+    default technique is to send the jailbroken objective unmodified, so it
+    supplies its own.
 
-    COMPLEX strategies use additional techniques to enhance the jailbreak like modifying the
-    system prompt or probing the target model for an additional vulnerability (e.g. the SkeletonKeyAttack).
-    They are meant to provide a sense of how well a jailbreak generalizes to slight changes in the delivery
-    method.
+    Returns:
+        AttackTechniqueFactory: The ``prompt_sending`` factory.
     """
+    return AttackTechniqueFactory(
+        name="prompt_sending",
+        attack_class=PromptSendingAttack,
+        strategy_tags=["single_turn"],
+    )
 
-    # Aggregate members (special markers that expand to strategies with matching tags)
-    ALL = ("all", {"all"})
-    SIMPLE = ("simple", {"simple"})
-    COMPLEX = ("complex", {"complex"})
 
-    # Simple strategies
-    PromptSending = ("prompt_sending", {"simple"})
+@cache
+def _build_jailbreak_strategy() -> type["ScenarioStrategy"]:
+    """
+    Build the Jailbreak strategy class dynamically from the registered technique factories.
 
-    # Complex strategies
-    ManyShot = ("many_shot", {"complex"})
-    SkeletonKey = ("skeleton", {"complex"})
-    RolePlay = ("role_play", {"complex"})
+    Mirrors ``RapidResponse``: the technique axis is the shared ``core`` catalog
+    (role_play, many_shot, tap, crescendo, …) plus the scenario-local
+    ``prompt_sending`` technique. The scenario's ``default_strategy`` is the
+    concrete ``prompt_sending`` member, so a no-strategy run "just sends" the
+    jailbroken objective; ``single_turn`` / ``multi_turn`` / ``all`` aggregates
+    remain available for broader selection.
 
-    @classmethod
-    def get_aggregate_tags(cls) -> set[str]:
-        """
-        Get the set of tags that represent aggregate categories.
+    Returns:
+        type[ScenarioStrategy]: The dynamically generated strategy enum class.
+    """
+    from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
+    from pyrit.registry.tag_query import TagQuery
 
-        Returns:
-            set[str]: Set of tags that are aggregate markers.
-        """
-        # Include base class aggregates ("all") and add scenario-specific ones
-        return super().get_aggregate_tags() | {"simple", "complex"}
+    registry = AttackTechniqueRegistry.get_registry_singleton()
+    core_factories = TagQuery.all("core").filter(list(registry.get_factories_or_raise().values()))
+    factories = [_prompt_sending_factory(), *core_factories]
+
+    return AttackTechniqueRegistry.build_strategy_class_from_factories(  # type: ignore[ty:invalid-return-type]
+        class_name="JailbreakStrategy",
+        factories=factories,
+        aggregate_tags={
+            "single_turn": TagQuery.any_of("single_turn"),
+            "multi_turn": TagQuery.any_of("multi_turn"),
+        },
+    )
 
 
 class Jailbreak(Scenario):
     """
     Jailbreak scenario implementation for PyRIT.
 
-    This scenario tests how vulnerable models are to jailbreak attacks by applying
-    various single-turn jailbreak templates to a set of test prompts. The responses are
-    scored to determine if the jailbreak was successful.
+    Tests how vulnerable a model is to jailbreak templates along three orthogonal axes:
+
+    * **objectives** — harmful objectives, selected with ``--dataset-names`` (default HarmBench).
+    * **techniques** — how each jailbroken objective is delivered; default is to "just send"
+      (``prompt_sending``), with the shared ``core`` techniques (role_play, many_shot, …)
+      selectable via ``--strategies``.
+    * **jailbreaks** — which jailbreak templates to apply, a random sample by default or an
+      explicit list via ``jailbreak_names`` / ``--num-templates``.
+
+    Each ``(technique x objective)`` pair is built for every selected jailbreak template, with
+    the template applied via a ``TextJailbreakConverter``. Results group by jailbreak template.
     """
 
-    VERSION: int = 2
+    VERSION: int = 3
 
     #: Number of jailbreak templates sampled by default when neither the constructor argument
-    #: nor the ``num_templates`` runtime parameter is supplied. The full catalog ships 162
-    #: templates; this is a small, fast-to-run random subset (the team-agreed default for the
-    #: quick path). Raise ``--num-templates`` for broader coverage, or pass ``num_templates=None``
-    #: to run the full catalog.
+    #: nor the ``num_templates`` runtime parameter is supplied. The full catalog ships many
+    #: templates; this is a small, fast random subset. Raise ``--num-templates`` for broader
+    #: coverage, or pass ``num_templates=None`` to run the full catalog.
     DEFAULT_NUM_TEMPLATES: ClassVar[int] = 10
 
     @classmethod
     def required_datasets(cls) -> list[str]:
         """Return a list of dataset names required by this scenario."""
-        return ["airt_harms"]
+        return ["harmbench"]
 
     @classmethod
     def supported_parameters(cls) -> list[Parameter]:
@@ -103,10 +123,19 @@ class Jailbreak(Scenario):
         Declare runtime parameters settable from the CLI / config file.
 
         Returns:
-            list[Parameter]: Parameters configurable per-run, exposed as ``--num-templates`` and
-            ``--num-attempts``.
+            list[Parameter]: Parameters configurable per-run, exposed as ``--jailbreak-names``,
+            ``--num-templates`` and ``--num-attempts``.
         """
         return [
+            Parameter(
+                name="jailbreak_names",
+                description=(
+                    "Specific jailbreak template names to run (the jailbreaks axis). When omitted, "
+                    "a random sample of size num_templates is drawn. Mutually exclusive with num_templates."
+                ),
+                param_type=list[str],
+                default=[],
+            ),
             Parameter(
                 name="num_templates",
                 description=(
@@ -146,20 +175,17 @@ class Jailbreak(Scenario):
             num_templates (int | None): Number of random jailbreak templates to run. When omitted,
                 falls back to the ``num_templates`` runtime parameter (default
                 ``DEFAULT_NUM_TEMPLATES``). An explicit integer takes precedence over the parameter.
-                Pass ``num_templates=None`` to opt out of sampling and run the full catalog. Configure
-                the default via the ``num_templates`` runtime parameter (``--num-templates`` / config),
-                not ``set_default_value`` — the omitted case is a sentinel, not ``None``.
+                Pass ``num_templates=None`` to opt out of sampling and run the full catalog.
             num_attempts (int | None): Number of times to try each jailbreak. When omitted, falls back
                 to the ``num_attempts`` runtime parameter (default 1).
-            jailbreak_names (list[str] | None): List of jailbreak names from the template list under datasets.
-                to use.
+            jailbreak_names (list[str] | None): Specific jailbreak template names to use. Mutually
+                exclusive with ``num_templates`` (random selection).
 
         Raises:
             ValueError: If both jailbreak_names and num_templates are provided, as random selection
                 is incompatible with a predetermined list.
             ValueError: If the jailbreak_names list contains a jailbreak that isn't in the listed
                 templates.
-
         """
         if jailbreak_names is None:
             jailbreak_names = []
@@ -182,18 +208,15 @@ class Jailbreak(Scenario):
             self._num_templates_unset = False
             self._num_templates = num_templates
         self._num_attempts = num_attempts
-        self._adversarial_target: PromptTarget | None = None
 
         # Template resolution is split by selection mode:
         # * ``jailbreak_names`` (explicit selection) is validated and resolved eagerly here so an
         #   unknown name fails fast at construction time.
-        # * Random ``num_templates`` selection is deferred to ``_get_atomic_attacks_async`` so the
+        # * Random ``num_templates`` selection is deferred to ``_build_atomic_attacks_async`` so the
         #   ``num_templates`` runtime parameter (populated into ``self.params`` during
         #   ``initialize_async``) is honored — ``self.params`` does not exist yet in ``__init__``.
         if jailbreak_names:
             all_templates = TextJailBreak.get_jailbreak_templates()
-            # Example: if jailbreak_names is {'a', 'b', 'c'}, and all_templates is {'b', 'c', 'd'},
-            # then diff = {'a'}, which raises the error as 'a' was not discovered in all_templates.
             diff = set(jailbreak_names) - set(all_templates)
             if diff:
                 raise ValueError(f"Error: could not find templates `{diff}`!")
@@ -203,11 +226,13 @@ class Jailbreak(Scenario):
             self._jailbreaks = []
             self._jailbreaks_explicit = False
 
+        strategy_class = _build_jailbreak_strategy()
+
         super().__init__(
             version=self.VERSION,
-            strategy_class=JailbreakStrategy,
-            default_strategy=JailbreakStrategy.SIMPLE,
-            default_dataset_config=DatasetAttackConfiguration(dataset_names=["airt_harms"], max_dataset_size=4),
+            strategy_class=strategy_class,
+            default_strategy=strategy_class("prompt_sending"),
+            default_dataset_config=DatasetAttackConfiguration(dataset_names=["harmbench"], max_dataset_size=4),
             objective_scorer=self._objective_scorer,
             scenario_result_id=scenario_result_id,
         )
@@ -225,20 +250,6 @@ class Jailbreak(Scenario):
             list[str]: The jailbreak template names this run executes.
         """
         return list(self._jailbreaks)
-
-    def _get_or_create_adversarial_target(self) -> PromptTarget:
-        """
-        Return the shared adversarial target, creating it on first access.
-
-        Reuses a single PromptTarget instance across all role-play attacks
-        to avoid repeated client and TLS setup.
-
-        Returns:
-            PromptTarget: The shared adversarial target.
-        """
-        if self._adversarial_target is None:
-            self._adversarial_target = get_default_adversarial_target()
-        return self._adversarial_target
 
     def _load_persisted_jailbreak_names(self) -> list[str] | None:
         """
@@ -270,19 +281,31 @@ class Jailbreak(Scenario):
         Resolution precedence:
 
         1. On resume, replay the template names persisted by the original run (deterministic resume).
-        2. Explicit ``jailbreak_names`` (resolved in ``__init__``).
-        3. An explicit constructor ``num_templates`` (an integer wins over the runtime parameter; an
+        2. Explicit constructor ``jailbreak_names`` (resolved and validated in ``__init__``).
+        3. The ``jailbreak_names`` runtime parameter (specific selection via CLI / config).
+        4. An explicit constructor ``num_templates`` (an integer wins over the runtime parameter; an
            explicit ``None`` opts out of sampling and runs the full catalog).
-        4. The ``num_templates`` runtime parameter, which defaults to ``DEFAULT_NUM_TEMPLATES``.
+        5. The ``num_templates`` runtime parameter, which defaults to ``DEFAULT_NUM_TEMPLATES``.
 
         Returns:
             list[str]: The jailbreak template file names to run.
+
+        Raises:
+            ValueError: If the ``jailbreak_names`` runtime parameter contains a name that is not in
+                the template catalog.
         """
         persisted = self._load_persisted_jailbreak_names()
         if persisted is not None:
             return persisted
         if self._jailbreaks_explicit:
             return self._jailbreaks
+        runtime_names = self.params.get("jailbreak_names") if hasattr(self, "params") else None
+        if runtime_names:
+            all_templates = TextJailBreak.get_jailbreak_templates()
+            diff = set(runtime_names) - set(all_templates)
+            if diff:
+                raise ValueError(f"Error: could not find templates `{diff}`!")
+            return list(runtime_names)
         num_templates = self.params["num_templates"] if self._num_templates_unset else self._num_templates
         return TextJailBreak.get_jailbreak_templates(num_templates=num_templates)
 
@@ -303,91 +326,23 @@ class Jailbreak(Scenario):
         summary["Jailbreak templates"] = ", ".join(names)
         return metadata
 
-    async def _get_atomic_attack_from_strategy_async(
-        self, *, strategy: str, jailbreak_template_name: str, seed_groups: list[SeedAttackGroup]
-    ) -> AtomicAttack:
-        """
-        Create an atomic attack for a specific jailbreak template.
-
-        Args:
-            strategy (str): JailbreakStrategy to use.
-            jailbreak_template_name (str): Name of the jailbreak template file.
-            seed_groups (list[SeedAttackGroup]): Seed groups the attack draws from.
-
-        Returns:
-            AtomicAttack: An atomic attack using the specified jailbreak template.
-
-        Raises:
-            ValueError: If scenario is not properly initialized.
-        """
-        # objective_target is guaranteed to be non-None by parent class validation
-        if self._objective_target is None:
-            raise ValueError(
-                "Scenario not properly initialized. Call await scenario.initialize_async() before running."
-            )
-
-        # Create the jailbreak converter
-        jailbreak_converter = TextJailbreakConverter(
-            jailbreak_template=TextJailBreak(template_file_name=jailbreak_template_name)
-        )
-
-        # Create converter configuration
-        converter_config = AttackConverterConfig(
-            request_converters=PromptConverterConfiguration.from_converters(converters=[jailbreak_converter])
-        )
-
-        attack: ManyShotJailbreakAttack | PromptSendingAttack | RolePlayAttack | SkeletonKeyAttack | None = None
-        args: dict[str, Any] = {
-            "objective_target": self._objective_target,
-            "attack_scoring_config": AttackScoringConfig(objective_scorer=self._objective_scorer),
-            "attack_converter_config": converter_config,
-        }
-        match strategy:
-            case "many_shot":
-                attack = ManyShotJailbreakAttack(**args)
-            case "prompt_sending":
-                attack = PromptSendingAttack(**args)
-            case "skeleton":
-                attack = SkeletonKeyAttack(**args)
-            case "role_play":
-                args["attack_adversarial_config"] = AttackAdversarialConfig(
-                    target=self._get_or_create_adversarial_target()
-                )
-                args["role_play_definition_path"] = RolePlayPaths.PERSUASION_SCRIPT.value
-                attack = RolePlayAttack(**args)
-            case _:
-                raise ValueError(f"Unknown JailbreakStrategy `{strategy}`.")
-
-        if not attack:
-            raise ValueError(f"Attack cannot be None!")
-
-        # Extract template name without extension for the atomic attack name
-        template_name = Path(jailbreak_template_name).stem
-
-        return AtomicAttack(
-            atomic_attack_name=f"jailbreak_{template_name}",
-            attack_technique=AttackTechnique(attack=attack),
-            seed_groups=seed_groups,
-        )
-
     async def _build_atomic_attacks_async(self, *, context: ScenarioContext) -> list[AtomicAttack]:
         """
-        Generate atomic attacks for each jailbreak template.
+        Build the ``technique x objective`` atomic attacks for every selected jailbreak template.
 
-        This method creates an atomic attack for each retrieved jailbreak template.
+        Resolves the jailbreak templates now that runtime parameters are populated (and replays the
+        persisted sample on ``--resume``), then for each template builds the technique x objective
+        cross-product via ``MatrixAtomicAttackBuilder``, injecting that template's
+        ``TextJailbreakConverter`` as a request converter for every technique. Results group by
+        jailbreak template. The baseline (plain objective, no jailbreak) is emitted centrally by the
+        base ``initialize_async``, so this override never prepends one.
 
         Args:
             context (ScenarioContext): The resolved runtime inputs for this run.
 
         Returns:
-            list[AtomicAttack]: List of atomic attacks to execute, one per jailbreak template.
+            list[AtomicAttack]: One atomic attack per ``(technique x objective x jailbreak x attempt)``.
         """
-        atomic_attacks: list[AtomicAttack] = []
-
-        seed_groups = list(context.seed_groups)
-
-        # Resolve templates now that runtime parameters are populated (and replay the persisted
-        # sample on --resume). Deferred here rather than in __init__ so self.params exists.
         self._jailbreaks = self._resolve_jailbreaks()
         logger.info(
             "Jailbreak scenario running %d template(s): %s",
@@ -396,14 +351,35 @@ class Jailbreak(Scenario):
         )
         num_attempts = self._num_attempts if self._num_attempts is not None else self.params["num_attempts"]
 
-        strategies = {s.value for s in context.scenario_strategies}
+        factories = resolve_technique_factories(
+            context=context, extra_factories={"prompt_sending": _prompt_sending_factory()}
+        )
+        builder = MatrixAtomicAttackBuilder(
+            objective_target=context.objective_target,
+            objective_scorer=self._objective_scorer,
+            memory_labels=context.memory_labels,
+        )
 
-        for strategy in strategies:
-            for template_name in self._jailbreaks:
-                for _ in range(num_attempts):
-                    atomic_attack = await self._get_atomic_attack_from_strategy_async(
-                        strategy=strategy, jailbreak_template_name=template_name, seed_groups=seed_groups
+        atomic_attacks: list[AtomicAttack] = []
+        for template_name in self._jailbreaks:
+            stem = Path(template_name).stem
+            converter = TextJailbreakConverter(jailbreak_template=TextJailBreak(template_file_name=template_name))
+            strategy_converters: dict[str, list[PromptConverter]] = {name: [converter] for name in factories}
+            for attempt in range(num_attempts):
+
+                def name_fn(combo: MatrixCombo, *, stem: str = stem, attempt: int = attempt) -> str:
+                    base = f"jailbreak_{combo.technique_name}_{stem}_{combo.dataset_name}"
+                    return base if num_attempts == 1 else f"{base}_attempt{attempt + 1}"
+
+                atomic_attacks.extend(
+                    builder.build(
+                        technique_factories=factories,
+                        dataset_groups=context.seed_groups_by_dataset,
+                        strategy_converters=strategy_converters,
+                        name_fn=name_fn,
+                        display_group_fn=lambda combo, *, stem=stem: stem,
+                        include_baseline=False,
                     )
-                    atomic_attacks.append(atomic_attack)
+                )
 
         return atomic_attacks
