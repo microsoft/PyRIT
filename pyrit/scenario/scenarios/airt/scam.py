@@ -97,7 +97,7 @@ class Scam(Scenario):
         Returns:
             list[Parameter]: Parameters configurable per-run.
         """
-        return [
+        return super().supported_parameters() + [
             Parameter(
                 name="max_turns",
                 description="Maximum conversation turns for the persuasive_rta strategy.",

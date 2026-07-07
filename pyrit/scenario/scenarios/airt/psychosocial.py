@@ -128,10 +128,13 @@ class Psychosocial(Scenario):
         }
 
         scenario = Psychosocial(subharm_configs=custom_configs)
-        await scenario.initialize_async(
-            objective_target=target_llm,
-            scenario_strategies=[PsychosocialStrategy.ImminentCrisis],
+        scenario.set_params_from_args(
+            args={
+                "objective_target": target_llm,
+                "scenario_strategies": [PsychosocialStrategy.ImminentCrisis],
+            }
         )
+        await scenario.initialize_async()
     """
 
     VERSION: int = 1

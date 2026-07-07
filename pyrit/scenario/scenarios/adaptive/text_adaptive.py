@@ -136,7 +136,7 @@ class TextAdaptive(AdaptiveScenario):
         Returns:
             list[Parameter]: Parameters configurable per-run.
         """
-        return [
+        return super().supported_parameters() + [
             Parameter(
                 name="max_attempts_per_objective",
                 description="Max techniques tried per objective. Defaults to 3.",

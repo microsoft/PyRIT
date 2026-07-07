@@ -150,7 +150,7 @@
 
 from pyrit.common import apply_defaults
 from pyrit.prompt_target.openai.openai_chat_target import OpenAIChatTarget
-from pyrit.scenario import DatasetConfiguration, Scenario, ScenarioStrategy
+from pyrit.scenario import DatasetAttackConfiguration, Scenario, ScenarioStrategy
 from pyrit.score import SelfAskRefusalScorer, TrueFalseInverterScorer
 from pyrit.setup import initialize_pyrit_async
 
@@ -175,7 +175,7 @@ class MyCustomScenario(Scenario):
             objective_scorer=TrueFalseInverterScorer(scorer=SelfAskRefusalScorer(chat_target=OpenAIChatTarget())),
             strategy_class=MyCustomStrategy,
             default_strategy=MyCustomStrategy.ALL,
-            default_dataset_config=DatasetConfiguration(dataset_names=["harmbench"]),
+            default_dataset_config=DatasetAttackConfiguration(dataset_names=["harmbench"]),
             scenario_result_id=scenario_result_id,
         )
         # ... your scenario-specific initialization code

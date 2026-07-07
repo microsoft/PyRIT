@@ -119,7 +119,7 @@ class AdversarialBenchmark(Scenario):
             list[Parameter]: Single parameter declaring
             ``adversarial_targets: list[str]``.
         """
-        return [
+        return super().supported_parameters() + [
             Parameter(
                 name="adversarial_targets",
                 description=(

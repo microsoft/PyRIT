@@ -208,8 +208,9 @@ class TestScamInitialization:
             "pyrit.scenario.core.dataset_configuration.DatasetConfiguration._fetch_dataset_async",
             new_callable=AsyncMock,
         ):
+            scenario.set_params_from_args(args={"objective_target": mock_objective_target})
             with pytest.raises(DatasetConstraintError, match="could not be loaded"):
-                await scenario.initialize_async(objective_target=mock_objective_target)
+                await scenario.initialize_async()
 
 
 @pytest.mark.usefixtures(*FIXTURES)
@@ -228,7 +229,13 @@ class TestScamAttackGeneration:
         ):
             scenario = Scam(objective_scorer=mock_objective_scorer)
 
-            await scenario.initialize_async(objective_target=mock_objective_target, dataset_config=mock_dataset_config)
+            scenario.set_params_from_args(
+                args={
+                    "objective_target": mock_objective_target,
+                    "dataset_config": mock_dataset_config,
+                }
+            )
+            await scenario.initialize_async()
             atomic_attacks = scenario._atomic_attacks
 
             assert len(atomic_attacks) > 0
@@ -247,12 +254,15 @@ class TestScamAttackGeneration:
             objective_scorer=mock_objective_scorer,
         )
 
-        await scenario.initialize_async(
-            objective_target=mock_objective_target,
-            scenario_strategies=[single_turn_strategy],
-            dataset_config=mock_dataset_config,
-            include_baseline=False,
+        scenario.set_params_from_args(
+            args={
+                "objective_target": mock_objective_target,
+                "scenario_strategies": [single_turn_strategy],
+                "dataset_config": mock_dataset_config,
+                "include_baseline": False,
+            }
         )
+        await scenario.initialize_async()
         atomic_attacks = scenario._atomic_attacks
 
         for run in atomic_attacks:
@@ -266,12 +276,15 @@ class TestScamAttackGeneration:
             objective_scorer=mock_objective_scorer,
         )
 
-        await scenario.initialize_async(
-            objective_target=mock_objective_target,
-            scenario_strategies=[multi_turn_strategy],
-            dataset_config=mock_dataset_config,
-            include_baseline=False,
+        scenario.set_params_from_args(
+            args={
+                "objective_target": mock_objective_target,
+                "scenario_strategies": [multi_turn_strategy],
+                "dataset_config": mock_dataset_config,
+                "include_baseline": False,
+            }
         )
+        await scenario.initialize_async()
         atomic_attacks = scenario._atomic_attacks
 
         for run in atomic_attacks:
@@ -290,7 +303,13 @@ class TestScamAttackGeneration:
             objective_scorer=mock_objective_scorer,
         )
 
-        await scenario.initialize_async(objective_target=mock_objective_target, dataset_config=mock_dataset_config)
+        scenario.set_params_from_args(
+            args={
+                "objective_target": mock_objective_target,
+                "dataset_config": mock_dataset_config,
+            }
+        )
+        await scenario.initialize_async()
         atomic_attacks = scenario._atomic_attacks
 
         for run in atomic_attacks:
@@ -310,7 +329,13 @@ class TestScamAttackGeneration:
             objective_scorer=mock_objective_scorer,
         )
 
-        await scenario.initialize_async(objective_target=mock_objective_target, dataset_config=mock_dataset_config)
+        scenario.set_params_from_args(
+            args={
+                "objective_target": mock_objective_target,
+                "dataset_config": mock_dataset_config,
+            }
+        )
+        await scenario.initialize_async()
         atomic_attacks = scenario._atomic_attacks
         assert len(atomic_attacks) > 0
         assert all(run.attack_technique is not None for run in atomic_attacks)
@@ -333,12 +358,15 @@ class TestScamMaxTurnsParameter:
         scenario = Scam(objective_scorer=mock_objective_scorer)
         scenario.set_params_from_args(args={})
 
-        await scenario.initialize_async(
-            objective_target=mock_objective_target,
-            scenario_strategies=[multi_turn_strategy],
-            dataset_config=mock_dataset_config,
-            include_baseline=False,
+        scenario.set_params_from_args(
+            args={
+                "objective_target": mock_objective_target,
+                "scenario_strategies": [multi_turn_strategy],
+                "dataset_config": mock_dataset_config,
+                "include_baseline": False,
+            }
         )
+        await scenario.initialize_async()
         atomic_attacks = scenario._atomic_attacks
 
         for run in atomic_attacks:
@@ -352,12 +380,16 @@ class TestScamMaxTurnsParameter:
         scenario = Scam(objective_scorer=mock_objective_scorer)
         scenario.set_params_from_args(args={"max_turns": 10})
 
-        await scenario.initialize_async(
-            objective_target=mock_objective_target,
-            scenario_strategies=[multi_turn_strategy],
-            dataset_config=mock_dataset_config,
-            include_baseline=False,
+        scenario.set_params_from_args(
+            args={
+                "objective_target": mock_objective_target,
+                "scenario_strategies": [multi_turn_strategy],
+                "dataset_config": mock_dataset_config,
+                "include_baseline": False,
+                "max_turns": 10,
+            }
         )
+        await scenario.initialize_async()
         atomic_attacks = scenario._atomic_attacks
 
         for run in atomic_attacks:
@@ -384,9 +416,14 @@ class TestScamLifecycle:
             return_value={"memory": mock_memory_seed_groups},
         ):
             scenario = Scam(objective_scorer=mock_objective_scorer)
-            await scenario.initialize_async(
-                objective_target=mock_objective_target, max_concurrency=20, dataset_config=mock_dataset_config
+            scenario.set_params_from_args(
+                args={
+                    "objective_target": mock_objective_target,
+                    "max_concurrency": 20,
+                    "dataset_config": mock_dataset_config,
+                }
             )
+            await scenario.initialize_async()
             assert scenario._max_concurrency == 20
 
     async def test_initialize_async_with_memory_labels(
@@ -407,11 +444,14 @@ class TestScamLifecycle:
             return_value={"memory": mock_memory_seed_groups},
         ):
             scenario = Scam(objective_scorer=mock_objective_scorer)
-            await scenario.initialize_async(
-                memory_labels=memory_labels,
-                objective_target=mock_objective_target,
-                dataset_config=mock_dataset_config,
+            scenario.set_params_from_args(
+                args={
+                    "memory_labels": memory_labels,
+                    "objective_target": mock_objective_target,
+                    "dataset_config": mock_dataset_config,
+                }
             )
+            await scenario.initialize_async()
             assert scenario._memory_labels == memory_labels
 
 
@@ -446,7 +486,13 @@ class TestScamProperties:
             return_value={"memory": mock_memory_seed_groups},
         ):
             scenario = Scam()
-            await scenario.initialize_async(objective_target=mock_objective_target, dataset_config=mock_dataset_config)
+            scenario.set_params_from_args(
+                args={
+                    "objective_target": mock_objective_target,
+                    "dataset_config": mock_dataset_config,
+                }
+            )
+            await scenario.initialize_async()
 
             objective_target = scenario._objective_target
             scorer_target = scenario._scorer_config.objective_scorer  # type: ignore[arg-type]
@@ -476,12 +522,15 @@ class TestScamBaselineUniformity:
             side_effect=[first_sample, second_sample],
         ) as mock_sample:
             scenario = Scam(objective_scorer=mock_objective_scorer)
-            await scenario.initialize_async(
-                objective_target=mock_objective_target,
-                scenario_strategies=[single_turn_strategy],
-                dataset_config=config,
-                include_baseline=True,
+            scenario.set_params_from_args(
+                args={
+                    "objective_target": mock_objective_target,
+                    "scenario_strategies": [single_turn_strategy],
+                    "dataset_config": config,
+                    "include_baseline": True,
+                }
             )
+            await scenario.initialize_async()
 
         assert mock_sample.call_count == 1
         assert scenario._atomic_attacks[0].atomic_attack_name == "baseline"
