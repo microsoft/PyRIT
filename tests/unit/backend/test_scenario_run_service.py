@@ -65,7 +65,7 @@ def _make_request(
     scenario_result_id: str | None = None,
     dataset_names: list[str] | None = None,
     max_dataset_size: int | None = None,
-    dataset_filters: dict[str, Any] | None = None,
+    dataset_filters: dict[str, list[str]] | None = None,
 ) -> RunScenarioRequest:
     """Create a RunScenarioRequest for testing."""
     return RunScenarioRequest(
@@ -405,7 +405,7 @@ class TestScenarioRunServiceStartRun:
             request=_make_request(
                 dataset_names=["custom"],
                 max_dataset_size=7,
-                dataset_filters={"harm_categories": "cyber"},
+                dataset_filters={"harm_categories": ["cyber"]},
             )
         )
 
@@ -422,24 +422,12 @@ class TestScenarioRunServiceStartRun:
         scenario_instance._default_dataset_config = default_config
 
         service = ScenarioRunService()
-        await service.start_run_async(request=_make_request(dataset_filters={"harm_categories": "cyber"}))
+        await service.start_run_async(request=_make_request(dataset_filters={"harm_categories": ["cyber"]}))
 
         init_call = mock_all_registries["scenario_registry"].create_and_initialize_async.await_args
         built_config = init_call.kwargs["dataset_config"]
         assert built_config is default_config
         assert built_config.filters == {"harm_categories": ["cyber"]}
-
-    async def test_start_run_dataset_filters_rejects_max_dataset_size(self, mock_all_registries) -> None:
-        """``max_dataset_size`` in ``dataset_filters`` is rejected as an unknown filter key."""
-        service = ScenarioRunService()
-        with pytest.raises(ValueError, match="Unknown dataset filter 'max_dataset_size'"):
-            await service.start_run_async(request=_make_request(dataset_filters={"max_dataset_size": "9"}))
-
-    async def test_start_run_dataset_filters_unknown_key_raises(self, mock_all_registries) -> None:
-        """An unknown dataset filter surfaces as a validation error."""
-        service = ScenarioRunService()
-        with pytest.raises(ValueError, match="Unknown dataset filter 'bogus'"):
-            await service.start_run_async(request=_make_request(dataset_filters={"bogus": "x"}))
 
     async def test_start_run_dataset_names_introspection_failure_raises(self, mock_memory) -> None:
         """Passing ``dataset_names`` against a non-no-arg-instantiable scenario fails fast."""

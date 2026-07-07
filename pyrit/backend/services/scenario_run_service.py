@@ -28,7 +28,7 @@ from pyrit.registry import (
     TargetRegistry,
 )
 from pyrit.scenario import Scenario
-from pyrit.scenario.core import DatasetAttackConfiguration, build_dataset_filters
+from pyrit.scenario.core import DatasetAttackConfiguration
 
 if TYPE_CHECKING:
     from pyrit.prompt_converter import PromptConverter
@@ -302,7 +302,9 @@ class ScenarioRunService:
         if request.labels:
             init_kwargs["memory_labels"] = request.labels
 
-        dataset_filters = build_dataset_filters(parameters=request.dataset_filters)
+        # The request model has already validated the filter keys and coerced values into
+        # lists, so the service can consume them directly.
+        dataset_filters = request.dataset_filters or {}
 
         # Resolve strategies and dataset config from a temporary instance of the
         # scenario. The downstream _initialize_scenario_async builds its own

@@ -563,7 +563,7 @@ class TestDoRun:
         assert sent.labels == {"k": "v"}
         assert sent.dataset_names == ["d1"]
         assert sent.max_dataset_size == 5
-        assert sent.dataset_filters == {"harm_categories": "cyber", "data_types": "text"}
+        assert sent.dataset_filters == {"harm_categories": ["cyber"], "data_types": ["text"]}
 
     def test_run_failed_status_calls_summary(self, shell):
         s, client = shell

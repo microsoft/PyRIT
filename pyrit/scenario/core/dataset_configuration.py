@@ -31,7 +31,7 @@ import random
 from dataclasses import dataclass
 from enum import Enum
 from functools import cached_property
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from pyrit.common.deprecation import print_deprecation_message
 from pyrit.memory import CentralMemory
@@ -226,60 +226,6 @@ def forbid_inline_seeds() -> Callable[[ResolvedDataset], None]:
     return _validate
 
 
-# Authoritative set of dataset seed filters exposed via ``--dataset-filters``. Each entry
-# is used verbatim as a ``MemoryInterface.get_seeds`` keyword argument, so a filter key IS the
-# get_seeds kwarg. Every exposed filter must be a list-valued (Sequence) get_seeds parameter --
-# a guard test enforces this and keeps the CLI's advertised keys in sync. Adding a filterable
-# field is a one-line change here.
-DATASET_FILTERS: frozenset[str] = frozenset({"harm_categories", "data_types"})
-
-
-def _coerce_filter_values(value: Any) -> list[str]:
-    """
-    Coerce a single filter value into a list of non-empty strings.
-
-    Accepts a list/tuple as-is (stringified) or splits a comma-separated string.
-
-    Args:
-        value (Any): The raw filter value (scalar, comma-separated string, or sequence).
-
-    Returns:
-        list[str]: The cleaned list of values.
-    """
-    if isinstance(value, (list, tuple)):
-        return [str(item).strip() for item in value if str(item).strip()]
-    return [part.strip() for part in str(value).split(",") if part.strip()]
-
-
-def build_dataset_filters(*, parameters: dict[str, Any] | None) -> dict[str, Any]:
-    """
-    Map a user-facing dataset-filter bag onto ``MemoryInterface.get_seeds`` filters.
-
-    Each key must be one of ``DATASET_FILTERS`` (the exposed ``get_seeds`` kwargs); its value is
-    coerced into a list (a single token or a comma-separated string). Any other key is rejected
-    loudly.
-
-    Args:
-        parameters (dict[str, Any] | None): The raw dataset-filter bag (e.g. from the CLI
-            ``--dataset-filters`` flag), keyed by ``get_seeds`` kwarg name.
-
-    Returns:
-        dict[str, Any]: The filters ready to pass as ``**filters`` to ``get_seeds``.
-
-    Raises:
-        ValueError: If a key is not present in ``DATASET_FILTERS``.
-    """
-    filters: dict[str, Any] = {}
-    for key, raw_value in (parameters or {}).items():
-        if key not in DATASET_FILTERS:
-            raise ValueError(f"Unknown dataset filter '{key}'. Allowed: {', '.join(sorted(DATASET_FILTERS))}.")
-        values = _coerce_filter_values(raw_value)
-        if values:
-            filters[key] = values
-
-    return filters
-
-
 def restrict_dataset_names(allowed: set[str]) -> Callable[[ResolvedDataset], None]:
     """
     Build a validator that requires every contributing dataset name to be in ``allowed``.
@@ -347,7 +293,7 @@ class DatasetConfiguration:
         seed_groups: list[SeedGroup] | None = None,
         dataset_names: list[str] | None = None,
         max_dataset_size: int | None = None,
-        filters: dict[str, Any] | None = None,
+        filters: dict[str, list[str]] | None = None,
         validators: Sequence[Callable[[ResolvedDataset], None]] | None = None,
         auto_fetch: bool = True,
     ) -> None:
@@ -361,7 +307,7 @@ class DatasetConfiguration:
             dataset_names (list[str] | None): Names of datasets to load from memory.
             max_dataset_size (int | None): If set, randomly samples up to this many items
                 from the resolved dataset (without replacement).
-            filters (dict[str, Any] | None): Filters passed to ``MemoryInterface.get_seeds``
+            filters (dict[str, list[str]] | None): Filters passed to ``MemoryInterface.get_seeds``
                 when resolving named datasets (e.g. ``{"harm_categories": ["cyber"]}``).
                 Applied before ``max_dataset_size`` sampling; ignored for inline seeds.
             validators (Sequence[Callable[[ResolvedDataset], None]] | None): Constraint
@@ -389,7 +335,7 @@ class DatasetConfiguration:
         self._seed_groups = list(seed_groups) if seed_groups is not None else None
         self._dataset_names = list(dataset_names) if dataset_names is not None else None
         self.max_dataset_size = max_dataset_size
-        self._filters: dict[str, Any] = dict(filters or {})
+        self._filters: dict[str, list[str]] = dict(filters or {})
         self._validators: list[Callable[[ResolvedDataset], None]] = [
             *self._default_validators(),
             *(list(validators) if validators else []),
@@ -449,16 +395,29 @@ class DatasetConfiguration:
         return DatasetSourceKind.MEMORY
 
     @property
-    def filters(self) -> dict[str, Any]:
+    def filters(self) -> dict[str, list[str]]:
         """
         The ``get_seeds`` filters applied when resolving named datasets.
 
         Returns:
-            dict[str, Any]: A copy of the configured filters.
+            dict[str, list[str]]: A copy of the configured filters.
         """
         return dict(self._filters)
 
-    def update_filters(self, *, filters: dict[str, Any]) -> None:
+    @property
+    def _get_seeds_filters(self) -> dict[str, Any]:
+        """
+        The configured filters widened to ``Any`` for ``get_seeds`` keyword unpacking.
+
+        ``get_seeds`` has a heterogeneous signature, so the list-valued filters must be widened
+        at this boundary before being unpacked as ``**kwargs``.
+
+        Returns:
+            dict[str, Any]: The filters typed for keyword unpacking.
+        """
+        return cast("dict[str, Any]", self._filters)
+
+    def update_filters(self, *, filters: dict[str, list[str]]) -> None:
         """
         Merge additional ``get_seeds`` filters into this configuration (run-time override).
 
@@ -466,7 +425,7 @@ class DatasetConfiguration:
         the provided filters take precedence over any already configured with the same key.
 
         Args:
-            filters (dict[str, Any]): Filters to merge, keyed by ``get_seeds`` kwarg name.
+            filters (dict[str, list[str]]): Filters to merge, keyed by ``get_seeds`` kwarg name.
         """
         self._filters = {**self._filters, **filters}
 
@@ -507,7 +466,7 @@ class DatasetConfiguration:
             DatasetConstraintError: If the dataset yields no seeds even after auto-fetch, or
                 if auto-fetch itself fails (the provider error is chained as the cause).
         """
-        found = list(self._memory.get_seeds(dataset_name=dataset_name, **self._filters))
+        found = list(self._memory.get_seeds(dataset_name=dataset_name, **self._get_seeds_filters))
         if not found and self._auto_fetch:
             try:
                 await self._fetch_dataset_async(dataset_name=dataset_name)
@@ -515,7 +474,7 @@ class DatasetConfiguration:
                 raise DatasetConstraintError(
                     f"Dataset '{dataset_name}' could not be loaded: auto-fetch from the registered provider failed."
                 ) from exc
-            found = list(self._memory.get_seeds(dataset_name=dataset_name, **self._filters))
+            found = list(self._memory.get_seeds(dataset_name=dataset_name, **self._get_seeds_filters))
         if not found:
             if self._filters and self._memory.get_seeds(dataset_name=dataset_name):
                 raise DatasetConstraintError(
@@ -952,7 +911,7 @@ class CompoundDatasetAttackConfiguration(DatasetAttackConfiguration):
         dataset_names: Sequence[str],
         max_dataset_size: int | None = None,
         auto_fetch: bool = True,
-        filters: dict[str, Any] | None = None,
+        filters: dict[str, list[str]] | None = None,
         validators: Sequence[Callable[[ResolvedDataset], None]] | None = None,
     ) -> CompoundDatasetAttackConfiguration:
         """
@@ -965,7 +924,7 @@ class CompoundDatasetAttackConfiguration(DatasetAttackConfiguration):
             dataset_names (Sequence[str]): The dataset names; one child is built per name.
             max_dataset_size (int | None): Per-dataset cap applied to each child.
             auto_fetch (bool): Passed to each child (fetch missing datasets into memory).
-            filters (dict[str, Any] | None): ``get_seeds`` filters applied to each child.
+            filters (dict[str, list[str]] | None): ``get_seeds`` filters applied to each child.
             validators (Sequence[Callable[[ResolvedDataset], None]] | None): Applied to each child.
 
         Returns:
@@ -1016,7 +975,7 @@ class CompoundDatasetAttackConfiguration(DatasetAttackConfiguration):
             return DatasetSourceKind.INLINE
         return DatasetSourceKind.MEMORY
 
-    def update_filters(self, *, filters: dict[str, Any]) -> None:
+    def update_filters(self, *, filters: dict[str, list[str]]) -> None:
         """
         Merge filters into the compound and propagate them to every child configuration.
 
@@ -1024,7 +983,7 @@ class CompoundDatasetAttackConfiguration(DatasetAttackConfiguration):
         reach each child to take effect.
 
         Args:
-            filters (dict[str, Any]): Filters to merge, keyed by ``get_seeds`` kwarg name.
+            filters (dict[str, list[str]]): Filters to merge, keyed by ``get_seeds`` kwarg name.
         """
         super().update_filters(filters=filters)
         for child in self._configurations:

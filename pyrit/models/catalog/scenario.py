@@ -16,10 +16,17 @@ canonical models.
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from pyrit.models.parameter import Parameter
 from pyrit.models.results.scenario_result import ScenarioRunState
+
+# Authoritative set of dataset seed filters exposed over the run request surface. Each entry
+# is used verbatim as a ``MemoryInterface.get_seeds`` keyword argument, so a filter key IS the
+# get_seeds kwarg. Every exposed filter must be a list-valued (Sequence) get_seeds parameter.
+# Adding a filterable field is a one-line change here; the CLI ``--dataset-filters`` help text
+# describes these keys, and this request model validates them server-side (covering the GUI too).
+DATASET_FILTERS: frozenset[str] = frozenset({"harm_categories", "data_types"})
 
 
 class RegisteredScenario(BaseModel):
@@ -50,7 +57,7 @@ class RunScenarioRequest(BaseModel):
     strategies: list[str] | None = Field(None, description="Strategy names to use (uses scenario default if omitted)")
     dataset_names: list[str] | None = Field(None, description="Dataset names to use (uses scenario default if omitted)")
     max_dataset_size: int | None = Field(None, ge=1, description="Maximum items per dataset")
-    dataset_filters: dict[str, Any] | None = Field(
+    dataset_filters: dict[str, list[str]] | None = Field(
         None,
         description=(
             "Dataset seed filters keyed by field, applied before sampling. Accepted keys: harm_categories, data_types."
@@ -75,6 +82,28 @@ class RunScenarioRequest(BaseModel):
         description="Optional ID of an existing ScenarioResult to resume. "
         "If provided, the scenario will resume from prior progress instead of starting fresh.",
     )
+
+    @field_validator("dataset_filters")
+    @classmethod
+    def _validate_dataset_filters(cls, value: dict[str, list[str]] | None) -> dict[str, list[str]] | None:
+        """
+        Reject any dataset-filter key not in the exposed ``DATASET_FILTERS`` allow-list.
+
+        Runs for every request source (CLI and GUI), so the allow-list is enforced server-side.
+
+        Args:
+            value (dict[str, list[str]] | None): The submitted dataset filters.
+
+        Returns:
+            dict[str, list[str]] | None: The validated filters, unchanged.
+
+        Raises:
+            ValueError: If any key is not present in ``DATASET_FILTERS``.
+        """
+        for key in value or {}:
+            if key not in DATASET_FILTERS:
+                raise ValueError(f"Unknown dataset filter '{key}'. Allowed: {', '.join(sorted(DATASET_FILTERS))}.")
+        return value
 
 
 class ScenarioRunSummary(BaseModel):

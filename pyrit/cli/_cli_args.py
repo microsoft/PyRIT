@@ -278,42 +278,54 @@ def parse_dataset_filter(arg: str) -> tuple[str, str]:
     return key, value
 
 
-def collapse_dataset_filters(tokens: list[tuple[str, str]]) -> dict[str, str]:
+def collapse_dataset_filters(tokens: list[tuple[str, str]]) -> dict[str, list[str]]:
     """
-    Fold parsed ``KEY=VALUE`` dataset-filter tokens into a dict, rejecting duplicate keys.
+    Fold parsed ``KEY=VALUE`` dataset-filter tokens into list-valued filters, rejecting duplicates.
 
     Repeating a key (e.g. ``harm_categories=cyber harm_categories=violence``) would otherwise be
     silently collapsed by ``dict(...)`` to the last value, dropping earlier constraints. Since
     list-valued filters accept comma-separated values, a repeated key is almost certainly a
-    mistake, so this fails loud instead.
+    mistake, so this fails loud instead. Each value is coerced into a list of tokens (comma
+    splitting is CLI input parsing); the server-side request model validates the keys.
 
     Args:
         tokens (list[tuple[str, str]]): The parsed ``(key, value)`` pairs.
 
     Returns:
-        dict[str, str]: The collapsed filter mapping.
+        dict[str, list[str]]: The collapsed, list-valued filter mapping.
 
     Raises:
         ValueError: If any key appears more than once.
     """
-    filters: dict[str, str] = {}
+    filters: dict[str, list[str]] = {}
     for key, value in tokens:
         if key in filters:
             raise ValueError(
-                f"Duplicate dataset filter '{key}'; combine values with commas: {key}={filters[key]},{value}"
+                f"Duplicate dataset filter '{key}'; combine values with commas: {key}={','.join(filters[key])},{value}"
             )
-        filters[key] = value
+        filters[key] = _coerce_filter_values(value)
     return filters
+
+
+def _coerce_filter_values(value: str) -> list[str]:
+    """
+    Split a raw dataset-filter value string into a list of non-empty tokens.
+
+    Comma-splitting raw CLI input is a frontend concern, so it lives here next to
+    ``parse_dataset_filter`` rather than in the dataset-config module that consumes filters.
+
+    Args:
+        value (str): The raw comma-separated value string.
+
+    Returns:
+        list[str]: The cleaned list of values.
+    """
+    return [part.strip() for part in value.split(",") if part.strip()]
 
 
 # ---------------------------------------------------------------------------
 # Shared argument help text
 # ---------------------------------------------------------------------------
-
-# Dataset-filter keys advertised in --dataset-filters help. Kept as a static list here (this
-# module is on the fast --help path and stays import-light); a unit test asserts it matches the
-# authoritative registry in pyrit.scenario.core.dataset_configuration.
-_ADVERTISED_DATASET_FILTER_KEYS: tuple[str, ...] = ("harm_categories", "data_types")
 
 ARG_HELP = {
     "config_file": CONFIG_FILE_HELP,
@@ -339,7 +351,7 @@ ARG_HELP = {
     "max_dataset_size": "Maximum number of items to use from the dataset (must be >= 1). "
     "Limits new datasets if --dataset-names provided, otherwise overrides scenario's default limit",
     "dataset_filters": "Dataset seed filters as KEY=VALUE tokens "
-    "(e.g., harm_categories=cyber data_types=text). Accepted keys: " + ", ".join(_ADVERTISED_DATASET_FILTER_KEYS) + ". "
+    "(e.g., harm_categories=cyber data_types=text). Accepted keys: harm_categories, data_types. "
     "Keys filter seeds before sizing. "
     "List values may be comma-separated (e.g., harm_categories=cyber,violence)",
     "target": "Name of a registered target from the TargetRegistry to use as the objective target. "

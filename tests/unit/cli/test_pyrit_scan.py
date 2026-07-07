@@ -656,7 +656,7 @@ class TestBuildRunRequest:
             memory_labels=None,
         )
         request = pyrit_scan._build_run_request(parsed_args=parsed, scenario_name="s")
-        assert request.dataset_filters == {"harm_categories": "cyber", "data_types": "text"}
+        assert request.dataset_filters == {"harm_categories": ["cyber"], "data_types": ["text"]}
 
     def test_duplicate_dataset_filter_key_raises(self):
         parsed = Namespace(
