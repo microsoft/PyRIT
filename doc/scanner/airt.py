@@ -242,7 +242,9 @@ await output_scenario_async(scenario_result)
 #   --max-dataset-size 1
 # ```
 #
-# **Available strategies:** ALL, SINGLE_TURN, MULTI_TURN, ContextCompliance, RolePlay, PersuasiveRedTeamingAttack
+# **Available strategies:** ALL, DEFAULT, SINGLE_TURN, MULTI_TURN, ContextCompliance, RolePlay,
+# PersuasiveRedTeamingAttack. DEFAULT runs the single-turn techniques (ContextCompliance, RolePlay)
+# and omits the slower multi-turn PersuasiveRedTeamingAttack; run it via ALL or MULTI_TURN.
 
 # %%
 from pyrit.scenario.airt import Scam, ScamStrategy
