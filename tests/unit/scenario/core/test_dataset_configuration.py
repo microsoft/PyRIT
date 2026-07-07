@@ -609,7 +609,7 @@ class TestBuildDatasetFilters:
         assert build_dataset_filters(parameters={}) == {}
 
     def test_max_dataset_size_is_rejected(self) -> None:
-        with pytest.raises(ValueError, match="Unknown dataset parameter 'max_dataset_size'"):
+        with pytest.raises(ValueError, match="Unknown dataset filter 'max_dataset_size'"):
             build_dataset_filters(parameters={"max_dataset_size": "13"})
 
     def test_single_value_maps_to_list(self) -> None:
@@ -627,12 +627,12 @@ class TestBuildDatasetFilters:
         }
 
     def test_unknown_key_raises(self) -> None:
-        with pytest.raises(ValueError, match="Unknown dataset parameter 'bogus'"):
+        with pytest.raises(ValueError, match="Unknown dataset filter 'bogus'"):
             build_dataset_filters(parameters={"bogus": "x"})
 
     def test_unexposed_get_seeds_kwarg_is_rejected(self) -> None:
         # ``authors`` is a real get_seeds kwarg but is intentionally NOT exposed as a filter.
-        with pytest.raises(ValueError, match="Unknown dataset parameter 'authors'"):
+        with pytest.raises(ValueError, match="Unknown dataset filter 'authors'"):
             build_dataset_filters(parameters={"authors": "jones"})
 
 

@@ -84,15 +84,15 @@ class TestParseArgs:
         args = pyrit_scan.parse_args(["test_scenario", "--memory-labels", '{"key":"value"}'])
         assert args.memory_labels == '{"key":"value"}'
 
-    def test_parse_args_with_dataset_parameters(self):
+    def test_parse_args_with_dataset_filters(self):
         args = pyrit_scan.parse_args(
-            ["test_scenario", "--dataset-parameters", "harm_categories=cyber", "data_types=text"]
+            ["test_scenario", "--dataset-filters", "harm_categories=cyber", "data_types=text"]
         )
-        assert args.dataset_parameters == [("harm_categories", "cyber"), ("data_types", "text")]
+        assert args.dataset_filters == [("harm_categories", "cyber"), ("data_types", "text")]
 
-    def test_parse_args_dataset_parameter_without_equals_errors(self):
+    def test_parse_args_dataset_filter_without_equals_errors(self):
         with pytest.raises(SystemExit):
-            pyrit_scan.parse_args(["test_scenario", "--dataset-parameters", "harm_categories"])
+            pyrit_scan.parse_args(["test_scenario", "--dataset-filters", "harm_categories"])
 
     def test_parse_args_complex_command(self):
         args = pyrit_scan.parse_args(
@@ -616,7 +616,7 @@ class TestBuildRunRequest:
             max_retries=None,
             dataset_names=None,
             max_dataset_size=None,
-            dataset_parameters=None,
+            dataset_filters=None,
             memory_labels=None,
         )
         request = pyrit_scan._build_run_request(parsed_args=parsed, scenario_name="s")
@@ -632,7 +632,7 @@ class TestBuildRunRequest:
             max_retries=2,
             dataset_names=["d1"],
             max_dataset_size=10,
-            dataset_parameters=None,
+            dataset_filters=None,
             memory_labels='{"key":"value"}',
         )
         request = pyrit_scan._build_run_request(parsed_args=parsed, scenario_name="s")
@@ -643,7 +643,7 @@ class TestBuildRunRequest:
         assert request.max_dataset_size == 10
         assert request.labels == {"key": "value"}
 
-    def test_populates_dataset_parameters(self):
+    def test_populates_dataset_filters(self):
         parsed = Namespace(
             target="t",
             initializers=None,
@@ -652,11 +652,11 @@ class TestBuildRunRequest:
             max_retries=None,
             dataset_names=None,
             max_dataset_size=None,
-            dataset_parameters=[("harm_categories", "cyber"), ("data_types", "text")],
+            dataset_filters=[("harm_categories", "cyber"), ("data_types", "text")],
             memory_labels=None,
         )
         request = pyrit_scan._build_run_request(parsed_args=parsed, scenario_name="s")
-        assert request.dataset_parameters == {"harm_categories": "cyber", "data_types": "text"}
+        assert request.dataset_filters == {"harm_categories": "cyber", "data_types": "text"}
 
     def test_includes_scenario_declared_params(self):
         parsed = Namespace(
@@ -667,7 +667,7 @@ class TestBuildRunRequest:
             max_retries=None,
             dataset_names=None,
             max_dataset_size=None,
-            dataset_parameters=None,
+            dataset_filters=None,
             memory_labels=None,
             scenario__max_turns="7",
         )

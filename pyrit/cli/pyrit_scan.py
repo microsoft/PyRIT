@@ -24,7 +24,7 @@ from pyrit.cli._cli_args import (
     _parse_initializer_arg,
     build_parameters_from_api,
     non_negative_int,
-    parse_dataset_parameter,
+    parse_dataset_filter,
     positive_int,
     validate_log_level_argparse,
 )
@@ -269,11 +269,11 @@ def _build_base_parser(*, add_help: bool = True) -> ArgumentParser:
         help=ARG_HELP["max_dataset_size"],
     )
     run_group.add_argument(
-        "--dataset-parameters",
-        type=parse_dataset_parameter,
+        "--dataset-filters",
+        type=parse_dataset_filter,
         nargs="+",
         metavar="KEY=VALUE",
-        help=ARG_HELP["dataset_parameters"],
+        help=ARG_HELP["dataset_filters"],
     )
 
     return parser
@@ -652,8 +652,8 @@ def _build_run_request(*, parsed_args: Namespace, scenario_name: str) -> RunScen
         kwargs["dataset_names"] = parsed_args.dataset_names
     if parsed_args.max_dataset_size is not None:
         kwargs["max_dataset_size"] = parsed_args.max_dataset_size
-    if parsed_args.dataset_parameters:
-        kwargs["dataset_parameters"] = dict(parsed_args.dataset_parameters)
+    if parsed_args.dataset_filters:
+        kwargs["dataset_filters"] = dict(parsed_args.dataset_filters)
     if parsed_args.memory_labels:
         kwargs["labels"] = parse_memory_labels(json_string=parsed_args.memory_labels)
 

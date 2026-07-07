@@ -226,7 +226,7 @@ def forbid_inline_seeds() -> Callable[[ResolvedDataset], None]:
     return _validate
 
 
-# Authoritative set of dataset seed filters exposed via ``--dataset-parameters``. Each entry
+# Authoritative set of dataset seed filters exposed via ``--dataset-filters``. Each entry
 # is used verbatim as a ``MemoryInterface.get_seeds`` keyword argument, so a filter key IS the
 # get_seeds kwarg. Every exposed filter must be a list-valued (Sequence) get_seeds parameter --
 # a guard test enforces this and keeps the CLI's advertised keys in sync. Adding a filterable
@@ -253,15 +253,15 @@ def _coerce_filter_values(value: Any) -> list[str]:
 
 def build_dataset_filters(*, parameters: dict[str, Any] | None) -> dict[str, Any]:
     """
-    Map a user-facing dataset-parameter bag onto ``MemoryInterface.get_seeds`` filters.
+    Map a user-facing dataset-filter bag onto ``MemoryInterface.get_seeds`` filters.
 
     Each key must be one of ``DATASET_FILTERS`` (the exposed ``get_seeds`` kwargs); its value is
     coerced into a list (a single token or a comma-separated string). Any other key is rejected
     loudly.
 
     Args:
-        parameters (dict[str, Any] | None): The raw dataset-parameter bag (e.g. from the CLI
-            ``--dataset-parameters`` flag), keyed by ``get_seeds`` kwarg name.
+        parameters (dict[str, Any] | None): The raw dataset-filter bag (e.g. from the CLI
+            ``--dataset-filters`` flag), keyed by ``get_seeds`` kwarg name.
 
     Returns:
         dict[str, Any]: The filters ready to pass as ``**filters`` to ``get_seeds``.
@@ -272,7 +272,7 @@ def build_dataset_filters(*, parameters: dict[str, Any] | None) -> dict[str, Any
     filters: dict[str, Any] = {}
     for key, raw_value in (parameters or {}).items():
         if key not in DATASET_FILTERS:
-            raise ValueError(f"Unknown dataset parameter '{key}'. Allowed: {', '.join(sorted(DATASET_FILTERS))}.")
+            raise ValueError(f"Unknown dataset filter '{key}'. Allowed: {', '.join(sorted(DATASET_FILTERS))}.")
         values = _coerce_filter_values(raw_value)
         if values:
             filters[key] = values

@@ -302,7 +302,7 @@ class ScenarioRunService:
         if request.labels:
             init_kwargs["memory_labels"] = request.labels
 
-        dataset_filters = build_dataset_filters(parameters=request.dataset_parameters)
+        dataset_filters = build_dataset_filters(parameters=request.dataset_filters)
 
         # Resolve strategies and dataset config from a temporary instance of the
         # scenario. The downstream _initialize_scenario_async builds its own

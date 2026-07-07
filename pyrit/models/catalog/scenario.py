@@ -50,7 +50,7 @@ class RunScenarioRequest(BaseModel):
     strategies: list[str] | None = Field(None, description="Strategy names to use (uses scenario default if omitted)")
     dataset_names: list[str] | None = Field(None, description="Dataset names to use (uses scenario default if omitted)")
     max_dataset_size: int | None = Field(None, ge=1, description="Maximum items per dataset")
-    dataset_parameters: dict[str, Any] | None = Field(
+    dataset_filters: dict[str, Any] | None = Field(
         None,
         description=(
             "Dataset seed filters keyed by field, applied before sampling. Accepted keys: harm_categories, data_types."
