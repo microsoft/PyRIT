@@ -253,24 +253,28 @@ class TestPsychosocialCrossProduct:
         assert len(technique_names) == 6  # 3 techniques x 2 subharms
         assert len([n for n in names if n.startswith("baseline")]) == 2
 
-    async def test_baseline_naming_first_is_literal_baseline(self, mock_objective_target):
-        """First emitted baseline is literally 'baseline' so the base guard does not double-prepend."""
+    async def test_per_subharm_baselines_named_and_flagged(self, mock_objective_target):
+        """Each per-subharm baseline is named 'baseline_<subharm>' and flagged is_baseline."""
         scenario = Psychosocial()
         with _patch_seed_groups(_make_subharm_seed_groups()):
             await scenario.initialize_async(objective_target=mock_objective_target)
-        baseline_names = [
-            a.atomic_attack_name for a in scenario._atomic_attacks if a.atomic_attack_name.startswith("baseline")
-        ]
-        assert baseline_names[0] == "baseline"
-        assert "baseline_licensed_therapist" in baseline_names
-        # Exactly two baselines — no third generic one prepended by the base central guard.
-        assert len(baseline_names) == 2
+        baselines = [a for a in scenario._atomic_attacks if a.is_baseline]
+        baseline_names = {a.atomic_attack_name for a in baselines}
+        assert baseline_names == {"baseline_imminent_crisis", "baseline_licensed_therapist"}
+        # No generic 'baseline' — the base central guard recognizes is_baseline and does not double-prepend.
+        assert "baseline" not in baseline_names
+        assert len(baselines) == 2
 
     async def test_baselines_are_first(self, mock_objective_target):
         scenario = Psychosocial()
         with _patch_seed_groups(_make_subharm_seed_groups()):
             await scenario.initialize_async(objective_target=mock_objective_target)
-        assert scenario._atomic_attacks[0].atomic_attack_name == "baseline"
+        assert scenario._atomic_attacks[0].is_baseline is True
+        assert scenario._atomic_attacks[0].atomic_attack_name.startswith("baseline_")
+        # Strategy (non-baseline) attacks are not flagged.
+        assert all(
+            not a.is_baseline for a in scenario._atomic_attacks if not a.atomic_attack_name.startswith("baseline")
+        )
 
     async def test_include_baseline_false_emits_no_baselines(self, mock_objective_target):
         scenario = Psychosocial()
@@ -306,20 +310,20 @@ class TestPsychosocialCrossProduct:
         groups = {a.display_group for a in scenario._atomic_attacks}
         assert groups == {"imminent_crisis", "licensed_therapist"}
 
-    async def test_only_therapist_subharm_first_baseline_is_baseline(self, mock_objective_target):
-        """Subset selection edge: only therapist has seeds -> its baseline is still named 'baseline'.
+    async def test_only_therapist_subharm_single_baseline(self, mock_objective_target):
+        """Subset selection edge: only therapist has seeds -> exactly one baseline for it.
 
-        Guards against the central guard double-prepending a crisis-scored generic baseline when the
-        first-emitted subharm baseline would otherwise be named 'baseline_licensed_therapist'.
+        Guards against the central guard double-prepending a crisis-scored generic baseline. The
+        per-subharm baseline is flagged is_baseline, so the base guard recognizes it and does not
+        add another.
         """
         scenario = Psychosocial()
         groups = {"airt_licensed_therapist": _make_subharm_seed_groups()["airt_licensed_therapist"]}
         with _patch_seed_groups(groups):
             await scenario.initialize_async(objective_target=mock_objective_target)
-        baseline_names = [
-            a.atomic_attack_name for a in scenario._atomic_attacks if a.atomic_attack_name.startswith("baseline")
-        ]
-        assert baseline_names == ["baseline"]
+        baselines = [a for a in scenario._atomic_attacks if a.is_baseline]
+        assert [a.atomic_attack_name for a in baselines] == ["baseline_licensed_therapist"]
+        assert scenario._atomic_attacks[0].is_baseline is True
         assert scenario._atomic_attacks[0].display_group == "licensed_therapist"
 
     async def test_no_seeds_for_any_subharm_raises_clear_error(self, mock_objective_target):

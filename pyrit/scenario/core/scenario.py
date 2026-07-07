@@ -47,7 +47,10 @@ from pyrit.registry import ScorerRegistry
 from pyrit.registry.resolution import resolve_declared_params
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
-from pyrit.scenario.core.matrix_atomic_attack_builder import build_baseline_atomic_attack
+from pyrit.scenario.core.matrix_atomic_attack_builder import (
+    BaselineSpec,
+    build_baseline_atomic_attacks,
+)
 from pyrit.scenario.core.scenario_context import ScenarioContext
 from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
 from pyrit.scenario.core.scenario_target_defaults import get_default_scorer_target
@@ -465,7 +468,7 @@ class Scenario(ABC):
         context = self._build_scenario_context(seed_groups_by_dataset=seed_groups_by_dataset)
         self._atomic_attacks = await self._build_atomic_attacks_async(context=context)
 
-        if include_baseline and (not self._atomic_attacks or self._atomic_attacks[0].atomic_attack_name != "baseline"):
+        if include_baseline and not any(aa.is_baseline for aa in self._atomic_attacks):
             self._atomic_attacks.insert(0, self._build_baseline_atomic_attack(seed_groups=list(context.seed_groups)))
 
         # Build the canonical scenario identifier once params/strategies/datasets
@@ -582,13 +585,43 @@ class Scenario(ABC):
                 f"Either restore the missing objectives or drop scenario_result_id to start a new scenario."
             )
 
+    def _build_baseline_atomic_attacks(self, *, specs: Sequence[BaselineSpec]) -> list[AtomicAttack]:
+        """
+        Build one baseline AtomicAttack per spec from pre-resolved seed groups.
+
+        Each baseline sends its objectives unmodified, providing a comparison point
+        against the scenario's strategy attacks. Pass the same ``seed_groups`` used
+        to build the strategy attacks so both populations match. A spec whose
+        ``objective_scorer`` is ``None`` falls back to the scenario's objective scorer.
+
+        Args:
+            specs: One :class:`BaselineSpec` per baseline to build.
+
+        Returns:
+            list[AtomicAttack]: The baseline atomic attacks, in spec order.
+
+        Raises:
+            ValueError: If ``initialize_async`` has not been called (no objective
+                target or scorer set).
+        """
+        if self._objective_target is None:
+            raise ValueError("Objective target is required to create baseline attack.")
+        if self._objective_scorer is None:
+            raise ValueError("Objective scorer is required to create baseline attack.")
+
+        return build_baseline_atomic_attacks(
+            objective_target=self._objective_target,
+            default_objective_scorer=self._objective_scorer,
+            specs=specs,
+            memory_labels=self._memory_labels,
+        )
+
     def _build_baseline_atomic_attack(self, *, seed_groups: list[SeedAttackGroup]) -> AtomicAttack:
         """
-        Build the baseline AtomicAttack from pre-resolved seed groups.
+        Build the single baseline AtomicAttack named ``"baseline"`` from pre-resolved seed groups.
 
-        The baseline sends each objective unmodified, providing a comparison point
-        against the scenario's strategy attacks. Pass the same ``seed_groups`` used
-        to build the strategy attacks so both populations match.
+        Thin convenience wrapper over :meth:`_build_baseline_atomic_attacks` for the
+        common single-baseline case (used by the central baseline prepend).
 
         Args:
             seed_groups: Seed groups to attack. Used as-is, no further sampling.
@@ -600,17 +633,7 @@ class Scenario(ABC):
             ValueError: If ``initialize_async`` has not been called (no objective
                 target or scorer set).
         """
-        if self._objective_target is None:
-            raise ValueError("Objective target is required to create baseline attack.")
-        if self._objective_scorer is None:
-            raise ValueError("Objective scorer is required to create baseline attack.")
-
-        return build_baseline_atomic_attack(
-            objective_target=self._objective_target,
-            objective_scorer=self._objective_scorer,
-            seed_groups=seed_groups,
-            memory_labels=self._memory_labels,
-        )
+        return self._build_baseline_atomic_attacks(specs=[BaselineSpec(seed_groups=seed_groups)])[0]
 
     def _build_scenario_identifier(self) -> ScenarioIdentifier:
         """

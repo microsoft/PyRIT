@@ -693,6 +693,36 @@ class TestFoundryProperties:
         assert result.converters == [FoundryStrategy.Base64]
         assert result.name == "ComposedStrategy(crescendo, base64)"
 
+    async def test_bare_composite_baseline_not_double_prepended(
+        self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups, mock_dataset_config
+    ):
+        """A bare FoundryComposite (no attack, no converters) is itself the baseline.
+
+        It is named ``"baseline"`` and flagged ``is_baseline``, so the base central
+        baseline prepend recognizes it and does not add a duplicate ``"baseline"`` atomic.
+        """
+        composite = FoundryComposite(attack=None, converters=[])
+
+        with patch.object(
+            RedTeamAgent,
+            "_resolve_seed_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value={"memory": mock_memory_seed_groups},
+        ):
+            scenario = RedTeamAgent(
+                attack_scoring_config=AttackScoringConfig(objective_scorer=mock_objective_scorer),
+            )
+            await scenario.initialize_async(
+                objective_target=mock_objective_target,
+                scenario_strategies=[composite],
+                dataset_config=mock_dataset_config,
+                include_baseline=True,
+            )
+
+        baseline_atomics = [a for a in scenario._atomic_attacks if a.atomic_attack_name == "baseline"]
+        assert len(baseline_atomics) == 1
+        assert baseline_atomics[0].is_baseline is True
+
     async def test_initialize_with_mixed_composites_and_strategies(
         self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups, mock_dataset_config
     ):

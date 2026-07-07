@@ -471,6 +471,7 @@ class RedTeamAgent(Scenario):
             adversarial_chat=self._adversarial_chat,
             objective_scorer=self._attack_scoring_config.objective_scorer,
             memory_labels=self._memory_labels,
+            is_baseline=composite.attack is None and not composite.converters,
         )
 
     def _get_attack(

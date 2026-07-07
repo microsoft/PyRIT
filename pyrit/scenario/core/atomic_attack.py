@@ -61,6 +61,7 @@ class AtomicAttack:
         adversarial_chat: PromptTarget | None = None,
         objective_scorer: TrueFalseScorer | None = None,
         memory_labels: dict[str, str] | None = None,
+        is_baseline: bool = False,
         **attack_execute_params: Any,
     ) -> None:
         """
@@ -84,6 +85,11 @@ class AtomicAttack:
             objective_scorer: Optional scorer for evaluating simulated
                 conversations.
             memory_labels: Additional labels to apply to prompts.
+            is_baseline: True when this atomic attack is a baseline (each objective
+                sent unmodified) used as a comparison point. Set by the baseline
+                builder; the base ``Scenario`` reads it to decide whether to prepend
+                its own baseline. It does not participate in identity, eval hash, or
+                resume matching.
             **attack_execute_params: Additional parameters to pass to the attack
                 execution method.
 
@@ -127,6 +133,7 @@ class AtomicAttack:
         self._adversarial_chat = adversarial_chat
         self._objective_scorer = objective_scorer
         self._memory_labels = memory_labels or {}
+        self.is_baseline = is_baseline
         self._attack_execute_params = attack_execute_params
         # Set via set_scenario_result_id() by Scenario._execute_scenario_async
         # before run_async. When set, each persisted AttackResult is linked to

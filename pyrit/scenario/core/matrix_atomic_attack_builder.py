@@ -87,6 +87,77 @@ def _default_display_group(combo: MatrixCombo) -> str:
     return combo.technique_name
 
 
+@dataclass(frozen=True)
+class BaselineSpec:
+    """
+    One baseline to build: its seed population plus optional per-baseline overrides.
+
+    A scenario with a single baseline passes one spec; a scenario with per-group
+    scoring (e.g. Psychosocial's per-subharm rubrics) passes one spec per group,
+    each carrying that group's ``objective_scorer``, ``name``, and ``display_group``.
+
+    Attributes:
+        seed_groups (list[SeedAttackGroup]): Seed groups to attack. Used as-is.
+        objective_scorer (Scorer | None): Scorer for this baseline. When ``None``,
+            the builder falls back to the scenario's default objective scorer.
+        name (str): The ``atomic_attack_name`` for this baseline.
+        display_group (str | None): Optional grouping label for user-facing output.
+    """
+
+    seed_groups: list[SeedAttackGroup]
+    objective_scorer: Scorer | None = None
+    name: str = "baseline"
+    display_group: str | None = None
+
+
+def build_baseline_atomic_attacks(
+    *,
+    objective_target: PromptTarget,
+    default_objective_scorer: Scorer,
+    specs: Sequence[BaselineSpec],
+    memory_labels: dict[str, str] | None = None,
+) -> list[AtomicAttack]:
+    """
+    Build one baseline ``AtomicAttack`` per spec, each sending its objectives unmodified.
+
+    Each baseline is a plain ``PromptSendingAttack`` used as a comparison point against
+    a scenario's strategy attacks. Pass the *same* ``seed_groups`` used to build the
+    strategy attacks so both populations match — re-resolving under ``max_dataset_size``
+    would draw a fresh random sample and diverge from the strategy population. Every
+    returned attack is stamped ``is_baseline=True`` so the base ``Scenario`` recognizes
+    it regardless of name.
+
+    Args:
+        objective_target (PromptTarget): The target to attack.
+        default_objective_scorer (Scorer): Scorer used for any spec whose
+            ``objective_scorer`` is ``None``.
+        specs (Sequence[BaselineSpec]): One spec per baseline to build.
+        memory_labels (dict[str, str] | None): Labels applied to the baselines' prompts.
+
+    Returns:
+        list[AtomicAttack]: One baseline atomic attack per spec, in order.
+    """
+    attacks: list[AtomicAttack] = []
+    for spec in specs:
+        scorer = spec.objective_scorer or default_objective_scorer
+        attack = PromptSendingAttack(
+            objective_target=objective_target,
+            attack_scoring_config=AttackScoringConfig(objective_scorer=cast("TrueFalseScorer", scorer)),
+        )
+        attacks.append(
+            AtomicAttack(
+                atomic_attack_name=spec.name,
+                display_group=spec.display_group,
+                attack_technique=AttackTechnique(attack=attack),
+                seed_groups=spec.seed_groups,
+                objective_scorer=cast("TrueFalseScorer", scorer),
+                memory_labels=memory_labels or {},
+                is_baseline=True,
+            )
+        )
+    return attacks
+
+
 def build_baseline_atomic_attack(
     *,
     objective_target: PromptTarget,
@@ -95,12 +166,10 @@ def build_baseline_atomic_attack(
     memory_labels: dict[str, str] | None = None,
 ) -> AtomicAttack:
     """
-    Build the baseline ``AtomicAttack`` that sends each objective unmodified.
+    Build the single baseline ``AtomicAttack`` named ``"baseline"``.
 
-    The baseline is a plain ``PromptSendingAttack`` used as a comparison point against
-    a scenario's strategy attacks. Pass the *same* ``seed_groups`` used to build the
-    strategy attacks so both populations match — re-resolving under ``max_dataset_size``
-    would draw a fresh random sample and diverge from the strategy population.
+    Thin convenience wrapper over :func:`build_baseline_atomic_attacks` for the common
+    single-baseline case.
 
     Args:
         objective_target (PromptTarget): The target to attack.
@@ -111,16 +180,12 @@ def build_baseline_atomic_attack(
     Returns:
         AtomicAttack: The baseline atomic attack named ``"baseline"``.
     """
-    attack = PromptSendingAttack(
+    return build_baseline_atomic_attacks(
         objective_target=objective_target,
-        attack_scoring_config=AttackScoringConfig(objective_scorer=cast("TrueFalseScorer", objective_scorer)),
-    )
-    return AtomicAttack(
-        atomic_attack_name="baseline",
-        attack_technique=AttackTechnique(attack=attack),
-        seed_groups=seed_groups,
-        memory_labels=memory_labels or {},
-    )
+        default_objective_scorer=objective_scorer,
+        specs=[BaselineSpec(seed_groups=seed_groups)],
+        memory_labels=memory_labels,
+    )[0]
 
 
 def resolve_technique_factories(

@@ -46,9 +46,9 @@ from pyrit.prompt_normalizer import PromptConverterConfiguration
 from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
 from pyrit.registry.tag_query import TagQuery
 from pyrit.scenario.core.atomic_attack import AtomicAttack
-from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
 from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
+from pyrit.scenario.core.matrix_atomic_attack_builder import BaselineSpec
 from pyrit.scenario.core.scenario import BaselineAttackPolicy, Scenario
 from pyrit.scenario.core.scenario_target_defaults import (
     get_default_adversarial_target,
@@ -328,11 +328,11 @@ class Psychosocial(Scenario):
         Each ``AtomicAttack`` carries its subharm's scorer and display label; the
         crescendo factory is rebuilt per subharm so it picks up the right
         escalation YAML. When ``context.include_baseline`` is true, one baseline
-        ``AtomicAttack`` is emitted **per subharm** so each is scored with its
+        ``AtomicAttack`` is emitted **per subharm** (via the base
+        ``_build_baseline_atomic_attacks`` helper) so each is scored with its
         matching rubric and keeps a distinct key in ``_display_group_map`` /
-        ``attack_results``. The first emitted baseline is named ``"baseline"`` so
-        the base ``Scenario.initialize_async`` central baseline is not additionally
-        prepended; the rest are named ``baseline_<subharm>``.
+        ``attack_results``. Each is stamped ``is_baseline=True``, so the base
+        ``Scenario.initialize_async`` central baseline is not additionally prepended.
 
         Args:
             context (ScenarioContext): The resolved runtime inputs for this run.
@@ -409,35 +409,16 @@ class Psychosocial(Scenario):
                 )
 
         if context.include_baseline:
-            baseline_attacks: list[AtomicAttack] = []
-            for cfg in _SUBHARMS:
-                seed_groups_for_subharm = seed_groups_by_dataset.get(cfg.dataset_name) or []
-                if not seed_groups_for_subharm:
-                    continue
-                baseline_scorer = scorers_by_dataset[cfg.dataset_name]
-                baseline_attack_technique = PromptSendingAttack(
-                    objective_target=context.objective_target,
-                    attack_scoring_config=AttackScoringConfig(
-                        objective_scorer=cast("TrueFalseScorer", baseline_scorer)
-                    ),
+            baseline_specs = [
+                BaselineSpec(
+                    seed_groups=list(seed_groups_by_dataset[cfg.dataset_name]),
+                    objective_scorer=scorers_by_dataset[cfg.dataset_name],
+                    name=f"baseline_{cfg.display_name}",
+                    display_group=cfg.display_name,
                 )
-                # The first emitted baseline is named exactly ``"baseline"`` so the base
-                # central-baseline guard (which only prepends when the first atomic attack
-                # is not named ``"baseline"``) does not add a duplicate single-scorer
-                # baseline on top of these per-subharm ones. Subsequent baselines use
-                # ``baseline_<subharm>`` so each stays distinct in ``_display_group_map`` /
-                # ``attack_results`` (both keyed on ``atomic_attack_name``).
-                baseline_name = "baseline" if not baseline_attacks else f"baseline_{cfg.display_name}"
-                baseline_attacks.append(
-                    AtomicAttack(
-                        atomic_attack_name=baseline_name,
-                        attack_technique=AttackTechnique(attack=baseline_attack_technique),
-                        seed_groups=list(seed_groups_for_subharm),
-                        objective_scorer=cast("TrueFalseScorer", baseline_scorer),
-                        memory_labels=context.memory_labels,
-                        display_group=cfg.display_name,
-                    )
-                )
-            atomic_attacks = baseline_attacks + atomic_attacks
+                for cfg in _SUBHARMS
+                if seed_groups_by_dataset.get(cfg.dataset_name)
+            ]
+            atomic_attacks = self._build_baseline_atomic_attacks(specs=baseline_specs) + atomic_attacks
 
         return atomic_attacks
