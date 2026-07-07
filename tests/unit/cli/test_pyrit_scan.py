@@ -31,6 +31,22 @@ def _sp(*, name, description="", default=None, param_type="str", choices=None, i
     )
 
 
+def test_dataset_filter_help_covers_every_request_model_key():
+    """
+    The frontend per-key ``--dataset-filters`` help must describe exactly the server-side allow-list.
+
+    A missing key means a filter the request model accepts has no CLI help (and, by design, no
+    documented semantics); an extra key means the CLI advertises a filter the server rejects.
+    Adding to ``DATASET_FILTERS`` therefore forces adding a ``_DATASET_FILTER_HELP`` entry, where
+    the surrounding entries model the one-line semantics note to write.
+    """
+    from pyrit.cli._cli_args import _DATASET_FILTER_HELP
+    from pyrit.models.catalog.scenario import DATASET_FILTERS
+
+    assert set(_DATASET_FILTER_HELP) == DATASET_FILTERS
+    assert all(_DATASET_FILTER_HELP.values()), "every dataset filter key needs a semantics note"
+
+
 class TestParseArgs:
     """Tests for parse_args function."""
 

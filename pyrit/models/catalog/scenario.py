@@ -26,6 +26,15 @@ from pyrit.models.results.scenario_result import ScenarioRunState
 # get_seeds kwarg. Every exposed filter must be a list-valued (Sequence) get_seeds parameter.
 # Adding a filterable field is a one-line change here; the CLI ``--dataset-filters`` help text
 # describes these keys, and this request model validates them server-side (covering the GUI too).
+#
+# Comma-list semantics differ per key because ``get_seeds`` treats each field differently, and
+# that behavior lives in ``pyrit.memory`` (this layer cannot import it). As of today
+# (see ``MemoryInterface.get_seeds`` / ``_add_list_conditions``):
+#   - harm_categories -> AND + substring: a seed must be tagged with EVERY value, and each value
+#     is a substring match (``cyber`` matches ``cyber_harm``). So ``harm_categories=cyber,violence``
+#     is an intersection, not a union.
+#   - data_types -> OR + exact: a seed matches ANY value, compared for exact equality. So
+#     ``data_types=text,image_path`` is a union.
 DATASET_FILTERS: frozenset[str] = frozenset({"harm_categories", "data_types"})
 
 
