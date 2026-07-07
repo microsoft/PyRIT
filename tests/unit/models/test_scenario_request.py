@@ -38,7 +38,7 @@ class TestRunScenarioRequestDatasetFilters:
             _make_request(dataset_filters={"harm_categories": "cyber"})  # type: ignore[dict-item]
 
 
-class TestDatasetFilterRegistry:
+class TestExposedDatasetFilters:
     """The exposed filter set is intentional and stays in contract with ``get_seeds``."""
 
     def test_exposed_filters_are_frozen(self) -> None:
