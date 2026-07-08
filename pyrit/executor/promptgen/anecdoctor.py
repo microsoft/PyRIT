@@ -218,7 +218,6 @@ class AnecdoctorGenerator(
         self._objective_target.set_system_prompt(
             system_prompt=system_prompt,
             conversation_id=context.conversation_id,
-            labels=context.memory_labels,  # deprecated
         )
 
     async def _perform_async(self, *, context: AnecdoctorContext) -> AnecdoctorResult:
@@ -302,6 +301,9 @@ class AnecdoctorGenerator(
         """
         # Create message from the formatted examples
         message = Message.from_prompt(prompt=formatted_examples, role="user")
+        if context.memory_labels:
+            for piece in message.message_pieces:
+                piece.labels = context.memory_labels
 
         # Send to target model with configured converters
         return await self._prompt_normalizer.send_prompt_async(
@@ -310,7 +312,6 @@ class AnecdoctorGenerator(
             conversation_id=context.conversation_id,
             request_converter_configurations=self._request_converters,
             response_converter_configurations=self._response_converters,
-            labels=context.memory_labels,
         )
 
     def _load_prompt_from_yaml(self, *, yaml_filename: str) -> str:
@@ -379,7 +380,6 @@ class AnecdoctorGenerator(
         self._processing_model.set_system_prompt(
             system_prompt=kg_system_prompt,
             conversation_id=kg_conversation_id,
-            labels=self._memory_labels,  # deprecated
         )
 
         # Format examples for knowledge graph extraction using few-shot format
@@ -387,6 +387,9 @@ class AnecdoctorGenerator(
 
         # Create message for the processing model
         message = Message.from_prompt(prompt=formatted_examples, role="user")
+        if self._memory_labels:
+            for piece in message.message_pieces:
+                piece.labels = self._memory_labels
 
         # Send to processing model with configured converters
         kg_response = await self._prompt_normalizer.send_prompt_async(
@@ -395,7 +398,6 @@ class AnecdoctorGenerator(
             conversation_id=kg_conversation_id,
             request_converter_configurations=self._request_converters,
             response_converter_configurations=self._response_converters,
-            labels=self._memory_labels,
         )
 
         if not kg_response:

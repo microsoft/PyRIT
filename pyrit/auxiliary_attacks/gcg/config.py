@@ -25,6 +25,13 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from pyrit.auxiliary_attacks.gcg.extension_protocols import (
+        CandidateFilter,
+        LossFunction,
+        SamplingStrategy,
+        SuffixInitializer,
+    )
+
 _DEFAULT_CONTROL_INIT: str = "! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! !"
 
 
@@ -147,6 +154,18 @@ class GCGAlgorithmConfig:
         random_seed (int): Seed for ``torch``/``numpy``/``random``. Defaults to 42.
         control_init (str): Initial suffix string the optimization starts from.
             Defaults to twenty space-separated ``!`` tokens.
+        sampling (SamplingStrategy | None): Optional strategy object that
+            samples candidate suffix token sequences from the aggregated
+            gradient. ``None`` uses the built-in default implementation.
+        loss (LossFunction | None): Optional loss object used to score each
+            candidate suffix. ``None`` uses the built-in weighted
+            cross-entropy default that preserves legacy behavior.
+        candidate_filter (CandidateFilter | None): Optional candidate-filter
+            object that decodes/prunes sampled candidate token sequences.
+            ``None`` uses the built-in length-preserving filter.
+        suffix_init (SuffixInitializer | None): Optional initializer object
+            that produces the initial suffix string at attack construction
+            time. ``None`` uses ``control_init`` verbatim.
     """
 
     n_steps: int = 500
@@ -161,6 +180,10 @@ class GCGAlgorithmConfig:
     filter_cand: bool = True
     random_seed: int = 42
     control_init: str = _DEFAULT_CONTROL_INIT
+    sampling: SamplingStrategy | None = None
+    loss: LossFunction | None = None
+    candidate_filter: CandidateFilter | None = None
+    suffix_init: SuffixInitializer | None = None
 
     def __post_init__(self) -> None:
         if self.n_steps <= 0:
@@ -183,6 +206,27 @@ class GCGAlgorithmConfig:
             )
         if not self.control_init:
             raise ValueError("GCGAlgorithmConfig.control_init must be a non-empty string.")
+        self._validate_extensions()
+
+    def _validate_extensions(self) -> None:
+        from pyrit.auxiliary_attacks.gcg.extension_protocols import (
+            CandidateFilter,
+            LossFunction,
+            SamplingStrategy,
+            SuffixInitializer,
+        )
+
+        checks = (
+            ("sampling", self.sampling, SamplingStrategy),
+            ("loss", self.loss, LossFunction),
+            ("candidate_filter", self.candidate_filter, CandidateFilter),
+            ("suffix_init", self.suffix_init, SuffixInitializer),
+        )
+        for field_name, value, protocol in checks:
+            if value is not None and not isinstance(value, protocol):
+                raise ValueError(
+                    f"GCGAlgorithmConfig.{field_name} must satisfy {protocol.__name__}, got {type(value)!r}."
+                )
 
 
 @dataclass

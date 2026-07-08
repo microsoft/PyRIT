@@ -12,6 +12,7 @@ from sqlalchemy import inspect, text
 
 from pyrit.common.singleton import Singleton
 from pyrit.memory import AzureSQLMemory, EmbeddingDataEntry, PromptMemoryEntry
+from pyrit.memory.storage.serializers import set_message_piece_sha256_async
 from pyrit.models import Conversation, MessagePiece
 from pyrit.prompt_converter.base64_converter import Base64Converter
 from pyrit.prompt_target.text_target import TextTarget
@@ -40,7 +41,7 @@ async def test_insert_entry(memory_interface):
         original_value="Hello",
         converted_value="Hello",
     )
-    await message_piece.set_sha256_values_async()
+    await set_message_piece_sha256_async(message_piece)
     entry = PromptMemoryEntry(entry=message_piece)
 
     # Insert the entry

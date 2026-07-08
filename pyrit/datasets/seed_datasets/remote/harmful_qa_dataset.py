@@ -2,7 +2,6 @@
 # Licensed under the MIT license.
 
 import logging
-import warnings
 
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
@@ -33,28 +32,6 @@ class _HarmfulQADataset(_RemoteDatasetLoader):
     modalities: tuple[Modality, ...] = (Modality.TEXT,)
     size: str = "large"  # 1960 harmful questions by academic topic
     tags: frozenset[str] = frozenset({"default", "safety", "jailbreak"})
-
-    def __init__(
-        self,
-        *,
-        split: str | None = None,
-    ) -> None:
-        """
-        Initialize the HarmfulQA dataset loader.
-
-        Args:
-            split: **Deprecated.** Upstream ``declare-lab/HarmfulQA`` publishes only the
-                ``"train"`` split, so this kwarg has no effect. It will be removed in
-                v0.16.0.
-        """
-        if split is not None:
-            warnings.warn(
-                "'split' is deprecated and will be removed in v0.16.0. "
-                "Upstream declare-lab/HarmfulQA publishes only the 'train' split, "
-                "so this kwarg has no effect.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
 
     @property
     def dataset_name(self) -> str:

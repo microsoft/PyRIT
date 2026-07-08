@@ -199,7 +199,7 @@ class TestBuildAtomicAttackIdentifier:
             attack_identifier=_make_attack(),
             seed_group=_FakeSeedGroup(seeds=[seed]),
         )
-        restored = ComponentIdentifier.from_dict(original.to_dict())
+        restored = ComponentIdentifier.model_validate(original.model_dump())
         assert restored.hash == original.hash
 
 

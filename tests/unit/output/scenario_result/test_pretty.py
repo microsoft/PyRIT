@@ -86,7 +86,7 @@ async def test_write_async_with_unknown_target_when_no_params(printer, capsys):
         scenario_name="TestScenario",
         scenario_version=1,
         pyrit_version="1.0.0",
-        objective_target_identifier=ComponentIdentifier.from_dict({}),
+        objective_target_identifier=ComponentIdentifier.model_validate({}),
         attack_results={"s": []},
         objective_scorer_identifier=None,
     )
@@ -219,17 +219,4 @@ async def test_write_async_sort_is_stable_for_ties(patch_central_database, capsy
     )
     await sorting_printer.write_async(result)
     # Tied 100% groups retain their original relative order; 0% group goes last.
-    assert _group_order(capsys.readouterr().out) == [
-        "first_success",
-        "second_success",
-        "fail",
-    ]
-
-
-# --- deprecated alias ---
-
-
-async def test_print_summary_async_emits_deprecation_warning(printer, capsys):
-    with pytest.warns(DeprecationWarning, match="print_summary_async"):
-        await printer.print_summary_async(_scenario_result())
-    assert "SCENARIO RESULTS" in capsys.readouterr().out
+    assert _group_order(capsys.readouterr().out) == ["first_success", "second_success", "fail"]

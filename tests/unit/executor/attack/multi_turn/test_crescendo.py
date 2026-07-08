@@ -268,7 +268,8 @@ class CrescendoTestHelper:
         This method handles the complex initialization of CrescendoAttack,
         allowing tests to focus on specific scenarios without repeating setup code.
         """
-        adversarial_config = AttackAdversarialConfig(target=adversarial_chat, system_prompt_path=system_prompt_path)
+        system_prompt = SeedPrompt.from_yaml_file(system_prompt_path) if system_prompt_path else None
+        adversarial_config = AttackAdversarialConfig(target=adversarial_chat, system_prompt=system_prompt)
 
         # Only create scoring config if scorers are provided
         # This allows testing both with custom scorers and default scorers
@@ -373,7 +374,7 @@ class TestCrescendoAttackInitialization:
     ):
         """Test initialization with different Crescendo system prompt variants."""
         adversarial_config = AttackAdversarialConfig(
-            target=mock_adversarial_chat, system_prompt_path=system_prompt_path
+            target=mock_adversarial_chat, system_prompt=SeedPrompt.from_yaml_file(system_prompt_path)
         )
 
         attack = CrescendoAttack(
@@ -391,15 +392,10 @@ class TestCrescendoAttackInitialization:
     def test_init_with_invalid_system_prompt_path_raises_error(
         self, mock_objective_target: MagicMock, mock_adversarial_chat: MagicMock
     ):
-        """Test that invalid system prompt path raises FileNotFoundError."""
-        adversarial_config = AttackAdversarialConfig(
-            target=mock_adversarial_chat, system_prompt_path="nonexistent_file.yaml"
-        )
-
+        """Test that loading a nonexistent system prompt path raises FileNotFoundError."""
         with pytest.raises(FileNotFoundError):
-            CrescendoAttack(
-                objective_target=mock_objective_target,
-                attack_adversarial_config=adversarial_config,
+            AttackAdversarialConfig(
+                target=mock_adversarial_chat, system_prompt=SeedPrompt.from_yaml_file("nonexistent_file.yaml")
             )
 
     @pytest.mark.parametrize("max_backtracks", [-1, -10])

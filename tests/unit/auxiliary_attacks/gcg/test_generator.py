@@ -6,8 +6,9 @@
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING
-from unittest.mock import MagicMock, patch
+from functools import partial
+from typing import TYPE_CHECKING, Any
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -236,6 +237,137 @@ class TestApplyTargetAugmentation:
         result, _ = GCGGenerator._apply_target_augmentation(train_targets=targets, test_targets=[])
         num_changed = sum(1 for orig, aug in zip(targets, result, strict=False) if orig != aug)
         assert num_changed > 0
+
+
+class TestExtensionWiring:
+    def test_create_attack_uses_suffix_initializer_when_configured(self) -> None:
+        class _SuffixInitStub:
+            def __init__(self) -> None:
+                self.calls: list[object] = []
+
+            def make_initial_suffix(self, *, tokenizer: object) -> str:
+                self.calls.append(tokenizer)
+                return "initialized suffix"
+
+        suffix_init = _SuffixInitStub()
+        gen = GCGGenerator(
+            models=[GCGModelConfig(name=_LLAMA_2)],
+            algorithm=GCGAlgorithmConfig(suffix_init=suffix_init),
+        )
+        worker = MagicMock()
+        worker.tokenizer = MagicMock()
+
+        with patch.object(generator_mod, "IndividualPromptAttack") as mock_individual:
+            gen._create_attack(
+                params=MagicMock(),
+                managers={"MPA": MagicMock()},
+                train_goals=["g"],
+                train_targets=["t"],
+                test_goals=[],
+                test_targets=[],
+                workers=[worker],
+                test_workers=[],
+                logfile_path="out.json",
+            )
+
+        assert suffix_init.calls == [worker.tokenizer]
+        assert mock_individual.call_args.kwargs["control_init"] == "initialized suffix"
+
+    def test_resolve_control_init_returns_default_when_suffix_init_not_configured(self) -> None:
+        gen = GCGGenerator(
+            models=[GCGModelConfig(name=_LLAMA_2)],
+            algorithm=GCGAlgorithmConfig(control_init="seed control"),
+        )
+
+        assert gen._resolve_control_init(workers=[]) == "seed control"
+
+    def test_resolve_control_init_raises_when_suffix_init_requires_workers(self) -> None:
+        """Test _resolve_control_init raises ValueError when suffix_init configured but no workers."""
+
+        class _SuffixInitStub:
+            def make_initial_suffix(self, *, tokenizer: object) -> str:
+                return "initialized suffix"
+
+        suffix_init = _SuffixInitStub()
+        gen = GCGGenerator(
+            models=[GCGModelConfig(name=_LLAMA_2)],
+            algorithm=GCGAlgorithmConfig(suffix_init=suffix_init),
+        )
+
+        with pytest.raises(ValueError, match="Cannot resolve suffix_init without at least one worker"):
+            gen._resolve_control_init(workers=[])
+
+    async def test_perform_async_binds_algorithm_extensions_into_mpa_factory(self, tmp_path: Path) -> None:
+        class _SamplingStub:
+            def sample_candidates(
+                self,
+                *,
+                gradient: Any,
+                control_tokens: Any,
+                batch_size: int,
+                top_k: int,
+                temperature: float,
+                allow_non_ascii: bool,
+                non_ascii_tokens: Any,
+            ) -> Any:
+                return control_tokens
+
+        class _LossStub:
+            def compute_loss(
+                self,
+                *,
+                logits: Any,
+                token_ids: Any,
+                target_slice: slice,
+                control_slice: slice,
+            ) -> Any:
+                return logits
+
+        class _FilterStub:
+            def filter_candidates(
+                self,
+                *,
+                candidate_tokens: Any,
+                tokenizer: Any,
+                current_control: str,
+            ) -> list[str]:
+                return [current_control]
+
+        sampling = _SamplingStub()
+        loss = _LossStub()
+        candidate_filter = _FilterStub()
+        gen = GCGGenerator(
+            models=[GCGModelConfig(name=_LLAMA_2)],
+            algorithm=GCGAlgorithmConfig(
+                sampling=sampling,
+                loss=loss,
+                candidate_filter=candidate_filter,
+            ),
+            output=GCGOutputConfig(result_prefix=str(tmp_path / "gcg")),
+        )
+        context = GCGContext(
+            goals=["g"],
+            targets=["t"],
+            workers=[MagicMock()],
+            test_workers=[],
+        )
+        fake_attack = MagicMock()
+
+        with (
+            patch.object(gen, "_create_attack", return_value=fake_attack) as mock_create_attack,
+            patch.object(gen, "_build_logfile_path", return_value=str(tmp_path / "result.json")),
+            patch.object(gen, "_read_result", return_value=GCGResult(final_suffix="x")),
+            patch("pyrit.auxiliary_attacks.gcg.generator.asyncio.to_thread", new=AsyncMock(return_value=None)),
+        ):
+            await gen._perform_async(context=context)
+
+        managers = mock_create_attack.call_args.kwargs["managers"]
+        mpa_factory = managers["MPA"]
+        assert isinstance(mpa_factory, partial)
+        assert mpa_factory.func is generator_mod.attack_lib.GCGMultiPromptAttack
+        assert mpa_factory.keywords["sampling"] is sampling
+        assert mpa_factory.keywords["loss"] is loss
+        assert mpa_factory.keywords["candidate_filter"] is candidate_filter
 
 
 class TestReadResult:

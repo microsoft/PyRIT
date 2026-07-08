@@ -877,9 +877,10 @@ class TestMemoryLabelsPropagation:
         )
 
         call_args = mock_normalizer.send_prompt_async.call_args
-        passed_labels = call_args.kwargs.get("labels")
+        sent_message = call_args.kwargs["message"]
+        passed_labels = sent_message.message_pieces[0].labels
 
-        assert passed_labels is not None, "Labels should be passed to send_prompt_async"
+        assert passed_labels, "Labels should be stamped on the sent message pieces"
         assert passed_labels["test_key"] == "test_value"
 
 

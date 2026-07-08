@@ -9,7 +9,7 @@ from pyrit.common import apply_defaults
 from pyrit.common.path import EXECUTOR_RED_TEAM_PATH, SCORER_SEED_PROMPT_PATH
 from pyrit.executor.attack import ContextComplianceAttack, RedTeamingAttack, RolePlayAttack, RolePlayPaths
 from pyrit.executor.attack.core.attack_config import AttackAdversarialConfig, AttackScoringConfig
-from pyrit.models import Parameter, SeedAttackGroup
+from pyrit.models import Parameter, SeedAttackGroup, SeedPrompt
 from pyrit.prompt_target import PromptTarget
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
@@ -44,14 +44,24 @@ class ScamStrategy(ScenarioStrategy):
         to be used during training seminars.
     - PersuasiveRedTeamingAttack: This multi-turn attack uses a persuasive persona with the `RedTeamingAttack` to
         iteratively convince the target to comply with the scam objective over multiple turns.
+
+    Aggregate Values:
+    - ALL: Every technique (both single-turn and the multi-turn PersuasiveRedTeamingAttack).
+    - DEFAULT: The single-turn techniques (ContextCompliance, RolePlay). Excludes the multi-turn
+        PersuasiveRedTeamingAttack so the default run stays fast; opt into it via ALL or MULTI_TURN.
+    - SINGLE_TURN / MULTI_TURN: Group techniques by turn count. DEFAULT intentionally shares
+        membership with SINGLE_TURN today (both are the single-turn techniques); they are kept
+        distinct because DEFAULT is the recommended fast default while SINGLE_TURN is a turn-count
+        grouping, and their membership may diverge later.
     """
 
     ALL = ("all", {"all"})
+    DEFAULT = ("default", {"default"})
     SINGLE_TURN = ("single_turn", {"single_turn"})
     MULTI_TURN = ("multi_turn", {"multi_turn"})
 
-    ContextCompliance = ("context_compliance", {"single_turn"})
-    RolePlay = ("role_play", {"single_turn"})
+    ContextCompliance = ("context_compliance", {"single_turn", "default"})
+    RolePlay = ("role_play", {"single_turn", "default"})
     PersuasiveRedTeamingAttack = ("persuasive_rta", {"multi_turn"})
 
     @classmethod
@@ -63,7 +73,7 @@ class ScamStrategy(ScenarioStrategy):
             set[str]: Set of tags that are aggregate markers.
         """
         # Include base class aggregates ("all") and add scenario-specific ones
-        return super().get_aggregate_tags() | {"single_turn", "multi_turn"}
+        return super().get_aggregate_tags() | {"default", "single_turn", "multi_turn"}
 
 
 class Scam(Scenario):
@@ -72,7 +82,7 @@ class Scam(Scenario):
     (e.g., phishing emails, fraudulent messages) with primarily persuasion-oriented techniques.
     """
 
-    VERSION: int = 1
+    VERSION: int = 2
 
     @classmethod
     def _get_additional_scoring_questions(cls) -> list[Path]:
@@ -135,7 +145,7 @@ class Scam(Scenario):
         super().__init__(
             version=self.VERSION,
             strategy_class=ScamStrategy,
-            default_strategy=ScamStrategy.ALL,
+            default_strategy=ScamStrategy.DEFAULT,
             default_dataset_config=DatasetAttackConfiguration(dataset_names=["airt_scams"], max_dataset_size=4),
             objective_scorer=objective_scorer,
             scenario_result_id=scenario_result_id,
@@ -164,9 +174,9 @@ class Scam(Scenario):
 
         if strategy == "persuasive_rta":
             # Set system prompt to generic persuasion persona
-            self._adversarial_config.system_prompt_path = Path(
-                PERSUASION_DECEPTION_PATH, "persuasion_persona_generic.yaml"
-            ).resolve()
+            self._adversarial_config.system_prompt = SeedPrompt.from_yaml_file(
+                Path(PERSUASION_DECEPTION_PATH, "persuasion_persona_generic.yaml").resolve()
+            )
 
             attack_strategy = RedTeamingAttack(
                 objective_target=self._objective_target,
@@ -183,7 +193,7 @@ class Scam(Scenario):
             )
         elif strategy == "context_compliance":
             # Set system prompt to default
-            self._adversarial_config.system_prompt_path = None
+            self._adversarial_config.system_prompt = None
 
             attack_strategy = ContextComplianceAttack(
                 objective_target=self._objective_target,

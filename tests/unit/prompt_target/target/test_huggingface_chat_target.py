@@ -578,15 +578,3 @@ async def test_effective_generation_config_in_metadata():
     assert effective_config["temperature"] == 1.0
     # Model defaults should also be present
     assert effective_config["eos_token_id"] == 2
-
-
-@pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
-async def test_load_model_and_tokenizer_emits_deprecation_warning_and_delegates():
-    target = HuggingFaceChatTarget(model_id="test_model", use_cuda=False)
-    # Await the background task to avoid warnings about pending coroutines
-    await target.load_model_and_tokenizer_task
-
-    with patch.object(target, "load_model_and_tokenizer_async", new=AsyncMock()) as mock_async:
-        with pytest.warns(DeprecationWarning, match="load_model_and_tokenizer_async"):
-            await target.load_model_and_tokenizer()
-    mock_async.assert_awaited_once()

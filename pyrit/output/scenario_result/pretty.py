@@ -5,7 +5,6 @@ import textwrap
 
 from colorama import Fore, Style
 
-from pyrit.common.deprecation import print_deprecation_message
 from pyrit.models import AttackOutcome, ScenarioResult
 from pyrit.output.scenario_result.base import ScenarioResultPrinterBase
 from pyrit.output.scorer.base import ScorerPrinterBase
@@ -234,16 +233,6 @@ class PrettyScenarioResultPrinter(ScenarioResultPrinterBase):
         parts.append("".join(lines))
 
         return "".join(parts)
-
-    async def print_summary_async(self, result: ScenarioResult) -> None:
-        """
-        Use ``write_async`` instead. This method is deprecated.
-
-        Args:
-            result (ScenarioResult): The scenario result to summarize.
-        """
-        print_deprecation_message(old_item="print_summary_async", new_item="write_async", removed_in="0.16.0")
-        await self.write_async(result)
 
 
 class PrettyScenarioResultMemoryPrinter(PrettyScenarioResultPrinter):

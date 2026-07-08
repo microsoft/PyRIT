@@ -29,12 +29,9 @@ class VariationSelectorSmugglerConverter(SmugglerConverter):
     visible and hidden content within a single string.
     """
 
-    # Grandfathered: ``action`` is inherited from SmugglerConverter's public API.
-    # TODO: remove this opt-out and insert ``*,`` after ``self`` in 0.16.0.
-    _brick_legacy_init = True
-
     def __init__(
         self,
+        *,
         action: Literal["encode", "decode"] = "encode",
         base_char_utf8: str | None = None,
         embed_in_base: bool = True,
