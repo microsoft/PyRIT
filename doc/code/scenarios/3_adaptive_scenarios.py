@@ -47,7 +47,7 @@
 from pathlib import Path
 
 from pyrit.registry import TargetRegistry
-from pyrit.scenario import DatasetConfiguration
+from pyrit.scenario import DatasetAttackConfiguration
 from pyrit.scenario.printer.console_printer import ConsoleScenarioResultPrinter
 from pyrit.scenario.scenarios.adaptive import TextAdaptive
 from pyrit.setup import initialize_from_config_async
@@ -101,7 +101,7 @@ configured_scenario.set_params_from_args(  # type: ignore
         "max_attempts_per_objective": 5,
         "objective_target": objective_target,
         "scenario_strategies": [strategy_class("single_turn")],
-        "dataset_config": DatasetConfiguration(
+        "dataset_config": DatasetAttackConfiguration(
             dataset_names=["airt_hate", "airt_violence"],
             max_dataset_size=4,
         ),
@@ -131,7 +131,7 @@ resumed_scenario.set_params_from_args(  # type: ignore
         "max_attempts_per_objective": 5,
         "objective_target": objective_target,
         "scenario_strategies": [strategy_class("single_turn")],
-        "dataset_config": DatasetConfiguration(
+        "dataset_config": DatasetAttackConfiguration(
             dataset_names=["airt_hate", "airt_violence"],
             max_dataset_size=4,
         ),

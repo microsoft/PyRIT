@@ -39,14 +39,14 @@ objective_target = TargetRegistry.get_registry_singleton().instances.get("openai
 # %% [markdown]
 # ## Dataset Configuration
 #
-# `DatasetConfiguration` controls which prompts (objectives) are sent to the target.
+# `DatasetAttackConfiguration` controls which prompts (objectives) are sent to the target.
 # The simplest approach uses `dataset_names` to load datasets by name from memory.
 # By default, `RedTeamAgent` loads four random objectives from HarmBench [@mazeika2024harmbench].
 
 # %%
-from pyrit.scenario import DatasetConfiguration
+from pyrit.scenario import DatasetAttackConfiguration
 
-dataset_config = DatasetConfiguration(dataset_names=["harmbench"], max_dataset_size=2)
+dataset_config = DatasetAttackConfiguration(dataset_names=["harmbench"], max_dataset_size=2)
 
 # %% [markdown]
 # For more control, use `SeedDatasetProvider` to fetch datasets and pass explicit `seed_groups`.
@@ -60,7 +60,7 @@ datasets = await SeedDatasetProvider.fetch_datasets_async(dataset_names=["harmbe
 seed_groups: list[SeedGroup] = datasets[0].seed_groups  # type: ignore
 
 # Pass explicit seed_groups instead of dataset_names
-dataset_config = DatasetConfiguration(seed_groups=seed_groups, max_dataset_size=2)
+dataset_config = DatasetAttackConfiguration(seed_groups=seed_groups, max_dataset_size=2)
 
 # %% [markdown]
 # ## Strategy Selection and Composition
