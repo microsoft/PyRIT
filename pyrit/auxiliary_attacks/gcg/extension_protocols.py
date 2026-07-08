@@ -16,12 +16,11 @@ substitute custom behavior:
 - ``SuffixInitializer`` — how the initial suffix string fed into the
   optimization loop is constructed.
 
-The module is **typing surface only**. It ships no concrete implementations,
-no defaults, and no wiring into ``GCGAlgorithmConfig`` or
-``GCGMultiPromptAttack``. The default behaviors that match the current attack
-code will land as concrete classes in a follow-up PR; the optional
-``GCGAlgorithmConfig`` fields that select between defaults and custom
-implementations will land in the PR after that.
+The module is **typing surface only**. Concrete defaults live in
+``default_implementations.py``, and orchestration wiring lives in
+``GCGAlgorithmConfig`` + ``GCGMultiPromptAttack``. Keeping this module purely
+protocol definitions preserves a stable extension API that can be imported
+without pulling in heavy runtime dependencies.
 
 Tensor-typed signatures are kept lazy via ``from __future__ import
 annotations`` plus a ``TYPE_CHECKING`` import for ``torch`` so that

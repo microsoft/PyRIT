@@ -1,7 +1,8 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from unittest.mock import MagicMock
+from typing import Any
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -25,6 +26,7 @@ gcg_attack_mod = pytest.importorskip(
     "pyrit.auxiliary_attacks.gcg.attack.gcg.gcg_attack",
     reason="GCG optional dependencies not installed",
 )
+GCGMultiPromptAttack = gcg_attack_mod.GCGMultiPromptAttack
 GCGPromptManager = gcg_attack_mod.GCGPromptManager
 token_gradients = gcg_attack_mod.token_gradients
 
@@ -501,3 +503,466 @@ class TestGetWorkersChatTemplateValidation:
         with patch.object(attack_manager_mod.AutoTokenizer, "from_pretrained", return_value=bare_tokenizer):
             with pytest.raises(ValueError, match="no chat_template configured"):
                 get_workers(params)
+
+
+class _Queue:
+    def __init__(self, items: list[Any]) -> None:
+        self._items = list(items)
+
+    def get(self) -> Any:
+        return self._items.pop(0)
+
+
+class _WorkerStub:
+    def __init__(
+        self,
+        *,
+        gradient: torch.Tensor,
+        logits: torch.Tensor,
+        token_ids: torch.Tensor,
+        tokenizer: MagicMock,
+    ) -> None:
+        self.model = MagicMock()
+        self.model.device = "cpu"
+        self.tokenizer = tokenizer
+        self.results = _Queue([gradient, (logits, token_ids)])
+        self.calls: list[tuple] = []
+
+    def __call__(self, *args: Any, **kwargs: Any) -> None:
+        self.calls.append((args, kwargs))
+
+
+class _PromptManagerStub:
+    def __init__(
+        self,
+        *,
+        prompt: AttackPrompt,
+        control_tokens: torch.Tensor,
+        disallowed_tokens: torch.Tensor,
+        control_str: str,
+    ) -> None:
+        self._prompts = [prompt]
+        self._control_tokens = control_tokens
+        self._disallowed_tokens = disallowed_tokens
+        self.control_str = control_str
+
+    def __len__(self) -> int:
+        return len(self._prompts)
+
+    def __getitem__(self, i: int) -> AttackPrompt:
+        return self._prompts[i]
+
+    @property
+    def control_toks(self) -> torch.Tensor:
+        return self._control_tokens
+
+    @property
+    def disallowed_toks(self) -> torch.Tensor:
+        return self._disallowed_tokens
+
+
+class _SpySampling:
+    def __init__(self, *, sampled_tokens: torch.Tensor) -> None:
+        self.sampled_tokens = sampled_tokens
+        self.calls: list[dict] = []
+
+    def sample_candidates(
+        self,
+        *,
+        gradient: torch.Tensor,
+        control_tokens: torch.Tensor,
+        batch_size: int,
+        top_k: int,
+        temperature: float,
+        allow_non_ascii: bool,
+        non_ascii_tokens: torch.Tensor,
+    ) -> torch.Tensor:
+        self.calls.append(
+            {
+                "gradient": gradient.clone(),
+                "control_tokens": control_tokens.clone(),
+                "batch_size": batch_size,
+                "top_k": top_k,
+                "temperature": temperature,
+                "allow_non_ascii": allow_non_ascii,
+                "non_ascii_tokens": non_ascii_tokens.clone(),
+            }
+        )
+        return self.sampled_tokens.clone()
+
+
+class _SpyLoss:
+    def __init__(self, *, losses: torch.Tensor) -> None:
+        self.losses = losses
+        self.calls: list[dict] = []
+
+    def compute_loss(
+        self,
+        *,
+        logits: torch.Tensor,
+        token_ids: torch.Tensor,
+        target_slice: slice,
+        control_slice: slice,
+    ) -> torch.Tensor:
+        self.calls.append(
+            {
+                "logits": logits.clone(),
+                "token_ids": token_ids.clone(),
+                "target_slice": target_slice,
+                "control_slice": control_slice,
+            }
+        )
+        return self.losses.to(logits.device)
+
+
+class _SpyFilter:
+    def __init__(self, *, candidates: list[str]) -> None:
+        self.candidates = list(candidates)
+        self.calls: list[dict] = []
+
+    def filter_candidates(
+        self,
+        *,
+        candidate_tokens: torch.Tensor,
+        tokenizer: MagicMock,
+        current_control: str,
+    ) -> list[str]:
+        self.calls.append(
+            {
+                "candidate_tokens": candidate_tokens.clone(),
+                "tokenizer": tokenizer,
+                "current_control": current_control,
+            }
+        )
+        return list(self.candidates)
+
+
+class TestGCGMultiPromptAttackStepWiring:
+    @staticmethod
+    def _make_tokenizer() -> MagicMock:
+        tokenizer = MagicMock()
+        tokenizer.vocab_size = 100
+
+        def decode_fn(ids, **_kwargs):
+            values = ids.tolist() if hasattr(ids, "tolist") else list(ids)
+            return " ".join(str(int(v)) for v in values)
+
+        def call_fn(text, **_kwargs):
+            output = MagicMock()
+            if text == "!":
+                output.input_ids = [0]
+            else:
+                output.input_ids = [int(piece) for piece in text.split()] if text else []
+            return output
+
+        tokenizer.decode.side_effect = decode_fn
+        tokenizer.side_effect = call_fn
+        return tokenizer
+
+    @staticmethod
+    def _make_prompt(*, target_slice: slice, control_slice: slice) -> AttackPrompt:
+        prompt = object.__new__(AttackPrompt)
+        prompt._target_slice = target_slice
+        prompt._control_slice = control_slice
+        return prompt
+
+    @staticmethod
+    def _make_attack(
+        *,
+        worker: _WorkerStub,
+        prompt_manager: _PromptManagerStub,
+        sampling: object | None = None,
+        loss: object | None = None,
+        candidate_filter: object | None = None,
+    ) -> GCGMultiPromptAttack:
+        attack = object.__new__(GCGMultiPromptAttack)
+        attack.workers = [worker]
+        attack.models = [worker.model]
+        attack.prompts = [prompt_manager]
+        attack._sampling = sampling
+        attack._loss = loss
+        attack._candidate_filter = candidate_filter
+        return attack
+
+    def test_step_default_path_matches_legacy_behavior(self) -> None:
+        gradient = torch.tensor(
+            [
+                [0.3, -0.4, 0.8, -0.2, 0.1, 0.5],
+                [-0.3, 0.2, -0.8, 0.4, 0.1, 0.7],
+                [0.2, 0.6, -0.1, -0.5, 0.4, -0.2],
+            ],
+            dtype=torch.float32,
+        )
+        logits = torch.randn(1, 8, 10)
+        token_ids = torch.randint(0, 10, (1, 8))
+        control_tokens = torch.tensor([1, 2, 3], dtype=torch.long)
+        disallowed_tokens = torch.tensor([], dtype=torch.long)
+        target_slice = slice(4, 6)
+        control_slice = slice(1, 4)
+        current_control = "99 99 99"
+        tokenizer = self._make_tokenizer()
+
+        worker = _WorkerStub(gradient=gradient.clone(), logits=logits, token_ids=token_ids, tokenizer=tokenizer)
+        prompt = self._make_prompt(target_slice=target_slice, control_slice=control_slice)
+        prompt_manager = _PromptManagerStub(
+            prompt=prompt,
+            control_tokens=control_tokens,
+            disallowed_tokens=disallowed_tokens,
+            control_str=current_control,
+        )
+        attack = self._make_attack(worker=worker, prompt_manager=prompt_manager)
+
+        target_weight = 1.3
+        control_weight = 0.2
+        torch.manual_seed(2026)
+        actual_control, actual_loss = attack.step(
+            batch_size=1,
+            topk=3,
+            temp=1.0,
+            allow_non_ascii=True,
+            target_weight=target_weight,
+            control_weight=control_weight,
+            verbose=True,
+            filter_cand=True,
+        )
+
+        legacy_prompt_manager = object.__new__(GCGPromptManager)
+        legacy_prompt_for_sampling = MagicMock()
+        legacy_prompt_for_sampling.control_toks = control_tokens.clone()
+        legacy_prompt_manager._prompts = [legacy_prompt_for_sampling]
+        legacy_prompt_manager._nonascii_toks = disallowed_tokens
+
+        legacy_attack = object.__new__(MultiPromptAttack)
+        legacy_worker = MagicMock()
+        legacy_worker.tokenizer = tokenizer
+        legacy_attack.workers = [legacy_worker]
+
+        legacy_prompt_for_loss = self._make_prompt(target_slice=target_slice, control_slice=control_slice)
+        normalized_gradient = gradient / gradient.norm(dim=-1, keepdim=True)
+        torch.manual_seed(2026)
+        legacy_control_cand = legacy_prompt_manager.sample_control(
+            normalized_gradient.clone(),
+            1,
+            topk=3,
+            temp=1.0,
+            allow_non_ascii=True,
+        )
+        legacy_controls = legacy_attack.get_filtered_cands(
+            0,
+            legacy_control_cand,
+            filter_cand=True,
+            curr_control=current_control,
+        )
+        legacy_loss = target_weight * legacy_prompt_for_loss.target_loss(logits, token_ids).mean(
+            dim=-1
+        ) + control_weight * legacy_prompt_for_loss.control_loss(logits, token_ids).mean(dim=-1)
+
+        assert actual_control == legacy_controls[0]
+        assert actual_loss == pytest.approx(legacy_loss[0].item())
+
+    def test_step_uses_custom_protocol_implementations_when_supplied(self) -> None:
+        gradient = torch.randn(3, 6)
+        logits = torch.randn(2, 8, 10)
+        token_ids = torch.randint(0, 10, (2, 8))
+        control_tokens = torch.tensor([1, 2, 3], dtype=torch.long)
+        disallowed_tokens = torch.tensor([5], dtype=torch.long)
+        tokenizer = self._make_tokenizer()
+
+        worker = _WorkerStub(gradient=gradient.clone(), logits=logits, token_ids=token_ids, tokenizer=tokenizer)
+        prompt = self._make_prompt(target_slice=slice(4, 6), control_slice=slice(1, 4))
+        prompt_manager = _PromptManagerStub(
+            prompt=prompt,
+            control_tokens=control_tokens,
+            disallowed_tokens=disallowed_tokens,
+            control_str="current control",
+        )
+
+        sampled_tokens = torch.tensor([[8, 8, 8], [9, 9, 9]], dtype=torch.long)
+        sampling = _SpySampling(sampled_tokens=sampled_tokens)
+        candidate_filter = _SpyFilter(candidates=["candidate-A", "candidate-B"])
+        custom_losses = torch.tensor([3.0, 0.5], dtype=torch.float32)
+        loss = _SpyLoss(losses=custom_losses)
+        attack = self._make_attack(
+            worker=worker,
+            prompt_manager=prompt_manager,
+            sampling=sampling,
+            loss=loss,
+            candidate_filter=candidate_filter,
+        )
+
+        selected_control, normalized_loss = attack.step(
+            batch_size=2,
+            topk=4,
+            temp=0.8,
+            allow_non_ascii=False,
+            target_weight=0.0,
+            control_weight=1.0,
+            verbose=True,
+            filter_cand=True,
+        )
+
+        assert selected_control == "candidate-B"
+        assert normalized_loss == pytest.approx(0.5)
+        assert len(sampling.calls) == 1
+        assert len(candidate_filter.calls) == 1
+        assert len(loss.calls) == 1
+        assert sampling.calls[0]["batch_size"] == 2
+        assert sampling.calls[0]["top_k"] == 4
+        assert sampling.calls[0]["allow_non_ascii"] is False
+        assert candidate_filter.calls[0]["current_control"] == "current control"
+
+    def test_gcg_multi_prompt_attack_init_with_custom_protocols(self) -> None:
+        """Test GCGMultiPromptAttack.__init__ stores custom sampling/loss/filter."""
+        sampling = _SpySampling(sampled_tokens=torch.tensor([[1, 2, 3]]))
+        loss = _SpyLoss(losses=torch.tensor([1.0]))
+        candidate_filter = _SpyFilter(candidates=["filtered"])
+        workers = [MagicMock()]
+
+        with patch.object(MultiPromptAttack, "__init__", return_value=None) as mock_base_init:
+            attack = GCGMultiPromptAttack(
+                goals=["goal"],
+                targets=["target"],
+                workers=workers,
+                control_init="seed control",
+                sampling=sampling,
+                loss=loss,
+                candidate_filter=candidate_filter,
+            )
+
+        assert mock_base_init.call_count == 1
+        assert mock_base_init.call_args.args[:4] == (["goal"], ["target"], workers, "seed control")
+
+        assert attack._sampling is sampling
+        assert attack._loss is loss
+        assert attack._candidate_filter is candidate_filter
+
+    def test_step_aggregates_workers_when_grad_shapes_mismatch(self) -> None:
+        """Test step handles a worker gradient shape mismatch by sampling per group."""
+        tokenizer = self._make_tokenizer()
+        prompt = self._make_prompt(target_slice=slice(0, 1), control_slice=slice(0, 1))
+        prompt_manager1 = _PromptManagerStub(
+            prompt=prompt,
+            control_tokens=torch.tensor([1], dtype=torch.long),
+            disallowed_tokens=torch.tensor([], dtype=torch.long),
+            control_str="seed",
+        )
+        prompt_manager2 = _PromptManagerStub(
+            prompt=prompt,
+            control_tokens=torch.tensor([1], dtype=torch.long),
+            disallowed_tokens=torch.tensor([], dtype=torch.long),
+            control_str="seed",
+        )
+
+        grad1 = torch.tensor([[0.1, 0.2, 0.3]], dtype=torch.float32)
+        grad2 = torch.tensor([[0.4, 0.5, 0.6, 0.7]], dtype=torch.float32)
+        logits = torch.randn(1, 8, 10)
+        token_ids = torch.randint(0, 10, (1, 8))
+        worker1 = _WorkerStub(gradient=grad1, logits=logits, token_ids=token_ids, tokenizer=tokenizer)
+        worker2 = _WorkerStub(gradient=grad2, logits=logits, token_ids=token_ids, tokenizer=tokenizer)
+        worker1.results = _Queue([grad1, (logits, token_ids), (logits, token_ids)])
+        worker2.results = _Queue([grad2, (logits, token_ids), (logits, token_ids)])
+
+        attack = object.__new__(GCGMultiPromptAttack)
+        attack.workers = [worker1, worker2]
+        attack.models = [worker1.model]
+        attack.prompts = [prompt_manager1, prompt_manager2]
+        attack.control_str = "seed"
+
+        class _ConstantLoss:
+            @staticmethod
+            def compute_loss(
+                *,
+                logits: torch.Tensor,
+                token_ids: torch.Tensor,
+                target_slice: slice,
+                control_slice: slice,
+            ) -> torch.Tensor:
+                return torch.tensor([0.5], dtype=torch.float32)
+
+        with (
+            patch.object(
+                attack,
+                "_sample_control_candidates",
+                return_value=torch.tensor([[1, 2, 3]], dtype=torch.long),
+            ) as mock_sample,
+            patch.object(attack, "_filter_control_candidates", return_value=["candidate"]),
+            patch.object(attack, "_resolve_loss", return_value=_ConstantLoss()),
+            patch.object(attack, "_get_control_length", return_value=None),
+        ):
+            control, normalized_loss = attack.step(
+                batch_size=1,
+                topk=2,
+                temp=1.0,
+                allow_non_ascii=True,
+                target_weight=1.0,
+                control_weight=0.1,
+                verbose=True,
+                filter_cand=True,
+            )
+
+        assert control == "candidate"
+        assert normalized_loss == pytest.approx(0.5)
+        assert mock_sample.call_count == 2
+        assert mock_sample.call_args_list[0].kwargs["worker_index"] == 0
+        assert mock_sample.call_args_list[1].kwargs["worker_index"] == 1
+
+    def test_resolve_methods_return_defaults_when_none(self) -> None:
+        """Test _resolve_* methods return defaults when custom protocols are None."""
+        worker = _WorkerStub(
+            gradient=torch.tensor([[0.1]]),
+            logits=torch.randn(1, 8, 10),
+            token_ids=torch.randint(0, 10, (1, 8)),
+            tokenizer=self._make_tokenizer(),
+        )
+        prompt_manager = _PromptManagerStub(
+            prompt=self._make_prompt(target_slice=slice(0, 1), control_slice=slice(0, 1)),
+            control_tokens=torch.tensor([1]),
+            disallowed_tokens=torch.tensor([]),
+            control_str="test",
+        )
+
+        attack = self._make_attack(worker=worker, prompt_manager=prompt_manager)
+
+        # Test _resolve_sampling returns default
+        sampler = attack._resolve_sampling()
+        assert sampler is not None
+
+        # Test _resolve_loss returns default
+        loss_func = attack._resolve_loss(target_weight=1.0, control_weight=0.1)
+        assert loss_func is not None
+
+        # Test _resolve_candidate_filter returns default
+        filter_func = attack._resolve_candidate_filter(filter_cand=True)
+        assert filter_func is not None
+
+    def test_get_control_length_success(self) -> None:
+        """Test _get_control_length returns token count after dropping the first token."""
+        tokenizer = self._make_tokenizer()
+        worker = _WorkerStub(
+            gradient=torch.tensor([[0.1]]),
+            logits=torch.randn(1, 8, 10),
+            token_ids=torch.randint(0, 10, (1, 8)),
+            tokenizer=tokenizer,
+        )
+        attack = object.__new__(GCGMultiPromptAttack)
+        attack.workers = [worker]
+
+        length = attack._get_control_length(control="1 2 3")
+        assert length == 2
+
+    def test_get_control_length_handles_error(self) -> None:
+        """Test _get_control_length returns None on tokenizer error."""
+        tokenizer = MagicMock()
+        tokenizer.side_effect = ValueError("Tokenizer error")
+
+        worker = _WorkerStub(
+            gradient=torch.tensor([[0.1]]),
+            logits=torch.randn(1, 8, 10),
+            token_ids=torch.randint(0, 10, (1, 8)),
+            tokenizer=tokenizer,
+        )
+        attack = object.__new__(GCGMultiPromptAttack)
+        attack.workers = [worker]
+
+        length = attack._get_control_length(control="test")
+        assert length is None

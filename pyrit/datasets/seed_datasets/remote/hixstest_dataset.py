@@ -3,7 +3,6 @@
 
 import logging
 import os
-import warnings
 from enum import Enum
 
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
@@ -69,7 +68,6 @@ class _HiXSTestDataset(_RemoteDatasetLoader):
         self,
         *,
         language: HiXSTestLanguage = HiXSTestLanguage.HINDI,
-        split: str | None = None,
         token: str | None = None,
     ) -> None:
         """
@@ -79,23 +77,12 @@ class _HiXSTestDataset(_RemoteDatasetLoader):
             language: Which language to use as the primary ``SeedPrompt.value``.
                 Defaults to ``HiXSTestLanguage.HINDI`` (the dataset's intended language).
                 Pass ``HiXSTestLanguage.ENGLISH`` to use the English translation instead.
-            split: **Deprecated.** Upstream ``walledai/HiXSTest`` publishes only the
-                ``"train"`` split, so this kwarg has no effect. It will be removed in
-                v0.16.0.
             token: Hugging Face authentication token. If not provided, reads from the
                 ``HUGGINGFACE_TOKEN`` environment variable.
 
         Raises:
             ValueError: If ``language`` is not a ``HiXSTestLanguage`` instance.
         """
-        if split is not None:
-            warnings.warn(
-                "'split' is deprecated and will be removed in v0.16.0. "
-                "Upstream walledai/HiXSTest publishes only the 'train' split, "
-                "so this kwarg has no effect.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
         self._validate_enum(language, HiXSTestLanguage, "language")
         self.language = language
         self.token = token if token is not None else os.environ.get("HUGGINGFACE_TOKEN")

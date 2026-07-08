@@ -38,12 +38,7 @@ class AskToDecodeConverter(PromptConverter):
 
     all_templates = garak_templates + extra_templates
 
-    # Grandfathered: ``template`` and ``encoding_name`` are part of the public
-    # positional API.
-    # TODO: remove this opt-out and insert ``*,`` after ``self`` in 0.16.0.
-    _brick_legacy_init = True
-
-    def __init__(self, template: str | None = None, encoding_name: str = "cipher") -> None:
+    def __init__(self, *, template: str | None = None, encoding_name: str = "cipher") -> None:
         """
         Initialize the converter with a specified encoding name and template.
 

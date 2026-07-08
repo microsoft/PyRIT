@@ -2,7 +2,6 @@
 # Licensed under the MIT license.
 
 import logging
-import warnings
 
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
@@ -36,24 +35,6 @@ class _ORBenchBaseDataset(_RemoteDatasetLoader):
     # Metadata shared across all OR-Bench subclasses; subclasses override `size`.
     modalities: tuple[Modality, ...] = (Modality.TEXT,)
     tags: frozenset[str] = frozenset({"default", "safety", "refusal"})
-
-    def __init__(self, *, split: str | None = None) -> None:
-        """
-        Initialize the OR-Bench dataset loader.
-
-        Args:
-            split: **Deprecated.** Every config of ``bench-llm/OR-Bench`` publishes only
-                the ``"train"`` split, so this kwarg has no effect. It will be removed in
-                v0.16.0.
-        """
-        if split is not None:
-            warnings.warn(
-                "'split' is deprecated and will be removed in v0.16.0. "
-                "Every config of bench-llm/OR-Bench publishes only the 'train' split, "
-                "so this kwarg has no effect.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
 
     async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """

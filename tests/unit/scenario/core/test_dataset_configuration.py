@@ -328,51 +328,6 @@ class TestFetchDatasetAsync:
         assert isinstance(exc_info.value.__cause__, RuntimeError)
 
 
-class TestLegacyDeprecations:
-    """Legacy getters still work but emit ``DeprecationWarning`` (removed in 0.17.0)."""
-
-    def test_get_seed_groups_warns(self, mock_memory: MagicMock, sample_seed_groups: list[SeedGroup]) -> None:
-        config = DatasetConfiguration(seed_groups=sample_seed_groups)
-        with pytest.warns(DeprecationWarning):
-            result = config.get_seed_groups()
-        assert INLINE_DATASET_NAME in result
-
-    def test_get_all_seed_groups_warns(self, sample_seed_groups: list[SeedGroup]) -> None:
-        config = DatasetConfiguration(seed_groups=sample_seed_groups)
-        with pytest.warns(DeprecationWarning):
-            assert len(config.get_all_seed_groups()) == 3
-
-    def test_get_seed_attack_groups_warns(self, sample_seed_groups: list[SeedGroup]) -> None:
-        config = DatasetConfiguration(seed_groups=sample_seed_groups)
-        with pytest.warns(DeprecationWarning):
-            result = config.get_seed_attack_groups()
-        assert INLINE_DATASET_NAME in result
-
-    def test_get_all_seed_attack_groups_warns(self, sample_seed_groups: list[SeedGroup]) -> None:
-        config = DatasetConfiguration(seed_groups=sample_seed_groups)
-        with pytest.warns(DeprecationWarning):
-            groups = config.get_all_seed_attack_groups()
-        assert len(groups) == 3
-        assert all(isinstance(g, SeedAttackGroup) for g in groups)
-
-    def test_get_default_dataset_names_warns(self) -> None:
-        config = DatasetConfiguration(dataset_names=["d1", "d2"])
-        with pytest.warns(DeprecationWarning):
-            assert config.get_default_dataset_names() == ["d1", "d2"]
-
-    def test_get_all_seeds_warns(self, mock_memory: MagicMock) -> None:
-        mock_memory.get_seeds.return_value = make_objectives("a", "b")
-        config = DatasetConfiguration(dataset_names=["d1"])
-        with pytest.warns(DeprecationWarning):
-            assert len(config.get_all_seeds()) == 2
-
-    def test_get_all_seeds_raises_when_no_dataset_names(self, sample_seed_groups: list[SeedGroup]) -> None:
-        config = DatasetConfiguration(seed_groups=sample_seed_groups)
-        with pytest.warns(DeprecationWarning):
-            with pytest.raises(ValueError, match="No dataset names configured"):
-                config.get_all_seeds()
-
-
 class TestValidators:
     """The standalone validator builders and base ``validate``."""
 

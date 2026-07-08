@@ -104,11 +104,6 @@ class TestCBTBenchDataset:
             assert call_kwargs["split"] == "train"
             assert call_kwargs["cache"] is False
 
-    def test_split_kwarg_emits_deprecation_warning(self):
-        """Passing the deprecated ``split`` kwarg emits a DeprecationWarning."""
-        with pytest.warns(DeprecationWarning, match="'split' is deprecated"):
-            _CBTBenchDataset(split="train")
-
     async def test_fetch_dataset_situation_only(self, mock_cbt_bench_data_missing_thoughts):
         """Test that items with only situation (no thoughts) still work."""
         loader = _CBTBenchDataset()

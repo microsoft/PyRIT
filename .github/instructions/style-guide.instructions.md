@@ -181,8 +181,8 @@ package without paying the cost at package load time. See
 Import from the package root when the symbol is exported from `__init__.py`:
 
 ```python
-from pyrit.prompt_target import PromptChatTarget  # CORRECT
-from pyrit.prompt_target.common.prompt_chat_target import PromptChatTarget  # WRONG
+from pyrit.prompt_target import PromptTarget  # CORRECT
+from pyrit.prompt_target.common.prompt_target import PromptTarget  # WRONG
 ```
 
 Heavy submodules not re-exported from `__init__.py` are imported directly:

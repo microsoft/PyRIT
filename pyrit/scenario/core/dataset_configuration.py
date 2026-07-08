@@ -33,7 +33,6 @@ from enum import Enum
 from functools import cached_property
 from typing import TYPE_CHECKING, Any, TypeVar, cast
 
-from pyrit.common.deprecation import print_deprecation_message
 from pyrit.memory import CentralMemory
 from pyrit.models import Seed, SeedAttackGroup, SeedGroup, group_seeds_into_attack_groups
 
@@ -46,9 +45,6 @@ if TYPE_CHECKING:
 # they have no real dataset name. Inline and named sources are mutually exclusive, so this
 # never collides with a configured dataset name.
 INLINE_DATASET_NAME = "inline"
-
-# Version in which the deprecated legacy getters will be removed (current ver: 0.15.0.dev0).
-_LEGACY_REMOVED_IN = "0.17.0"
 
 # Internal helper TypeVar for size-capping any homogeneous list.
 _ItemT = TypeVar("_ItemT")
@@ -276,9 +272,6 @@ class DatasetConfiguration:
       check). The preferred way to enforce a constraint type-wide.
     - ``_collect_seeds_for_dataset_async`` -- the per-dataset memory query (override for
       richer filters).
-
-    The legacy getters (``get_seed_groups`` / ``get_all_seed_attack_groups`` / ...) are
-    deprecated and will be removed in 0.17.0; prefer ``DatasetAttackConfiguration``.
     """
 
     def __init__(
@@ -538,164 +531,6 @@ class DatasetConfiguration:
         if self.max_dataset_size is None or len(items) <= self.max_dataset_size:
             return items
         return random.sample(items, self.max_dataset_size)
-
-    # =========================================================================
-    # Legacy getters (deprecated; removed in 0.17.0)
-    # =========================================================================
-
-    def get_seed_groups(self) -> dict[str, list[SeedGroup]]:
-        """
-        Resolve and return seed groups keyed by dataset (deprecated).
-
-        Returns:
-            dict[str, list[SeedGroup]]: Dataset name -> seed groups, sampled per dataset.
-
-        Raises:
-            ValueError: If no seed groups could be resolved from the configuration.
-        """
-        print_deprecation_message(
-            old_item="DatasetConfiguration.get_seed_groups",
-            new_item="DatasetAttackConfiguration.get_attack_groups_by_dataset_async",
-            removed_in=_LEGACY_REMOVED_IN,
-        )
-        return self._get_seed_groups()
-
-    def _get_seed_groups(self) -> dict[str, list[SeedGroup]]:
-        """
-        Resolve and return seed groups keyed by dataset (legacy implementation).
-
-        Returns:
-            dict[str, list[SeedGroup]]: Dataset name -> seed groups, sampled per dataset.
-
-        Raises:
-            ValueError: If no seed groups could be resolved from the configuration.
-        """
-        result: dict[str, list[SeedGroup]] = {}
-
-        if self._seed_groups is not None:
-            sampled = self._apply_max_dataset_size(list(self._seed_groups))
-            if sampled:
-                result[INLINE_DATASET_NAME] = sampled
-        elif self._dataset_names is not None:
-            for name in self._dataset_names:
-                loaded = self._load_seed_groups_for_dataset(dataset_name=name)
-                if loaded:
-                    result[name] = self._apply_max_dataset_size(loaded)
-
-        if not result:
-            raise ValueError("DatasetConfiguration has no seed_groups. Set seed_groups or dataset_names.")
-
-        return result
-
-    def _load_seed_groups_for_dataset(self, *, dataset_name: str) -> list[SeedGroup]:
-        """
-        Load seed groups for a single dataset from memory (legacy override hook).
-
-        Args:
-            dataset_name (str): The dataset name to load.
-
-        Returns:
-            list[SeedGroup]: Seed groups loaded from memory, or empty list if none found.
-        """
-        return list(self._memory.get_seed_groups(dataset_name=dataset_name) or [])
-
-    def get_all_seed_groups(self) -> list[SeedGroup]:
-        """
-        Resolve and return all seed groups as a flat list (deprecated).
-
-        Returns:
-            list[SeedGroup]: All resolved seed groups across datasets.
-        """
-        print_deprecation_message(
-            old_item="DatasetConfiguration.get_all_seed_groups",
-            new_item="DatasetAttackConfiguration.get_seed_attack_groups_async",
-            removed_in=_LEGACY_REMOVED_IN,
-        )
-        all_groups: list[SeedGroup] = []
-        for groups in self._get_seed_groups().values():
-            all_groups.extend(groups)
-        return all_groups
-
-    def get_seed_attack_groups(self) -> dict[str, list[SeedAttackGroup]]:
-        """
-        Resolve and return seed groups as SeedAttackGroups, keyed by dataset (deprecated).
-
-        Returns:
-            dict[str, list[SeedAttackGroup]]: Dataset name -> seed attack groups.
-        """
-        print_deprecation_message(
-            old_item="DatasetConfiguration.get_seed_attack_groups",
-            new_item="DatasetAttackConfiguration.get_attack_groups_by_dataset_async",
-            removed_in=_LEGACY_REMOVED_IN,
-        )
-        return self._get_seed_attack_groups()
-
-    def _get_seed_attack_groups(self) -> dict[str, list[SeedAttackGroup]]:
-        """
-        Resolve and return seed groups as SeedAttackGroups, keyed by dataset (legacy impl).
-
-        Returns:
-            dict[str, list[SeedAttackGroup]]: Dataset name -> seed attack groups.
-        """
-        result: dict[str, list[SeedAttackGroup]] = {}
-        for dataset_name, groups in self._get_seed_groups().items():
-            result[dataset_name] = [SeedAttackGroup(seeds=list(sg.seeds)) for sg in groups]
-        return result
-
-    def get_all_seed_attack_groups(self) -> list[SeedAttackGroup]:
-        """
-        Resolve and return all seed groups as SeedAttackGroups in a flat list (deprecated).
-
-        Returns:
-            list[SeedAttackGroup]: All resolved seed attack groups across datasets.
-        """
-        print_deprecation_message(
-            old_item="DatasetConfiguration.get_all_seed_attack_groups",
-            new_item="DatasetAttackConfiguration.get_seed_attack_groups_async",
-            removed_in=_LEGACY_REMOVED_IN,
-        )
-        all_groups: list[SeedAttackGroup] = []
-        for groups in self._get_seed_attack_groups().values():
-            all_groups.extend(groups)
-        return all_groups
-
-    def get_default_dataset_names(self) -> list[str]:
-        """
-        Get the list of default dataset names for this configuration (deprecated).
-
-        Returns:
-            list[str]: Dataset names, or empty list if using inline seeds.
-        """
-        print_deprecation_message(
-            old_item="DatasetConfiguration.get_default_dataset_names",
-            new_item="DatasetConfiguration.dataset_names",
-            removed_in=_LEGACY_REMOVED_IN,
-        )
-        return self.dataset_names
-
-    def get_all_seeds(self) -> list[Seed]:
-        """
-        Load all seeds from memory for all configured datasets (deprecated).
-
-        Returns:
-            list[Seed]: Seeds from all configured datasets (sampled per dataset).
-
-        Raises:
-            ValueError: If no dataset names are configured.
-        """
-        print_deprecation_message(
-            old_item="DatasetConfiguration.get_all_seeds",
-            new_item="DatasetAttackConfiguration.get_seed_attack_groups_async",
-            removed_in=_LEGACY_REMOVED_IN,
-        )
-        if self._dataset_names is None:
-            raise ValueError("No dataset names configured. Set dataset_names to use get_all_seeds.")
-
-        all_seeds: list[Seed] = []
-        for dataset_name in self._dataset_names:
-            seeds = list(self._memory.get_seeds(dataset_name=dataset_name))
-            all_seeds.extend(self._apply_max_dataset_size(seeds))
-        return all_seeds
 
 
 class DatasetAttackConfiguration(DatasetConfiguration):

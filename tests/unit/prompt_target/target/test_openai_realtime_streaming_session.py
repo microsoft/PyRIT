@@ -103,10 +103,10 @@ def _mock_session_wire(session: _OpenAIRealtimeStreamingSession) -> None:
 
 def _build_normalizer() -> MagicMock:
     normalizer = MagicMock(name="PromptNormalizer")
-    normalizer.add_prepended_conversation_to_memory = AsyncMock()
+    normalizer.add_prepended_conversation_to_memory_async = AsyncMock()
     # Identity: the session treats ``converted is raw_pcm`` as "no converters ran".
     normalizer.convert_audio_async = AsyncMock(side_effect=lambda raw_pcm, **kw: raw_pcm)
-    normalizer.convert_values = AsyncMock()
+    normalizer.convert_values_async = AsyncMock()
     normalizer.hash_and_persist_message_async = AsyncMock()
     return normalizer
 
@@ -289,8 +289,8 @@ async def test_run_async_applies_response_converters_to_assistant_message():
         messages = await _run_session_with_events(session, finish=finish, events=[CommittedEvent(item_id="item-1")])
 
     assert len(messages) == 1
-    normalizer.convert_values.assert_awaited_once()
-    call_kwargs = normalizer.convert_values.await_args.kwargs
+    normalizer.convert_values_async.assert_awaited_once()
+    call_kwargs = normalizer.convert_values_async.await_args.kwargs
     assert call_kwargs["converter_configurations"] == [response_cfg]
     assert call_kwargs["message"] is messages[0]
 
@@ -379,7 +379,7 @@ async def test_run_async_skips_swap_and_identifiers_when_no_request_converters()
 
 
 async def test_run_async_persists_prepended_conversation_and_forwards_vad_config():
-    """``prepended_conversation`` reaches normalizer.add_prepended_conversation_to_memory; vad reaches the session."""
+    """``prepended_conversation`` reaches normalizer.add_prepended_conversation_to_memory_async; vad reaches session."""
     target = _build_target()
     normalizer = _build_normalizer()
 
@@ -415,8 +415,8 @@ async def test_run_async_persists_prepended_conversation_and_forwards_vad_config
     # The streaming session config was emitted exactly once.
     session._send_streaming_session_config_async.assert_awaited_once()
 
-    normalizer.add_prepended_conversation_to_memory.assert_awaited_once()
-    prep_kwargs = normalizer.add_prepended_conversation_to_memory.await_args.kwargs
+    normalizer.add_prepended_conversation_to_memory_async.assert_awaited_once()
+    prep_kwargs = normalizer.add_prepended_conversation_to_memory_async.await_args.kwargs
     assert prep_kwargs["conversation_id"] == "conv-prep"
     assert prep_kwargs["should_convert"] is False
     assert prep_kwargs["prepended_conversation"] == prepended
@@ -675,7 +675,7 @@ async def test_persist_prepended_conversation_false_skips_memory_add():
     # _send_streaming_session_config still runs (it reads the prepended conversation for system msg).
     session._send_streaming_session_config_async.assert_awaited_once()
     # But the memory write is skipped — the caller (e.g., the attack) has already persisted it.
-    normalizer.add_prepended_conversation_to_memory.assert_not_called()
+    normalizer.add_prepended_conversation_to_memory_async.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -734,35 +734,6 @@ def test_open_streaming_session_forwards_kwargs_to_session_constructor(sqlite_in
     assert captured["prepended_conversation"] is prepended
     assert captured["server_vad"] is vad
     assert captured["persist_prepended_conversation"] is False
-
-
-@patch.dict("os.environ", _CLEAN_ENV)
-def test_open_streaming_session_attack_identifier_emits_deprecation_warning(sqlite_instance):
-    """Passing the deprecated ``attack_identifier`` kwarg emits a deprecation message."""
-    from pyrit.prompt_target import RealtimeTarget
-
-    target = RealtimeTarget(api_key="k", endpoint="wss://test_url", model_name="test")
-    normalizer = _build_normalizer()
-
-    async def _empty():
-        if False:
-            yield b""
-
-    with (
-        patch(
-            "pyrit.prompt_target.openai.openai_realtime_target._OpenAIRealtimeStreamingSession",
-            side_effect=lambda **kwargs: MagicMock(name="session"),
-        ),
-        patch("pyrit.prompt_target.openai.openai_realtime_target.print_deprecation_message") as mock_deprecation,
-    ):
-        target.open_streaming_session(
-            audio_chunks=_empty(),
-            prompt_normalizer=normalizer,
-            conversation_id="conv-X",
-            attack_identifier=MagicMock(name="attack_identifier"),
-        )
-
-    mock_deprecation.assert_called_once()
 
 
 # ---------------------------------------------------------------------------

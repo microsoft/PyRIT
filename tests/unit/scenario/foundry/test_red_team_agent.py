@@ -13,7 +13,7 @@ from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
 from pyrit.models import ComponentIdentifier, SeedAttackGroup, SeedObjective
 from pyrit.prompt_converter import Base64Converter
 from pyrit.prompt_target import PromptTarget
-from pyrit.scenario import AtomicAttack, DatasetAttackConfiguration, ScenarioCompositeStrategy
+from pyrit.scenario import AtomicAttack, DatasetAttackConfiguration
 from pyrit.scenario.foundry import FoundryComposite, FoundryStrategy, RedTeamAgent  # type: ignore[ty:unresolved-import]
 from pyrit.score import FloatScaleThresholdScorer, TrueFalseScorer
 
@@ -719,88 +719,6 @@ class TestFoundryProperties:
         assert scenario._scenario_composites[0].attack == FoundryStrategy.Crescendo
         assert scenario._scenario_composites[1].attack is None
         assert scenario._scenario_composites[1].converters == [FoundryStrategy.ROT13]
-
-    @pytest.mark.filterwarnings("ignore::DeprecationWarning")
-    async def test_initialize_converts_scenario_composite_strategy_to_foundry_composite(
-        self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups, mock_dataset_config
-    ):
-        """ScenarioCompositeStrategy passed to initialize_async is converted to FoundryComposite."""
-        legacy = ScenarioCompositeStrategy(strategies=[FoundryStrategy.Crescendo, FoundryStrategy.Base64])
-
-        with patch.object(
-            RedTeamAgent,
-            "_resolve_seed_groups_by_dataset_async",
-            new_callable=AsyncMock,
-            return_value={"memory": mock_memory_seed_groups},
-        ):
-            scenario = RedTeamAgent(
-                attack_scoring_config=AttackScoringConfig(objective_scorer=mock_objective_scorer),
-            )
-            await scenario.initialize_async(
-                objective_target=mock_objective_target,
-                scenario_strategies=[legacy],  # type: ignore[arg-type]
-                dataset_config=mock_dataset_config,
-                include_baseline=False,
-            )
-
-        assert len(scenario._scenario_composites) == 1
-        result = scenario._scenario_composites[0]
-        assert result.attack == FoundryStrategy.Crescendo
-        assert result.converters == [FoundryStrategy.Base64]
-
-    @pytest.mark.filterwarnings("ignore::DeprecationWarning")
-    async def test_initialize_converts_converter_first_composite_strategy(
-        self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups, mock_dataset_config
-    ):
-        """Converter-first ScenarioCompositeStrategy is routed by tags, not position."""
-        legacy = ScenarioCompositeStrategy(strategies=[FoundryStrategy.Base64, FoundryStrategy.Crescendo])
-
-        with patch.object(
-            RedTeamAgent,
-            "_resolve_seed_groups_by_dataset_async",
-            new_callable=AsyncMock,
-            return_value={"memory": mock_memory_seed_groups},
-        ):
-            scenario = RedTeamAgent(
-                attack_scoring_config=AttackScoringConfig(objective_scorer=mock_objective_scorer),
-            )
-            await scenario.initialize_async(
-                objective_target=mock_objective_target,
-                scenario_strategies=[legacy],  # type: ignore[arg-type]
-                dataset_config=mock_dataset_config,
-                include_baseline=False,
-            )
-
-        result = scenario._scenario_composites[0]
-        assert result.attack == FoundryStrategy.Crescendo
-        assert result.converters == [FoundryStrategy.Base64]
-
-    @pytest.mark.filterwarnings("ignore::DeprecationWarning")
-    async def test_initialize_converts_converter_only_composite_strategy(
-        self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups, mock_dataset_config
-    ):
-        """Converter-only ScenarioCompositeStrategy maps to attack=None."""
-        legacy = ScenarioCompositeStrategy(strategies=[FoundryStrategy.Base64, FoundryStrategy.ROT13])
-
-        with patch.object(
-            RedTeamAgent,
-            "_resolve_seed_groups_by_dataset_async",
-            new_callable=AsyncMock,
-            return_value={"memory": mock_memory_seed_groups},
-        ):
-            scenario = RedTeamAgent(
-                attack_scoring_config=AttackScoringConfig(objective_scorer=mock_objective_scorer),
-            )
-            await scenario.initialize_async(
-                objective_target=mock_objective_target,
-                scenario_strategies=[legacy],  # type: ignore[arg-type]
-                dataset_config=mock_dataset_config,
-                include_baseline=False,
-            )
-
-        result = scenario._scenario_composites[0]
-        assert result.attack is None
-        assert set(result.converters) == {FoundryStrategy.Base64, FoundryStrategy.ROT13}
 
 
 @pytest.mark.usefixtures(*FIXTURES)

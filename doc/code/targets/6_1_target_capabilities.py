@@ -88,7 +88,7 @@ for flag in (
 #
 # Components that need particular capabilities declare them as a `TargetRequirements` and validate at
 # construction time. PyRIT ships a `CHAT_TARGET_REQUIREMENTS` constant for the common case of needing
-# multi-turn + editable history — the replacement for the deprecated `PromptChatTarget` type check.
+# multi-turn + editable history — the replacement for the former `PromptChatTarget` type check.
 #
 # `TargetRequirements.validate` collects every missing capability and raises a single `ValueError` so
 # callers see all violations at once.

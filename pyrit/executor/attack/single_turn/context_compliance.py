@@ -245,11 +245,13 @@ class ContextComplianceAttack(PromptSendingAttack):
             prompt=self._rephrase_objective_to_user_turn.render_template_value(objective=objective),
             role="user",
         )
+        if context.memory_labels:
+            for piece in message.message_pieces:
+                piece.labels = context.memory_labels
 
         response = await self._prompt_normalizer.send_prompt_async(
             message=message,
             target=self._adversarial_chat,
-            labels=context.memory_labels,
         )
 
         return response.get_value()
@@ -271,11 +273,13 @@ class ContextComplianceAttack(PromptSendingAttack):
             prompt=self._answer_user_turn.render_template_value(benign_request=benign_user_query),
             role="user",
         )
+        if context.memory_labels:
+            for piece in message.message_pieces:
+                piece.labels = context.memory_labels
 
         response = await self._prompt_normalizer.send_prompt_async(
             message=message,
             target=self._adversarial_chat,
-            labels=context.memory_labels,
         )
 
         return response.get_value()
@@ -295,11 +299,13 @@ class ContextComplianceAttack(PromptSendingAttack):
             prompt=self._rephrase_objective_to_question.render_template_value(objective=objective),
             role="user",
         )
+        if context.memory_labels:
+            for piece in message.message_pieces:
+                piece.labels = context.memory_labels
 
         response = await self._prompt_normalizer.send_prompt_async(
             message=message,
             target=self._adversarial_chat,
-            labels=context.memory_labels,
         )
 
         return response.get_value()

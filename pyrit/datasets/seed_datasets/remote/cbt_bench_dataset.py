@@ -2,7 +2,6 @@
 # Licensed under the MIT license.
 
 import logging
-import warnings
 from typing import Any
 
 from typing_extensions import override
@@ -41,7 +40,6 @@ class _CBTBenchDataset(_RemoteDatasetLoader):
         *,
         source: str = "Psychotherapy-LLM/CBT-Bench",
         config: str = "core_fine_seed",
-        split: str | None = None,
     ) -> None:
         """
         Initialize the CBT-Bench dataset loader.
@@ -49,18 +47,7 @@ class _CBTBenchDataset(_RemoteDatasetLoader):
         Args:
             source: HuggingFace dataset identifier. Defaults to "Psychotherapy-LLM/CBT-Bench".
             config: Dataset configuration/subset to load. Defaults to "core_fine_seed".
-            split: **Deprecated.** Every config of ``Psychotherapy-LLM/CBT-Bench`` publishes
-                only the ``"train"`` split, so this kwarg has no effect. It will be removed
-                in v0.16.0.
         """
-        if split is not None:
-            warnings.warn(
-                "'split' is deprecated and will be removed in v0.16.0. "
-                "Every config of Psychotherapy-LLM/CBT-Bench publishes only the 'train' "
-                "split, so this kwarg has no effect.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
         self.source = source
         self.config = config
 

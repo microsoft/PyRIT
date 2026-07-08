@@ -535,7 +535,7 @@ class TestAttackResultEntry:
 
         # Simulate a stale attack_identifier column (as if it wasn't updated)
         stale_id = ComponentIdentifier(class_name="StaleAttack", class_module="pyrit.backend")
-        entry.attack_identifier = stale_id.to_dict()
+        entry.attack_identifier = stale_id.model_dump()
 
         round_tripped = entry.get_attack_result()
         strategy = round_tripped.get_attack_strategy_identifier()
