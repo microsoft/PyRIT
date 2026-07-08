@@ -38,7 +38,9 @@ class DoctorStrategy(ScenarioStrategy):
     ALL = ("all", {"all"})
     DEFAULT = ("default", {"default"})
 
-    # Concrete strategies (values match the technique factory names)
+    # Concrete strategies (values match the technique factory names). Both are tagged
+    # "default", so DEFAULT and ALL coincide today; ALL exists so a future non-default
+    # technique would diverge from DEFAULT without another default-strategy change.
     PolicyPuppetry = ("policy_puppetry", {"default"})
     PolicyPuppetryLeet = ("policy_puppetry_leet", {"default"})
 
@@ -134,7 +136,7 @@ class Doctor(Scenario):
         super().__init__(
             version=self.VERSION,
             strategy_class=DoctorStrategy,
-            default_strategy=DoctorStrategy.ALL,
+            default_strategy=DoctorStrategy.DEFAULT,
             default_dataset_config=DatasetAttackConfiguration(dataset_names=["garak_doctor"]),
             objective_scorer=objective_scorer,
             scenario_result_id=scenario_result_id,

@@ -249,9 +249,99 @@ def parse_memory_labels(json_string: str) -> dict[str, str]:
     return labels
 
 
+def parse_dataset_filter(arg: str) -> tuple[str, str]:
+    """
+    Parse a single ``KEY=VALUE`` dataset-filter token from the CLI.
+
+    Note: The ``arg`` parameter is positional (not keyword-only) so it can be used directly
+    as an argparse ``type=`` callable and an ``_ArgSpec`` parser. This mirrors
+    ``_parse_initializer_arg`` and is an intentional exception to the keyword-only style rule
+    for argparse compatibility.
+
+    Args:
+        arg (str): The raw ``KEY=VALUE`` token.
+
+    Returns:
+        tuple[str, str]: The (key, value) pair. The value keeps its raw string form so the
+            server can coerce and validate it.
+
+    Raises:
+        ValueError: If the token is not in ``KEY=VALUE`` form or the key is empty. Argparse
+            converts this into a clean CLI error; the shell catches it directly.
+    """
+    if "=" not in arg:
+        raise ValueError(f"Dataset filter must be in KEY=VALUE form, got: {arg!r}")
+    key, _, value = arg.partition("=")
+    key = key.strip()
+    if not key:
+        raise ValueError(f"Dataset filter key cannot be empty in: {arg!r}")
+    return key, value
+
+
+def collapse_dataset_filters(tokens: list[tuple[str, str]]) -> dict[str, list[str]]:
+    """
+    Fold parsed ``KEY=VALUE`` dataset-filter tokens into list-valued filters, rejecting duplicates.
+
+    Repeating a key (e.g. ``harm_categories=cyber harm_categories=violence``) would otherwise be
+    silently collapsed by ``dict(...)`` to the last value, dropping earlier constraints. Since
+    list-valued filters accept comma-separated values, a repeated key is almost certainly a
+    mistake, so this fails loud instead. Each value is coerced into a list of tokens (comma
+    splitting is CLI input parsing); the server-side request model validates the keys.
+
+    Args:
+        tokens (list[tuple[str, str]]): The parsed ``(key, value)`` pairs.
+
+    Returns:
+        dict[str, list[str]]: The collapsed, list-valued filter mapping.
+
+    Raises:
+        ValueError: If any key appears more than once.
+    """
+    filters: dict[str, list[str]] = {}
+    for key, value in tokens:
+        if key in filters:
+            raise ValueError(
+                f"Duplicate dataset filter '{key}'; combine values with commas: {key}={','.join(filters[key])},{value}"
+            )
+        filters[key] = _coerce_filter_values(value)
+    return filters
+
+
+def _coerce_filter_values(value: str) -> list[str]:
+    """
+    Split a raw dataset-filter value string into a list of non-empty tokens.
+
+    Comma-splitting raw CLI input is a frontend concern, so it lives here next to
+    ``parse_dataset_filter`` rather than in the dataset-config module that consumes filters.
+
+    Args:
+        value (str): The raw comma-separated value string.
+
+    Returns:
+        list[str]: The cleaned list of values.
+    """
+    return [part.strip() for part in value.split(",") if part.strip()]
+
+
 # ---------------------------------------------------------------------------
 # Shared argument help text
 # ---------------------------------------------------------------------------
+
+# Per-key help for --dataset-filters. Kept in sync with
+# pyrit.models.catalog.scenario.DATASET_FILTERS (this module deliberately avoids importing
+# pyrit.models to keep argument-parsing startup fast); tests/unit/cli/test_pyrit_scan.py pins
+# the key sets equal so the two cannot drift.
+#
+# Each value states this key's comma-list semantics, because those differ per field (the actual
+# behavior lives in get_seeds, in pyrit.memory). When you add a key here to match a new
+# DATASET_FILTERS entry, the surrounding entries model the expected one-line semantics note --
+# write one for the new key too.
+_DATASET_FILTER_HELP: dict[str, str] = {
+    "harm_categories": "matches seeds tagged with ALL given values (AND, substring match), "
+    "so harm_categories=cyber,violence is an intersection",
+    "data_types": "matches seeds of ANY given value (OR, exact match), so data_types=text,image_path is a union",
+}
+
 ARG_HELP = {
     "config_file": CONFIG_FILE_HELP,
     "initializers": (
@@ -275,6 +365,11 @@ ARG_HELP = {
     "Creates a new dataset config; fetches all items unless --max-dataset-size is also specified",
     "max_dataset_size": "Maximum number of items to use from the dataset (must be >= 1). "
     "Limits new datasets if --dataset-names provided, otherwise overrides scenario's default limit",
+    "dataset_filters": "Dataset seed filters as KEY=VALUE tokens "
+    "(e.g., harm_categories=cyber data_types=text). Keys filter seeds before sizing. "
+    "List values may be comma-separated, but semantics differ per key: "
+    + "; ".join(f"{key} {semantics}" for key, semantics in _DATASET_FILTER_HELP.items())
+    + ".",
     "target": "Name of a registered target from the TargetRegistry to use as the objective target. "
     "Targets are registered by initializers (e.g., 'target' initializer). "
     "Use --list-targets to see available target names after initializers have run",
@@ -409,6 +504,12 @@ _MAX_DATASET_SIZE_ARG = _ArgSpec(
     result_key="max_dataset_size",
     parser=lambda v: validate_integer(v, name="--max-dataset-size", min_value=1),
 )
+_DATASET_FILTERS_ARG = _ArgSpec(
+    flags=["--dataset-filters"],
+    result_key="dataset_filters",
+    multi_value=True,
+    parser=parse_dataset_filter,
+)
 _TARGET_ARG = _ArgSpec(
     flags=["--target"],
     result_key="target",
@@ -422,6 +523,7 @@ _RUN_ARG_SPECS: list[_ArgSpec] = [
     _MEMORY_LABELS_ARG,
     _DATASET_NAMES_ARG,
     _MAX_DATASET_SIZE_ARG,
+    _DATASET_FILTERS_ARG,
     _TARGET_ARG,
 ]
 

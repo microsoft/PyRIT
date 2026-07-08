@@ -302,15 +302,23 @@ class ScenarioRunService:
         if request.labels:
             init_kwargs["memory_labels"] = request.labels
 
+        # The request model has already validated the filter keys and coerced values into
+        # lists, so the service can consume them directly.
+        dataset_filters = request.dataset_filters or {}
+
         # Resolve strategies and dataset config from a temporary instance of the
         # scenario. The downstream _initialize_scenario_async builds its own
         # instance (so scenario_result_id can be passed), so this is a cheap
         # throwaway used only for introspection. Introspection is required
-        # whenever the caller wants to override strategies, dataset names, or
-        # the sample cap, because each of those needs the scenario's own
-        # strategy enum or dataset-config subclass to be resolved correctly.
+        # whenever the caller wants to override strategies, dataset names, the
+        # sample cap, or dataset filters, because each of those needs the
+        # scenario's own strategy enum or dataset-config subclass to be resolved
+        # correctly.
         needs_introspection = (
-            bool(request.strategies) or bool(request.dataset_names) or request.max_dataset_size is not None
+            bool(request.strategies)
+            or bool(request.dataset_names)
+            or request.max_dataset_size is not None
+            or bool(dataset_filters)
         )
         if not needs_introspection:
             return init_kwargs
@@ -334,7 +342,7 @@ class ScenarioRunService:
             if strategy_converters:
                 init_kwargs["strategy_converters"] = strategy_converters
 
-        if request.dataset_names or request.max_dataset_size is not None:
+        if request.dataset_names or request.max_dataset_size is not None or dataset_filters:
             default_config = introspection_instance._default_dataset_config
 
             if request.dataset_names:
@@ -345,6 +353,7 @@ class ScenarioRunService:
                     init_kwargs["dataset_config"] = default_config_class(
                         dataset_names=request.dataset_names,
                         max_dataset_size=request.max_dataset_size,
+                        filters=dataset_filters or None,
                     )
                 except TypeError as exc:
                     # The subclass __init__ takes extra required kwargs we cannot
@@ -354,7 +363,7 @@ class ScenarioRunService:
                     # define a no-extra-required-args constructor or surface the
                     # incompatibility through their own initialize_async validation.
                     logger.warning(
-                        "Cannot construct %s(dataset_names=..., max_dataset_size=...) (%s). "
+                        "Cannot construct %s(dataset_names=..., max_dataset_size=..., filters=...) (%s). "
                         "Falling back to a generic DatasetAttackConfiguration; scenario-specific "
                         "dataset-config behavior may be lost.",
                         default_config_class.__name__,
@@ -363,12 +372,17 @@ class ScenarioRunService:
                     init_kwargs["dataset_config"] = DatasetAttackConfiguration(
                         dataset_names=request.dataset_names,
                         max_dataset_size=request.max_dataset_size,
+                        filters=dataset_filters or None,
                     )
-            elif request.max_dataset_size is not None:
+            else:
                 # Reuse the scenario's default dataset config (preserves subtype +
                 # the scenario's own default dataset names) and override only the
-                # sample cap. Safe because the introspection instance is throwaway.
-                default_config.max_dataset_size = request.max_dataset_size
+                # sample cap and/or filters. Safe because the introspection instance
+                # is throwaway.
+                if request.max_dataset_size is not None:
+                    default_config.max_dataset_size = request.max_dataset_size
+                if dataset_filters:
+                    default_config.update_filters(filters=dataset_filters)
                 init_kwargs["dataset_config"] = default_config
 
         return init_kwargs

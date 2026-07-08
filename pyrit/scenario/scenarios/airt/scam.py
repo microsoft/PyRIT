@@ -44,14 +44,24 @@ class ScamStrategy(ScenarioStrategy):
         to be used during training seminars.
     - PersuasiveRedTeamingAttack: This multi-turn attack uses a persuasive persona with the `RedTeamingAttack` to
         iteratively convince the target to comply with the scam objective over multiple turns.
+
+    Aggregate Values:
+    - ALL: Every technique (both single-turn and the multi-turn PersuasiveRedTeamingAttack).
+    - DEFAULT: The single-turn techniques (ContextCompliance, RolePlay). Excludes the multi-turn
+        PersuasiveRedTeamingAttack so the default run stays fast; opt into it via ALL or MULTI_TURN.
+    - SINGLE_TURN / MULTI_TURN: Group techniques by turn count. DEFAULT intentionally shares
+        membership with SINGLE_TURN today (both are the single-turn techniques); they are kept
+        distinct because DEFAULT is the recommended fast default while SINGLE_TURN is a turn-count
+        grouping, and their membership may diverge later.
     """
 
     ALL = ("all", {"all"})
+    DEFAULT = ("default", {"default"})
     SINGLE_TURN = ("single_turn", {"single_turn"})
     MULTI_TURN = ("multi_turn", {"multi_turn"})
 
-    ContextCompliance = ("context_compliance", {"single_turn"})
-    RolePlay = ("role_play", {"single_turn"})
+    ContextCompliance = ("context_compliance", {"single_turn", "default"})
+    RolePlay = ("role_play", {"single_turn", "default"})
     PersuasiveRedTeamingAttack = ("persuasive_rta", {"multi_turn"})
 
     @classmethod
@@ -63,7 +73,7 @@ class ScamStrategy(ScenarioStrategy):
             set[str]: Set of tags that are aggregate markers.
         """
         # Include base class aggregates ("all") and add scenario-specific ones
-        return super().get_aggregate_tags() | {"single_turn", "multi_turn"}
+        return super().get_aggregate_tags() | {"default", "single_turn", "multi_turn"}
 
 
 class Scam(Scenario):
@@ -72,7 +82,7 @@ class Scam(Scenario):
     (e.g., phishing emails, fraudulent messages) with primarily persuasion-oriented techniques.
     """
 
-    VERSION: int = 1
+    VERSION: int = 2
 
     @classmethod
     def _get_additional_scoring_questions(cls) -> list[Path]:
@@ -135,7 +145,7 @@ class Scam(Scenario):
         super().__init__(
             version=self.VERSION,
             strategy_class=ScamStrategy,
-            default_strategy=ScamStrategy.ALL,
+            default_strategy=ScamStrategy.DEFAULT,
             default_dataset_config=DatasetAttackConfiguration(dataset_names=["airt_scams"], max_dataset_size=4),
             objective_scorer=objective_scorer,
             scenario_result_id=scenario_result_id,

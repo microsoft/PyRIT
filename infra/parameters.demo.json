@@ -29,7 +29,7 @@
       "value": "REPLACE_SQL_DATABASE"
     },
     "pyritInitializer": {
-      "value": "target, airt"
+      "value": "target"
     },
     "envFileContents": {
       "value": "PYRIT_REPLACE_ME=set-via-secure-channel"
