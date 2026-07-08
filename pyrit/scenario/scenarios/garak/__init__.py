@@ -5,6 +5,10 @@
 
 from pyrit.scenario.scenarios.garak.doctor import Doctor, DoctorStrategy
 from pyrit.scenario.scenarios.garak.encoding import Encoding, EncodingStrategy
+from pyrit.scenario.scenarios.garak.system_prompt_extraction import (
+    SystemPromptExtraction,
+    SystemPromptExtractionStrategy,
+)
 from pyrit.scenario.scenarios.garak.web_injection import WebInjection, WebInjectionStrategy
 
 __all__ = [
@@ -12,6 +16,8 @@ __all__ = [
     "DoctorStrategy",
     "Encoding",
     "EncodingStrategy",
+    "SystemPromptExtraction",
+    "SystemPromptExtractionStrategy",
     "WebInjection",
     "WebInjectionStrategy",
 ]
