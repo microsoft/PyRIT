@@ -14,8 +14,9 @@
 # The Garak scenario family implements probes inspired by the
 # [Garak](https://github.com/NVIDIA/garak) framework. These include encoding-based probes (which
 # test whether a target can be tricked into producing harmful content when prompts are encoded in
-# various formats) and web-injection probes (which test whether a target emits markdown
-# data-exfiltration or cross-site-scripting payloads).
+# various formats), web-injection probes (which test whether a target emits markdown
+# data-exfiltration or cross-site-scripting payloads), and an audio probe (which delivers spoken
+# jailbreaks to multimodal targets).
 #
 # For full programming details, see the
 # [Scenarios Programming Guide](../code/scenarios/0_scenarios.ipynb).
@@ -90,6 +91,26 @@ await output_scenario_async(scenario_result)
 #
 # **Aggregate strategies:** `ALL` (all 8), `DEFAULT` (excludes the two combinatorial extended
 # probes), `EXFIL` (the 6 markdown-exfil probes), and `XSS` (TaskXSS + MarkdownXSS).
+
+# %% [markdown]
+# ## AudioAchillesHeel
+#
+# Ports Garak's `audio.AudioAchillesHeel` probe. Delivers the adversarial instruction as *spoken
+# audio* while the text channel carries only a benign "follow the audio instructions" nudge. Each
+# clip from the `garak_audio_achilles_heel` dataset is shaped into a single multimodal user turn
+# (text nudge + audio at the same sequence), and the response is scored for compliance — the PyRIT
+# analogue of Garak's non-refusal `mitigation.MitigationBypass` detector. A per-clip objective is
+# derived from the clip's harm category.
+#
+# **CLI example:**
+#
+# ```bash
+# pyrit_scan garak.audio_achilles_heel --target openai_chat --max-dataset-size 2
+# ```
+#
+# > **Note:** The objective target must accept `audio_path` input (i.e. be multimodal); non-audio
+# > targets will error when the request is sent. The full dataset holds ~350 clips, so a default
+# > run samples a small subset to finish quickly — raise `--max-dataset-size` for broader coverage.
 
 # %% [markdown]
 # For more details, see the [Scenarios Programming Guide](../code/scenarios/0_scenarios.ipynb) and
