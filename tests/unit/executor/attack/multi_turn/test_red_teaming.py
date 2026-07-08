@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import json
 import uuid
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -33,6 +34,33 @@ from pyrit.models import (
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import PromptTarget
 from pyrit.score import Scorer, TrueFalseScorer
+
+
+def _adversarial_reply_message(next_message: str = "Adversarial next message") -> Message:
+    """Build an adversarial-chat reply Message in the canonical ``adversarial_chat`` JSON shape.
+
+    Every genuine adversarial-conversation attack now validates the adversarial reply against the
+    shared ``adversarial_chat`` schema, so a mocked reply must be JSON carrying ``next_message`` (plus
+    the ``rationale`` / ``last_response_summary`` the schema requires) rather than raw text.
+    """
+    payload = json.dumps(
+        {
+            "next_message": next_message,
+            "rationale": "test rationale",
+            "last_response_summary": "test summary",
+        }
+    )
+    return Message(
+        message_pieces=[
+            MessagePiece(
+                role="assistant",
+                original_value=payload,
+                original_value_data_type="text",
+                converted_value=payload,
+                converted_value_data_type="text",
+            )
+        ]
+    )
 
 
 def _mock_scorer_id(name: str = "MockScorer") -> ComponentIdentifier:
@@ -856,17 +884,9 @@ class TestPromptGeneration:
 
         basic_context.executed_turns = 1
         basic_context.next_message = None  # No message
-        # The default adversarial system prompt (text_generation) declares no JSON schema, so the
-        # adversarial reply is used as raw text for the next message to the objective target.
-        adversarial_response = Message(
-            message_pieces=[
-                MessagePiece(
-                    role="assistant",
-                    original_value="Adversarial next message",
-                    original_value_data_type="text",
-                )
-            ]
-        )
+        # The manager always validates the adversarial reply against the canonical adversarial_chat
+        # schema, so the reply is JSON and ``next_message`` is extracted as the objective prompt.
+        adversarial_response = _adversarial_reply_message("Adversarial next message")
         mock_prompt_normalizer.send_prompt_async.return_value = adversarial_response
 
         result = await attack._generate_next_prompt_async(context=basic_context)
@@ -1836,7 +1856,7 @@ class TestModalityRouterIntegration:
 
         basic_context.executed_turns = 1
         basic_context.last_response = self._make_image_response()
-        mock_prompt_normalizer.send_prompt_async.return_value = sample_response
+        mock_prompt_normalizer.send_prompt_async.return_value = _adversarial_reply_message()
 
         await attack._generate_next_prompt_async(context=basic_context)
 
@@ -1871,7 +1891,7 @@ class TestModalityRouterIntegration:
 
         basic_context.executed_turns = 1
         basic_context.last_response = self._make_image_response()
-        mock_prompt_normalizer.send_prompt_async.return_value = sample_response
+        mock_prompt_normalizer.send_prompt_async.return_value = _adversarial_reply_message()
 
         await attack._generate_next_prompt_async(context=basic_context)
 
@@ -1900,13 +1920,13 @@ class TestModalityRouterIntegration:
 
         basic_context.executed_turns = 1
         basic_context.last_response = self._make_image_response()
-        mock_prompt_normalizer.send_prompt_async.return_value = sample_response
+        mock_prompt_normalizer.send_prompt_async.return_value = _adversarial_reply_message("adv text")
 
         result = await attack._generate_next_prompt_async(context=basic_context)
 
         # Returned message (the one to send to the objective) contains text + previous image.
         assert len(result.message_pieces) == 2
-        assert result.message_pieces[0].original_value == sample_response.get_value()
+        assert result.message_pieces[0].original_value == "adv text"
         assert result.message_pieces[1].original_value_data_type == "image_path"
         assert result.message_pieces[1].original_value == "/tmp/output.png"
 
@@ -1931,12 +1951,12 @@ class TestModalityRouterIntegration:
 
         basic_context.executed_turns = 1
         basic_context.last_response = self._make_image_response()
-        mock_prompt_normalizer.send_prompt_async.return_value = sample_response
+        mock_prompt_normalizer.send_prompt_async.return_value = _adversarial_reply_message("adv text")
 
         result = await attack._generate_next_prompt_async(context=basic_context)
 
         assert len(result.message_pieces) == 1
-        assert result.get_value() == sample_response.get_value()
+        assert result.get_value() == "adv text"
 
     async def test_generate_next_prompt_placeholder_branch_fills_in_adv_text(
         self,
@@ -1984,7 +2004,7 @@ class TestModalityRouterIntegration:
             prompt_normalizer=mock_prompt_normalizer,
         )
 
-        mock_prompt_normalizer.send_prompt_async.return_value = sample_response
+        mock_prompt_normalizer.send_prompt_async.return_value = _adversarial_reply_message("adv text")
 
         result = await attack._generate_next_prompt_async(context=basic_context)
 
@@ -2000,7 +2020,7 @@ class TestModalityRouterIntegration:
         assert sent_prompt_message.message_pieces[1].original_value == "/path/to/seed.png"
         # Resulting message has the adversarial text in place of the placeholder, plus the seed.
         assert len(result.message_pieces) == 2
-        assert result.message_pieces[0].original_value == sample_response.get_value()
+        assert result.message_pieces[0].original_value == "adv text"
         assert result.message_pieces[0].original_value_data_type == "text"
         assert result.message_pieces[1].original_value_data_type == "image_path"
         assert result.message_pieces[1].original_value == "/path/to/seed.png"

@@ -100,25 +100,6 @@ class AttackAdversarialConfig:
                     "'system_prompt' takes precedence and 'system_prompt_path' is ignored."
                 )
 
-    def get_json_schema(self) -> JsonSchemaDefinition | None:
-        """
-        Return the adversarial-chat response JSON schema declared on this config.
-
-        Reads ``response_json_schema`` off ``system_prompt`` and ``first_message`` when they
-        are ``SeedPrompt`` instances. Inline strings and ``system_prompt_path`` carry no
-        schema and are ignored here; for those, the schema is resolved from the effective
-        system prompt at attack-construction time.
-
-        Returns:
-            The declared schema, or None when neither prompt declares one.
-
-        Raises:
-            ValueError: If both ``system_prompt`` and ``first_message`` declare a schema.
-        """
-        system_prompt = self.system_prompt if isinstance(self.system_prompt, SeedPrompt) else None
-        first_message = self.first_message if isinstance(self.first_message, SeedPrompt) else None
-        return resolve_adversarial_json_schema(system_prompt=system_prompt, first_message=first_message)
-
 
 def resolve_adversarial_system_prompt(
     *,

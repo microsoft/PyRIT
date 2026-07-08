@@ -28,6 +28,7 @@ from pyrit.models import (
     Message,
     Score,
     SeedPrompt,
+    get_common_json_schema,
 )
 from pyrit.prompt_normalizer import PromptNormalizer
 
@@ -41,6 +42,12 @@ logger = logging.getLogger(__name__)
 # declared fields carry the attacker's own reasoning. The full set of required/permitted keys
 # is taken from the resolved schema itself at parse time (see ``_parse_adversarial_reply``).
 _NEXT_MESSAGE_KEY = "next_message"
+
+# Canonical adversarial-chat response schema. Every adversarial-conversation attack (Red Teaming,
+# Crescendo, TAP, PAIR, Simulated Conversation) validates against this same schema unless a prompt
+# explicitly declares its own, so their adversarial-chat prompts stay interchangeable and a reply is
+# always structurally validated instead of silently trusted.
+_DEFAULT_ADVERSARIAL_SCHEMA_NAME = "adversarial_chat"
 
 
 @dataclass
@@ -57,6 +64,23 @@ class AdversarialReply:
     rationale: str | None = None
     last_response_summary: str | None = None
     raw: str = ""
+
+
+@dataclass
+class AdversarialTurn:
+    """
+    Result of one adversarial-conversation turn, ready for the objective target.
+
+    ``objective_message`` is the fully-built ``Message`` the attack sends to the objective target:
+    the adversarial chat's next message (with any prior/seed media woven in by the modality router),
+    or a caller-supplied seed message sent directly when the adversarial chat is bypassed.
+    ``reply`` is the parsed adversarial reply, or None when the adversarial chat was bypassed.
+    ``bypassed`` records whether the adversarial chat was skipped this turn.
+    """
+
+    objective_message: Message
+    reply: AdversarialReply | None = None
+    bypassed: bool = False
 
 
 def _camel_to_snake(name: str) -> str:
@@ -226,47 +250,54 @@ def _parse_adversarial_reply(response_text: str, *, schema: JsonSchemaDefinition
     )
 
 
-class AdversarialConversationManager:
+class _AdversarialConversationManager:
     """
     Drives a single adversarial-chat conversation for a multi-turn attack.
 
     One manager owns one adversarial conversation (identified by ``conversation_id``): the
     conversation id is what preserves the adversarial chat's own running history across turns.
     Crescendo, TAP, PAIR, and Red Teaming would otherwise each hand-roll the recurring
-    mechanics this component centralizes:
+    mechanics this component centralizes and owns end to end:
 
-    1. Holding the resolved adversarial system prompt, the (optional) first message, the
-       per-turn prompt template, and the single response JSON schema declared on either prompt.
-    2. Building per-turn prompt metadata — ``response_format`` plus the shared schema —
-       only when a schema is declared, so schema-aware targets natively constrain the
-       response shape.
-    3. Sending the turn to the adversarial target on this manager's ``conversation_id``.
-    4. Parsing the shared ``adversarial_chat`` schema (``next_message`` / ``rationale`` /
-       ``last_response_summary``) out of the reply when a schema is declared.
+    1. Holding the resolved adversarial system prompt, the (optional) first user message, the
+       per-turn next-message template, and the single response JSON schema — defaulting to the
+       canonical ``adversarial_chat`` schema when no prompt declares one, so a reply is always
+       structurally validated instead of silently trusted.
+    2. Setting the adversarial system prompt on the conversation (rendered with ``objective`` and
+       ``max_turns``) via ``set_adversarial_system_prompt``.
+    3. Building per-turn prompt metadata — ``response_format`` plus the shared schema — so
+       schema-aware targets natively constrain the response shape.
+    4. Sending the turn to the adversarial target on this manager's ``conversation_id`` and parsing
+       the shared ``adversarial_chat`` schema (``next_message`` / ``rationale`` /
+       ``last_response_summary``) out of the reply, retrying on invalid JSON.
+    5. Building the ready-to-send objective ``Message`` from the reply — weaving in prior-response or
+       seed media via the modality router, filling adversarial placeholders, or bypassing the
+       adversarial chat entirely when the caller supplies a concrete seed message.
 
-    Conversation context (``conversation_id``, ``objective``, the objective target's
-    conversation id, the attack strategy name, and memory labels) is supplied once at
-    construction time and reused for every turn, so ``get_next_message_async`` only needs
-    the objective target's latest response and its score. The manager folds these into the
-    adversarial prompt itself: it computes the per-turn feedback text in Python (handling
-    blocked/error/empty responses and optional score feedback) and renders it into
-    ``adversarial_prompt_template`` as ``feedback_text``, so callers no longer hand-roll that text.
+    Conversation context (``conversation_id``, ``objective``, ``max_turns``, the objective target's
+    conversation id, the attack strategy name, and memory labels) is supplied once at construction
+    time and reused for every turn. Attacks call the single entry point ``get_next_message_async``
+    and receive an ``AdversarialTurn`` whose ``objective_message`` is ready to send — they never
+    branch on adversarial placeholders, hand-roll feedback text, or build the objective message
+    themselves.
 
-    First message: ``first_message`` is the *first* user turn sent to the
-    adversarial chat (rendered with ``{{ objective }}``) when there is no objective-target
-    response yet; it is not re-sent on later turns.
+    Two modes share the same send/parse/schema/modality core:
 
-    When no schema is declared, ``get_next_message_async`` attaches no prompt metadata and
-    returns the raw response text as ``next_message``.
+    * **Template mode** (Red Teaming): the manager computes the per-turn feedback text in Python
+      (handling blocked/error/empty responses and optional score feedback) and renders it into the
+      first-message / next-message templates.
+    * **Override mode** (Crescendo, TAP): the attack supplies the fully-built adversarial prompt text
+      via ``adversarial_prompt_text`` and the manager does everything else.
     """
 
     def __init__(
         self,
         *,
         adversarial_target: PromptTarget,
-        system_prompt: SeedPrompt,
-        first_message: SeedPrompt | None = None,
-        adversarial_prompt_template: SeedPrompt,
+        adversarial_system_prompt: SeedPrompt,
+        adversarial_first_user_message: SeedPrompt | None = None,
+        adversarial_next_user_message: SeedPrompt | None = None,
+        max_turns: int = 1,
         raise_on_invalid_json: bool = True,
         prompt_normalizer: PromptNormalizer | None = None,
         conversation_id: str | None = None,
@@ -282,30 +313,33 @@ class AdversarialConversationManager:
 
         Args:
             adversarial_target: The adversarial chat target to send turns to.
-            system_prompt: The resolved adversarial system-prompt SeedPrompt.
-            first_message: The first message sent to the adversarial chat when there is no
-                objective-target response yet (rendered with ``{{ objective }}``), or None for
-                strategies that have no first-message seed.
-            adversarial_prompt_template: Template rendered each turn to wrap the computed
-                per-turn feedback text. Receives ``feedback_text`` and ``objective`` and is
-                rendered strictly. Defaults are applied by ``AttackAdversarialConfig``; the
-                manager expects a resolved template.
-            raise_on_invalid_json: When True (default) and a response schema is declared, a reply
-                that fails to match the declared schema raises ``InvalidJsonException`` (retried via
-                ``pyrit_json_retry``). When False, the raw reply text is returned as ``next_message``
-                instead of raising.
+            adversarial_system_prompt: The resolved adversarial system-prompt SeedPrompt. Rendered
+                with ``objective`` and ``max_turns`` by ``set_adversarial_system_prompt``.
+            adversarial_first_user_message: The first user message sent to the adversarial chat when
+                there is no objective-target response yet (rendered with ``{{ objective }}``), or None
+                for strategies that build the first turn themselves (override mode).
+            adversarial_next_user_message: Template rendered each turn (template mode) to wrap the
+                computed per-turn feedback text. Receives ``feedback_text`` and ``objective`` and is
+                rendered strictly. May be None in override mode, where the attack supplies the prompt
+                text directly.
+            max_turns: Maximum number of turns; rendered into the adversarial system prompt as
+                ``max_turns``. Defaults to 1.
+            raise_on_invalid_json: When True (default), a reply that fails to match the resolved
+                schema raises ``InvalidJsonException`` (retried via ``pyrit_json_retry``). When False,
+                the raw reply text is returned as ``next_message`` instead of raising.
             prompt_normalizer: The prompt normalizer to send through. Defaults to a new one.
             conversation_id: The adversarial-chat conversation id this manager drives. A fresh
                 id is generated when None.
-            objective: The attack objective (for first-message rendering and execution context).
+            objective: The attack objective (for first-message / system-prompt rendering and
+                execution context).
             objective_target_conversation_id: The objective target's conversation id (for
                 execution-context correlation).
             attack_strategy_name: Name of the calling attack strategy (for execution context).
             memory_labels: Optional memory labels to attach to each request.
             modality_router: Optional capability-aware router. When provided, the outgoing
-                adversarial message is built via ``build_adversarial_input_message`` so first-turn
-                seed media and prior objective-response media are forwarded to the adversarial chat
-                when its declared capabilities allow it. When None, a text-only message is sent.
+                adversarial message and the objective message forward seed / prior-response media
+                when the relevant target's declared capabilities allow it. When None, text-only
+                messages are used.
             use_score_as_feedback: When True, the computed per-turn ``feedback_text`` appends the
                 scorer rationale to the objective target's response. Defaults to False.
 
@@ -315,9 +349,10 @@ class AdversarialConversationManager:
                 attack loop consumes.
         """
         self._adversarial_target = adversarial_target
-        self._system_prompt = system_prompt
-        self._first_message = first_message
-        self._adversarial_prompt_template = adversarial_prompt_template
+        self._adversarial_system_prompt = adversarial_system_prompt
+        self._adversarial_first_user_message = adversarial_first_user_message
+        self._adversarial_next_user_message = adversarial_next_user_message
+        self._max_turns = max_turns
         self._raise_on_invalid_json = raise_on_invalid_json
         self._prompt_normalizer = prompt_normalizer or PromptNormalizer()
         self._conversation_id = conversation_id or str(uuid4())
@@ -328,16 +363,16 @@ class AdversarialConversationManager:
         self._modality_router = modality_router
         self._use_score_as_feedback = use_score_as_feedback
 
-        # The single response schema is resolved from the system prompt / first-message
-        # template (raising if both declare one), so callers never pass it in.
-        self._response_json_schema = resolve_adversarial_json_schema(
-            system_prompt=system_prompt,
-            first_message=first_message,
-        )
+        # The single response schema is resolved from the system prompt / first-message template
+        # (raising if both declare one). When neither declares one, the canonical ``adversarial_chat``
+        # schema is used so every reply is validated — there is no unvalidated raw-text path.
+        self._response_json_schema: JsonSchemaDefinition = resolve_adversarial_json_schema(
+            system_prompt=adversarial_system_prompt,
+            first_message=adversarial_first_user_message,
+        ) or get_common_json_schema(_DEFAULT_ADVERSARIAL_SCHEMA_NAME)
         # The attack loop consumes ``next_message``, so a declared schema that omits that
         # property cannot drive this manager — fail fast at construction rather than mid-run.
-        declared_schema = self._response_json_schema
-        if declared_schema is not None and _NEXT_MESSAGE_KEY not in declared_schema.get("properties", {}):
+        if _NEXT_MESSAGE_KEY not in self._response_json_schema.get("properties", {}):
             raise ValueError(
                 f"The adversarial response schema must declare a '{_NEXT_MESSAGE_KEY}' property; "
                 "it is the field the attack loop sends to the objective target."
@@ -349,24 +384,24 @@ class AdversarialConversationManager:
         return self._adversarial_target
 
     @property
-    def system_prompt(self) -> SeedPrompt:
+    def adversarial_system_prompt(self) -> SeedPrompt:
         """The resolved adversarial system-prompt SeedPrompt."""
-        return self._system_prompt
+        return self._adversarial_system_prompt
 
     @property
-    def first_message(self) -> SeedPrompt | None:
-        """The resolved adversarial first-message SeedPrompt, if any."""
-        return self._first_message
+    def adversarial_first_user_message(self) -> SeedPrompt | None:
+        """The resolved adversarial first user-message SeedPrompt, if any."""
+        return self._adversarial_first_user_message
 
     @property
-    def adversarial_prompt_template(self) -> SeedPrompt:
+    def adversarial_next_user_message(self) -> SeedPrompt | None:
         """The per-turn template that builds the adversarial-chat prompt from a response."""
-        return self._adversarial_prompt_template
+        return self._adversarial_next_user_message
 
-    @adversarial_prompt_template.setter
-    def adversarial_prompt_template(self, value: SeedPrompt) -> None:
-        """Allow an attack to swap in a different per-turn adversarial prompt template."""
-        self._adversarial_prompt_template = value
+    @adversarial_next_user_message.setter
+    def adversarial_next_user_message(self, value: SeedPrompt) -> None:
+        """Allow an attack to swap in a different per-turn adversarial next-message template."""
+        self._adversarial_next_user_message = value
 
     @property
     def conversation_id(self) -> str:
@@ -374,14 +409,33 @@ class AdversarialConversationManager:
         return self._conversation_id
 
     @property
-    def response_json_schema(self) -> JsonSchemaDefinition | None:
-        """The single response JSON schema, or None when the adversarial chat is raw-text."""
+    def response_json_schema(self) -> JsonSchemaDefinition:
+        """The single response JSON schema every reply is validated against."""
         return self._response_json_schema
 
-    @property
-    def has_schema(self) -> bool:
-        """Whether a response JSON schema is declared (i.e. the JSON path is active)."""
-        return self._response_json_schema is not None
+    def set_adversarial_system_prompt(self) -> None:
+        """
+        Render and set the adversarial system prompt on this manager's conversation.
+
+        Renders ``adversarial_system_prompt`` with the manager's ``objective`` and ``max_turns`` and
+        sets it on the adversarial target for this manager's ``conversation_id``. Must be called from
+        the attack's ``_setup_async`` *before* any prepended adversarial turns are hydrated, because
+        ``set_system_prompt`` rejects a conversation that already has messages.
+
+        Raises:
+            ValueError: If the rendered system prompt is empty.
+        """
+        rendered = self._adversarial_system_prompt.render_template_value(
+            objective=self._objective,
+            max_turns=self._max_turns,
+        )
+        if not rendered:
+            raise ValueError("Adversarial chat system prompt must be defined")
+        self._adversarial_target.set_system_prompt(
+            system_prompt=rendered,
+            conversation_id=self._conversation_id,
+            labels=self._memory_labels,  # deprecated
+        )
 
     def _render_first_message(self) -> str:
         """
@@ -394,9 +448,9 @@ class AdversarialConversationManager:
             ValueError: If no first message is configured, or the first message references
                 ``objective`` but none was configured.
         """
-        template = self._first_message
+        template = self._adversarial_first_user_message
         if template is None:
-            raise ValueError("No first message configured on AdversarialConversationManager")
+            raise ValueError("No first message configured on the adversarial conversation manager")
         needs_objective = "objective" in (template.parameters or []) or "objective" in template.value
         if self._objective is None and needs_objective:
             raise ValueError("No objective configured to render the first message")
@@ -417,76 +471,175 @@ class AdversarialConversationManager:
 
         Returns:
             The rendered adversarial-chat prompt text.
+
+        Raises:
+            ValueError: If no next-message template is configured (override mode should supply the
+                prompt text directly instead of calling this).
         """
         feedback_text = _build_adversarial_feedback_text(
             last_response=last_response,
             score=score,
             use_score_as_feedback=self._use_score_as_feedback,
         )
-        return self._adversarial_prompt_template.render_template_value(
+        self._warn_if_response_media_dropped(last_response=last_response, feedback_text=feedback_text)
+        if self._adversarial_next_user_message is None:
+            raise ValueError("No next-message template configured on the adversarial conversation manager")
+        return self._adversarial_next_user_message.render_template_value(
             feedback_text=feedback_text,
             objective=self._objective,
         )
 
-    async def get_first_message_async(self, *, seed_message: Message | None = None) -> AdversarialReply:
+    def _warn_if_response_media_dropped(self, *, last_response: Message, feedback_text: str) -> None:
         """
-        Get the opening adversarial-chat message for this conversation.
+        Warn when a media-only objective response is silently reduced to a "please continue" nudge.
 
-        Renders ``first_message`` with the manager's objective and sends it on this manager's
-        conversation id. Used for the first turn, when there is no objective-target response
-        to react to yet.
+        When the objective response carries only non-text media that the adversarial chat cannot
+        consume (no router, or the router will not forward it), the computed feedback is the empty
+        nudge and the media is effectively dropped. That is a likely misconfiguration (e.g. a
+        text-only adversarial target paired with an image-generating objective target), so surface a
+        warning rather than failing — the legitimate multimodal case, where the router forwards the
+        media to a capable adversarial chat, is left silent.
 
-        Returns:
-            AdversarialReply: ``next_message`` plus parsed extras (schema path) or the raw
-                text (raw path).
-
-        Raises:
-            ValueError: If no first message / objective is configured, or no response is
-                received from the adversarial chat.
-            InvalidJsonException: If a schema is declared but the reply is invalid.
+        Args:
+            last_response: The objective target's latest response.
+            feedback_text: The feedback text computed for this turn.
         """
-        return await self._send_and_parse_async(
-            prompt_text=self._render_first_message(),
-            seed_message=seed_message,
+        if feedback_text != _EMPTY_FEEDBACK_TEXT:
+            return
+        media_pieces = [piece for piece in last_response.message_pieces if piece.converted_value_data_type != "text"]
+        if not media_pieces:
+            return
+        forwardable = (
+            self._modality_router is not None
+            and self._modality_router.response_media_is_forwardable_to_adversarial(last_response=last_response)
+        )
+        if forwardable:
+            return
+        logger.warning(
+            "Objective response carried only non-text media (%d piece(s)) that the adversarial chat "
+            "cannot consume; falling back to a 'please continue' nudge. If this is unexpected, ensure "
+            "the adversarial target advertises a {text, <media>} input combo so the media is forwarded.",
+            len(media_pieces),
         )
 
     async def get_next_message_async(
         self,
         *,
-        score: Score | None,
-        last_response: Message,
+        turn_index: int,
         seed_message: Message | None = None,
-    ) -> AdversarialReply:
+        last_response: Message | None = None,
+        score: Score | None = None,
+        adversarial_prompt_text: str | None = None,
+    ) -> AdversarialTurn:
         """
-        Get the next message from the adversarial chat for this conversation.
+        Produce the next objective-target message for this adversarial conversation.
 
-        The objective target's latest response and its score are folded into the adversarial
-        prompt via ``adversarial_prompt_template`` before being sent on this manager's
-        conversation id.
+        This is the single entry point every adversarial-conversation attack calls each turn. It owns
+        the full contract: the bypass path, adversarial prompt selection, the send/parse/schema/retry
+        cycle, and building the ready-to-send objective ``Message`` (weaving in prior/seed media or
+        filling placeholders). Callers send ``AdversarialTurn.objective_message`` as-is.
+
+        Prompt selection:
+
+        * ``adversarial_prompt_text`` supplied (override mode) — used verbatim as the adversarial turn.
+        * else ``last_response is None`` — the first user message is rendered from the objective.
+        * else — the next-message template is rendered with the computed per-turn feedback text.
+
+        Objective message:
+
+        * ``seed_message`` with no adversarial placeholder — the adversarial chat is bypassed and a
+          duplicate of ``seed_message`` is returned directly (fresh ids, safe to send).
+        * ``seed_message`` with adversarial placeholders — the adversarial text fills the placeholder
+          slots so caller-supplied seed media travels to the objective target alongside the text.
+        * otherwise — the modality router builds the objective request (forwarding prior media when
+          the objective target accepts it), or a plain text message when no router is configured.
 
         Args:
-            score: The score for ``last_response``, or None when the turn was not scored
-                (e.g. intermediate turns with ``score_last_turn_only``).
-            last_response: The objective target's latest response — the message the
-                adversarial chat reacts to this turn.
-            seed_message: Optional seed message whose media pieces should be forwarded to the
-                adversarial chat when a ``modality_router`` is configured.
+            turn_index: Zero-based index of the current turn (used for objective-message routing).
+            seed_message: Optional caller-supplied seed (``AttackParameters.next_message``). Bypasses
+                the adversarial chat when it carries no adversarial placeholder.
+            last_response: The objective target's latest response, or None on the first turn.
+            score: The score for ``last_response``, or None when the turn was not scored.
+            adversarial_prompt_text: Optional pre-built adversarial prompt text (override mode). When
+                supplied, the manager skips template rendering and sends this text.
 
         Returns:
-            AdversarialReply: ``next_message`` plus parsed extras (schema path) or the raw
-                text (raw path).
+            AdversarialTurn: The ready-to-send objective ``Message`` plus the parsed adversarial
+                reply (or None when the adversarial chat was bypassed).
 
         Raises:
-            ValueError: If no response is received from the adversarial chat.
-            InvalidJsonException: If a schema is declared but the reply is not valid JSON
-                or is missing/has unexpected keys.
+            ValueError: If no response is received from the adversarial chat, or a placeholder seed is
+                supplied without a modality router to fill it.
+            InvalidJsonException: If the reply is not valid JSON or is missing/has unexpected keys.
         """
-        prompt_text = self._render_adversarial_prompt(score=score, last_response=last_response)
-        return await self._send_and_parse_async(
+        has_placeholder = seed_message is not None and any(
+            piece.is_adversarial_placeholder() for piece in seed_message.message_pieces
+        )
+
+        # Bypass: a concrete caller-supplied seed (no placeholder) is sent as-is. Duplicating gives
+        # the objective send fresh ids so the seed message is never mutated or double-persisted.
+        if seed_message is not None and not has_placeholder:
+            logger.debug("Using custom seed message, bypassing adversarial chat")
+            return AdversarialTurn(objective_message=seed_message.duplicate(), reply=None, bypassed=True)
+
+        if adversarial_prompt_text is not None:
+            prompt_text = adversarial_prompt_text
+        elif last_response is None:
+            prompt_text = self._render_first_message()
+        else:
+            prompt_text = self._render_adversarial_prompt(score=score, last_response=last_response)
+
+        reply = await self._send_and_parse_async(
             prompt_text=prompt_text,
             last_response=last_response,
             seed_message=seed_message,
         )
+
+        objective_message = self._build_objective_message(
+            reply=reply,
+            seed_message=seed_message if has_placeholder else None,
+            last_response=last_response,
+            turn_index=turn_index,
+        )
+        return AdversarialTurn(objective_message=objective_message, reply=reply, bypassed=False)
+
+    def _build_objective_message(
+        self,
+        *,
+        reply: AdversarialReply,
+        seed_message: Message | None,
+        last_response: Message | None,
+        turn_index: int,
+    ) -> Message:
+        """
+        Build the objective-target message from the adversarial reply.
+
+        Args:
+            reply: The parsed adversarial reply whose ``next_message`` drives the objective turn.
+            seed_message: The seed message when it carries adversarial placeholders to fill, else None.
+            last_response: The objective target's latest response, whose media may be forwarded.
+            turn_index: Zero-based index of the current turn.
+
+        Returns:
+            Message: The ready-to-send objective-target message.
+
+        Raises:
+            ValueError: If ``seed_message`` has placeholders but no modality router is configured.
+        """
+        if seed_message is not None:
+            if self._modality_router is None:
+                raise ValueError("An adversarial-placeholder seed requires a modality_router to fill it.")
+            return self._modality_router.fill_adversarial_placeholders(
+                message=seed_message,
+                adversarial_text=reply.next_message,
+            )
+        if self._modality_router is not None:
+            return self._modality_router.build_objective_input_message(
+                text=reply.next_message,
+                last_response=last_response,
+                turn_index=turn_index,
+            )
+        return Message.from_prompt(prompt=reply.next_message, role="user")
 
     @pyrit_json_retry
     async def _send_and_parse_async(
@@ -499,10 +652,10 @@ class AdversarialConversationManager:
         """
         Send one user turn to the adversarial chat and parse its reply.
 
-        This is the single place adversarial-chat JSON retry lives: when a schema is declared
-        and the reply fails to match it, ``InvalidJsonException`` propagates and ``pyrit_json_retry``
-        re-sends the turn until it parses or the attempt budget is exhausted. When
-        ``raise_on_invalid_json`` is False, an unparseable reply is returned as raw text instead.
+        This is the single place adversarial-chat JSON retry lives: when the reply fails to match the
+        resolved schema, ``InvalidJsonException`` propagates and ``pyrit_json_retry`` re-sends the turn
+        until it parses or the attempt budget is exhausted. When ``raise_on_invalid_json`` is False, an
+        unparseable reply is returned as raw text instead.
 
         When a ``modality_router`` is configured, the outgoing message is built via
         ``build_adversarial_input_message`` so first-turn seed media (``seed_message``) and prior
@@ -515,13 +668,11 @@ class AdversarialConversationManager:
             seed_message: The seed message whose media may be forwarded on the first turn.
 
         Returns:
-            AdversarialReply: ``next_message`` plus parsed extras (schema path) or the raw
-                text (raw path).
+            AdversarialReply: ``next_message`` plus the parsed ``rationale`` / ``last_response_summary``.
 
         Raises:
             ValueError: If no response is received from the adversarial chat.
-            InvalidJsonException: If a schema is declared, ``raise_on_invalid_json`` is True, and
-                the reply is invalid.
+            InvalidJsonException: If ``raise_on_invalid_json`` is True and the reply is invalid.
         """
         prompt_metadata = _build_adversarial_prompt_metadata(response_json_schema=self._response_json_schema)
 
@@ -559,9 +710,6 @@ class AdversarialConversationManager:
         raw = response.get_value()
 
         schema = self._response_json_schema
-        if schema is None:
-            return AdversarialReply(next_message=raw, raw=raw)
-
         if not self._raise_on_invalid_json:
             try:
                 return _parse_adversarial_reply(raw, schema=schema)

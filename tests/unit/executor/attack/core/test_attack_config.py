@@ -153,41 +153,8 @@ class TestResolveAdversarialJsonSchema:
             )
 
 
-class TestGetJsonSchema:
-    """Tests for AttackAdversarialConfig.get_json_schema."""
-
-    def test_none_when_prompts_are_strings(self):
-        config = AttackAdversarialConfig(
-            target=MagicMock(spec=PromptTarget),
-            system_prompt="persona {{ objective }}",
-            first_message="seed {{ objective }}",
-        )
-        assert config.get_json_schema() is None
-
-    def test_reads_schema_from_system_prompt(self):
-        config = AttackAdversarialConfig(
-            target=MagicMock(spec=PromptTarget),
-            system_prompt=_seed_with_schema(_SCHEMA),
-            first_message="seed {{ objective }}",
-        )
-        assert config.get_json_schema() == _SCHEMA
-
-    def test_reads_schema_from_first_message(self):
-        config = AttackAdversarialConfig(
-            target=MagicMock(spec=PromptTarget),
-            system_prompt=None,
-            first_message=_seed_with_schema(_SCHEMA),
-        )
-        assert config.get_json_schema() == _SCHEMA
-
-    def test_raises_when_both_declare_schema(self):
-        config = AttackAdversarialConfig(
-            target=MagicMock(spec=PromptTarget),
-            system_prompt=_seed_with_schema(_SCHEMA),
-            first_message=_seed_with_schema(_OTHER_SCHEMA),
-        )
-        with pytest.raises(ValueError, match="only one of them"):
-            config.get_json_schema()
+class TestResolveAdversarialSystemPrompt:
+    """Tests for resolve_adversarial_system_prompt."""
 
     def test_explicit_seedprompt_with_required_params_returned_as_is(self):
         """An explicitly provided SeedPrompt declaring the required params is returned unchanged."""

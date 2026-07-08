@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import logging
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -9,8 +10,10 @@ import pytest
 from pyrit.exceptions import InvalidJsonException
 from pyrit.executor.attack.component.adversarial_conversation_manager import (
     _BLOCKED_FEEDBACK_TEXT,
+    _DEFAULT_ADVERSARIAL_SCHEMA_NAME,
     _EMPTY_FEEDBACK_TEXT,
-    AdversarialConversationManager,
+    AdversarialTurn,
+    _AdversarialConversationManager,
     _build_adversarial_feedback_text,
     _build_adversarial_prompt_metadata,
     _parse_adversarial_reply,
@@ -22,6 +25,7 @@ from pyrit.models import (
     MessagePiece,
     Score,
     SeedPrompt,
+    get_common_json_schema,
 )
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import PromptTarget
@@ -41,6 +45,9 @@ SCHEMA: dict = {
 
 OTHER_SCHEMA: dict = {"type": "object", "properties": {"next_message": {"type": "string"}}}
 
+# A schema that does not declare the ``next_message`` property the attack loop consumes.
+SCHEMA_WITHOUT_NEXT_MESSAGE: dict = {"type": "object", "properties": {"rationale": {"type": "string"}}}
+
 VALID_JSON = (
     '{"next_message": "hello target", "rationale": "build rapport", "last_response_summary": "no prior response"}'
 )
@@ -55,10 +62,8 @@ def _target() -> MagicMock:
     return target
 
 
-def _system_prompt(*, schema: dict | None = None) -> SeedPrompt:
-    return SeedPrompt(
-        value="system {{ objective }}", data_type="text", response_json_schema=schema, is_jinja_template=True
-    )
+def _system_prompt(value: str = "system {{ objective }}", *, schema: dict | None = None) -> SeedPrompt:
+    return SeedPrompt(value=value, data_type="text", response_json_schema=schema, is_jinja_template=True)
 
 
 def _first_message(value: str = "open {{ objective }}", *, schema: dict | None = None) -> SeedPrompt:
@@ -82,15 +87,40 @@ def _response_message(value: str = "target said hi", *, data_type: str = "text",
     return Message(message_pieces=[piece])
 
 
-def _manager(**overrides) -> AdversarialConversationManager:
+def _seed_message(value: str = "seed prompt") -> Message:
+    return Message(message_pieces=[MessagePiece(role="user", original_value=value, original_value_data_type="text")])
+
+
+def _placeholder_seed(*, media: str = "/path/to/seed.png") -> Message:
+    conversation_id = "seed-conv"
+    return Message(
+        message_pieces=[
+            MessagePiece(
+                role="user",
+                original_value="",
+                original_value_data_type="text",
+                conversation_id=conversation_id,
+                prompt_metadata={"adversarial_placeholder": True},
+            ),
+            MessagePiece(
+                role="user",
+                original_value=media,
+                original_value_data_type="image_path",
+                conversation_id=conversation_id,
+            ),
+        ]
+    )
+
+
+def _manager(**overrides) -> _AdversarialConversationManager:
     kwargs: dict = {
         "adversarial_target": _target(),
-        "system_prompt": _system_prompt(schema=None),
-        "adversarial_prompt_template": _per_turn(),
+        "adversarial_system_prompt": _system_prompt(schema=None),
+        "adversarial_next_user_message": _per_turn(),
         "objective": "obj",
     }
     kwargs.update(overrides)
-    return AdversarialConversationManager(**kwargs)
+    return _AdversarialConversationManager(**kwargs)
 
 
 # --- _build_adversarial_prompt_metadata --------------------------------------
@@ -166,29 +196,35 @@ def test_parse_reply_coerces_non_string_next_message():
 
 class TestManagerInit:
     def test_resolves_schema_from_system_prompt(self):
-        manager = _manager(system_prompt=_system_prompt(schema=SCHEMA))
-        assert manager.has_schema is True
+        manager = _manager(adversarial_system_prompt=_system_prompt(schema=SCHEMA))
         assert manager.response_json_schema == SCHEMA
 
     def test_resolves_schema_from_first_message(self):
         manager = _manager(
-            system_prompt=_system_prompt(schema=None),
-            first_message=_first_message(schema=SCHEMA),
+            adversarial_system_prompt=_system_prompt(schema=None),
+            adversarial_first_user_message=_first_message(schema=SCHEMA),
         )
-        assert manager.has_schema is True
         assert manager.response_json_schema == SCHEMA
 
-    def test_no_schema_is_raw_path(self):
-        manager = _manager(system_prompt=_system_prompt(schema=None))
-        assert manager.has_schema is False
-        assert manager.response_json_schema is None
+    def test_defaults_to_canonical_schema_when_none_declared(self):
+        # There is no unvalidated raw-text path: when neither prompt declares a schema, the manager
+        # falls back to the shared canonical adversarial_chat schema so every reply is validated.
+        manager = _manager(adversarial_system_prompt=_system_prompt(schema=None))
+        assert manager.response_json_schema == get_common_json_schema(_DEFAULT_ADVERSARIAL_SCHEMA_NAME)
+        assert "next_message" in manager.response_json_schema["properties"]
 
     def test_raises_when_both_declare_schema(self):
         with pytest.raises(ValueError, match="only one of them"):
             _manager(
-                system_prompt=_system_prompt(schema=SCHEMA),
-                first_message=_first_message(schema=OTHER_SCHEMA),
+                adversarial_system_prompt=_system_prompt(schema=SCHEMA),
+                adversarial_first_user_message=_first_message(schema=OTHER_SCHEMA),
             )
+
+    def test_raises_when_declared_schema_omits_next_message(self):
+        # A declared schema that cannot carry next_message cannot drive the manager; fail fast at
+        # construction rather than after the first adversarial round trip.
+        with pytest.raises(ValueError, match="next_message"):
+            _manager(adversarial_system_prompt=_system_prompt(schema=SCHEMA_WITHOUT_NEXT_MESSAGE))
 
     def test_conversation_id_generated_when_omitted(self):
         assert _manager().conversation_id
@@ -202,12 +238,37 @@ class TestManagerInit:
         first = _first_message()
         manager = _manager(
             adversarial_target=target,
-            adversarial_prompt_template=per_turn,
-            first_message=first,
+            adversarial_next_user_message=per_turn,
+            adversarial_first_user_message=first,
         )
         assert manager.adversarial_target is target
-        assert manager.adversarial_prompt_template is per_turn
-        assert manager.first_message is first
+        assert manager.adversarial_next_user_message is per_turn
+        assert manager.adversarial_first_user_message is first
+
+
+# --- set_adversarial_system_prompt -------------------------------------------
+
+
+class TestSetAdversarialSystemPrompt:
+    def test_renders_objective_and_max_turns_and_sets_on_conversation(self):
+        target = _target()
+        manager = _manager(
+            adversarial_target=target,
+            adversarial_system_prompt=_system_prompt("SYS obj={{ objective }} turns={{ max_turns }}"),
+            objective="the goal",
+            max_turns=7,
+            conversation_id="conv-sys",
+        )
+        manager.set_adversarial_system_prompt()
+        target.set_system_prompt.assert_called_once()
+        kwargs = target.set_system_prompt.call_args.kwargs
+        assert kwargs["system_prompt"] == "SYS obj=the goal turns=7"
+        assert kwargs["conversation_id"] == "conv-sys"
+
+    def test_empty_rendered_system_prompt_raises(self):
+        manager = _manager(adversarial_system_prompt=_system_prompt("{{ objective }}"), objective="")
+        with pytest.raises(ValueError, match="must be defined"):
+            manager.set_adversarial_system_prompt()
 
 
 # --- first-message rendering -------------------------------------------------
@@ -216,19 +277,19 @@ class TestManagerInit:
 class TestRenderFirstMessage:
     def test_renders_objective(self):
         manager = _manager(
-            first_message=_first_message("open {{ objective }}"),
+            adversarial_first_user_message=_first_message("open {{ objective }}"),
             objective="the goal",
         )
         assert manager._render_first_message() == "open the goal"
 
     def test_without_template_raises(self):
-        manager = _manager(first_message=None)
+        manager = _manager(adversarial_first_user_message=None)
         with pytest.raises(ValueError, match="No first message configured"):
             manager._render_first_message()
 
     def test_without_objective_raises_when_needed(self):
         manager = _manager(
-            first_message=_first_message("open {{ objective }}"),
+            adversarial_first_user_message=_first_message("open {{ objective }}"),
             objective=None,
         )
         with pytest.raises(ValueError, match="No objective configured"):
@@ -236,140 +297,219 @@ class TestRenderFirstMessage:
 
     def test_renders_static_first_message_without_objective(self):
         manager = _manager(
-            first_message=_first_message("static opening"),
+            adversarial_first_user_message=_first_message("static opening"),
             objective=None,
         )
         assert manager._render_first_message() == "static opening"
 
 
-# --- get_first_message_async -------------------------------------------------
-
-
-class TestGetFirstMessageAsync:
-    async def test_raw_path_sends_rendered_first_message(self):
-        normalizer = _normalizer("raw opening")
-        manager = _manager(
-            first_message=_first_message("open {{ objective }}"),
-            objective="the goal",
-            prompt_normalizer=normalizer,
-        )
-        reply = await manager.get_first_message_async()
-        assert reply.next_message == "raw opening"
-        sent = normalizer.send_prompt_async.call_args.kwargs["message"]
-        assert sent.message_pieces[0].converted_value == "open the goal"
-
-    async def test_schema_path_parses_and_forwards_metadata(self):
-        normalizer = _normalizer(VALID_JSON)
-        manager = _manager(
-            system_prompt=_system_prompt(schema=None),
-            first_message=_first_message("open {{ objective }}", schema=SCHEMA),
-            objective="the goal",
-            prompt_normalizer=normalizer,
-        )
-        reply = await manager.get_first_message_async()
-        assert reply.next_message == "hello target"
-        sent = normalizer.send_prompt_async.call_args.kwargs["message"]
-        assert sent.message_pieces[0].prompt_metadata[JSON_SCHEMA_METADATA_KEY] == SCHEMA
-
-    async def test_no_template_raises(self):
-        manager = _manager(first_message=None, prompt_normalizer=_normalizer("x"))
-        with pytest.raises(ValueError, match="No first message configured"):
-            await manager.get_first_message_async()
-
-
-# --- get_next_message_async --------------------------------------------------
+# --- get_next_message_async: prompt selection --------------------------------
 
 
 class TestGetNextMessageAsync:
-    async def test_raw_path_returns_raw_text_and_no_metadata(self):
-        normalizer = _normalizer("just raw adversarial text")
-        manager = _manager(system_prompt=_system_prompt(schema=None), prompt_normalizer=normalizer)
-        reply = await manager.get_next_message_async(score=None, last_response=_response_message())
-        assert reply.next_message == "just raw adversarial text"
-        assert reply.rationale is None
-        sent = normalizer.send_prompt_async.call_args.kwargs["message"]
-        assert not (sent.message_pieces[0].prompt_metadata or {})
-
-    async def test_schema_path_forwards_metadata_and_parses(self):
+    async def test_first_turn_renders_first_message(self):
         normalizer = _normalizer(VALID_JSON)
-        manager = _manager(system_prompt=_system_prompt(schema=SCHEMA), prompt_normalizer=normalizer)
-        reply = await manager.get_next_message_async(score=None, last_response=_response_message())
-        assert reply.next_message == "hello target"
-        assert reply.rationale == "build rapport"
-        sent = normalizer.send_prompt_async.call_args.kwargs["message"]
-        assert sent.message_pieces[0].prompt_metadata[JSON_SCHEMA_METADATA_KEY] == SCHEMA
-
-    async def test_renders_template_with_objective_and_feedback_text(self):
-        normalizer = _normalizer("raw")
         manager = _manager(
-            adversarial_prompt_template=_per_turn("OBJ={{ objective }}|FB={{ feedback_text }}"),
+            adversarial_first_user_message=_first_message("open {{ objective }}"),
+            objective="the goal",
+            prompt_normalizer=normalizer,
+        )
+        turn = await manager.get_next_message_async(turn_index=0, last_response=None)
+        assert isinstance(turn, AdversarialTurn)
+        assert turn.reply is not None and turn.reply.next_message == "hello target"
+        assert turn.bypassed is False
+        sent = normalizer.send_prompt_async.call_args.kwargs["message"]
+        assert sent.message_pieces[0].converted_value == "open the goal"
+        # The reply's next_message becomes the ready-to-send objective message.
+        assert turn.objective_message.get_value() == "hello target"
+
+    async def test_next_turn_renders_template_with_objective_and_feedback_text(self):
+        normalizer = _normalizer(VALID_JSON)
+        manager = _manager(
+            adversarial_next_user_message=_per_turn("OBJ={{ objective }}|FB={{ feedback_text }}"),
             objective="my objective",
             use_score_as_feedback=True,
             prompt_normalizer=normalizer,
         )
         score = SimpleNamespace(score_value="true", score_rationale="because")
-        await manager.get_next_message_async(score=score, last_response=_response_message("target text"))
+        await manager.get_next_message_async(turn_index=1, score=score, last_response=_response_message("target text"))
         sent = normalizer.send_prompt_async.call_args.kwargs["message"]
         assert sent.message_pieces[0].converted_value == "OBJ=my objective|FB=target text\n\nbecause"
+
+    async def test_override_prompt_text_used_verbatim(self):
+        # Override mode (Crescendo / TAP): the attack supplies the built adversarial prompt text and
+        # the manager skips template rendering entirely (next-message template may even be None).
+        normalizer = _normalizer(VALID_JSON)
+        manager = _manager(
+            adversarial_system_prompt=_system_prompt(schema=SCHEMA),
+            adversarial_next_user_message=None,
+            prompt_normalizer=normalizer,
+        )
+        turn = await manager.get_next_message_async(
+            turn_index=2, last_response=_response_message("ignored"), adversarial_prompt_text="OVERRIDE TEXT"
+        )
+        sent = normalizer.send_prompt_async.call_args.kwargs["message"]
+        assert sent.message_pieces[0].converted_value == "OVERRIDE TEXT"
+        assert turn.reply is not None and turn.reply.next_message == "hello target"
+
+    async def test_schema_metadata_forwarded(self):
+        normalizer = _normalizer(VALID_JSON)
+        manager = _manager(adversarial_system_prompt=_system_prompt(schema=SCHEMA), prompt_normalizer=normalizer)
+        await manager.get_next_message_async(turn_index=1, last_response=_response_message())
+        sent = normalizer.send_prompt_async.call_args.kwargs["message"]
+        assert sent.message_pieces[0].prompt_metadata[JSON_SCHEMA_METADATA_KEY] == SCHEMA
 
     async def test_no_response_raises(self):
         manager = _manager(prompt_normalizer=_normalizer(None))
         with pytest.raises(ValueError, match="No response received from adversarial chat"):
-            await manager.get_next_message_async(score=None, last_response=_response_message())
+            await manager.get_next_message_async(turn_index=1, last_response=_response_message())
 
-    async def test_schema_path_invalid_reply_raises(self):
+    async def test_invalid_reply_raises(self):
         manager = _manager(
-            system_prompt=_system_prompt(schema=SCHEMA), prompt_normalizer=_normalizer("totally not json")
+            adversarial_system_prompt=_system_prompt(schema=SCHEMA), prompt_normalizer=_normalizer("totally not json")
         )
         with pytest.raises(InvalidJsonException):
-            await manager.get_next_message_async(score=None, last_response=_response_message())
+            await manager.get_next_message_async(turn_index=1, last_response=_response_message())
 
     async def test_raise_on_invalid_json_false_returns_raw(self):
         normalizer = _normalizer("totally not json")
         manager = _manager(
-            system_prompt=_system_prompt(schema=SCHEMA),
+            adversarial_system_prompt=_system_prompt(schema=SCHEMA),
             raise_on_invalid_json=False,
             prompt_normalizer=normalizer,
         )
-        reply = await manager.get_next_message_async(score=None, last_response=_response_message())
-        assert reply.next_message == "totally not json"
+        turn = await manager.get_next_message_async(turn_index=1, last_response=_response_message())
+        assert turn.reply is not None and turn.reply.next_message == "totally not json"
+        assert turn.objective_message.get_value() == "totally not json"
 
 
-# --- modality-router integration ---------------------------------------------
+# --- get_next_message_async: bypass path -------------------------------------
+
+
+class TestBypass:
+    async def test_seed_without_placeholder_bypasses_and_duplicates(self):
+        # Regression: the red_teaming bypass path used to return the seed message without
+        # ``.duplicate()`` while Crescendo/TAP duplicated it. The manager now always duplicates, so
+        # the objective send gets fresh ids and the caller's seed is never mutated or double-persisted.
+        normalizer = _normalizer(VALID_JSON)
+        manager = _manager(prompt_normalizer=normalizer)
+        seed = _seed_message("custom seed")
+
+        turn = await manager.get_next_message_async(turn_index=0, seed_message=seed)
+
+        assert turn.bypassed is True
+        assert turn.reply is None
+        assert turn.objective_message is not seed
+        assert turn.objective_message.get_value() == "custom seed"
+        assert turn.objective_message.message_pieces[0].id != seed.message_pieces[0].id
+        normalizer.send_prompt_async.assert_not_called()
+
+    async def test_seed_with_placeholder_does_not_bypass(self):
+        # A placeholder seed must route through the adversarial chat so the generated text fills the
+        # slot; it is not a bypass.
+        normalizer = _normalizer(VALID_JSON)
+        router = MagicMock()
+        router.fill_adversarial_placeholders.return_value = Message.from_prompt(prompt="FILLED", role="user")
+        manager = _manager(
+            adversarial_first_user_message=_first_message("open {{ objective }}"),
+            prompt_normalizer=normalizer,
+            modality_router=router,
+        )
+
+        turn = await manager.get_next_message_async(turn_index=0, seed_message=_placeholder_seed(), last_response=None)
+
+        assert turn.bypassed is False
+        normalizer.send_prompt_async.assert_called_once()
+
+
+# --- get_next_message_async: objective-message construction -------------------
+
+
+class TestBuildObjectiveMessage:
+    async def test_text_only_without_router(self):
+        manager = _manager(prompt_normalizer=_normalizer(VALID_JSON))
+        turn = await manager.get_next_message_async(turn_index=1, last_response=_response_message())
+        assert turn.objective_message.get_value() == "hello target"
+        assert len(turn.objective_message.message_pieces) == 1
+
+    async def test_router_builds_objective_message_with_turn_index(self):
+        normalizer = _normalizer(VALID_JSON)
+        router = MagicMock()
+        router.build_adversarial_input_message.return_value = Message.from_prompt(prompt="ADV_SENT", role="user")
+        router.build_objective_input_message.return_value = Message.from_prompt(prompt="OBJ_MSG", role="user")
+        last = _response_message("last")
+        manager = _manager(prompt_normalizer=normalizer, modality_router=router)
+
+        turn = await manager.get_next_message_async(turn_index=3, last_response=last)
+
+        router.build_objective_input_message.assert_called_once()
+        kwargs = router.build_objective_input_message.call_args.kwargs
+        assert kwargs["text"] == "hello target"
+        assert kwargs["last_response"] is last
+        assert kwargs["turn_index"] == 3
+        assert turn.objective_message.get_value() == "OBJ_MSG"
+
+    async def test_placeholder_seed_fills_via_router(self):
+        normalizer = _normalizer(VALID_JSON)
+        router = MagicMock()
+        router.build_adversarial_input_message.return_value = Message.from_prompt(prompt="ADV_SENT", role="user")
+        router.fill_adversarial_placeholders.return_value = Message.from_prompt(prompt="FILLED", role="user")
+        manager = _manager(
+            adversarial_first_user_message=_first_message("open {{ objective }}"),
+            prompt_normalizer=normalizer,
+            modality_router=router,
+        )
+
+        turn = await manager.get_next_message_async(turn_index=0, seed_message=_placeholder_seed(), last_response=None)
+
+        router.fill_adversarial_placeholders.assert_called_once()
+        assert router.fill_adversarial_placeholders.call_args.kwargs["adversarial_text"] == "hello target"
+        assert turn.objective_message.get_value() == "FILLED"
+
+    async def test_placeholder_seed_without_router_raises(self):
+        manager = _manager(
+            adversarial_first_user_message=_first_message("open {{ objective }}"),
+            prompt_normalizer=_normalizer(VALID_JSON),
+        )
+        with pytest.raises(ValueError, match="requires a modality_router"):
+            await manager.get_next_message_async(turn_index=0, seed_message=_placeholder_seed(), last_response=None)
+
+
+# --- modality-router integration (adversarial send) --------------------------
 
 
 class TestModalityRouterIntegration:
-    async def test_next_turn_builds_message_via_router(self):
-        normalizer = _normalizer("raw")
+    async def test_next_turn_builds_adversarial_message_via_router(self):
+        normalizer = _normalizer(VALID_JSON)
         routed = Message.from_prompt(prompt="ROUTED", role="user")
         router = MagicMock()
         router.build_adversarial_input_message.return_value = routed
+        router.build_objective_input_message.return_value = Message.from_prompt(prompt="OBJ", role="user")
         last = _response_message("last media")
-        seed = _response_message("seed media")
         manager = _manager(prompt_normalizer=normalizer, modality_router=router)
 
-        await manager.get_next_message_async(score=None, last_response=last, seed_message=seed)
+        await manager.get_next_message_async(turn_index=1, last_response=last)
 
         router.build_adversarial_input_message.assert_called_once()
         kwargs = router.build_adversarial_input_message.call_args.kwargs
         assert kwargs["last_response"] is last
-        assert kwargs["seed_message"] is seed
         assert normalizer.send_prompt_async.call_args.kwargs["message"] is routed
 
     async def test_first_turn_forwards_seed_media_via_router(self):
-        normalizer = _normalizer("raw")
+        normalizer = _normalizer(VALID_JSON)
         routed = Message.from_prompt(prompt="ROUTED", role="user")
         router = MagicMock()
         router.build_adversarial_input_message.return_value = routed
-        seed = _response_message("seed media")
+        router.fill_adversarial_placeholders.return_value = Message.from_prompt(prompt="FILLED", role="user")
+        seed = _placeholder_seed()
         manager = _manager(
-            first_message=_first_message("open {{ objective }}"),
+            adversarial_first_user_message=_first_message("open {{ objective }}"),
             objective="goal",
             prompt_normalizer=normalizer,
             modality_router=router,
         )
 
-        await manager.get_first_message_async(seed_message=seed)
+        await manager.get_next_message_async(turn_index=0, seed_message=seed, last_response=None)
 
         kwargs = router.build_adversarial_input_message.call_args.kwargs
         assert kwargs["seed_message"] is seed
@@ -377,14 +517,40 @@ class TestModalityRouterIntegration:
         assert normalizer.send_prompt_async.call_args.kwargs["message"] is routed
 
     async def test_no_router_sends_text_only_message(self):
-        normalizer = _normalizer("raw")
+        normalizer = _normalizer(VALID_JSON)
         manager = _manager(
-            adversarial_prompt_template=_per_turn("prompt: {{ feedback_text }}"),
+            adversarial_next_user_message=_per_turn("prompt: {{ feedback_text }}"),
             prompt_normalizer=normalizer,
         )
-        await manager.get_next_message_async(score=None, last_response=_response_message("hi there"))
+        await manager.get_next_message_async(turn_index=1, last_response=_response_message("hi there"))
         sent = normalizer.send_prompt_async.call_args.kwargs["message"]
         assert sent.message_pieces[0].converted_value == "prompt: hi there"
+
+
+# --- media-drop warning ------------------------------------------------------
+
+
+class TestMediaDropWarning:
+    async def test_media_only_response_without_router_warns(self, caplog):
+        # A media-only objective response with no router silently degrades to a "please continue"
+        # nudge; that likely means a text-only adversarial paired with an image objective, so warn.
+        manager = _manager(prompt_normalizer=_normalizer(VALID_JSON))
+        last = _response_message("/tmp/out.png", data_type="image_path")
+        with caplog.at_level(logging.WARNING):
+            await manager.get_next_message_async(turn_index=1, last_response=last)
+        assert "non-text media" in caplog.text
+
+    async def test_media_only_response_is_silent_when_router_forwards(self, caplog):
+        normalizer = _normalizer(VALID_JSON)
+        router = MagicMock()
+        router.response_media_is_forwardable_to_adversarial.return_value = True
+        router.build_adversarial_input_message.return_value = Message.from_prompt(prompt="ADV", role="user")
+        router.build_objective_input_message.return_value = Message.from_prompt(prompt="OBJ", role="user")
+        manager = _manager(prompt_normalizer=normalizer, modality_router=router)
+        last = _response_message("/tmp/out.png", data_type="image_path")
+        with caplog.at_level(logging.WARNING):
+            await manager.get_next_message_async(turn_index=1, last_response=last)
+        assert "non-text media" not in caplog.text
 
 
 # --- round trip --------------------------------------------------------------
