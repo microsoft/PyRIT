@@ -545,6 +545,7 @@ class TestDoRun:
                     "memory_labels": {"k": "v"},
                     "dataset_names": ["d1"],
                     "max_dataset_size": 5,
+                    "dataset_filters": [("harm_categories", "cyber"), ("data_types", "text")],
                 },
             ),
             patch("pyrit.cli._output.print_scenario_result_async", new_callable=AsyncMock),
@@ -562,6 +563,7 @@ class TestDoRun:
         assert sent.labels == {"k": "v"}
         assert sent.dataset_names == ["d1"]
         assert sent.max_dataset_size == 5
+        assert sent.dataset_filters == {"harm_categories": ["cyber"], "data_types": ["text"]}
 
     def test_run_failed_status_calls_summary(self, shell):
         s, client = shell

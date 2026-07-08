@@ -31,6 +31,22 @@ def _sp(*, name, description="", default=None, param_type="str", choices=None, i
     )
 
 
+def test_dataset_filter_help_covers_every_request_model_key():
+    """
+    The frontend per-key ``--dataset-filters`` help must describe exactly the server-side allow-list.
+
+    A missing key means a filter the request model accepts has no CLI help (and, by design, no
+    documented semantics); an extra key means the CLI advertises a filter the server rejects.
+    Adding to ``DATASET_FILTERS`` therefore forces adding a ``_DATASET_FILTER_HELP`` entry, where
+    the surrounding entries model the one-line semantics note to write.
+    """
+    from pyrit.cli._cli_args import _DATASET_FILTER_HELP
+    from pyrit.models.catalog.scenario import DATASET_FILTERS
+
+    assert set(_DATASET_FILTER_HELP) == DATASET_FILTERS
+    assert all(_DATASET_FILTER_HELP.values()), "every dataset filter key needs a semantics note"
+
+
 class TestParseArgs:
     """Tests for parse_args function."""
 
@@ -83,6 +99,14 @@ class TestParseArgs:
     def test_parse_args_with_memory_labels(self):
         args = pyrit_scan.parse_args(["test_scenario", "--memory-labels", '{"key":"value"}'])
         assert args.memory_labels == '{"key":"value"}'
+
+    def test_parse_args_with_dataset_filters(self):
+        args = pyrit_scan.parse_args(["test_scenario", "--dataset-filters", "harm_categories=cyber", "data_types=text"])
+        assert args.dataset_filters == [("harm_categories", "cyber"), ("data_types", "text")]
+
+    def test_parse_args_dataset_filter_without_equals_errors(self):
+        with pytest.raises(SystemExit):
+            pyrit_scan.parse_args(["test_scenario", "--dataset-filters", "harm_categories"])
 
     def test_parse_args_complex_command(self):
         args = pyrit_scan.parse_args(
@@ -605,6 +629,7 @@ class TestBuildRunRequest:
             max_retries=None,
             dataset_names=None,
             max_dataset_size=None,
+            dataset_filters=None,
             memory_labels=None,
         )
         request = pyrit_scan._build_run_request(parsed_args=parsed, scenario_name="s")
@@ -620,6 +645,7 @@ class TestBuildRunRequest:
             max_retries=2,
             dataset_names=["d1"],
             max_dataset_size=10,
+            dataset_filters=None,
             memory_labels='{"key":"value"}',
         )
         request = pyrit_scan._build_run_request(parsed_args=parsed, scenario_name="s")
@@ -630,6 +656,36 @@ class TestBuildRunRequest:
         assert request.max_dataset_size == 10
         assert request.labels == {"key": "value"}
 
+    def test_populates_dataset_filters(self):
+        parsed = Namespace(
+            target="t",
+            initializers=None,
+            scenario_strategies=None,
+            max_concurrency=None,
+            max_retries=None,
+            dataset_names=None,
+            max_dataset_size=None,
+            dataset_filters=[("harm_categories", "cyber"), ("data_types", "text")],
+            memory_labels=None,
+        )
+        request = pyrit_scan._build_run_request(parsed_args=parsed, scenario_name="s")
+        assert request.dataset_filters == {"harm_categories": ["cyber"], "data_types": ["text"]}
+
+    def test_duplicate_dataset_filter_key_raises(self):
+        parsed = Namespace(
+            target="t",
+            initializers=None,
+            scenario_strategies=None,
+            max_concurrency=None,
+            max_retries=None,
+            dataset_names=None,
+            max_dataset_size=None,
+            dataset_filters=[("harm_categories", "cyber"), ("harm_categories", "violence")],
+            memory_labels=None,
+        )
+        with pytest.raises(ValueError, match="Duplicate dataset filter 'harm_categories'"):
+            pyrit_scan._build_run_request(parsed_args=parsed, scenario_name="s")
+
     def test_includes_scenario_declared_params(self):
         parsed = Namespace(
             target=None,
@@ -639,6 +695,7 @@ class TestBuildRunRequest:
             max_retries=None,
             dataset_names=None,
             max_dataset_size=None,
+            dataset_filters=None,
             memory_labels=None,
             scenario__max_turns="7",
         )

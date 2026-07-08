@@ -83,6 +83,10 @@ class TestDoctorInitialization:
         config = Doctor(objective_scorer=mock_objective_scorer)._default_dataset_config
         assert config.dataset_names == ["garak_doctor"]
 
+    def test_default_strategy_is_default(self, mock_objective_scorer):
+        scenario = Doctor(objective_scorer=mock_objective_scorer)
+        assert scenario._default_strategy == DoctorStrategy.DEFAULT
+
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestDoctorTechniqueFactories:
@@ -135,6 +139,22 @@ class TestDoctorTechniqueFactories:
 class TestDoctorStrategyExpansion:
     """Tests for Doctor strategy expansion and atomic attack generation."""
 
+    async def test_default_expands_to_concrete_strategies(
+        self, mock_objective_target, mock_objective_scorer, doctor_dataset_config
+    ):
+        """No explicit strategies -> DEFAULT -> both Policy Puppetry techniques."""
+        scenario = Doctor(objective_scorer=mock_objective_scorer)
+        scenario.set_params_from_args(
+            args={
+                "objective_target": mock_objective_target,
+                "dataset_config": doctor_dataset_config,
+            }
+        )
+        await scenario.initialize_async()
+
+        strategy_values = {s.value for s in scenario._scenario_strategies}
+        assert strategy_values == {"policy_puppetry", "policy_puppetry_leet"}
+
     async def test_all_expands_to_concrete_strategies(
         self, mock_objective_target, mock_objective_scorer, doctor_dataset_config
     ):
@@ -142,6 +162,7 @@ class TestDoctorStrategyExpansion:
         scenario.set_params_from_args(
             args={
                 "objective_target": mock_objective_target,
+                "scenario_strategies": [DoctorStrategy.ALL],
                 "dataset_config": doctor_dataset_config,
             }
         )
