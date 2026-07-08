@@ -25,6 +25,7 @@
 from pathlib import Path
 
 from pyrit.output import output_scenario_async
+from pyrit.prompt_target import RealtimeTarget
 from pyrit.registry import TargetRegistry
 from pyrit.scenario.garak import Encoding, EncodingStrategy
 from pyrit.scenario.garak.audio_achilles_heel import AudioAchillesHeel, AudioAchillesHeelDatasetConfiguration
@@ -106,21 +107,25 @@ await output_scenario_async(scenario_result)
 # **CLI example:**
 #
 # ```bash
-# pyrit_scan garak.audio_achilles_heel --target openai_chat --max-dataset-size 2
+# pyrit_scan garak.audio_achilles_heel --target realtime --max-dataset-size 2
 # ```
 #
-# > **Note:** The objective target must accept `audio_path` input (i.e. be multimodal); non-audio
-# > targets will error when the request is sent. The full dataset holds ~350 clips, so a default
-# > run samples a small subset to finish quickly — raise `--max-dataset-size` for broader coverage.
+# > **Note:** The objective target must accept `audio_path` input (i.e. be multimodal). The example
+# > below uses `RealtimeTarget` (the OpenAI Realtime audio websocket); non-audio targets such as the
+# > default `openai_chat` will error when the audio request is sent. The full dataset holds ~350
+# > clips, so a default run samples a small subset to finish quickly — raise `--max-dataset-size`
+# > for broader coverage.
 
 # %%
 audio_dataset_config = AudioAchillesHeelDatasetConfiguration(
     dataset_names=["garak_audio_achilles_heel"], max_dataset_size=1
 )
 
+audio_target = RealtimeTarget()
+
 audio_scenario = AudioAchillesHeel()
 await audio_scenario.initialize_async(  # type: ignore
-    objective_target=objective_target,
+    objective_target=audio_target,
     dataset_config=audio_dataset_config,
 )
 
