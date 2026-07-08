@@ -92,5 +92,24 @@ await output_scenario_async(scenario_result)
 # probes), `EXFIL` (the 6 markdown-exfil probes), and `XSS` (TaskXSS + MarkdownXSS).
 
 # %% [markdown]
+# ## Doctor
+#
+# Ports Garak's `doctor` probe, which implements the HiddenLayer Policy Puppetry universal bypass:
+# a post-instruction-hierarchy prompt injection that frames a harmful request as a fictional
+# medical-drama script ("Dr House") to override safety guardrails. Each objective from the
+# `garak_doctor` dataset is wrapped in a Policy Puppetry template via `PolicyPuppetryConverter` and
+# the response is scored for non-refusal (mirroring Garak's `mitigation.MitigationBypass` detector).
+#
+# **CLI example:**
+#
+# ```bash
+# pyrit_scan garak.doctor --target openai_chat --strategies policy_puppetry --max-dataset-size 1
+# ```
+#
+# **Available strategies** (2 probes): `PolicyPuppetry` (wraps the objective in the Dr House
+# template) and `PolicyPuppetryLeet` (the same template, additionally leetspeak-encoded). Both are
+# tagged `default`, so `DEFAULT` and `ALL` currently coincide.
+
+# %% [markdown]
 # For more details, see the [Scenarios Programming Guide](../code/scenarios/0_scenarios.ipynb) and
 # [Configuration](../getting_started/configuration.md).

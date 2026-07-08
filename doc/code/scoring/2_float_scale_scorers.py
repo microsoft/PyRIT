@@ -8,6 +8,7 @@
 #       format_version: '1.3'
 #       jupytext_version: 1.19.1
 # ---
+
 # %% [markdown]
 # # Float-Scale Scorers
 # %% [markdown]
@@ -141,3 +142,13 @@ print(f"rationale: {scored.score_rationale}")
 # - **`SelfAskGeneralFloatScaleScorer`** — full control: provide your own system prompt,
 #   JSON schema, and `min_value`/`max_value`. See
 #   [Combining & stacking scorers](3_combining_scorers.ipynb) for custom-scorer guidance.
+# %% [markdown]
+# ## Multimodal scorers
+#
+# The float-scale media scorers mirror their true/false counterparts, transcribing or sampling a
+# response and delegating to a wrapped `FloatScaleScorer`:
+#
+# - **`AudioFloatScaleScorer`** — transcribes an `audio_path` response (Azure Speech-to-Text) and
+#   scores the resulting transcript.
+# - **`VideoFloatScaleScorer`** — samples frames from a `video_path` response and aggregates their
+#   per-category float scores (`MAX` by default); an optional audio scorer is folded in.
