@@ -9,7 +9,7 @@ from pyrit.common import apply_defaults
 from pyrit.common.path import EXECUTOR_RED_TEAM_PATH, SCORER_SEED_PROMPT_PATH
 from pyrit.executor.attack import ContextComplianceAttack, RedTeamingAttack, RolePlayAttack, RolePlayPaths
 from pyrit.executor.attack.core.attack_config import AttackAdversarialConfig, AttackScoringConfig
-from pyrit.models import Parameter, SeedAttackGroup
+from pyrit.models import Parameter, SeedAttackGroup, SeedPrompt
 from pyrit.prompt_target import PromptTarget
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
@@ -174,9 +174,9 @@ class Scam(Scenario):
 
         if strategy == "persuasive_rta":
             # Set system prompt to generic persuasion persona
-            self._adversarial_config.system_prompt_path = Path(
-                PERSUASION_DECEPTION_PATH, "persuasion_persona_generic.yaml"
-            ).resolve()
+            self._adversarial_config.system_prompt = SeedPrompt.from_yaml_file(
+                Path(PERSUASION_DECEPTION_PATH, "persuasion_persona_generic.yaml").resolve()
+            )
 
             attack_strategy = RedTeamingAttack(
                 objective_target=self._objective_target,
@@ -193,7 +193,7 @@ class Scam(Scenario):
             )
         elif strategy == "context_compliance":
             # Set system prompt to default
-            self._adversarial_config.system_prompt_path = None
+            self._adversarial_config.system_prompt = None
 
             attack_strategy = ContextComplianceAttack(
                 objective_target=self._objective_target,

@@ -211,14 +211,17 @@ class AttackSummary(AttackResult):
     )
 
     @field_serializer("related_conversations")
-    def _serialize_related_conversations(self, conversations: set[ConversationReference]) -> list[Any]:
+    def _serialize_related_conversations(
+        self,
+        related_conversations: set[ConversationReference],
+    ) -> list[dict[str, Any]]:
         """
         Serialize related conversations in a stable (sorted) order for deterministic output.
 
         Returns:
             A list of serialized conversation references ordered by ``conversation_id``.
         """
-        ordered = sorted(conversations, key=lambda ref: ref.conversation_id)
+        ordered = sorted(related_conversations, key=lambda ref: ref.conversation_id)
         return [ref.model_dump() for ref in ordered]
 
     @computed_field  # type: ignore[prop-decorator]
