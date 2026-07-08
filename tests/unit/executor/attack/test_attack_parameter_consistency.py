@@ -567,6 +567,96 @@ class TestNextMessageSentFirst:
 
 
 # =============================================================================
+# Test Class: adversarial reply parsed consistently across attacks
+# =============================================================================
+
+
+async def _assert_camelcase_reply_reaches_objective(
+    *,
+    attack: RedTeamingAttack | CrescendoAttack | TreeOfAttacksWithPruningAttack,
+    adversarial_target: MagicMock,
+    objective_target: MagicMock,
+    objective_response: Message,
+) -> None:
+    """Drive ``attack`` end-to-end with a camelCase adversarial reply and assert the normalized
+    ``next_message`` reaches the objective target.
+
+    Every genuine adversarial-conversation attack now routes its adversarial send through the shared
+    ``_AdversarialConversationManager``, which parses replies against the canonical ``adversarial_chat``
+    schema. A schema-aware adversarial model that emits camelCase keys (``nextMessage``) once broke a
+    Crescendo CI run because that attack hand-rolled its own parser. Asserting the same camelCase reply
+    is normalized through every consuming executor guards against any of them regressing to a bespoke
+    parser that skips normalization.
+    """
+    camel_reply = Message.from_prompt(
+        prompt='{"nextMessage": "CAMEL_NEXT_MESSAGE", "rationale": "r", "lastResponseSummary": "s"}',
+        role="assistant",
+    )
+
+    async def _side_effect(*, message: Message, target: MagicMock, **kwargs: object) -> Message:
+        return camel_reply if target is adversarial_target else objective_response
+
+    attack._prompt_normalizer.send_prompt_async = AsyncMock(side_effect=_side_effect)
+
+    await attack.execute_async(objective="Test objective")
+
+    objective_calls = [
+        call
+        for call in attack._prompt_normalizer.send_prompt_async.call_args_list
+        if call.kwargs.get("target") is objective_target
+    ]
+    assert objective_calls, "attack never sent a message to the objective target"
+    assert "CAMEL_NEXT_MESSAGE" in objective_calls[0].kwargs["message"].get_value()
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestAdversarialReplyParsedConsistentlyAcrossAttacks:
+    """Every consuming executor must extract ``next_message`` via the shared schema-aware parser."""
+
+    async def test_red_teaming_normalizes_camelcase_adversarial_reply(
+        self,
+        red_teaming_attack: RedTeamingAttack,
+        mock_adversarial_chat: MagicMock,
+        mock_chat_target: MagicMock,
+        sample_response: Message,
+    ) -> None:
+        await _assert_camelcase_reply_reaches_objective(
+            attack=red_teaming_attack,
+            adversarial_target=mock_adversarial_chat,
+            objective_target=mock_chat_target,
+            objective_response=sample_response,
+        )
+
+    async def test_crescendo_normalizes_camelcase_adversarial_reply(
+        self,
+        crescendo_attack: CrescendoAttack,
+        mock_adversarial_chat: MagicMock,
+        mock_chat_target: MagicMock,
+        sample_response: Message,
+    ) -> None:
+        await _assert_camelcase_reply_reaches_objective(
+            attack=crescendo_attack,
+            adversarial_target=mock_adversarial_chat,
+            objective_target=mock_chat_target,
+            objective_response=sample_response,
+        )
+
+    async def test_tap_normalizes_camelcase_adversarial_reply(
+        self,
+        tap_attack: TreeOfAttacksWithPruningAttack,
+        mock_adversarial_chat: MagicMock,
+        mock_chat_target: MagicMock,
+        sample_response: Message,
+    ) -> None:
+        await _assert_camelcase_reply_reaches_objective(
+            attack=tap_attack,
+            adversarial_target=mock_adversarial_chat,
+            objective_target=mock_chat_target,
+            objective_response=sample_response,
+        )
+
+
+# =============================================================================
 # Test Class: prepended_conversation Memory Handling
 # =============================================================================
 
