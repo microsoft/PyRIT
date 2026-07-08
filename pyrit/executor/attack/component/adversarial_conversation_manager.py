@@ -276,9 +276,12 @@ class _AdversarialConversationManager:
 
     Conversation context (``conversation_id``, ``objective``, ``max_turns``, the objective target's
     conversation id, the attack strategy name, and memory labels) is supplied once at construction
-    time and reused for every turn. Attacks call the single entry point ``get_next_message_async``
+    time and reused for every turn. Most attacks call the single entry point ``get_next_message_async``
     and receive an ``AdversarialTurn`` whose ``objective_message`` is ready to send — they never
     branch on adversarial placeholders, hand-roll feedback text, or build the objective message
+    themselves. Attacks that must inspect the parsed reply *before* deciding what to send (e.g. TAP,
+    which scores ``next_message`` for on-topic-ness and may re-prompt with feedback) call
+    ``generate_adversarial_reply_async`` for the send/parse half and build the objective message
     themselves.
 
     Two modes share the same send/parse/schema/modality core:
@@ -287,7 +290,7 @@ class _AdversarialConversationManager:
       (handling blocked/error/empty responses and optional score feedback) and renders it into the
       first-message / next-message templates.
     * **Override mode** (Crescendo, TAP): the attack supplies the fully-built adversarial prompt text
-      via ``adversarial_prompt_text`` and the manager does everything else.
+      via ``adversarial_prompt_text`` (or ``prompt_text``) and the manager does everything else.
     """
 
     def __init__(
@@ -413,7 +416,7 @@ class _AdversarialConversationManager:
         """The single response JSON schema every reply is validated against."""
         return self._response_json_schema
 
-    def set_adversarial_system_prompt(self) -> None:
+    def set_adversarial_system_prompt(self, **extra_render_values: object) -> None:
         """
         Render and set the adversarial system prompt on this manager's conversation.
 
@@ -422,12 +425,19 @@ class _AdversarialConversationManager:
         the attack's ``_setup_async`` *before* any prepended adversarial turns are hydrated, because
         ``set_system_prompt`` rejects a conversation that already has messages.
 
+        Args:
+            **extra_render_values: Additional attack-specific template variables to render into the
+                system prompt (e.g. Crescendo's ``conversation_context``). Attacks that need bespoke
+                system-prompt inputs supply them here rather than rendering and setting the prompt
+                themselves, keeping the setup mechanics owned by the manager.
+
         Raises:
             ValueError: If the rendered system prompt is empty.
         """
         rendered = self._adversarial_system_prompt.render_template_value(
             objective=self._objective,
             max_turns=self._max_turns,
+            **extra_render_values,
         )
         if not rendered:
             raise ValueError("Adversarial chat system prompt must be defined")
@@ -602,6 +612,47 @@ class _AdversarialConversationManager:
             turn_index=turn_index,
         )
         return AdversarialTurn(objective_message=objective_message, reply=reply, bypassed=False)
+
+    async def generate_adversarial_reply_async(
+        self,
+        *,
+        prompt_text: str,
+        seed_message: Message | None = None,
+        last_response: Message | None = None,
+    ) -> AdversarialReply:
+        """
+        Send a caller-built adversarial prompt and return the parsed reply, without building the
+        objective message.
+
+        This is the override-mode send/parse entry point for attacks that need the raw parsed
+        ``AdversarialReply`` in hand before building the objective-target message themselves — for
+        example TAP, which runs an on-topic scorer on ``next_message`` and may re-prompt the
+        adversarial chat with feedback before deciding what to send to the objective target. It owns
+        the same metadata/schema, modality-routed message building, execution-context tagging, and
+        JSON-retry mechanics as ``get_next_message_async`` (they share ``_send_and_parse_async``); it
+        simply stops at the parsed reply instead of weaving the ``next_message`` into an objective
+        ``Message``. Attacks whose turn ends with a ready-to-send objective message should call
+        ``get_next_message_async`` instead.
+
+        Args:
+            prompt_text: The fully-built adversarial prompt text to send this turn.
+            seed_message: Optional first-turn seed message whose media the modality router may forward
+                to the adversarial chat.
+            last_response: The objective target's latest response, whose media the modality router may
+                forward to the adversarial chat, or None on the first turn.
+
+        Returns:
+            AdversarialReply: ``next_message`` plus the parsed ``rationale`` / ``last_response_summary``.
+
+        Raises:
+            ValueError: If no response is received from the adversarial chat.
+            InvalidJsonException: If ``raise_on_invalid_json`` is True and the reply is invalid.
+        """
+        return await self._send_and_parse_async(
+            prompt_text=prompt_text,
+            last_response=last_response,
+            seed_message=seed_message,
+        )
 
     def _build_objective_message(
         self,

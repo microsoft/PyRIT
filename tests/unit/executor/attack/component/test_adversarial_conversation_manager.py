@@ -12,6 +12,7 @@ from pyrit.executor.attack.component.adversarial_conversation_manager import (
     _BLOCKED_FEEDBACK_TEXT,
     _DEFAULT_ADVERSARIAL_SCHEMA_NAME,
     _EMPTY_FEEDBACK_TEXT,
+    AdversarialReply,
     AdversarialTurn,
     _AdversarialConversationManager,
     _build_adversarial_feedback_text,
@@ -525,6 +526,106 @@ class TestModalityRouterIntegration:
         await manager.get_next_message_async(turn_index=1, last_response=_response_message("hi there"))
         sent = normalizer.send_prompt_async.call_args.kwargs["message"]
         assert sent.message_pieces[0].converted_value == "prompt: hi there"
+
+
+# --- generate_adversarial_reply_async (override-mode send/parse) -------------
+
+
+class TestGenerateAdversarialReplyAsync:
+    """The send/parse-only entry point used by attacks (TAP) that inspect the parsed reply before
+    deciding what to send to the objective target. It must share the manager's schema/metadata,
+    modality routing, and JSON-retry mechanics with ``get_next_message_async`` while stopping at the
+    parsed reply — it must never build an objective-target message itself.
+    """
+
+    async def test_returns_parsed_reply_without_objective_message(self):
+        normalizer = _normalizer(VALID_JSON)
+        manager = _manager(adversarial_system_prompt=_system_prompt(schema=SCHEMA), prompt_normalizer=normalizer)
+
+        reply = await manager.generate_adversarial_reply_async(prompt_text="built by the attack")
+
+        assert isinstance(reply, AdversarialReply)
+        assert reply.next_message == "hello target"
+        assert reply.rationale == "build rapport"
+        assert reply.last_response_summary == "no prior response"
+
+    async def test_prompt_text_used_verbatim_without_router(self):
+        normalizer = _normalizer(VALID_JSON)
+        manager = _manager(adversarial_system_prompt=_system_prompt(schema=SCHEMA), prompt_normalizer=normalizer)
+
+        await manager.generate_adversarial_reply_async(prompt_text="EXACT OVERRIDE TEXT")
+
+        sent = normalizer.send_prompt_async.call_args.kwargs["message"]
+        assert sent.message_pieces[0].converted_value == "EXACT OVERRIDE TEXT"
+
+    async def test_does_not_build_objective_message_even_with_router(self):
+        # A router is configured, but the send/parse path must never call the objective-side builders;
+        # TAP owns objective-message construction after scoring the reply.
+        normalizer = _normalizer(VALID_JSON)
+        routed = Message.from_prompt(prompt="ROUTED", role="user")
+        router = MagicMock()
+        router.build_adversarial_input_message.return_value = routed
+        manager = _manager(
+            adversarial_system_prompt=_system_prompt(schema=SCHEMA),
+            prompt_normalizer=normalizer,
+            modality_router=router,
+        )
+
+        await manager.generate_adversarial_reply_async(prompt_text="x")
+
+        router.build_objective_input_message.assert_not_called()
+        router.fill_adversarial_placeholders.assert_not_called()
+
+    async def test_forwards_media_via_router(self):
+        normalizer = _normalizer(VALID_JSON)
+        routed = Message.from_prompt(prompt="ROUTED", role="user")
+        router = MagicMock()
+        router.build_adversarial_input_message.return_value = routed
+        seed = _placeholder_seed()
+        last = _response_message("last media")
+        manager = _manager(
+            adversarial_system_prompt=_system_prompt(schema=SCHEMA),
+            prompt_normalizer=normalizer,
+            modality_router=router,
+        )
+
+        await manager.generate_adversarial_reply_async(prompt_text="x", seed_message=seed, last_response=last)
+
+        kwargs = router.build_adversarial_input_message.call_args.kwargs
+        assert kwargs["seed_message"] is seed
+        assert kwargs["last_response"] is last
+        assert normalizer.send_prompt_async.call_args.kwargs["message"] is routed
+
+    async def test_schema_metadata_forwarded(self):
+        normalizer = _normalizer(VALID_JSON)
+        manager = _manager(adversarial_system_prompt=_system_prompt(schema=SCHEMA), prompt_normalizer=normalizer)
+
+        await manager.generate_adversarial_reply_async(prompt_text="x")
+
+        sent = normalizer.send_prompt_async.call_args.kwargs["message"]
+        assert sent.message_pieces[0].prompt_metadata[JSON_SCHEMA_METADATA_KEY] == SCHEMA
+
+    async def test_no_response_raises(self):
+        manager = _manager(adversarial_system_prompt=_system_prompt(schema=SCHEMA), prompt_normalizer=_normalizer(None))
+        with pytest.raises(ValueError, match="No response received from adversarial chat"):
+            await manager.generate_adversarial_reply_async(prompt_text="x")
+
+    async def test_invalid_json_raises(self):
+        manager = _manager(
+            adversarial_system_prompt=_system_prompt(schema=SCHEMA), prompt_normalizer=_normalizer("totally not json")
+        )
+        with pytest.raises(InvalidJsonException):
+            await manager.generate_adversarial_reply_async(prompt_text="x")
+
+    async def test_schemaless_prompt_still_enforces_canonical_schema(self):
+        # Override-mode attacks with a schemaless custom prompt still get canonical-schema enforcement:
+        # a reply missing required keys is rejected rather than silently returned.
+        manager = _manager(
+            adversarial_system_prompt=_system_prompt(schema=None),
+            prompt_normalizer=_normalizer('{"next_message": "x"}'),
+        )
+        with pytest.raises(InvalidJsonException, match="Missing required keys"):
+            await manager.generate_adversarial_reply_async(prompt_text="x")
 
 
 # --- media-drop warning ------------------------------------------------------

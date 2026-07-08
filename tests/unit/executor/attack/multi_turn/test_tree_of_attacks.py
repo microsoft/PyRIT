@@ -1489,74 +1489,94 @@ class TestTreeOfAttacksNode:
     def _node_with_schema(self, node_components, schema):
         """Build a real node whose adversarial system prompt advertises ``schema``.
 
-        The parser reads its schema from ``_adversarial_chat_system_seed_prompt.response_json_schema``,
-        so overriding it here lets the tests drive the real (un-mocked) ``_parse_red_teaming_response``
-        through both the strict shipped-schema path and the schemaless custom-prompt path.
+        The manager resolves its schema from ``_adversarial_chat_system_seed_prompt.response_json_schema``
+        (falling back to the canonical ``adversarial_chat`` schema when it is None), so overriding it
+        here lets the tests drive the real send/parse path through both the strict shipped-schema case
+        and the schemaless custom-prompt case.
         """
         node = _TreeOfAttacksNode(**node_components)
         node._adversarial_chat_system_seed_prompt.response_json_schema = schema
         return node
 
-    def test_parse_red_teaming_response_returns_next_message_with_strict_schema(self, node_components):
+    @staticmethod
+    def _mock_adversarial_reply(node, raw: str) -> None:
+        """Make the node's adversarial chat return ``raw`` so the manager parses it on the next send."""
+        node._prompt_normalizer.send_prompt_async = AsyncMock(
+            return_value=Message.from_prompt(prompt=raw, role="assistant")
+        )
+
+    async def test_send_to_adversarial_chat_returns_next_message_with_strict_schema(self, node_components):
         """A schema-compliant reply yields the next_message the node forwards to the objective target."""
         node = self._node_with_schema(node_components, _STRICT_ADVERSARIAL_CHAT_SCHEMA)
-        reply = json.dumps({"next_message": "attack text", "rationale": "why", "last_response_summary": "summary"})
+        self._mock_adversarial_reply(
+            node, json.dumps({"next_message": "attack text", "rationale": "why", "last_response_summary": "summary"})
+        )
 
-        assert node._parse_red_teaming_response(reply) == "attack text"
+        assert await node._send_to_adversarial_chat_async(prompt_text="x") == "attack text"
 
-    def test_parse_red_teaming_response_accepts_camel_case_keys(self, node_components):
-        """TAP/PAIR historically hand-rolled a parser that never normalized camelCase. Delegating to the
-        shared parser closes that exact gap, so a schema-aware adversarial model that emits ``nextMessage``
+    async def test_send_to_adversarial_chat_accepts_camel_case_keys(self, node_components):
+        """TAP/PAIR historically hand-rolled a parser that never normalized camelCase. Routing through the
+        shared manager closes that exact gap, so a schema-aware adversarial model that emits ``nextMessage``
         no longer breaks the node the way it once broke a crescendo CI run."""
         node = self._node_with_schema(node_components, _STRICT_ADVERSARIAL_CHAT_SCHEMA)
-        reply = json.dumps({"nextMessage": "attack text", "rationale": "why", "lastResponseSummary": "summary"})
+        self._mock_adversarial_reply(
+            node, json.dumps({"nextMessage": "attack text", "rationale": "why", "lastResponseSummary": "summary"})
+        )
 
-        assert node._parse_red_teaming_response(reply) == "attack text"
+        assert await node._send_to_adversarial_chat_async(prompt_text="x") == "attack text"
 
-    def test_parse_red_teaming_response_strict_schema_rejects_missing_key(self, node_components):
+    async def test_send_to_adversarial_chat_strict_schema_rejects_missing_key(self, node_components):
         """With the shipped schema present the node enforces every required key, so a reply carrying only
         next_message now raises instead of silently proceeding as the old TAP parser did."""
         node = self._node_with_schema(node_components, _STRICT_ADVERSARIAL_CHAT_SCHEMA)
+        self._mock_adversarial_reply(node, '{"next_message": "x"}')
 
         with pytest.raises(InvalidJsonException, match="Missing required keys"):
-            node._parse_red_teaming_response('{"next_message": "x"}')
+            await node._send_to_adversarial_chat_async(prompt_text="x")
 
-    def test_parse_red_teaming_response_strict_schema_rejects_extra_key(self, node_components):
-        """``additionalProperties: false`` from the shipped schema is enforced through the node parser."""
+    async def test_send_to_adversarial_chat_strict_schema_rejects_extra_key(self, node_components):
+        """``additionalProperties: false`` from the shipped schema is enforced through the manager."""
         node = self._node_with_schema(node_components, _STRICT_ADVERSARIAL_CHAT_SCHEMA)
-        reply = json.dumps(
-            {
-                "next_message": "x",
-                "rationale": "why",
-                "last_response_summary": "summary",
-                "surprise": "nope",
-            }
+        self._mock_adversarial_reply(
+            node,
+            json.dumps(
+                {
+                    "next_message": "x",
+                    "rationale": "why",
+                    "last_response_summary": "summary",
+                    "surprise": "nope",
+                }
+            ),
         )
 
         with pytest.raises(InvalidJsonException, match="Unexpected keys"):
-            node._parse_red_teaming_response(reply)
+            await node._send_to_adversarial_chat_async(prompt_text="x")
 
-    def test_parse_red_teaming_response_without_schema_stays_lax(self, node_components):
-        """Schemaless custom adversarial prompts keep the permissive contract: only next_message is
-        required, so a single-key reply is still accepted and no custom-prompt path regresses."""
+    async def test_send_to_adversarial_chat_without_declared_schema_enforces_canonical(self, node_components):
+        """A schemaless custom adversarial prompt no longer skips validation: the manager falls back to the
+        canonical adversarial_chat schema, so an incomplete reply is rejected instead of silently accepted.
+        This closes the old lax path where a custom prompt could proceed on an unvalidated reply."""
         node = self._node_with_schema(node_components, None)
+        self._mock_adversarial_reply(node, '{"next_message": "x"}')
 
-        assert node._parse_red_teaming_response('{"next_message": "x"}') == "x"
+        with pytest.raises(InvalidJsonException, match="Missing required keys"):
+            await node._send_to_adversarial_chat_async(prompt_text="x")
 
-    def test_parse_red_teaming_response_strips_markdown_fencing(self, node_components):
+    async def test_send_to_adversarial_chat_strips_markdown_fencing(self, node_components):
         """Adversarial models routinely wrap JSON in ```json fences; the shared parser strips them."""
         node = self._node_with_schema(node_components, _STRICT_ADVERSARIAL_CHAT_SCHEMA)
         payload = json.dumps({"next_message": "attack text", "rationale": "why", "last_response_summary": "summary"})
-        reply = f"```json\n{payload}\n```"
+        self._mock_adversarial_reply(node, f"```json\n{payload}\n```")
 
-        assert node._parse_red_teaming_response(reply) == "attack text"
+        assert await node._send_to_adversarial_chat_async(prompt_text="x") == "attack text"
 
-    def test_parse_red_teaming_response_invalid_json_raises(self, node_components):
-        """A non-JSON reply raises InvalidJsonException so @pyrit_json_retry can retry the turn."""
+    async def test_send_to_adversarial_chat_invalid_json_raises(self, node_components):
+        """A non-JSON reply raises InvalidJsonException so the manager's json-retry can retry the turn."""
         node = self._node_with_schema(node_components, _STRICT_ADVERSARIAL_CHAT_SCHEMA)
+        self._mock_adversarial_reply(node, "not json at all")
 
         with pytest.raises(InvalidJsonException, match="Invalid JSON"):
-            node._parse_red_teaming_response("not json at all")
+            await node._send_to_adversarial_chat_async(prompt_text="x")
 
     async def test_node_send_prompt_json_error_handling(self, node_components):
         """Test handling of JSON parsing errors in send_prompt_async."""
@@ -1674,7 +1694,6 @@ class TestTreeOfAttacksNode:
             ) as red_teaming_mock,
             patch("pyrit.executor.attack.multi_turn.tree_of_attacks.get_retry_max_num_attempts", return_value=1),
             patch.object(node, "_send_to_adversarial_chat_async", new_callable=AsyncMock, return_value="new prompt"),
-            patch.object(node, "_parse_red_teaming_response", return_value="new prompt"),
         ):
             await node.send_prompt_async(objective="Test objective")
 
@@ -1720,13 +1739,18 @@ class TestTreeOfAttacksNode:
             target = kwargs.get("target")
 
             if target == node._adversarial_chat:
-                # Return JSON response for adversarial chat
+                # Return JSON response for adversarial chat. The manager now validates every reply
+                # against the canonical adversarial_chat schema, so include all required keys.
                 return Message(
                     message_pieces=[
                         MessagePiece(
                             role="assistant",
-                            original_value=json.dumps({"next_message": "test prompt", "rationale": "test"}),
-                            converted_value=json.dumps({"next_message": "test prompt", "rationale": "test"}),
+                            original_value=json.dumps(
+                                {"next_message": "test prompt", "rationale": "test", "last_response_summary": "s"}
+                            ),
+                            converted_value=json.dumps(
+                                {"next_message": "test prompt", "rationale": "test", "last_response_summary": "s"}
+                            ),
                             conversation_id=node.adversarial_chat_conversation_id,
                             id=str(uuid.uuid4()),
                         )
