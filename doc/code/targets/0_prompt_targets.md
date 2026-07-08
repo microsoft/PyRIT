@@ -25,7 +25,7 @@ A `PromptTarget` is a generic place to send a prompt. With PyRIT, the idea is th
 
 With some algorithms, you want to send a prompt, set a system prompt, and modify conversation history (including PAIR [@chao2023pair], TAP [@mehrotra2023tap], and flip attack [@liu2024flipattack]). These algorithms require a target whose [`TargetCapabilities`](#target-capabilities) declare both `supports_multi_turn=True` and `supports_editable_history=True` — i.e. you can modify a conversation history. Consumers express this requirement via `CHAT_TARGET_REQUIREMENTS` and validate it against `target.configuration` at construction time. See [Target Capabilities](#target-capabilities) below for the full list of capabilities and how they compose into a `TargetConfiguration`.
 
-Note: The previous `PromptChatTarget` class is **deprecated** as of v0.14.0 and will be removed in v0.16.0. Use `PromptTarget` directly with a `TargetConfiguration` declaring `supports_multi_turn=True` and `supports_editable_history=True`. See [Target Capabilities](#target-capabilities) for details.
+Note: The previous `PromptChatTarget` class has been **removed**. Use `PromptTarget` directly with a `TargetConfiguration` declaring `supports_multi_turn=True` and `supports_editable_history=True`. See [Target Capabilities](#target-capabilities) for details.
 
 
 Here are some examples:

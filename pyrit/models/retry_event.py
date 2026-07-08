@@ -6,11 +6,8 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any
 
 from pydantic import BaseModel, Field
-
-from pyrit.common.deprecation import print_deprecation_message
 
 
 class RetryEvent(BaseModel):
@@ -32,43 +29,3 @@ class RetryEvent(BaseModel):
     component_name: str | None = None
     endpoint: str | None = None
     elapsed_seconds: float = 0.0
-
-    def to_dict(self) -> dict[str, Any]:
-        """
-        Serialize to a dictionary suitable for JSON storage.
-
-        .. deprecated::
-            Use ``model_dump`` with ``mode="json"`` instead. This method
-            will be removed in version 0.16.0.
-
-        Returns:
-            dict: Dictionary representation of the retry event.
-        """
-        print_deprecation_message(
-            old_item=RetryEvent.to_dict,
-            new_item='RetryEvent.model_dump(mode="json")',
-            removed_in="0.16.0",
-        )
-        return self.model_dump(mode="json")
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> RetryEvent:
-        """
-        Deserialize from a dictionary.
-
-        .. deprecated::
-            Use ``model_validate`` instead. This method will be removed
-            in version 0.16.0.
-
-        Args:
-            data: Dictionary representation of a retry event.
-
-        Returns:
-            RetryEvent: Deserialized retry event.
-        """
-        print_deprecation_message(
-            old_item=RetryEvent.from_dict,
-            new_item="RetryEvent.model_validate",
-            removed_in="0.16.0",
-        )
-        return cls.model_validate(data)

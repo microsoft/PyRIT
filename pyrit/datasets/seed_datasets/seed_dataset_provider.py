@@ -10,7 +10,6 @@ from typing import Any
 
 from tqdm import tqdm
 
-from pyrit.common.deprecation import print_deprecation_message
 from pyrit.datasets.seed_datasets.seed_metadata import SeedDatasetFilter, SeedDatasetLoadTime, SeedDatasetMetadata
 from pyrit.models.seeds import SeedDataset
 
@@ -52,15 +51,6 @@ class SeedDatasetProvider(ABC):
         from pyrit.common.brick_contract import enforce_keyword_only_init
 
         enforce_keyword_only_init(cls, base_name="SeedDatasetProvider")
-        if not inspect.isabstract(cls) and (
-            cls.fetch_dataset is not SeedDatasetProvider.fetch_dataset
-            and cls.fetch_dataset_async is SeedDatasetProvider.fetch_dataset_async
-        ):
-            print_deprecation_message(
-                old_item=f"{cls.__name__}.fetch_dataset",
-                new_item=f"{cls.__name__}.fetch_dataset_async",
-                removed_in="0.16.0",
-            )
         if not inspect.isabstract(cls) and getattr(cls, "should_register", True):
             SeedDatasetProvider._registry[cls.__name__] = cls
             logger.debug(f"Registered dataset provider: {cls.__name__}")
@@ -79,10 +69,7 @@ class SeedDatasetProvider(ABC):
         """
         Fetch the dataset and return as a SeedDataset.
 
-        Subclasses MUST override this method. The default implementation exists
-        only to provide a deprecation bridge for legacy subclasses that override
-        the old ``fetch_dataset`` name; in that case it dispatches to the legacy
-        method and emits a DeprecationWarning.
+        Subclasses MUST override this method.
 
         Args:
             cache: Whether to cache the fetched dataset. Defaults to True.
@@ -92,39 +79,10 @@ class SeedDatasetProvider(ABC):
             SeedDataset: The fetched dataset with prompts.
 
         Raises:
-            NotImplementedError: If the subclass overrides neither
-                ``fetch_dataset_async`` nor the legacy ``fetch_dataset``.
+            NotImplementedError: If the subclass does not override this method.
             Exception: If the dataset cannot be fetched or processed.
         """
-        cls = type(self)
-        if cls.fetch_dataset is SeedDatasetProvider.fetch_dataset:
-            raise NotImplementedError(f"{cls.__name__} must implement fetch_dataset_async.")
-        print_deprecation_message(
-            old_item=f"{cls.__name__}.fetch_dataset",
-            new_item=f"{cls.__name__}.fetch_dataset_async",
-            removed_in="0.16.0",
-        )
-        return await self.fetch_dataset(cache=cache)
-
-    async def fetch_dataset(self, *, cache: bool = True) -> SeedDataset:  # pyrit-async-suffix-exempt
-        """
-        Fetch the dataset (deprecated alias of ``fetch_dataset_async``).
-
-        Kept as a backward-compatibility shim for callers of the public API.
-        Emits a DeprecationWarning and delegates to ``fetch_dataset_async``.
-
-        Args:
-            cache: Whether to cache the fetched dataset. Defaults to True.
-
-        Returns:
-            SeedDataset: The fetched dataset with prompts.
-        """
-        print_deprecation_message(
-            old_item="SeedDatasetProvider.fetch_dataset",
-            new_item="SeedDatasetProvider.fetch_dataset_async",
-            removed_in="0.16.0",
-        )
-        return await self.fetch_dataset_async(cache=cache)
+        raise NotImplementedError(f"{type(self).__name__} must implement fetch_dataset_async.")
 
     async def _parse_metadata_async(self) -> SeedDatasetMetadata | None:
         """

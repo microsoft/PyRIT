@@ -6,7 +6,6 @@ import logging
 import pathlib
 
 from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
-from pyrit.common.deprecation import print_deprecation_message
 from pyrit.common.path import CONVERTER_SEED_PROMPT_PATH
 from pyrit.exceptions import (
     InvalidJsonException,
@@ -14,7 +13,6 @@ from pyrit.exceptions import (
 )
 from pyrit.models import (
     ComponentIdentifier,
-    Message,
     SeedPrompt,
 )
 from pyrit.prompt_converter.llm_generic_text_converter import LLMGenericTextConverter
@@ -118,20 +116,3 @@ class PersuasionConverter(LLMGenericTextConverter):
             return str(parsed["mutated_text"])
         except (json.JSONDecodeError, TypeError):
             raise InvalidJsonException(message=f"Invalid JSON encountered: {cleaned}") from None
-
-    async def send_persuasion_prompt_async(self, request: Message) -> str:
-        """
-        Delegate to the unified retry helper. Deprecated shim retained for backward compatibility.
-
-        Args:
-            request (Message): The message to send to the converter target.
-
-        Returns:
-            str: The post-processed response text.
-        """
-        print_deprecation_message(
-            old_item="PersuasionConverter.send_persuasion_prompt_async",
-            new_item="PersuasionConverter._send_with_retries_async (inherited from LLMGenericTextConverter)",
-            removed_in="0.16.0",
-        )
-        return await self._send_with_retries_async(request)

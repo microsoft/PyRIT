@@ -9,7 +9,7 @@ The config module is pure stdlib so it works without the gcg extra installed.
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
@@ -28,6 +28,49 @@ if TYPE_CHECKING:
 _LLAMA_2 = "meta-llama/Llama-2-7b-chat-hf"
 
 
+class _SamplingStub:
+    def sample_candidates(
+        self,
+        *,
+        gradient: Any,
+        control_tokens: Any,
+        batch_size: int,
+        top_k: int,
+        temperature: float,
+        allow_non_ascii: bool,
+        non_ascii_tokens: Any,
+    ) -> Any:
+        return control_tokens
+
+
+class _LossStub:
+    def compute_loss(
+        self,
+        *,
+        logits: Any,
+        token_ids: Any,
+        target_slice: slice,
+        control_slice: slice,
+    ) -> Any:
+        return logits
+
+
+class _FilterStub:
+    def filter_candidates(
+        self,
+        *,
+        candidate_tokens: Any,
+        tokenizer: Any,
+        current_control: str,
+    ) -> list[str]:
+        return [current_control]
+
+
+class _SuffixInitStub:
+    def make_initial_suffix(self, *, tokenizer: Any) -> str:
+        return "stub suffix"
+
+
 def _minimal_config() -> GCGConfig:
     return GCGConfig(models=[GCGModelConfig(name=_LLAMA_2)])
 
@@ -42,6 +85,10 @@ def test_minimal_config_constructs_with_defaults() -> None:
     assert config.test_models == []
     assert config.algorithm.n_steps == 500
     assert config.algorithm.batch_size == 512
+    assert config.algorithm.sampling is None
+    assert config.algorithm.loss is None
+    assert config.algorithm.candidate_filter is None
+    assert config.algorithm.suffix_init is None
     assert config.strategy.transfer is False
     assert config.output.verbose is True
     assert config.hf_token is None
@@ -98,6 +145,33 @@ def test_algorithm_control_only_is_allowed() -> None:
 def test_algorithm_empty_control_init_raises() -> None:
     with pytest.raises(ValueError, match="control_init must be a non-empty"):
         GCGAlgorithmConfig(control_init="")
+
+
+@pytest.mark.parametrize(
+    "field_name,value",
+    [
+        ("sampling", object()),
+        ("loss", object()),
+        ("candidate_filter", object()),
+        ("suffix_init", object()),
+    ],
+)
+def test_algorithm_extension_type_validation(field_name: str, value: object) -> None:
+    with pytest.raises(ValueError, match=rf"GCGAlgorithmConfig\.{field_name} must satisfy"):
+        GCGAlgorithmConfig(**{field_name: value})
+
+
+def test_algorithm_accepts_protocol_implementations() -> None:
+    config = GCGAlgorithmConfig(
+        sampling=_SamplingStub(),
+        loss=_LossStub(),
+        candidate_filter=_FilterStub(),
+        suffix_init=_SuffixInitStub(),
+    )
+    assert config.sampling is not None
+    assert config.loss is not None
+    assert config.candidate_filter is not None
+    assert config.suffix_init is not None
 
 
 @pytest.mark.parametrize("field_name", ["n_train_data", "n_test_data"])

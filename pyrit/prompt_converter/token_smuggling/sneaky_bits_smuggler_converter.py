@@ -22,12 +22,9 @@ class SneakyBitsSmugglerConverter(SmugglerConverter):
         - [@embracethered2025sneakybits]
     """
 
-    # Grandfathered: ``action`` is inherited from SmugglerConverter's public API.
-    # TODO: remove this opt-out and insert ``*,`` after ``self`` in 0.16.0.
-    _brick_legacy_init = True
-
     def __init__(
         self,
+        *,
         action: Literal["encode", "decode"] = "encode",
         zero_char: str | None = None,
         one_char: str | None = None,

@@ -18,7 +18,7 @@ Helper functions include:
 """
 
 import uuid
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from unit.mocks import get_mock_scorer_identifier
@@ -348,36 +348,6 @@ class TestGetAdversarialChatMessages:
 
         assert result == []
 
-    def test_applies_labels(self) -> None:
-        """Test that labels are applied to transformed messages."""
-        piece = MessagePiece(role="user", original_value="Message", conversation_id="original")
-        messages = [Message(message_pieces=[piece])]
-        labels = {"category": "test", "source": "unit_test"}
-
-        result = get_adversarial_chat_messages(
-            messages,
-            adversarial_chat_conversation_id="adversarial_conv",
-            labels=labels,
-        )
-
-        assert result[0].get_piece().labels == labels
-
-    def test_labels_emit_deprecation_warning(self) -> None:
-        """Test that passing labels emits deprecation warning."""
-        piece = MessagePiece(role="user", original_value="Message", conversation_id="original")
-        messages = [Message(message_pieces=[piece])]
-
-        with patch(
-            "pyrit.executor.attack.component.conversation_manager.print_deprecation_message"
-        ) as mock_deprecation:
-            get_adversarial_chat_messages(
-                messages,
-                adversarial_chat_conversation_id="adversarial_conv",
-                labels={"env": "prod"},
-            )
-
-        mock_deprecation.assert_called_once()
-
 
 class TestBuildConversationContextStringAsync:
     """Tests for the build_conversation_context_string_async helper function."""
@@ -613,56 +583,17 @@ class TestSystemPromptHandling:
         manager = ConversationManager()
         conversation_id = str(uuid.uuid4())
         system_prompt = "You are a helpful assistant"
-        labels = {"type": "system"}
 
         manager.set_system_prompt(
             target=mock_chat_target,
             conversation_id=conversation_id,
             system_prompt=system_prompt,
-            labels=labels,
         )
 
         mock_chat_target.set_system_prompt.assert_called_once_with(
             system_prompt=system_prompt,
             conversation_id=conversation_id,
-            labels=labels,
         )
-
-    def test_set_system_prompt_without_labels(
-        self, attack_identifier: ComponentIdentifier, mock_chat_target: MagicMock
-    ) -> None:
-        """Test set_system_prompt works without labels."""
-        manager = ConversationManager()
-        conversation_id = str(uuid.uuid4())
-        system_prompt = "You are a helpful assistant"
-
-        manager.set_system_prompt(
-            target=mock_chat_target,
-            conversation_id=conversation_id,
-            system_prompt=system_prompt,
-        )
-
-        mock_chat_target.set_system_prompt.assert_called_once()
-        call_args = mock_chat_target.set_system_prompt.call_args
-        assert call_args.kwargs["labels"] is None
-
-    def test_set_system_prompt_labels_emit_deprecation_warning(
-        self, attack_identifier: ComponentIdentifier, mock_chat_target: MagicMock
-    ) -> None:
-        """Test that passing labels emits deprecation warning."""
-        manager = ConversationManager()
-
-        with patch(
-            "pyrit.executor.attack.component.conversation_manager.print_deprecation_message"
-        ) as mock_deprecation:
-            manager.set_system_prompt(
-                target=mock_chat_target,
-                conversation_id=str(uuid.uuid4()),
-                system_prompt="You are a helpful assistant",
-                labels={"type": "system"},
-            )
-
-        mock_deprecation.assert_called_once()
 
 
 # =============================================================================
@@ -1062,33 +993,6 @@ class TestPrependedConversationConfigSettings:
         text_value = context.next_message.get_piece().original_value
         assert len(text_value) > 0
 
-    async def test_non_chat_target_behavior_raise_explicit(
-        self,
-        attack_identifier: ComponentIdentifier,
-        mock_prompt_target: MagicMock,
-        sample_conversation: list[Message],
-    ) -> None:
-        """Test that non_chat_target_behavior='raise' raises ValueError."""
-        manager = ConversationManager()
-        conversation_id = str(uuid.uuid4())
-        context = _TestAttackContext(params=AttackParameters(objective="Test objective"))
-        context.prepended_conversation = sample_conversation
-
-        with pytest.warns(DeprecationWarning, match="non_chat_target_behavior"):
-            config = PrependedConversationConfig(non_chat_target_behavior="raise")
-
-        with pytest.raises(
-            ValueError,
-            match="prepended_conversation requires the objective target to support multi-turn conversations"
-            " with editable history",
-        ):
-            await manager.initialize_context_async(
-                context=context,
-                target=mock_prompt_target,
-                conversation_id=conversation_id,
-                prepended_conversation_config=config,
-            )
-
     async def test_non_chat_target_behavior_normalize_first_turn_creates_next_message(
         self,
         attack_identifier: ComponentIdentifier,
@@ -1353,72 +1257,22 @@ class TestPrependedConversationConfigSettings:
         assert "CUSTOM_FORMAT: test content" in text_value
 
     # -------------------------------------------------------------------------
-    # Factory Methods Tests
-    # -------------------------------------------------------------------------
-
-    def test_default_factory_creates_raise_behavior(self) -> None:
-        """Test that PrependedConversationConfig.default() creates raise behavior."""
-        with pytest.warns(DeprecationWarning, match="PrependedConversationConfig.default\\(\\) is deprecated"):
-            config = PrependedConversationConfig.default()
-
-        assert config.non_chat_target_behavior == "raise"
-        assert config.message_normalizer is None
-        # Should include all roles
-        assert "user" in config.apply_converters_to_roles
-        assert "assistant" in config.apply_converters_to_roles
-        assert "system" in config.apply_converters_to_roles
-
-    def test_for_non_chat_target_factory_creates_normalize_behavior(self) -> None:
-        """Test that for_non_chat_target() creates normalize_first_turn behavior."""
-        with pytest.warns(
-            DeprecationWarning, match="PrependedConversationConfig.for_non_chat_target\\(\\) is deprecated"
-        ):
-            config = PrependedConversationConfig.for_non_chat_target()
-
-        assert config.non_chat_target_behavior == "normalize_first_turn"
-
-    def test_for_non_chat_target_with_custom_normalizer(self) -> None:
-        """Test that for_non_chat_target() accepts custom message_normalizer."""
-        from pyrit.message_normalizer import MessageStringNormalizer
-
-        mock_normalizer = MagicMock(spec=MessageStringNormalizer)
-        with pytest.warns(
-            DeprecationWarning, match="PrependedConversationConfig.for_non_chat_target\\(\\) is deprecated"
-        ):
-            config = PrependedConversationConfig.for_non_chat_target(message_normalizer=mock_normalizer)
-
-        assert config.message_normalizer == mock_normalizer
-        assert config.non_chat_target_behavior == "normalize_first_turn"
-
-    def test_for_non_chat_target_with_custom_roles(self) -> None:
-        """Test that for_non_chat_target() accepts custom apply_converters_to_roles."""
-        with pytest.warns(
-            DeprecationWarning, match="PrependedConversationConfig.for_non_chat_target\\(\\) is deprecated"
-        ):
-            config = PrependedConversationConfig.for_non_chat_target(apply_converters_to_roles=["user"])
-
-        assert config.apply_converters_to_roles == ["user"]
-        assert config.non_chat_target_behavior == "normalize_first_turn"
-
-    # -------------------------------------------------------------------------
     # Chat Target Behavior (Config has no effect)
     # -------------------------------------------------------------------------
 
-    async def test_chat_target_ignores_non_chat_target_behavior(
+    async def test_chat_target_adds_prepended_conversation(
         self,
         attack_identifier: ComponentIdentifier,
         mock_chat_target: MagicMock,
         sample_conversation: list[Message],
     ) -> None:
-        """Test that chat targets ignore non_chat_target_behavior setting."""
+        """Test that chat targets add the prepended conversation to memory."""
         manager = ConversationManager()
         conversation_id = str(uuid.uuid4())
         context = _TestAttackContext(params=AttackParameters(objective="Test objective"))
         context.prepended_conversation = sample_conversation
 
-        # Even with raise behavior, chat targets should work
-        with pytest.warns(DeprecationWarning, match="non_chat_target_behavior"):
-            config = PrependedConversationConfig(non_chat_target_behavior="raise")
+        config = PrependedConversationConfig()
 
         state = await manager.initialize_context_async(
             context=context,

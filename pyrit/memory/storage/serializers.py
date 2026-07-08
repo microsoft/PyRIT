@@ -17,7 +17,6 @@ from urllib.parse import urlparse
 
 import aiofiles
 
-from pyrit.common.deprecation import print_deprecation_message
 from pyrit.common.path import DB_DATA_PATH
 from pyrit.memory.storage.storage import DiskStorageIO, StorageIO
 
@@ -359,126 +358,6 @@ class DataTypeSerializer(abc.ABC):
             self._file_path = Path(full_data_directory_path, f"{file_name}.{self.file_extension}")
 
         return self._file_path
-
-    async def save_data(  # pyrit-async-suffix-exempt
-        self, data: bytes, output_filename: str | None = None
-    ) -> None:
-        """
-        Save data to storage (deprecated alias of ``save_data_async``).
-
-        Args:
-            data: The data to be saved.
-            output_filename: Optional filename to store data as.
-        """
-        print_deprecation_message(
-            old_item="pyrit.memory.storage.serializers.DataTypeSerializer.save_data",
-            new_item="pyrit.memory.storage.serializers.DataTypeSerializer.save_data_async",
-            removed_in="0.16.0",
-        )
-        await self.save_data_async(data, output_filename)
-
-    async def save_b64_image(  # pyrit-async-suffix-exempt
-        self, data: str | bytes, output_filename: str | None = None
-    ) -> None:
-        """
-        Save a base64-encoded image to storage (deprecated alias of ``save_b64_image_async``).
-
-        Args:
-            data: String or bytes with base64 data.
-            output_filename: Optional filename to store image as.
-        """
-        print_deprecation_message(
-            old_item="pyrit.memory.storage.serializers.DataTypeSerializer.save_b64_image",
-            new_item="pyrit.memory.storage.serializers.DataTypeSerializer.save_b64_image_async",
-            removed_in="0.16.0",
-        )
-        await self.save_b64_image_async(data, output_filename)
-
-    async def save_formatted_audio(  # pyrit-async-suffix-exempt
-        self,
-        data: bytes,
-        num_channels: int = 1,
-        sample_width: int = 2,
-        sample_rate: int = 16000,
-        output_filename: str | None = None,
-    ) -> None:
-        """
-        Save formatted audio data to storage (deprecated alias of ``save_formatted_audio_async``).
-
-        Args:
-            data: Audio data bytes.
-            num_channels: Number of channels in audio data.
-            sample_width: Sample width in bytes.
-            sample_rate: Sample rate in Hz.
-            output_filename: Optional filename to store audio as.
-        """
-        print_deprecation_message(
-            old_item="pyrit.memory.storage.serializers.DataTypeSerializer.save_formatted_audio",
-            new_item="pyrit.memory.storage.serializers.DataTypeSerializer.save_formatted_audio_async",
-            removed_in="0.16.0",
-        )
-        await self.save_formatted_audio_async(data, num_channels, sample_width, sample_rate, output_filename)
-
-    async def read_data(self) -> bytes:  # pyrit-async-suffix-exempt
-        """
-        Read data from storage (deprecated alias of ``read_data_async``).
-
-        Returns:
-            bytes: The data read from storage.
-        """
-        print_deprecation_message(
-            old_item="pyrit.memory.storage.serializers.DataTypeSerializer.read_data",
-            new_item="pyrit.memory.storage.serializers.DataTypeSerializer.read_data_async",
-            removed_in="0.16.0",
-        )
-        return await self.read_data_async()
-
-    async def read_data_base64(self) -> str:  # pyrit-async-suffix-exempt
-        """
-        Read data and return it as a base64 string (deprecated alias of ``read_data_base64_async``).
-
-        Returns:
-            str: Base64-encoded data.
-        """
-        print_deprecation_message(
-            old_item="pyrit.memory.storage.serializers.DataTypeSerializer.read_data_base64",
-            new_item="pyrit.memory.storage.serializers.DataTypeSerializer.read_data_base64_async",
-            removed_in="0.16.0",
-        )
-        return await self.read_data_base64_async()
-
-    async def get_sha256(self) -> str:  # pyrit-async-suffix-exempt
-        """
-        Compute SHA256 hash for this serializer's current value (deprecated alias of ``get_sha256_async``).
-
-        Returns:
-            str: Hex digest of the computed SHA256 hash.
-        """
-        print_deprecation_message(
-            old_item="pyrit.memory.storage.serializers.DataTypeSerializer.get_sha256",
-            new_item="pyrit.memory.storage.serializers.DataTypeSerializer.get_sha256_async",
-            removed_in="0.16.0",
-        )
-        return await self.get_sha256_async()
-
-    async def get_data_filename(  # pyrit-async-suffix-exempt
-        self, file_name: str | None = None
-    ) -> Path | str:
-        """
-        Generate or retrieve a unique filename for the data file (deprecated alias of ``get_data_filename_async``).
-
-        Args:
-            file_name: Optional file name override.
-
-        Returns:
-            Path | str: Full storage path for the generated data file.
-        """
-        print_deprecation_message(
-            old_item="pyrit.memory.storage.serializers.DataTypeSerializer.get_data_filename",
-            new_item="pyrit.memory.storage.serializers.DataTypeSerializer.get_data_filename_async",
-            removed_in="0.16.0",
-        )
-        return await self.get_data_filename_async(file_name)
 
     @staticmethod
     def get_extension(file_path: str) -> str | None:

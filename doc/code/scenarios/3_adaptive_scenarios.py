@@ -46,16 +46,16 @@
 # %%
 from pathlib import Path
 
+from pyrit.output.scenario_result.pretty import PrettyScenarioResultMemoryPrinter
 from pyrit.registry import TargetRegistry
 from pyrit.scenario import DatasetConfiguration
-from pyrit.scenario.printer.console_printer import ConsoleScenarioResultPrinter
 from pyrit.scenario.scenarios.adaptive import TextAdaptive
 from pyrit.setup import initialize_from_config_async
 
 await initialize_from_config_async(config_path=Path("../../scanner/pyrit_conf.yaml"))  # type: ignore
 
 objective_target = TargetRegistry.get_registry_singleton().instances.get("openai_chat")
-printer = ConsoleScenarioResultPrinter()
+printer = PrettyScenarioResultMemoryPrinter()
 
 # %% [markdown]
 # ## Basic usage

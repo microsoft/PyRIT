@@ -199,8 +199,8 @@ def test_self_ask_true_false_get_identifier_long_prompt_stored_in_full(patch_cen
     assert full_prompt is not None
     assert len(full_prompt) > 100  # GROUNDED prompt is long
 
-    # to_dict() flattens params and stores the full value (no truncation)
-    id_dict = identifier.to_dict()
+    # model_dump() flattens params and stores the full value (no truncation)
+    id_dict = identifier.model_dump()
     assert id_dict["system_prompt_template"] == full_prompt
 
 

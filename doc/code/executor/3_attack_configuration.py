@@ -192,6 +192,7 @@ await output_attack_async(result)
 #     RedTeamingAttack,
 #     RTASystemPromptPaths,
 # )
+# from pyrit.models import SeedPrompt
 # from pyrit.prompt_target import OpenAIChatTarget, OpenAIImageTarget
 # from pyrit.score import SelfAskTrueFalseScorer, TrueFalseQuestion
 #
@@ -203,7 +204,7 @@ await output_attack_async(result)
 # # Adversarial config: an unfiltered chat model drafts each image prompt, primed for image generation.
 # adversarial_config = AttackAdversarialConfig(
 #     target=OpenAIChatTarget(),
-#     system_prompt_path=RTASystemPromptPaths.IMAGE_GENERATION.value,
+#     system_prompt=SeedPrompt.from_yaml_file(RTASystemPromptPaths.IMAGE_GENERATION.value),
 # )
 #
 # # Scoring config: a vision-capable model inspects the generated image and scores the objective.

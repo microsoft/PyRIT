@@ -580,13 +580,15 @@ class _TreeOfAttacksNode:
             objective_target_conversation_id=self.objective_target_conversation_id,
             objective=self._objective,
         ):
+            if self._memory_labels:
+                for piece in message.message_pieces:
+                    piece.labels = self._memory_labels
             response = await self._prompt_normalizer.send_prompt_async(
                 message=message,
                 request_converter_configurations=self._request_converters,
                 response_converter_configurations=self._response_converters,
                 conversation_id=self.objective_target_conversation_id,
                 target=self._objective_target,
-                labels=self._memory_labels,
             )
 
         # Store the full response so subsequent turns can forward media when supported.
@@ -658,13 +660,15 @@ class _TreeOfAttacksNode:
             objective_target_conversation_id=self.objective_target_conversation_id,
             objective=self._objective,
         ):
+            if self._memory_labels:
+                for piece in message.message_pieces:
+                    piece.labels = self._memory_labels
             response = await self._prompt_normalizer.send_prompt_async(
                 message=message,
                 request_converter_configurations=self._request_converters,
                 response_converter_configurations=self._response_converters,
                 conversation_id=self.objective_target_conversation_id,
                 target=self._objective_target,
-                labels=self._memory_labels,
             )
 
         # Store the full response so subsequent turns can forward media when supported.
@@ -1082,7 +1086,6 @@ class _TreeOfAttacksNode:
         self._adversarial_chat.set_system_prompt(
             system_prompt=system_prompt,
             conversation_id=self.adversarial_chat_conversation_id,
-            labels=self._memory_labels,  # deprecated
         )
 
         logger.debug(f"Node {self.node_id}: Using initial seed prompt for first turn")
@@ -1221,11 +1224,13 @@ class _TreeOfAttacksNode:
             objective_target_conversation_id=self.objective_target_conversation_id,
             objective=self._objective,
         ):
+            if self._memory_labels:
+                for piece in message.message_pieces:
+                    piece.labels = self._memory_labels
             response = await self._prompt_normalizer.send_prompt_async(
                 message=message,
                 conversation_id=self.adversarial_chat_conversation_id,
                 target=self._adversarial_chat,
-                labels=self._memory_labels,
             )
 
         return response.get_value()

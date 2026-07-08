@@ -114,11 +114,6 @@ class TestSGXSTestDataset:
         assert kwargs["cache"] is False
         assert kwargs["token"] == "hf_test_token"
 
-    def test_split_kwarg_emits_deprecation_warning(self):
-        """Passing the deprecated ``split`` kwarg emits a DeprecationWarning."""
-        with pytest.warns(DeprecationWarning, match="'split' is deprecated"):
-            _SGXSTestDataset(split="train")
-
     def test_invalid_label_raises(self):
         """Passing a non-SGXSTestLabel value should raise."""
         with pytest.raises(ValueError, match="Expected SGXSTestLabel"):

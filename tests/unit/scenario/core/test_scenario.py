@@ -17,7 +17,12 @@ except ImportError:  # pragma: no cover - 3.10 only
 from pyrit.executor.attack.core import AttackExecutorResult
 from pyrit.memory import CentralMemory
 from pyrit.models import AttackOutcome, AttackResult, ComponentIdentifier
-from pyrit.scenario import DatasetConfiguration, ScenarioIdentifier, ScenarioResult
+from pyrit.scenario import (
+    DatasetAttackConfiguration,
+    DatasetConfiguration,
+    ScenarioIdentifier,
+    ScenarioResult,
+)
 from pyrit.scenario.core import AtomicAttack, BaselineAttackPolicy, Scenario, ScenarioStrategy
 from pyrit.score import Scorer
 from tests.unit.mocks import make_scenario_identifier, make_scenario_result
@@ -737,7 +742,7 @@ class ConcreteScenarioWithTrueFalseScorer(Scenario):
         self._atomic_attacks_to_return = atomic_attacks_to_return or []
 
     async def _resolve_seed_groups_by_dataset_async(self):
-        return self._dataset_config.get_seed_attack_groups()
+        return await self._dataset_config.get_attack_groups_by_dataset_async()
 
     async def _build_atomic_attacks_async(self, *, context):
         return list(self._atomic_attacks_to_return)
@@ -758,8 +763,8 @@ class TestScenarioBaselineOnlyExecution:
         )
 
         # Create a mock dataset config with seed groups
-        mock_dataset_config = MagicMock(spec=DatasetConfiguration)
-        mock_dataset_config.get_seed_attack_groups.return_value = {
+        mock_dataset_config = MagicMock(spec=DatasetAttackConfiguration)
+        mock_dataset_config.get_attack_groups_by_dataset_async.return_value = {
             "default": [
                 SeedAttackGroup(seeds=[SeedObjective(value="test objective 1")]),
                 SeedAttackGroup(seeds=[SeedObjective(value="test objective 2")]),
@@ -788,8 +793,8 @@ class TestScenarioBaselineOnlyExecution:
         )
 
         # Create a mock dataset config with seed groups
-        mock_dataset_config = MagicMock(spec=DatasetConfiguration)
-        mock_dataset_config.get_seed_attack_groups.return_value = {
+        mock_dataset_config = MagicMock(spec=DatasetAttackConfiguration)
+        mock_dataset_config.get_attack_groups_by_dataset_async.return_value = {
             "default": [SeedAttackGroup(seeds=[SeedObjective(value="test objective 1")])]
         }
 
@@ -849,8 +854,8 @@ class TestScenarioBaselineOnlyExecution:
             SeedAttackGroup(seeds=[SeedObjective(value="objective_c")]),
         ]
 
-        mock_dataset_config = MagicMock(spec=DatasetConfiguration)
-        mock_dataset_config.get_seed_attack_groups.return_value = {"default": expected_seeds}
+        mock_dataset_config = MagicMock(spec=DatasetAttackConfiguration)
+        mock_dataset_config.get_attack_groups_by_dataset_async.return_value = {"default": expected_seeds}
 
         await scenario.initialize_async(
             objective_target=mock_objective_target,
@@ -949,7 +954,7 @@ class TestScenarioBaselineUniformObjectives:
         from pyrit.scenario.core.attack_technique import AttackTechnique
 
         seed_groups = [SeedGroup(seeds=[SeedObjective(value=f"obj{i}")]) for i in range(10)]
-        config = DatasetConfiguration(seed_groups=seed_groups, max_dataset_size=3)
+        config = DatasetAttackConfiguration(seed_groups=seed_groups, max_dataset_size=3)
 
         class StrategyScenario(ConcreteScenarioWithTrueFalseScorer):
             async def _build_atomic_attacks_async(self, *, context):
@@ -961,13 +966,14 @@ class TestScenarioBaselineUniformObjectives:
                     )
                 ]
 
-        # Two distinct samples wired up. A buggy implementation with a second
-        # resolution call would consume both; the structural fix consumes one.
-        first_sample = seed_groups[:3]
-        second_sample = seed_groups[5:8]
+        # A single deterministic resolution: random.sample must be called exactly once,
+        # so baseline and strategy draw from the same sampled population and share objectives.
+        def _sample_first_k(population, k):
+            return list(population)[:k]
+
         with patch(
             "pyrit.scenario.core.dataset_configuration.random.sample",
-            side_effect=[first_sample, second_sample],
+            side_effect=_sample_first_k,
         ) as mock_sample:
             scenario = StrategyScenario(name="ADO 9012 regression", version=1)
             await scenario.initialize_async(

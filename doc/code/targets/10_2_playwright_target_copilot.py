@@ -105,7 +105,7 @@ async def run_text(page: Page) -> None:
     adversarial_chat_target = OpenAIChatTarget()
     adv_config = AttackAdversarialConfig(
         target=adversarial_chat_target,
-        system_prompt_path=RTASystemPromptPaths.TEXT_GENERATION.value,
+        system_prompt=SeedPrompt.from_yaml_file(RTASystemPromptPaths.TEXT_GENERATION.value),
     )
     scoring_config = AttackScoringConfig(
         objective_scorer=SelfAskTrueFalseScorer(

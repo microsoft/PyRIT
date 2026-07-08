@@ -349,7 +349,7 @@ class AttackService:
             await self._store_prepended_messages_async(
                 conversation_id=conversation_id,
                 prepended=request.prepended_conversation,
-                labels=labels,  # deprecated
+                labels=labels,
                 target_identifier=target_identifier,
             )
 
@@ -628,7 +628,7 @@ class AttackService:
                 target_registry_name=target_registry_name,
                 request=request,
                 sequence=sequence,
-                labels=attack_labels,  # deprecated
+                labels=attack_labels,
             )
         else:
             existing_metadata = self._memory._get_conversation(conversation_id=msg_conversation_id)
@@ -636,7 +636,7 @@ class AttackService:
                 conversation_id=msg_conversation_id,
                 request=request,
                 sequence=sequence,
-                labels=attack_labels,  # deprecated
+                labels=attack_labels,
                 target_identifier=existing_metadata.target_identifier if existing_metadata else None,
             )
 
@@ -1020,7 +1020,7 @@ class AttackService:
         *,
         conversation_id: str,
         prepended: list[Any],
-        labels: dict[str, str] | None = None,  # deprecated
+        labels: dict[str, str] | None = None,
         target_identifier: ComponentIdentifier | None = None,
     ) -> None:
         """Store prepended conversation messages in memory."""
@@ -1036,8 +1036,9 @@ class AttackService:
                     role=msg.role,
                     conversation_id=conversation_id,
                     sequence=seq,
-                    labels=labels,  # deprecated
                 )
+                if labels:
+                    piece.labels = labels
                 self._memory.add_message_pieces_to_memory(message_pieces=[piece])
 
     async def _send_and_store_message_async(
@@ -1047,7 +1048,7 @@ class AttackService:
         target_registry_name: str,
         request: AddMessageRequest,
         sequence: int,
-        labels: dict[str, str] | None = None,  # deprecated
+        labels: dict[str, str] | None = None,
     ) -> None:
         """Send message to target via normalizer and store response."""
         target_obj = get_target_service().get_target_object(target_registry_name=target_registry_name)
@@ -1062,8 +1063,10 @@ class AttackService:
             request=request,
             conversation_id=conversation_id,
             sequence=sequence,
-            labels=labels,  # deprecated
         )
+        if labels:
+            for piece in pyrit_message.message_pieces:
+                piece.labels = labels
 
         converter_configs = self._get_converter_configs(request)
 
@@ -1073,7 +1076,6 @@ class AttackService:
             target=target_obj,
             conversation_id=conversation_id,
             request_converter_configurations=converter_configs,
-            labels=labels,
         )
         # PromptNormalizer stores both request and response in memory automatically
 
@@ -1083,7 +1085,7 @@ class AttackService:
         conversation_id: str,
         request: AddMessageRequest,
         sequence: int,
-        labels: dict[str, str] | None = None,  # deprecated
+        labels: dict[str, str] | None = None,
         target_identifier: ComponentIdentifier | None = None,
     ) -> None:
         """Store message without sending (send=False)."""
@@ -1097,8 +1099,9 @@ class AttackService:
                 role=request.role,
                 conversation_id=conversation_id,
                 sequence=sequence,
-                labels=labels,  # deprecated
             )
+            if labels:
+                piece.labels = labels
             self._memory.add_message_pieces_to_memory(message_pieces=[piece])
 
     def _resolve_video_remix_metadata(self, request: AddMessageRequest) -> None:
