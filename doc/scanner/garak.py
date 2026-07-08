@@ -27,6 +27,7 @@ from pathlib import Path
 from pyrit.output import output_scenario_async
 from pyrit.registry import TargetRegistry
 from pyrit.scenario.garak import Encoding, EncodingStrategy
+from pyrit.scenario.garak.audio_achilles_heel import AudioAchillesHeel, AudioAchillesHeelDatasetConfiguration
 from pyrit.scenario.garak.encoding import EncodingDatasetConfiguration
 from pyrit.setup import initialize_from_config_async
 
@@ -111,6 +112,25 @@ await output_scenario_async(scenario_result)
 # > **Note:** The objective target must accept `audio_path` input (i.e. be multimodal); non-audio
 # > targets will error when the request is sent. The full dataset holds ~350 clips, so a default
 # > run samples a small subset to finish quickly — raise `--max-dataset-size` for broader coverage.
+
+# %%
+audio_dataset_config = AudioAchillesHeelDatasetConfiguration(
+    dataset_names=["garak_audio_achilles_heel"], max_dataset_size=1
+)
+
+audio_scenario = AudioAchillesHeel()
+await audio_scenario.initialize_async(  # type: ignore
+    objective_target=objective_target,
+    dataset_config=audio_dataset_config,
+)
+
+print(f"Scenario: {audio_scenario.name}")
+print(f"Atomic attacks: {audio_scenario.atomic_attack_count}")
+
+audio_scenario_result = await audio_scenario.run_async()  # type: ignore
+
+# %%
+await output_scenario_async(audio_scenario_result)
 
 # %% [markdown]
 # For more details, see the [Scenarios Programming Guide](../code/scenarios/0_scenarios.ipynb) and
