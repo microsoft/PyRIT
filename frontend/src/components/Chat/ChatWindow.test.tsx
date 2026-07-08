@@ -2,13 +2,14 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { FluentProvider, webLightTheme } from "@fluentui/react-components";
 import ChatWindow from "./ChatWindow";
-import { Message, TargetCapabilitiesInfo, TargetInfo, TargetInstance } from "../../types";
+import { makeTarget } from "@/test-utils/targetFixtures";
+import { Message, TargetCapabilities, TargetInfo, TargetInstance } from "../../types";
 import { attacksApi, convertersApi } from "../../services/api";
 import * as messageMapper from "../../utils/messageMapper";
 
 const buildCapabilities = (
-  overrides: Partial<TargetCapabilitiesInfo> = {}
-): TargetCapabilitiesInfo => ({
+  overrides: Partial<TargetCapabilities> = {}
+): TargetCapabilities => ({
   supports_multi_turn: true,
   supports_multi_message_pieces: false,
   supports_json_schema: false,
@@ -58,12 +59,12 @@ const TestWrapper: React.FC<{ children: React.ReactNode }> = ({
   children,
 }) => <FluentProvider theme={webLightTheme}>{children}</FluentProvider>;
 
-const mockTarget: TargetInstance = {
+const mockTarget: TargetInstance = makeTarget({
   target_registry_name: "openai_chat_1",
   target_type: "OpenAIChatTarget",
   endpoint: "https://api.openai.com",
   model_name: "gpt-4",
-};
+});
 
 // ---------------------------------------------------------------------------
 // Helpers to build mock backend responses
@@ -388,7 +389,7 @@ describe("ChatWindow Integration", () => {
   it("should display target without model name", () => {
     const targetNoModel: TargetInstance = {
       ...mockTarget,
-      model_name: null,
+      identifier: { ...mockTarget.identifier, model_name: null },
     };
 
     render(
@@ -1247,11 +1248,11 @@ describe("ChatWindow Integration", () => {
   // -----------------------------------------------------------------------
 
   it("should show single-turn banner for single-turn target with existing user messages", async () => {
-    const singleTurnTarget: TargetInstance = {
+    const singleTurnTarget: TargetInstance = makeTarget({
       target_registry_name: "openai_image_1",
       target_type: "OpenAIImageTarget",
       capabilities: buildCapabilities({ supports_multi_turn: false }),
-    };
+    });
 
     const messagesWithUser: Message[] = [
       { role: "user", content: "Generate an image", timestamp: "2026-01-01T00:00:00Z" },
@@ -1281,11 +1282,11 @@ describe("ChatWindow Integration", () => {
   });
 
   it("should not show single-turn banner for single-turn target with no messages", () => {
-    const singleTurnTarget: TargetInstance = {
+    const singleTurnTarget: TargetInstance = makeTarget({
       target_registry_name: "openai_image_1",
       target_type: "OpenAIImageTarget",
       capabilities: buildCapabilities({ supports_multi_turn: false }),
-    };
+    });
 
     render(
       <TestWrapper>
@@ -1330,11 +1331,11 @@ describe("ChatWindow Integration", () => {
   });
 
   it("should show New Conversation button in single-turn banner when conversation exists", async () => {
-    const singleTurnTarget: TargetInstance = {
+    const singleTurnTarget: TargetInstance = makeTarget({
       target_registry_name: "openai_tts_1",
       target_type: "OpenAITTSTarget",
       capabilities: buildCapabilities({ supports_multi_turn: false }),
-    };
+    });
 
     const messagesWithUser: Message[] = [
       { role: "user", content: "Say hello", timestamp: "2026-01-01T00:00:00Z" },
@@ -1384,9 +1385,9 @@ describe("ChatWindow Integration", () => {
 
   it("should not show cross-target banner when attackTarget matches activeTarget", () => {
     const sameTarget: TargetInfo = {
-      target_type: mockTarget.target_type,
-      endpoint: mockTarget.endpoint,
-      model_name: mockTarget.model_name,
+      target_type: mockTarget.identifier.class_name,
+      endpoint: mockTarget.identifier.endpoint,
+      model_name: mockTarget.identifier.model_name,
     };
 
     render(
@@ -1543,11 +1544,11 @@ describe("ChatWindow Integration", () => {
       conversation_id: "new-conv-from-new",
     });
 
-    const singleTurnTarget: TargetInstance = {
+    const singleTurnTarget: TargetInstance = makeTarget({
       target_registry_name: "openai_image_1",
       target_type: "OpenAIImageTarget",
       capabilities: buildCapabilities({ supports_multi_turn: false }),
-    };
+    });
 
     const messagesWithUser: Message[] = [
       { role: "user", content: "Generate an image", timestamp: "2026-01-01T00:00:00Z" },

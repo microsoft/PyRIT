@@ -77,7 +77,7 @@ class TestInitializerServiceListInitializers:
         with patch.object(InitializerService, "__init__", lambda self: None):
             service = InitializerService()
             service._registry = MagicMock()
-            service._registry.list_metadata.return_value = []
+            service._registry.get_all_registered_class_metadata.return_value = []
 
             result = await service.list_initializers_async()
 
@@ -90,7 +90,7 @@ class TestInitializerServiceListInitializers:
         with patch.object(InitializerService, "__init__", lambda self: None):
             service = InitializerService()
             service._registry = MagicMock()
-            service._registry.list_metadata.return_value = [metadata]
+            service._registry.get_all_registered_class_metadata.return_value = [metadata]
 
             result = await service.list_initializers_async()
 
@@ -111,7 +111,7 @@ class TestInitializerServiceListInitializers:
         with patch.object(InitializerService, "__init__", lambda self: None):
             service = InitializerService()
             service._registry = MagicMock()
-            service._registry.list_metadata.return_value = metadata_list
+            service._registry.get_all_registered_class_metadata.return_value = metadata_list
 
             result = await service.list_initializers_async(limit=3)
 
@@ -125,7 +125,7 @@ class TestInitializerServiceListInitializers:
         with patch.object(InitializerService, "__init__", lambda self: None):
             service = InitializerService()
             service._registry = MagicMock()
-            service._registry.list_metadata.return_value = metadata_list
+            service._registry.get_all_registered_class_metadata.return_value = metadata_list
 
             result = await service.list_initializers_async(limit=2, cursor="init_1")
 
@@ -140,7 +140,7 @@ class TestInitializerServiceListInitializers:
         with patch.object(InitializerService, "__init__", lambda self: None):
             service = InitializerService()
             service._registry = MagicMock()
-            service._registry.list_metadata.return_value = metadata_list
+            service._registry.get_all_registered_class_metadata.return_value = metadata_list
 
             result = await service.list_initializers_async(limit=5)
 
@@ -154,7 +154,7 @@ class TestInitializerServiceListInitializers:
         with patch.object(InitializerService, "__init__", lambda self: None):
             service = InitializerService()
             service._registry = MagicMock()
-            service._registry.list_metadata.return_value = [metadata]
+            service._registry.get_all_registered_class_metadata.return_value = [metadata]
 
             result = await service.list_initializers_async()
 
@@ -171,7 +171,7 @@ class TestInitializerServiceGetInitializer:
         with patch.object(InitializerService, "__init__", lambda self: None):
             service = InitializerService()
             service._registry = MagicMock()
-            service._registry.list_metadata.return_value = [metadata]
+            service._registry.get_all_registered_class_metadata.return_value = [metadata]
 
             result = await service.get_initializer_async(initializer_name="target")
 
@@ -182,7 +182,7 @@ class TestInitializerServiceGetInitializer:
         with patch.object(InitializerService, "__init__", lambda self: None):
             service = InitializerService()
             service._registry = MagicMock()
-            service._registry.list_metadata.return_value = []
+            service._registry.get_all_registered_class_metadata.return_value = []
 
             result = await service.get_initializer_async(initializer_name="nonexistent")
 
@@ -298,7 +298,7 @@ class TestInitializerRoutes:
 
 
 _SAMPLE_SCRIPT = """
-from pyrit.setup.initializers.pyrit_initializer import PyRITInitializer
+from pyrit.setup.pyrit_initializer import PyRITInitializer
 
 class MyCustomInitializer(PyRITInitializer):
     \"\"\"A custom test initializer.\"\"\"
@@ -316,7 +316,7 @@ class TestInitializerServiceRegister:
             service = InitializerService()
             mock_registry = MagicMock()
             mock_registry.register_from_content.return_value = "my_custom"
-            mock_registry.list_metadata.return_value = [
+            mock_registry.get_all_registered_class_metadata.return_value = [
                 _make_initializer_metadata(registry_name="my_custom", class_name="MyCustomInitializer")
             ]
             service._registry = mock_registry

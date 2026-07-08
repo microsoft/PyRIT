@@ -57,10 +57,12 @@ from pyrit.models import (
     AttackIdentifier,
     AttackOutcome,
     AttackResult,
+    AttackTechniqueIdentifier,
     ComponentIdentifier,
     Conversation,
     ConversationStats,
     ConversationType,
+    ConverterIdentifier,
     MessagePiece,
     PromptDataType,
 )
@@ -754,49 +756,95 @@ class AttackService:
 
         if request.converter_ids:
             converter_objs = get_converter_service().get_converter_objects_for_ids(converter_ids=request.converter_ids)
-            new_converter_ids = [c.get_identifier() for c in converter_objs]
+            new_converter_ids = [
+                ConverterIdentifier.from_component_identifier(c.get_identifier()) for c in converter_objs
+            ]
             aid = ar.get_attack_strategy_identifier()
-            if aid:
-                existing_converters: list[ComponentIdentifier] = list(aid.get_child_list("request_converters"))
-                existing_hashes = {c.hash for c in existing_converters}
-                merged = existing_converters + [c for c in new_converter_ids if c.hash not in existing_hashes]
-                new_children = dict(aid.children)
-                if merged:
-                    new_children["request_converters"] = merged
-                new_aid = ComponentIdentifier(
-                    class_name=aid.class_name,
-                    class_module=aid.class_module,
-                    params=dict(aid.params),
-                    children=new_children,
-                )
-                if ar.atomic_attack_identifier:
-                    atomic = ComponentIdentifier.model_validate(ar.atomic_attack_identifier.model_dump())
-                    atomic_children = dict(atomic.children)
-                    # Navigate into attack_technique child to update the nested attack child.
-                    technique = atomic_children.get("attack_technique")
-                    if isinstance(technique, ComponentIdentifier):
-                        tech_children = dict(technique.children)
-                        tech_children["attack"] = new_aid
-                        atomic_children["attack_technique"] = ComponentIdentifier(
-                            class_name=technique.class_name,
-                            class_module=technique.class_module,
-                            params=dict(technique.params),
-                            children=tech_children,
-                        )
-                    else:
-                        # Fallback for pre-nesting rows with children["attack"] directly.
-                        atomic_children["attack"] = new_aid
-                    new_atomic = ComponentIdentifier(
-                        class_name=atomic.class_name,
-                        class_module=atomic.class_module,
-                        params=dict(atomic.params),
-                        children=atomic_children,
+            if aid and ar.atomic_attack_identifier:
+                attack_id = AttackIdentifier.from_component_identifier(aid)
+                existing_hashes = {c.hash for c in attack_id.request_converters}
+                additions = [c for c in new_converter_ids if c.hash not in existing_hashes]
+                if additions:
+                    new_attack_id = self._replace_request_converters(
+                        attack_id, request_converters=[*attack_id.request_converters, *additions]
+                    )
+                    new_atomic = self._replace_attack_in_atomic(
+                        AtomicAttackIdentifier.from_component_identifier(ar.atomic_attack_identifier),
+                        attack=new_attack_id,
                     )
                     update_fields["atomic_attack_identifier"] = new_atomic.model_dump()
 
         self._memory.update_attack_result_by_id(
             attack_result_id=attack_result_id,
             update_fields=update_fields,
+        )
+
+    @staticmethod
+    def _replace_request_converters(
+        attack_id: AttackIdentifier, *, request_converters: list[ConverterIdentifier]
+    ) -> AttackIdentifier:
+        """
+        Return a copy of ``attack_id`` with its request-converter pipeline replaced.
+
+        Reconstructed through the constructor (not ``model_copy``) so the
+        after-validator re-mirrors the typed converters into ``children`` and
+        recomputes the content hash. All other params/children/attributes are
+        preserved, so the identifier hashes identically apart from the converters.
+
+        Returns:
+            AttackIdentifier: A new identifier with the given request converters.
+        """
+        return AttackIdentifier(
+            class_name=attack_id.class_name,
+            class_module=attack_id.class_module,
+            params=dict(attack_id.params),
+            children=dict(attack_id.children),
+            attributes=dict(attack_id.attributes),
+            request_converters=request_converters,
+        )
+
+    @staticmethod
+    def _replace_attack_in_atomic(
+        atomic: AtomicAttackIdentifier, *, attack: AttackIdentifier
+    ) -> AtomicAttackIdentifier:
+        """
+        Return a copy of ``atomic`` with its nested attack strategy replaced.
+
+        Handles both the current nested shape (``atomic -> attack_technique ->
+        attack``) and the legacy flat shape (``atomic -> attack``). Everything
+        else is preserved so the composite identifier hashes identically apart
+        from the swapped attack node.
+
+        Returns:
+            AtomicAttackIdentifier: A new composite identifier wrapping ``attack``.
+        """
+        technique = atomic.attack_technique
+        if technique is not None:
+            new_technique = AttackTechniqueIdentifier(
+                class_name=technique.class_name,
+                class_module=technique.class_module,
+                params=dict(technique.params),
+                children=dict(technique.children),
+                attributes=dict(technique.attributes),
+                attack=attack,
+            )
+            return AtomicAttackIdentifier(
+                class_name=atomic.class_name,
+                class_module=atomic.class_module,
+                params=dict(atomic.params),
+                children=dict(atomic.children),
+                attributes=dict(atomic.attributes),
+                attack_technique=new_technique,
+            )
+        # Legacy flat shape: the attack strategy lives in children["attack"].
+        atomic_children = dict(atomic.children)
+        atomic_children["attack"] = attack
+        return AtomicAttackIdentifier(
+            class_name=atomic.class_name,
+            class_module=atomic.class_module,
+            params=dict(atomic.params),
+            children=atomic_children,
+            attributes=dict(atomic.attributes),
         )
 
     # ========================================================================

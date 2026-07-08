@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
+import { makeTarget } from "./_targets";
 
 // ---------------------------------------------------------------------------
 // Helpers – mock backend API responses so tests don't require an OpenAI key
@@ -19,12 +20,12 @@ async function mockBackendAPIs(page: Page) {
         contentType: "application/json",
         body: JSON.stringify({
           items: [
-            {
+            makeTarget({
               target_registry_name: "mock-openai-chat",
               target_type: "OpenAIChatTarget",
               endpoint: "https://mock.openai.com",
               model_name: "gpt-4o-mock",
-            },
+            }),
           ],
         }),
       });
@@ -327,12 +328,12 @@ function buildModalityMock(
           contentType: "application/json",
           body: JSON.stringify({
             items: [
-              {
+              makeTarget({
                 target_registry_name: "mock-target",
                 target_type: "OpenAIChatTarget",
                 endpoint: "https://mock.endpoint.com",
                 model_name: "test-model",
-              },
+              }),
             ],
           }),
         });
@@ -677,7 +678,7 @@ test.describe("Target type scenarios", () => {
       endpoint: "https://api.openai.com",
       model_name: "tts-1-hd",
     },
-  ];
+  ].map(makeTarget);
 
   test("should list multiple target types on config page", async ({ page }) => {
     await page.route(/\/api\/targets/, async (route) => {

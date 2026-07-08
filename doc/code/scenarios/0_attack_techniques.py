@@ -50,7 +50,7 @@
 # Techniques are registered into a singleton
 # [`AttackTechniqueRegistry`](../../../pyrit/registry/components/attack_technique_registry.py)
 # by an **initializer**. The canonical catalog lives in
-# [`ScenarioTechniqueInitializer`](../../../pyrit/setup/initializers/components/scenario_techniques.py),
+# [`TechniqueInitializer`](../../../pyrit/setup/initializers/techniques/technique_initializer.py),
 # which registers a flat list of
 # [`AttackTechniqueFactory`](../../../pyrit/scenario/core/attack_technique_factory.py) instances.
 # Each factory is self-describing — it knows its `name`, the attack class it builds, its tags, and
@@ -67,10 +67,10 @@ import pandas as pd
 
 from pyrit.registry import AttackTechniqueRegistry
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
-from pyrit.setup.initializers.components import ScenarioTechniqueInitializer
+from pyrit.setup.initializers.techniques import TechniqueInitializer
 
 await initialize_pyrit_async(memory_db_type=IN_MEMORY, silent=True)  # type: ignore
-await ScenarioTechniqueInitializer().initialize_async()  # type: ignore
+await TechniqueInitializer().initialize_async()  # type: ignore
 
 factories = AttackTechniqueRegistry.get_registry_singleton().get_factories()
 
@@ -109,7 +109,7 @@ print(pd.DataFrame(rows).to_string(index=False))
 #
 # ```mermaid
 # flowchart LR
-#     I["ScenarioTechniqueInitializer"] -->|registers factories| R["AttackTechniqueRegistry"]
+#     I["TechniqueInitializer"] -->|registers factories| R["AttackTechniqueRegistry"]
 #     R -->|builds enum + tags| S["ScenarioStrategy"]
 #     S -->|name / tag / composite| Sc["Scenario"]
 #     R -->|create with target + scorer| T["AttackTechnique<br/>(attack + seeds)"]
@@ -147,6 +147,6 @@ print(pd.DataFrame(rows).to_string(index=False))
 # )
 # ```
 #
-# Wrap registration in a `PyRITInitializer` (as `ScenarioTechniqueInitializer` does) when you want it
+# Wrap registration in a `PyRITInitializer` (as `TechniqueInitializer` does) when you want it
 # to run as part of standard setup. Any scenario built afterwards will see `my_role_play` as a
 # selectable strategy.

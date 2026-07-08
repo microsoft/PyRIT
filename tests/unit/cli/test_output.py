@@ -14,14 +14,14 @@ from typing import Literal
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from pyrit.cli import _output
-from pyrit.models import Parameter, ScenarioRunState
+from pyrit.models import Parameter, ScenarioRunState, TargetCapabilities, TargetIdentifier
 from pyrit.models.catalog import (
     RegisteredInitializer,
     RegisteredScenario,
     ScenarioRunSummary,
-    TargetCapabilitiesInfo,
     TargetInstance,
 )
+from unit.mocks import make_scenario_result
 
 # ---------------------------------------------------------------------------
 # Typed-object factory helpers
@@ -37,7 +37,6 @@ def _make_scenario(**overrides) -> RegisteredScenario:
         "aggregate_strategies": [],
         "all_strategies": [],
         "default_datasets": [],
-        "max_dataset_size": None,
         "supported_parameters": [],
     }
     defaults.update(overrides)
@@ -57,19 +56,23 @@ def _make_initializer(**overrides) -> RegisteredInitializer:
 
 
 def _make_target(**overrides) -> TargetInstance:
+    """Build a ``TargetInstance``; identity kwargs (``target_type``/``endpoint``/
+    ``model_name``/...) are folded into the embedded ``TargetIdentifier``."""
+    if "target_type" in overrides:
+        overrides["class_name"] = overrides.pop("target_type")
+    identifier_kwargs = {
+        "class_name": overrides.pop("class_name", "X"),
+        "class_module": overrides.pop("class_module", "pyrit.prompt_target"),
+    }
+    for key in ("endpoint", "model_name", "underlying_model_name", "temperature", "top_p", "max_requests_per_minute"):
+        if key in overrides:
+            identifier_kwargs[key] = overrides.pop(key)
     defaults = {
         "target_registry_name": "t1",
-        "target_type": "X",
-        "endpoint": None,
-        "model_name": None,
-        "underlying_model_name": None,
-        "temperature": None,
-        "top_p": None,
-        "max_requests_per_minute": None,
-        "capabilities": TargetCapabilitiesInfo(),
+        "identifier": TargetIdentifier(**identifier_kwargs),
+        "capabilities": TargetCapabilities(),
         "target_specific_params": None,
         "inner_targets": None,
-        "identifier_hash": None,
     }
     defaults.update(overrides)
     return TargetInstance(**defaults)
@@ -170,7 +173,6 @@ def test_print_scenario_list_full(capsys):
             all_strategies=["s1", "s2", "s3"],
             default_strategy="s1",
             default_datasets=["d1", "d2"],
-            max_dataset_size=50,
             supported_parameters=[
                 Parameter(
                     name="max_turns",
@@ -195,7 +197,7 @@ def test_print_scenario_list_full(capsys):
     assert "single_turn" in captured.out
     assert "Available Strategies (3)" in captured.out
     assert "Default Strategy: s1" in captured.out
-    assert "Default Datasets (2, max 50 per dataset)" in captured.out
+    assert "Default Datasets (2)" in captured.out
     assert "Supported Parameters" in captured.out
     assert "max_turns" in captured.out
     assert "mode" in captured.out
@@ -302,6 +304,41 @@ def test_print_target_list_full(capsys):
     assert "Model: claude-sonnet" in captured.out
     assert "minimal" in captured.out
     assert "Total targets: 3" in captured.out
+
+
+# ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# print_converter_list
+# ---------------------------------------------------------------------------
+
+
+def test_print_converter_list_empty(capsys):
+    _output.print_converter_list(items=[])
+    captured = capsys.readouterr()
+    assert "No converters found in registry" in captured.out
+    assert "converter.translation_spanish" in captured.out
+
+
+def test_print_converter_list_full(capsys):
+    items = [
+        {
+            "converter_id": "translation_spanish",
+            "converter_type": "TranslationConverter",
+            "display_name": "Spanish translation",
+        },
+        {
+            "converter_id": "pipeline_1",
+            "converter_type": "PromptConverterPipeline",
+            "sub_converter_ids": ["base64", "rot13"],
+        },
+    ]
+    _output.print_converter_list(items=items)
+    captured = capsys.readouterr()
+    assert "translation_spanish" in captured.out
+    assert "Class: TranslationConverter" in captured.out
+    assert "Name: Spanish translation" in captured.out
+    assert "Sub-converters: base64, rot13" in captured.out
+    assert "Total converters: 2" in captured.out
 
 
 # ---------------------------------------------------------------------------
@@ -442,11 +479,8 @@ async def test_print_scenario_result_async_accepts_real_scenario_result():
         AttackOutcome,
         AttackResult,
         ComponentIdentifier,
-        ScenarioIdentifier,
-        ScenarioResult,
     )
 
-    identifier = ScenarioIdentifier(name="test.scenario", description="A test")
     target_identifier = ComponentIdentifier.model_validate(
         {"__type__": "FakeTarget", "__module__": "test.mod", "params": {}}
     )
@@ -458,8 +492,9 @@ async def test_print_scenario_result_async_accepts_real_scenario_result():
         execution_time_ms=150,
         timestamp=datetime(2025, 1, 1, tzinfo=timezone.utc),
     )
-    scenario_result = ScenarioResult(
-        scenario_identifier=identifier,
+    scenario_result = make_scenario_result(
+        scenario_name="test.scenario",
+        scenario_description="A test",
         objective_target_identifier=target_identifier,
         objective_scorer_identifier=None,
         attack_results={"strat_a": [attack]},

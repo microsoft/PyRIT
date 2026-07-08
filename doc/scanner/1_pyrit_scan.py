@@ -115,6 +115,31 @@
 # ```
 
 # %% [markdown]
+# #### Attaching Converters to a Technique
+#
+# Strategies (techniques) can have a registered converter instance appended to them with the
+# `<technique>:converter.<name>` syntax. The converter is added to the request side of every attack
+# the technique produces, on top of any converters the technique already bakes in. This also works on
+# aggregate strategies (the converter is applied to every technique the aggregate expands to).
+#
+# First discover the registered converter instances with `--list-converters` (converters are
+# registered by initializers, so pass the same `--initializers`/`--initialization-scripts` you use to run):
+#
+# ```shell
+# pyrit_scan --list-converters --initializers my_converters
+# ```
+#
+# Then reference a converter by name in `--strategies`:
+#
+# ```shell
+# # Add the registered "translation_spanish" converter to role_play only
+# pyrit_scan airt.rapid_response --target openai_chat --initializers load_default_datasets target my_converters --strategies role_play:converter.translation_spanish
+#
+# # Chain multiple converters (applied in order) and combine with plain strategies
+# pyrit_scan airt.rapid_response --target openai_chat --initializers load_default_datasets target my_converters --strategies role_play:converter.translation_spanish:converter.base64 many_shot
+# ```
+
+# %% [markdown]
 # #### Using Custom Scenarios
 #
 # You can define your own scenarios in initialization scripts. The CLI will automatically discover any `Scenario` subclasses and make them available:
@@ -155,9 +180,10 @@ class MyCustomScenario(Scenario):
         )
         # ... your scenario-specific initialization code
 
-    async def _get_atomic_attacks_async(self):
-        # Override only if your scenario needs custom attack construction.
-        # The base class provides a default that uses the factory/registry pattern.
+    async def _build_atomic_attacks_async(self, *, context):
+        # The single abstract extension point every scenario implements.
+        # Read runtime inputs from `context`; return the list of AtomicAttack to run.
+        # Matrix-shaped scenarios can delegate to build_matrix_atomic_attacks(context=...).
         # Example: create attacks for each strategy composite
         return []
 

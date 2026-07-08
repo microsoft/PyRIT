@@ -97,8 +97,8 @@ def _is_content_filter_error(data: dict[str, object] | str) -> bool:
     """
     if isinstance(data, dict):
         error_obj = data.get("error")
-        if isinstance(error_obj, dict) and error_obj.get("code") == "invalid_prompt":  # type: ignore[ty:invalid-argument-type]
-            message = str(error_obj.get("message", "")).lower()  # type: ignore[ty:no-matching-overload]
+        if isinstance(error_obj, dict) and error_obj.get("code") == "invalid_prompt":
+            message = str(error_obj.get("message", "")).lower()
             if any(marker in message for marker in SAFETY_MESSAGE_MARKERS):
                 return True
         haystack = json.dumps(data).lower()

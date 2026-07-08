@@ -18,6 +18,7 @@ import { attacksApi } from '../../services/api'
 import { toApiError } from '../../services/errors'
 import { buildMessagePieces, backendMessagesToFrontend } from '../../utils/messageMapper'
 import type { Message, MessageAttachment, TargetInstance, TargetInfo } from '../../types'
+import { targetEndpoint, targetModelName, targetType } from '../../utils/targetIdentity'
 import type { ViewName } from '../Sidebar/Navigation'
 import { useChatWindowStyles } from './ChatWindow.styles'
 
@@ -526,9 +527,9 @@ export default function ChatWindow({
   // The user can "Continue with your target" to branch into a new attack with their target.
   const isCrossTargetLocked = Boolean(
     attackResultId && attackTarget && activeTarget && (
-      attackTarget.target_type !== activeTarget.target_type ||
-      (attackTarget.endpoint ?? '') !== (activeTarget.endpoint ?? '') ||
-      (attackTarget.model_name ?? '') !== (activeTarget.model_name ?? '')
+      attackTarget.target_type !== targetType(activeTarget) ||
+      (attackTarget.endpoint ?? '') !== (targetEndpoint(activeTarget) ?? '') ||
+      (attackTarget.model_name ?? '') !== (targetModelName(activeTarget) ?? '')
     )
   )
 

@@ -12,15 +12,15 @@ import httpx
 import pytest
 
 from pyrit.cli.api_client import PyRITApiClient, ServerNotAvailableError
-from pyrit.models import ScenarioRunState
+from pyrit.models import ScenarioRunState, TargetCapabilities
 from pyrit.models.catalog import (
     RegisteredInitializer,
     RegisteredScenario,
     RunScenarioRequest,
     ScenarioRunSummary,
-    TargetCapabilitiesInfo,
     TargetInstance,
 )
+from unit.mocks import make_scenario_result
 
 
 @pytest.fixture()
@@ -60,7 +60,6 @@ def _scenario_payload(*, scenario_name: str = "s1") -> dict:
         "aggregate_strategies": [],
         "all_strategies": ["single_turn"],
         "default_datasets": [],
-        "max_dataset_size": None,
         "supported_parameters": [],
     }
 
@@ -78,17 +77,13 @@ def _initializer_payload(*, initializer_name: str = "x") -> dict:
 def _target_payload(*, target_registry_name: str = "t1") -> dict:
     return {
         "target_registry_name": target_registry_name,
-        "target_type": "OpenAIChatTarget",
-        "endpoint": None,
-        "model_name": None,
-        "underlying_model_name": None,
-        "temperature": None,
-        "top_p": None,
-        "max_requests_per_minute": None,
-        "capabilities": TargetCapabilitiesInfo().model_dump(mode="json"),
+        "identifier": {
+            "class_name": "OpenAIChatTarget",
+            "class_module": "pyrit.prompt_target",
+        },
+        "capabilities": TargetCapabilities().model_dump(mode="json"),
         "target_specific_params": None,
         "inner_targets": None,
-        "identifier_hash": None,
     }
 
 
@@ -145,7 +140,9 @@ async def test_async_context_manager_passes_custom_request_timeout(mock_httpx_cl
     fake_async_client_cls.assert_called_once_with(base_url="http://localhost:8000", timeout=120.0)
 
 
-async def test_async_context_manager_uses_default_when_request_timeout_is_none(mock_httpx_client):
+async def test_async_context_manager_uses_default_when_request_timeout_is_none(
+    mock_httpx_client,
+):
     c = PyRITApiClient(base_url="http://localhost:8000", request_timeout=None)
     fake_async_client_cls = MagicMock(return_value=mock_httpx_client)
     with patch("httpx.AsyncClient", fake_async_client_cls):
@@ -293,6 +290,12 @@ async def test_list_targets_async(client, mock_httpx_client):
     mock_httpx_client.get.assert_awaited_once_with("/api/targets", params={"limit": 7})
 
 
+async def test_list_converters_async(client, mock_httpx_client):
+    mock_httpx_client.get.return_value = _make_response(json_data={"items": []})
+    await client.list_converters_async()
+    mock_httpx_client.get.assert_awaited_once_with("/api/converters", params=None)
+
+
 # ---------------------------------------------------------------------------
 # Datasets
 # ---------------------------------------------------------------------------
@@ -352,10 +355,10 @@ async def test_get_scenario_run_async_wraps_connect_error(client, mock_httpx_cli
 
 async def test_get_scenario_run_results_async(client, mock_httpx_client):
     # Build a minimal ScenarioResult.to_dict() payload that from_dict can deserialize.
-    from pyrit.models import ScenarioIdentifier, ScenarioResult, ScenarioRunState
+    from pyrit.models import ScenarioResult, ScenarioRunState
 
-    scenario_result = ScenarioResult(
-        scenario_identifier=ScenarioIdentifier(name="x"),
+    scenario_result = make_scenario_result(
+        scenario_name="x",
         objective_target_identifier=None,
         objective_scorer_identifier=None,
         attack_results={},

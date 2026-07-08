@@ -360,11 +360,9 @@ class TestConfigurationLoaderInitialization:
         mock_registry = mock.MagicMock()
         mock_registry_cls.return_value = mock_registry
 
-        # Mock an initializer class
-        mock_initializer_class = mock.MagicMock()
+        # Mock the configured initializer instance produced by the registry
         mock_initializer_instance = mock.MagicMock()
-        mock_initializer_class.return_value = mock_initializer_instance
-        mock_registry.get_class.return_value = mock_initializer_class
+        mock_registry.create_and_configure.return_value = mock_initializer_instance
 
         config = ConfigurationLoader(
             memory_db_type="in_memory",
@@ -372,9 +370,8 @@ class TestConfigurationLoaderInitialization:
         )
         await config.initialize_pyrit_async()
 
-        # Verify registry was used to resolve initializer
-        mock_registry.get_class.assert_called_once_with("simple")
-        mock_initializer_class.assert_called_once_with()
+        # Verify registry was used to resolve and configure the initializer
+        mock_registry.create_and_configure.assert_called_once_with("simple", initializer_params=None)
 
         # Verify initialize was called with resolved initializers
         mock_init.assert_called_once()
@@ -386,8 +383,8 @@ class TestConfigurationLoaderInitialization:
         """Test that unknown initializer name raises ValueError."""
         mock_registry = mock.MagicMock()
         mock_registry_cls.return_value = mock_registry
-        mock_registry.get_class.return_value = None
-        mock_registry.get_names.return_value = ["simple", "airt"]
+        mock_registry.create_and_configure.side_effect = KeyError("unknown_initializer")
+        mock_registry.get_class_names.return_value = ["simple", "airt"]
 
         config = ConfigurationLoader(
             memory_db_type="in_memory",

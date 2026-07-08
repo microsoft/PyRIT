@@ -35,7 +35,10 @@ from pyrit.models.identifiers import (
     Identifiable,
     IdentifierFilter,
     IdentifierType,
+    JSONValue,
     ObjectiveTargetEvaluationIdentifier,
+    ScenarioEvaluationIdentifier,
+    ScenarioIdentifier,
     ScorerEvaluationIdentifier,
     ScorerIdentifier,
     SeedIdentifier,
@@ -90,7 +93,7 @@ from pyrit.models.parameter import (
 )
 from pyrit.models.question_answering import QuestionAnsweringDataset, QuestionAnsweringEntry, QuestionChoice
 from pyrit.models.results.attack_result import AttackOutcome, AttackResult, AttackResultT
-from pyrit.models.results.scenario_result import ScenarioIdentifier, ScenarioResult, ScenarioRunState
+from pyrit.models.results.scenario_result import ScenarioResult, ScenarioRunState
 from pyrit.models.results.strategy_result import StrategyResult, StrategyResultT
 from pyrit.models.retry_event import RetryEvent
 from pyrit.models.score import Score, ScoreType, UnvalidatedScore
@@ -155,6 +158,7 @@ __all__ = [
     "Identifiable",
     "IdentifierFilter",
     "IdentifierType",
+    "JSONValue",
     "COMMON_JSON_SCHEMAS",
     "get_common_json_schema",
     "register_common_json_schema",
@@ -180,6 +184,7 @@ __all__ = [
     "ScaleDescription",
     "Score",
     "ScoreType",
+    "ScenarioEvaluationIdentifier",
     "ScorerEvaluationIdentifier",
     "ScorerIdentifier",
     "ScenarioIdentifier",

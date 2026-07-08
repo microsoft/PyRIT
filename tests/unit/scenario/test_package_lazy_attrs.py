@@ -15,7 +15,7 @@ from pyrit.scenario.scenarios.airt.cyber import _build_cyber_strategy
 from pyrit.scenario.scenarios.airt.leakage import _build_leakage_strategy
 from pyrit.scenario.scenarios.airt.rapid_response import _build_rapid_response_strategy
 from pyrit.scenario.scenarios.benchmark.adversarial import _build_benchmark_strategy
-from pyrit.setup.initializers.components.scenario_techniques import build_scenario_technique_factories
+from pyrit.setup.initializers.techniques import build_technique_factories
 
 
 @pytest.fixture(autouse=True)
@@ -32,7 +32,7 @@ def populate_registries():
     adv_target.capabilities.includes.return_value = True
     TargetRegistry.get_registry_singleton().instances.register(adv_target, name="adversarial_chat")
 
-    AttackTechniqueRegistry.get_registry_singleton().register_from_factories(build_scenario_technique_factories())
+    AttackTechniqueRegistry.get_registry_singleton().register_from_factories(build_technique_factories())
     yield
     AttackTechniqueRegistry.reset_registry_singleton()
     TargetRegistry.reset_registry_singleton()

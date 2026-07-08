@@ -14,7 +14,12 @@ from pyrit.models.identifiers.class_name_utils import (
     snake_case_to_class_name,
     validate_registry_name,
 )
-from pyrit.models.identifiers.component_identifier import ComponentIdentifier, Identifiable, config_hash
+from pyrit.models.identifiers.component_identifier import (
+    ComponentIdentifier,
+    Identifiable,
+    JSONValue,
+    config_hash,
+)
 from pyrit.models.identifiers.converter_identifier import ConverterIdentifier
 from pyrit.models.identifiers.evaluation_identifier import (
     TARGET_EVAL_PARAM_FALLBACKS,
@@ -23,6 +28,7 @@ from pyrit.models.identifiers.evaluation_identifier import (
     ChildEvalRule,
     EvaluationIdentifier,
     ObjectiveTargetEvaluationIdentifier,
+    ScenarioEvaluationIdentifier,
     ScorerEvaluationIdentifier,
     compute_eval_hash,
     compute_inner_attack_eval_hash,
@@ -31,6 +37,7 @@ from pyrit.models.identifiers.evaluation_identifier import (
 from pyrit.models.identifiers.evaluation_markers import EvalMarker, Evaluate, Exclude, Include, Unwrap
 from pyrit.models.identifiers.identifier_filters import IdentifierFilter, IdentifierType
 from pyrit.models.identifiers.param_markers import Param, ParamMarker
+from pyrit.models.identifiers.scenario_identifier import ScenarioIdentifier
 from pyrit.models.identifiers.scorer_identifier import ScorerIdentifier
 from pyrit.models.identifiers.seed_identifier import SeedIdentifier
 from pyrit.models.identifiers.target_identifier import TargetIdentifier
@@ -53,12 +60,15 @@ __all__ = [
     "Exclude",
     "Identifiable",
     "Include",
+    "JSONValue",
     "ObjectiveTargetEvaluationIdentifier",
     "REGISTRY_NAME_PATTERN",
     "Param",
     "ParamMarker",
+    "ScenarioEvaluationIdentifier",
     "ScorerEvaluationIdentifier",
     "ScorerIdentifier",
+    "ScenarioIdentifier",
     "SeedIdentifier",
     "snake_case_to_class_name",
     "TARGET_EVAL_PARAM_FALLBACKS",

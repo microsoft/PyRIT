@@ -21,6 +21,7 @@ import LabelsBar from '../Labels/LabelsBar'
 import { attacksApi } from '../../services/api'
 import { toApiError } from '../../services/errors'
 import type { AttackSummary, TargetInstance } from '../../types'
+import { targetEndpoint, targetModelName, targetType } from '../../utils/targetIdentity'
 import type { ViewName } from '../Sidebar/Navigation'
 import { useHomeStyles } from './Home.styles'
 
@@ -95,7 +96,7 @@ function formatRelativeTime(iso: string): string {
 }
 
 function targetDisplayName(target: TargetInstance): string {
-  return target.model_name || target.target_registry_name || target.target_type
+  return targetModelName(target) || target.target_registry_name || targetType(target)
 }
 
 export default function Home({
@@ -174,8 +175,8 @@ export default function Home({
                 <div className={styles.targetSummary} data-testid="home-target-active">
                   <Text className={styles.targetName}>{targetDisplayName(activeTarget)}</Text>
                   <Text size={200} className={styles.targetMeta}>
-                    {activeTarget.target_type}
-                    {activeTarget.endpoint ? ` · ${activeTarget.endpoint}` : ''}
+                    {targetType(activeTarget)}
+                    {targetEndpoint(activeTarget) ? ` · ${targetEndpoint(activeTarget)}` : ''}
                   </Text>
                 </div>
               ) : (

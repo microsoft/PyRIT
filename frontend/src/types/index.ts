@@ -58,33 +58,43 @@ export interface PaginationInfo {
 
 // --- Targets ---
 
-export interface TargetCapabilitiesInfo {
+export interface TargetCapabilities {
   supports_multi_turn: boolean
-  supports_multi_message_pieces: boolean
+  supports_multi_message_pieces?: boolean
   supports_json_schema: boolean
   supports_json_output: boolean
-  supports_editable_history: boolean
+  supports_editable_history?: boolean
   supports_system_prompt: boolean
+  supports_streaming_audio?: boolean
   supported_input_modalities: string[]
   supported_output_modalities: string[]
 }
 
-export interface TargetInstance {
-  target_registry_name: string
-  target_type: string
+export interface TargetIdentifier {
+  class_name: string
+  class_module?: string
+  hash: string
+  pyrit_version?: string
   endpoint?: string | null
   model_name?: string | null
   underlying_model_name?: string | null
   temperature?: number | null
   top_p?: number | null
   max_requests_per_minute?: number | null
-  capabilities?: TargetCapabilitiesInfo | null
+  // Promoted + target-specific constructor params are inlined at the top level;
+  // inner target identifiers live under `__children__`.
+  [key: string]: unknown
+}
+
+export interface TargetInstance {
+  target_registry_name: string
+  /** Typed identity: class name, endpoint, model name, generation params, content hash. */
+  identifier: TargetIdentifier
+  capabilities?: TargetCapabilities | null
+  /** Non-promoted constructor params, curated for display (e.g., RoundRobin weights). */
   target_specific_params?: Record<string, unknown> | null
   /** Inner targets for composite targets like RoundRobinTarget. */
   inner_targets?: TargetInstance[] | null
-  /** ComponentIdentifier content hash. Targets with the same hash resolve to the
-   *  same backend configuration and are treated as duplicates for RoundRobinTarget grouping. */
-  identifier_hash?: string | null
 }
 
 export interface TargetListResponse {
@@ -95,7 +105,7 @@ export interface TargetListResponse {
 export interface CreateTargetRequest {
   type: string
   params: Record<string, unknown>
-  auth_mode?: 'api_key' | 'entra'
+  auth_mode?: 'api_key' | 'identity'
 }
 
 // --- Converters ---
@@ -141,6 +151,17 @@ export interface ConverterCatalogEntry {
 
 export interface ConverterCatalogResponse {
   items: ConverterCatalogEntry[]
+}
+
+export interface TargetCatalogEntry {
+  target_type: string
+  parameters: Parameter[]
+  supported_auth_modes: ('api_key' | 'identity')[]
+  description?: string | null
+}
+
+export interface TargetCatalogResponse {
+  items: TargetCatalogEntry[]
 }
 
 // --- Attacks ---

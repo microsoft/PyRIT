@@ -16,6 +16,7 @@ from pyrit.registry.instance_registry import (
     RegistryEntry,
     SupportsInstances,
 )
+from pyrit.registry.tag_query import TagQuery
 
 
 class _TestItem(Identifiable):
@@ -257,6 +258,34 @@ class TestTags:
     def test_get_by_tag_no_match(self, registry: DefaultInstanceRegistry[_TestItem]):
         registry.register(_item("v1"), name="n1", tags=["fast"])
         assert registry.get_by_tag(tag="missing") == []
+
+    def test_query_by_tags_and_predicate(self, registry: DefaultInstanceRegistry[_TestItem]):
+        registry.register(_item("v1"), name="n1", tags=["core", "fast"])
+        registry.register(_item("v2"), name="n2", tags=["core", "slow"])
+        registry.register(_item("v3"), name="n3", tags=["fast"])
+        query = TagQuery.all("core") & TagQuery.any_of("fast", "cheap")
+        assert [e.name for e in registry.query_by_tags(query=query)] == ["n1"]
+
+    def test_query_by_tags_exclude(self, registry: DefaultInstanceRegistry[_TestItem]):
+        registry.register(_item("v1"), name="n1", tags=["core"])
+        registry.register(_item("v2"), name="n2", tags=["core", "deprecated"])
+        query = TagQuery.all("core") & TagQuery.none_of("deprecated")
+        assert [e.name for e in registry.query_by_tags(query=query)] == ["n1"]
+
+    def test_query_by_tags_matches_keys_ignoring_values(self, registry: DefaultInstanceRegistry[_TestItem]):
+        registry.register(_item("v1"), name="n1", tags={"speed": "fast"})
+        registry.register(_item("v2"), name="n2", tags={"speed": "slow"})
+        assert [e.name for e in registry.query_by_tags(query=TagQuery.all("speed"))] == ["n1", "n2"]
+
+    def test_query_by_tags_returns_sorted_by_name(self, registry: DefaultInstanceRegistry[_TestItem]):
+        registry.register(_item("v1"), name="zeta", tags=["t"])
+        registry.register(_item("v2"), name="alpha", tags=["t"])
+        assert [e.name for e in registry.query_by_tags(query=TagQuery.any_of("t"))] == ["alpha", "zeta"]
+
+    def test_query_by_tags_empty_query_returns_all(self, registry: DefaultInstanceRegistry[_TestItem]):
+        registry.register(_item("v1"), name="n1", tags=["a"])
+        registry.register(_item("v2"), name="n2", tags=["b"])
+        assert [e.name for e in registry.query_by_tags(query=TagQuery())] == ["n1", "n2"]
 
     def test_normalize_tags_none(self, registry: DefaultInstanceRegistry[_TestItem]):
         assert registry._normalize_tags(None) == {}

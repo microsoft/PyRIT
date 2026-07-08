@@ -34,6 +34,11 @@ def test_initialization_with_required_parameters(azure_blob_storage_target: Azur
     assert azure_blob_storage_target._sas_token == "valid_sas_token"
 
 
+def test_supported_auth_modes_includes_identity():
+    """Blob advertises identity-based auth (DefaultAzureCredential) alongside api_key."""
+    assert AzureBlobStorageTarget.supported_auth_modes == ("api_key", "identity")
+
+
 def test_initialization_with_required_parameters_from_env():
     os.environ[AzureBlobStorageTarget.AZURE_STORAGE_CONTAINER_ENVIRONMENT_VARIABLE] = (
         "https://test.blob.core.windows.net/test"

@@ -25,6 +25,7 @@ from pyrit.scenario import (
 )
 from pyrit.scenario.core import AtomicAttack, BaselineAttackPolicy, Scenario, ScenarioStrategy
 from pyrit.score import Scorer
+from tests.unit.mocks import make_scenario_identifier, make_scenario_result
 
 # Reusable test scorer identifier
 _TEST_SCORER_ID = ComponentIdentifier(
@@ -168,8 +169,34 @@ class ConcreteScenario(Scenario):
         super().__init__(**kwargs)
         self._atomic_attacks_to_return = atomic_attacks_to_return or []
 
-    async def _get_atomic_attacks_async(self):
+    async def _resolve_seed_groups_by_dataset_async(self):
+        return {}
+
+    async def _build_atomic_attacks_async(self, *, context):
         return self._atomic_attacks_to_return
+
+
+def test_scenario_base_class_is_abstract():
+    """The base ``Scenario`` declares ``_build_atomic_attacks_async`` abstract and can't be instantiated directly."""
+    assert "_build_atomic_attacks_async" in Scenario.__abstractmethods__
+    with pytest.raises(TypeError, match="_build_atomic_attacks_async"):
+        Scenario()  # type: ignore[abstract]
+
+
+def test_subclass_without_build_atomic_attacks_async_is_abstract():
+    """A subclass that omits ``_build_atomic_attacks_async`` stays abstract and fails at instantiation."""
+
+    class IncompleteScenario(Scenario):
+        """Subclass that forgets to implement the required extension point."""
+
+    assert "_build_atomic_attacks_async" in IncompleteScenario.__abstractmethods__
+    with pytest.raises(TypeError, match="_build_atomic_attacks_async"):
+        IncompleteScenario()  # type: ignore[abstract]
+
+
+def test_subclass_implementing_build_atomic_attacks_async_is_concrete():
+    """Implementing ``_build_atomic_attacks_async`` clears the abstract marker so the subclass is instantiable."""
+    assert not ConcreteScenario.__abstractmethods__
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -184,24 +211,22 @@ class TestScenarioInitialization:
         )
 
         assert scenario.name == "Test Scenario"
-        assert scenario._identifier.name == "ConcreteScenario"
-        assert scenario._identifier.version == 1
+        assert scenario._version == 1
+        assert scenario._description == "Concrete implementation of Scenario for testing."
         assert scenario._memory_labels == {}
         assert scenario._max_concurrency is None
         assert scenario._max_retries == 0  # Default value
         assert scenario.atomic_attack_count == 0  # Not initialized yet
 
-    def test_init_creates_scenario_identifier(self, mock_objective_target):
-        """Test that initialization creates a proper ScenarioIdentifier."""
+    def test_init_stores_scenario_version_and_description(self, mock_objective_target):
+        """Test that initialization stores run metadata used by ScenarioResult."""
         scenario = ConcreteScenario(
             name="Test Scenario",
             version=3,
         )
 
-        assert isinstance(scenario._identifier, ScenarioIdentifier)
-        assert scenario._identifier.name == "ConcreteScenario"
-        assert scenario._identifier.version == 3
-        assert scenario._identifier.pyrit_version is not None
+        assert scenario._version == 3
+        assert scenario._description == "Concrete implementation of Scenario for testing."
 
     def test_init_with_empty_attack_strategies(self, mock_objective_target):
         """Test that initialization works without attack_strategies."""
@@ -479,10 +504,9 @@ class TestScenarioExecution:
         result = await scenario.run_async()
 
         assert isinstance(result, ScenarioResult)
-        assert isinstance(result.scenario_identifier, ScenarioIdentifier)
-        assert result.scenario_identifier.name == "ConcreteScenario"
-        assert result.scenario_identifier.version == 5
-        assert result.scenario_identifier.pyrit_version is not None
+        assert result.scenario_name == "ConcreteScenario"
+        assert result.scenario_version == 5
+        assert result.pyrit_version is not None
         assert result.get_strategies_used() == [
             "attack_run_1",
             "attack_run_2",
@@ -572,15 +596,19 @@ class TestScenarioResult:
 
     def test_scenario_result_initialization(self, sample_attack_results):
         """Test ScenarioResult initialization."""
-        identifier = ScenarioIdentifier(name="Test", scenario_version=1)
-        result = ScenarioResult(
-            scenario_identifier=identifier,
+        result = make_scenario_result(
+            scenario_name="Test",
+            scenario_version=1,
             objective_target_identifier=ComponentIdentifier(class_name="TestTarget", class_module="test"),
-            attack_results={"base64": sample_attack_results[:3], "rot13": sample_attack_results[3:]},
+            attack_results={
+                "base64": sample_attack_results[:3],
+                "rot13": sample_attack_results[3:],
+            },
             objective_scorer_identifier=_TEST_SCORER_ID,
         )
 
-        assert result.scenario_identifier == identifier
+        assert result.scenario_name == "Test"
+        assert result.scenario_version == 1
         assert result.get_strategies_used() == ["base64", "rot13"]
         assert len(result.attack_results) == 2
         assert len(result.attack_results["base64"]) == 3
@@ -588,9 +616,9 @@ class TestScenarioResult:
 
     def test_scenario_result_with_empty_results(self):
         """Test ScenarioResult with empty attack results."""
-        identifier = ScenarioIdentifier(name="TestScenario", scenario_version=1)
-        result = ScenarioResult(
-            scenario_identifier=identifier,
+        result = make_scenario_result(
+            scenario_name="TestScenario",
+            scenario_version=1,
             objective_target_identifier=ComponentIdentifier(
                 class_name="TestTarget",
                 class_module="test",
@@ -604,11 +632,10 @@ class TestScenarioResult:
 
     def test_scenario_result_objective_achieved_rate(self, sample_attack_results):
         """Test objective_achieved_rate calculation."""
-        identifier = ScenarioIdentifier(name="Test", scenario_version=1)
-
         # All successful
-        result = ScenarioResult(
-            scenario_identifier=identifier,
+        result = make_scenario_result(
+            scenario_name="Test",
+            scenario_version=1,
             objective_target_identifier=ComponentIdentifier(
                 class_name="TestTarget",
                 class_module="test",
@@ -633,8 +660,9 @@ class TestScenarioResult:
                 executed_turns=1,
             ),
         ]
-        result2 = ScenarioResult(
-            scenario_identifier=identifier,
+        result2 = make_scenario_result(
+            scenario_name="Test",
+            scenario_version=1,
             objective_target_identifier=ComponentIdentifier(
                 class_name="TestTarget",
                 class_module="test",
@@ -647,29 +675,30 @@ class TestScenarioResult:
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestScenarioIdentifier:
-    """Tests for ScenarioIdentifier class."""
+    """Tests for ScenarioIdentifier registry projection."""
 
     def test_scenario_identifier_initialization(self):
-        """Test ScenarioIdentifier initialization."""
-        identifier = ScenarioIdentifier(name="TestScenario", scenario_version=2)
+        """Test ScenarioIdentifier projection initialization."""
+        identifier = ScenarioIdentifier(
+            class_name="TestScenario",
+            class_module="tests.unit.scenario.core.test_scenario",
+            version=2,
+        )
 
-        assert identifier.name == "TestScenario"
-        assert identifier.version == 2
-        assert identifier.pyrit_version is not None
+        assert identifier.class_name == "TestScenario"
+        assert identifier.class_module == "tests.unit.scenario.core.test_scenario"
 
-    def test_scenario_identifier_with_custom_pyrit_version(self):
-        """Test ScenarioIdentifier initialization sets pyrit version automatically."""
-        identifier = ScenarioIdentifier(name="TestScenario", scenario_version=1)
+    def test_scenario_identifier_accepts_registry_projection_fields(self):
+        """Test ScenarioIdentifier stores registry projection metadata."""
+        identifier = ScenarioIdentifier(
+            class_name="TestScenario",
+            class_module="tests.unit.scenario.core.test_scenario",
+            techniques=["baseline"],
+            datasets=["harmful_content"],
+        )
 
-        assert identifier.pyrit_version is not None
-        assert identifier.name == "TestScenario"
-
-    def test_scenario_identifier_with_init_data(self):
-        """Test ScenarioIdentifier with init_data."""
-        init_data = {"param1": "value1", "param2": 42}
-        identifier = ScenarioIdentifier(name="TestScenario", scenario_version=1, init_data=init_data)
-
-        assert identifier.init_data == init_data
+        assert identifier.techniques == ["baseline"]
+        assert identifier.datasets == ["harmful_content"]
 
 
 def create_mock_truefalse_scorer():
@@ -712,13 +741,11 @@ class ConcreteScenarioWithTrueFalseScorer(Scenario):
         super().__init__(**kwargs)
         self._atomic_attacks_to_return = atomic_attacks_to_return or []
 
-    async def _get_atomic_attacks_async(self):
-        atomic_attacks = list(self._atomic_attacks_to_return)
-        if self._include_baseline:
-            groups_by_dataset = await self._dataset_config.get_attack_groups_by_dataset_async()
-            all_seed_groups = [g for groups in groups_by_dataset.values() for g in groups]
-            atomic_attacks.insert(0, self._build_baseline_atomic_attack(seed_groups=all_seed_groups))
-        return atomic_attacks
+    async def _resolve_seed_groups_by_dataset_async(self):
+        return await self._dataset_config.get_attack_groups_by_dataset_async()
+
+    async def _build_atomic_attacks_async(self, *, context):
+        return list(self._atomic_attacks_to_return)
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -930,19 +957,14 @@ class TestScenarioBaselineUniformObjectives:
         config = DatasetAttackConfiguration(seed_groups=seed_groups, max_dataset_size=3)
 
         class StrategyScenario(ConcreteScenarioWithTrueFalseScorer):
-            async def _get_atomic_attacks_async(self):
-                groups_by_dataset = await self._dataset_config.get_attack_groups_by_dataset_async()
-                all_seed_groups = [g for groups in groups_by_dataset.values() for g in groups]
-                atomic_attacks = [
+            async def _build_atomic_attacks_async(self, *, context):
+                return [
                     AtomicAttack(
                         atomic_attack_name="strategy",
                         attack_technique=AttackTechnique(attack=MagicMock()),
-                        seed_groups=all_seed_groups,
+                        seed_groups=list(context.seed_groups),
                     )
                 ]
-                if self._include_baseline:
-                    atomic_attacks.insert(0, self._build_baseline_atomic_attack(seed_groups=all_seed_groups))
-                return atomic_attacks
 
         # A single deterministic resolution: random.sample must be called exactly once,
         # so baseline and strategy draw from the same sampled population and share objectives.
@@ -1014,40 +1036,40 @@ class TestValidateStoredScenario:
     def _make_scenario(self, *, name: str = "TestScenario", version: int = 1) -> ConcreteScenario:
         scenario = ConcreteScenario(name=name, version=version)
         scenario._scenario_result_id = "test-result-id"
-        # _validate_stored_scenario now also checks params
         scenario.params = {}
         return scenario
 
     def test_passes_when_name_and_version_match(self):
-        """Valid match does not raise."""
+        """Valid match (identical eval hash) does not raise."""
         scenario = self._make_scenario(name="TestScenario", version=2)
 
-        stored_result = MagicMock(spec=ScenarioResult)
-        stored_result.scenario_identifier = ScenarioIdentifier(name="ConcreteScenario", scenario_version=2)
-        stored_result.scenario_run_state = "CREATED"
+        current = make_scenario_identifier(scenario_name="ConcreteScenario", version=2)
+        stored_result = make_scenario_result(
+            scenario_name="ConcreteScenario", scenario_version=2, scenario_run_state="CREATED", attack_results={}
+        )
 
         # Should not raise
-        scenario._validate_stored_scenario(stored_result=stored_result)
+        scenario._validate_stored_scenario(stored_result=stored_result, current_identifier=current)
 
     def test_raises_when_name_mismatches(self):
         """Mismatched name raises ValueError."""
         scenario = self._make_scenario(name="TestScenario", version=1)
 
-        stored_result = MagicMock(spec=ScenarioResult)
-        stored_result.scenario_identifier = ScenarioIdentifier(name="DifferentScenario", scenario_version=1)
+        current = make_scenario_identifier(scenario_name="ConcreteScenario", version=1)
+        stored_result = make_scenario_result(scenario_name="DifferentScenario", scenario_version=1, attack_results={})
 
-        with pytest.raises(ValueError, match="belongs to scenario 'DifferentScenario'"):
-            scenario._validate_stored_scenario(stored_result=stored_result)
+        with pytest.raises(ValueError, match="does not match the current"):
+            scenario._validate_stored_scenario(stored_result=stored_result, current_identifier=current)
 
     def test_raises_when_version_mismatches(self):
-        """Mismatched version raises ValueError."""
+        """Mismatched version changes the eval hash and raises ValueError."""
         scenario = self._make_scenario(name="TestScenario", version=2)
 
-        stored_result = MagicMock(spec=ScenarioResult)
-        stored_result.scenario_identifier = ScenarioIdentifier(name="ConcreteScenario", scenario_version=99)
+        current = make_scenario_identifier(scenario_name="ConcreteScenario", version=2)
+        stored_result = make_scenario_result(scenario_name="ConcreteScenario", scenario_version=99, attack_results={})
 
-        with pytest.raises(ValueError, match="version 99 but current version is 2"):
-            scenario._validate_stored_scenario(stored_result=stored_result)
+        with pytest.raises(ValueError, match="does not match the current"):
+            scenario._validate_stored_scenario(stored_result=stored_result, current_identifier=current)
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -1165,7 +1187,10 @@ class TestScenarioParallelExecution:
                     atomic_attack=mock_atomic_attacks[idx],
                 )
                 save_attack_results_to_memory([sample_attack_results[idx]])
-                return AttackExecutorResult(completed_results=[sample_attack_results[idx]], incomplete_objectives=[])
+                return AttackExecutorResult(
+                    completed_results=[sample_attack_results[idx]],
+                    incomplete_objectives=[],
+                )
 
             return AsyncMock(side_effect=run_async)
 
@@ -1214,7 +1239,10 @@ class TestScenarioParallelExecution:
                     atomic_attack=mock_atomic_attacks[idx],
                 )
                 save_attack_results_to_memory([sample_attack_results[idx]])
-                return AttackExecutorResult(completed_results=[sample_attack_results[idx]], incomplete_objectives=[])
+                return AttackExecutorResult(
+                    completed_results=[sample_attack_results[idx]],
+                    incomplete_objectives=[],
+                )
 
             return AsyncMock(side_effect=run_async)
 

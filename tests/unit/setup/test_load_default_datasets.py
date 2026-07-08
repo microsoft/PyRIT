@@ -16,8 +16,8 @@ from pyrit.models import SeedDataset
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry import ScenarioRegistry, TargetRegistry
 from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
-from pyrit.setup.initializers.components.scenario_techniques import build_scenario_technique_factories
-from pyrit.setup.initializers.scenarios.load_default_datasets import LoadDefaultDatasets
+from pyrit.setup.initializers.load_default_datasets import LoadDefaultDatasets
+from pyrit.setup.initializers.techniques import build_technique_factories
 
 
 @pytest.fixture
@@ -30,7 +30,7 @@ def populated_technique_registry():
     adv_target.capabilities.includes.return_value = True
     TargetRegistry.get_registry_singleton().instances.register(adv_target, name="adversarial_chat")
 
-    AttackTechniqueRegistry.get_registry_singleton().register_from_factories(build_scenario_technique_factories())
+    AttackTechniqueRegistry.get_registry_singleton().register_from_factories(build_technique_factories())
     yield
     AttackTechniqueRegistry.reset_registry_singleton()
     TargetRegistry.reset_registry_singleton()
@@ -64,7 +64,7 @@ class TestLoadDefaultDatasets:
         """Test initialization when no scenarios are registered."""
         initializer = LoadDefaultDatasets()
 
-        with patch.object(ScenarioRegistry, "list_metadata", return_value=[]):
+        with patch.object(ScenarioRegistry, "get_all_registered_class_metadata", return_value=[]):
             with patch.object(SeedDatasetProvider, "fetch_datasets_async", new_callable=AsyncMock) as mock_fetch:
                 with patch.object(CentralMemory, "get_memory_instance") as mock_memory:
                     mock_memory_instance = MagicMock()
@@ -82,7 +82,7 @@ class TestLoadDefaultDatasets:
 
         metadata = [_FakeMetadata(registry_name="mock_scenario", default_datasets=("dataset1", "dataset2"))]
 
-        with patch.object(ScenarioRegistry, "list_metadata", return_value=metadata):
+        with patch.object(ScenarioRegistry, "get_all_registered_class_metadata", return_value=metadata):
             with patch.object(SeedDatasetProvider, "fetch_datasets_async", new_callable=AsyncMock) as mock_fetch:
                 mock_dataset1 = MagicMock(spec=SeedDataset)
                 mock_dataset2 = MagicMock(spec=SeedDataset)
@@ -112,7 +112,7 @@ class TestLoadDefaultDatasets:
             _FakeMetadata(registry_name="scenario2", default_datasets=("dataset2", "dataset3")),
         ]
 
-        with patch.object(ScenarioRegistry, "list_metadata", return_value=metadata):
+        with patch.object(ScenarioRegistry, "get_all_registered_class_metadata", return_value=metadata):
             with patch.object(SeedDatasetProvider, "fetch_datasets_async", new_callable=AsyncMock) as mock_fetch:
                 mock_fetch.return_value = []
 
@@ -157,7 +157,7 @@ class TestLoadDefaultDatasets:
         ):
             registry = ScenarioRegistry.get_registry_singleton()
             registry._metadata_cache = None  # force rebuild under the patch
-            metadata_list = list(registry.list_metadata())
+            metadata_list = list(registry.get_all_registered_class_metadata())
 
         missing_datasets: list[str] = []
         for metadata in metadata_list:
@@ -178,7 +178,7 @@ class TestLoadDefaultDatasets:
 
         metadata = [_FakeMetadata(registry_name="empty_scenario", default_datasets=())]
 
-        with patch.object(ScenarioRegistry, "list_metadata", return_value=metadata):
+        with patch.object(ScenarioRegistry, "get_all_registered_class_metadata", return_value=metadata):
             with patch.object(SeedDatasetProvider, "fetch_datasets_async", new_callable=AsyncMock) as mock_fetch:
                 with patch.object(CentralMemory, "get_memory_instance") as mock_memory:
                     mock_memory_instance = MagicMock()
@@ -188,3 +188,75 @@ class TestLoadDefaultDatasets:
                     await initializer.initialize_async()
 
                     mock_fetch.assert_not_called()
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestLoadDefaultDatasetsParameters:
+    """Tests for the dataset_names and tags selection parameters."""
+
+    def test_supported_parameters_defaults(self) -> None:
+        params = {p.name: p for p in LoadDefaultDatasets().supported_parameters}
+        assert params["dataset_names"].default == []
+        assert params["tags"].default == []
+
+    async def test_dataset_names_loads_exact_names(self) -> None:
+        initializer = LoadDefaultDatasets()
+        initializer.params = {"dataset_names": ["alpha", "beta"]}
+
+        with (
+            patch.object(ScenarioRegistry, "get_all_registered_class_metadata") as mock_list_metadata,
+            patch.object(SeedDatasetProvider, "get_all_dataset_names_async", new_callable=AsyncMock) as mock_names,
+            patch.object(SeedDatasetProvider, "fetch_datasets_async", new_callable=AsyncMock) as mock_fetch,
+            patch.object(CentralMemory, "get_memory_instance") as mock_memory,
+        ):
+            mock_fetch.return_value = []
+            mock_memory_instance = MagicMock()
+            mock_memory_instance.add_seed_datasets_to_memory_async = AsyncMock()
+            mock_memory.return_value = mock_memory_instance
+
+            await initializer.initialize_async()
+
+            mock_list_metadata.assert_not_called()
+            mock_names.assert_not_called()
+            assert mock_fetch.call_args.kwargs["dataset_names"] == ["alpha", "beta"]
+
+    async def test_tags_selects_via_metadata_filter(self) -> None:
+        initializer = LoadDefaultDatasets()
+        initializer.params = {"tags": ["safety"]}
+
+        with (
+            patch.object(SeedDatasetProvider, "get_all_dataset_names_async", new_callable=AsyncMock) as mock_names,
+            patch.object(SeedDatasetProvider, "fetch_datasets_async", new_callable=AsyncMock) as mock_fetch,
+            patch.object(CentralMemory, "get_memory_instance") as mock_memory,
+        ):
+            mock_names.return_value = ["d1", "d2"]
+            mock_fetch.return_value = []
+            mock_memory_instance = MagicMock()
+            mock_memory_instance.add_seed_datasets_to_memory_async = AsyncMock()
+            mock_memory.return_value = mock_memory_instance
+
+            await initializer.initialize_async()
+
+            mock_names.assert_called_once()
+            filters = mock_names.call_args.kwargs["filters"]
+            assert filters.criteria[0].tags == {"safety"}
+            assert mock_fetch.call_args.kwargs["dataset_names"] == ["d1", "d2"]
+
+    async def test_dataset_names_take_precedence_over_tags(self) -> None:
+        initializer = LoadDefaultDatasets()
+        initializer.params = {"dataset_names": ["alpha"], "tags": ["safety"]}
+
+        with (
+            patch.object(SeedDatasetProvider, "get_all_dataset_names_async", new_callable=AsyncMock) as mock_names,
+            patch.object(SeedDatasetProvider, "fetch_datasets_async", new_callable=AsyncMock) as mock_fetch,
+            patch.object(CentralMemory, "get_memory_instance") as mock_memory,
+        ):
+            mock_fetch.return_value = []
+            mock_memory_instance = MagicMock()
+            mock_memory_instance.add_seed_datasets_to_memory_async = AsyncMock()
+            mock_memory.return_value = mock_memory_instance
+
+            await initializer.initialize_async()
+
+            mock_names.assert_not_called()
+            assert mock_fetch.call_args.kwargs["dataset_names"] == ["alpha"]

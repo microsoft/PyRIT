@@ -25,14 +25,17 @@ from typing import TYPE_CHECKING, cast
 from pyrit.executor.attack import AttackScoringConfig
 from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
 from pyrit.models import SeedAttackGroup
+from pyrit.prompt_normalizer import PromptConverterConfiguration
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
+    from collections.abc import Callable, Mapping, Sequence
 
+    from pyrit.prompt_converter import PromptConverter
     from pyrit.prompt_target import PromptTarget
     from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
+    from pyrit.scenario.core.scenario_context import ScenarioContext
     from pyrit.score import Scorer
     from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
 
@@ -120,6 +123,91 @@ def build_baseline_atomic_attack(
     )
 
 
+def resolve_technique_factories(
+    *,
+    context: ScenarioContext,
+    extra_factories: dict[str, AttackTechniqueFactory] | None = None,
+) -> dict[str, AttackTechniqueFactory]:
+    """
+    Resolve a run's selected strategies to their registered ``AttackTechniqueFactory`` instances.
+
+    Reads the ``AttackTechniqueRegistry`` singleton and keeps only the factories whose name
+    matches a selected strategy, preserving selection order. Strategies with no registered
+    factory are silently dropped so the caller can proceed with whatever techniques exist.
+
+    Args:
+        context (ScenarioContext): The resolved runtime inputs for this run.
+        extra_factories (dict[str, AttackTechniqueFactory] | None): Scenario-local factories
+            merged on top of the registry before filtering, so a scenario can offer techniques
+            without registering them globally. Entries override registry factories of the same
+            name.
+
+    Returns:
+        dict[str, AttackTechniqueFactory]: Mapping of technique name to factory, ordered by
+        the selected strategies.
+    """
+    from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
+
+    all_factories = dict(AttackTechniqueRegistry.get_registry_singleton().get_factories_or_raise())
+    if extra_factories:
+        all_factories.update(extra_factories)
+    return {
+        strategy.value: all_factories[strategy.value]
+        for strategy in context.scenario_strategies
+        if strategy.value in all_factories
+    }
+
+
+def build_matrix_atomic_attacks(
+    *,
+    context: ScenarioContext,
+    objective_scorer: Scorer,
+    display_group_fn: Callable[[MatrixCombo], str] | None = None,
+    strategy_converters: dict[str, list[PromptConverter]] | None = None,
+    extra_factories: dict[str, AttackTechniqueFactory] | None = None,
+) -> list[AtomicAttack]:
+    """
+    Build a matrix-shaped scenario's atomic attacks from its resolved context in one call.
+
+    This is the zero-boilerplate path for scenarios whose construction is the plain
+    technique × dataset cross-product: it resolves the selected strategies to factories
+    (``resolve_technique_factories``) and hands them to ``MatrixAtomicAttackBuilder``
+    with the context's target, labels, and per-dataset seed groups. The baseline is emitted
+    centrally by ``Scenario.initialize_async``, so this never prepends one.
+
+    Scenarios needing extra axes (adversarial targets, caching, converter stacks) call
+    ``MatrixAtomicAttackBuilder`` directly instead.
+
+    Args:
+        context (ScenarioContext): The resolved runtime inputs for this run.
+        objective_scorer (Scorer): The scorer applied to each produced atomic attack.
+        display_group_fn (Callable[[MatrixCombo], str] | None): Builds each ``display_group``.
+            Defaults to grouping by technique name.
+        strategy_converters (dict[str, list[PromptConverter]] | None): Optional mapping from
+            technique name to converters appended after that technique's converters. Pass a
+            scenario's ``self._strategy_converters`` so per-technique converter overrides are
+            preserved.
+        extra_factories (dict[str, AttackTechniqueFactory] | None): Scenario-local factories
+            merged on top of the registry (see ``resolve_technique_factories``), so a scenario
+            can offer techniques without registering them globally.
+
+    Returns:
+        list[AtomicAttack]: The generated atomic attacks (no baseline).
+    """
+    builder = MatrixAtomicAttackBuilder(
+        objective_target=context.objective_target,
+        objective_scorer=objective_scorer,
+        memory_labels=context.memory_labels,
+    )
+    return builder.build(
+        technique_factories=resolve_technique_factories(context=context, extra_factories=extra_factories),
+        dataset_groups=context.seed_groups_by_dataset,
+        display_group_fn=display_group_fn,
+        strategy_converters=strategy_converters,
+        include_baseline=False,
+    )
+
+
 class MatrixAtomicAttackBuilder:
     """
     Build ``AtomicAttack`` instances from a technique × dataset (× target) cross-product.
@@ -171,10 +259,11 @@ class MatrixAtomicAttackBuilder:
         self,
         *,
         technique_factories: dict[str, AttackTechniqueFactory],
-        dataset_groups: dict[str, list[SeedAttackGroup]],
+        dataset_groups: Mapping[str, list[SeedAttackGroup]],
         adversarial_targets: Sequence[tuple[str, PromptTarget]] | None = None,
         name_fn: Callable[[MatrixCombo], str] | None = None,
         display_group_fn: Callable[[MatrixCombo], str] | None = None,
+        strategy_converters: dict[str, list[PromptConverter]] | None = None,
         include_baseline: bool = False,
     ) -> list[AtomicAttack]:
         """
@@ -188,7 +277,7 @@ class MatrixAtomicAttackBuilder:
         Args:
             technique_factories (dict[str, AttackTechniqueFactory]): Mapping of technique
                 name to the factory that produces it. Only these techniques are built.
-            dataset_groups (dict[str, list[SeedAttackGroup]]): Mapping of dataset name to
+            dataset_groups (Mapping[str, list[SeedAttackGroup]]): Mapping of dataset name to
                 its seed groups (e.g. ``await DatasetAttackConfiguration.get_attack_groups_by_dataset_async()``).
             adversarial_targets (Sequence[tuple[str, PromptTarget]] | None): Optional
                 ``(name, instance)`` pairs adding an adversarial-target axis. When set,
@@ -201,6 +290,10 @@ class MatrixAtomicAttackBuilder:
                 when an adversarial-target axis is active).
             display_group_fn (Callable[[MatrixCombo], str] | None): Builds each
                 ``display_group``. Defaults to grouping by technique name.
+            strategy_converters (dict[str, list[PromptConverter]] | None): Optional mapping
+                from technique name to request converters appended on top of that technique's
+                built-in converters (via ``factory.create(extra_request_converters=...)``).
+                Techniques absent from the mapping are built unchanged.
             include_baseline (bool): When ``True``, prepend a baseline atomic attack built
                 from the flattened seed groups across all datasets.
 
@@ -217,7 +310,12 @@ class MatrixAtomicAttackBuilder:
         )
 
         atomic_attacks: list[AtomicAttack] = []
+        strategy_converters = strategy_converters or {}
         for technique_name, factory in technique_factories.items():
+            extra_converters = strategy_converters.get(technique_name)
+            extra_request_converters = (
+                PromptConverterConfiguration.from_converters(converters=extra_converters) if extra_converters else None
+            )
             for target_name, target_instance in target_axis:
                 for dataset_name, seed_groups in dataset_groups.items():
                     compatible_groups = self._filter_compatible_groups(
@@ -233,6 +331,7 @@ class MatrixAtomicAttackBuilder:
                     attack_technique = factory.create(
                         objective_target=self._objective_target,
                         attack_scoring_config=scoring_config,
+                        extra_request_converters=extra_request_converters,
                         **create_adversarial,
                     )
 

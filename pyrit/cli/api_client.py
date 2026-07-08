@@ -210,6 +210,19 @@ class PyRITApiClient:
         return await self._get_json_async(path="/api/datasets")
 
     # ------------------------------------------------------------------
+    # Converters
+    # ------------------------------------------------------------------
+
+    async def list_converters_async(self) -> dict[str, Any]:
+        """
+        List all registered converter instances.
+
+        Returns:
+            dict: ``ConverterInstanceListResponse`` payload.
+        """
+        return await self._get_json_async(path="/api/converters")
+
+    # ------------------------------------------------------------------
     # Scenario runs
     # ------------------------------------------------------------------
 

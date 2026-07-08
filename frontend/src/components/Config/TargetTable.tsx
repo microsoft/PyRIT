@@ -30,6 +30,7 @@ import {
   ChevronDownRegular,
 } from '@fluentui/react-icons'
 import type { TargetInstance } from '../../types'
+import { targetEndpoint, targetModelName, targetType, targetUnderlyingModelName } from '../../utils/targetIdentity'
 import { useTargetTableStyles } from './TargetTable.styles'
 
 interface TargetTableProps {
@@ -156,15 +157,17 @@ function CapabilityCell({ value }: { value: boolean | undefined }) {
 
 /** Render the model cell with a tooltip when underlying model differs. */
 function ModelCell({ target }: { target: TargetInstance }) {
-  const displayName = target.model_name || '—'
-  const hasUnderlying = target.underlying_model_name
-    && target.model_name
-    && target.underlying_model_name !== target.model_name
+  const modelName = targetModelName(target)
+  const underlyingModelName = targetUnderlyingModelName(target)
+  const displayName = modelName || '—'
+  const hasUnderlying = underlyingModelName
+    && modelName
+    && underlyingModelName !== modelName
 
   if (hasUnderlying) {
     return (
       <Tooltip
-        content={`Underlying model: ${target.underlying_model_name}`}
+        content={`Underlying model: ${underlyingModelName}`}
         relationship="description"
       >
         <Text size={200} style={{ textDecoration: 'underline dotted', cursor: 'help' }}>
@@ -209,14 +212,14 @@ function InnerTargetRows({ parentKey, innerTargets, weights }: {
             <Text size={200} style={{ paddingLeft: '28px' }}>#{idx + 1}</Text>
           </TableCell>
           <TableCell>
-            <Text size={200}>{inner.target_type}</Text>
+            <Text size={200}>{targetType(inner)}</Text>
           </TableCell>
           <TableCell>
             <ModelCell target={inner} />
           </TableCell>
           <TableCell>
-            <Text size={200} className={styles.endpointCell} title={inner.endpoint || undefined}>
-              {inner.endpoint || '—'}
+            <Text size={200} className={styles.endpointCell} title={targetEndpoint(inner) || undefined}>
+              {targetEndpoint(inner) || '—'}
             </Text>
           </TableCell>
           <TableCell className={styles.inputsModalityCell}>
@@ -261,12 +264,12 @@ export default function TargetTable({ targets, activeTarget, onSetActiveTarget }
     (target.inner_targets ?? []).length > 0
 
   const targetTypes = useMemo(
-    () => Array.from(new Set(targets.map(t => t.target_type))).sort(),
+    () => Array.from(new Set(targets.map(t => targetType(t)))).sort(),
     [targets],
   )
 
   const filteredTargets = useMemo(
-    () => typeFilter ? targets.filter(t => t.target_type === typeFilter) : targets,
+    () => typeFilter ? targets.filter(t => targetType(t) === typeFilter) : targets,
     [targets, typeFilter],
   )
 
@@ -293,15 +296,15 @@ export default function TargetTable({ targets, activeTarget, onSetActiveTarget }
                       aria-label={expandedRows.has(activeTarget.target_registry_name) ? 'Collapse inner targets' : 'Expand inner targets'}
                     />
                   )}
-                  <Text size={200}>{activeTarget.target_type}</Text>
+                  <Text size={200}>{targetType(activeTarget)}</Text>
                 </div>
               </TableCell>
               <TableCell style={{ width: '160px' }}>
                 <ModelCell target={activeTarget} />
               </TableCell>
               <TableCell style={{ width: '450px' }}>
-                <Text size={200} className={styles.endpointCell} title={activeTarget.endpoint || undefined}>
-                  {activeTarget.endpoint || '—'}
+                <Text size={200} className={styles.endpointCell} title={targetEndpoint(activeTarget) || undefined}>
+                  {targetEndpoint(activeTarget) || '—'}
                 </Text>
               </TableCell>
               <TableCell className={styles.inputsModalityCell}>
@@ -427,15 +430,15 @@ export default function TargetTable({ targets, activeTarget, onSetActiveTarget }
                           aria-label={expanded ? 'Collapse inner targets' : 'Expand inner targets'}
                         />
                       )}
-                      <Text size={200}>{target.target_type}</Text>
+                      <Text size={200}>{targetType(target)}</Text>
                     </div>
                   </TableCell>
                   <TableCell>
                     <ModelCell target={target} />
                   </TableCell>
                   <TableCell>
-                    <Text size={200} className={styles.endpointCell} title={target.endpoint || undefined}>
-                      {target.endpoint || '—'}
+                    <Text size={200} className={styles.endpointCell} title={targetEndpoint(target) || undefined}>
+                      {targetEndpoint(target) || '—'}
                     </Text>
                   </TableCell>
                   <TableCell className={styles.inputsModalityCell}>

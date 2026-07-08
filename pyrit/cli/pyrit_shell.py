@@ -70,6 +70,7 @@ class PyRITShell(cmd.Cmd):
         list-scenarios             - List all available scenarios
         list-initializers          - List all available initializers
         list-targets               - List all available targets
+        list-converters            - List all registered converter instances
         run <scenario> [opts]      - Run a scenario with optional parameters
         scenario-history [N]       - List the last N (default 10) scenario runs
         print-scenario [id]        - Print detailed results for a scenario run
@@ -275,6 +276,21 @@ class PyRITShell(cmd.Cmd):
         except Exception as e:
             print(f"Error listing targets: {e}")
 
+    def do_list_converters(self, arg: str) -> None:
+        """List all registered converter instances."""
+        if arg.strip():
+            print(f"Error: list-converters does not accept arguments, got: {arg.strip()}")
+            return
+        if not self._ensure_client():
+            return
+        from pyrit.cli import _output
+
+        try:
+            resp = self._run_async(self._api_client.list_converters_async())
+            _output.print_converter_list(items=resp.get("items", []))
+        except Exception as e:
+            print(f"Error listing converters: {e}")
+
     def do_add_initializer(self, arg: str) -> None:
         """
         Register an initializer from a Python script file.
@@ -328,7 +344,11 @@ class PyRITShell(cmd.Cmd):
         Options:
             --target <name>                 Target name (required)
             --initializers <name> ...       Initializer names (supports name:key=val syntax)
-            --strategies, -s <s1> <s2> ...  Strategy names
+            --strategies, -s <s1> <s2> ...  Strategy names. Append registered
+                                            converters to a technique with
+                                            ':converter.<name>' (repeatable), e.g.
+                                            role_play:converter.translation_spanish.
+                                            Use list-converters to see names.
             --max-concurrency <N>           Maximum concurrent operations
             --max-retries <N>               Maximum retry attempts
             --memory-labels <JSON>          JSON string of labels
@@ -349,7 +369,12 @@ class PyRITShell(cmd.Cmd):
             print("Usage: run <scenario_name> --target <name> [options]")
             return
 
-        from pyrit.cli._cli_args import build_parameters_from_api, extract_scenario_args, parse_run_arguments
+        from pyrit.cli._cli_args import (
+            build_parameters_from_api,
+            collapse_dataset_filters,
+            extract_scenario_args,
+            parse_run_arguments,
+        )
         from pyrit.cli._output import (
             print_scenario_result_async,
             print_scenario_run_progress,
@@ -412,6 +437,8 @@ class PyRITShell(cmd.Cmd):
             request_kwargs["dataset_names"] = args["dataset_names"]
         if args.get("max_dataset_size") is not None:
             request_kwargs["max_dataset_size"] = args["max_dataset_size"]
+        if args.get("dataset_filters"):
+            request_kwargs["dataset_filters"] = collapse_dataset_filters(args["dataset_filters"])
         if args.get("memory_labels"):
             request_kwargs["labels"] = args["memory_labels"]
 

@@ -27,14 +27,8 @@ from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.scenario import Scenario
 from pyrit.scenario.core.scenario_target_defaults import get_default_adversarial_target
-from pyrit.scenario.scenarios.adaptive.dispatcher import (
-    AdaptiveTechniqueDispatcher,
-    TechniqueBundle,
-)
-from pyrit.scenario.scenarios.adaptive.selectors import (
-    EpsilonGreedyTechniqueSelector,
-    TechniqueSelector,
-)
+from pyrit.scenario.scenarios.adaptive.dispatcher import AdaptiveTechniqueDispatcher, TechniqueBundle
+from pyrit.scenario.scenarios.adaptive.selectors import EpsilonGreedyTechniqueSelector, TechniqueSelector
 
 if TYPE_CHECKING:
     from pyrit.models import SeedAttackGroup
@@ -143,19 +137,18 @@ class AdaptiveScenario(Scenario):
         Returns:
             dict[str, AttackTechniqueFactory]: Mapping of technique name to factory.
         """
-        # Local import: ``scenario_techniques`` imports ``pyrit.scenario.core``,
+        # Local import: ``techniques`` imports ``pyrit.scenario.core``,
         # which transitively re-imports this module, so a top-level import
         # would form a cycle during ``pyrit.scenario`` package initialization.
-        from pyrit.setup.initializers.components.scenario_techniques import (
-            build_scenario_technique_factories,
-        )
+        from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
+        from pyrit.setup.initializers.techniques import build_technique_factories
 
-        catalog = {factory.name: factory for factory in build_scenario_technique_factories()}
+        catalog = {factory.name: factory for factory in build_technique_factories()}
         try:
-            registry_overrides = super()._get_attack_technique_factories()
+            registry_overrides = AttackTechniqueRegistry.get_registry_singleton().get_factories_or_raise()
         except RuntimeError:
             # Registry not initialized yet (e.g. bare CLI parse before
-            # ScenarioTechniqueInitializer has run). Catalog alone is the
+            # TechniqueInitializer has run). Catalog alone is the
             # safe fallback and matches the strategy enum's value set.
             registry_overrides = {}
         return {**catalog, **registry_overrides}

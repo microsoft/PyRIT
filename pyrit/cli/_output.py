@@ -106,8 +106,7 @@ def print_scenario_list(*, items: list[RegisteredScenario]) -> None:
         if sc.default_strategy:
             print(f"    Default Strategy: {sc.default_strategy}")
         if sc.default_datasets:
-            suffix = f", max {sc.max_dataset_size} per dataset" if sc.max_dataset_size else ""
-            print(f"    Default Datasets ({len(sc.default_datasets)}{suffix}):")
+            print(f"    Default Datasets ({len(sc.default_datasets)}):")
             print(_wrap(text=", ".join(sc.default_datasets), indent="      "))
         if sc.supported_parameters:
             print("    Supported Parameters:")
@@ -182,15 +181,55 @@ def print_target_list(*, items: list[TargetInstance]) -> None:
     print("\nRegistered Targets:")
     print("=" * 80)
     for tgt in items:
+        identifier = tgt.identifier
         _header(tgt.target_registry_name)
-        print(f"    Class: {tgt.target_type}")
-        model = tgt.underlying_model_name or tgt.model_name or ""
+        print(f"    Class: {identifier.class_name}")
+        model = identifier.underlying_model_name or identifier.model_name or ""
         if model:
             print(f"    Model: {model}")
-        if tgt.endpoint:
-            print(f"    Endpoint: {tgt.endpoint}")
+        if identifier.endpoint:
+            print(f"    Endpoint: {identifier.endpoint}")
     print("\n" + "=" * 80)
     print(f"\nTotal targets: {len(items)}")
+
+
+# ---------------------------------------------------------------------------
+# Converter listing
+# ---------------------------------------------------------------------------
+
+
+def print_converter_list(*, items: list[dict[str, Any]]) -> None:
+    """
+    Print a formatted list of registered converter instances.
+
+    Args:
+        items: List of converter dicts from ``GET /api/converters``.
+    """
+    if not items:
+        print("\nNo converters found in registry.")
+        print(
+            "\nConverters are registered by initializers. Include an initializer that "
+            "registers converters to attach them to scenario techniques, for example:\n"
+            "  --strategies role_play:converter.translation_spanish\n"
+        )
+        return
+
+    print("\nRegistered Converters:")
+    print("=" * 80)
+    for conv in items:
+        name = conv.get("converter_id", "unknown")
+        _header(name)
+        print(f"    Class: {conv.get('converter_type', '')}")
+        display_name = conv.get("display_name") or ""
+        if display_name:
+            print(f"    Name: {display_name}")
+        sub_ids = conv.get("sub_converter_ids") or []
+        if sub_ids:
+            print(f"    Sub-converters: {', '.join(sub_ids)}")
+    print("\n" + "=" * 80)
+    print(f"\nTotal converters: {len(items)}")
+    print("\nAttach a converter to a scenario technique with, for example:")
+    print("  --strategies role_play:converter.<name>\n")
 
 
 # ---------------------------------------------------------------------------

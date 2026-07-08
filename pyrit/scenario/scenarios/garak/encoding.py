@@ -6,10 +6,7 @@ import logging
 from collections.abc import Sequence
 
 from pyrit.common import apply_defaults
-from pyrit.executor.attack.core.attack_config import (
-    AttackConverterConfig,
-    AttackScoringConfig,
-)
+from pyrit.executor.attack.core.attack_config import AttackConverterConfig, AttackScoringConfig
 from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
 from pyrit.models import Seed, SeedAttackGroup, SeedObjective, SeedPrompt
 from pyrit.prompt_converter import (
@@ -28,15 +25,10 @@ from pyrit.prompt_converter import (
 from pyrit.prompt_converter.braille_converter import BrailleConverter
 from pyrit.prompt_converter.ecoji_converter import EcojiConverter
 from pyrit.prompt_converter.nato_converter import NatoConverter
-from pyrit.prompt_normalizer.prompt_converter_configuration import (
-    PromptConverterConfiguration,
-)
+from pyrit.prompt_normalizer.prompt_converter_configuration import PromptConverterConfiguration
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
-from pyrit.scenario.core.dataset_configuration import (
-    CompoundDatasetAttackConfiguration,
-    DatasetAttackConfiguration,
-)
+from pyrit.scenario.core.dataset_configuration import CompoundDatasetAttackConfiguration, DatasetAttackConfiguration
 from pyrit.scenario.core.scenario import Scenario
 from pyrit.scenario.core.scenario_context import ScenarioContext
 from pyrit.scenario.core.scenario_strategy import ScenarioStrategy

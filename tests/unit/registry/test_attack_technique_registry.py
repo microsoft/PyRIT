@@ -14,7 +14,7 @@ from pyrit.prompt_target import PromptTarget
 from pyrit.registry import TargetRegistry
 from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
 from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory, ScorerOverridePolicy
-from pyrit.setup.initializers.components.scenario_techniques import build_scenario_technique_factories
+from pyrit.setup.initializers.techniques import build_technique_factories
 
 
 class _StubAttack:
@@ -284,7 +284,7 @@ def _scenario_factories() -> list[AttackTechniqueFactory]:
         adv_target = MagicMock(spec=PromptTarget)
         adv_target.capabilities.includes.return_value = True
         TargetRegistry.get_registry_singleton().instances.register(adv_target, name="adversarial_chat")
-        SCENARIO_FACTORIES_FIXTURE.extend(build_scenario_technique_factories())
+        SCENARIO_FACTORIES_FIXTURE.extend(build_technique_factories())
         # This runs at collection time (parametrize). Reset so we don't leak the mock
         # "adversarial_chat" into the global TargetRegistry singleton of every xdist worker.
         TargetRegistry.reset_registry_singleton()
@@ -292,7 +292,7 @@ def _scenario_factories() -> list[AttackTechniqueFactory]:
 
 
 class TestScenarioTechniqueFactoriesValid:
-    """Validate that every factory built by ``build_scenario_technique_factories`` is well-formed."""
+    """Validate that every factory built by ``build_technique_factories`` is well-formed."""
 
     @pytest.mark.parametrize("factory", _scenario_factories(), ids=lambda f: f.name)
     def test_factory_attack_class_set(self, factory: AttackTechniqueFactory):
@@ -314,17 +314,17 @@ class TestScenarioTechniqueFactoriesValid:
 
 
 class TestPairTechniqueRegistration:
-    """Targeted tests for the PAIR technique factory in build_scenario_technique_factories()."""
+    """Targeted tests for the PAIR technique factory in build_technique_factories()."""
 
     def test_pair_factory_registered_with_pair_attack_class(self):
         from pyrit.executor.attack import PAIRAttack
 
-        factories = build_scenario_technique_factories()
+        factories = build_technique_factories()
         pair_factories = [f for f in factories if f.name == "pair"]
         assert len(pair_factories) == 1, "Expected exactly one 'pair' factory"
         factory = pair_factories[0]
         assert factory.attack_class is PAIRAttack
-        assert set(factory.strategy_tags) >= {"core", "multi_turn"}
+        assert set(factory.strategy_tags) >= {"extra", "multi_turn"}
         assert not factory._attack_kwargs, "PAIR defaults are encoded on PAIRAttack itself, not via attack_kwargs"
 
 

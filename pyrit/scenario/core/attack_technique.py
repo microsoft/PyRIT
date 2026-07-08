@@ -11,12 +11,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from pyrit.models import (
-    AttackTechniqueIdentifier,
-    ComponentIdentifier,
-    Identifiable,
-    SeedIdentifier,
-)
+from pyrit.models import AttackTechniqueIdentifier, ComponentIdentifier, Identifiable, SeedIdentifier
 
 if TYPE_CHECKING:
     from pyrit.executor.attack import AttackStrategy

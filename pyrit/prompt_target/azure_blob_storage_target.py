@@ -3,6 +3,7 @@
 
 import logging
 from enum import Enum
+from typing import ClassVar
 from urllib.parse import urlparse
 
 from azure.core.exceptions import ClientAuthenticationError
@@ -12,7 +13,7 @@ from azure.storage.blob.aio import ContainerClient as AsyncContainerClient
 
 from pyrit.common import default_values
 from pyrit.models import ComponentIdentifier, Message, construct_response_from_request
-from pyrit.prompt_target.common.prompt_target import PromptTarget
+from pyrit.prompt_target.common.prompt_target import AuthMode, PromptTarget
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.prompt_target.common.utils import limit_requests_per_minute
@@ -49,6 +50,10 @@ class AzureBlobStorageTarget(PromptTarget):
 
     AZURE_STORAGE_CONTAINER_ENVIRONMENT_VARIABLE: str = "AZURE_STORAGE_ACCOUNT_CONTAINER_URL"
     SAS_TOKEN_ENVIRONMENT_VARIABLE: str = "AZURE_STORAGE_ACCOUNT_SAS_TOKEN"
+
+    # A SAS token is the "api_key"; with no token the target falls back to
+    # ``DefaultAzureCredential`` (identity-based auth).
+    supported_auth_modes: ClassVar[tuple[AuthMode, ...]] = ("api_key", "identity")
 
     _DEFAULT_CONFIGURATION: TargetConfiguration = TargetConfiguration(
         capabilities=TargetCapabilities(

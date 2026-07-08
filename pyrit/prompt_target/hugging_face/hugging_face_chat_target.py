@@ -282,7 +282,7 @@ class HuggingFaceChatTarget(PromptTarget):
                     await download_specific_files_async(
                         self.model_id or "",
                         None,
-                        self.huggingface_token,  # type: ignore[ty:invalid-argument-type]
+                        self.huggingface_token,
                         cache_dir,
                     )
                 else:
@@ -291,7 +291,7 @@ class HuggingFaceChatTarget(PromptTarget):
                     await download_specific_files_async(
                         self.model_id or "",
                         self.necessary_files,
-                        self.huggingface_token,  # type: ignore[ty:invalid-argument-type]
+                        self.huggingface_token,
                         Path(cache_dir),
                     )
 

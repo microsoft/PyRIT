@@ -24,9 +24,9 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from pyrit.registry.base import ClassRegistryEntry
 from pyrit.registry.instance_registry import DefaultInstanceRegistry, InstanceRegistry
 from pyrit.registry.registry import Registry
+from pyrit.registry.registry_metadata import RegistryMetadata
 
 if TYPE_CHECKING:
     from pyrit.registry.tag_query import TagQuery
@@ -55,13 +55,13 @@ def _attack_technique_factory_type() -> type[AttackTechniqueFactory]:
 
 
 @dataclass(frozen=True)
-class AttackTechniqueMetadata(ClassRegistryEntry):
+class AttackTechniqueMetadata(RegistryMetadata):
     """
     Metadata describing a registered attack-technique class.
 
     Placeholder for the buildable catalog, which is intentionally empty until the
     factory is decoupled into a buildable component. It carries only the common
-    ``ClassRegistryEntry`` fields today; technique-specific fields are added when
+    ``RegistryMetadata`` fields today; technique-specific fields are added when
     the catalog is lit up.
     """
 
@@ -159,8 +159,8 @@ class AttackTechniqueRegistry(Registry["AttackTechniqueFactory", AttackTechnique
             raise RuntimeError(
                 "AttackTechniqueRegistry is empty. Register attack technique factories before "
                 "executing scenarios — for example by running the default "
-                "ScenarioTechniqueInitializer "
-                "(pyrit.setup.initializers.components.scenario_techniques), "
+                "TechniqueInitializer "
+                "(pyrit.setup.initializers.techniques), "
                 "running another initializer that calls "
                 "AttackTechniqueRegistry.register_from_factories(...), or registering "
                 "factories directly via AttackTechniqueRegistry.get_registry_singleton()."
@@ -253,4 +253,7 @@ class AttackTechniqueRegistry(Registry["AttackTechniqueFactory", AttackTechnique
                     tags=tags,
                 )
 
-        logger.debug("Technique registration complete (%d total in registry)", len(self.instances))
+        logger.debug(
+            "Technique registration complete (%d total in registry)",
+            len(self.instances),
+        )

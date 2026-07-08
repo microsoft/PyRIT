@@ -162,29 +162,30 @@ asyncio_mode = "auto"
 [tool.ty]
 [tool.ty.rules]
 all = "error"
-# The baseline repository contains many dynamic typing patterns that ty flags
-# as false positives (optional runtime deps, pandas/NumPy generics, and
-# Pydantic/OpenAI wrappers). Keep the type check useful without turning every
-# existing file into a blocker.
-possibly-missing-attribute = "ignore"
-invalid-argument-type = "ignore"
-invalid-method-override = "ignore"
-invalid-return-type = "ignore"
+# Most rules under `all = "error"` are already clean for pyrit/. A few remain
+# suppressed below; the remaining finding counts are noted so they can be
+# re-enabled as the code is cleaned up.
+# missing-type-argument is clean under numpy>=2.4 (Python 3.14) but flags 38
+# bare `np.ndarray` generics under numpy 2.2.6 -- the version the lock pins for
+# Python 3.10-3.13, i.e. CI's 3.11 -- across 5 files (analytics/conversation_analytics,
+# prompt_converter/transparency_attack_converter, score/scorer_evaluation/*).
+# Annotating those generics is real code work, so keep the rule deferred until
+# that numpy-generics debt is addressed.
 missing-type-argument = "ignore"
-no-matching-overload = "ignore"
-possibly-missing-import = "ignore"
-unresolved-attribute = "ignore"
-unresolved-import = "ignore"
-# Allow existing type: ignore comments without matching errors
-unused-ignore-comment = "ignore"
+# unused-type-ignore-comment is environment-dependent: a `# type: ignore`
+# on an optional-dependency import (torch, playwright, etc.) is "used" when the
+# extra is not installed but "unused" once it is. CI installs `--extra all`, so
+# enabling this rule flags such directives across several unrelated modules
+# (auth/copilot_authenticator, executor/benchmark/fairness_bias,
+# prompt_target/playwright_*; the incremental PR check only sees changed files,
+# but the on-main `--all-files` run would fail). Cleanly enabling it requires
+# refactoring those optional imports repo-wide, so keep the rule deferred.
 unused-type-ignore-comment = "ignore"
-# Allow empty function bodies during development
-empty-body = "ignore"
 # ty 0.0.43 (bumped from 0.0.32 in #1919) activated this rule under
-# [tool.ty.rules] all = "error". Adopting @override across pyrit/ would require
-# the typing_extensions backport on Python 3.10/3.11 (typing.override is 3.12+),
-# which adds a direct dep and ongoing import-path friction. Suppressing the
-# rule keeps the codebase consistent with the existing pragmatic ignores above.
+# [tool.ty.rules] all = "error". Adopting @override across pyrit/ (~695 methods)
+# would require the typing_extensions backport on Python 3.10/3.11
+# (typing.override is 3.12+), which adds a direct dep and ongoing import-path
+# friction. Suppressing the rule keeps the codebase consistent for now.
 missing-override-decorator = "ignore"
 
 [tool.ty.analysis]
@@ -225,6 +226,13 @@ missing-argument = "ignore"
 not-subscriptable = "ignore"
 unknown-argument = "ignore"
 unsupported-operator = "ignore"
+# Re-enabled repo-wide so pyrit/ is checked (production is clean) but still
+# relaxed here: tests read private/mock attributes and subclass library types
+# with loosened signatures / runtime-validation-failure arguments.
+invalid-argument-type = "ignore"
+invalid-method-override = "ignore"
+no-matching-overload = "ignore"
+unresolved-attribute = "ignore"
 
 [tool.uv]
 constraint-dependencies = [
