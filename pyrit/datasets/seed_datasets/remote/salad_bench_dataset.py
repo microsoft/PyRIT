@@ -235,13 +235,9 @@ class _SaladBenchDataset(_RemoteDatasetLoader):
                     value=item["prompt"],
                     data_type="text",
                     dataset_name=self.dataset_name,
-                    harm_categories=list(
-                        dict.fromkeys(
-                            self._standardize_harm_categories(
-                                parsed_categories,
-                                alias_overrides=self.HARM_CATEGORY_ALIAS_OVERRIDES,
-                            )
-                        )
+                    harm_categories=self._standardize_harm_categories(
+                        parsed_categories,
+                        alias_overrides=self.HARM_CATEGORY_ALIAS_OVERRIDES,
                     ),
                     description=description,
                     source=source_url,

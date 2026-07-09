@@ -134,13 +134,9 @@ class _BeaverTailsDataset(_RemoteDatasetLoader):
             raw_harm_categories = [
                 part.strip() for k, v in item["category"].items() if v for part in k.split(",") if part.strip()
             ]
-            harm_categories = list(
-                dict.fromkeys(
-                    self._standardize_harm_categories(
-                        raw_harm_categories,
-                        alias_overrides=self.HARM_CATEGORY_ALIAS_OVERRIDES,
-                    )
-                )
+            harm_categories = self._standardize_harm_categories(
+                raw_harm_categories,
+                alias_overrides=self.HARM_CATEGORY_ALIAS_OVERRIDES,
             )
 
             seed_prompts.append(

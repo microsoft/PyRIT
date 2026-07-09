@@ -70,6 +70,10 @@ async def test_fetch_dataset_includes_all_prompts(mock_pku_data):
     assert dataset.seeds[0].harm_categories == ["MALWARE", "COORDINATION_HARM"]
     assert dataset.seeds[1].harm_categories == []
     assert dataset.seeds[2].harm_categories == ["VIOLENT_CONTENT"]
+    # Original PKU category labels are preserved in metadata (provenance).
+    assert dataset.seeds[0].metadata == {"pku_categories": "Cybercrime"}
+    assert dataset.seeds[1].metadata is None
+    assert dataset.seeds[2].metadata == {"pku_categories": "Violence"}
 
 
 async def test_fetch_dataset_excludes_safe_prompts(mock_pku_data):

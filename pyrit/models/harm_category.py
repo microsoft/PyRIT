@@ -1,6 +1,5 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
-# type: ignore[misc, override, arg-type, union-attr, return-value]
 
 """Harm category taxonomy and standardization utilities for seed classification."""
 
@@ -21,12 +20,17 @@ except ImportError:  # Python 3.10 and below
     class StrEnum(str, Enum):  # type: ignore[misc]
         """Minimal backport of enum.StrEnum for Python < 3.11."""
 
+        __str__ = str.__str__
 
-_HARM_CATEGORY_ALIASES: dict[str, object] = {}
-HARM_CATEGORY_TAXONOMY_VERSION = "v1.0.0"
+
+_HARM_CATEGORY_ALIASES: "dict[str, list[HarmCategory]]" = {}
+_CANONICAL_LOOKUP: "dict[str, HarmCategory]" = {}
 
 with open(os.path.join(os.path.dirname(__file__), "harm_category_definitions.yaml")) as f:
-    _HARM_CATEGORY_DEFINITIONS: dict[str, str] = yaml.safe_load(f).get("definitions", {})
+    _HARM_CATEGORY_YAML: dict = yaml.safe_load(f) or {}
+    _HARM_CATEGORY_DEFINITIONS: dict[str, str] = _HARM_CATEGORY_YAML.get("definitions", {})
+
+HARM_CATEGORY_TAXONOMY_VERSION: str = _HARM_CATEGORY_YAML.get("version", "v1.0.0")
 
 
 class HarmCategory(StrEnum):
@@ -97,63 +101,94 @@ class HarmCategory(StrEnum):
     OTHER = "Other"
 
     @classmethod
-    def _initialize_aliases(cls) -> None:  # type: ignore[override]
+    def _initialize_aliases(cls) -> None:
         """Initialize the alias mapping from raw strings to canonical categories."""
         if _HARM_CATEGORY_ALIASES:
             return
-        _HARM_CATEGORY_ALIASES.update(  # type: ignore[arg-type, union-attr]
-            {
-                "ableism": [cls.REPRESENTATIONAL, cls.HATESPEECH],
-                "bias": [cls.REPRESENTATIONAL, cls.HATESPEECH],
-                "biology": [cls.CBRN],
-                "bullying": [cls.HARASSMENT],
-                "chemistry": [cls.CBRN],
-                "controlled/regulated substances": [cls.DRUG_USE],
-                "copyright issues": [cls.COPYRIGHT],
-                "copyright/trademark/plagiarism": [cls.COPYRIGHT, cls.TRADEMARK, cls.PLAGIARISM],
-                "criminal planning/confessions": [cls.COORDINATION_HARM],
-                "discriminatory behavior": [cls.REPRESENTATIONAL, cls.HATESPEECH],
-                "discrimination": [cls.REPRESENTATIONAL, cls.HATESPEECH],
-                "drugs": [cls.DRUG_USE],
-                "economic crime": [cls.SCAMS, cls.DECEPTION],
-                "endangering national security": [cls.HIGH_RISK_GOVERNMENT],
-                "endangering public health": [cls.PUBLIC_HEALTH],
-                "fraud/deception": [cls.SCAMS, cls.DECEPTION],
-                "guns and illegal weapons": [cls.MILITARY],
-                "hate/identity hate": [cls.HATESPEECH, cls.REPRESENTATIONAL],
-                "high risk gov decision making": [cls.HIGH_RISK_GOVERNMENT],
-                "homophobia": [cls.REPRESENTATIONAL, cls.HATESPEECH],
-                "human trafficking": [cls.COORDINATION_HARM],
-                "illegal": [cls.COORDINATION_HARM],
-                "insulting behavior": [cls.HARASSMENT],
-                "medicine": [cls.PUBLIC_HEALTH],
-                "mental manipulation": [cls.MENTAL_HEALTH],
-                "misogyny": [cls.REPRESENTATIONAL, cls.HATESPEECH],
-                "pharmacology": [cls.PSEUDO_PHARMA],
-                "physical harm": [cls.VIOLENT_CONTENT],
-                "physics": [cls.HIGH_RISK_GOVERNMENT],
-                "pii/privacy": [cls.PPI],
-                "political/misinformation/conspiracy": [cls.INFO_INTEGRITY, cls.CAMPAIGNING],
-                "privacy violation": [cls.PPI],
-                "psychological harm": [cls.EMOTIONAL],
-                "psychology": [cls.MENTAL_HEALTH],
-                "racism": [cls.REPRESENTATIONAL, cls.HATESPEECH],
-                "religious discrimination": [cls.REPRESENTATIONAL, cls.HATESPEECH],
-                "sexism": [cls.REPRESENTATIONAL, cls.HATESPEECH],
-                "sexual": [cls.SEXUAL_CONTENT],
-                "sexual content": [cls.SEXUAL_CONTENT],
-                "sexual violence": [cls.SEXUAL_CONTENT, cls.VIOLENT_CONTENT],
-                "sexualization": [cls.SEXUALIZATION],
-                "stereotyping": [cls.REPRESENTATIONAL],
-                "suicide and self harm": [cls.SUICIDE, cls.SELF_HARM],
-                "threat": [cls.VIOLENT_THREATS],
-                "grooming": [cls.GROOMING],
-                "child leakage": [cls.CHILD_LEAKAGE],
-                "dangerous situations": [cls.DANGEROUS_SITUATIONS],
-                "violent": [cls.VIOLENT_CONTENT],
-                "violence": [cls.VIOLENT_CONTENT],
-                "white-collar crime": [cls.SCAMS, cls.DECEPTION],
-            }
+        _HARM_CATEGORY_ALIASES.update(
+            cast(
+                "dict[str, list[HarmCategory]]",
+                {
+                    "ableism": [cls.REPRESENTATIONAL, cls.HATESPEECH],
+                    "bias": [cls.REPRESENTATIONAL, cls.HATESPEECH],
+                    "bullying": [cls.HARASSMENT],
+                    "chemistry": [cls.CBRN],
+                    "controlled/regulated substances": [cls.DRUG_USE],
+                    "copyright issues": [cls.COPYRIGHT],
+                    "copyright/trademark/plagiarism": [cls.COPYRIGHT, cls.TRADEMARK, cls.PLAGIARISM],
+                    "criminal planning/confessions": [cls.COORDINATION_HARM],
+                    "discriminatory behavior": [cls.REPRESENTATIONAL, cls.HATESPEECH],
+                    "discrimination": [cls.REPRESENTATIONAL, cls.HATESPEECH],
+                    "drugs": [cls.DRUG_USE],
+                    "economic crime": [cls.SCAMS, cls.DECEPTION],
+                    "endangering national security": [cls.HIGH_RISK_GOVERNMENT],
+                    "endangering public health": [cls.PUBLIC_HEALTH],
+                    "fraud/deception": [cls.SCAMS, cls.DECEPTION],
+                    "guns and illegal weapons": [cls.MILITARY],
+                    "hate/identity hate": [cls.HATESPEECH, cls.REPRESENTATIONAL],
+                    "high risk gov decision making": [cls.HIGH_RISK_GOVERNMENT],
+                    "homophobia": [cls.REPRESENTATIONAL, cls.HATESPEECH],
+                    "human trafficking": [cls.COORDINATION_HARM],
+                    "illegal": [cls.COORDINATION_HARM],
+                    "insulting behavior": [cls.HARASSMENT],
+                    "medicine": [cls.PUBLIC_HEALTH],
+                    "mental manipulation": [cls.MENTAL_HEALTH],
+                    "misogyny": [cls.REPRESENTATIONAL, cls.HATESPEECH],
+                    "pharmacology": [cls.PSEUDO_PHARMA],
+                    "physical harm": [cls.VIOLENT_CONTENT],
+                    "pii/privacy": [cls.PPI],
+                    "political/misinformation/conspiracy": [cls.INFO_INTEGRITY, cls.CAMPAIGNING],
+                    "privacy violation": [cls.PPI],
+                    "psychological harm": [cls.EMOTIONAL],
+                    "psychology": [cls.MENTAL_HEALTH],
+                    "racism": [cls.REPRESENTATIONAL, cls.HATESPEECH],
+                    "religious discrimination": [cls.REPRESENTATIONAL, cls.HATESPEECH],
+                    "sexism": [cls.REPRESENTATIONAL, cls.HATESPEECH],
+                    "sexual": [cls.SEXUAL_CONTENT],
+                    "sexual content": [cls.SEXUAL_CONTENT],
+                    "sexual violence": [cls.SEXUAL_CONTENT, cls.VIOLENT_CONTENT],
+                    "sexualization": [cls.SEXUALIZATION],
+                    "stereotyping": [cls.REPRESENTATIONAL],
+                    "suicide and self harm": [cls.SUICIDE, cls.SELF_HARM],
+                    "threat": [cls.VIOLENT_THREATS],
+                    "grooming": [cls.GROOMING],
+                    "child leakage": [cls.CHILD_LEAKAGE],
+                    "dangerous situations": [cls.DANGEROUS_SITUATIONS],
+                    "violent": [cls.VIOLENT_CONTENT],
+                    "violence": [cls.VIOLENT_CONTENT],
+                    "white-collar crime": [cls.SCAMS, cls.DECEPTION],
+                    # Cross-dataset labels that recurred in >=2 loader override maps,
+                    # promoted here so loaders don't redefine them individually.
+                    "adult content": [cls.SEXUAL_CONTENT],
+                    "chemical_biological": [cls.CBRN],
+                    "child abuse": [cls.CHILD_LEAKAGE, cls.GROOMING, cls.SEXUAL_CONTENT],
+                    "copyright": [cls.COPYRIGHT],
+                    "cybercrime": [cls.COORDINATION_HARM, cls.MALWARE],
+                    "cybercrime_intrusion": [cls.COORDINATION_HARM, cls.MALWARE],
+                    "defamation": [cls.REPUTATIONAL_DAMAGE],
+                    "disinformation": [cls.INFO_INTEGRITY],
+                    "environmental crimes": [cls.COORDINATION_HARM],
+                    "expert advice": [cls.FINANCIAL_ADVICE, cls.HEALTH_DIAGNOSIS, cls.LEGAL_ADVICE],
+                    "fraud": [cls.DECEPTION, cls.SCAMS],
+                    "government decision-making": [cls.HIGH_RISK_GOVERNMENT],
+                    "harassment/discrimination": [cls.HARASSMENT, cls.HATESPEECH, cls.REPRESENTATIONAL],
+                    "hate": [cls.HATESPEECH, cls.REPRESENTATIONAL],
+                    "illegal activities": [cls.COORDINATION_HARM],
+                    "illegal activity": [cls.COORDINATION_HARM],
+                    "legal opinion": [cls.LEGAL_ADVICE],
+                    "malware generation": [cls.MALWARE],
+                    "malware/hacking": [cls.MALWARE],
+                    "misinformation_disinformation": [cls.INFO_INTEGRITY],
+                    "political campaigning": [cls.CAMPAIGNING],
+                    "pornography": [cls.SEXUAL_CONTENT],
+                    "privacy": [cls.PPI],
+                    "privacy violations": [cls.PPI],
+                    "sex-related crimes": [cls.SEXUAL_CONTENT],
+                    "sexual/adult content": [cls.SEXUAL_CONTENT],
+                    "suicide & self-harm": [cls.SUICIDE, cls.SELF_HARM],
+                    "theft": [cls.COORDINATION_HARM],
+                },
+            )
         )
 
     @classmethod
@@ -168,11 +203,12 @@ class HarmCategory(StrEnum):
         if not normalized_value:
             return None
 
-        for member in cls.__members__.values():
-            if str(member.value).lower() == normalized_value or str(member.name).lower() == normalized_value:
-                return member
+        if not _CANONICAL_LOOKUP:
+            for member in cls.__members__.values():
+                _CANONICAL_LOOKUP[str(member.value).lower()] = member
+                _CANONICAL_LOOKUP[str(member.name).lower()] = member
 
-        return None
+        return _CANONICAL_LOOKUP.get(normalized_value)
 
     @classmethod
     def _coerce_alias_mapping_value(
@@ -247,11 +283,12 @@ class HarmCategory(StrEnum):
         if canonical is not None:
             return [canonical]
 
-        if alias_overrides and normalized_value in alias_overrides:
-            return cls._coerce_alias_mapping_value(
-                alias_value=alias_overrides[normalized_value],
-                strict=True,
-            )
+        if alias_overrides:
+            # Match override keys case-insensitively so callers can pass raw dataset
+            # labels without pre-normalizing (parity with standardize_harm_categories).
+            for override_key, override_value in alias_overrides.items():
+                if override_key and override_key.strip().lower() == normalized_value:
+                    return cls._coerce_alias_mapping_value(alias_value=override_value, strict=True)
 
         if normalized_value in _HARM_CATEGORY_ALIASES:
             return cls._coerce_alias_mapping_value(alias_value=_HARM_CATEGORY_ALIASES[normalized_value])
@@ -339,10 +376,12 @@ def standardize_harm_categories(
 
     # Parse and standardize each category
     HarmCategory._initialize_aliases()
-    standardized = []
+    standardized: list[str] = []
     for raw_cat in categories_list:
         if raw_cat:  # Skip empty strings
             parsed_categories = HarmCategory.parse_many(raw_cat, alias_overrides=normalized_overrides)
             standardized.extend(parsed.name for parsed in parsed_categories)
 
-    return standardized
+    # De-duplicate while preserving order: overlapping n:1 / 1:many mappings
+    # (e.g. "racism" + "sexism" -> REPRESENTATIONAL) must not repeat a category.
+    return list(dict.fromkeys(standardized))

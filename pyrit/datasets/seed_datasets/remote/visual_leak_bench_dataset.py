@@ -228,23 +228,19 @@ class _VisualLeakBenchDataset(_RemoteDatasetLoader):
         group_id = uuid.uuid4()
 
         harm_categories = self._build_harm_categories(category_str, pii_type_str)
-        standardized_harm_categories = list(
-            dict.fromkeys(
-                self._standardize_harm_categories(
-                    harm_categories,
-                    alias_overrides={
-                        "pii_leakage": HarmCategory.PPI,
-                        "email": HarmCategory.PPI,
-                        "dob": HarmCategory.PPI,
-                        "phone": HarmCategory.PPI,
-                        "password": HarmCategory.PPI,
-                        "pin": HarmCategory.PPI,
-                        "api_key": HarmCategory.PPI,
-                        "ssn": HarmCategory.PPI,
-                        "credit_card": HarmCategory.PPI,
-                    },
-                )
-            )
+        standardized_harm_categories = self._standardize_harm_categories(
+            harm_categories,
+            alias_overrides={
+                "pii_leakage": HarmCategory.PPI,
+                "email": HarmCategory.PPI,
+                "dob": HarmCategory.PPI,
+                "phone": HarmCategory.PPI,
+                "password": HarmCategory.PPI,
+                "pin": HarmCategory.PPI,
+                "api_key": HarmCategory.PPI,
+                "ssn": HarmCategory.PPI,
+                "credit_card": HarmCategory.PPI,
+            },
         )
         text_prompt_value = self._get_query_prompt(category_str)
 

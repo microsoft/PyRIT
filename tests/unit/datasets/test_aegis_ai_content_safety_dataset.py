@@ -92,10 +92,11 @@ async def test_fetch_dataset_filters_unsafe_only(mock_aegis_data):
         "VIOLENT_THREATS",
         "COORDINATION_HARM",
         "REGULATED_GOODS",
-        "COORDINATION_HARM",
-        "VIOLENT_CONTENT",
     ]
     assert dataset.seeds[1].harm_categories == ["MALWARE"]
+    # Original row-level annotations are preserved in metadata (provenance).
+    assert dataset.seeds[0].metadata == {"aegis_violated_categories": "Violence, Guns and Illegal Weapons"}
+    assert dataset.seeds[1].metadata == {"aegis_violated_categories": "Malware"}
 
 
 async def test_fetch_dataset_with_harm_category_filter(mock_aegis_data):

@@ -218,10 +218,6 @@ class _AegisContentSafetyDataset(_RemoteDatasetLoader):
                 ):
                     continue
 
-                # Escape Jinja2 template syntax by wrapping the entire prompt in raw tags
-                # This tells Jinja2 to treat everything inside as literal text
-                prompt_value = prompt_value
-
                 seed_prompts.append(
                     SeedPrompt(
                         value=prompt_value,
@@ -229,6 +225,11 @@ class _AegisContentSafetyDataset(_RemoteDatasetLoader):
                         dataset_name=self.dataset_name,
                         harm_categories=standardized_categories if standardized_categories else None,
                         source=self.source,
+                        metadata=(
+                            {"aegis_violated_categories": ", ".join(prompt_harm_categories)}
+                            if prompt_harm_categories
+                            else None
+                        ),
                     )
                 )
 

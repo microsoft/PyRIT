@@ -157,6 +157,7 @@ class _PKUSafeRLHFDataset(_RemoteDatasetLoader):
                             "their helpfulness or harmfulness. Only the 'prompt' column is extracted."
                         ),
                         source=f"https://huggingface.co/datasets/{self.source}",
+                        metadata=({"pku_categories": ", ".join(sorted(harm_categories))} if harm_categories else None),
                     )
                 )
 
