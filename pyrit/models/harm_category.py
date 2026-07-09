@@ -337,6 +337,191 @@ class HarmCategory(StrEnum):
         """
         return _HARM_CATEGORY_DEFINITIONS.get(category.name, "No definition available.")
 
+    def pillars(self) -> list["HarmCategoryPillar"]:
+        """
+        Return the pillars this category belongs to.
+
+        A category can belong to multiple pillars, or to none (only OTHER is unassigned).
+
+        Returns:
+            list[HarmCategoryPillar]: The pillars containing this category.
+        """
+        HarmCategoryPillar._initialize()
+        return list(_CATEGORY_TO_PILLARS.get(self, []))
+
+
+_PILLAR_TO_CATEGORIES: "dict[HarmCategoryPillar, list[HarmCategory]]" = {}
+_CATEGORY_TO_PILLARS: "dict[HarmCategory, list[HarmCategoryPillar]]" = {}
+
+
+class HarmCategoryPillar(StrEnum):
+    """
+    Coarse groupings ("pillars") layered over the fine-grained HarmCategory taxonomy.
+
+    A pillar contains many harm categories, and a single category can belong to
+    multiple pillars (e.g. HARASSMENT is in both CHILD_SAFETY and HARMFUL_CONTENT).
+    This is a rollup layer: filtering by a pillar expands to its member categories.
+    Every HarmCategory except OTHER belongs to at least one pillar.
+    """
+
+    CHILD_SAFETY = "Child Safety"
+    HARMFUL_CONTENT = "Harmful Content"
+    FAIRNESS = "Fairness"
+    SELF_INJURY = "Self-Injury"
+    INCITEMENT = "Incitement"
+    SENSITIVE_GOODS_SERVICES = "Sensitive Goods & Services"
+    SPAM_SCAMS = "Spam & Scams"
+    INAUTHENTIC_ACCOUNTS = "Inauthentic Accounts"
+    INFO_INTEGRITY = "Information Integrity excluding Elections"
+    ELECTION_INTEGRITY = "Election-Related Integrity"
+    PERSUASION = "Persuasion"
+    IP = "Intellectual Property"
+    PRIVACY = "Privacy"
+    EXPLOITS = "Exploits"
+    WEAPONS = "Weapons"
+    HIGH_RISK_DECISIONS = "High-Risk Decision-Making"
+    FINANCE = "Finance"
+    HEALTH = "Health"
+    POLITICS = "Politics"
+    LEGAL = "Legal"
+    PSYCHOSOCIAL = "Psychosocial Harms"
+    ATTRIBUTE_INFERENCE = "Inference of Sensitive Attributes"
+
+    @classmethod
+    def _initialize(cls) -> None:
+        """Populate the pillar->categories map and its category->pillars inverse (idempotent)."""
+        if _PILLAR_TO_CATEGORIES:
+            return
+        _PILLAR_TO_CATEGORIES.update(
+            cast(
+                "dict[HarmCategoryPillar, list[HarmCategory]]",
+                {
+                    cls.CHILD_SAFETY: [
+                        HarmCategory.SEXUALIZATION,
+                        HarmCategory.GROOMING,
+                        HarmCategory.CHILD_LEAKAGE,
+                        HarmCategory.DANGEROUS_SITUATIONS,
+                        HarmCategory.VIOLENT_CONTENT,
+                        HarmCategory.HARASSMENT,
+                        HarmCategory.SUICIDE,
+                        HarmCategory.SELF_HARM,
+                        HarmCategory.EATING_DISORDERS,
+                        HarmCategory.DRUG_USE,
+                    ],
+                    cls.HARMFUL_CONTENT: [
+                        HarmCategory.HATESPEECH,
+                        HarmCategory.HARASSMENT,
+                        HarmCategory.VIOLENT_CONTENT,
+                        HarmCategory.SEXUAL_CONTENT,
+                        HarmCategory.PROFANITY,
+                    ],
+                    cls.FAIRNESS: [
+                        HarmCategory.QUALITY_OF_SERVICE,
+                        HarmCategory.ALLOCATION,
+                        HarmCategory.REPRESENTATIONAL,
+                    ],
+                    cls.SELF_INJURY: [
+                        HarmCategory.SUICIDE,
+                        HarmCategory.SELF_HARM,
+                        HarmCategory.EATING_DISORDERS,
+                        HarmCategory.DRUG_USE,
+                    ],
+                    cls.INCITEMENT: [
+                        HarmCategory.VIOLENT_THREATS,
+                        HarmCategory.VIOLENT_EXTREMISM,
+                        HarmCategory.COORDINATION_HARM,
+                    ],
+                    cls.SENSITIVE_GOODS_SERVICES: [
+                        HarmCategory.REGULATED_GOODS,
+                        HarmCategory.SEXUAL_SOLICITATION,
+                    ],
+                    cls.SPAM_SCAMS: [
+                        HarmCategory.SCAMS,
+                        HarmCategory.SPAM,
+                    ],
+                    cls.INAUTHENTIC_ACCOUNTS: [
+                        HarmCategory.IMPERSONATION,
+                        HarmCategory.FAKE_ACCOUNTS,
+                    ],
+                    cls.INFO_INTEGRITY: [
+                        HarmCategory.INFO_INTEGRITY,
+                        HarmCategory.CURRENT_EVENTS_MISINFO,
+                        HarmCategory.HISTORICAL_EVENTS_BIAS,
+                    ],
+                    cls.ELECTION_INTEGRITY: [
+                        HarmCategory.ELECTION_INTEGRITY,
+                    ],
+                    cls.PERSUASION: [
+                        HarmCategory.DECEPTION,
+                        HarmCategory.COVERT_TARGETED,
+                        HarmCategory.REPUTATIONAL_DAMAGE,
+                    ],
+                    cls.IP: [
+                        HarmCategory.COPYRIGHT,
+                        HarmCategory.TRADEMARK,
+                        HarmCategory.IP_UPLOAD,
+                        HarmCategory.PLAGIARISM,
+                    ],
+                    cls.PRIVACY: [
+                        HarmCategory.PROPRIETARY_INFO,
+                        HarmCategory.PPI,
+                        HarmCategory.PUBLIC_FIGURES,
+                        HarmCategory.NONCONSENSUAL_UPLOAD,
+                    ],
+                    cls.EXPLOITS: [
+                        HarmCategory.INSECURE_CODE,
+                        HarmCategory.MALWARE,
+                    ],
+                    cls.WEAPONS: [
+                        HarmCategory.MILITARY,
+                        HarmCategory.CBRN,
+                    ],
+                    cls.HIGH_RISK_DECISIONS: [
+                        HarmCategory.HIGH_RISK_GOVERNMENT,
+                        HarmCategory.INFRASTRUCTURE_RISK,
+                    ],
+                    cls.FINANCE: [
+                        HarmCategory.FINANCIAL_ADVICE,
+                        HarmCategory.MLM,
+                        HarmCategory.GAMBLING,
+                        HarmCategory.LENDING,
+                        HarmCategory.FINANCIAL_ELIGIBILITY,
+                    ],
+                    cls.HEALTH: [
+                        HarmCategory.HEALTH_DIAGNOSIS,
+                        HarmCategory.PSEUDO_PHARMA,
+                        HarmCategory.PUBLIC_HEALTH,
+                    ],
+                    cls.POLITICS: [
+                        HarmCategory.CAMPAIGNING,
+                    ],
+                    cls.LEGAL: [
+                        HarmCategory.LEGAL_ADVICE,
+                    ],
+                    cls.PSYCHOSOCIAL: [
+                        HarmCategory.ROMANTIC,
+                        HarmCategory.SELF_VALIDATION,
+                        HarmCategory.MENTAL_HEALTH,
+                        HarmCategory.EMOTIONAL,
+                    ],
+                    cls.ATTRIBUTE_INFERENCE: [
+                        HarmCategory.PROTECTED_INFERENCE,
+                        HarmCategory.EMOTION_INFERENCE,
+                    ],
+                },
+            )
+        )
+        for pillar, categories in _PILLAR_TO_CATEGORIES.items():
+            for category in categories:
+                pillars_for_category = _CATEGORY_TO_PILLARS.setdefault(category, [])
+                if pillar not in pillars_for_category:
+                    pillars_for_category.append(pillar)
+
+    def categories(self) -> list["HarmCategory"]:
+        """Return the harm categories that belong to this pillar."""
+        HarmCategoryPillar._initialize()
+        return list(_PILLAR_TO_CATEGORIES.get(self, []))
+
 
 def standardize_harm_categories(
     raw_categories: list[str] | str | None,

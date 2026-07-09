@@ -11,6 +11,7 @@ from pyrit.models.harm_category import (
     _HARM_CATEGORY_DEFINITIONS,
     HARM_CATEGORY_TAXONOMY_VERSION,
     HarmCategory,
+    HarmCategoryPillar,
     standardize_harm_categories,
 )
 
@@ -150,3 +151,49 @@ def test_no_stray_definition_keys() -> None:
 
 def test_get_definition_returns_defined_text() -> None:
     assert HarmCategory.get_definition(HarmCategory.MALWARE) == "Creating or distributing malicious software."
+
+
+def test_pillar_count_matches_taxonomy() -> None:
+    assert len(list(HarmCategoryPillar)) == 22
+
+
+def test_pillar_str_returns_display_value() -> None:
+    assert str(HarmCategoryPillar.CHILD_SAFETY) == "Child Safety"
+    assert f"{HarmCategoryPillar.IP}" == "Intellectual Property"
+
+
+def test_every_pillar_has_at_least_one_category() -> None:
+    empty = [pillar.name for pillar in HarmCategoryPillar if not pillar.categories()]
+    assert not empty, f"Pillars with no categories: {empty}"
+
+
+def test_pillar_categories_are_all_harm_categories() -> None:
+    for pillar in HarmCategoryPillar:
+        for category in pillar.categories():
+            assert isinstance(category, HarmCategory)
+
+
+def test_every_category_except_other_belongs_to_a_pillar() -> None:
+    orphans = [c.name for c in HarmCategory if c is not HarmCategory.OTHER and not c.pillars()]
+    assert not orphans, f"HarmCategory members not assigned to any pillar: {orphans}"
+
+
+def test_other_belongs_to_no_pillar() -> None:
+    assert HarmCategory.OTHER.pillars() == []
+
+
+def test_pillar_and_category_are_inverse_consistent() -> None:
+    for pillar in HarmCategoryPillar:
+        for category in pillar.categories():
+            assert pillar in category.pillars()
+    for category in HarmCategory:
+        for pillar in category.pillars():
+            assert category in pillar.categories()
+
+
+def test_category_can_belong_to_multiple_pillars() -> None:
+    harassment_pillars = set(HarmCategory.HARASSMENT.pillars())
+    assert {HarmCategoryPillar.CHILD_SAFETY, HarmCategoryPillar.HARMFUL_CONTENT} <= harassment_pillars
+
+    suicide_pillars = set(HarmCategory.SUICIDE.pillars())
+    assert {HarmCategoryPillar.CHILD_SAFETY, HarmCategoryPillar.SELF_INJURY} <= suicide_pillars
