@@ -263,7 +263,7 @@ class TestAttackTechniqueRegistryScorerOverridePolicy:
 
     def test_policy_passed_to_factories_via_register_from_factories(self):
         """Factories registered via register_from_factories inherit the registry's default policy."""
-        factory = AttackTechniqueFactory(name="stub_policy", attack_class=_StubAttack, strategy_tags=["test"])
+        factory = AttackTechniqueFactory(name="stub_policy", attack_class=_StubAttack, technique_tags=["test"])
         self.registry.register_from_factories([factory])
 
         stored = self.registry.instances.get_entry("stub_policy").instance
@@ -324,7 +324,7 @@ class TestPairTechniqueRegistration:
         assert len(pair_factories) == 1, "Expected exactly one 'pair' factory"
         factory = pair_factories[0]
         assert factory.attack_class is PAIRAttack
-        assert set(factory.strategy_tags) >= {"extra", "multi_turn"}
+        assert set(factory.technique_tags) >= {"extra", "multi_turn"}
         assert not factory._attack_kwargs, "PAIR defaults are encoded on PAIRAttack itself, not via attack_kwargs"
 
 

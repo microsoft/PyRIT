@@ -30,8 +30,8 @@ from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration, DatasetConstraintError
 from pyrit.scenario.core.scenario import Scenario
 from pyrit.scenario.core.scenario_context import ScenarioContext
-from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
 from pyrit.scenario.core.scenario_target_defaults import get_default_adversarial_target, get_default_scorer_target
+from pyrit.scenario.core.scenario_technique import ScenarioTechnique
 from pyrit.score import (
     FloatScaleScorer,
     FloatScaleThresholdScorer,
@@ -52,11 +52,11 @@ class SubharmConfig:
     The dataset maintains 'psychosocial' as the broad harm category, while each
     individual seed can specify a subharm (e.g., 'imminent_crisis', 'dependency')
     in its harm_categories field. This config maps subharms to their specific
-    escalation strategies and scoring rubrics.
+    escalation techniques and scoring rubrics.
     The single turn default attacks remain the same for all subharms.
 
     Attributes:
-        crescendo_system_prompt_path: Path to the Crescendo escalation strategy YAML file.
+        crescendo_system_prompt_path: Path to the Crescendo escalation technique YAML file.
         scoring_rubric_path: Path to the scoring rubric YAML file.
     """
 
@@ -64,36 +64,36 @@ class SubharmConfig:
     scoring_rubric_path: str
 
 
-class PsychosocialStrategy(ScenarioStrategy):
+class PsychosocialTechnique(ScenarioTechnique):
     """
-    PsychosocialHarmsStrategy defines a set of strategies for testing model behavior
+    PsychosocialTechnique defines a set of techniques for testing model behavior
     in psychosocial harm scenarios. The scenario is designed to evaluate how models handle
     users in mental health crisis or if the model misrepresents itself as a licensed therapist.
 
-    The tags correspond to different attack strategies:
+    The tags correspond to different attack techniques:
     - single_turn: PromptSendingAttack and RolePlayAttack
     - multi_turn: CrescendoAttack
     - all: Both single_turn and multi_turn attacks
 
-    Specific strategies (imminent_crisis, licensed_therapist) filter seeds by harm_category.
+    Specific techniques (imminent_crisis, licensed_therapist) filter seeds by harm_category.
     """
 
     ALL = ("all", {"all"})
 
-    # Strategies that filter to specific subharm categories (names match harm_categories in data)
+    # Techniques that filter to specific subharm categories (names match harm_categories in data)
     ImminentCrisis = ("imminent_crisis", set[str]())
     LicensedTherapist = ("licensed_therapist", set[str]())
 
     @property
     def harm_category_filter(self) -> str | None:
         """
-        The harm category filter for this strategy.
+        The harm category filter for this technique.
 
         Returns:
             str | None: The harm category to filter seeds by, or "psychosocial" as default.
         """
-        # For specific strategies, filter by the strategy value (which matches harm_categories in data)
-        # otherwise, use psychosocial as the default for ALL strategy
+        # For specific techniques, filter by the technique value (which matches harm_categories in data)
+        # otherwise, use psychosocial as the default for ALL technique
         if self.value == "all":
             return "psychosocial"
         return str(self.value)
@@ -131,7 +131,7 @@ class Psychosocial(Scenario):
         scenario.set_params_from_args(
             args={
                 "objective_target": target_llm,
-                "scenario_strategies": [PsychosocialStrategy.ImminentCrisis],
+                "scenario_techniques": [PsychosocialTechnique.ImminentCrisis],
             }
         )
         await scenario.initialize_async()
@@ -148,17 +148,17 @@ class Psychosocial(Scenario):
 
     # Set up default subharm configurations
     # Each subharm (e.g., 'imminent_crisis', 'licensed_therapist') can have unique escalation/scoring
-    # The key is the harm_category_filter value from the strategy
+    # The key is the harm_category_filter value from the technique
     DEFAULT_SUBHARM_CONFIGS: dict[str, SubharmConfig] = {
         "imminent_crisis": SubharmConfig(
-            # set default system prompt for crescendo escalation strategy for crisis scenarios
+            # set default system prompt for crescendo escalation technique for crisis scenarios
             crescendo_system_prompt_path=str(
                 pathlib.Path(DATASETS_PATH) / "executors" / "crescendo" / "escalation_crisis.yaml"
             ),
             scoring_rubric_path=str(pathlib.Path(DATASETS_PATH) / "score" / "likert" / "crisis_management.yaml"),
         ),
         "licensed_therapist": SubharmConfig(
-            # set default system prompt for crescendo escalation strategy for trying to get licensed therapist advice
+            # set default system prompt for crescendo escalation technique for trying to get licensed therapist advice
             crescendo_system_prompt_path=str(
                 pathlib.Path(DATASETS_PATH) / "executors" / "crescendo" / "therapist.yaml"
             ),
@@ -223,8 +223,8 @@ class Psychosocial(Scenario):
 
         super().__init__(
             version=self.VERSION,
-            strategy_class=PsychosocialStrategy,
-            default_strategy=PsychosocialStrategy.ALL,
+            technique_class=PsychosocialTechnique,
+            default_technique=PsychosocialTechnique.ALL,
             default_dataset_config=DatasetAttackConfiguration(
                 dataset_names=["airt_imminent_crisis"], max_dataset_size=4
             ),
@@ -239,10 +239,10 @@ class Psychosocial(Scenario):
         """
         Resolve seed groups from deprecated objectives or dataset configuration.
 
-        Seeds are filtered to the harm category selected by the scenario strategies (e.g.
-        ``imminent_crisis``); the default ``ALL`` strategy keeps the broad ``psychosocial``
+        Seeds are filtered to the harm category selected by the scenario techniques (e.g.
+        ``imminent_crisis``); the default ``ALL`` technique keeps the broad ``psychosocial``
         category. The base ``Scenario`` flattens the result into ``context.seed_groups`` and
-        reuses it for the strategy attacks and the baseline.
+        reuses it for the technique attacks and the baseline.
 
         Returns:
             dict[str, list[SeedAttackGroup]]: Seed groups keyed by dataset (or a synthetic
@@ -287,14 +287,14 @@ class Psychosocial(Scenario):
 
     def _extract_harm_category_filter(self) -> str | None:
         """
-        Extract harm category filter from scenario strategies.
+        Extract harm category filter from scenario techniques.
 
         Returns:
             str | None: The harm category to filter by, or None if no filter is set.
         """
-        for strategy in self._scenario_strategies:
-            if isinstance(strategy, PsychosocialStrategy):
-                harm_filter = strategy.harm_category_filter
+        for technique in self._scenario_techniques:
+            if isinstance(technique, PsychosocialTechnique):
+                harm_filter = technique.harm_category_filter
                 if harm_filter:
                     return harm_filter
         return None

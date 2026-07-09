@@ -58,27 +58,27 @@ The `run` command executes scenarios with the same options as `pyrit_scan`:
 pyrit> run foundry.red_team_agent --target my_target --initializers target
 ```
 
-### With Strategies
+### With Techniques
 
 ```bash
-pyrit> run garak.encoding --target my_target --initializers target --strategies base64 rot13
+pyrit> run garak.encoding --target my_target --initializers target --techniques base64 rot13
 
-pyrit> run foundry.red_team_agent --target my_target --initializers target -s jailbreak crescendo
+pyrit> run foundry.red_team_agent --target my_target --initializers target -t jailbreak crescendo
 ```
 
 ### Attaching Converters to a Technique
 
-Append a registered converter instance to a single technique (or an aggregate strategy) with the
+Append a registered converter instance to a single technique (or an aggregate technique) with the
 `<technique>:converter.<name>` syntax. The converter is added to the request side of every attack
 the technique produces, on top of any converters the technique already bakes in. Use
 `list-converters` to discover the registered converter names:
 
 ```bash
 # Add the registered "translation_spanish" converter to role_play only
-pyrit> run airt.rapid_response --target my_target --initializers target load_default_datasets -s role_play:converter.translation_spanish
+pyrit> run airt.rapid_response --target my_target --initializers target load_default_datasets -t role_play:converter.translation_spanish
 
-# Chain multiple converters (applied in order) and combine with plain strategies
-pyrit> run airt.rapid_response --target my_target --initializers target load_default_datasets -s role_play:converter.translation_spanish:converter.base64 many_shot
+# Chain multiple converters (applied in order) and combine with plain techniques
+pyrit> run airt.rapid_response --target my_target --initializers target load_default_datasets -t role_play:converter.translation_spanish:converter.base64 many_shot
 ```
 
 ### With Runtime Parameters
@@ -103,7 +103,7 @@ pyrit> run garak.encoding --target my_target --initializers target --log-level D
 ```
 --initializers <name> ...       Built-in initializers to run before the scenario (REQUIRED)
 --initialization-scripts <...>  Custom Python scripts to run before the scenario (alternative)
---strategies, -s <s1> <s2> ...  Strategy names to use
+--techniques, -t <s1> <s2> ...  Technique names to use
 --max-concurrency <N>           Maximum concurrent operations
 --max-retries <N>               Maximum retry attempts
 --memory-labels <JSON>          JSON string of labels
@@ -135,9 +135,9 @@ pyrit> scenario-history
 
 Scenario Run History:
 ================================================================================
-1) foundry.red_team_agent --initializers target --strategies base64
-2) garak.encoding --initializers target --strategies rot13
-3) foundry.red_team_agent --initializers target -s jailbreak
+1) foundry.red_team_agent --initializers target --techniques base64
+2) garak.encoding --initializers target --techniques rot13
+3) foundry.red_team_agent --initializers target -t jailbreak
 ================================================================================
 
 Total runs: 3
@@ -155,9 +155,9 @@ pyrit_shell --initializers target
 
 # Quick exploration
 pyrit> list-scenarios
-pyrit> run garak.encoding --strategies base64
-pyrit> run garak.encoding --strategies rot13
-pyrit> run garak.encoding --strategies morse_code
+pyrit> run garak.encoding --techniques base64
+pyrit> run garak.encoding --techniques rot13
+pyrit> run garak.encoding --techniques morse_code
 
 # Review and compare
 pyrit> scenario-history
@@ -180,9 +180,9 @@ pyrit> print-scenario 2
    pyrit_shell --database InMemory --log-level INFO
    ```
 
-2. **Use short strategy aliases** with `-s`:
+2. **Use short technique aliases** with `-t`:
    ```bash
-   pyrit> run foundry.red_team_agent --initializers target -s base64 rot13
+   pyrit> run foundry.red_team_agent --initializers target -t base64 rot13
    ```
 
 3. **Review history regularly** to track what you've tested:

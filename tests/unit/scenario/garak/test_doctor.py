@@ -13,7 +13,7 @@ from pyrit.prompt_converter import LeetspeakConverter, PolicyPuppetryConverter
 from pyrit.prompt_target import PromptTarget
 from pyrit.scenario import DatasetAttackConfiguration
 from pyrit.scenario.core.scenario import BaselineAttackPolicy
-from pyrit.scenario.garak import Doctor, DoctorStrategy  # type: ignore[ty:unresolved-import]
+from pyrit.scenario.garak import Doctor, DoctorTechnique  # type: ignore[ty:unresolved-import]
 from pyrit.scenario.scenarios.garak.doctor import DOCTOR_FACTORIES
 from pyrit.score import TrueFalseScorer
 
@@ -83,9 +83,9 @@ class TestDoctorInitialization:
         config = Doctor(objective_scorer=mock_objective_scorer)._default_dataset_config
         assert config.dataset_names == ["garak_doctor"]
 
-    def test_default_strategy_is_default(self, mock_objective_scorer):
+    def test_default_technique_is_default(self, mock_objective_scorer):
         scenario = Doctor(objective_scorer=mock_objective_scorer)
-        assert scenario._default_strategy == DoctorStrategy.DEFAULT
+        assert scenario._default_technique == DoctorTechnique.DEFAULT
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -136,13 +136,13 @@ class TestDoctorTechniqueFactories:
 
 
 @pytest.mark.usefixtures("patch_central_database")
-class TestDoctorStrategyExpansion:
-    """Tests for Doctor strategy expansion and atomic attack generation."""
+class TestDoctorTechniqueExpansion:
+    """Tests for Doctor technique expansion and atomic attack generation."""
 
-    async def test_default_expands_to_concrete_strategies(
+    async def test_default_expands_to_concrete_techniques(
         self, mock_objective_target, mock_objective_scorer, doctor_dataset_config
     ):
-        """No explicit strategies -> DEFAULT -> both Policy Puppetry techniques."""
+        """No explicit techniques -> DEFAULT -> both Policy Puppetry techniques."""
         scenario = Doctor(objective_scorer=mock_objective_scorer)
         scenario.set_params_from_args(
             args={
@@ -152,24 +152,24 @@ class TestDoctorStrategyExpansion:
         )
         await scenario.initialize_async()
 
-        strategy_values = {s.value for s in scenario._scenario_strategies}
-        assert strategy_values == {"policy_puppetry", "policy_puppetry_leet"}
+        technique_values = {s.value for s in scenario._scenario_techniques}
+        assert technique_values == {"policy_puppetry", "policy_puppetry_leet"}
 
-    async def test_all_expands_to_concrete_strategies(
+    async def test_all_expands_to_concrete_techniques(
         self, mock_objective_target, mock_objective_scorer, doctor_dataset_config
     ):
         scenario = Doctor(objective_scorer=mock_objective_scorer)
         scenario.set_params_from_args(
             args={
                 "objective_target": mock_objective_target,
-                "scenario_strategies": [DoctorStrategy.ALL],
+                "scenario_techniques": [DoctorTechnique.ALL],
                 "dataset_config": doctor_dataset_config,
             }
         )
         await scenario.initialize_async()
 
-        strategy_values = {s.value for s in scenario._scenario_strategies}
-        assert strategy_values == {"policy_puppetry", "policy_puppetry_leet"}
+        technique_values = {s.value for s in scenario._scenario_techniques}
+        assert technique_values == {"policy_puppetry", "policy_puppetry_leet"}
 
     async def test_atomic_attacks_one_per_technique(
         self, mock_objective_target, mock_objective_scorer, doctor_dataset_config
@@ -192,13 +192,13 @@ class TestDoctorStrategyExpansion:
 
 
 @pytest.mark.usefixtures("patch_central_database")
-class TestDoctorStrategyTags:
-    """Tests for DoctorStrategy aggregate tags."""
+class TestDoctorTechniqueTags:
+    """Tests for DoctorTechnique aggregate tags."""
 
     def test_get_aggregate_tags_includes_default(self):
-        assert "all" in DoctorStrategy.get_aggregate_tags()
-        assert "default" in DoctorStrategy.get_aggregate_tags()
+        assert "all" in DoctorTechnique.get_aggregate_tags()
+        assert "default" in DoctorTechnique.get_aggregate_tags()
 
-    def test_concrete_strategy_values(self):
-        assert DoctorStrategy.PolicyPuppetry.value == "policy_puppetry"
-        assert DoctorStrategy.PolicyPuppetryLeet.value == "policy_puppetry_leet"
+    def test_concrete_technique_values(self):
+        assert DoctorTechnique.PolicyPuppetry.value == "policy_puppetry"
+        assert DoctorTechnique.PolicyPuppetryLeet.value == "policy_puppetry_leet"

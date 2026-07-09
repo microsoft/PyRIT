@@ -10,7 +10,7 @@ import pytest
 
 from pyrit.models import ComponentIdentifier, Parameter
 from pyrit.scenario import DatasetConfiguration
-from pyrit.scenario.core import BaselineAttackPolicy, Scenario, ScenarioStrategy
+from pyrit.scenario.core import BaselineAttackPolicy, Scenario, ScenarioTechnique
 from pyrit.score import Scorer
 
 _TEST_SCORER_ID = ComponentIdentifier(class_name="MockScorer", class_module="tests.unit.scenarios")
@@ -33,7 +33,7 @@ def _make_scenario(
     """
     params_to_declare = declared_params
 
-    class _ParamTestStrategy(ScenarioStrategy):
+    class _ParamTestTechnique(ScenarioTechnique):
         TEST = ("test", {"concrete"})
         ALL = ("all", {"all"})
 
@@ -64,8 +64,8 @@ def _make_scenario(
 
     return _ParamTestScenario(
         version=1,
-        strategy_class=_ParamTestStrategy,
-        default_strategy=_ParamTestStrategy.ALL,
+        technique_class=_ParamTestTechnique,
+        default_technique=_ParamTestTechnique.ALL,
         default_dataset_config=DatasetConfiguration(),
         objective_scorer=mock_scorer,
     )
@@ -673,11 +673,11 @@ class TestObjectiveTargetResolution:
 class TestOpaquePassthrough:
     """Opaque common params reach initialize_async as live objects, unchanged."""
 
-    async def test_strategy_converters_identity_preserved(self) -> None:
+    async def test_technique_converters_identity_preserved(self) -> None:
         converters = {"technique": [object()]}
         scenario = _make_scenario(declared_params=[], include_common_params=True)
         scenario.set_params_from_args(
-            args={"objective_target": _mock_objective_target(), "strategy_converters": converters}
+            args={"objective_target": _mock_objective_target(), "technique_converters": converters}
         )
         await scenario.initialize_async()
-        assert scenario._strategy_converters is converters
+        assert scenario._technique_converters is converters

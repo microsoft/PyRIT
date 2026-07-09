@@ -43,11 +43,11 @@ def _mock_id(name: str) -> ComponentIdentifier:
     return ComponentIdentifier(class_name=name, class_module="test")
 
 
-def _strategy_class():
-    """Get the dynamically-generated RapidResponseStrategy class."""
-    from pyrit.scenario.scenarios.airt.rapid_response import _build_rapid_response_strategy
+def _technique_class():
+    """Get the dynamically-generated RapidResponseTechnique class."""
+    from pyrit.scenario.scenarios.airt.rapid_response import _build_rapid_response_technique
 
-    return _build_rapid_response_strategy()
+    return _build_rapid_response_technique()
 
 
 # ---------------------------------------------------------------------------
@@ -84,11 +84,11 @@ def reset_technique_registry():
     ``build_technique_factories`` does not fall back to
     ``OpenAIChatTarget``.
     """
-    from pyrit.scenario.scenarios.airt.rapid_response import _build_rapid_response_strategy
+    from pyrit.scenario.scenarios.airt.rapid_response import _build_rapid_response_technique
 
     AttackTechniqueRegistry.reset_registry_singleton()
     TargetRegistry.reset_registry_singleton()
-    _build_rapid_response_strategy.cache_clear()
+    _build_rapid_response_technique.cache_clear()
 
     adv_target = MagicMock(spec=PromptTarget)
     adv_target.capabilities.includes.return_value = True
@@ -99,7 +99,7 @@ def reset_technique_registry():
     yield
     AttackTechniqueRegistry.reset_registry_singleton()
     TargetRegistry.reset_registry_singleton()
-    _build_rapid_response_strategy.cache_clear()
+    _build_rapid_response_technique.cache_clear()
 
 
 @pytest.fixture(autouse=True)
@@ -154,19 +154,19 @@ class TestRapidResponseBasic:
     def test_version_is_2(self):
         assert RapidResponse.VERSION == 2
 
-    def test_get_strategy_class(self, mock_objective_scorer):
-        strat = _strategy_class()
+    def test_get_technique_class(self, mock_objective_scorer):
+        strat = _technique_class()
         with patch(
             "pyrit.scenario.core.scenario.Scenario._get_default_objective_scorer", return_value=mock_objective_scorer
         ):
-            assert RapidResponse()._strategy_class is strat
+            assert RapidResponse()._technique_class is strat
 
-    def test_get_default_strategy_returns_default(self, mock_objective_scorer):
-        strat = _strategy_class()
+    def test_get_default_technique_returns_default(self, mock_objective_scorer):
+        strat = _technique_class()
         with patch(
             "pyrit.scenario.core.scenario.Scenario._get_default_objective_scorer", return_value=mock_objective_scorer
         ):
-            assert RapidResponse()._default_strategy == strat.DEFAULT
+            assert RapidResponse()._default_technique == strat.DEFAULT
 
     def test_default_dataset_config_has_all_harm_datasets(self, mock_objective_scorer):
         with patch(
@@ -206,7 +206,7 @@ class TestRapidResponseBasic:
         new_callable=AsyncMock,
         return_value=ALL_HARM_SEED_GROUPS,
     )
-    async def test_initialization_defaults_to_default_strategy(
+    async def test_initialization_defaults_to_default_technique(
         self,
         _mock_groups,
         mock_get_scorer,
@@ -218,7 +218,7 @@ class TestRapidResponseBasic:
         scenario.set_params_from_args(args={"objective_target": mock_objective_target})
         await scenario.initialize_async()
         # DEFAULT expands to PromptSending + ManyShot → 2 composites
-        assert len(scenario._scenario_strategies) == 2
+        assert len(scenario._scenario_techniques) == 2
 
     async def test_initialize_raises_when_no_datasets(self, mock_objective_target, mock_objective_scorer):
         """Dataset resolution fails from empty memory."""
@@ -274,14 +274,14 @@ class TestRapidResponseBasic:
 
 @pytest.mark.usefixtures(*FIXTURES)
 class TestRapidResponseAttackGeneration:
-    """Tests for _get_atomic_attacks_async with various strategies."""
+    """Tests for _get_atomic_attacks_async with various techniques."""
 
     async def _init_and_get_attacks(
         self,
         *,
         mock_objective_target,
         mock_objective_scorer,
-        strategies=None,
+        techniques=None,
         seed_groups: dict[str, list[SeedAttackGroup]] | None = None,
     ):
         """Helper: initialize scenario and return atomic attacks."""
@@ -296,13 +296,13 @@ class TestRapidResponseAttackGeneration:
                 objective_scorer=mock_objective_scorer,
             )
             init_kwargs = {"objective_target": mock_objective_target, "include_baseline": False}
-            if strategies:
-                init_kwargs["scenario_strategies"] = strategies
+            if techniques:
+                init_kwargs["scenario_techniques"] = techniques
             scenario.set_params_from_args(args=init_kwargs)
             await scenario.initialize_async()
             return scenario._atomic_attacks
 
-    async def test_default_strategy_produces_role_play_and_many_shot(
+    async def test_default_technique_produces_role_play_and_many_shot(
         self, mock_objective_target, mock_objective_scorer
     ):
         attacks = await self._init_and_get_attacks(
@@ -312,13 +312,13 @@ class TestRapidResponseAttackGeneration:
         technique_classes = {type(a.attack_technique.attack) for a in attacks}
         assert technique_classes == {RolePlayAttack, ManyShotJailbreakAttack}
 
-    async def test_single_turn_strategy_produces_single_turn_attacks(
+    async def test_single_turn_technique_produces_single_turn_attacks(
         self, mock_objective_target, mock_objective_scorer
     ):
         attacks = await self._init_and_get_attacks(
             mock_objective_target=mock_objective_target,
             mock_objective_scorer=mock_objective_scorer,
-            strategies=[_strategy_class().SINGLE_TURN],
+            techniques=[_technique_class().SINGLE_TURN],
         )
         technique_classes = {type(a.attack_technique.attack) for a in attacks}
         # Every core technique tagged ``single_turn`` in the scenario-technique catalog must appear.
@@ -330,23 +330,23 @@ class TestRapidResponseAttackGeneration:
         assert ManyShotJailbreakAttack not in technique_classes
         assert TreeOfAttacksWithPruningAttack not in technique_classes
 
-    async def test_multi_turn_strategy_produces_multi_turn_attacks(self, mock_objective_target, mock_objective_scorer):
+    async def test_multi_turn_technique_produces_multi_turn_attacks(self, mock_objective_target, mock_objective_scorer):
         attacks = await self._init_and_get_attacks(
             mock_objective_target=mock_objective_target,
             mock_objective_scorer=mock_objective_scorer,
-            strategies=[_strategy_class().MULTI_TURN],
+            techniques=[_technique_class().MULTI_TURN],
         )
         technique_classes = {type(a.attack_technique.attack) for a in attacks}
         assert len(technique_classes) >= 2
         assert {ManyShotJailbreakAttack, TreeOfAttacksWithPruningAttack} <= technique_classes
 
-    async def test_all_strategy_produces_attacks_for_every_technique(
+    async def test_all_technique_produces_attacks_for_every_technique(
         self, mock_objective_target, mock_objective_scorer
     ):
         attacks = await self._init_and_get_attacks(
             mock_objective_target=mock_objective_target,
             mock_objective_scorer=mock_objective_scorer,
-            strategies=[_strategy_class().ALL],
+            techniques=[_technique_class().ALL],
         )
         technique_classes = {type(a.attack_technique.attack) for a in attacks}
         # Should include all known core techniques. PromptSendingAttack is intentionally
@@ -363,19 +363,19 @@ class TestRapidResponseAttackGeneration:
         attacks = await self._init_and_get_attacks(
             mock_objective_target=mock_objective_target,
             mock_objective_scorer=mock_objective_scorer,
-            strategies=[_strategy_class()("role_play")],
+            techniques=[_technique_class()("role_play")],
         )
         assert len(attacks) > 0
         for a in attacks:
             assert isinstance(a.attack_technique.attack, RolePlayAttack)
 
-    async def test_strategy_converters_are_threaded_to_factory_create(
+    async def test_technique_converters_are_threaded_to_factory_create(
         self, mock_objective_target, mock_objective_scorer
     ):
-        """``strategy_converters`` passed to ``initialize_async`` reach ``factory.create`` for the keyed technique."""
+        """``technique_converters`` passed to ``initialize_async`` reach ``factory.create`` for the keyed technique."""
         from pyrit.prompt_converter import Base64Converter
 
-        strat = _strategy_class()
+        strat = _technique_class()
         role_play = strat("role_play")
         converter = Base64Converter()
         captured: list[object] = []
@@ -400,8 +400,8 @@ class TestRapidResponseAttackGeneration:
                 args={
                     "objective_target": mock_objective_target,
                     "include_baseline": False,
-                    "scenario_strategies": [role_play],
-                    "strategy_converters": {role_play.value: [converter]},
+                    "scenario_techniques": [role_play],
+                    "technique_converters": {role_play.value: [converter]},
                 }
             )
             await scenario.initialize_async()
@@ -473,14 +473,14 @@ class TestRapidResponseAttackGeneration:
         # Reset the registry and register only prompt_sending — the other techniques
         # (role_play, many_shot, tap) won't have factories.
         AttackTechniqueRegistry.reset_registry_singleton()
-        RapidResponse._cached_strategy_class = None
+        RapidResponse._cached_technique_class = None
         registry = AttackTechniqueRegistry.get_registry_singleton()
         registry.register_technique(
             name="prompt_sending",
             factory=AttackTechniqueFactory(
                 name="prompt_sending",
                 attack_class=PromptSendingAttack,
-                strategy_tags=["core", "single_turn"],
+                technique_tags=["core", "single_turn"],
             ),
             tags=["core", "single_turn"],
         )
@@ -498,7 +498,7 @@ class TestRapidResponseAttackGeneration:
             scenario.set_params_from_args(
                 args={
                     "objective_target": mock_objective_target,
-                    "scenario_strategies": [_strategy_class().ALL],
+                    "scenario_techniques": [_technique_class().ALL],
                     "include_baseline": False,
                 }
             )
@@ -513,7 +513,7 @@ class TestRapidResponseAttackGeneration:
         attacks = await self._init_and_get_attacks(
             mock_objective_target=mock_objective_target,
             mock_objective_scorer=mock_objective_scorer,
-            strategies=[_strategy_class()("role_play")],
+            techniques=[_technique_class()("role_play")],
         )
         for a in attacks:
             assert len(a.objectives) > 0
@@ -658,10 +658,10 @@ class TestAttackTechniqueFactoryBasics:
     """Tests for the AttackTechniqueFactory construction surface."""
 
     def test_simple_factory(self):
-        factory = AttackTechniqueFactory(name="test", attack_class=PromptSendingAttack, strategy_tags=["single_turn"])
+        factory = AttackTechniqueFactory(name="test", attack_class=PromptSendingAttack, technique_tags=["single_turn"])
         assert factory.name == "test"
         assert factory.attack_class is PromptSendingAttack
-        assert factory.strategy_tags == ["single_turn"]
+        assert factory.technique_tags == ["single_turn"]
         assert factory.adversarial_chat is None
 
     def test_adversarial_config_rejected_in_attack_kwargs(self):

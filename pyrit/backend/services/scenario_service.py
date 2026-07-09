@@ -32,9 +32,9 @@ def _metadata_to_registered_scenario(metadata: ScenarioMetadata) -> RegisteredSc
         scenario_name=metadata.registry_name,
         scenario_type=metadata.class_name,
         description=metadata.class_description,
-        default_strategy=metadata.default_strategy,
-        aggregate_strategies=list(metadata.aggregate_strategies),
-        all_strategies=list(metadata.all_strategies),
+        default_technique=metadata.default_technique,
+        aggregate_techniques=list(metadata.aggregate_techniques),
+        all_techniques=list(metadata.all_techniques),
         default_datasets=list(metadata.default_datasets),
         supported_parameters=list(metadata.supported_parameters),
     )

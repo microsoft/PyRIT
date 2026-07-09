@@ -14,8 +14,8 @@ state is mutated.
 
 These tests cover the new contract:
 * Class metadata (VERSION, BASELINE policy, defaults).
-* Strategy enum is built from registered factories with ``uses_adversarial=True``
-  and the ``core`` strategy tag; ``light`` aggregate preserves the
+* Technique enum is built from registered factories with ``uses_adversarial=True``
+  and the ``core`` technique tag; ``light`` aggregate preserves the
   source ``light`` tag (excludes ``tap`` / ``crescendo_simulated``).
 * ``supported_parameters`` declares ``adversarial_targets: list[str]``.
 * ``_resolve_adversarial_targets`` raises with available names on typos.
@@ -52,7 +52,7 @@ from pyrit.registry.components.attack_technique_registry import AttackTechniqueR
 from pyrit.scenario.core import BaselineAttackPolicy
 from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
 from pyrit.scenario.core.scenario import Scenario
-from pyrit.scenario.scenarios.benchmark.adversarial import AdversarialBenchmark, _build_benchmark_strategy
+from pyrit.scenario.scenarios.benchmark.adversarial import AdversarialBenchmark, _build_benchmark_technique
 from pyrit.score import TrueFalseScorer
 from pyrit.setup.initializers.techniques import build_technique_factories
 
@@ -76,13 +76,13 @@ def _build_benchmarkable_factories_snapshot() -> list:
         factories = build_technique_factories()
     finally:
         TargetRegistry.reset_registry_singleton()
-    return [f for f in factories if f.uses_adversarial and "core" in f.strategy_tags]
+    return [f for f in factories if f.uses_adversarial and "core" in f.technique_tags]
 
 
 _BENCHMARKABLE_FACTORIES = _build_benchmarkable_factories_snapshot()
 _NUM_ADVERSARIAL_TECHNIQUES = len(_BENCHMARKABLE_FACTORIES)
 _BENCHMARKABLE_TECHNIQUE_NAMES = {f.name for f in _BENCHMARKABLE_FACTORIES}
-_LIGHT_BENCHMARKABLE_FACTORIES = [f for f in _BENCHMARKABLE_FACTORIES if "light" in f.strategy_tags]
+_LIGHT_BENCHMARKABLE_FACTORIES = [f for f in _BENCHMARKABLE_FACTORIES if "light" in f.technique_tags]
 _NUM_LIGHT_BENCHMARKABLE = len(_LIGHT_BENCHMARKABLE_FACTORIES)
 
 # ---------------------------------------------------------------------------
@@ -95,12 +95,12 @@ def reset_technique_registry():
     """Reset registries, register a mock adversarial target, and populate real factories.
 
     Registers a mock ``adversarial_chat`` target so ``build_technique_factories``
-    resolves without depending on environment variables. Uses ``_build_benchmark_strategy.cache_clear()``
-    because our implementation uses ``@cache`` (not ``_cached_strategy_class``).
+    resolves without depending on environment variables. Uses ``_build_benchmark_technique.cache_clear()``
+    because our implementation uses ``@cache`` (not ``_cached_technique_class``).
     """
     AttackTechniqueRegistry.reset_registry_singleton()
     TargetRegistry.reset_registry_singleton()
-    _build_benchmark_strategy.cache_clear()
+    _build_benchmark_technique.cache_clear()
 
     adv_target = MagicMock(spec=PromptTarget)
     adv_target.capabilities.includes.return_value = True
@@ -110,7 +110,7 @@ def reset_technique_registry():
     yield
     AttackTechniqueRegistry.reset_registry_singleton()
     TargetRegistry.reset_registry_singleton()
-    _build_benchmark_strategy.cache_clear()
+    _build_benchmark_technique.cache_clear()
 
 
 def _register_adversarial_target(*, name: str) -> PromptTarget:
@@ -126,7 +126,7 @@ def _register_mock_factory(*, name: str, tags: list[str] | None = None, seed_tec
     factory = MagicMock(spec=AttackTechniqueFactory)
     factory.name = name
     factory.uses_adversarial = True
-    factory.strategy_tags = tags if tags is not None else ["core", "light"]
+    factory.technique_tags = tags if tags is not None else ["core", "light"]
     factory.seed_technique = seed_technique
     technique_instance = MagicMock(name="AttackTechnique")
     technique_instance.get_identifier.return_value = ComponentIdentifier(
@@ -194,72 +194,72 @@ class TestAdversarialBenchmarkSupportedParameters:
 
 
 # ---------------------------------------------------------------------------
-# Strategy class construction
+# Technique class construction
 # ---------------------------------------------------------------------------
 
 
-class TestAdversarialBenchmarkStrategy:
-    """Tests for ``_build_benchmark_strategy`` using the registry-based factory API."""
+class TestAdversarialBenchmarkTechnique:
+    """Tests for ``_build_benchmark_technique`` using the registry-based factory API."""
 
-    def test_strategy_built_from_registered_adversarial_factories(self):
+    def test_technique_built_from_registered_adversarial_factories(self):
         """Each registered ``core`` adversarial factory produces one concrete enum member."""
-        strategy_cls = _build_benchmark_strategy()
-        aggregate_names = {"all"} | strategy_cls.get_aggregate_tags()
-        concrete_members = [m for m in strategy_cls if m.value not in aggregate_names]
+        technique_cls = _build_benchmark_technique()
+        aggregate_names = {"all"} | technique_cls.get_aggregate_tags()
+        concrete_members = [m for m in technique_cls if m.value not in aggregate_names]
         concrete_member_values = {m.value for m in concrete_members}
         assert concrete_member_values == _BENCHMARKABLE_TECHNIQUE_NAMES
 
-    def test_strategy_excludes_non_adversarial_factories(self):
+    def test_technique_excludes_non_adversarial_factories(self):
         """Factories without ``uses_adversarial=True`` must not appear as enum members."""
         # Register a non-adversarial factory directly
         non_adv = MagicMock(spec=AttackTechniqueFactory)
         non_adv.name = "prompt_sending"
         non_adv.uses_adversarial = False
-        non_adv.strategy_tags = ["core", "light"]
+        non_adv.technique_tags = ["core", "light"]
         non_adv.seed_technique = None
         non_adv.attack_class = MagicMock(__name__="prompt_sending")
         non_adv.create.return_value = MagicMock()
         AttackTechniqueRegistry.get_registry_singleton().register_from_factories([non_adv])
 
-        strategy_cls = _build_benchmark_strategy()
-        member_values = {m.value for m in strategy_cls}
+        technique_cls = _build_benchmark_technique()
+        member_values = {m.value for m in technique_cls}
         assert "prompt_sending" not in member_values
 
-    def test_strategy_excludes_factories_with_baked_adversarial_chat(self):
+    def test_technique_excludes_factories_with_baked_adversarial_chat(self):
         """Adversarial factories that bake their own ``adversarial_chat`` are not swept."""
         baked = MagicMock(spec=AttackTechniqueFactory)
         baked.name = "pinned_adversary"
         baked.uses_adversarial = True
-        baked.strategy_tags = ["core", "light"]
+        baked.technique_tags = ["core", "light"]
         baked.seed_technique = None
         baked.attack_class = MagicMock(__name__="pinned_adversary")
         baked.adversarial_chat = MagicMock()
         baked.create.return_value = MagicMock()
         AttackTechniqueRegistry.get_registry_singleton().register_from_factories([baked])
 
-        strategy_cls = _build_benchmark_strategy()
-        member_values = {m.value for m in strategy_cls}
+        technique_cls = _build_benchmark_technique()
+        member_values = {m.value for m in technique_cls}
         assert "pinned_adversary" not in member_values
-        """The strategy enum exposes ``light``, ``single_turn``, ``multi_turn`` aggregates."""
-        strategy_cls = _build_benchmark_strategy()
-        aggregates = strategy_cls.get_aggregate_tags()
+        """The technique enum exposes ``light``, ``single_turn``, ``multi_turn`` aggregates."""
+        technique_cls = _build_benchmark_technique()
+        aggregates = technique_cls.get_aggregate_tags()
         assert "light" in aggregates
         assert "single_turn" in aggregates
         assert "multi_turn" in aggregates
 
     def test_light_aggregate_excludes_non_light_techniques(self):
         """Techniques without the ``light`` tag must not appear in the ``light`` aggregate."""
-        strategy_cls = _build_benchmark_strategy()
-        light_member = strategy_cls("light")
-        resolved_values = {child.value for child in strategy_cls.expand({light_member})}
+        technique_cls = _build_benchmark_technique()
+        light_member = technique_cls("light")
+        resolved_values = {child.value for child in technique_cls.expand({light_member})}
         assert "tap" not in resolved_values
         assert "red_teaming" in resolved_values
 
     def test_light_aggregate_includes_red_teaming(self):
         """Sanity check: ``red_teaming`` tagged ``light`` appears in the ``light`` aggregate."""
-        strategy_cls = _build_benchmark_strategy()
-        light_member = strategy_cls("light")
-        resolved_values = {child.value for child in strategy_cls.expand({light_member})}
+        technique_cls = _build_benchmark_technique()
+        light_member = technique_cls("light")
+        resolved_values = {child.value for child in technique_cls.expand({light_member})}
         assert "red_teaming" in resolved_values
 
 
@@ -427,15 +427,15 @@ class TestGetAtomicAttacksCrossProduct:
         # Reset the technique registry so we can register a controllable mock factory
         # whose create() return value we can inspect.
         AttackTechniqueRegistry.reset_registry_singleton()
-        _build_benchmark_strategy.cache_clear()
+        _build_benchmark_technique.cache_clear()
         _register_mock_factory(name="red_teaming", tags=["core", "light"])
         bench = AdversarialBenchmark(objective_scorer=MagicMock(spec=TrueFalseScorer))
         bench._objective_target = MagicMock(spec=PromptTarget)
         bench.params = {"adversarial_targets": target_names}
 
-        red_teaming_strategy = MagicMock()
-        red_teaming_strategy.value = "red_teaming"
-        bench._scenario_strategies = [red_teaming_strategy]
+        red_teaming_technique = MagicMock()
+        red_teaming_technique.value = "red_teaming"
+        bench._scenario_techniques = [red_teaming_technique]
 
         # Dataset config: one dataset with one real seed group (AtomicAttack hashes objectives).
         seed_group = SeedAttackGroup(seeds=[SeedObjective(value="benchmark_objective_1")])
@@ -474,16 +474,16 @@ class TestGetAtomicAttacksCrossProduct:
         TargetRegistry.get_registry_singleton().instances.register(target, name="adv_a")
         # Reset the technique registry to get a controllable mock factory
         AttackTechniqueRegistry.reset_registry_singleton()
-        _build_benchmark_strategy.cache_clear()
+        _build_benchmark_technique.cache_clear()
         _register_mock_factory(name="red_teaming", tags=["core", "light"])
 
         bench = AdversarialBenchmark(objective_scorer=MagicMock(spec=TrueFalseScorer))
         bench._objective_target = MagicMock(spec=PromptTarget)
         bench.params = {"adversarial_targets": ["adv_a"]}
 
-        red_teaming_strategy = MagicMock()
-        red_teaming_strategy.value = "red_teaming"
-        bench._scenario_strategies = [red_teaming_strategy]
+        red_teaming_technique = MagicMock()
+        red_teaming_technique.value = "red_teaming"
+        bench._scenario_techniques = [red_teaming_technique]
 
         seed_group = SeedAttackGroup(seeds=[SeedObjective(value="display_group_regression_objective")])
         bench._dataset_config = MagicMock()
@@ -758,7 +758,7 @@ class TestSkipCachedFilter:
         _register_adversarial_target(name="adv_a")
         # Reset the technique registry to get a controllable mock factory
         AttackTechniqueRegistry.reset_registry_singleton()
-        _build_benchmark_strategy.cache_clear()
+        _build_benchmark_technique.cache_clear()
         _register_mock_factory(name="red_teaming", tags=["core", "light"])
         bench = AdversarialBenchmark(
             objective_scorer=MagicMock(spec=TrueFalseScorer),
@@ -768,9 +768,9 @@ class TestSkipCachedFilter:
         bench._objective_target_identifier = MagicMock()
         bench.params = {"adversarial_targets": ["adv_a"]}
 
-        red_teaming_strategy = MagicMock()
-        red_teaming_strategy.value = "red_teaming"
-        bench._scenario_strategies = [red_teaming_strategy]
+        red_teaming_technique = MagicMock()
+        red_teaming_technique.value = "red_teaming"
+        bench._scenario_techniques = [red_teaming_technique]
 
         seed_group = SeedAttackGroup(seeds=[SeedObjective(value="skip_cached_objective")])
         bench._dataset_config = MagicMock()
@@ -959,7 +959,7 @@ def _make_bench_with_real_memory(
     """Build a minimal benchmark wired to a real memory backend.
 
     Uses ``__new__`` to bypass the full ``__init__`` so we don't have to
-    register a target or build a strategy enum just to exercise the cache
+    register a target or build a technique enum just to exercise the cache
     helper. The helper only reads ``_memory`` and
     ``_objective_target_identifier``.
     """

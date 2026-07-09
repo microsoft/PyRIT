@@ -20,7 +20,7 @@ from pyrit.scenario.core.scenario_context import ScenarioContext
 def _context(**overrides) -> ScenarioContext:
     kwargs = {
         "objective_target": MagicMock(spec=PromptTarget),
-        "scenario_strategies": [],
+        "scenario_techniques": [],
         "dataset_config": MagicMock(spec=DatasetConfiguration),
     }
     kwargs.update(overrides)
@@ -29,15 +29,15 @@ def _context(**overrides) -> ScenarioContext:
 
 def test_required_fields_are_stored():
     target = MagicMock(spec=PromptTarget)
-    strategies = [MagicMock()]
+    techniques = [MagicMock()]
     dataset_config = MagicMock(spec=DatasetConfiguration)
     context = ScenarioContext(
         objective_target=target,
-        scenario_strategies=strategies,
+        scenario_techniques=techniques,
         dataset_config=dataset_config,
     )
     assert context.objective_target is target
-    assert context.scenario_strategies is strategies
+    assert context.scenario_techniques is techniques
     assert context.dataset_config is dataset_config
 
 

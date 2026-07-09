@@ -71,7 +71,7 @@ class ScenarioRunService:
         Start a new scenario run as a background task.
 
         Performs all validation and initialization eagerly (initializers, target
-        resolution, strategy validation, scenario.initialize_async) so errors are
+        resolution, technique validation, scenario.initialize_async) so errors are
         returned immediately. On success, spawns a background task that only
         executes scenario.run_async.
 
@@ -82,7 +82,7 @@ class ScenarioRunService:
             ScenarioRunResponse with run_id and RUNNING status.
 
         Raises:
-            ValueError: If scenario, target, initializer, or strategy cannot be found,
+            ValueError: If scenario, target, initializer, or technique cannot be found,
                 or concurrent limit exceeded.
         """
         if self._run_semaphore.locked():
@@ -270,7 +270,7 @@ class ScenarioRunService:
         """
         Build the kwargs dict for scenario.initialize_async.
 
-        Resolves strategies and dataset configuration from the request.
+        Resolves techniques and dataset configuration from the request.
 
         Dataset configuration is built so that the scenario's default
         ``DatasetAttackConfiguration`` *subclass* (e.g. ``EncodingDatasetConfiguration``)
@@ -288,9 +288,9 @@ class ScenarioRunService:
             Dict of kwargs to pass to scenario.initialize_async.
 
         Raises:
-            ValueError: If a strategy name is invalid for the scenario, or the
+            ValueError: If a technique name is invalid for the scenario, or the
                 scenario class cannot be instantiated with no arguments when
-                introspection is required to resolve strategies or dataset
+                introspection is required to resolve techniques or dataset
                 configuration.
         """
         init_kwargs: dict[str, Any] = {
@@ -306,16 +306,16 @@ class ScenarioRunService:
         # lists, so the service can consume them directly.
         dataset_filters = request.dataset_filters or {}
 
-        # Resolve strategies and dataset config from a temporary instance of the
+        # Resolve techniques and dataset config from a temporary instance of the
         # scenario. The downstream _initialize_scenario_async builds its own
         # instance (so scenario_result_id can be passed), so this is a cheap
         # throwaway used only for introspection. Introspection is required
-        # whenever the caller wants to override strategies, dataset names, the
+        # whenever the caller wants to override techniques, dataset names, the
         # sample cap, or dataset filters, because each of those needs the
-        # scenario's own strategy enum or dataset-config subclass to be resolved
+        # scenario's own technique enum or dataset-config subclass to be resolved
         # correctly.
         needs_introspection = (
-            bool(request.strategies)
+            bool(request.techniques)
             or bool(request.dataset_names)
             or request.max_dataset_size is not None
             or bool(dataset_filters)
@@ -331,16 +331,16 @@ class ScenarioRunService:
                 f"scenario class is not instantiable without arguments ({exc})."
             ) from exc
 
-        if request.strategies:
-            strategy_class = introspection_instance._strategy_class
-            strategy_enums, strategy_converters = self._resolve_strategies_and_converters(
-                tokens=request.strategies,
-                strategy_class=strategy_class,
+        if request.techniques:
+            technique_class = introspection_instance._technique_class
+            technique_enums, technique_converters = self._resolve_techniques_and_converters(
+                tokens=request.techniques,
+                technique_class=technique_class,
                 scenario_name=request.scenario_name,
             )
-            init_kwargs["scenario_strategies"] = strategy_enums
-            if strategy_converters:
-                init_kwargs["strategy_converters"] = strategy_converters
+            init_kwargs["scenario_techniques"] = technique_enums
+            if technique_converters:
+                init_kwargs["technique_converters"] = technique_converters
 
         if request.dataset_names or request.max_dataset_size is not None or dataset_filters:
             default_config = introspection_instance._default_dataset_config
@@ -387,67 +387,67 @@ class ScenarioRunService:
 
         return init_kwargs
 
-    def _resolve_strategies_and_converters(
+    def _resolve_techniques_and_converters(
         self,
         *,
         tokens: list[str],
-        strategy_class: type[Any],
+        technique_class: type[Any],
         scenario_name: str,
     ) -> tuple[list[Any], dict[str, list["PromptConverter"]]]:
         """
-        Resolve ``--strategies`` tokens into strategy enums and per-technique converters.
+        Resolve ``--techniques`` tokens into technique enums and per-technique converters.
 
-        Each token has the form ``<strategy>[:converter.<name>[:converter.<name>...]]``.
-        The base ``<strategy>`` is resolved to a ``ScenarioStrategy`` enum member (which may
+        Each token has the form ``<technique>[:converter.<name>[:converter.<name>...]]``.
+        The base ``<technique>`` is resolved to a ``ScenarioTechnique`` enum member (which may
         be an aggregate). Each ``converter.<name>`` modifier is resolved to a registered
         converter instance and appended (in token order) to every concrete technique that the
-        base strategy expands to.
+        base technique expands to.
 
         Args:
-            tokens: The raw strategy tokens from the request.
-            strategy_class: The scenario's ``ScenarioStrategy`` subclass.
+            tokens: The raw technique tokens from the request.
+            technique_class: The scenario's ``ScenarioTechnique`` subclass.
             scenario_name: The scenario name, used for error messages.
 
         Returns:
-            A tuple of (strategy enums to pass as ``scenario_strategies``, mapping from concrete
+            A tuple of (technique enums to pass as ``scenario_techniques``, mapping from concrete
             technique name to the list of converters to append for that technique).
 
         Raises:
-            ValueError: If a base strategy name is unknown, a modifier is malformed, or a
+            ValueError: If a base technique name is unknown, a modifier is malformed, or a
                 converter name is not registered.
         """
-        strategy_enums: list[Any] = []
-        strategy_converters: dict[str, list[PromptConverter]] = {}
+        technique_enums: list[Any] = []
+        technique_converters: dict[str, list[PromptConverter]] = {}
 
         for token in tokens:
             base_name, _, remainder = token.partition(":")
             modifiers = [m for m in remainder.split(":") if m] if remainder else []
 
             try:
-                strategy_enum = strategy_class(base_name)
+                technique_enum = technique_class(base_name)
             except ValueError:
-                available_strategies = [s.value for s in strategy_class]
+                available_techniques = [s.value for s in technique_class]
                 raise ValueError(
-                    f"Strategy '{base_name}' not found for scenario '{scenario_name}'. "
-                    f"Available: {', '.join(available_strategies)}"
+                    f"Technique '{base_name}' not found for scenario '{scenario_name}'. "
+                    f"Available: {', '.join(available_techniques)}"
                 ) from None
-            strategy_enums.append(strategy_enum)
+            technique_enums.append(technique_enum)
 
             converters = self._resolve_converter_modifiers(modifiers=modifiers, token=token)
             if not converters:
                 continue
 
-            for concrete in strategy_class.expand({strategy_enum}):
-                strategy_converters.setdefault(concrete.value, []).extend(converters)
+            for concrete in technique_class.expand({technique_enum}):
+                technique_converters.setdefault(concrete.value, []).extend(converters)
 
-        return strategy_enums, strategy_converters
+        return technique_enums, technique_converters
 
     def _resolve_converter_modifiers(self, *, modifiers: list[str], token: str) -> list["PromptConverter"]:
         """
-        Resolve the converter modifiers of a single strategy token to converter instances.
+        Resolve the converter modifiers of a single technique token to converter instances.
 
         Args:
-            modifiers: The modifier segments of the token (everything after the base strategy).
+            modifiers: The modifier segments of the token (everything after the base technique).
             token: The full original token, used for error messages.
 
         Returns:
@@ -465,7 +465,7 @@ class ScenarioRunService:
         for modifier in modifiers:
             if not modifier.startswith(_CONVERTER_MODIFIER_PREFIX):
                 raise ValueError(
-                    f"Unknown strategy modifier '{modifier}' in '{token}'. "
+                    f"Unknown technique modifier '{modifier}' in '{token}'. "
                     f"Supported modifiers must use the '{_CONVERTER_MODIFIER_PREFIX}' prefix "
                     f"(e.g. '{_CONVERTER_MODIFIER_PREFIX}translation_spanish')."
                 )
@@ -488,7 +488,7 @@ class ScenarioRunService:
         Delegates the full create + set-parameters + initialize lifecycle to
         ``ScenarioRegistry.create_and_initialize_async`` so the registry owns
         scenario creation and initialization. The run-specific common parameters
-        (target, strategies, dataset config, concurrency) are resolved by
+        (target, techniques, dataset config, concurrency) are resolved by
         ``_build_init_kwargs`` and forwarded as ``init_kwargs``.
 
         Args:
@@ -595,7 +595,7 @@ class ScenarioRunService:
         # Build result fields from DB (always computed so in-progress runs show progress)
         total_attacks = sum(len(results) for results in scenario_result.attack_results.values())
         completed_attacks = total_attacks
-        strategies_used = scenario_result.get_strategies_used()
+        techniques_used = scenario_result.get_techniques_used()
 
         return ScenarioRunSummary(
             scenario_result_id=scenario_result_id,
@@ -606,7 +606,7 @@ class ScenarioRunService:
             updated_at=scenario_result.completion_time or scenario_result.creation_time,
             error=error,
             error_type=error_type,
-            strategies_used=strategies_used,
+            techniques_used=techniques_used,
             total_attacks=total_attacks,
             completed_attacks=completed_attacks,
             objective_achieved_rate=scenario_result.objective_achieved_rate(),

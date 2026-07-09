@@ -12,7 +12,7 @@ from pyrit.models import ComponentIdentifier, SeedAttackGroup, SeedObjective, Se
 from pyrit.prompt_converter import Base64Converter
 from pyrit.prompt_target import PromptTarget
 from pyrit.scenario import CompoundDatasetAttackConfiguration, DatasetAttackConfiguration, DatasetConfiguration
-from pyrit.scenario.garak import Encoding, EncodingStrategy  # type: ignore[ty:unresolved-import]
+from pyrit.scenario.garak import Encoding, EncodingTechnique  # type: ignore[ty:unresolved-import]
 from pyrit.scenario.scenarios.garak.encoding import EncodingDatasetConfiguration
 from pyrit.score import DecodingScorer, TrueFalseScorer
 
@@ -181,10 +181,10 @@ class TestEncodingInitialization:
             # max_concurrency is unset (None) until initialize_async is called
             assert scenario._max_concurrency is None
 
-    async def test_init_attack_strategies(
+    async def test_init_attack_techniques(
         self, mock_objective_target, mock_objective_scorer, mock_seed_attack_groups, mock_dataset_config
     ):
-        """Test that attack strategies are set correctly."""
+        """Test that attack techniques are set correctly."""
         from unittest.mock import patch
 
         with patch.object(
@@ -205,12 +205,12 @@ class TestEncodingInitialization:
             )
             await scenario.initialize_async()
 
-            # By default, EncodingStrategy.ALL is used, which expands to all encoding strategies
-            assert len(scenario._scenario_strategies) > 0
-            # Verify all strategies contain EncodingStrategy instances
-            assert all(isinstance(s, EncodingStrategy) for s in scenario._scenario_strategies)
-            # Verify none of the strategies are the aggregate "ALL"
-            assert all(s != EncodingStrategy.ALL for s in scenario._scenario_strategies)
+            # By default, EncodingTechnique.ALL is used, which expands to all encoding techniques
+            assert len(scenario._scenario_techniques) > 0
+            # Verify all techniques contain EncodingTechnique instances
+            assert all(isinstance(s, EncodingTechnique) for s in scenario._scenario_techniques)
+            # Verify none of the techniques are the aggregate "ALL"
+            assert all(s != EncodingTechnique.ALL for s in scenario._scenario_techniques)
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -500,9 +500,9 @@ class TestEncodingDatasetConfigurationBuildAttackGroups:
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestEncodingBaselineUniformity:
-    """ADO 9012 regression: baseline shares objectives with strategies under max_dataset_size."""
+    """ADO 9012 regression: baseline shares objectives with techniques under max_dataset_size."""
 
-    async def test_one_resolution_call_baseline_matches_strategies(self, mock_objective_target, mock_objective_scorer):
+    async def test_one_resolution_call_baseline_matches_techniques(self, mock_objective_target, mock_objective_scorer):
         from unittest.mock import patch
 
         from pyrit.models import SeedAttackGroup, SeedObjective
@@ -520,7 +520,7 @@ class TestEncodingBaselineUniformity:
             scenario.set_params_from_args(
                 args={
                     "objective_target": mock_objective_target,
-                    "scenario_strategies": [EncodingStrategy.ALL],
+                    "scenario_techniques": [EncodingTechnique.ALL],
                     "dataset_config": config,
                     "include_baseline": True,
                 }

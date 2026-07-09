@@ -23,7 +23,7 @@ from pyrit.scenario import (
     ScenarioIdentifier,
     ScenarioResult,
 )
-from pyrit.scenario.core import AtomicAttack, BaselineAttackPolicy, Scenario, ScenarioStrategy
+from pyrit.scenario.core import AtomicAttack, BaselineAttackPolicy, Scenario, ScenarioTechnique
 from pyrit.score import Scorer
 from tests.unit.mocks import make_scenario_identifier, make_scenario_result
 
@@ -79,7 +79,7 @@ def create_mock_run_async(attack_results, *, atomic_attack=None):
 @pytest.fixture
 def mock_atomic_attacks():
     """Create mock AtomicAttack instances for testing."""
-    # Create a mock attack strategy
+    # Create a mock attack technique
     mock_attack = MagicMock()
     mock_attack.get_objective_target.return_value = MagicMock()
     mock_attack.get_attack_scoring_config.return_value = MagicMock()
@@ -145,9 +145,9 @@ class ConcreteScenario(Scenario):
     BASELINE_ATTACK_POLICY: ClassVar[BaselineAttackPolicy] = BaselineAttackPolicy.Forbidden
 
     def __init__(self, *, atomic_attacks_to_return=None, **kwargs):
-        # Add required strategy_class if not provided
+        # Add required technique_class if not provided
 
-        class TestStrategy(ScenarioStrategy):
+        class TestTechnique(ScenarioTechnique):
             TEST = ("test", {"concrete"})  # Tagged as concrete, not aggregate
             ALL = ("all", {"all"})
 
@@ -155,8 +155,8 @@ class ConcreteScenario(Scenario):
             def get_aggregate_tags(cls) -> set[str]:
                 return {"all"}
 
-        kwargs.setdefault("strategy_class", TestStrategy)
-        kwargs.setdefault("default_strategy", kwargs["strategy_class"].ALL)
+        kwargs.setdefault("technique_class", TestTechnique)
+        kwargs.setdefault("default_technique", kwargs["technique_class"].ALL)
         kwargs.setdefault("default_dataset_config", DatasetConfiguration())
 
         # Add a mock scorer if not provided
@@ -228,14 +228,14 @@ class TestScenarioInitialization:
         assert scenario._version == 3
         assert scenario._description == "Concrete implementation of Scenario for testing."
 
-    def test_init_with_empty_attack_strategies(self, mock_objective_target):
-        """Test that initialization works without attack_strategies."""
+    def test_init_with_empty_attack_techniques(self, mock_objective_target):
+        """Test that initialization works without attack_techniques."""
         scenario = ConcreteScenario(
             name="Test Scenario",
             version=1,
         )
 
-        # Test that scenario initializes correctly without attack_strategies
+        # Test that scenario initializes correctly without attack_techniques
         assert scenario.atomic_attack_count == 0
 
 
@@ -545,7 +545,7 @@ class TestScenarioExecution:
         assert result.scenario_name == "ConcreteScenario"
         assert result.scenario_version == 5
         assert result.pyrit_version is not None
-        assert result.get_strategies_used() == [
+        assert result.get_techniques_used() == [
             "attack_run_1",
             "attack_run_2",
             "attack_run_3",
@@ -582,7 +582,7 @@ class TestScenarioProperties:
 
     async def test_atomic_attack_count_with_different_sizes(self, mock_objective_target):
         """Test atomic_attack_count with different numbers of atomic attacks."""
-        # Create mock attack strategy
+        # Create mock attack technique
         mock_attack = MagicMock()
         mock_attack.get_objective_target.return_value = mock_objective_target
         mock_attack.get_attack_scoring_config.return_value = MagicMock()
@@ -650,7 +650,7 @@ class TestScenarioResult:
 
         assert result.scenario_name == "Test"
         assert result.scenario_version == 1
-        assert result.get_strategies_used() == ["base64", "rot13"]
+        assert result.get_techniques_used() == ["base64", "rot13"]
         assert len(result.attack_results) == 2
         assert len(result.attack_results["base64"]) == 3
         assert len(result.attack_results["rot13"]) == 2
@@ -761,9 +761,9 @@ class ConcreteScenarioWithTrueFalseScorer(Scenario):
     """Concrete implementation of Scenario for testing baseline-only execution."""
 
     def __init__(self, *, atomic_attacks_to_return=None, **kwargs):
-        # Add required strategy_class if not provided
+        # Add required technique_class if not provided
 
-        class TestStrategy(ScenarioStrategy):
+        class TestTechnique(ScenarioTechnique):
             TEST = ("test", {"concrete"})
             ALL = ("all", {"all"})
 
@@ -771,8 +771,8 @@ class ConcreteScenarioWithTrueFalseScorer(Scenario):
             def get_aggregate_tags(cls) -> set[str]:
                 return {"all"}
 
-        kwargs.setdefault("strategy_class", TestStrategy)
-        kwargs.setdefault("default_strategy", kwargs["strategy_class"].ALL)
+        kwargs.setdefault("technique_class", TestTechnique)
+        kwargs.setdefault("default_technique", kwargs["technique_class"].ALL)
         kwargs.setdefault("default_dataset_config", DatasetConfiguration())
 
         # Use TrueFalseScorer mock if not provided
@@ -791,10 +791,10 @@ class ConcreteScenarioWithTrueFalseScorer(Scenario):
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestScenarioBaselineOnlyExecution:
-    """Tests for baseline-only execution (empty strategies with include_baseline=True)."""
+    """Tests for baseline-only execution (empty techniques with include_baseline=True)."""
 
-    async def test_initialize_async_with_empty_strategies_and_baseline(self, mock_objective_target):
-        """Test that baseline is included when include_baseline=True, regardless of strategies."""
+    async def test_initialize_async_with_empty_techniques_and_baseline(self, mock_objective_target):
+        """Test that baseline is included when include_baseline=True, regardless of techniques."""
         from pyrit.models import SeedAttackGroup, SeedObjective
 
         # Create a scenario with TrueFalseScorer; baseline is included by default
@@ -812,11 +812,11 @@ class TestScenarioBaselineOnlyExecution:
             ]
         }
 
-        # Initialize with None (default strategy) — [] also works, both expand defaults
+        # Initialize with None (default technique) — [] also works, both expand defaults
         scenario.set_params_from_args(
             args={
                 "objective_target": mock_objective_target,
-                "scenario_strategies": None,
+                "scenario_techniques": None,
                 "dataset_config": mock_dataset_config,
             }
         )
@@ -846,7 +846,7 @@ class TestScenarioBaselineOnlyExecution:
         scenario.set_params_from_args(
             args={
                 "objective_target": mock_objective_target,
-                "scenario_strategies": None,  # same as [] now
+                "scenario_techniques": None,  # same as [] now
                 "dataset_config": mock_dataset_config,
             }
         )
@@ -865,8 +865,8 @@ class TestScenarioBaselineOnlyExecution:
         assert "baseline" in result.attack_results
         assert len(result.attack_results["baseline"]) == 1
 
-    async def test_empty_strategies_without_baseline_allows_initialization(self, mock_objective_target):
-        """Test that no strategies + no baseline allows initialization but fails at run time."""
+    async def test_empty_techniques_without_baseline_allows_initialization(self, mock_objective_target):
+        """Test that no techniques + no baseline allows initialization but fails at run time."""
         scenario = ConcreteScenario(
             name="No Baseline Test",
             version=1,
@@ -874,11 +874,11 @@ class TestScenarioBaselineOnlyExecution:
 
         mock_dataset_config = MagicMock(spec=DatasetConfiguration)
 
-        # None strategies with no baseline: _get_atomic_attacks_async returns []
+        # None techniques with no baseline: _get_atomic_attacks_async returns []
         scenario.set_params_from_args(
             args={
                 "objective_target": mock_objective_target,
-                "scenario_strategies": None,
+                "scenario_techniques": None,
                 "dataset_config": mock_dataset_config,
             }
         )
@@ -910,7 +910,7 @@ class TestScenarioBaselineOnlyExecution:
         scenario.set_params_from_args(
             args={
                 "objective_target": mock_objective_target,
-                "scenario_strategies": None,
+                "scenario_techniques": None,
                 "dataset_config": mock_dataset_config,
             }
         )
@@ -921,14 +921,14 @@ class TestScenarioBaselineOnlyExecution:
         assert baseline_attack.atomic_attack_name == "baseline"
         assert baseline_attack.seed_groups == expected_seeds
 
-    def test_empty_list_strategies_expands_defaults_same_as_none(self):
-        """Test that [] and None both expand to the default strategy set."""
+    def test_empty_list_techniques_expands_defaults_same_as_none(self):
+        """Test that [] and None both expand to the default technique set."""
         scenario = ConcreteScenario(name="Test", version=1)
-        strategy_class = scenario._strategy_class
-        default = scenario._default_strategy
+        technique_class = scenario._technique_class
+        default = scenario._default_technique
 
-        resolved_none = strategy_class.resolve(None, default=default)
-        resolved_empty = strategy_class.resolve([], default=default)
+        resolved_none = technique_class.resolve(None, default=default)
+        resolved_empty = technique_class.resolve([], default=default)
 
         assert resolved_none == resolved_empty
         assert len(resolved_none) > 0
@@ -992,10 +992,10 @@ async def test_execute_scenario_raises_when_scenario_result_id_is_none():
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestScenarioBaselineUniformObjectives:
-    """ADO 9012 regression: baseline and strategy share objectives under max_dataset_size.
+    """ADO 9012 regression: baseline and technique share objectives under max_dataset_size.
 
     The structural fix collapses to a single seed-group resolution call per scenario
-    run. Both the strategy atomic attacks and the baseline use the same sampled
+    run. Both the technique atomic attacks and the baseline use the same sampled
     population, so ``random.sample`` runs once and the two groups match.
     """
 
@@ -1009,18 +1009,18 @@ class TestScenarioBaselineUniformObjectives:
         seed_groups = [SeedGroup(seeds=[SeedObjective(value=f"obj{i}")]) for i in range(10)]
         config = DatasetAttackConfiguration(seed_groups=seed_groups, max_dataset_size=3)
 
-        class StrategyScenario(ConcreteScenarioWithTrueFalseScorer):
+        class TechniqueScenario(ConcreteScenarioWithTrueFalseScorer):
             async def _build_atomic_attacks_async(self, *, context):
                 return [
                     AtomicAttack(
-                        atomic_attack_name="strategy",
+                        atomic_attack_name="technique",
                         attack_technique=AttackTechnique(attack=MagicMock()),
                         seed_groups=list(context.seed_groups),
                     )
                 ]
 
         # A single deterministic resolution: random.sample must be called exactly once,
-        # so baseline and strategy draw from the same sampled population and share objectives.
+        # so baseline and technique draw from the same sampled population and share objectives.
         def _sample_first_k(population, k):
             return list(population)[:k]
 
@@ -1028,11 +1028,11 @@ class TestScenarioBaselineUniformObjectives:
             "pyrit.scenario.core.dataset_configuration.random.sample",
             side_effect=_sample_first_k,
         ) as mock_sample:
-            scenario = StrategyScenario(name="ADO 9012 regression", version=1)
+            scenario = TechniqueScenario(name="ADO 9012 regression", version=1)
             scenario.set_params_from_args(
                 args={
                     "objective_target": mock_objective_target,
-                    "scenario_strategies": None,
+                    "scenario_techniques": None,
                     "dataset_config": config,
                 }
             )
@@ -1040,10 +1040,10 @@ class TestScenarioBaselineUniformObjectives:
 
         assert mock_sample.call_count == 1
 
-        baseline, strategy = scenario._atomic_attacks
+        baseline, technique = scenario._atomic_attacks
         assert baseline.atomic_attack_name == "baseline"
-        assert strategy.atomic_attack_name == "strategy"
-        assert set(baseline.objectives) == set(strategy.objectives)
+        assert technique.atomic_attack_name == "technique"
+        assert set(baseline.objectives) == set(technique.objectives)
         assert len(baseline.objectives) == 3
 
 

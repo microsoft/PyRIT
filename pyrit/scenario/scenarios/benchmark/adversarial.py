@@ -23,7 +23,7 @@ if TYPE_CHECKING:
     from pyrit.prompt_target import PromptTarget
     from pyrit.scenario.core.atomic_attack import AtomicAttack
     from pyrit.scenario.core.scenario_context import ScenarioContext
-    from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
+    from pyrit.scenario.core.scenario_technique import ScenarioTechnique
     from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
 
 
@@ -31,35 +31,35 @@ logger = logging.getLogger(__name__)
 
 
 @cache
-def _build_benchmark_strategy() -> type[ScenarioStrategy]:
+def _build_benchmark_technique() -> type[ScenarioTechnique]:
     """
-    Build the ``BenchmarkStrategy`` enum from the registered factory catalog.
+    Build the ``BenchmarkTechnique`` enum from the registered factory catalog.
 
     Reads ``core`` adversarial-capable factories from the
     ``AttackTechniqueRegistry`` singleton and passes them to
-    ``build_strategy_class_from_factories``. Factories that bake their own
+    ``build_technique_class_from_factories``. Factories that bake their own
     ``adversarial_chat`` are excluded — the benchmark sweeps each technique
     across the user-supplied targets, which is incompatible with a technique
     that pins its own adversarial target. The resulting enum has one
     concrete member per factory (e.g. ``red_teaming``, ``tap``,
     ``crescendo_simulated``) plus ``default`` / ``light`` / ``single_turn``
-    / ``multi_turn`` aggregates derived from each factory's ``strategy_tags``.
+    / ``multi_turn`` aggregates derived from each factory's ``technique_tags``.
 
     The (technique × target) cross-product is materialized lazily in
     ``AdversarialBenchmark._build_atomic_attacks_async`` from the
     user-supplied ``adversarial_targets`` parameter.
 
     Returns:
-        type[ScenarioStrategy]: The dynamically generated ``BenchmarkStrategy`` class.
+        type[ScenarioTechnique]: The dynamically generated ``BenchmarkTechnique`` class.
     """
     registry = AttackTechniqueRegistry.get_registry_singleton()
     factories = [
         factory
         for factory in registry.get_factories_or_raise().values()
-        if factory.uses_adversarial and "core" in factory.strategy_tags and factory.adversarial_chat is None
+        if factory.uses_adversarial and "core" in factory.technique_tags and factory.adversarial_chat is None
     ]
-    return AttackTechniqueRegistry.build_strategy_class_from_factories(  # type: ignore[ty:invalid-return-type]
-        class_name="BenchmarkStrategy",
+    return AttackTechniqueRegistry.build_technique_class_from_factories(  # type: ignore[ty:invalid-return-type]
+        class_name="BenchmarkTechnique",
         factories=factories,
         aggregate_tags={
             "default": TagQuery.any_of("default"),
@@ -175,13 +175,13 @@ class AdversarialBenchmark(Scenario):
         self._precomputed_cached_display_groups: dict[str, str] = {}
         self._cached_results_by_name: dict[str, list[AttackResult]] = {}
 
-        strategy_class = _build_benchmark_strategy()
+        technique_class = _build_benchmark_technique()
 
         super().__init__(
             version=self.VERSION,
             objective_scorer=self._objective_scorer,
-            strategy_class=strategy_class,
-            default_strategy=strategy_class("light"),
+            technique_class=technique_class,
+            default_technique=technique_class("light"),
             default_dataset_config=DatasetAttackConfiguration(
                 dataset_names=["harmbench"],
                 max_dataset_size=8,

@@ -24,7 +24,7 @@ from pyrit.scenario.core.dataset_configuration import CompoundDatasetAttackConfi
 from pyrit.scenario.scenarios.adaptive.adaptive_scenario import AdaptiveScenario
 
 if TYPE_CHECKING:
-    from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
+    from pyrit.scenario.core.scenario_technique import ScenarioTechnique
     from pyrit.scenario.scenarios.adaptive.selectors import TechniqueSelector
     from pyrit.score import TrueFalseScorer
 
@@ -35,13 +35,13 @@ logger = logging.getLogger(__name__)
 _EXCLUDED_TECHNIQUES = frozenset({"prompt_sending"})
 
 
-def _build_text_adaptive_strategy() -> type[ScenarioStrategy]:
+def _build_text_adaptive_technique() -> type[ScenarioTechnique]:
     """
-    Build the strategy enum from the core scenario-techniques catalog,
+    Build the technique enum from the core scenario-techniques catalog,
     excluding techniques that run as baseline.
 
     Returns:
-        type[ScenarioStrategy]: The dynamically-built strategy enum class.
+        type[ScenarioTechnique]: The dynamically-built technique enum class.
 
     Logs a warning if any name in ``_EXCLUDED_TECHNIQUES`` is not present
     in the current catalog. The exclusion is defensive — when the catalog
@@ -68,8 +68,8 @@ def _build_text_adaptive_strategy() -> type[ScenarioStrategy]:
 
     factories = [factory for factory in all_factories if factory.name not in _EXCLUDED_TECHNIQUES]
 
-    return AttackTechniqueRegistry.build_strategy_class_from_factories(  # type: ignore[return-value, ty:invalid-return-type]
-        class_name="TextAdaptiveStrategy",
+    return AttackTechniqueRegistry.build_technique_class_from_factories(  # type: ignore[return-value, ty:invalid-return-type]
+        class_name="TextAdaptiveTechnique",
         factories=factories,
         aggregate_tags={
             "default": TagQuery.any_of("default"),
@@ -84,11 +84,11 @@ class TextAdaptive(AdaptiveScenario):
     Adaptive text-attack scenario.
 
     Selects techniques per-objective via an epsilon-greedy selector over the
-    set of selected strategies. ``prompt_sending`` runs as the baseline
+    set of selected techniques. ``prompt_sending`` runs as the baseline
     comparison and is excluded from the adaptive technique pool.
     """
 
-    _cached_strategy_class: ClassVar[type[ScenarioStrategy] | None] = None
+    _cached_technique_class: ClassVar[type[ScenarioTechnique] | None] = None
 
     VERSION: ClassVar[int] = 1
 
@@ -98,17 +98,17 @@ class TextAdaptive(AdaptiveScenario):
         return "adaptive_text"
 
     @classmethod
-    def get_strategy_class(cls) -> type[ScenarioStrategy]:
-        """Return the strategy enum for this scenario, building it once on first access."""
-        if cls._cached_strategy_class is None:
-            cls._cached_strategy_class = _build_text_adaptive_strategy()
-        return cls._cached_strategy_class
+    def get_technique_class(cls) -> type[ScenarioTechnique]:
+        """Return the technique enum for this scenario, building it once on first access."""
+        if cls._cached_technique_class is None:
+            cls._cached_technique_class = _build_text_adaptive_technique()
+        return cls._cached_technique_class
 
     @classmethod
-    def get_default_strategy(cls) -> ScenarioStrategy:
-        """Return the default strategy aggregate (resolves to every ``default``-tagged technique)."""
-        strategy_class = cls.get_strategy_class()
-        return strategy_class("default")
+    def get_default_technique(cls) -> ScenarioTechnique:
+        """Return the default technique aggregate (resolves to every ``default``-tagged technique)."""
+        technique_class = cls.get_technique_class()
+        return technique_class("default")
 
     @classmethod
     def required_datasets(cls) -> list[str]:

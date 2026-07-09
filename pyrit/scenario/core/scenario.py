@@ -49,8 +49,8 @@ from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
 from pyrit.scenario.core.matrix_atomic_attack_builder import build_baseline_atomic_attack
 from pyrit.scenario.core.scenario_context import ScenarioContext
-from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
 from pyrit.scenario.core.scenario_target_defaults import get_default_scorer_target
+from pyrit.scenario.core.scenario_technique import ScenarioTechnique
 from pyrit.score import (
     Scorer,
     SelfAskRefusalScorer,
@@ -80,7 +80,7 @@ class BaselineAttackPolicy(Enum):
     Declares how a scenario type treats the default baseline atomic attack.
 
     The baseline is a plain ``PromptSendingAttack`` that sends each objective unmodified,
-    used as a comparison point against the scenario's strategies. Each scenario class
+    used as a comparison point against the scenario's techniques. Each scenario class
     declares its policy via ``Scenario.BASELINE_ATTACK_POLICY``; callers can still override
     at runtime via ``initialize_async(include_baseline=...)`` for the ``Enabled`` and
     ``Disabled`` states.
@@ -151,8 +151,8 @@ class Scenario(ABC):
         *,
         name: str = "",
         version: int,
-        strategy_class: type[ScenarioStrategy],
-        default_strategy: ScenarioStrategy,
+        technique_class: type[ScenarioTechnique],
+        default_technique: ScenarioTechnique,
         default_dataset_config: DatasetAttackConfiguration,
         objective_scorer: Scorer,
         scenario_result_id: uuid.UUID | str | None = None,
@@ -163,10 +163,10 @@ class Scenario(ABC):
         Args:
             name (str): Descriptive name for the scenario.
             version (int): Version number of the scenario.
-            strategy_class (type[ScenarioStrategy]): The strategy enum class for this scenario.
-            default_strategy (ScenarioStrategy): The default strategy member used when no
-                ``scenario_strategies`` are passed to ``initialize_async``. Usually an aggregate
-                member like ``MyStrategy.ALL`` or ``MyStrategy.DEFAULT``.
+            technique_class (type[ScenarioTechnique]): The technique enum class for this scenario.
+            default_technique (ScenarioTechnique): The default technique member used when no
+                ``scenario_techniques`` are passed to ``initialize_async``. Usually an aggregate
+                member like ``MyTechnique.ALL`` or ``MyTechnique.DEFAULT``.
             default_dataset_config (DatasetAttackConfiguration): The default dataset configuration used
                 when no ``dataset_config`` is passed to ``initialize_async``.
             objective_scorer (Scorer): The objective scorer used to evaluate attack results.
@@ -194,9 +194,9 @@ class Scenario(ABC):
         self._version = version
         self._description = description
 
-        # Store strategy configuration for use in initialize_async
-        self._strategy_class = strategy_class
-        self._default_strategy = default_strategy
+        # Store technique configuration for use in initialize_async
+        self._technique_class = technique_class
+        self._default_technique = default_technique
         self._default_dataset_config = default_dataset_config
 
         # These will be set in initialize_async
@@ -219,11 +219,11 @@ class Scenario(ABC):
         self._atomic_attacks: list[AtomicAttack] = []
         self._scenario_result_id: str | None = str(scenario_result_id) if scenario_result_id else None
 
-        # Store prepared strategies for use in _build_atomic_attacks_async
-        self._scenario_strategies: list[ScenarioStrategy] = []
+        # Store prepared techniques for use in _build_atomic_attacks_async
+        self._scenario_techniques: list[ScenarioTechnique] = []
 
         # Maps concrete technique name → extra request converters to append for that technique.
-        self._strategy_converters: dict[str, list[PromptConverter]] = {}
+        self._technique_converters: dict[str, list[PromptConverter]] = {}
 
         # Maps atomic_attack_name → display_group for user-facing aggregation
         self._display_group_map: dict[str, str] = {}
@@ -281,12 +281,12 @@ class Scenario(ABC):
                 reference=RegistryReference(component_type=ComponentType.TARGET),
             ),
             Parameter(
-                name="scenario_strategies",
-                description="Strategies to execute; defaults to the scenario's default aggregate when omitted.",
+                name="scenario_techniques",
+                description="Techniques to execute; defaults to the scenario's default aggregate when omitted.",
                 opaque=True,
             ),
             Parameter(
-                name="strategy_converters",
+                name="technique_converters",
                 description="Mapping of concrete technique name to extra request converters to append.",
                 opaque=True,
             ),
@@ -325,7 +325,7 @@ class Scenario(ABC):
         Return the names of the framework common parameters.
 
         These are the run inputs the base declares for every scenario (target,
-        strategies, dataset config, concurrency, etc.). They are captured in the
+        techniques, dataset config, concurrency, etc.). They are captured in the
         scenario identity through dedicated fields (objective target, techniques,
         datasets) rather than the free-form params dict, and callers use this set
         to separate framework inputs from a scenario's own custom parameters.
@@ -497,23 +497,23 @@ class Scenario(ABC):
             name="objective_target",
         )
 
-    def _resolve_scenario_strategies(self, *, scenario_strategies: Any) -> list[ScenarioStrategy]:
+    def _resolve_scenario_techniques(self, *, scenario_techniques: Any) -> list[ScenarioTechnique]:
         """
-        Resolve the bag's requested strategies into the concrete strategy list.
+        Resolve the bag's requested techniques into the concrete technique list.
 
-        The base resolves ``scenario_strategies`` against the scenario's strategy enum,
+        The base resolves ``scenario_techniques`` against the scenario's technique enum,
         expanding aggregates and falling back to the default aggregate when omitted.
-        Override to widen the accepted strategy types or expand composite strategies
+        Override to widen the accepted technique types or expand composite techniques
         (see ``FoundryScenario``, which pairs attacks with converters).
 
         Args:
-            scenario_strategies (Any): The raw ``scenario_strategies`` bag value
-                (a sequence of ``ScenarioStrategy`` members, or None for the default).
+            scenario_techniques (Any): The raw ``scenario_techniques`` bag value
+                (a sequence of ``ScenarioTechnique`` members, or None for the default).
 
         Returns:
-            list[ScenarioStrategy]: The concrete strategies to execute.
+            list[ScenarioTechnique]: The concrete techniques to execute.
         """
-        return self._strategy_class.resolve(scenario_strategies, default=self._default_strategy)
+        return self._technique_class.resolve(scenario_techniques, default=self._default_technique)
 
     @final
     async def initialize_async(self) -> None:
@@ -539,7 +539,7 @@ class Scenario(ABC):
 
         The common run inputs read from the bag are ``objective_target`` (a ``PromptTarget``
         instance or a registered target name resolved against ``TargetRegistry``),
-        ``scenario_strategies``, ``strategy_converters``, ``dataset_config``,
+        ``scenario_techniques``, ``technique_converters``, ``dataset_config``,
         ``max_concurrency``, ``max_retries``, ``memory_labels``, and ``include_baseline``
         (see ``_common_scenario_parameters``). A subclass that removes a common input via
         ``supported_parameters`` falls back to that input's default here.
@@ -598,12 +598,12 @@ class Scenario(ABC):
 
         self._include_baseline = include_baseline
 
-        # Prepare scenario strategies via the resolution hook (subclasses override to widen
+        # Prepare scenario techniques via the resolution hook (subclasses override to widen
         # accepted types or expand composites) and stash any per-technique converter overrides.
-        self._scenario_strategies = self._resolve_scenario_strategies(
-            scenario_strategies=params.get("scenario_strategies")
+        self._scenario_techniques = self._resolve_scenario_techniques(
+            scenario_techniques=params.get("scenario_techniques")
         )
-        self._strategy_converters = params.get("strategy_converters") or {}
+        self._technique_converters = params.get("technique_converters") or {}
 
         # Build atomic attacks: resolve the seed groups once, snapshot the resolved inputs
         # into a ScenarioContext, and hand it to the subclass extension point. Baseline is
@@ -616,7 +616,7 @@ class Scenario(ABC):
         if include_baseline and (not self._atomic_attacks or self._atomic_attacks[0].atomic_attack_name != "baseline"):
             self._atomic_attacks.insert(0, self._build_baseline_atomic_attack(seed_groups=list(context.seed_groups)))
 
-        # Build the canonical scenario identifier once params/strategies/datasets
+        # Build the canonical scenario identifier once params/techniques/datasets
         # are resolved, so both the resume check and the new-result branch share the
         # same identity (and its eval hash).
         scenario_identifier = self._build_scenario_identifier()
@@ -735,8 +735,8 @@ class Scenario(ABC):
         Build the baseline AtomicAttack from pre-resolved seed groups.
 
         The baseline sends each objective unmodified, providing a comparison point
-        against the scenario's strategy attacks. Pass the same ``seed_groups`` used
-        to build the strategy attacks so both populations match.
+        against the scenario's technique attacks. Pass the same ``seed_groups`` used
+        to build the technique attacks so both populations match.
 
         Args:
             seed_groups: Seed groups to attack. Used as-is, no further sampling.
@@ -771,10 +771,10 @@ class Scenario(ABC):
         Returns:
             ScenarioIdentifier: The identifier describing this scenario run.
         """
-        techniques = sorted({s.value for s in self._scenario_strategies})
+        techniques = sorted({s.value for s in self._scenario_techniques})
         datasets = list(self._dataset_config.dataset_names)
         # Persist only the scenario's own custom params. The framework common inputs
-        # (objective_target, strategies, dataset config, ...) are captured through the
+        # (objective_target, techniques, dataset config, ...) are captured through the
         # dedicated identity fields below and are often live, non-JSON-serializable
         # objects, so they must not leak into the free-form params dict.
         common_names = self._common_scenario_parameter_names()
@@ -948,7 +948,7 @@ class Scenario(ABC):
         Snapshot the resolved runtime inputs into a ``ScenarioContext``.
 
         Called after ``initialize_async`` has populated the objective target, scorer,
-        strategies, dataset config, labels, and baseline flag. The resulting context is
+        techniques, dataset config, labels, and baseline flag. The resulting context is
         handed to ``_build_atomic_attacks_async`` so scenario authors never read
         half-initialized ``self._*`` state to build attacks.
 
@@ -972,7 +972,7 @@ class Scenario(ABC):
 
         return ScenarioContext(
             objective_target=self._objective_target,
-            scenario_strategies=tuple(self._scenario_strategies),
+            scenario_techniques=tuple(self._scenario_techniques),
             dataset_config=self._dataset_config,
             memory_labels=dict(self._memory_labels),
             include_baseline=self._include_baseline,
@@ -987,7 +987,7 @@ class Scenario(ABC):
 
         This is the single extension point scenarios override to map techniques, datasets,
         scorers, and any extra axes into ``AtomicAttack`` instances. It is called once by
-        ``initialize_async`` after the objective target, scorer, strategies, dataset config,
+        ``initialize_async`` after the objective target, scorer, techniques, dataset config,
         labels, and baseline flag have been resolved and snapshot into ``context``.
 
         Scenario authors build their attacks from ``context.seed_groups`` (or

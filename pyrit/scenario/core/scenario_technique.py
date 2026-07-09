@@ -2,10 +2,10 @@
 # Licensed under the MIT license.
 
 """
-Base class for scenario attack strategies with group-based aggregation.
+Base class for scenario attack techniques with group-based aggregation.
 
-This module provides a generic base class for creating enum-based attack strategy
-hierarchies where strategies can be grouped by categories (e.g., complexity, encoding type)
+This module provides a generic base class for creating enum-based attack technique
+hierarchies where techniques can be grouped by categories (e.g., complexity, encoding type)
 and automatically expanded during scenario initialization.
 """
 
@@ -20,21 +20,21 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
 # TypeVar for the enum subclass itself
-T = TypeVar("T", bound="ScenarioStrategy")
+T = TypeVar("T", bound="ScenarioTechnique")
 
 
 class _DeprecatedEnumMeta(EnumMeta):
     """
     Custom Enum metaclass that supports deprecated member aliases.
 
-    Subclasses of ScenarioStrategy can define deprecated member name mappings
+    Subclasses of ScenarioTechnique can define deprecated member name mappings
     by setting ``__deprecated_members__`` on the class after definition.
     Each entry maps the old name to a ``(new_name, removed_in)`` tuple::
 
-        MyStrategy.__deprecated_members__ = {"OLD_NAME": ("NewName", "0.15.0")}
+        MyTechnique.__deprecated_members__ = {"OLD_NAME": ("NewName", "0.15.0")}
 
-    Accessing ``MyStrategy.OLD_NAME`` will emit a DeprecationWarning and return
-    the same enum member as ``MyStrategy.NewName``.
+    Accessing ``MyTechnique.OLD_NAME`` will emit a DeprecationWarning and return
+    the same enum member as ``MyTechnique.NewName``.
     """
 
     def __getattr__(cls, name: str) -> Any:
@@ -50,23 +50,23 @@ class _DeprecatedEnumMeta(EnumMeta):
         raise AttributeError(name)
 
 
-class ScenarioStrategy(Enum, metaclass=_DeprecatedEnumMeta):
+class ScenarioTechnique(Enum, metaclass=_DeprecatedEnumMeta):
     """
-    Base class for attack strategies with tag-based categorization and aggregation.
+    Base class for attack techniques with tag-based categorization and aggregation.
 
-    This class provides a pattern for defining attack strategies as enums where each
-    strategy has a set of tags for flexible categorization. It supports aggregate tags
+    This class provides a pattern for defining attack techniques as enums where each
+    technique has a set of tags for flexible categorization. It supports aggregate tags
     (like "easy", "moderate", "difficult" or "fast", "medium") that automatically expand
-    to include all strategies with that tag.
+    to include all techniques with that tag.
 
-    **Convention**: Strategy enum members should map 1:1 to selectable **attack techniques**
+    **Convention**: Technique enum members should map 1:1 to selectable **attack techniques**
     (e.g., ``PromptSending``, ``RolePlay``, ``TAP``) or to aggregates of techniques
     (e.g., ``DEFAULT``, ``SINGLE_TURN``).  Datasets control *what* content or objectives
-    are tested; strategies control *how* attacks are executed.  Avoid encoding dataset or
-    category selection into the strategy enum — use ``DatasetConfiguration`` and the
+    are tested; techniques control *how* attacks are executed.  Avoid encoding dataset or
+    category selection into the technique enum — use ``DatasetConfiguration`` and the
     ``--dataset-names`` CLI flag for that axis.
 
-    **Tags**: Flexible categorization system where strategies can have multiple tags
+    **Tags**: Flexible categorization system where techniques can have multiple tags
     (e.g., {"easy", "converter"}, {"difficult", "multi_turn"})
 
     Subclasses should define their enum members with (value, tags) tuples and
@@ -75,26 +75,26 @@ class ScenarioStrategy(Enum, metaclass=_DeprecatedEnumMeta):
 
     **Convention**: All subclasses should include `ALL = ("all", {"all"})` as the first
     aggregate member. The base class automatically handles expanding "all" to
-    include all non-aggregate strategies.
+    include all non-aggregate techniques.
 
     The normalization process automatically:
-    1. Expands aggregate tags into their constituent strategies
+    1. Expands aggregate tags into their constituent techniques
     2. Excludes the aggregate tag enum members themselves from the final set
-    3. Handles the special "all" tag by expanding to all non-aggregate strategies
+    3. Handles the special "all" tag by expanding to all non-aggregate techniques
     """
 
     _tags: set[str]
 
-    def __new__(cls, value: str, tags: set[str] | None = None) -> ScenarioStrategy:
+    def __new__(cls, value: str, tags: set[str] | None = None) -> ScenarioTechnique:
         """
-        Create a new ScenarioStrategy with value and tags.
+        Create a new ScenarioTechnique with value and tags.
 
         Args:
-            value: The strategy value/name.
+            value: The technique value/name.
             tags: Optional set of tags for categorization.
 
         Returns:
-            ScenarioStrategy: The new enum member.
+            ScenarioTechnique: The new enum member.
         """
         obj = object.__new__(cls)
         obj._value_ = value
@@ -104,9 +104,9 @@ class ScenarioStrategy(Enum, metaclass=_DeprecatedEnumMeta):
     @property
     def tags(self) -> set[str]:
         """
-        The tags for this attack strategy.
+        The tags for this attack technique.
 
-        Tags provide a flexible categorization system, allowing strategies
+        Tags provide a flexible categorization system, allowing techniques
         to be classified along multiple dimensions (e.g., by complexity, type, or technique).
 
         Returns:
@@ -124,7 +124,7 @@ class ScenarioStrategy(Enum, metaclass=_DeprecatedEnumMeta):
         scenarios or {"fast", "medium"} for speed-based scenarios).
 
         The base class automatically includes "all" as an aggregate tag that expands
-        to all non-aggregate strategies.
+        to all non-aggregate techniques.
 
         Returns:
             set[str]: Set of tags that represent aggregates.
@@ -132,37 +132,37 @@ class ScenarioStrategy(Enum, metaclass=_DeprecatedEnumMeta):
         return {"all"}
 
     @classmethod
-    def get_strategies_by_tag(cls: type[T], tag: str) -> set[T]:
+    def get_techniques_by_tag(cls: type[T], tag: str) -> set[T]:
         """
-        Get all attack strategies that have a specific tag.
+        Get all attack techniques that have a specific tag.
 
-        This method returns concrete attack strategies (not aggregate markers)
+        This method returns concrete attack techniques (not aggregate markers)
         that include the specified tag.
 
         Args:
             tag (str): The tag to filter by (e.g., "easy", "converter", "multi_turn").
 
         Returns:
-            set[T]: Set of strategies that include the specified tag, excluding
+            set[T]: Set of techniques that include the specified tag, excluding
                     any aggregate markers.
         """
         aggregate_tags = cls.get_aggregate_tags()
-        return {strategy for strategy in cls if tag in strategy.tags and strategy.value not in aggregate_tags}
+        return {technique for technique in cls if tag in technique.tags and technique.value not in aggregate_tags}
 
     @classmethod
-    def get_all_strategies(cls: type[T]) -> list[T]:
+    def get_all_techniques(cls: type[T]) -> list[T]:
         """
-        Get all non-aggregate strategies for this strategy enum.
+        Get all non-aggregate techniques for this technique enum.
 
-        This method returns all concrete attack strategies, excluding aggregate markers
+        This method returns all concrete attack techniques, excluding aggregate markers
         (like ALL, EASY, MODERATE, DIFFICULT) that are used for grouping.
 
         Returns:
-            list[T]: List of all non-aggregate strategies.
+            list[T]: List of all non-aggregate techniques.
 
         Example:
-            >>> # Get all concrete strategies for a strategy enum
-            >>> all_strategies = FoundryStrategy.get_all_strategies()
+            >>> # Get all concrete techniques for a technique enum
+            >>> all_techniques = FoundryTechnique.get_all_techniques()
             >>> # Returns: [Base64, ROT13, Leetspeak, ..., Crescendo]
             >>> # Excludes: ALL, EASY, MODERATE, DIFFICULT
         """
@@ -170,77 +170,77 @@ class ScenarioStrategy(Enum, metaclass=_DeprecatedEnumMeta):
         return [s for s in cls if s.value not in aggregate_tags]
 
     @classmethod
-    def get_aggregate_strategies(cls: type[T]) -> list[T]:
+    def get_aggregate_techniques(cls: type[T]) -> list[T]:
         """
-        Get all aggregate strategies for this strategy enum.
+        Get all aggregate techniques for this technique enum.
 
         This method returns only the aggregate markers (like ALL, EASY, MODERATE, DIFFICULT)
-        that are used to group concrete strategies by tags.
+        that are used to group concrete techniques by tags.
 
         Returns:
-            list[T]: List of all aggregate strategies.
+            list[T]: List of all aggregate techniques.
 
         Example:
-            >>> # Get all aggregate strategies for a strategy enum
-            >>> aggregates = FoundryStrategy.get_aggregate_strategies()
+            >>> # Get all aggregate techniques for a technique enum
+            >>> aggregates = FoundryTechnique.get_aggregate_techniques()
             >>> # Returns: [ALL, EASY, MODERATE, DIFFICULT]
         """
         aggregate_tags = cls.get_aggregate_tags()
         return [s for s in cls if s.value in aggregate_tags]
 
     @classmethod
-    def expand(cls: type[T], strategies: set[T]) -> list[T]:
+    def expand(cls: type[T], techniques: set[T]) -> list[T]:
         """
-        Expand a set of strategies (including aggregates) into an ordered, deduplicated list.
+        Expand a set of techniques (including aggregates) into an ordered, deduplicated list.
 
-        Aggregate markers (like EASY, ALL) are expanded into their constituent concrete strategies.
+        Aggregate markers (like EASY, ALL) are expanded into their constituent concrete techniques.
         The result is sorted by enum definition order for determinism.
 
         Args:
-            strategies (set[T]): Set of strategies, which may include aggregate markers.
+            techniques (set[T]): Set of techniques, which may include aggregate markers.
 
         Returns:
-            list[T]: Ordered list of concrete strategies with aggregates expanded.
+            list[T]: Ordered list of concrete techniques with aggregates expanded.
         """
-        concrete: set[T] = set(strategies)
+        concrete: set[T] = set(techniques)
         aggregate_tags = cls.get_aggregate_tags()
         aggregates_to_expand = {
-            tag for strategy in strategies if strategy.value in aggregate_tags for tag in strategy.tags
+            tag for technique in techniques if technique.value in aggregate_tags for tag in technique.tags
         }
         for aggregate_tag in aggregates_to_expand:
             aggregate_marker = next((s for s in concrete if s.value == aggregate_tag), None)
             if aggregate_marker:
                 concrete.remove(aggregate_marker)
             if aggregate_tag == "all":
-                concrete.update(cls.get_all_strategies())
+                concrete.update(cls.get_all_techniques())
             else:
-                concrete.update(cls.get_strategies_by_tag(aggregate_tag))
+                concrete.update(cls.get_techniques_by_tag(aggregate_tag))
         return [s for s in cls if s in concrete]
 
     @classmethod
-    def resolve(cls: type[T], strategies: Sequence[Any] | None, *, default: T) -> list[T]:
+    def resolve(cls: type[T], techniques: Sequence[Any] | None, *, default: T) -> list[T]:
         """
-        Resolve strategy inputs into a concrete, ordered, deduplicated list.
+        Resolve technique inputs into a concrete, ordered, deduplicated list.
 
-        Handles None (returns expanded default), plain strategies, and aggregate strategies.
+        Handles None (returns expanded default), plain techniques, and aggregate techniques.
         Non-cls items (e.g., FoundryComposite) are silently skipped for
         backward compatibility.
 
         Args:
-            strategies (Sequence[Any] | None): Strategies to resolve. If None or empty,
+            techniques (Sequence[Any] | None): Techniques to resolve. If None or empty,
                 expands the default.
-            default (T): Default aggregate strategy to use when strategies is None or empty.
+            default (T): Default aggregate technique to use when techniques is None or empty.
 
         Returns:
-            list[T]: Ordered, deduplicated list of concrete strategies.
+            list[T]: Ordered, deduplicated list of concrete techniques.
         """
-        if not strategies:
+        if not techniques:
             return cls.expand({default})
 
         result: list[T] = []
         seen: set[T] = set()
         aggregate_tags = cls.get_aggregate_tags()
-        for item in strategies:
+        for item in techniques:
             if not isinstance(item, cls):
                 continue
             if item.value in aggregate_tags:

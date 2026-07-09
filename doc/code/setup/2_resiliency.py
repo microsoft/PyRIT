@@ -120,7 +120,7 @@
 
 # %%
 from pyrit.prompt_target import OpenAIChatTarget
-from pyrit.scenario.foundry import FoundryStrategy, RedTeamAgent
+from pyrit.scenario.foundry import FoundryTechnique, RedTeamAgent
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 from pyrit.setup.initializers import LoadDefaultDatasets
 
@@ -136,7 +136,7 @@ scenario.set_params_from_args(  # type: ignore
         "objective_target": objective_target,
         "max_concurrency": 5,
         "max_retries": 3,
-        "scenario_strategies": [FoundryStrategy.Base64],
+        "scenario_techniques": [FoundryTechnique.Base64],
     }
 )
 await scenario.initialize_async()  # type: ignore
@@ -203,14 +203,14 @@ print(f"Total results: {len(result.attack_results)}")
 # resumed_scenario.set_params_from_args(
 #     args={
 #         "objective_target": objective_target,
-#         "scenario_strategies": [FoundryStrategy.Base64],
+#         "scenario_techniques": [FoundryTechnique.Base64],
 #     }
 # )
 # await resumed_scenario.initialize_async()  # type: ignore
 # result = await resumed_scenario.run_async()  # type: ignore  # Picks up where it left off
 # ```
 #
-# **Note:** The scenario configuration (strategies, target type, etc.) must match the original for resumption to work.
+# **Note:** The scenario configuration (techniques, target type, etc.) must match the original for resumption to work.
 
 # %% [markdown]
 # ### Resume from Partial Completion
