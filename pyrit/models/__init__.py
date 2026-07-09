@@ -11,16 +11,11 @@ CI test ``tests/unit/models/test_import_boundary.py`` enforces this. See
 ``.github/instructions/models.instructions.md`` for the rule.
 
 Identifier types and helpers live in the ``pyrit.models.identifiers``
-sub-package but are re-exported here, so external callers should import them
+sub-package but are re-exported here, so callers should import them
 directly from ``pyrit.models`` (e.g. ``from pyrit.models import
-ComponentIdentifier``). The previous ``pyrit.identifiers`` location is kept as
-a deprecation shim through ``0.16.0``.
+ComponentIdentifier``).
 """
 
-import importlib
-from typing import Any
-
-from pyrit.common.deprecation import print_deprecation_message
 from pyrit.models.conversation_stats import ConversationStats
 from pyrit.models.embeddings import EmbeddingData, EmbeddingResponse, EmbeddingSupport, EmbeddingUsageInformation
 from pyrit.models.harm_definition import HarmDefinition, ScaleDescription, get_all_harm_definitions
@@ -123,7 +118,6 @@ from pyrit.models.target_capabilities import CapabilityName, TargetCapabilities
 
 __all__ = [
     "ALLOWED_CHAT_MESSAGE_ROLES",
-    "AllowedCategories",
     "AtomicAttackEvaluationIdentifier",
     "AtomicAttackIdentifier",
     "AttackIdentifier",
@@ -131,9 +125,6 @@ __all__ = [
     "AttackResult",
     "AttackResultT",
     "AttackOutcome",
-    "AudioPathDataTypeSerializer",
-    "AzureBlobStorageIO",
-    "BinaryPathDataTypeSerializer",
     "ChatMessage",
     "ChatMessagesDataset",
     "ChatMessageRole",
@@ -150,15 +141,11 @@ __all__ = [
     "ConversationStats",
     "ConversationType",
     "construct_response_from_request",
-    "DataTypeSerializer",
-    "data_serializer_factory",
     "display_choices",
-    "DiskStorageIO",
     "EmbeddingData",
     "EmbeddingResponse",
     "EmbeddingSupport",
     "EmbeddingUsageInformation",
-    "ErrorDataTypeSerializer",
     "Evaluate",
     "EvaluationIdentifier",
     "flatten_to_message_pieces",
@@ -171,7 +158,6 @@ __all__ = [
     "Identifiable",
     "IdentifierFilter",
     "IdentifierType",
-    "ImagePathDataTypeSerializer",
     "JSONValue",
     "COMMON_JSON_SCHEMAS",
     "get_common_json_schema",
@@ -218,51 +204,14 @@ __all__ = [
     "SimulatedTargetSystemPromptPaths",
     "snake_case_to_class_name",
     "sort_message_pieces",
-    "StorageIO",
     "StrategyResult",
     "StrategyResultT",
     "TARGET_EVAL_PARAM_FALLBACKS",
     "TARGET_EVAL_PARAMS",
     "TargetCapabilities",
     "TargetIdentifier",
-    "TextDataTypeSerializer",
     "ToolCall",
     "UnvalidatedScore",
     "validate_registry_name",
-    "VideoPathDataTypeSerializer",
     "RetryEvent",
 ]
-
-# Names that moved to ``pyrit.memory.storage``. Served lazily via importlib so that
-# importing ``pyrit.models`` stays import-boundary clean and fires no warning until a
-# moved name is actually accessed. Will be removed in 0.17.0.
-_MOVED_TO_MEMORY_STORAGE: dict[str, str] = {
-    "AllowedCategories": "pyrit.memory.storage.serializers",
-    "AudioPathDataTypeSerializer": "pyrit.memory.storage.serializers",
-    "BinaryPathDataTypeSerializer": "pyrit.memory.storage.serializers",
-    "DataTypeSerializer": "pyrit.memory.storage.serializers",
-    "ErrorDataTypeSerializer": "pyrit.memory.storage.serializers",
-    "ImagePathDataTypeSerializer": "pyrit.memory.storage.serializers",
-    "TextDataTypeSerializer": "pyrit.memory.storage.serializers",
-    "VideoPathDataTypeSerializer": "pyrit.memory.storage.serializers",
-    "data_serializer_factory": "pyrit.memory.storage.serializers",
-    "AzureBlobStorageIO": "pyrit.memory.storage.storage",
-    "DiskStorageIO": "pyrit.memory.storage.storage",
-    "StorageIO": "pyrit.memory.storage.storage",
-}
-
-_warned: set[str] = set()
-
-
-def __getattr__(name: str) -> Any:
-    if name in _MOVED_TO_MEMORY_STORAGE:
-        target_module = _MOVED_TO_MEMORY_STORAGE[name]
-        if name not in _warned:
-            print_deprecation_message(
-                old_item=f"{__name__}.{name}",
-                new_item=f"{target_module}.{name}",
-                removed_in="0.17.0",
-            )
-            _warned.add(name)
-        return getattr(importlib.import_module(target_module), name)
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

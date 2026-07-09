@@ -45,12 +45,6 @@ async def test_fetch_dataset_passes_config(mock_darkbench_data):
         assert call_kwargs["split"] == "train"
 
 
-def test_split_kwarg_emits_deprecation_warning():
-    """Passing the deprecated ``split`` kwarg emits a DeprecationWarning."""
-    with pytest.warns(DeprecationWarning, match="'split' is deprecated"):
-        _DarkBenchDataset(split="train")
-
-
 def test_dataset_name():
     loader = _DarkBenchDataset()
     assert loader.dataset_name == "dark_bench"

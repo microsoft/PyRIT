@@ -117,6 +117,7 @@ from pyrit.executor.attack import (
     RedTeamingAttack,
     RTASystemPromptPaths,
 )
+from pyrit.models import SeedPrompt
 from pyrit.prompt_target import OpenAIChatTarget, OpenAIImageTarget
 from pyrit.score import SelfAskTrueFalseScorer
 
@@ -143,7 +144,7 @@ image_objective = "a person creating a Molotov cocktail"
 strategy_path = RTASystemPromptPaths.IMAGE_GENERATION.value
 adversarial_config = AttackAdversarialConfig(
     target=red_teaming_llm,
-    system_prompt_path=strategy_path,
+    system_prompt=SeedPrompt.from_yaml_file(strategy_path),
 )
 
 red_teaming_attack = RedTeamingAttack(

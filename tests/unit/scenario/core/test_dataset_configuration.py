@@ -328,51 +328,6 @@ class TestFetchDatasetAsync:
         assert isinstance(exc_info.value.__cause__, RuntimeError)
 
 
-class TestLegacyDeprecations:
-    """Legacy getters still work but emit ``DeprecationWarning`` (removed in 0.17.0)."""
-
-    def test_get_seed_groups_warns(self, mock_memory: MagicMock, sample_seed_groups: list[SeedGroup]) -> None:
-        config = DatasetConfiguration(seed_groups=sample_seed_groups)
-        with pytest.warns(DeprecationWarning):
-            result = config.get_seed_groups()
-        assert INLINE_DATASET_NAME in result
-
-    def test_get_all_seed_groups_warns(self, sample_seed_groups: list[SeedGroup]) -> None:
-        config = DatasetConfiguration(seed_groups=sample_seed_groups)
-        with pytest.warns(DeprecationWarning):
-            assert len(config.get_all_seed_groups()) == 3
-
-    def test_get_seed_attack_groups_warns(self, sample_seed_groups: list[SeedGroup]) -> None:
-        config = DatasetConfiguration(seed_groups=sample_seed_groups)
-        with pytest.warns(DeprecationWarning):
-            result = config.get_seed_attack_groups()
-        assert INLINE_DATASET_NAME in result
-
-    def test_get_all_seed_attack_groups_warns(self, sample_seed_groups: list[SeedGroup]) -> None:
-        config = DatasetConfiguration(seed_groups=sample_seed_groups)
-        with pytest.warns(DeprecationWarning):
-            groups = config.get_all_seed_attack_groups()
-        assert len(groups) == 3
-        assert all(isinstance(g, SeedAttackGroup) for g in groups)
-
-    def test_get_default_dataset_names_warns(self) -> None:
-        config = DatasetConfiguration(dataset_names=["d1", "d2"])
-        with pytest.warns(DeprecationWarning):
-            assert config.get_default_dataset_names() == ["d1", "d2"]
-
-    def test_get_all_seeds_warns(self, mock_memory: MagicMock) -> None:
-        mock_memory.get_seeds.return_value = make_objectives("a", "b")
-        config = DatasetConfiguration(dataset_names=["d1"])
-        with pytest.warns(DeprecationWarning):
-            assert len(config.get_all_seeds()) == 2
-
-    def test_get_all_seeds_raises_when_no_dataset_names(self, sample_seed_groups: list[SeedGroup]) -> None:
-        config = DatasetConfiguration(seed_groups=sample_seed_groups)
-        with pytest.warns(DeprecationWarning):
-            with pytest.raises(ValueError, match="No dataset names configured"):
-                config.get_all_seeds()
-
-
 class TestValidators:
     """The standalone validator builders and base ``validate``."""
 
@@ -595,3 +550,51 @@ class TestCompoundDatasetAttackConfiguration:
         )
         groups = await config.get_seed_attack_groups_async()
         assert sorted(g.objective.value for g in groups) == ["a", "b"]
+
+
+class TestDatasetConfigurationFilters:
+    """Filters are threaded into ``get_seeds`` and applied before sampling."""
+
+    async def test_filters_passed_to_get_seeds(self, mock_memory: MagicMock) -> None:
+        mock_memory.get_seeds.return_value = make_objectives("a", "b")
+        config = DatasetAttackConfiguration(dataset_names=["d1"], filters={"harm_categories": ["cyber"]})
+        await config.get_seed_attack_groups_async()
+        mock_memory.get_seeds.assert_called_with(dataset_name="d1", harm_categories=["cyber"])
+
+    async def test_filter_removing_all_seeds_raises_specific_error(self, mock_memory: MagicMock) -> None:
+        def _get_seeds(*, dataset_name, **filters):
+            return [] if filters else make_objectives("a", "b")
+
+        mock_memory.get_seeds.side_effect = _get_seeds
+        config = DatasetAttackConfiguration(
+            dataset_names=["d1"], filters={"harm_categories": ["missing"]}, auto_fetch=False
+        )
+        with pytest.raises(DatasetConstraintError, match="none match the configured filters"):
+            await config.get_seed_attack_groups_async()
+
+    async def test_update_filters_merges(self, mock_memory: MagicMock) -> None:
+        mock_memory.get_seeds.return_value = make_objectives("a")
+        config = DatasetAttackConfiguration(dataset_names=["d1"], filters={"harm_categories": ["a"]})
+        config.update_filters(filters={"authors": ["jones"]})
+        await config.get_seed_attack_groups_async()
+        mock_memory.get_seeds.assert_called_with(dataset_name="d1", harm_categories=["a"], authors=["jones"])
+
+    def test_filters_property_returns_copy(self) -> None:
+        config = DatasetAttackConfiguration(dataset_names=["d1"], filters={"harm_categories": ["a"]})
+        config.filters["authors"] = ["mutated"]
+        assert config.filters == {"harm_categories": ["a"]}
+
+    async def test_per_dataset_threads_filters_to_children(self, mock_memory: MagicMock) -> None:
+        mock_memory.get_seeds.return_value = make_objectives("a")
+        config = CompoundDatasetAttackConfiguration.per_dataset(
+            dataset_names=["d1"], filters={"harm_categories": ["cyber"]}
+        )
+        await config.get_seed_attack_groups_async()
+        mock_memory.get_seeds.assert_called_with(dataset_name="d1", harm_categories=["cyber"])
+
+    async def test_compound_update_filters_propagates_to_children(self, mock_memory: MagicMock) -> None:
+        mock_memory.get_seeds.return_value = make_objectives("a")
+        config = CompoundDatasetAttackConfiguration.per_dataset(dataset_names=["d1"])
+        config.update_filters(filters={"harm_categories": ["cyber"]})
+        await config.get_seed_attack_groups_async()
+        mock_memory.get_seeds.assert_called_with(dataset_name="d1", harm_categories=["cyber"])

@@ -11,7 +11,7 @@ from pyrit.executor.attack import RedTeamingAttack
 from pyrit.models import ComponentIdentifier, SeedAttackGroup, SeedObjective, SeedPrompt
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
-from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration, DatasetConfiguration
+from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
 from pyrit.scenario.scenarios.airt.cyber import Cyber
 from pyrit.score import TrueFalseScorer
 from pyrit.setup.initializers.techniques import (
@@ -133,13 +133,37 @@ class TestCyberBasic:
         strat = _strategy_class()
         assert Cyber()._strategy_class is strat
 
-    def test_get_default_strategy_returns_all(self):
+    def test_get_default_strategy_returns_default(self):
         strat = _strategy_class()
-        assert Cyber()._default_strategy == strat.ALL
+        assert Cyber()._default_strategy == strat.DEFAULT
+
+    def test_default_aggregate_expands_to_red_teaming(self):
+        """DEFAULT must be non-empty and select the single curated technique.
+
+        Guards against wiring the ``default`` aggregate to a tag ``red_teaming`` lacks
+        (e.g. the catalog ``default`` tag), which would silently make DEFAULT empty and
+        collapse the default run to baseline-only.
+        """
+        strat = _strategy_class()
+        assert "default" in strat.get_aggregate_tags()
+        default_members = strat.expand({strat.DEFAULT})
+        assert default_members == [strat("red_teaming")]
+
+    def test_default_matches_all(self):
+        """DEFAULT must expand to exactly the same techniques as ALL.
+
+        Cyber curates a single technique, so its DEFAULT run is a no-op alias of ALL. Asserting
+        equality (not just subset) guards against a future technique landing in ALL but being
+        silently excluded from DEFAULT (or vice versa) once the aggregate wiring changes.
+        """
+        strat = _strategy_class()
+        assert set(strat.expand({strat.DEFAULT})) == set(strat.expand({strat.ALL}))
 
     def test_default_dataset_config_has_malware_dataset(self):
         config = Cyber()._default_dataset_config
-        assert isinstance(config, DatasetConfiguration)
+        # Concrete DatasetAttackConfiguration (not the base) so the scenario's async
+        # get_attack_groups_by_dataset_async() resolve path is available.
+        assert isinstance(config, DatasetAttackConfiguration)
         names = config.dataset_names
         assert "airt_malware" in names
         assert len(names) == 1
@@ -166,15 +190,16 @@ class TestCyberBasic:
         new_callable=AsyncMock,
         return_value={"malware": _make_seed_groups("malware")},
     )
-    async def test_initialization_defaults_to_all_strategy(
+    async def test_initialization_defaults_to_default_strategy(
         self,
         _mock_groups,
         mock_objective_target,
         mock_objective_scorer,
     ):
         scenario = Cyber(objective_scorer=mock_objective_scorer)
-        await scenario.initialize_async(objective_target=mock_objective_target)
-        # ALL expands to red_teaming (the only registered Cyber technique); a
+        scenario.set_params_from_args(args={"objective_target": mock_objective_target})
+        await scenario.initialize_async()
+        # DEFAULT expands to red_teaming (the only registered Cyber technique); a
         # PromptSendingAttack baseline is added separately via the baseline
         # policy, not as a strategy.
         assert len(scenario._scenario_strategies) == 1
@@ -188,8 +213,9 @@ class TestCyberBasic:
             "pyrit.scenario.core.dataset_configuration.DatasetConfiguration._fetch_dataset_async",
             new_callable=AsyncMock,
         ):
+            scenario.set_params_from_args(args={"objective_target": mock_objective_target})
             with pytest.raises(ValueError, match="could not be loaded"):
-                await scenario.initialize_async(objective_target=mock_objective_target)
+                await scenario.initialize_async()
 
     @patch.object(
         DatasetAttackConfiguration,
@@ -205,7 +231,13 @@ class TestCyberBasic:
     ):
         labels = {"test_run": "123"}
         scenario = Cyber(objective_scorer=mock_objective_scorer)
-        await scenario.initialize_async(objective_target=mock_objective_target, memory_labels=labels)
+        scenario.set_params_from_args(
+            args={
+                "objective_target": mock_objective_target,
+                "memory_labels": labels,
+            }
+        )
+        await scenario.initialize_async()
         assert scenario._memory_labels == labels
 
     @patch.object(
@@ -221,7 +253,13 @@ class TestCyberBasic:
         mock_objective_scorer,
     ):
         scenario = Cyber(objective_scorer=mock_objective_scorer)
-        await scenario.initialize_async(objective_target=mock_objective_target, max_concurrency=20)
+        scenario.set_params_from_args(
+            args={
+                "objective_target": mock_objective_target,
+                "max_concurrency": 20,
+            }
+        )
+        await scenario.initialize_async()
         assert scenario._max_concurrency == 20
 
 
@@ -254,7 +292,8 @@ class TestCyberAttackGeneration:
             init_kwargs = {"objective_target": mock_objective_target, "include_baseline": False}
             if strategies:
                 init_kwargs["scenario_strategies"] = strategies
-            await scenario.initialize_async(**init_kwargs)
+            scenario.set_params_from_args(args=init_kwargs)
+            await scenario.initialize_async()
             return scenario._atomic_attacks
 
     async def test_all_strategy_produces_red_teaming(self, mock_objective_target, mock_objective_scorer):
@@ -276,7 +315,7 @@ class TestCyberAttackGeneration:
         assert technique_classes == {RedTeamingAttack}
 
     async def test_default_strategy_produces_red_teaming(self, mock_objective_target, mock_objective_scorer):
-        """Default (ALL) should produce RedTeaming. PromptSendingAttack baseline is
+        """Default (DEFAULT) should produce RedTeaming. PromptSendingAttack baseline is
         prepended automatically by BaselineAttackPolicy.Enabled when
         include_baseline=True (the helper here uses include_baseline=False)."""
         attacks = await self._init_and_get_attacks(

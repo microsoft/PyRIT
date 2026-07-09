@@ -1019,7 +1019,8 @@ class TestAddMessage:
             await attack_service.add_message_async(attack_result_id="test-id", request=request)
 
             call_kwargs = mock_normalizer.send_prompt_async.call_args[1]
-            assert call_kwargs["labels"] == {"env": "staging"}
+            sent_message = call_kwargs["message"]
+            assert all(piece.labels == {"env": "staging"} for piece in sent_message.message_pieces)
 
     async def test_add_message_raises_when_send_without_registry_name(self, attack_service, mock_memory) -> None:
         """Test that add_message raises ValueError when send=True but target_registry_name missing."""

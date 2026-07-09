@@ -83,6 +83,7 @@ from pyrit.executor.attack import (
     RedTeamingAttack,
     RTASystemPromptPaths,
 )
+from pyrit.models import SeedPrompt
 from pyrit.score import SelfAskTrueFalseScorer, TrueFalseQuestion
 
 scoring_config = AttackScoringConfig(
@@ -96,7 +97,7 @@ attack = RedTeamingAttack(
     objective_target=objective_target,
     attack_adversarial_config=AttackAdversarialConfig(
         target=adversarial_chat,
-        system_prompt_path=RTASystemPromptPaths.TEXT_GENERATION.value,
+        system_prompt=SeedPrompt.from_yaml_file(RTASystemPromptPaths.TEXT_GENERATION.value),
     ),
     attack_scoring_config=scoring_config,
     max_turns=2,

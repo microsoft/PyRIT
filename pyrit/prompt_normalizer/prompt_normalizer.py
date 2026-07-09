@@ -12,7 +12,6 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from pyrit.common.deprecation import print_deprecation_message
 from pyrit.exceptions import (
     ComponentRole,
     EmptyResponseException,
@@ -72,8 +71,6 @@ class PromptNormalizer:
         conversation_id: str | None = None,
         request_converter_configurations: list[PromptConverterConfiguration] | None = None,
         response_converter_configurations: list[PromptConverterConfiguration] | None = None,
-        labels: dict[str, str] | None = None,
-        attack_identifier: ComponentIdentifier | None = None,
     ) -> Message:
         """
         Send a single request to a target.
@@ -86,10 +83,6 @@ class PromptNormalizer:
                 converting the request. Defaults to an empty list.
             response_converter_configurations (list[PromptConverterConfiguration], optional): Configurations for
                 converting the response. Defaults to an empty list.
-            labels (dict[str, str] | None, optional): Labels associated with the request. Defaults to None.
-                Deprecated: This parameter will be removed in a release 0.16.0.
-            attack_identifier (ComponentIdentifier | None, optional): Identifier for the attack. Defaults to
-                None. Deprecated: this parameter is ignored and will be removed in release 0.17.0.
 
         Returns:
             Message: The response received from the target.
@@ -98,25 +91,13 @@ class PromptNormalizer:
             Exception: If an error occurs during the request processing.
             ValueError: If the message pieces are not part of the same sequence.
         """
-        if labels is not None:
-            print_deprecation_message(
-                old_item="send_prompt_async(..., labels=...)",
-                new_item="send_prompt_async(...)",
-                removed_in="0.16.0",
-            )
-        if attack_identifier is not None:
-            print_deprecation_message(
-                old_item="send_prompt_async(..., attack_identifier=...)",
-                new_item="send_prompt_async(...)",
-                removed_in="0.17.0",
-            )
         # Validates that the MessagePieces in the Message are part of the same sequence
         request_converter_configurations = request_converter_configurations or []
         response_converter_configurations = response_converter_configurations or []
         if len({piece.sequence for piece in message.message_pieces}) > 1:
             raise ValueError("All MessagePieces in the Message must have the same sequence.")
 
-        # Prepare the request by updating conversation ID, labels, and attack identifier
+        # Prepare the request by updating conversation ID
         request = copy.deepcopy(message)
         conversation_id = conversation_id if conversation_id else str(uuid4())
         target_identifier = target.get_identifier()
@@ -126,8 +107,6 @@ class PromptNormalizer:
 
         for piece in request.message_pieces:
             piece.conversation_id = conversation_id
-            if labels:
-                piece.labels = labels  # deprecated
 
         # Apply request converters
         await self.convert_values_async(converter_configurations=request_converter_configurations, message=request)
@@ -205,7 +184,6 @@ class PromptNormalizer:
         requests: list[NormalizerRequest],
         target: PromptTarget,
         labels: dict[str, str] | None = None,
-        attack_identifier: ComponentIdentifier | None = None,
         batch_size: int = 10,
     ) -> list[Message]:
         """
@@ -214,16 +192,19 @@ class PromptNormalizer:
         Args:
             requests (list[NormalizerRequest]): A list of NormalizerRequest objects to be sent.
             target (PromptTarget): The target to which the prompts are sent.
-            labels (dict[str, str] | None, optional): A dictionary of labels to be included with the request.
-                Defaults to None.
-            attack_identifier (ComponentIdentifier | None, optional): The attack identifier.
-                Defaults to None. Deprecated: this parameter is ignored and will be removed in release 0.17.0.
+            labels (dict[str, str] | None, optional): A dictionary of labels to attach to each request's
+                message pieces. Defaults to None.
             batch_size (int, optional): The number of prompts to include in each batch. Defaults to 10.
 
         Returns:
             list[Message]: A list of Message objects representing the responses
                 received for each prompt.
         """
+        if labels:
+            for request in requests:
+                for piece in request.message.message_pieces:
+                    piece.labels = labels
+
         batch_items: list[list[Any]] = [
             [request.message for request in requests],
             [request.request_converter_configurations for request in requests],
@@ -245,8 +226,6 @@ class PromptNormalizer:
             task_func=self.send_prompt_async,
             task_arguments=batch_item_keys,
             target=target,
-            labels=labels,
-            attack_identifier=attack_identifier,
         )
 
     async def convert_values_async(
@@ -363,7 +342,7 @@ class PromptNormalizer:
                 converted_value_data_type="audio_path",
             )
             message = Message(message_pieces=[piece])
-            await self.convert_values(
+            await self.convert_values_async(
                 converter_configurations=converter_configurations,
                 message=message,
             )
@@ -408,7 +387,6 @@ class PromptNormalizer:
         conversation_id: str,
         should_convert: bool = True,
         converter_configurations: list[PromptConverterConfiguration] | None = None,
-        attack_identifier: ComponentIdentifier | None = None,
         prepended_conversation: list[Message] | None = None,
         target_identifier: ComponentIdentifier | None = None,
     ) -> list[Message] | None:
@@ -420,8 +398,6 @@ class PromptNormalizer:
             should_convert (bool): Whether to convert the prepended conversation
             converter_configurations (list[PromptConverterConfiguration] | None): Configurations for converting the
                 request
-            attack_identifier (ComponentIdentifier | None): Identifier for the attack.
-                Deprecated: this parameter is ignored and will be removed in release 0.17.0.
             prepended_conversation (list[Message] | None): The conversation to prepend
             target_identifier (ComponentIdentifier | None): The target the conversation is held
                 with, if known. Recorded once per conversation.
@@ -431,13 +407,6 @@ class PromptNormalizer:
         """
         if not prepended_conversation:
             return None
-
-        if attack_identifier is not None:
-            print_deprecation_message(
-                old_item="add_prepended_conversation_to_memory_async(..., attack_identifier=...)",
-                new_item="add_prepended_conversation_to_memory_async(...)",
-                removed_in="0.17.0",
-            )
 
         # Create a deep copy of the prepended conversation to avoid modifying the original
         prepended_conversation = copy.deepcopy(prepended_conversation)
@@ -458,48 +427,6 @@ class PromptNormalizer:
             self.memory.add_message_to_memory(request=request)
 
         return prepended_conversation
-
-    async def convert_values(  # pyrit-async-suffix-exempt
-        self,
-        converter_configurations: list[PromptConverterConfiguration],
-        message: Message,
-    ) -> None:
-        """Use ``convert_values_async`` instead; this is a deprecated alias."""
-        print_deprecation_message(
-            old_item="pyrit.prompt_normalizer.PromptNormalizer.convert_values",
-            new_item="pyrit.prompt_normalizer.PromptNormalizer.convert_values_async",
-            removed_in="0.16.0",
-        )
-        await self.convert_values_async(converter_configurations=converter_configurations, message=message)
-
-    async def add_prepended_conversation_to_memory(  # pyrit-async-suffix-exempt
-        self,
-        conversation_id: str,
-        should_convert: bool = True,
-        converter_configurations: list[PromptConverterConfiguration] | None = None,
-        attack_identifier: ComponentIdentifier | None = None,
-        prepended_conversation: list[Message] | None = None,
-        target_identifier: ComponentIdentifier | None = None,
-    ) -> list[Message] | None:
-        """
-        Use ``add_prepended_conversation_to_memory_async`` instead; this is a deprecated alias.
-
-        Returns:
-            list[Message] | None: Same as ``add_prepended_conversation_to_memory_async``.
-        """
-        print_deprecation_message(
-            old_item="pyrit.prompt_normalizer.PromptNormalizer.add_prepended_conversation_to_memory",
-            new_item="pyrit.prompt_normalizer.PromptNormalizer.add_prepended_conversation_to_memory_async",
-            removed_in="0.16.0",
-        )
-        return await self.add_prepended_conversation_to_memory_async(
-            conversation_id=conversation_id,
-            should_convert=should_convert,
-            converter_configurations=converter_configurations,
-            attack_identifier=attack_identifier,
-            prepended_conversation=prepended_conversation,
-            target_identifier=target_identifier,
-        )
 
 
 def _write_pcm_to_temp_wav(

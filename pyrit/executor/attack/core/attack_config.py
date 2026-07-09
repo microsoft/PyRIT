@@ -5,7 +5,6 @@ import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from pyrit.common.deprecation import print_deprecation_message
 from pyrit.executor.core import StrategyConverterConfig
 from pyrit.models import SeedPrompt
 from pyrit.prompt_target import PromptTarget
@@ -31,31 +30,13 @@ class AttackAdversarialConfig:
     # Adversarial chat target for the attack
     target: PromptTarget
 
-    # Path to the YAML file containing the system prompt for the adversarial chat target.
-    # Deprecated: use ``system_prompt`` (an inline string or SeedPrompt) instead.
-    system_prompt_path: str | Path | None = None
-
     # Seed prompt for the adversarial chat target (supports {{ objective }} template variable).
     # May be None for strategies that do not use a first-message seed prompt.
     seed_prompt: str | SeedPrompt | None = DEFAULT_ADVERSARIAL_SEED_PROMPT
 
     # System prompt for the adversarial chat target, as an inline Jinja template string or a
-    # SeedPrompt. Takes precedence over ``system_prompt_path`` when both are provided.
+    # SeedPrompt.
     system_prompt: str | SeedPrompt | None = None
-
-    def __post_init__(self) -> None:
-        """Emit a deprecation warning when the legacy ``system_prompt_path`` is used."""
-        if self.system_prompt_path is not None:
-            print_deprecation_message(
-                old_item="AttackAdversarialConfig.system_prompt_path",
-                new_item="AttackAdversarialConfig.system_prompt",
-                removed_in="0.17.0",
-            )
-            if self.system_prompt is not None:
-                logger.warning(
-                    "Both 'system_prompt' and 'system_prompt_path' are set on AttackAdversarialConfig; "
-                    "'system_prompt' takes precedence and 'system_prompt_path' is ignored."
-                )
 
 
 def resolve_adversarial_system_prompt(
@@ -71,8 +52,7 @@ def resolve_adversarial_system_prompt(
     Resolution order:
 
     1. ``config.system_prompt`` (inline string or SeedPrompt), if provided.
-    2. ``config.system_prompt_path`` (deprecated), if provided.
-    3. ``default_system_prompt_path``.
+    2. ``default_system_prompt_path``.
 
     Inline strings are trusted: they are wrapped in a Jinja ``SeedPrompt`` whose declared
     parameters are set to ``required_parameters``. Explicitly provided ``SeedPrompt`` objects
@@ -109,7 +89,7 @@ def resolve_adversarial_system_prompt(
             parameters=list(required_parameters),
         )
 
-    template_path = config.system_prompt_path or default_system_prompt_path
+    template_path = default_system_prompt_path
     return SeedPrompt.from_yaml_with_required_parameters(
         template_path=template_path,
         required_parameters=required_parameters,

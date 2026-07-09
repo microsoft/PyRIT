@@ -24,13 +24,14 @@
 # ## Declaring a parameter
 #
 # `Parameter` is the unified declaration shared by initializers and scenarios.
-# To declare one on a scenario, override the `supported_parameters()` classmethod
-# and return a list. Here's the actual declaration on
-# [`Scam`](../../../pyrit/scenario/scenarios/airt/scam.py):
+# To declare one on a scenario, override the `additional_parameters()` classmethod
+# and return a list of just your extras — the base composes these with the common
+# run inputs, so you never repeat (or accidentally drop) them. Here's the actual
+# declaration on [`Scam`](../../../pyrit/scenario/scenarios/airt/scam.py):
 #
 # ```python
 # @classmethod
-# def supported_parameters(cls) -> list[Parameter]:
+# def additional_parameters(cls) -> list[Parameter]:
 #     """Declare custom parameters this scenario accepts from the CLI / config file."""
 #     return [
 #         Parameter(
@@ -42,9 +43,10 @@
 #     ]
 # ```
 #
-# At runtime the framework calls `supported_parameters()` to inspect declarations.
-# It's a classmethod, so this works without instantiating the scenario (which
-# would wire up memory and scorers):
+# At runtime the framework calls `supported_parameters()` to inspect declarations
+# (the common inputs plus your `additional_parameters()`). It's a classmethod, so
+# this works without instantiating the scenario (which would wire up memory and
+# scorers):
 
 # %%
 from pyrit.scenario.airt.scam import Scam
@@ -59,7 +61,7 @@ for param in Scam.supported_parameters():
 
 # %% [markdown]
 # Each declaration lives inside the scenario class body, in the
-# `supported_parameters()` classmethod. End users don't construct `Parameter`
+# `additional_parameters()` classmethod. End users don't construct `Parameter`
 # objects themselves; they pass values via CLI flags or YAML config.
 #
 # Each `Parameter` carries:
@@ -78,7 +80,7 @@ from typing import Literal
 
 from pyrit.models import Parameter
 
-# What a scenario author would return from supported_parameters():
+# What a scenario author would return from additional_parameters():
 example_declarations = [
     # Scalar with no default — author must guard against None at run time
     Parameter(name="objective", description="Goal the attack pursues", param_type=str),

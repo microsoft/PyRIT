@@ -239,7 +239,9 @@ async def test_scorer_remove_markdown_json_called(good_json):
 
     scorer = MockScorer()
 
-    with patch("pyrit.score.scorer.remove_markdown_json", wraps=remove_markdown_json) as mock_remove_markdown_json:
+    with patch(
+        "pyrit.score.response_handler.remove_markdown_json", wraps=remove_markdown_json
+    ) as mock_remove_markdown_json:
         await scorer._score_value_with_llm_async(
             prompt_target=chat_target,
             system_prompt="system_prompt",

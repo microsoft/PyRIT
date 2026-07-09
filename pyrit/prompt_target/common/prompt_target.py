@@ -5,7 +5,6 @@ import abc
 import logging
 from typing import Any, ClassVar, Literal, final
 
-from pyrit.common.deprecation import print_deprecation_message
 from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import ComponentIdentifier, Conversation, Identifiable, Message, MessagePiece, TargetIdentifier
 from pyrit.prompt_target.common.json_response_config import _JsonResponseConfig
@@ -75,7 +74,7 @@ class PromptTarget(Identifiable):
 
         Raises:
             TypeError: If the subclass ``__init__`` accepts positional parameters
-                after ``self`` and is not grandfathered via ``_brick_legacy_init``.
+                after ``self``.
         """
         super().__init_subclass__(**kwargs)
         # Local import to avoid a circular dependency at package init time.
@@ -83,13 +82,9 @@ class PromptTarget(Identifiable):
 
         enforce_keyword_only_init(cls, base_name="PromptTarget")
 
-    # TODO: ``PromptTarget.__init__`` itself accepts positional parameters, which
-    # violates the keyword-only contract enforced by ``__init_subclass__`` on
-    # subclasses. The hook only runs for subclasses, so the base class non-
-    # compliance is tolerated during the warn-first phase. Reshape this
-    # signature (insert ``*`` after ``self``) in 0.16.0 as a BREAKING CHANGE.
     def __init__(
         self,
+        *,
         verbose: bool = False,
         max_requests_per_minute: int | None = None,
         endpoint: str = "",
@@ -311,8 +306,6 @@ class PromptTarget(Identifiable):
         *,
         system_prompt: str,
         conversation_id: str,
-        attack_identifier: ComponentIdentifier | None = None,
-        labels: dict[str, str] | None = None,  # deprecated
     ) -> None:
         """
         Inject a system prompt into memory for the given conversation.
@@ -333,28 +326,11 @@ class PromptTarget(Identifiable):
         Args:
             system_prompt (str): The system prompt text to set.
             conversation_id (str): The conversation id to attach the prompt to.
-            attack_identifier (ComponentIdentifier | None): Optional attack identifier.
-                Deprecated: this parameter is ignored and will be removed in release 0.17.0.
-            labels (dict[str, str] | None): Optional labels.
 
         Raises:
             ValueError: If the target does not support multi-turn or editable history.
             RuntimeError: If the conversation already has messages.
         """
-        if labels is not None:
-            print_deprecation_message(
-                old_item="set_system_prompt(..., labels=...)",
-                new_item="set_system_prompt(...)",
-                removed_in="0.16.0",
-            )
-
-        if attack_identifier is not None:
-            print_deprecation_message(
-                old_item="set_system_prompt(..., attack_identifier=...)",
-                new_item="set_system_prompt(...)",
-                removed_in="0.17.0",
-            )
-
         if not self.capabilities.supports_multi_turn or not self.capabilities.supports_editable_history:
             raise ValueError(
                 f"Target {type(self).__name__} does not support setting a system prompt. "
@@ -375,7 +351,6 @@ class PromptTarget(Identifiable):
                 conversation_id=conversation_id,
                 original_value=system_prompt,
                 converted_value=system_prompt,
-                labels=labels or {},
             ).to_message(),
         )
 

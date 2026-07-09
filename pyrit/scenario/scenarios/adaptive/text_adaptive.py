@@ -129,7 +129,7 @@ class TextAdaptive(AdaptiveScenario):
         return CompoundDatasetAttackConfiguration.per_dataset(dataset_names=cls.required_datasets(), max_dataset_size=4)
 
     @classmethod
-    def supported_parameters(cls) -> list[Parameter]:
+    def additional_parameters(cls) -> list[Parameter]:
         """
         Declare custom parameters this scenario accepts from the CLI / config file.
 

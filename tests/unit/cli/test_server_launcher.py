@@ -5,6 +5,7 @@
 Unit tests for pyrit.cli._server_launcher.ServerLauncher.
 """
 
+import subprocess
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -83,6 +84,29 @@ async def test_start_async_spawns_subprocess_and_waits_for_health():
     assert "/tmp/foo.yaml" in cmd or "\\tmp\\foo.yaml" in cmd
     assert "--log-level" in cmd
     assert "INFO" in cmd
+
+
+async def test_start_async_redirects_child_stdio_to_log_file():
+    # A detached backend must not inherit the parent's stdout/stderr, otherwise a
+    # caller capturing our output (piped shell, Jupyter `!`, CI) blocks forever.
+    launcher = ServerLauncher()
+    fake_proc = MagicMock()
+    fake_proc.pid = 4321
+    fake_proc.poll.return_value = None
+    probe = AsyncMock(side_effect=[False, True])
+
+    with (
+        patch.object(ServerLauncher, "probe_health_async", new=probe),
+        patch("subprocess.Popen", return_value=fake_proc) as popen_mock,
+        patch("asyncio.sleep", new=AsyncMock(return_value=None)),
+    ):
+        await launcher.start_async(host="localhost", port=8001, startup_timeout=5)
+
+    kwargs = popen_mock.call_args.kwargs
+    # stdout is redirected to a real file handle (not None/inherited)
+    assert kwargs["stdout"] is not None
+    assert kwargs["stderr"] is subprocess.STDOUT
+    assert launcher._log_path is not None
 
 
 async def test_start_async_raises_when_process_crashes_during_startup():

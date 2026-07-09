@@ -13,7 +13,7 @@ from pyrit.exceptions.exception_classes import (
     EmptyResponseException,
     RateLimitException,
 )
-from pyrit.models import Message, MessagePiece
+from pyrit.models import Message, MessagePiece, flatten_to_message_pieces
 from pyrit.prompt_target import OpenAIImageTarget
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
@@ -56,7 +56,7 @@ def image_response_json() -> dict:
 @pytest.fixture
 def sample_conversations() -> MutableSequence[MessagePiece]:
     conversations = get_sample_conversations()
-    return Message.flatten_to_message_pieces(conversations)
+    return flatten_to_message_pieces(conversations)
 
 
 def test_initialization_with_required_parameters(image_target: OpenAIImageTarget):

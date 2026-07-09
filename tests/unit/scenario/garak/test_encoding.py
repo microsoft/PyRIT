@@ -139,8 +139,9 @@ class TestEncodingInitialization:
 
         with patch.object(EncodingDatasetConfiguration, "_fetch_dataset_async", new_callable=AsyncMock):
             # Error should occur during initialize_async when _get_atomic_attacks_async resolves seed prompts
+            scenario.set_params_from_args(args={"objective_target": mock_objective_target})
             with pytest.raises(DatasetConstraintError, match="could not be loaded"):
-                await scenario.initialize_async(objective_target=mock_objective_target)
+                await scenario.initialize_async()
 
     def test_init_with_memory_labels(self, mock_objective_target, mock_objective_scorer, mock_memory_seeds):
         """Test initialization with memory labels."""
@@ -196,7 +197,13 @@ class TestEncodingInitialization:
                 objective_scorer=mock_objective_scorer,
             )
 
-            await scenario.initialize_async(objective_target=mock_objective_target, dataset_config=mock_dataset_config)
+            scenario.set_params_from_args(
+                args={
+                    "objective_target": mock_objective_target,
+                    "dataset_config": mock_dataset_config,
+                }
+            )
+            await scenario.initialize_async()
 
             # By default, EncodingStrategy.ALL is used, which expands to all encoding strategies
             assert len(scenario._scenario_strategies) > 0
@@ -226,7 +233,13 @@ class TestEncodingAtomicAttacks:
                 objective_scorer=mock_objective_scorer,
             )
 
-            await scenario.initialize_async(objective_target=mock_objective_target, dataset_config=mock_dataset_config)
+            scenario.set_params_from_args(
+                args={
+                    "objective_target": mock_objective_target,
+                    "dataset_config": mock_dataset_config,
+                }
+            )
+            await scenario.initialize_async()
             atomic_attacks = scenario._atomic_attacks
 
             # Should return multiple atomic attacks (one for each encoding type)
@@ -249,7 +262,13 @@ class TestEncodingAtomicAttacks:
                 objective_scorer=mock_objective_scorer,
             )
 
-            await scenario.initialize_async(objective_target=mock_objective_target, dataset_config=mock_dataset_config)
+            scenario.set_params_from_args(
+                args={
+                    "objective_target": mock_objective_target,
+                    "dataset_config": mock_dataset_config,
+                }
+            )
+            await scenario.initialize_async()
             attack_runs = scenario._get_converter_attacks(seed_groups=mock_seed_attack_groups)
 
             # Should have multiple attack runs for different encodings
@@ -273,7 +292,13 @@ class TestEncodingAtomicAttacks:
                 objective_scorer=mock_objective_scorer,
             )
 
-            await scenario.initialize_async(objective_target=mock_objective_target, dataset_config=mock_dataset_config)
+            scenario.set_params_from_args(
+                args={
+                    "objective_target": mock_objective_target,
+                    "dataset_config": mock_dataset_config,
+                }
+            )
+            await scenario.initialize_async()
             attack_runs = scenario._get_prompt_attacks(
                 converters=[Base64Converter()], encoding_name="Base64", seed_groups=mock_seed_attack_groups
             )
@@ -307,7 +332,13 @@ class TestEncodingAtomicAttacks:
                 objective_scorer=mock_objective_scorer,
             )
 
-            await scenario.initialize_async(objective_target=mock_objective_target, dataset_config=mock_dataset_config)
+            scenario.set_params_from_args(
+                args={
+                    "objective_target": mock_objective_target,
+                    "dataset_config": mock_dataset_config,
+                }
+            )
+            await scenario.initialize_async()
             attack_runs = scenario._get_prompt_attacks(
                 converters=[Base64Converter()], encoding_name="Base64", seed_groups=mock_seed_attack_groups
             )
@@ -343,7 +374,13 @@ class TestEncodingExecution:
                 objective_scorer=mock_objective_scorer,
             )
 
-            await scenario.initialize_async(objective_target=mock_objective_target, dataset_config=mock_dataset_config)
+            scenario.set_params_from_args(
+                args={
+                    "objective_target": mock_objective_target,
+                    "dataset_config": mock_dataset_config,
+                }
+            )
+            await scenario.initialize_async()
 
             # Verify initialization creates atomic attacks
             assert scenario.atomic_attack_count > 0
@@ -480,12 +517,15 @@ class TestEncodingBaselineUniformity:
             side_effect=[first_sample, second_sample],
         ) as mock_sample:
             scenario = Encoding(objective_scorer=mock_objective_scorer)
-            await scenario.initialize_async(
-                objective_target=mock_objective_target,
-                scenario_strategies=[EncodingStrategy.ALL],
-                dataset_config=config,
-                include_baseline=True,
+            scenario.set_params_from_args(
+                args={
+                    "objective_target": mock_objective_target,
+                    "scenario_strategies": [EncodingStrategy.ALL],
+                    "dataset_config": config,
+                    "include_baseline": True,
+                }
             )
+            await scenario.initialize_async()
 
         assert mock_sample.call_count == 1
         assert scenario._atomic_attacks[0].atomic_attack_name == "baseline"

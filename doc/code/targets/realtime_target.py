@@ -126,7 +126,7 @@ strategy_path = RTASystemPromptPaths.TEXT_GENERATION.value
 adversarial_chat = OpenAIChatTarget()
 adversarial_config = AttackAdversarialConfig(
     target=adversarial_chat,
-    system_prompt_path=strategy_path,
+    system_prompt=SeedPrompt.from_yaml_file(strategy_path),
 )
 
 scorer = SelfAskTrueFalseScorer(

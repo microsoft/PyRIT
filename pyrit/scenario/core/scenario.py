@@ -15,7 +15,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar, final
 
 try:
     # Built-in on Python 3.11+. Fall back to the ``exceptiongroup`` backport on 3.10
@@ -26,7 +26,7 @@ except ImportError:  # pragma: no cover - exercised only on 3.10
 
 from tqdm.auto import tqdm
 
-from pyrit.common import REQUIRED_VALUE, apply_defaults
+from pyrit.common import get_global_default_values
 from pyrit.common.utils import to_sha256
 from pyrit.executor.attack import AttackExecutor
 from pyrit.memory import CentralMemory
@@ -40,11 +40,11 @@ from pyrit.models import (
     ScenarioRunState,
     SeedAttackGroup,
 )
-from pyrit.models.parameter import Parameter
+from pyrit.models.parameter import ComponentType, Parameter, RegistryReference
 from pyrit.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_requirements import TargetRequirements
 from pyrit.registry import ScorerRegistry
-from pyrit.registry.resolution import resolve_declared_params
+from pyrit.registry.resolution import resolve_declared_params, resolve_reference_value
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
 from pyrit.scenario.core.matrix_atomic_attack_builder import build_baseline_atomic_attack
@@ -231,6 +231,10 @@ class Scenario(ABC):
         # Declared via supported_parameters(); resolved/populated by the registry
         # helper (pyrit.registry.resolution). Subclasses read it in _build_atomic_attacks_async.
         self.params: dict[str, Any] = {}
+        # True once the param bag has been resolved (declared defaults materialized,
+        # values coerced) by set_params_from_args. initialize_async resolves on demand
+        # only when a programmatic caller skipped it, so resolution happens exactly once.
+        self._params_resolved: bool = False
 
         # Resolved effective baseline inclusion for the current run. Set in initialize_async
         # before _build_atomic_attacks_async is awaited so overrides can read it.
@@ -247,21 +251,128 @@ class Scenario(ABC):
         return len(self._atomic_attacks)
 
     @classmethod
+    def _common_scenario_parameters(cls) -> list[Parameter]:
+        """
+        Declare the run-resolved inputs every scenario accepts, once on the base.
+
+        These populate ``self.params`` (via ``set_params_from_args``) and are read by
+        ``initialize_async``. ``objective_target`` is a registry reference (resolved by
+        name or supplied as an instance); the structured run inputs are ``opaque`` (live
+        objects passed by identity — never coerced or copied); the scalars coerce normally.
+
+        Subclasses that need to add their own parameters override ``additional_parameters``;
+        those that need to remove or replace a common input override ``supported_parameters``
+        and compose against this list with ``super()``:
+
+        - **Add:** override ``additional_parameters`` and return ``[Parameter(...), ...]``
+        - **Remove:** ``return [p for p in super().supported_parameters() if p.name != "dataset_config"]``
+
+        Dropping a common input is not silent: ``set_params_from_args`` rejects any value
+        supplied for an undeclared parameter, so the registry/CLI/programmatic path fails
+        loudly the moment something tries to set it.
+
+        Returns:
+            list[Parameter]: The common run-input parameters.
+        """
+        return [
+            Parameter(
+                name="objective_target",
+                description="Target system under attack: a registered target name or a PromptTarget instance.",
+                reference=RegistryReference(component_type=ComponentType.TARGET),
+            ),
+            Parameter(
+                name="scenario_strategies",
+                description="Strategies to execute; defaults to the scenario's default aggregate when omitted.",
+                opaque=True,
+            ),
+            Parameter(
+                name="strategy_converters",
+                description="Mapping of concrete technique name to extra request converters to append.",
+                opaque=True,
+            ),
+            Parameter(
+                name="dataset_config",
+                description="Dataset source configuration; defaults to the scenario's default when omitted.",
+                opaque=True,
+            ),
+            Parameter(
+                name="memory_labels",
+                description="Additional labels applied to every attack run in the scenario.",
+                opaque=True,
+            ),
+            Parameter(
+                name="max_concurrency",
+                description="Maximum number of concurrent units of work for the scenario.",
+                param_type=int,
+                default=4,
+            ),
+            Parameter(
+                name="max_retries",
+                description="Maximum number of automatic retries if the scenario raises an exception.",
+                param_type=int,
+                default=0,
+            ),
+            Parameter(
+                name="include_baseline",
+                description="Whether to prepend a baseline atomic attack; None defers to BASELINE_ATTACK_POLICY.",
+                param_type=bool,
+            ),
+        ]
+
+    @classmethod
+    def _common_scenario_parameter_names(cls) -> frozenset[str]:
+        """
+        Return the names of the framework common parameters.
+
+        These are the run inputs the base declares for every scenario (target,
+        strategies, dataset config, concurrency, etc.). They are captured in the
+        scenario identity through dedicated fields (objective target, techniques,
+        datasets) rather than the free-form params dict, and callers use this set
+        to separate framework inputs from a scenario's own custom parameters.
+
+        Returns:
+            frozenset[str]: The common parameter names.
+        """
+        return frozenset(p.name for p in Scenario._common_scenario_parameters())
+
+    @classmethod
+    def additional_parameters(cls) -> list[Parameter]:
+        """
+        Declare the scenario-specific parameters this scenario accepts, beyond the common
+        run inputs.
+
+        This is the extension point for the common case: override it to **add** parameters
+        without repeating the common inputs. The base ``supported_parameters`` composes
+        ``_common_scenario_parameters() + additional_parameters()``, so overrides never need
+        to call ``super()`` or risk dropping a common input. To **remove or replace** a common
+        input instead, override ``supported_parameters`` directly.
+
+        Returns:
+            list[Parameter]: The scenario-specific parameters (default: none).
+        """
+        return []
+
+    @classmethod
     def supported_parameters(cls) -> list[Parameter]:
         """
-        Override to declare custom parameters this scenario accepts.
+        Declare the parameters this scenario accepts, resolved into ``self.params`` before
+        ``initialize_async()`` runs. The base returns the common run inputs (see
+        ``_common_scenario_parameters``) plus whatever ``additional_parameters`` declares.
 
-        Declared parameters flow from CLI/config through ``set_params_from_args``
-        into ``self.params`` before ``initialize_async()`` runs. Implemented as
-        a classmethod so ``--list-scenarios`` can introspect without instantiating.
+        To **add** scenario-specific parameters, override ``additional_parameters`` (the
+        common case). Override *this* method only to **remove or replace** a common input,
+        composing against ``super().supported_parameters()``.
+
+        Implemented as a classmethod so ``--list-scenarios`` can introspect without
+        instantiating.
 
         Note: ``PyRITInitializer.supported_parameters`` is an instance ``@property``;
         this asymmetry is intentional pending a future alignment.
 
         Returns:
-            list[Parameter]: Declared parameters (default: empty list).
+            list[Parameter]: Declared parameters (default: common run inputs + additional).
         """
-        return []
+        return cls._common_scenario_parameters() + cls.additional_parameters()
 
     def _get_default_objective_scorer(self) -> TrueFalseScorer:
         # Deferred import to avoid circular dependency.
@@ -350,22 +461,73 @@ class Scenario(ABC):
             raw_args=args,
             owner=f"Scenario '{type(self).__name__}'",
         )
+        self._params_resolved = True
 
-    @apply_defaults
-    async def initialize_async(
-        self,
-        *,
-        objective_target: PromptTarget = REQUIRED_VALUE,  # type: ignore[ty:invalid-parameter-default]
-        scenario_strategies: Sequence[ScenarioStrategy] | None = None,
-        strategy_converters: dict[str, list["PromptConverter"]] | None = None,
-        dataset_config: DatasetAttackConfiguration | None = None,
-        max_concurrency: int = 4,
-        max_retries: int = 0,
-        memory_labels: dict[str, str] | None = None,
-        include_baseline: bool | None = None,
-    ) -> None:
+    def _resolve_objective_target(self, *, value: Any) -> PromptTarget | None:
+        """
+        Resolve the bag's ``objective_target`` value into a live ``PromptTarget``.
+
+        The value is a live ``PromptTarget`` instance (used as-is), a registered target
+        *name* (resolved against ``TargetRegistry`` — the same registry-reference path
+        the constructor-argument resolver uses for converters and scorers), or ``None``
+        (falls back to a default registered with ``set_default_value``, preserving the
+        initializer-script default-target workflow).
+
+        Args:
+            value (Any): The raw ``objective_target`` bag value (a ``PromptTarget``,
+                a registered target name, or None).
+
+        Returns:
+            PromptTarget | None: The resolved target, or None when neither supplied
+                nor available as a global default.
+
+        Raises:
+            ValueError: If a target name is supplied that is not registered in ``TargetRegistry``.
+        """
+        if value is None:
+            found, default = get_global_default_values().get_default_value(
+                class_type=type(self), parameter_name="objective_target"
+            )
+            return default if found else None
+
+        return resolve_reference_value(
+            component_type=ComponentType.TARGET,
+            value=value,
+            owner=type(self).__name__,
+            name="objective_target",
+        )
+
+    def _resolve_scenario_strategies(self, *, scenario_strategies: Any) -> list[ScenarioStrategy]:
+        """
+        Resolve the bag's requested strategies into the concrete strategy list.
+
+        The base resolves ``scenario_strategies`` against the scenario's strategy enum,
+        expanding aggregates and falling back to the default aggregate when omitted.
+        Override to widen the accepted strategy types or expand composite strategies
+        (see ``FoundryScenario``, which pairs attacks with converters).
+
+        Args:
+            scenario_strategies (Any): The raw ``scenario_strategies`` bag value
+                (a sequence of ``ScenarioStrategy`` members, or None for the default).
+
+        Returns:
+            list[ScenarioStrategy]: The concrete strategies to execute.
+        """
+        return self._strategy_class.resolve(scenario_strategies, default=self._default_strategy)
+
+    @final
+    async def initialize_async(self) -> None:
         """
         Initialize the scenario by populating self._atomic_attacks and creating the ScenarioResult.
+
+        All run inputs are read from the parameter bag (``self.params``), which is populated by
+        ``set_params_from_args`` from the merged CLI / config / programmatic arguments. Callers
+        fill the bag then initialize:
+
+        .. code-block:: python
+
+            scenario.set_params_from_args(args={"objective_target": target, "max_concurrency": 8})
+            await scenario.initialize_async()
 
         This method allows scenarios to be initialized with atomic attacks after construction,
         which is useful when atomic attacks require async operations to be built.
@@ -375,66 +537,55 @@ class Scenario(ABC):
         If it matches, the scenario will resume from prior progress. If it doesn't match or
         doesn't exist, a new scenario result will be created.
 
-        Args:
-            objective_target (PromptTarget): The target system to attack.
-            scenario_strategies (Sequence[ScenarioStrategy] | None): The strategies to execute.
-                Can be a list of ScenarioStrategy enum members. If None, uses the default aggregate
-                from the scenario's configuration.
-            strategy_converters (dict[str, list[PromptConverter]] | None): Optional mapping from
-                concrete technique name (``ScenarioStrategy.value``) to a list of request converters
-                to append on top of that technique's built-in converters. Techniques not present in
-                the mapping are left unchanged. Aggregate strategy names must already be expanded to
-                concrete technique names by the caller.
-            dataset_config (DatasetAttackConfiguration | None): Configuration for the dataset source.
-                Use this to specify dataset names or maximum dataset size from the CLI.
-                If not provided, scenarios use their constructor-supplied default_dataset_config.
-            max_concurrency (int): Maximum number of concurrent units of work for the scenario.
-                Defaults to 4. A "unit of work" is one parameter-build call (turning a seed
-                group into attack parameters) or one attack execution (running a single
-                ``objective × attack`` pair). All atomic attacks in the scenario share a
-                single ``AttackExecutor`` whose internal semaphore caps in-flight units at
-                ``max_concurrency``: e.g. ``max_concurrency=4`` means at most 4 such units
-                are in flight at any time, regardless of how many atomic attacks or
-                objectives the scenario has.
-            max_retries (int): Maximum number of automatic retries if the scenario raises an exception.
-                Set to 0 (default) for no automatic retries. If set to a positive number,
-                the scenario will automatically retry up to this many times after an exception.
-                For example, max_retries=3 allows up to 4 total attempts (1 initial + 3 retries).
-            memory_labels (dict[str, str] | None): Additional labels to apply to all
-                attack runs in the scenario. These help track and categorize the scenario.
-            include_baseline (bool | None): Whether to prepend a baseline atomic attack that sends
-                all objectives without modifications, allowing comparison between unmodified prompts
-                and the scenario's strategies. If None (the default), the scenario type's
-                ``BASELINE_ATTACK_POLICY`` class attribute decides: ``Enabled`` includes it,
-                ``Disabled`` omits it, and ``Forbidden`` always omits it (and rejects an
-                explicit ``True``). Passing ``True`` to a scenario whose ``BASELINE_ATTACK_POLICY``
-                is ``Forbidden`` raises ``ValueError``.
+        The common run inputs read from the bag are ``objective_target`` (a ``PromptTarget``
+        instance or a registered target name resolved against ``TargetRegistry``),
+        ``scenario_strategies``, ``strategy_converters``, ``dataset_config``,
+        ``max_concurrency``, ``max_retries``, ``memory_labels``, and ``include_baseline``
+        (see ``_common_scenario_parameters``). A subclass that removes a common input via
+        ``supported_parameters`` falls back to that input's default here.
 
         Raises:
-            ValueError: If no objective_target is provided, or if ``include_baseline=True`` is passed
-                to a scenario whose ``BASELINE_ATTACK_POLICY`` is ``Forbidden``.
+            ValueError: If ``objective_target`` is declared but not resolvable (neither supplied
+                nor registered as a default), if a supplied target name is not registered in
+                ``TargetRegistry``, or if ``include_baseline=True`` is set for a scenario whose
+                ``BASELINE_ATTACK_POLICY`` is ``Forbidden``.
         """
-        # Validate required parameters
-        if objective_target is None:
-            raise ValueError(
-                "objective_target is required. "
-                "Provide it either as a parameter or via set_default_value() in an initialization script."
-            )
+        # Resolve declared parameters through the single registry-owned path, materializing
+        # defaults for programmatic callers that skipped an explicit set_params_from_args.
+        # Guarded so the bag is resolved exactly once: the registry/CLI flows already call
+        # set_params_from_args, so this only runs for a direct construct-then-initialize caller
+        # and avoids a surprising re-validation / self-mutation of an already-resolved bag.
+        if not self._params_resolved:
+            self.set_params_from_args(args=self.params)
+        params = self.params
+        declared_names = {p.name for p in self.supported_parameters()}
 
-        # Set instance variables from parameters
-        self._objective_target = objective_target
-        self._objective_target_identifier = objective_target.get_identifier()
-        type(self).TARGET_REQUIREMENTS.validate(target=objective_target)
+        # objective_target is only required when the scenario declares it; a subclass may drop
+        # it (then self._objective_target stays None and the scenario supplies its own target).
+        if "objective_target" in declared_names:
+            objective_target = self._resolve_objective_target(value=params.get("objective_target"))
+            if objective_target is None:
+                raise ValueError(
+                    "objective_target is required. Provide it via "
+                    "set_params_from_args(args={'objective_target': ...}) or register a default "
+                    "with set_default_value() in an initialization script."
+                )
+            self._objective_target = objective_target
+            self._objective_target_identifier = objective_target.get_identifier()
+            type(self).TARGET_REQUIREMENTS.validate(target=objective_target)
+
+        dataset_config = params.get("dataset_config")
         self._dataset_config_provided = dataset_config is not None
         self._dataset_config = dataset_config if dataset_config else self._default_dataset_config
-        self._max_concurrency = max_concurrency
-        self._max_retries = max_retries
-        self._memory_labels = memory_labels or {}
+        self._max_concurrency = params.get("max_concurrency", 4)
+        self._max_retries = params.get("max_retries", 0)
+        self._memory_labels = params.get("memory_labels") or {}
 
         # Resolve the effective include_baseline. Forbidden is checked first so a forbidden
         # scenario type never silently inherits a True default; explicit-True on a forbidden
         # type is a hard error rather than a silent ignore. For the Enabled / Disabled states,
         # a None runtime value defers to the policy.
+        include_baseline = params.get("include_baseline")
         if self.BASELINE_ATTACK_POLICY is BaselineAttackPolicy.Forbidden:
             if include_baseline is True:
                 raise ValueError(
@@ -447,15 +598,12 @@ class Scenario(ABC):
 
         self._include_baseline = include_baseline
 
-        # Prepare scenario strategies using the stored configuration
-        self._scenario_strategies = self._strategy_class.resolve(scenario_strategies, default=self._default_strategy)
-        self._strategy_converters = strategy_converters or {}
-
-        # Resolve declared parameters through the single registry-owned path,
-        # materializing defaults for programmatic callers that skipped an explicit
-        # set_params_from_args. Re-resolving an already-resolved bag is idempotent,
-        # so the registry- and CLI-driven flows converge here without divergence.
-        self.set_params_from_args(args=self.params)
+        # Prepare scenario strategies via the resolution hook (subclasses override to widen
+        # accepted types or expand composites) and stash any per-technique converter overrides.
+        self._scenario_strategies = self._resolve_scenario_strategies(
+            scenario_strategies=params.get("scenario_strategies")
+        )
+        self._strategy_converters = params.get("strategy_converters") or {}
 
         # Build atomic attacks: resolve the seed groups once, snapshot the resolved inputs
         # into a ScenarioContext, and hand it to the subclass extension point. Baseline is
@@ -625,9 +773,15 @@ class Scenario(ABC):
         """
         techniques = sorted({s.value for s in self._scenario_strategies})
         datasets = list(self._dataset_config.dataset_names)
+        # Persist only the scenario's own custom params. The framework common inputs
+        # (objective_target, strategies, dataset config, ...) are captured through the
+        # dedicated identity fields below and are often live, non-JSON-serializable
+        # objects, so they must not leak into the free-form params dict.
+        common_names = self._common_scenario_parameter_names()
+        custom_params = {name: value for name, value in self.params.items() if name not in common_names}
         return ScenarioIdentifier.of(
             self,
-            params=self.params,
+            params=custom_params,
             version=self._version,
             techniques=techniques,
             datasets=datasets,

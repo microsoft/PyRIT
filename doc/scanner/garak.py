@@ -56,11 +56,14 @@ objective_target = TargetRegistry.get_registry_singleton().instances.get("openai
 dataset_config = EncodingDatasetConfiguration(dataset_names=["garak_slur_terms_en"], max_dataset_size=1)
 
 scenario = Encoding()
-await scenario.initialize_async(  # type: ignore
-    objective_target=objective_target,
-    scenario_strategies=[EncodingStrategy.Base64],
-    dataset_config=dataset_config,
+scenario.set_params_from_args(  # type: ignore
+    args={
+        "objective_target": objective_target,
+        "scenario_strategies": [EncodingStrategy.Base64],
+        "dataset_config": dataset_config,
+    }
 )
+await scenario.initialize_async()  # type: ignore
 
 print(f"Scenario: {scenario.name}")
 print(f"Atomic attacks: {scenario.atomic_attack_count}")
@@ -90,6 +93,25 @@ await output_scenario_async(scenario_result)
 #
 # **Aggregate strategies:** `ALL` (all 8), `DEFAULT` (excludes the two combinatorial extended
 # probes), `EXFIL` (the 6 markdown-exfil probes), and `XSS` (TaskXSS + MarkdownXSS).
+
+# %% [markdown]
+# ## Doctor
+#
+# Ports Garak's `doctor` probe, which implements the HiddenLayer Policy Puppetry universal bypass:
+# a post-instruction-hierarchy prompt injection that frames a harmful request as a fictional
+# medical-drama script ("Dr House") to override safety guardrails. Each objective from the
+# `garak_doctor` dataset is wrapped in a Policy Puppetry template via `PolicyPuppetryConverter` and
+# the response is scored for non-refusal (mirroring Garak's `mitigation.MitigationBypass` detector).
+#
+# **CLI example:**
+#
+# ```bash
+# pyrit_scan garak.doctor --target openai_chat --strategies policy_puppetry --max-dataset-size 1
+# ```
+#
+# **Available strategies** (2 probes): `PolicyPuppetry` (wraps the objective in the Dr House
+# template) and `PolicyPuppetryLeet` (the same template, additionally leetspeak-encoded). Both are
+# tagged `default`, so `DEFAULT` and `ALL` currently coincide.
 
 # %% [markdown]
 # For more details, see the [Scenarios Programming Guide](../code/scenarios/0_scenarios.ipynb) and

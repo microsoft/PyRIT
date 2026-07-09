@@ -51,7 +51,7 @@ async def test_generic_squash_system_message_no_system_message():
 
 
 async def test_generic_squash_normalize_to_dicts_async():
-    """Test that normalize_to_dicts_async returns list of dicts with Message.to_dict() format."""
+    """Test that normalize_to_dicts_async returns list of dicts from model_dump(exclude_none=True)."""
     messages = [
         _make_message("system", "System message"),
         _make_message("user", "User message"),
@@ -61,12 +61,13 @@ async def test_generic_squash_normalize_to_dicts_async():
     assert isinstance(result, list)
     assert len(result) == 1
     assert isinstance(result[0], dict)
-    assert result[0]["role"] == "user"
-    assert "pieces" in result[0]
-    assert len(result[0]["pieces"]) == 1
-    assert "### Instructions ###" in result[0]["pieces"][0]["converted_value"]
-    assert "System message" in result[0]["pieces"][0]["converted_value"]
-    assert "User message" in result[0]["pieces"][0]["converted_value"]
+    assert "message_pieces" in result[0]
+    assert len(result[0]["message_pieces"]) == 1
+    piece = result[0]["message_pieces"][0]
+    assert piece["role"] == "user"
+    assert "### Instructions ###" in piece["converted_value"]
+    assert "System message" in piece["converted_value"]
+    assert "User message" in piece["converted_value"]
 
 
 async def test_generic_squash_preserves_multipart_user_message():

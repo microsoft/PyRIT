@@ -2,9 +2,10 @@
 # Licensed under the MIT license.
 
 import abc
-from typing import Any, Generic, Literal, Protocol, TypeVar
+from typing import Any, Generic, Literal, TypeVar
 
-from pyrit.common.deprecation import print_deprecation_message
+from pydantic import BaseModel
+
 from pyrit.models import Message
 
 # Type alias for system message handling strategies
@@ -17,15 +18,7 @@ How to handle system messages in models with varying support:
 """
 
 
-class DictConvertible(Protocol):
-    """Protocol for objects that can be converted to a dictionary."""
-
-    def to_dict(self) -> dict[str, Any]:
-        """Convert the object to a dictionary representation."""
-        ...
-
-
-T = TypeVar("T", bound=DictConvertible)
+T = TypeVar("T", bound=BaseModel)
 
 
 class MessageListNormalizer(abc.ABC, Generic[T]):
@@ -33,7 +26,6 @@ class MessageListNormalizer(abc.ABC, Generic[T]):
     Abstract base class for normalizers that return a list of items.
 
     Subclasses specify the type T (e.g., Message, ChatMessage) that the list contains.
-    T must implement the DictConvertible protocol (have a to_dict() method).
     """
 
     @abc.abstractmethod
@@ -52,7 +44,8 @@ class MessageListNormalizer(abc.ABC, Generic[T]):
         """
         Normalize the list of messages into a list of dictionaries.
 
-        This method uses normalize_async and calls to_dict() on each item.
+        This method uses normalize_async and serializes each item with
+        ``model_dump(exclude_none=True)``.
 
         Args:
             messages: The list of Message objects to normalize.
@@ -61,7 +54,7 @@ class MessageListNormalizer(abc.ABC, Generic[T]):
             A list of dictionaries representing the normalized messages.
         """
         normalized = await self.normalize_async(messages)
-        return [item.to_dict() for item in normalized]
+        return [item.model_dump(exclude_none=True) for item in normalized]
 
 
 class MessageStringNormalizer(abc.ABC):
@@ -119,24 +112,3 @@ async def apply_system_message_behavior_async(
         return [msg for msg in messages if msg.api_role != "system"]
     # This should never happen due to Literal type, but handle it gracefully
     raise ValueError(f"Unknown system message behavior: {behavior}")
-
-
-async def apply_system_message_behavior(  # pyrit-async-suffix-exempt
-    messages: list[Message], behavior: SystemMessageBehavior
-) -> list[Message]:
-    """
-    Apply a system message behavior to a list of messages (deprecated alias of ``apply_system_message_behavior_async``).
-
-    Args:
-        messages: The list of Message objects to process.
-        behavior: How to handle system messages.
-
-    Returns:
-        The processed list of Message objects.
-    """
-    print_deprecation_message(
-        old_item="pyrit.message_normalizer.message_normalizer.apply_system_message_behavior",
-        new_item="pyrit.message_normalizer.message_normalizer.apply_system_message_behavior_async",
-        removed_in="0.16.0",
-    )
-    return await apply_system_message_behavior_async(messages, behavior)

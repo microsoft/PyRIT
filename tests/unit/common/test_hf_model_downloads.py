@@ -9,13 +9,9 @@ import pytest
 
 # Import functions to test from local application files
 from pyrit.common.download_hf_model import (
-    download_chunk,
     download_chunk_async,
-    download_file,
     download_file_async,
-    download_files,
     download_files_async,
-    download_specific_files,
     download_specific_files_async,
 )
 
@@ -47,56 +43,6 @@ async def test_download_specific_files_async(setup_environment):
 
     with patch("os.makedirs"), patch("pyrit.common.download_hf_model.download_files_async"):
         await download_specific_files_async(MODEL_ID, FILE_PATTERNS, token, Path(""))
-
-
-async def test_deprecated_alias_emits_warning_and_delegates(setup_environment):
-    token = setup_environment
-
-    with patch("os.makedirs"), patch("pyrit.common.download_hf_model.download_files_async"):
-        with pytest.warns(DeprecationWarning, match="download_specific_files"):
-            await download_specific_files(MODEL_ID, FILE_PATTERNS, token, Path(""))
-
-
-async def test_download_chunk_deprecated_alias_emits_warning_and_delegates():
-    client = MagicMock()
-    seen: dict[str, tuple] = {}
-
-    async def fake_chunk_async(url, headers, start, end, c):
-        seen["args"] = (url, headers, start, end, c)
-        return b"data"
-
-    with patch("pyrit.common.download_hf_model.download_chunk_async", new=fake_chunk_async):
-        with pytest.warns(DeprecationWarning, match="download_chunk"):
-            result = await download_chunk("https://example/file", {"k": "v"}, 0, 9, client)
-
-    assert seen["args"] == ("https://example/file", {"k": "v"}, 0, 9, client)
-    assert result == b"data"
-
-
-async def test_download_file_deprecated_alias_emits_warning_and_delegates():
-    seen: dict[str, tuple] = {}
-
-    async def fake_file_async(url, token, download_dir, num_splits):
-        seen["args"] = (url, token, download_dir, num_splits)
-
-    with patch("pyrit.common.download_hf_model.download_file_async", new=fake_file_async):
-        with pytest.warns(DeprecationWarning, match="download_file"):
-            await download_file("https://example/file", "token", Path(""), 3)
-
-    assert seen["args"] == ("https://example/file", "token", Path(""), 3)
-
-
-async def test_download_files_deprecated_alias_emits_warning_and_delegates():
-    seen: dict[str, tuple] = {}
-
-    async def fake_files_async(urls, token, download_dir, num_splits, parallel_downloads):
-        seen["args"] = (urls, token, download_dir, num_splits, parallel_downloads)
-
-    with patch("pyrit.common.download_hf_model.download_files_async", new=fake_files_async):
-        with pytest.warns(DeprecationWarning, match="download_files"):
-            await download_files(["https://example/file"], "token", Path(""), 3, 4)
-
-    assert seen["args"] == (["https://example/file"], "token", Path(""), 3, 4)
 
 
 async def test_download_files_async_dispatches_one_call_per_url():

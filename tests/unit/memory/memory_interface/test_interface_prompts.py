@@ -13,9 +13,8 @@ from unit.mocks import get_mock_target
 
 from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
 from pyrit.memory import MemoryInterface, PromptMemoryEntry
+from pyrit.memory.storage.serializers import set_message_piece_sha256_async
 from pyrit.models import (
-    AtomicAttackIdentifier,
-    AttackResult,
     ComponentIdentifier,
     Conversation,
     IdentifierFilter,
@@ -997,41 +996,6 @@ def test_get_message_pieces_id(sqlite_instance: MemoryInterface):
     assert_original_value_in_list("Hello 2", retrieved_entries)
 
 
-def test_get_message_pieces_attack(sqlite_instance: MemoryInterface):
-    attack1 = PromptSendingAttack(objective_target=get_mock_target())
-    attack2 = PromptSendingAttack(objective_target=get_mock_target("Target2"))
-
-    pieces = [
-        MessagePiece(role="user", original_value="Hello 1", conversation_id="c1", sequence=0),
-        MessagePiece(role="assistant", original_value="Hello 2", conversation_id="c2", sequence=0),
-        MessagePiece(role="user", original_value="Hello 3", conversation_id="c1", sequence=1),
-    ]
-    sqlite_instance.add_message_pieces_to_memory(message_pieces=pieces)
-
-    # attack_identifier is no longer stamped on pieces; the deprecated attack_id filter
-    # resolves to an attack's main conversation via persisted AttackResults.
-    sqlite_instance.add_attack_results_to_memory(
-        attack_results=[
-            AttackResult(
-                conversation_id="c1",
-                objective="objective 1",
-                atomic_attack_identifier=AtomicAttackIdentifier.build(attack_identifier=attack1.get_identifier()),
-            ),
-            AttackResult(
-                conversation_id="c2",
-                objective="objective 2",
-                atomic_attack_identifier=AtomicAttackIdentifier.build(attack_identifier=attack2.get_identifier()),
-            ),
-        ]
-    )
-
-    attack1_entries = sqlite_instance.get_message_pieces(attack_id=attack1.get_identifier().hash)
-
-    assert len(attack1_entries) == 2
-    assert_original_value_in_list("Hello 1", attack1_entries)
-    assert_original_value_in_list("Hello 3", attack1_entries)
-
-
 def test_get_message_pieces_sent_after(sqlite_instance: MemoryInterface):
     entries = [
         PromptMemoryEntry(
@@ -1293,7 +1257,7 @@ async def test_message_piece_hash_stored_and_retrieved(sqlite_instance: MemoryIn
     ]
 
     for entry in entries:
-        await entry.set_sha256_values_async()
+        await set_message_piece_sha256_async(entry)
 
     sqlite_instance.add_message_pieces_to_memory(message_pieces=entries)
     retrieved_entries = sqlite_instance.get_message_pieces()
@@ -1358,35 +1322,6 @@ def test_get_request_from_response_success(sqlite_instance: MemoryInterface):
     assert request.sequence == 0
     assert request.get_value() == "What is the weather?"
     assert request.conversation_id == conversation_id
-
-
-def test_get_conversation_is_deprecated_and_delegates_to_messages(sqlite_instance: MemoryInterface):
-    """get_conversation warns and returns the same result as get_conversation_messages."""
-    conversation_id = str(uuid4())
-    pieces = [
-        MessagePiece(
-            role="user",
-            original_value="Hello",
-            converted_value="Hello",
-            conversation_id=conversation_id,
-            sequence=0,
-        ),
-        MessagePiece(
-            role="assistant",
-            original_value="Hi there",
-            converted_value="Hi there",
-            conversation_id=conversation_id,
-            sequence=1,
-        ),
-    ]
-    sqlite_instance.add_message_pieces_to_memory(message_pieces=pieces)
-
-    with pytest.warns(DeprecationWarning, match="get_conversation_messages"):
-        deprecated_result = sqlite_instance.get_conversation(conversation_id=conversation_id)
-
-    expected = sqlite_instance.get_conversation_messages(conversation_id=conversation_id)
-    assert [m.get_value() for m in deprecated_result] == [m.get_value() for m in expected]
-    assert len(deprecated_result) == 2
 
 
 def test_get_request_from_response_multi_turn_conversation(sqlite_instance: MemoryInterface):

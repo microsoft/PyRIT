@@ -31,7 +31,6 @@ from pyrit.scenario.core import (
     DatasetSourceKind,
     ResolvedDataset,
     Scenario,
-    ScenarioCompositeStrategy,
     ScenarioStrategy,
 )
 
@@ -90,7 +89,6 @@ __all__ = [
     "Parameter",
     "ResolvedDataset",
     "Scenario",
-    "ScenarioCompositeStrategy",
     "ScenarioStrategy",
     "ScenarioIdentifier",
     "ScenarioResult",
