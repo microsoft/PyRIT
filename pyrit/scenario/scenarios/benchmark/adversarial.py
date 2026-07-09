@@ -104,7 +104,7 @@ class AdversarialBenchmark(Scenario):
     BASELINE_ATTACK_POLICY: ClassVar[BaselineAttackPolicy] = BaselineAttackPolicy.Forbidden
 
     @classmethod
-    def supported_parameters(cls) -> list[Parameter]:
+    def additional_parameters(cls) -> list[Parameter]:
         """
         Declare the ``adversarial_targets`` parameter.
 
@@ -119,7 +119,7 @@ class AdversarialBenchmark(Scenario):
             list[Parameter]: Single parameter declaring
             ``adversarial_targets: list[str]``.
         """
-        return super().supported_parameters() + [
+        return [
             Parameter(
                 name="adversarial_targets",
                 description=(

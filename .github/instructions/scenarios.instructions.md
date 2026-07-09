@@ -95,20 +95,20 @@ await scenario.initialize_async()
 
 The base `Scenario` declares the common run inputs once in `_common_scenario_parameters()`: `objective_target` (a `RegistryReference` — resolved by name or supplied as an instance), the `opaque` live objects `scenario_strategies` / `strategy_converters` / `dataset_config` / `memory_labels` (passed by identity, never coerced or deep-copied), and the scalars `max_concurrency` / `max_retries` / `include_baseline`.
 
-### Declaring custom parameters — compose, don't replace
+### Declaring custom parameters — add via `additional_parameters`
 
-`supported_parameters()` returns the full parameter list. The base returns the common inputs; a subclass that needs its own parameter **must compose against `super()`**, or it silently drops all common inputs:
+The base `Scenario` composes `supported_parameters()` as `_common_scenario_parameters() + additional_parameters()`. To add your own parameters, override **`additional_parameters()`** and return just your extras — the common inputs are included for you, so there's no `super()` call to forget:
 
 ```python
 @classmethod
-def supported_parameters(cls) -> list[Parameter]:
-    return super().supported_parameters() + [
+def additional_parameters(cls) -> list[Parameter]:
+    return [
         Parameter(name="max_turns", description="...", param_type=int, default=5),
     ]
 ```
 
-- **Extend:** `return super().supported_parameters() + [Parameter(...)]`
-- **Remove:** `return [p for p in super().supported_parameters() if p.name != "dataset_config"]`
+- **Add (common case):** override `additional_parameters` and return `[Parameter(...)]`
+- **Remove / replace a common input (rare):** override `supported_parameters` directly and compose against `super()`, e.g. `return [p for p in super().supported_parameters() if p.name != "dataset_config"]`
 
 Dropping a common input is not silent: `set_params_from_args` rejects any value supplied for an undeclared parameter, so the registry/CLI/programmatic path fails loudly. If a scenario resolves its strategies differently (e.g. pairing attacks with converters), override the `_resolve_scenario_strategies` hook rather than `initialize_async` (see `RedTeamAgent`).
 

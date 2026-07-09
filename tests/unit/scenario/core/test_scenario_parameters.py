@@ -89,6 +89,30 @@ class TestSupportedParametersDefault:
         assert "objective_target" in names
         assert "max_concurrency" in names
 
+    def test_additional_parameters_compose_with_common(self) -> None:
+        """Overriding additional_parameters appends to the common inputs without super()."""
+
+        class _AdditionalParamsScenario(Scenario):
+            @classmethod
+            def additional_parameters(cls) -> list[Parameter]:
+                return [Parameter(name="max_turns", description="d", param_type=int, default=5)]
+
+        names = [p.name for p in _AdditionalParamsScenario.supported_parameters()]
+        common_names = [p.name for p in Scenario._common_scenario_parameters()]
+        assert names == common_names + ["max_turns"]
+
+    def test_supported_parameters_override_can_remove_common(self) -> None:
+        """Overriding supported_parameters directly is still the escape hatch for removal."""
+
+        class _RemoveCommonScenario(Scenario):
+            @classmethod
+            def supported_parameters(cls) -> list[Parameter]:
+                return [p for p in super().supported_parameters() if p.name != "dataset_config"]
+
+        names = [p.name for p in _RemoveCommonScenario.supported_parameters()]
+        assert "dataset_config" not in names
+        assert "objective_target" in names
+
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestSetParamsFromArgsScalarCoercion:

@@ -15,7 +15,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar, final
 
 try:
     # Built-in on Python 3.11+. Fall back to the ``exceptiongroup`` backport on 3.10
@@ -260,10 +260,11 @@ class Scenario(ABC):
         name or supplied as an instance); the structured run inputs are ``opaque`` (live
         objects passed by identity — never coerced or copied); the scalars coerce normally.
 
-        Subclasses that need to add, remove, or replace a common input override
-        ``supported_parameters`` and compose against this list with ``super()``:
+        Subclasses that need to add their own parameters override ``additional_parameters``;
+        those that need to remove or replace a common input override ``supported_parameters``
+        and compose against this list with ``super()``:
 
-        - **Extend:** ``return super().supported_parameters() + [Parameter(...), ...]``
+        - **Add:** override ``additional_parameters`` and return ``[Parameter(...), ...]``
         - **Remove:** ``return [p for p in super().supported_parameters() if p.name != "dataset_config"]``
 
         Dropping a common input is not silent: ``set_params_from_args`` rejects any value
@@ -335,12 +336,32 @@ class Scenario(ABC):
         return frozenset(p.name for p in Scenario._common_scenario_parameters())
 
     @classmethod
+    def additional_parameters(cls) -> list[Parameter]:
+        """
+        Declare the scenario-specific parameters this scenario accepts, beyond the common
+        run inputs.
+
+        This is the extension point for the common case: override it to **add** parameters
+        without repeating the common inputs. The base ``supported_parameters`` composes
+        ``_common_scenario_parameters() + additional_parameters()``, so overrides never need
+        to call ``super()`` or risk dropping a common input. To **remove or replace** a common
+        input instead, override ``supported_parameters`` directly.
+
+        Returns:
+            list[Parameter]: The scenario-specific parameters (default: none).
+        """
+        return []
+
+    @classmethod
     def supported_parameters(cls) -> list[Parameter]:
         """
         Declare the parameters this scenario accepts, resolved into ``self.params`` before
-        ``initialize_async()`` runs. The base declares the common run inputs (see
-        ``_common_scenario_parameters``); subclasses override this to add, remove, or
-        replace parameters, composing against ``super().supported_parameters()``.
+        ``initialize_async()`` runs. The base returns the common run inputs (see
+        ``_common_scenario_parameters``) plus whatever ``additional_parameters`` declares.
+
+        To **add** scenario-specific parameters, override ``additional_parameters`` (the
+        common case). Override *this* method only to **remove or replace** a common input,
+        composing against ``super().supported_parameters()``.
 
         Implemented as a classmethod so ``--list-scenarios`` can introspect without
         instantiating.
@@ -349,9 +370,9 @@ class Scenario(ABC):
         this asymmetry is intentional pending a future alignment.
 
         Returns:
-            list[Parameter]: Declared parameters (default: the common run inputs).
+            list[Parameter]: Declared parameters (default: common run inputs + additional).
         """
-        return cls._common_scenario_parameters()
+        return cls._common_scenario_parameters() + cls.additional_parameters()
 
     def _get_default_objective_scorer(self) -> TrueFalseScorer:
         # Deferred import to avoid circular dependency.
@@ -494,6 +515,7 @@ class Scenario(ABC):
         """
         return self._strategy_class.resolve(scenario_strategies, default=self._default_strategy)
 
+    @final
     async def initialize_async(self) -> None:
         """
         Initialize the scenario by populating self._atomic_attacks and creating the ScenarioResult.

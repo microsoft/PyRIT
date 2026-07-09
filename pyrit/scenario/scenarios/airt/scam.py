@@ -100,14 +100,14 @@ class Scam(Scenario):
         return ["airt_scams"]
 
     @classmethod
-    def supported_parameters(cls) -> list[Parameter]:
+    def additional_parameters(cls) -> list[Parameter]:
         """
         Declare custom parameters this scenario accepts from the CLI / config file.
 
         Returns:
             list[Parameter]: Parameters configurable per-run.
         """
-        return super().supported_parameters() + [
+        return [
             Parameter(
                 name="max_turns",
                 description="Maximum conversation turns for the persuasive_rta strategy.",
