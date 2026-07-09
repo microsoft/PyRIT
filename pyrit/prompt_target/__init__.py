@@ -28,6 +28,7 @@ from pyrit.prompt_target.common.target_capabilities import (
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.prompt_target.common.target_requirements import CHAT_TARGET_REQUIREMENTS, TargetRequirements
 from pyrit.prompt_target.common.utils import limit_requests_per_minute
+from pyrit.prompt_target.litellm_chat_target import LiteLLMChatTarget
 from pyrit.prompt_target.gandalf_target import GandalfLevel, GandalfTarget
 from pyrit.prompt_target.http_target.http_target import HTTPTarget
 from pyrit.prompt_target.http_target.http_target_callback_functions import (
@@ -87,6 +88,7 @@ __all__ = [
     "HuggingFaceChatTarget",
     "HuggingFaceEndpointTarget",
     "limit_requests_per_minute",
+    "LiteLLMChatTarget",
     "OpenAICompletionTarget",
     "OpenAIChatAudioConfig",
     "OpenAIChatTarget",

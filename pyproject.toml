@@ -136,6 +136,9 @@ opencv = [
 speech = [
     "azure-cognitiveservices-speech>=1.46.0",
 ]
+litellm = [
+    "litellm>=1.83.0,<2.0.0",
+]
 
 # all includes all functional dependencies excluding the ones from the "dev" dependency group
 all = [
