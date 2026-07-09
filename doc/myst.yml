@@ -193,7 +193,6 @@ project:
         - file: api/pyrit_executor_core.md
         - file: api/pyrit_executor_promptgen.md
         - file: api/pyrit_executor_workflow.md
-        - file: api/pyrit_identifiers.md
         - file: api/pyrit_memory.md
         - file: api/pyrit_message_normalizer.md
         - file: api/pyrit_models.md
