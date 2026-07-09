@@ -2924,6 +2924,58 @@ class TestModalityRouterIntegration:
         with pytest.raises(ValueError, match="seed"):
             attack._validate_context(context=context)
 
+    async def test_node_send_to_adversarial_forwards_prev_image_when_supported(self, node_components):
+        """A {text, image_path}-capable adversarial chat receives the prior objective image as feedback."""
+        node_components["adversarial_chat"].configuration.capabilities.input_modalities = frozenset(
+            {frozenset({"text"}), frozenset({"text", "image_path"})}
+        )
+        node_components["modality_router"] = _ModalityFeedbackRouter(
+            adversarial_chat=node_components["adversarial_chat"],
+            objective_target=node_components["objective_target"],
+        )
+        node = _TreeOfAttacksNode(**node_components)
+        node._objective = "test"
+        node._adversarial_chat_system_seed_prompt.response_json_schema = {
+            "type": "object",
+            "properties": {"next_message": {"type": "string"}},
+        }
+        node.last_response = self._make_image_response(node.objective_target_conversation_id)
+
+        node._prompt_normalizer.send_prompt_async = AsyncMock(
+            return_value=Message.from_prompt(prompt='{"next_message": "attack text"}', role="assistant")
+        )
+
+        result = await node._send_to_adversarial_chat_async(prompt_text="feedback text")
+
+        assert result == "attack text"
+        sent = node._prompt_normalizer.send_prompt_async.call_args.kwargs["message"]
+        assert len(sent.message_pieces) == 2
+        assert sent.message_pieces[0].original_value == "feedback text"
+        assert sent.message_pieces[1].original_value_data_type == "image_path"
+        assert sent.message_pieces[1].original_value == "/tmp/output.png"
+
+    async def test_node_send_to_adversarial_text_only_drops_response_media(self, node_components):
+        """A text-only adversarial chat receives only feedback text when the objective response carried media."""
+        # adversarial_chat default is text-only.
+        node = _TreeOfAttacksNode(**node_components)
+        node._objective = "test"
+        node._adversarial_chat_system_seed_prompt.response_json_schema = {
+            "type": "object",
+            "properties": {"next_message": {"type": "string"}},
+        }
+        node.last_response = self._make_image_response(node.objective_target_conversation_id)
+
+        node._prompt_normalizer.send_prompt_async = AsyncMock(
+            return_value=Message.from_prompt(prompt='{"next_message": "attack text"}', role="assistant")
+        )
+
+        result = await node._send_to_adversarial_chat_async(prompt_text="feedback text")
+
+        assert result == "attack text"
+        sent = node._prompt_normalizer.send_prompt_async.call_args.kwargs["message"]
+        assert len(sent.message_pieces) == 1
+        assert sent.get_value() == "feedback text"
+
 
 class TestTAPAdversarialIdentity:
     """Tests for adversarial config in the TAP attack identity and inline system prompt."""

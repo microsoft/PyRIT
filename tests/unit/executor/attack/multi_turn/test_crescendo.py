@@ -2475,6 +2475,71 @@ class TestModalityRouterIntegration:
         with pytest.raises(ValueError, match="seed"):
             attack._validate_context(context=context)
 
+    async def test_generate_next_prompt_forwards_prev_image_to_adversarial_when_supported(
+        self,
+        mock_objective_target: MagicMock,
+        mock_adversarial_chat: MagicMock,
+        mock_prompt_normalizer: MagicMock,
+    ):
+        """A {text, image_path}-capable adversarial chat receives the prior objective image as feedback."""
+        mock_adversarial_chat.configuration.capabilities.input_modalities = frozenset(
+            {frozenset({"text"}), frozenset({"text", "image_path"})}
+        )
+        attack = CrescendoTestHelper.create_attack(
+            objective_target=mock_objective_target,
+            adversarial_chat=mock_adversarial_chat,
+            prompt_normalizer=mock_prompt_normalizer,
+        )
+
+        context = CrescendoAttackContext(
+            params=AttackParameters(objective="goal"),
+            session=ConversationSession(),
+            executed_turns=1,
+            last_response=self._make_image_response(),
+        )
+
+        mock_prompt_normalizer.send_prompt_async.return_value = create_prompt_response(
+            text=create_adversarial_json_response(question="next question")
+        )
+
+        await attack._generate_next_prompt_async(context=context)
+
+        sent_message = mock_prompt_normalizer.send_prompt_async.call_args.kwargs["message"]
+        assert len(sent_message.message_pieces) == 2
+        assert sent_message.message_pieces[1].original_value_data_type == "image_path"
+        assert sent_message.message_pieces[1].original_value == "/tmp/output.png"
+
+    async def test_generate_next_prompt_text_only_adversarial_drops_response_media(
+        self,
+        mock_objective_target: MagicMock,
+        mock_adversarial_chat: MagicMock,
+        mock_prompt_normalizer: MagicMock,
+    ):
+        """A text-only adversarial chat sees only feedback text when the objective response carried media."""
+        # mock_adversarial_chat default is text-only.
+        attack = CrescendoTestHelper.create_attack(
+            objective_target=mock_objective_target,
+            adversarial_chat=mock_adversarial_chat,
+            prompt_normalizer=mock_prompt_normalizer,
+        )
+
+        context = CrescendoAttackContext(
+            params=AttackParameters(objective="goal"),
+            session=ConversationSession(),
+            executed_turns=1,
+            last_response=self._make_image_response(),
+        )
+
+        mock_prompt_normalizer.send_prompt_async.return_value = create_prompt_response(
+            text=create_adversarial_json_response(question="next question")
+        )
+
+        await attack._generate_next_prompt_async(context=context)
+
+        sent_message = mock_prompt_normalizer.send_prompt_async.call_args.kwargs["message"]
+        assert len(sent_message.message_pieces) == 1
+        assert sent_message.message_pieces[0].converted_value_data_type == "text"
+
 
 class TestCrescendoAdversarialIdentity:
     """Tests for adversarial config in the Crescendo attack identity and inline system prompt."""
