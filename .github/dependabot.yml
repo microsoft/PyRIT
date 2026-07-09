@@ -57,6 +57,8 @@ updates:
           - minor
           - patch
 
+    cooldown:
+      default-days: 7
   - package-ecosystem: pre-commit
     directory: /
     schedule:
