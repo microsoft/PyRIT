@@ -1621,33 +1621,14 @@ class TestTreeOfAttacksNode:
             return_value=Message.from_prompt(prompt='{"next_message": "x"}', role="assistant")
         )
 
-        seed_message = Message(
-            message_pieces=[
-                MessagePiece(
-                    role="user",
-                    original_value="",
-                    original_value_data_type="text",
-                    conversation_id="tap-seed-forwarding-conv",
-                    prompt_metadata={"adversarial_placeholder": True},
-                ),
-                MessagePiece(
-                    role="user",
-                    original_value="/path/to/seed.png",
-                    original_value_data_type="image_path",
-                    conversation_id="tap-seed-forwarding-conv",
-                ),
-            ]
-        )
-
-        await node._send_to_adversarial_chat_async(prompt_text="Test prompt", seed_message=seed_message)
+        await node._send_to_adversarial_chat_async(prompt_text="Test prompt")
 
         sent_message = prompt_normalizer.send_prompt_async.call_args.kwargs["message"]
-        assert len(sent_message.message_pieces) == 2
-        assert sent_message.message_pieces[1].original_value_data_type == "image_path"
-        assert sent_message.message_pieces[1].original_value == "/path/to/seed.png"
         metadata = sent_message.message_pieces[0].prompt_metadata
         assert metadata["response_format"] == "json"
         assert metadata[JSON_SCHEMA_METADATA_KEY] == schema
+
+    async def test_node_send_prompt_unexpected_error_handling(self, node_components):
         """Test handling of unexpected errors in send_prompt_async."""
         node = _TreeOfAttacksNode(**node_components)
 
@@ -2877,22 +2858,22 @@ class TestModalityRouterIntegration:
 
         node = _TreeOfAttacksNode(**node_components)
         node._objective = "test"
+        # None -> the manager resolves the canonical adversarial_chat schema (requires all three keys).
+        node._adversarial_chat_system_seed_prompt.response_json_schema = None
 
         captured_message: dict = {}
 
-        async def capture_send(*args, **kwargs):
+        async def routed_send(*args, **kwargs):
+            # The adversarial chat send returns a JSON reply; the objective-target send is captured.
+            if kwargs.get("target") is node._adversarial_chat:
+                reply = {"next_message": "adv generated text", "rationale": "r", "last_response_summary": "s"}
+                return Message.from_prompt(prompt=json.dumps(reply), role="assistant")
             captured_message["message"] = kwargs.get("message")
             return Message.from_prompt(prompt="ok", role="assistant")
 
-        node._prompt_normalizer.send_prompt_async = AsyncMock(side_effect=capture_send)
+        node._prompt_normalizer.send_prompt_async = AsyncMock(side_effect=routed_send)
 
-        with patch.object(
-            node,
-            "_generate_red_teaming_prompt_async",
-            new_callable=AsyncMock,
-            return_value="adv generated text",
-        ):
-            await node._send_initial_prompt_to_target_async()
+        await node._send_initial_prompt_to_target_async()
 
         sent = captured_message["message"]
         assert sent is not None
@@ -2904,6 +2885,31 @@ class TestModalityRouterIntegration:
         # Seed media is preserved.
         assert sent.message_pieces[1].original_value_data_type == "image_path"
         assert sent.message_pieces[1].original_value == "/path/to/seed.png"
+
+    async def test_node_send_initial_prompt_bypass_no_placeholder(self, node_components):
+        """A concrete seed (no adversarial placeholder) is sent as-is, bypassing the adversarial chat."""
+        node = _TreeOfAttacksNode(**node_components)
+        node._objective = "test"
+        # The manager is still constructed on the bypass path, so give it a resolvable schema.
+        node._adversarial_chat_system_seed_prompt.response_json_schema = None
+        node._initial_prompt = Message.from_prompt(prompt="concrete seed prompt", role="user")
+
+        captured_message: dict = {}
+
+        async def routed_send(*args, **kwargs):
+            # The adversarial chat must never be sent to on the bypass path.
+            if kwargs.get("target") is node._adversarial_chat:
+                raise AssertionError("Adversarial chat must not be invoked when the seed has no placeholder")
+            captured_message["message"] = kwargs.get("message")
+            return Message.from_prompt(prompt="ok", role="assistant")
+
+        node._prompt_normalizer.send_prompt_async = AsyncMock(side_effect=routed_send)
+
+        await node._send_initial_prompt_to_target_async()
+
+        sent = captured_message["message"]
+        assert sent is not None
+        assert sent.get_value() == "concrete seed prompt"
 
     def test_validate_context_raises_when_edit_only_target_has_no_seed(self, attack_builder):
         """Edit-only objective without seed in next_message fails validation early."""

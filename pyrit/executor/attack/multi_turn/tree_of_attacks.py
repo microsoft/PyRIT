@@ -600,10 +600,10 @@ class _TreeOfAttacksNode:
         initial prompt directly. It supports multimodal messages. The initial prompt
         is cleared after use to ensure subsequent turns use normal generation.
 
-        If the initial prompt contains ``MessagePiece.adversarial_placeholder``
-        pieces (e.g. seed media combined with a placeholder for adversarial-generated
-        text), the adversarial chat is invoked to produce the text and the router
-        substitutes it into the placeholder slots before sending.
+        Both the bypass case (a concrete caller seed) and the placeholder case (seed media plus a
+        slot for adversarial-generated text) are delegated to the ``_AdversarialConversationManager``,
+        which owns the decision of whether to invoke the adversarial chat and returns a ready-to-send
+        objective message. The node never branches on ``is_adversarial_placeholder`` itself.
 
         Returns:
             Message: The response from the objective target.
@@ -623,25 +623,24 @@ class _TreeOfAttacksNode:
         if not self._objective_target.configuration.includes(capability=CapabilityName.MULTI_TURN):
             self.objective_target_conversation_id = str(uuid.uuid4())
 
-        # If the initial prompt contains adversarial-placeholder pieces, generate the
-        # adversarial text first and fill the slots; otherwise use the initial prompt as-is.
+        assert self._objective is not None
         initial_prompt = self._initial_prompt
         self._initial_prompt = None  # Clear for future turns
 
-        has_placeholder = any(piece.is_adversarial_placeholder() for piece in initial_prompt.message_pieces)
-        if has_placeholder:
-            assert self._objective is not None
-            adversarial_text = await self._generate_red_teaming_prompt_async(
-                objective=self._objective,
-                seed_message=initial_prompt,
-            )
-            message = self._modality_router.fill_adversarial_placeholders(
-                message=initial_prompt,
-                adversarial_text=adversarial_text,
-            )
-        else:
-            # Duplicate to ensure fresh IDs (avoids conflicts if message was already in memory)
-            message = initial_prompt.duplicate()
+        # Delegate the bypass-vs-placeholder decision to the manager instead of branching here: a
+        # seed with no adversarial placeholder is duplicated and sent as-is, while a seed carrying
+        # placeholders has its slots filled with freshly generated adversarial text (seed media
+        # forwarded to the objective target). We hand the manager TAP's first-turn prompt text, which
+        # also sets the adversarial system prompt; the manager uses that text only on the placeholder
+        # path and ignores it when bypassing.
+        adversarial_prompt_text = await self._generate_first_turn_prompt_async(self._objective)
+        turn = await self._build_adversarial_manager().get_next_message_async(
+            turn_index=0,
+            seed_message=initial_prompt,
+            last_response=None,
+            adversarial_prompt_text=adversarial_prompt_text,
+        )
+        message = turn.objective_message
 
         # Store the prompt text for reference
         self.last_prompt_sent = message.get_value()
@@ -912,7 +911,6 @@ class _TreeOfAttacksNode:
         self,
         *,
         objective: str,
-        seed_message: Message | None = None,
     ) -> str:
         """
         Generate an adversarial prompt using the red teaming chat.
@@ -933,8 +931,6 @@ class _TreeOfAttacksNode:
         Args:
             objective (str): The attack objective describing what the attacker wants to achieve.
                 This guides both the system prompt configuration and prompt generation.
-            seed_message (Message | None): Optional first-turn seed message whose
-                media pieces should be forwarded to the adversarial chat.
 
         Returns:
             str: The generated adversarial prompt text extracted from the JSON response.
@@ -949,10 +945,7 @@ class _TreeOfAttacksNode:
             - Sets self.off_topic to True if prompt is still off-topic after all retries
         """
         # Generate initial prompt
-        prompt: str = await self._generate_single_red_teaming_prompt_async(
-            objective=objective,
-            seed_message=seed_message,
-        )
+        prompt: str = await self._generate_single_red_teaming_prompt_async(objective=objective)
 
         # If no on-topic scorer, return the prompt as-is
         if not self._on_topic_scorer:
@@ -981,10 +974,7 @@ class _TreeOfAttacksNode:
             )
 
             # Send feedback to adversarial chat and get the new parsed prompt
-            prompt = await self._send_to_adversarial_chat_async(
-                prompt_text=feedback_prompt,
-                seed_message=seed_message,
-            )
+            prompt = await self._send_to_adversarial_chat_async(prompt_text=feedback_prompt)
 
         # Final check after all retries
         final_score = (await self._on_topic_scorer.score_text_async(text=prompt))[0]
@@ -998,7 +988,6 @@ class _TreeOfAttacksNode:
         self,
         *,
         objective: str,
-        seed_message: Message | None = None,
     ) -> str:
         """
         Generate a single adversarial prompt from the red teaming chat.
@@ -1009,8 +998,6 @@ class _TreeOfAttacksNode:
 
         Args:
             objective (str): The attack objective.
-            seed_message (Message | None): Optional first-turn seed message whose
-                media pieces should be forwarded to the adversarial chat.
 
         Returns:
             str: The generated adversarial prompt text.
@@ -1022,10 +1009,7 @@ class _TreeOfAttacksNode:
             prompt_text = await self._generate_subsequent_turn_prompt_async(objective)
 
         # Send to adversarial chat and return the parsed next attack prompt.
-        return await self._send_to_adversarial_chat_async(
-            prompt_text=prompt_text,
-            seed_message=seed_message,
-        )
+        return await self._send_to_adversarial_chat_async(prompt_text=prompt_text)
 
     def _generate_off_topic_feedback_prompt(
         self, *, original_prompt: str, off_topic_rationale: str, objective: str
@@ -1186,7 +1170,6 @@ class _TreeOfAttacksNode:
         self,
         *,
         prompt_text: str,
-        seed_message: Message | None = None,
     ) -> str:
         """
         Send a prompt to the adversarial chat and return the parsed ``next_message``.
@@ -1205,8 +1188,6 @@ class _TreeOfAttacksNode:
             prompt_text (str): The text to send to the adversarial chat. This could be a first-turn
                 seed prompt, a template-generated prompt containing conversation history and scores,
                 or an off-topic-retry feedback prompt.
-            seed_message (Message | None): Optional first-turn seed message whose
-                media pieces should be forwarded to the adversarial chat.
 
         Returns:
             str: The ``next_message`` extracted from the adversarial chat's validated reply — the
@@ -1218,7 +1199,6 @@ class _TreeOfAttacksNode:
         """
         reply = await self._build_adversarial_manager().generate_adversarial_reply_async(
             prompt_text=prompt_text,
-            seed_message=seed_message,
             last_response=self.last_response,
         )
         return reply.next_message
