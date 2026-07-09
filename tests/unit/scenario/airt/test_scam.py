@@ -14,7 +14,7 @@ from pyrit.executor.attack.core.attack_config import AttackScoringConfig
 from pyrit.models import ComponentIdentifier, SeedAttackGroup, SeedDataset, SeedObjective
 from pyrit.prompt_target import OpenAIChatTarget, PromptTarget
 from pyrit.scenario import DatasetAttackConfiguration, DatasetConfiguration
-from pyrit.scenario.scenarios.airt.scam import Scam, ScamStrategy
+from pyrit.scenario.scenarios.airt.scam import Scam, ScamTechnique
 from pyrit.score import TrueFalseCompositeScorer
 
 SEED_DATASETS_PATH = pathlib.Path(DATASETS_PATH) / "seed_datasets" / "local" / "airt"
@@ -61,13 +61,13 @@ def mock_dataset_config(mock_memory_seed_groups):
 
 
 @pytest.fixture
-def single_turn_strategy() -> ScamStrategy:
-    return ScamStrategy.SINGLE_TURN
+def single_turn_technique() -> ScamTechnique:
+    return ScamTechnique.SINGLE_TURN
 
 
 @pytest.fixture
-def multi_turn_strategy() -> ScamStrategy:
-    return ScamStrategy.MULTI_TURN
+def multi_turn_technique() -> ScamTechnique:
+    return ScamTechnique.MULTI_TURN
 
 
 @pytest.fixture
@@ -115,24 +115,24 @@ def mock_adversarial_target() -> PromptTarget:
 FIXTURES = ["patch_central_database", "mock_runtime_env"]
 
 
-class TestScamStrategyEnum:
-    """Aggregate expansion for ScamStrategy (DEFAULT curation)."""
+class TestScamTechniqueEnum:
+    """Aggregate expansion for ScamTechnique (DEFAULT curation)."""
 
     def test_default_expands_to_single_turn_only(self):
-        members = {m.value for m in ScamStrategy.expand({ScamStrategy.DEFAULT})}
+        members = {m.value for m in ScamTechnique.expand({ScamTechnique.DEFAULT})}
         assert members == {"context_compliance", "role_play"}
 
     def test_default_excludes_persuasive_rta(self):
-        members = {m.value for m in ScamStrategy.expand({ScamStrategy.DEFAULT})}
+        members = {m.value for m in ScamTechnique.expand({ScamTechnique.DEFAULT})}
         assert "persuasive_rta" not in members
 
     def test_all_includes_persuasive_rta(self):
-        members = {m.value for m in ScamStrategy.expand({ScamStrategy.ALL})}
+        members = {m.value for m in ScamTechnique.expand({ScamTechnique.ALL})}
         assert members == {"context_compliance", "role_play", "persuasive_rta"}
 
     def test_default_is_aggregate(self):
-        assert "default" in ScamStrategy.get_aggregate_tags()
-        assert ScamStrategy.DEFAULT in ScamStrategy.get_aggregate_strategies()
+        assert "default" in ScamTechnique.get_aggregate_tags()
+        assert ScamTechnique.DEFAULT in ScamTechnique.get_aggregate_techniques()
 
 
 @pytest.mark.usefixtures(*FIXTURES)
@@ -156,9 +156,9 @@ class TestScamInitialization:
             assert scenario.name == "Scam"
             assert scenario.VERSION == 2
 
-    def test_default_strategy_is_default(self, mock_objective_scorer) -> None:
+    def test_default_technique_is_default(self, mock_objective_scorer) -> None:
         scenario = Scam(objective_scorer=mock_objective_scorer)
-        assert scenario._default_strategy == ScamStrategy.DEFAULT
+        assert scenario._default_technique == ScamTechnique.DEFAULT
 
     def test_init_with_default_scorer(self, mock_memory_seed_groups) -> None:
         """Test initialization with default scorer."""
@@ -232,8 +232,9 @@ class TestScamInitialization:
             "pyrit.scenario.core.dataset_configuration.DatasetConfiguration._fetch_dataset_async",
             new_callable=AsyncMock,
         ):
+            scenario.set_params_from_args(args={"objective_target": mock_objective_target})
             with pytest.raises(DatasetConstraintError, match="could not be loaded"):
-                await scenario.initialize_async(objective_target=mock_objective_target)
+                await scenario.initialize_async()
 
 
 @pytest.mark.usefixtures(*FIXTURES)
@@ -252,12 +253,15 @@ class TestScamAttackGeneration:
         ):
             scenario = Scam(objective_scorer=mock_objective_scorer)
 
-            await scenario.initialize_async(
-                objective_target=mock_objective_target,
-                scenario_strategies=[ScamStrategy.ALL],
-                dataset_config=mock_dataset_config,
-                include_baseline=False,
+            scenario.set_params_from_args(
+                args={
+                    "objective_target": mock_objective_target,
+                    "scenario_techniques": [ScamTechnique.ALL],
+                    "dataset_config": mock_dataset_config,
+                    "include_baseline": False,
+                }
             )
+            await scenario.initialize_async()
             atomic_attacks = scenario._atomic_attacks
 
             assert len(atomic_attacks) == 3
@@ -267,7 +271,7 @@ class TestScamAttackGeneration:
     async def test_default_run_yields_single_turn_only(
         self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups, mock_dataset_config
     ):
-        """No explicit strategies -> DEFAULT -> only the two single-turn techniques, no persuasive_rta."""
+        """No explicit techniques -> DEFAULT -> only the two single-turn techniques, no persuasive_rta."""
         with patch.object(
             Scam,
             "_resolve_seed_groups_by_dataset_async",
@@ -276,11 +280,14 @@ class TestScamAttackGeneration:
         ):
             scenario = Scam(objective_scorer=mock_objective_scorer)
 
-            await scenario.initialize_async(
-                objective_target=mock_objective_target,
-                dataset_config=mock_dataset_config,
-                include_baseline=False,
+            scenario.set_params_from_args(
+                args={
+                    "objective_target": mock_objective_target,
+                    "dataset_config": mock_dataset_config,
+                    "include_baseline": False,
+                }
             )
+            await scenario.initialize_async()
             atomic_attacks = scenario._atomic_attacks
 
             assert len(atomic_attacks) == 2
@@ -293,39 +300,45 @@ class TestScamAttackGeneration:
         *,
         mock_objective_target: PromptTarget,
         mock_objective_scorer: TrueFalseCompositeScorer,
-        single_turn_strategy: ScamStrategy,
+        single_turn_technique: ScamTechnique,
         mock_dataset_config: DatasetConfiguration,
     ) -> None:
-        """Test that the single turn strategy attack generation works."""
+        """Test that the single turn technique attack generation works."""
         scenario = Scam(
             objective_scorer=mock_objective_scorer,
         )
 
-        await scenario.initialize_async(
-            objective_target=mock_objective_target,
-            scenario_strategies=[single_turn_strategy],
-            dataset_config=mock_dataset_config,
-            include_baseline=False,
+        scenario.set_params_from_args(
+            args={
+                "objective_target": mock_objective_target,
+                "scenario_techniques": [single_turn_technique],
+                "dataset_config": mock_dataset_config,
+                "include_baseline": False,
+            }
         )
+        await scenario.initialize_async()
         atomic_attacks = scenario._atomic_attacks
 
         for run in atomic_attacks:
             assert isinstance(run.attack_technique.attack, (ContextComplianceAttack, RolePlayAttack))
 
     async def test_attack_generation_for_multiturn_async(
-        self, mock_objective_target, mock_objective_scorer, multi_turn_strategy, mock_dataset_config
+        self, mock_objective_target, mock_objective_scorer, multi_turn_technique, mock_dataset_config
     ):
         """Test that the multi turn attack generation works."""
         scenario = Scam(
             objective_scorer=mock_objective_scorer,
         )
 
-        await scenario.initialize_async(
-            objective_target=mock_objective_target,
-            scenario_strategies=[multi_turn_strategy],
-            dataset_config=mock_dataset_config,
-            include_baseline=False,
+        scenario.set_params_from_args(
+            args={
+                "objective_target": mock_objective_target,
+                "scenario_techniques": [multi_turn_technique],
+                "dataset_config": mock_dataset_config,
+                "include_baseline": False,
+            }
         )
+        await scenario.initialize_async()
         atomic_attacks = scenario._atomic_attacks
 
         for run in atomic_attacks:
@@ -344,7 +357,13 @@ class TestScamAttackGeneration:
             objective_scorer=mock_objective_scorer,
         )
 
-        await scenario.initialize_async(objective_target=mock_objective_target, dataset_config=mock_dataset_config)
+        scenario.set_params_from_args(
+            args={
+                "objective_target": mock_objective_target,
+                "dataset_config": mock_dataset_config,
+            }
+        )
+        await scenario.initialize_async()
         atomic_attacks = scenario._atomic_attacks
 
         for run in atomic_attacks:
@@ -364,7 +383,13 @@ class TestScamAttackGeneration:
             objective_scorer=mock_objective_scorer,
         )
 
-        await scenario.initialize_async(objective_target=mock_objective_target, dataset_config=mock_dataset_config)
+        scenario.set_params_from_args(
+            args={
+                "objective_target": mock_objective_target,
+                "dataset_config": mock_dataset_config,
+            }
+        )
+        await scenario.initialize_async()
         atomic_attacks = scenario._atomic_attacks
         assert len(atomic_attacks) > 0
         assert all(run.attack_technique is not None for run in atomic_attacks)
@@ -381,18 +406,21 @@ class TestScamMaxTurnsParameter:
         assert "max_turns" in names
 
     async def test_max_turns_default_used_when_unset_async(
-        self, mock_objective_target, mock_objective_scorer, multi_turn_strategy, mock_dataset_config
+        self, mock_objective_target, mock_objective_scorer, multi_turn_technique, mock_dataset_config
     ):
         """When set_params_from_args isn't given max_turns, the declared default (5) is used."""
         scenario = Scam(objective_scorer=mock_objective_scorer)
         scenario.set_params_from_args(args={})
 
-        await scenario.initialize_async(
-            objective_target=mock_objective_target,
-            scenario_strategies=[multi_turn_strategy],
-            dataset_config=mock_dataset_config,
-            include_baseline=False,
+        scenario.set_params_from_args(
+            args={
+                "objective_target": mock_objective_target,
+                "scenario_techniques": [multi_turn_technique],
+                "dataset_config": mock_dataset_config,
+                "include_baseline": False,
+            }
         )
+        await scenario.initialize_async()
         atomic_attacks = scenario._atomic_attacks
 
         for run in atomic_attacks:
@@ -400,18 +428,22 @@ class TestScamMaxTurnsParameter:
             assert run.attack_technique.attack._max_turns == 5
 
     async def test_max_turns_override_flows_into_attack_async(
-        self, mock_objective_target, mock_objective_scorer, multi_turn_strategy, mock_dataset_config
+        self, mock_objective_target, mock_objective_scorer, multi_turn_technique, mock_dataset_config
     ):
         """A user-supplied max_turns overrides the default and reaches the underlying attack."""
         scenario = Scam(objective_scorer=mock_objective_scorer)
         scenario.set_params_from_args(args={"max_turns": 10})
 
-        await scenario.initialize_async(
-            objective_target=mock_objective_target,
-            scenario_strategies=[multi_turn_strategy],
-            dataset_config=mock_dataset_config,
-            include_baseline=False,
+        scenario.set_params_from_args(
+            args={
+                "objective_target": mock_objective_target,
+                "scenario_techniques": [multi_turn_technique],
+                "dataset_config": mock_dataset_config,
+                "include_baseline": False,
+                "max_turns": 10,
+            }
         )
+        await scenario.initialize_async()
         atomic_attacks = scenario._atomic_attacks
 
         for run in atomic_attacks:
@@ -438,9 +470,14 @@ class TestScamLifecycle:
             return_value={"memory": mock_memory_seed_groups},
         ):
             scenario = Scam(objective_scorer=mock_objective_scorer)
-            await scenario.initialize_async(
-                objective_target=mock_objective_target, max_concurrency=20, dataset_config=mock_dataset_config
+            scenario.set_params_from_args(
+                args={
+                    "objective_target": mock_objective_target,
+                    "max_concurrency": 20,
+                    "dataset_config": mock_dataset_config,
+                }
             )
+            await scenario.initialize_async()
             assert scenario._max_concurrency == 20
 
     async def test_initialize_async_with_memory_labels(
@@ -461,11 +498,14 @@ class TestScamLifecycle:
             return_value={"memory": mock_memory_seed_groups},
         ):
             scenario = Scam(objective_scorer=mock_objective_scorer)
-            await scenario.initialize_async(
-                memory_labels=memory_labels,
-                objective_target=mock_objective_target,
-                dataset_config=mock_dataset_config,
+            scenario.set_params_from_args(
+                args={
+                    "memory_labels": memory_labels,
+                    "objective_target": mock_objective_target,
+                    "dataset_config": mock_dataset_config,
+                }
             )
+            await scenario.initialize_async()
             assert scenario._memory_labels == memory_labels
 
 
@@ -500,7 +540,13 @@ class TestScamProperties:
             return_value={"memory": mock_memory_seed_groups},
         ):
             scenario = Scam()
-            await scenario.initialize_async(objective_target=mock_objective_target, dataset_config=mock_dataset_config)
+            scenario.set_params_from_args(
+                args={
+                    "objective_target": mock_objective_target,
+                    "dataset_config": mock_dataset_config,
+                }
+            )
+            await scenario.initialize_async()
 
             objective_target = scenario._objective_target
             scorer_target = scenario._scorer_config.objective_scorer  # type: ignore[arg-type]
@@ -513,10 +559,10 @@ class TestScamProperties:
 
 @pytest.mark.usefixtures(*FIXTURES)
 class TestScamBaselineUniformity:
-    """ADO 9012 regression: baseline shares objectives with strategies under max_dataset_size."""
+    """ADO 9012 regression: baseline shares objectives with techniques under max_dataset_size."""
 
-    async def test_one_resolution_call_baseline_matches_strategies(
-        self, mock_objective_target, mock_objective_scorer, single_turn_strategy
+    async def test_one_resolution_call_baseline_matches_techniques(
+        self, mock_objective_target, mock_objective_scorer, single_turn_technique
     ):
         from pyrit.models import SeedAttackGroup, SeedObjective
 
@@ -530,12 +576,15 @@ class TestScamBaselineUniformity:
             side_effect=[first_sample, second_sample],
         ) as mock_sample:
             scenario = Scam(objective_scorer=mock_objective_scorer)
-            await scenario.initialize_async(
-                objective_target=mock_objective_target,
-                scenario_strategies=[single_turn_strategy],
-                dataset_config=config,
-                include_baseline=True,
+            scenario.set_params_from_args(
+                args={
+                    "objective_target": mock_objective_target,
+                    "scenario_techniques": [single_turn_technique],
+                    "dataset_config": config,
+                    "include_baseline": True,
+                }
             )
+            await scenario.initialize_async()
 
         assert mock_sample.call_count == 1
         assert scenario._atomic_attacks[0].atomic_attack_name == "baseline"

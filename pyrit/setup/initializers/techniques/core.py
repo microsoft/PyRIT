@@ -11,7 +11,7 @@ factories here carry only their behavioral tags (e.g.
 
 ``default`` is intentionally not a tag here: what runs by default is
 scenario-relative and is declared per scenario (see
-``AttackTechniqueRegistry.build_strategy_class_from_factories``'s
+``AttackTechniqueRegistry.build_technique_class_from_factories``'s
 ``default_technique_names``), not baked into the shared catalog.
 """
 
@@ -46,43 +46,43 @@ def get_technique_factories() -> list[AttackTechniqueFactory]:
         AttackTechniqueFactory(
             name="role_play",
             attack_class=RolePlayAttack,
-            strategy_tags=["single_turn", "light"],
+            technique_tags=["single_turn", "light"],
             attack_kwargs={"role_play_definition_path": RolePlayPaths.MOVIE_SCRIPT.value},
         ),
         AttackTechniqueFactory(
             name="many_shot",
             attack_class=ManyShotJailbreakAttack,
-            strategy_tags=["multi_turn", "light"],
+            technique_tags=["multi_turn", "light"],
         ),
         AttackTechniqueFactory(
             name="tap",
             attack_class=TreeOfAttacksWithPruningAttack,
-            strategy_tags=["multi_turn"],
+            technique_tags=["multi_turn"],
         ),
         AttackTechniqueFactory.with_simulated_conversation(
             name="crescendo_simulated",
-            strategy_tags=["single_turn"],
+            technique_tags=["single_turn"],
         ),
         AttackTechniqueFactory.with_simulated_conversation(
             name="crescendo_movie_director",
-            strategy_tags=["single_turn"],
+            technique_tags=["single_turn"],
         ),
         AttackTechniqueFactory.with_simulated_conversation(
             name="crescendo_history_lecture",
-            strategy_tags=["single_turn"],
+            technique_tags=["single_turn"],
         ),
         AttackTechniqueFactory.with_simulated_conversation(
             name="crescendo_journalist_interview",
-            strategy_tags=["single_turn"],
+            technique_tags=["single_turn"],
         ),
         AttackTechniqueFactory(
             name="red_teaming",
             attack_class=RedTeamingAttack,
-            strategy_tags=["multi_turn", "light"],
+            technique_tags=["multi_turn", "light"],
         ),
         AttackTechniqueFactory(
             name="context_compliance",
             attack_class=ContextComplianceAttack,
-            strategy_tags=["single_turn", "light"],
+            technique_tags=["single_turn", "light"],
         ),
     ]

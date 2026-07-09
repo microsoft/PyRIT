@@ -141,6 +141,7 @@ class SelfAskScaleScorer(FloatScaleScorer):
             category=self._category,
             objective=objective,
             response_json_schema=self._response_json_schema,
+            numeric_value=True,
         )
 
         score = unvalidated_score.to_score(

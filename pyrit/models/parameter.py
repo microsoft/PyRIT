@@ -99,6 +99,16 @@ class Parameter(BaseModel):
         exclude=True,
         description="Where the parameter is consumed at build time; not serialized.",
     )
+    opaque: bool = Field(
+        default=False,
+        exclude=True,
+        description=(
+            "When True, the value is a live object passed through by identity: it is neither "
+            "coerced nor copied, and no ``param_type`` is required. Use for run-resolved inputs "
+            "the scalar/list model can't represent (e.g. a live config object or a mapping of "
+            "converter instances). Not serialized."
+        ),
+    )
 
     @model_validator(mode="before")
     @classmethod
@@ -215,25 +225,26 @@ class Parameter(BaseModel):
         """
         Coerce ``raw_value`` to this parameter's declared type.
 
-        A reference parameter passes its value through unchanged (the registry
-        layer resolves it by name). Otherwise it branches by shape: ``None``
-        passes through (deep-copied), a ``list`` coerces per element, and a scalar
-        form (including ``Literal``/``Enum``) coerces and validates membership.
-        Arbitrary defaulted types pass through unchanged.
+        An opaque or reference parameter passes its value through unchanged (by
+        identity — the registry layer resolves a reference by name; an opaque
+        value is a live object owned by the caller). Otherwise it branches by
+        shape: ``None`` passes through (deep-copied), a ``list`` coerces per
+        element, and a scalar form (including ``Literal``/``Enum``) coerces and
+        validates membership. Arbitrary defaulted types pass through unchanged.
 
         Args:
             raw_value (Any): The raw value to coerce.
 
         Returns:
-            Any: The coerced value (a deep copy for the ``None`` passthrough, a
-                coerced list for list types, a coerced scalar for scalar types, or
-                the raw value unchanged for reference/arbitrary types).
+            Any: The coerced value (the raw value unchanged for opaque/reference/
+                arbitrary types, a deep copy for the ``None`` passthrough, a
+                coerced list for list types, or a coerced scalar for scalar types).
 
         Raises:
             ValueError: If the value cannot be coerced to a constrained scalar or
                 list element type.
         """
-        if self.reference is not None:
+        if self.reference is not None or self.opaque:
             return raw_value
         param_type = self.param_type
         if param_type is None:
@@ -250,14 +261,14 @@ class Parameter(BaseModel):
 
         Supported forms are a plain scalar, a constrained scalar
         (``Literal``/``Enum``), a ``list`` of any of those, a registry reference,
-        or ``None``. An otherwise-unsupported type is tolerated only when the
-        parameter declares a default (the builder simply does not supply it, and
-        the value passes through unchanged).
+        an opaque passthrough, or ``None``. An otherwise-unsupported type is
+        tolerated only when the parameter declares a default (the builder simply
+        does not supply it, and the value passes through unchanged).
 
         Raises:
             ValueError: If ``param_type`` is unsupported and no default is declared.
         """
-        if self.reference is not None:
+        if self.reference is not None or self.opaque:
             return
         param_type = self.param_type
         if param_type is None or _is_scalar_param_type(param_type):

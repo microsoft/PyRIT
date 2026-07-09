@@ -336,6 +336,40 @@ def _resolve_registry_reference(
     return _resolve_single_reference(value=value, getter=getter, owner=owner, name=name)
 
 
+def resolve_reference_value(
+    *,
+    component_type: ComponentType,
+    value: Any,
+    owner: str,
+    name: str,
+) -> Any:
+    """
+    Resolve a single registry-reference value (name -> instance) for ``component_type``.
+
+    A string value is looked up by name in the component family's registry; an
+    already-built instance passes through unchanged. Shares the same registry lookup
+    and not-found errors used by the constructor-argument path, so a reference declared
+    on a scenario (e.g. ``objective_target``) and one derived from a constructor
+    signature resolve a name identically.
+
+    Args:
+        component_type (ComponentType): The registry family the reference resolves against.
+        value (Any): The raw value (a registry name, or an instance to pass through).
+        owner (str): The owning class name, for error messages.
+        name (str): The parameter name, for error messages.
+
+    Returns:
+        Any: The resolved instance, or the value unchanged when already an instance.
+
+    Raises:
+        ValueError: If no registry is wired for ``component_type``, or the name is not registered.
+    """
+    getter = _registry_getter_for_component_type(component_type)
+    if getter is None:
+        raise ValueError(f"{owner}.{name}: no registry is wired for component type '{component_type}'.")
+    return _resolve_registry_reference(value=value, getter=getter, owner=owner, name=name)
+
+
 def resolve_constructor_args(
     *,
     cls: type,

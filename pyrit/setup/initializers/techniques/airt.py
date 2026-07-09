@@ -40,7 +40,7 @@ def get_technique_factories() -> list[AttackTechniqueFactory]:
         AttackTechniqueFactory(
             name="first_letter",
             attack_class=PromptSendingAttack,
-            strategy_tags=["single_turn", "airt", "leakage"],
+            technique_tags=["single_turn", "airt", "leakage"],
             attack_kwargs={
                 "attack_converter_config": AttackConverterConfig(
                     request_converters=PromptConverterConfiguration.from_converters(converters=[FirstLetterConverter()])
@@ -50,7 +50,7 @@ def get_technique_factories() -> list[AttackTechniqueFactory]:
         AttackTechniqueFactory(
             name="image",
             attack_class=PromptSendingAttack,
-            strategy_tags=["single_turn", "airt", "leakage"],
+            technique_tags=["single_turn", "airt", "leakage"],
             attack_kwargs={
                 "attack_converter_config": AttackConverterConfig(
                     request_converters=PromptConverterConfiguration.from_converters(

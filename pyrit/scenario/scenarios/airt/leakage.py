@@ -14,7 +14,7 @@ from pyrit.registry.tag_query import TagQuery
 from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
 from pyrit.scenario.core.matrix_atomic_attack_builder import build_matrix_atomic_attacks
 from pyrit.scenario.core.scenario import Scenario
-from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
+from pyrit.scenario.core.scenario_technique import ScenarioTechnique
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -22,7 +22,7 @@ if TYPE_CHECKING:
     from pyrit.scenario.core.atomic_attack import AtomicAttack
     from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
     from pyrit.scenario.core.scenario_context import ScenarioContext
-    from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
+    from pyrit.scenario.core.scenario_technique import ScenarioTechnique
     from pyrit.score import TrueFalseScorer
 
 logger = logging.getLogger(__name__)
@@ -51,21 +51,21 @@ def _leakage_factories() -> list[AttackTechniqueFactory]:
 
 
 @cache
-def _build_leakage_strategy() -> type[ScenarioStrategy]:
+def _build_leakage_technique() -> type[ScenarioTechnique]:
     """
-    Build the Leakage strategy class dynamically from core + leakage-specific factories.
+    Build the Leakage technique class dynamically from core + leakage-specific factories.
 
     Combines core factories (from the registry) with leakage-unique factories
-    (``first_letter``, ``image``) to provide the full set of attack strategies.
+    (``first_letter``, ``image``) to provide the full set of attack techniques.
 
     Returns:
-        type[ScenarioStrategy]: The dynamically generated strategy enum class.
+        type[ScenarioTechnique]: The dynamically generated technique enum class.
     """
     registry = AttackTechniqueRegistry.get_registry_singleton()
     core_factories = list(registry.get_factories_or_raise().values())
     all_factories = core_factories + _leakage_factories()
-    return AttackTechniqueRegistry.build_strategy_class_from_factories(  # type: ignore[return-value, ty:invalid-return-type]
-        class_name="LeakageStrategy",
+    return AttackTechniqueRegistry.build_technique_class_from_factories(  # type: ignore[return-value, ty:invalid-return-type]
+        class_name="LeakageTechnique",
         factories=all_factories,
         aggregate_tags={
             "single_turn": TagQuery.any_of("single_turn"),
@@ -119,12 +119,12 @@ class Leakage(Scenario):
         if not objective_scorer:
             objective_scorer = self._get_default_objective_scorer()
 
-        strategy_class = _build_leakage_strategy()
+        technique_class = _build_leakage_technique()
 
         super().__init__(
             version=self.VERSION,
-            strategy_class=strategy_class,
-            default_strategy=strategy_class("default"),
+            technique_class=technique_class,
+            default_technique=technique_class("default"),
             default_dataset_config=DatasetAttackConfiguration(dataset_names=["airt_leakage"], max_dataset_size=4),
             objective_scorer=objective_scorer,
             scenario_result_id=scenario_result_id,
@@ -148,6 +148,6 @@ class Leakage(Scenario):
         return build_matrix_atomic_attacks(
             context=context,
             objective_scorer=self._objective_scorer,
-            strategy_converters=self._strategy_converters,
+            technique_converters=self._technique_converters,
             extra_factories={factory.name: factory for factory in _leakage_factories()},
         )

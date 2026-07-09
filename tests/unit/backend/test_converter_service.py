@@ -605,7 +605,7 @@ def _try_instantiate_converter(converter_name: str):
         # PromptConverter — use a real simple converter to avoid JSON serialization issues
         elif "PromptConverter" in ann_str:
             kwargs[pname] = Base64Converter()
-        # TextSelectionStrategy — use a real concrete strategy
+        # TextSelectionStrategy — use a real concrete technique
         elif "TextSelectionStrategy" in ann_str:
             from pyrit.prompt_converter.text_selection_strategy import AllWordsSelectionStrategy
 

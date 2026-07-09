@@ -20,7 +20,7 @@ from pyrit.scenario.core.scenario import BaselineAttackPolicy, Scenario
 if TYPE_CHECKING:
     from pyrit.scenario.core.atomic_attack import AtomicAttack
     from pyrit.scenario.core.scenario_context import ScenarioContext
-    from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
+    from pyrit.scenario.core.scenario_technique import ScenarioTechnique
     from pyrit.score import TrueFalseScorer
 
 logger = logging.getLogger(__name__)
@@ -35,7 +35,7 @@ DOCTOR_FACTORIES: list[AttackTechniqueFactory] = [
     AttackTechniqueFactory(
         name="policy_puppetry",
         attack_class=PromptSendingAttack,
-        strategy_tags=["single_turn"],
+        technique_tags=["single_turn"],
         attack_kwargs={
             "attack_converter_config": AttackConverterConfig(
                 request_converters=PromptConverterConfiguration.from_converters(
@@ -49,7 +49,7 @@ DOCTOR_FACTORIES: list[AttackTechniqueFactory] = [
     AttackTechniqueFactory(
         name="policy_puppetry_leet",
         attack_class=PromptSendingAttack,
-        strategy_tags=["single_turn"],
+        technique_tags=["single_turn"],
         attack_kwargs={
             "attack_converter_config": AttackConverterConfig(
                 request_converters=PromptConverterConfiguration.from_converters(
@@ -64,23 +64,23 @@ DOCTOR_FACTORIES: list[AttackTechniqueFactory] = [
 ]
 
 
-# Doctor's strategy enum is generated from DOCTOR_FACTORIES via the shared factory
+# Doctor's technique enum is generated from DOCTOR_FACTORIES via the shared factory
 # generator (like the registry-driven scenarios) rather than hand-written. Both
 # techniques are the scenario default, so DEFAULT and ALL coincide today; ALL exists
 # so a future non-default technique would diverge from DEFAULT without another change.
 # Built lazily and cached (like the other dynamically-generated scenarios) so every
-# Doctor instance shares one enum class; the public ``DoctorStrategy`` symbol is
+# Doctor instance shares one enum class; the public ``DoctorTechnique`` symbol is
 # resolved from here via the garak package ``__getattr__``.
 @cache
-def _build_doctor_strategy() -> type[ScenarioStrategy]:
+def _build_doctor_technique() -> type[ScenarioTechnique]:
     """
-    Generate the Doctor strategy enum from ``DOCTOR_FACTORIES``.
+    Generate the Doctor technique enum from ``DOCTOR_FACTORIES``.
 
     Returns:
-        type[ScenarioStrategy]: The dynamically generated strategy enum class.
+        type[ScenarioTechnique]: The dynamically generated technique enum class.
     """
-    return AttackTechniqueRegistry.build_strategy_class_from_factories(  # type: ignore[return-value, ty:invalid-return-type]
-        class_name="DoctorStrategy",
+    return AttackTechniqueRegistry.build_technique_class_from_factories(  # type: ignore[return-value, ty:invalid-return-type]
+        class_name="DoctorTechnique",
         factories=DOCTOR_FACTORIES,
         aggregate_tags={},
         default_technique_names={"policy_puppetry", "policy_puppetry_leet"},
@@ -133,12 +133,12 @@ class Doctor(Scenario):
         if not objective_scorer:
             objective_scorer = self._get_default_objective_scorer()
 
-        strategy_class = _build_doctor_strategy()
+        technique_class = _build_doctor_technique()
 
         super().__init__(
             version=self.VERSION,
-            strategy_class=strategy_class,
-            default_strategy=strategy_class("default"),
+            technique_class=technique_class,
+            default_technique=technique_class("default"),
             default_dataset_config=DatasetAttackConfiguration(dataset_names=["garak_doctor"]),
             objective_scorer=objective_scorer,
             scenario_result_id=scenario_result_id,
@@ -159,7 +159,7 @@ class Doctor(Scenario):
         Returns:
             list[AtomicAttack]: The generated atomic attacks.
         """
-        selected_techniques = {strategy.value for strategy in context.scenario_strategies}
+        selected_techniques = {technique.value for technique in context.scenario_techniques}
         technique_factories = {
             factory.name: factory for factory in DOCTOR_FACTORIES if factory.name in selected_techniques
         }

@@ -15,6 +15,7 @@ ARCHITECTURE:
 - AI-generated attacks may have multiple related conversations
 """
 
+import logging
 import mimetypes
 import uuid
 from collections.abc import Sequence
@@ -67,6 +68,8 @@ from pyrit.models import (
     PromptDataType,
 )
 from pyrit.prompt_normalizer import PromptConverterConfiguration, PromptNormalizer
+
+logger = logging.getLogger(__name__)
 
 
 class AttackService:
@@ -623,13 +626,31 @@ class AttackService:
 
         if request.send:
             assert target_registry_name is not None  # validated above
-            await self._send_and_store_message_async(
-                conversation_id=msg_conversation_id,
-                target_registry_name=target_registry_name,
-                request=request,
-                sequence=sequence,
-                labels=attack_labels,
-            )
+            try:
+                await self._send_and_store_message_async(
+                    conversation_id=msg_conversation_id,
+                    target_registry_name=target_registry_name,
+                    request=request,
+                    sequence=sequence,
+                    labels=attack_labels,
+                )
+            except Exception:
+                # PromptNormalizer persists a full error piece (response_error +
+                # traceback) to memory *before* re-raising. Surface that stored
+                # piece inline so the send (POST) response matches the
+                # conversation-reload (GET) view instead of collapsing to a
+                # generic 500. If no new error piece was stored (the failure
+                # happened before the send, e.g. target lookup), re-raise so the
+                # route still reports a real error.
+                prior_ids = {p.id for p in existing}
+                current_pieces = self._memory.get_message_pieces(conversation_id=msg_conversation_id)
+                if not any(p.id not in prior_ids and p.has_error() for p in current_pieces):
+                    raise
+                logger.exception(
+                    "Send failed for attack '%s' conversation '%s'; surfacing stored error piece.",
+                    attack_result_id,
+                    msg_conversation_id,
+                )
         else:
             existing_metadata = self._memory._get_conversation(conversation_id=msg_conversation_id)
             await self._store_message_only_async(

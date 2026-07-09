@@ -43,9 +43,9 @@ def _make_scenario_metadata(
     registry_name: str = "test.scenario",
     class_name: str = "TestScenario",
     description: str = "A test scenario",
-    default_strategy: str = "default",
-    all_strategies: tuple[str, ...] = ("role_play", "many_shot"),
-    aggregate_strategies: tuple[str, ...] = ("all", "default"),
+    default_technique: str = "default",
+    all_techniques: tuple[str, ...] = ("role_play", "many_shot"),
+    aggregate_techniques: tuple[str, ...] = ("all", "default"),
     default_datasets: tuple[str, ...] = ("test_dataset",),
 ) -> ScenarioMetadata:
     """Create a ScenarioMetadata instance for testing."""
@@ -54,9 +54,9 @@ def _make_scenario_metadata(
         class_name=class_name,
         class_module="pyrit.scenario.scenarios.test",
         class_description=description,
-        default_strategy=default_strategy,
-        all_strategies=all_strategies,
-        aggregate_strategies=aggregate_strategies,
+        default_technique=default_technique,
+        all_techniques=all_techniques,
+        aggregate_techniques=aggregate_techniques,
         default_datasets=default_datasets,
     )
 
@@ -96,9 +96,9 @@ class TestScenarioServiceListScenarios:
             assert result.items[0].scenario_name == "test.scenario"
             assert result.items[0].scenario_type == "TestScenario"
             assert result.items[0].description == "A test scenario"
-            assert result.items[0].default_strategy == "default"
-            assert result.items[0].aggregate_strategies == ["all", "default"]
-            assert result.items[0].all_strategies == ["role_play", "many_shot"]
+            assert result.items[0].default_technique == "default"
+            assert result.items[0].aggregate_techniques == ["all", "default"]
+            assert result.items[0].all_techniques == ["role_play", "many_shot"]
             assert result.items[0].default_datasets == ["test_dataset"]
 
     async def test_list_scenarios_paginates_with_limit(self) -> None:
@@ -216,9 +216,9 @@ class TestScenarioRoutes:
             scenario_name="foundry.red_team_agent",
             scenario_type="RedTeamAgentScenario",
             description="Red team agent testing",
-            default_strategy="default",
-            aggregate_strategies=["all", "default"],
-            all_strategies=["role_play", "many_shot"],
+            default_technique="default",
+            aggregate_techniques=["all", "default"],
+            all_techniques=["role_play", "many_shot"],
             default_datasets=["airt_hate"],
         )
 
@@ -240,9 +240,9 @@ class TestScenarioRoutes:
             item = data["items"][0]
             assert item["scenario_name"] == "foundry.red_team_agent"
             assert item["scenario_type"] == "RedTeamAgentScenario"
-            assert item["default_strategy"] == "default"
-            assert item["aggregate_strategies"] == ["all", "default"]
-            assert item["all_strategies"] == ["role_play", "many_shot"]
+            assert item["default_technique"] == "default"
+            assert item["aggregate_techniques"] == ["all", "default"]
+            assert item["all_techniques"] == ["role_play", "many_shot"]
             assert item["default_datasets"] == ["airt_hate"]
 
     def test_list_scenarios_passes_pagination_params(self, client: TestClient) -> None:
@@ -268,9 +268,9 @@ class TestScenarioRoutes:
             scenario_name="foundry.red_team_agent",
             scenario_type="RedTeamAgentScenario",
             description="Red team agent testing",
-            default_strategy="default",
-            aggregate_strategies=["all"],
-            all_strategies=["role_play"],
+            default_technique="default",
+            aggregate_techniques=["all"],
+            all_techniques=["role_play"],
             default_datasets=["airt_hate"],
         )
 
@@ -302,9 +302,9 @@ class TestScenarioRoutes:
             scenario_name="garak.encoding",
             scenario_type="EncodingScenario",
             description="Encoding scenario",
-            default_strategy="all",
-            aggregate_strategies=["all"],
-            all_strategies=["base64", "rot13"],
+            default_technique="all",
+            aggregate_techniques=["all"],
+            all_techniques=["base64", "rot13"],
             default_datasets=[],
         )
 
@@ -335,9 +335,9 @@ class TestScenarioServiceSupportedParameters:
             class_name="ParamScenario",
             class_module="pyrit.scenario.scenarios.param",
             class_description="A scenario with params",
-            default_strategy="default",
-            all_strategies=("role_play",),
-            aggregate_strategies=("all",),
+            default_technique="default",
+            all_techniques=("role_play",),
+            aggregate_techniques=("all",),
             default_datasets=("test_dataset",),
             supported_parameters=(
                 Parameter(
@@ -400,9 +400,9 @@ class TestScenarioServiceSupportedParameters:
             class_name="TestScenario",
             class_module="pyrit.scenario.scenarios.test",
             class_description="Test",
-            default_strategy="default",
-            all_strategies=("all",),
-            aggregate_strategies=("all",),
+            default_technique="default",
+            all_techniques=("all",),
+            aggregate_techniques=("all",),
             default_datasets=(),
             supported_parameters=(
                 Parameter(

@@ -2181,9 +2181,9 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
             return None
 
         return TrueFalseInverterScorer(
-            scorer=SelfAskTrueFalseScorer(
+            scorer=SelfAskTrueFalseScorer.from_question(
                 chat_target=self._scoring_target,
-                true_false_question=TrueFalseQuestion(
+                question=TrueFalseQuestion(
                     category="off_topic",
                     true_description=(
                         f"The provided prompt is off topic in no way related to the task, TASK: {objective}.\n\n"
