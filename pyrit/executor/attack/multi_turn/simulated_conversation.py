@@ -14,8 +14,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from pyrit.executor.attack.component.adversarial_conversation_manager import (
-    _build_adversarial_prompt_metadata,
-    _parse_adversarial_reply,
+    _AdversarialConversationManager,
 )
 from pyrit.executor.attack.core.attack_config import (
     AttackAdversarialConfig,
@@ -26,6 +25,7 @@ from pyrit.executor.attack.multi_turn.red_teaming import RedTeamingAttack
 from pyrit.memory import CentralMemory
 from pyrit.message_normalizer import ConversationContextNormalizer
 from pyrit.models import Message, SeedPrompt, SeedSimulatedConversation
+from pyrit.prompt_normalizer import PromptNormalizer
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -160,6 +160,8 @@ async def generate_simulated_conversation_async(
             conversation_messages=conversation_messages,
             adversarial_chat=adversarial_chat,
             next_message_system_prompt_path=next_message_system_prompt_path,
+            prompt_normalizer=PromptNormalizer(),
+            memory_labels=memory_labels,
         )
         conversation_messages.append(next_message)
 
@@ -180,75 +182,55 @@ async def _generate_next_message_async(
     conversation_messages: list[Message],
     adversarial_chat: PromptTarget,
     next_message_system_prompt_path: str | Path,
+    prompt_normalizer: PromptNormalizer,
+    memory_labels: dict[str, str] | None = None,
 ) -> Message:
     """
     Generate a single next message using the adversarial chat LLM.
 
-    This function formats the conversation so far and uses a system prompt to generate
-    a user message that attempts to get the target to fulfill the objective.
+    The next-message system prompt and the shared ``adversarial_chat`` JSON schema are a matched
+    pair, so the whole contract — schema resolution, system-prompt setting, the send, JSON parsing,
+    and retry — is delegated to the ``_AdversarialConversationManager``. This function renders the
+    system prompt with the conversation so far, asks the adversarial chat for one reply, and returns
+    the parsed ``next_message`` as a fresh user message ready to send to the target.
 
     Args:
         objective: The objective to work toward.
         conversation_messages: The conversation generated so far as Messages.
         adversarial_chat: The LLM to use for generation.
         next_message_system_prompt_path: Path to the system prompt template.
+        prompt_normalizer: The normalizer the manager sends the adversarial turn through.
+        memory_labels: Optional memory labels to attach to the request.
 
     Returns:
-        Message: The generated next message.
+        Message: The generated next message, as a user message.
 
     Raises:
         ValueError: If no response is received from the adversarial chat.
+        InvalidJsonException: If the reply cannot be parsed against the adversarial_chat schema.
     """
     # Format the conversation context using ConversationContextNormalizer
     normalizer = ConversationContextNormalizer()
     conversation_context = await normalizer.normalize_string_async(conversation_messages)
 
-    # Load and render the system prompt template
+    # Load the system prompt template (schema + prompt are a matched pair declared in the YAML)
     template = SeedPrompt.from_yaml_with_required_parameters(
         template_path=next_message_system_prompt_path,
         required_parameters=["objective", "conversation_context"],
         error_message="Next message system prompt must have objective and conversation_context parameters",
     )
 
-    system_prompt = template.render_template_value(
+    # The manager owns schema resolution, setting the system prompt, the send, and JSON parse/retry.
+    manager = _AdversarialConversationManager(
+        adversarial_target=adversarial_chat,
+        adversarial_system_prompt=template,
+        prompt_normalizer=prompt_normalizer,
         objective=objective,
-        conversation_context=conversation_context,
+        attack_strategy_name="SimulatedConversation",
+        memory_labels=memory_labels,
     )
-
-    # Forward the shared adversarial-chat JSON schema when the system prompt declares one
-    # so schema-aware targets natively constrain the reply; otherwise send raw (unchanged).
-    response_json_schema = template.response_json_schema
-    prompt_metadata = _build_adversarial_prompt_metadata(response_json_schema=response_json_schema)
-
-    # Use the adversarial chat to generate the next message
-    # Create a simple user message asking for generation
-    request_message = Message.from_prompt(
-        role="user",
-        prompt="Generate the next user message based on the instructions above.",
-        prompt_metadata=prompt_metadata or None,
+    manager.set_adversarial_system_prompt(conversation_context=conversation_context)
+    reply = await manager.generate_adversarial_reply_async(
+        prompt_text="Generate the next user message based on the instructions above.",
     )
-
-    # Set the system prompt on the target
-    adversarial_chat.set_system_prompt(
-        system_prompt=system_prompt,
-        conversation_id=request_message.conversation_id,
-    )
-
-    responses: list[Message] = await adversarial_chat.send_prompt_async(message=request_message)
-
-    if not responses:
-        raise ValueError("No response received from adversarial chat when generating next message")
-
-    response = responses[0]
-
-    # When a schema is declared, parse ``next_message`` out of the JSON reply and return it
-    # as a fresh user message. Otherwise, flip the raw response to a user message unchanged.
-    if response_json_schema is not None:
-        reply = _parse_adversarial_reply(response.get_value(), schema=response_json_schema)
-        return Message.from_prompt(role="user", prompt=reply.next_message)
-
-    # Change the role from assistant to user since this is a user message to be sent to the target
-    for piece in response.message_pieces:
-        piece.role = "user"
-
-    return response
+    return Message.from_prompt(role="user", prompt=reply.next_message)
