@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import logging
+from functools import cache
 from typing import TYPE_CHECKING, ClassVar
 
 from pyrit.common import apply_defaults
@@ -67,6 +68,10 @@ DOCTOR_FACTORIES: list[AttackTechniqueFactory] = [
 # generator (like the registry-driven scenarios) rather than hand-written. Both
 # techniques are the scenario default, so DEFAULT and ALL coincide today; ALL exists
 # so a future non-default technique would diverge from DEFAULT without another change.
+# Built lazily and cached (like the other dynamically-generated scenarios) so every
+# Doctor instance shares one enum class; the public ``DoctorStrategy`` symbol is
+# resolved from here via the garak package ``__getattr__``.
+@cache
 def _build_doctor_strategy() -> type[ScenarioStrategy]:
     """
     Generate the Doctor strategy enum from ``DOCTOR_FACTORIES``.
@@ -80,9 +85,6 @@ def _build_doctor_strategy() -> type[ScenarioStrategy]:
         aggregate_tags={},
         default_technique_names={"policy_puppetry", "policy_puppetry_leet"},
     )
-
-
-DoctorStrategy: type[ScenarioStrategy] = _build_doctor_strategy()
 
 
 class Doctor(Scenario):
@@ -131,10 +133,12 @@ class Doctor(Scenario):
         if not objective_scorer:
             objective_scorer = self._get_default_objective_scorer()
 
+        strategy_class = _build_doctor_strategy()
+
         super().__init__(
             version=self.VERSION,
-            strategy_class=DoctorStrategy,
-            default_strategy=DoctorStrategy("default"),
+            strategy_class=strategy_class,
+            default_strategy=strategy_class("default"),
             default_dataset_config=DatasetAttackConfiguration(dataset_names=["garak_doctor"]),
             objective_scorer=objective_scorer,
             scenario_result_id=scenario_result_id,
