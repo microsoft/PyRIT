@@ -20,7 +20,7 @@
 # ### Key Components
 #
 # - **Scenario**: The top-level orchestrator that groups and executes multiple atomic attacks
-# - **AtomicAttack**: An atomic test unit combining an attack strategy, objectives, and execution parameters
+# - **AtomicAttack**: An atomic test unit combining an attack technique, objectives, and execution parameters
 # - **ScenarioResult**: Contains the aggregated results from all atomic attacks and scenario metadata
 #
 # ## Use Cases
@@ -29,7 +29,7 @@
 #
 # - **VibeCheckScenario**: Randomly selects a few prompts from HarmBench [@mazeika2024harmbench] to quickly assess model behavior
 # - **QuickViolence**: Checks how resilient a model is to violent objectives using multiple attack techniques
-# - **ComprehensiveFoundry**: Tests a target with all available attack converters and strategies
+# - **ComprehensiveFoundry**: Tests a target with all available attack converters and techniques
 # - **CustomCompliance**: Tests against specific compliance requirements with curated datasets and attacks
 #
 # These Scenarios can be updated and added to as you refine what you are testing for.
@@ -38,7 +38,7 @@
 #
 # Scenarios should take almost no effort to run with default values. The [PyRIT Scanner](../../scanner/0_scanner.md) provides two CLIs for running scenarios: [pyrit_scan](../../scanner/1_pyrit_scan.ipynb) for automated execution and [pyrit_shell](../../scanner/2_pyrit_shell.md) for interactive exploration.
 #
-# For programmatic configuration — customizing datasets, strategies, scorers, and baseline mode — see [Common Scenario Parameters](./1_common_scenario_parameters.ipynb).
+# For programmatic configuration — customizing datasets, techniques, scorers, and baseline mode — see [Common Scenario Parameters](./1_common_scenario_parameters.ipynb).
 #
 # ## How It Works
 #
@@ -55,14 +55,14 @@
 #
 # ### Required Components
 #
-# 1. **Strategy Enum**: Create a `ScenarioStrategy` enum that defines the available attack techniques for your scenario.
+# 1. **Technique Enum**: Create a `ScenarioTechnique` enum that defines the available attack techniques for your scenario.
 #    - Each enum member represents an **attack technique** (the *how* of an attack)
 #    - Each member is defined as `(value, tags)` where value is a string and tags is a set of strings
-#    - Include an `ALL` aggregate strategy that expands to all available strategies
+#    - Include an `ALL` aggregate technique that expands to all available techniques
 #
 # 2. **Scenario Class**: Extend `Scenario` and pass these to `super().__init__()`:
-#    - `strategy_class`: Your strategy enum class
-#    - `default_strategy`: The default strategy (typically `YourStrategy.ALL` or `YourStrategy.DEFAULT`)
+#    - `technique_class`: Your technique enum class
+#    - `default_technique`: The default technique (typically `YourTechnique.ALL` or `YourTechnique.DEFAULT`)
 #    - Implement `_build_atomic_attacks_async(context)` — the single abstract extension point.
 #      Matrix-shaped scenarios delegate to `build_matrix_atomic_attacks(context=...)` in one line.
 #
@@ -73,15 +73,15 @@
 # 4. **Constructor**: Use `@apply_defaults` decorator and call `super().__init__()` with scenario metadata:
 #    - `name`: Descriptive name for your scenario
 #    - `version`: Integer version number
-#    - `strategy_class`: The strategy enum class for this scenario
-#    - `default_strategy`: The default strategy member (typically `YourStrategy.ALL` or `YourStrategy.DEFAULT`)
+#    - `technique_class`: The technique enum class for this scenario
+#    - `default_technique`: The default technique member (typically `YourTechnique.ALL` or `YourTechnique.DEFAULT`)
 #    - `default_dataset_config`: A `DatasetConfiguration` specifying the scenario's default datasets
 #    - `objective_scorer`: The scorer used to judge responses
 #    - `scenario_result_id`: Optional ID to resume an existing scenario (optional)
 #
 # 5. **Initialization**: Call `await scenario.initialize_async()` to populate atomic attacks:
 #    - `objective_target`: The target system being tested (required)
-#    - `scenario_strategies`: List of strategies to execute (optional, defaults to ALL)
+#    - `scenario_techniques`: List of techniques to execute (optional, defaults to ALL)
 #    - `max_concurrency`: Number of concurrent operations (default: 4)
 #    - `max_retries`: Number of retry attempts on failure (default: 0)
 #    - `memory_labels`: Optional labels for tracking (optional)
@@ -90,7 +90,7 @@
 #
 # ### Example Structure
 #
-# The construction path: define your strategy, dataset config, and constructor, then
+# The construction path: define your technique, dataset config, and constructor, then
 # implement `_build_atomic_attacks_async(context)`. Matrix-shaped scenarios delegate to the
 # `build_matrix_atomic_attacks` helper, which builds atomic attacks automatically from the
 # registered attack techniques.
@@ -100,7 +100,7 @@ from pyrit.common import apply_defaults
 from pyrit.scenario import (
     DatasetConfiguration,
     Scenario,
-    ScenarioStrategy,
+    ScenarioTechnique,
 )
 from pyrit.scenario.core.matrix_atomic_attack_builder import build_matrix_atomic_attacks
 from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
@@ -111,11 +111,11 @@ await initialize_pyrit_async(memory_db_type="InMemory")  # type: ignore [top-lev
 await TechniqueInitializer().initialize_async()  # type: ignore [top-level-await]
 
 
-class MyStrategy(ScenarioStrategy):
+class MyTechnique(ScenarioTechnique):
     ALL = ("all", {"all"})
     DEFAULT = ("default", {"default"})
     SINGLE_TURN = ("single_turn", {"single_turn"})
-    # Strategy members represent attack techniques
+    # Technique members represent attack techniques
     PromptSending = ("prompt_sending", {"single_turn", "default"})
     RolePlay = ("role_play", {"single_turn"})
 
@@ -139,8 +139,8 @@ class MyScenario(Scenario):
         super().__init__(
             version=self.VERSION,
             objective_scorer=self._objective_scorer,
-            strategy_class=MyStrategy,
-            default_strategy=MyStrategy.DEFAULT,
+            technique_class=MyTechnique,
+            default_technique=MyTechnique.DEFAULT,
             default_dataset_config=DatasetConfiguration(dataset_names=["dataset_name"], max_dataset_size=4),
             scenario_result_id=scenario_result_id,
         )
@@ -183,12 +183,12 @@ print_scenario_list(items=[s.model_dump() for s in response.items])
 # [Common Scenario Parameters](./1_common_scenario_parameters.ipynb) for a worked example.
 #
 # Custom scenarios should choose their `BASELINE_ATTACK_POLICY` based on whether an unmodified
-# prompt is a meaningful comparator for the scenario's strategies:
+# prompt is a meaningful comparator for the scenario's techniques:
 #
 # - **`Enabled`** — the baseline is prepended by default and the caller can opt out. Use when an
 #   unmodified-prompt run is a meaningful comparison point (most scenarios).
 # - **`Disabled`** — the baseline is supported but omitted by default; the caller must opt in. Use
-#   when the scenario is already dominated by a large set of templates/strategies that already
+#   when the scenario is already dominated by a large set of templates/techniques that already
 #   exercise the unmodified surface (e.g., `Jailbreak`).
 # - **`Forbidden`** — the baseline is unavailable and passing `include_baseline=True` raises. Use
 #   when the scenario's semantics make a single-shot unmodified prompt meaningless as a comparator

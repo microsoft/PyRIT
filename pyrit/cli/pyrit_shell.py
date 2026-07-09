@@ -344,7 +344,7 @@ class PyRITShell(cmd.Cmd):
         Options:
             --target <name>                 Target name (required)
             --initializers <name> ...       Initializer names (supports name:key=val syntax)
-            --strategies, -s <s1> <s2> ...  Strategy names. Append registered
+            --techniques, -t <t1> <t2> ...  Technique names. Append registered
                                             converters to a technique with
                                             ':converter.<name>' (repeatable), e.g.
                                             role_play:converter.translation_spanish.
@@ -427,8 +427,8 @@ class PyRITShell(cmd.Cmd):
             if init_args:
                 request_kwargs["initializer_args"] = init_args
 
-        if args.get("scenario_strategies"):
-            request_kwargs["strategies"] = args["scenario_strategies"]
+        if args.get("scenario_techniques"):
+            request_kwargs["techniques"] = args["scenario_techniques"]
         if args.get("max_concurrency") is not None:
             request_kwargs["max_concurrency"] = args["max_concurrency"]
         if args.get("max_retries") is not None:
@@ -449,7 +449,7 @@ class PyRITShell(cmd.Cmd):
         request = RunScenarioRequest(**request_kwargs)
 
         # Start run
-        total_strategies = len(request.strategies or [])
+        total_techniques = len(request.techniques or [])
         print(f"\nRunning scenario: {scenario_name}")
         sys.stdout.flush()
 
@@ -467,7 +467,7 @@ class PyRITShell(cmd.Cmd):
         try:
             while True:
                 run = self._run_async(self._api_client.get_scenario_run_async(scenario_result_id=scenario_result_id))
-                print_scenario_run_progress(run=run, total_strategies=total_strategies)
+                print_scenario_run_progress(run=run, total_techniques=total_techniques)
                 if run.status in {
                     ScenarioRunState.COMPLETED,
                     ScenarioRunState.FAILED,

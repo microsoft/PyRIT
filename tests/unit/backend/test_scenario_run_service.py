@@ -20,11 +20,11 @@ from pyrit.models import AttackOutcome, ScenarioRunState
 from pyrit.models.catalog.scenario import RunScenarioRequest
 from pyrit.prompt_converter import PromptConverter
 from pyrit.scenario.core import DatasetAttackConfiguration, DatasetConfiguration
-from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
+from pyrit.scenario.core.scenario_technique import ScenarioTechnique
 
 
-class _StubStrategy(ScenarioStrategy):
-    """Minimal concrete ScenarioStrategy used to exercise converter-token parsing."""
+class _StubTechnique(ScenarioTechnique):
+    """Minimal concrete ScenarioTechnique used to exercise converter-token parsing."""
 
     ALL = ("all", {"all"})
     EASY = ("easy", {"easy"})
@@ -61,7 +61,7 @@ def _make_request(
     scenario_name: str = "foundry.red_team_agent",
     target_name: str = "my_target",
     initializers: list[str] | None = None,
-    strategies: list[str] | None = None,
+    techniques: list[str] | None = None,
     scenario_result_id: str | None = None,
     dataset_names: list[str] | None = None,
     max_dataset_size: int | None = None,
@@ -72,7 +72,7 @@ def _make_request(
         scenario_name=scenario_name,
         target_name=target_name,
         initializers=initializers,
-        strategies=strategies,
+        techniques=techniques,
         scenario_result_id=scenario_result_id,
         dataset_names=dataset_names,
         max_dataset_size=max_dataset_size,
@@ -93,7 +93,7 @@ def _make_db_scenario_result(
     sr.scenario_name = scenario_name
     sr.scenario_version = 1
     sr.scenario_run_state = run_state
-    sr.get_strategies_used.return_value = []
+    sr.get_techniques_used.return_value = []
     sr.attack_results = attack_results or {}
     sr.number_tries = 1
     sr.creation_time = datetime(2025, 1, 1, tzinfo=timezone.utc)
@@ -128,7 +128,7 @@ def mock_all_registries(mock_memory):
     mock_scenario_instance._scenario_result_id = "sr-uuid-1"
 
     mock_scenario_class = MagicMock(return_value=mock_scenario_instance)
-    mock_scenario_instance._strategy_class = MagicMock()
+    mock_scenario_instance._technique_class = MagicMock()
     mock_scenario_instance._default_dataset_config = MagicMock()
 
     mock_sr = MagicMock()
@@ -227,14 +227,14 @@ class TestScenarioRunServiceStartRun:
             with pytest.raises(ValueError, match="Initializer not found"):
                 await service.start_run_async(request=_make_request(initializers=["bad_init"]))
 
-    async def test_start_run_invalid_strategy_raises_value_error(self, mock_memory) -> None:
-        """Test that an invalid strategy name raises ValueError immediately."""
+    async def test_start_run_invalid_technique_raises_value_error(self, mock_memory) -> None:
+        """Test that an invalid technique name raises ValueError immediately."""
         service = ScenarioRunService()
 
-        mock_strategy_class = MagicMock(side_effect=ValueError("not a valid strategy"))
-        mock_strategy_class.__iter__ = MagicMock(return_value=iter([MagicMock(value="valid_strat")]))
+        mock_technique_class = MagicMock(side_effect=ValueError("not a valid technique"))
+        mock_technique_class.__iter__ = MagicMock(return_value=iter([MagicMock(value="valid_strat")]))
 
-        mock_instance = MagicMock(_strategy_class=mock_strategy_class)
+        mock_instance = MagicMock(_technique_class=mock_technique_class)
         mock_scenario_class = MagicMock(return_value=mock_instance)
 
         mock_sr = MagicMock()
@@ -248,8 +248,8 @@ class TestScenarioRunServiceStartRun:
             patch(f"{_REGISTRY_PATCH_BASE}.TargetRegistry.get_registry_singleton", return_value=mock_tr),
             patch(f"{_REGISTRY_PATCH_BASE}.InitializerRegistry.get_registry_singleton"),
         ):
-            with pytest.raises(ValueError, match="Strategy.*not found for scenario"):
-                await service.start_run_async(request=_make_request(strategies=["bad_strategy"]))
+            with pytest.raises(ValueError, match="Technique.*not found for scenario"):
+                await service.start_run_async(request=_make_request(techniques=["bad_technique"]))
 
     async def test_start_run_scenario_not_no_arg_instantiable_raises(self, mock_memory) -> None:
         """If introspection is required and ``scenario_class()`` fails, surface a ValueError."""
@@ -270,26 +270,26 @@ class TestScenarioRunServiceStartRun:
             patch(f"{_REGISTRY_PATCH_BASE}.InitializerRegistry.get_registry_singleton"),
         ):
             with pytest.raises(ValueError, match="not instantiable without arguments"):
-                # strategies forces the introspection path
-                await service.start_run_async(request=_make_request(strategies=["any"]))
+                # techniques forces the introspection path
+                await service.start_run_async(request=_make_request(techniques=["any"]))
 
-    async def test_start_run_passes_valid_strategies_through(self, mock_all_registries) -> None:
-        """A valid strategy list is converted to enum values and forwarded to initialize_async."""
-        strategy_a = MagicMock(value="strat_a")
-        strategy_b = MagicMock(value="strat_b")
+    async def test_start_run_passes_valid_techniques_through(self, mock_all_registries) -> None:
+        """A valid technique list is converted to enum values and forwarded to initialize_async."""
+        technique_a = MagicMock(value="strat_a")
+        technique_b = MagicMock(value="strat_b")
 
         def _lookup(name):
-            return {"strat_a": strategy_a, "strat_b": strategy_b}[name]
+            return {"strat_a": technique_a, "strat_b": technique_b}[name]
 
-        mock_strategy_class = MagicMock(side_effect=_lookup)
+        mock_technique_class = MagicMock(side_effect=_lookup)
         scenario_instance = mock_all_registries["scenario_instance"]
-        scenario_instance._strategy_class = mock_strategy_class
+        scenario_instance._technique_class = mock_technique_class
 
         service = ScenarioRunService()
-        await service.start_run_async(request=_make_request(strategies=["strat_a", "strat_b"]))
+        await service.start_run_async(request=_make_request(techniques=["strat_a", "strat_b"]))
 
         init_call = mock_all_registries["scenario_registry"].create_and_initialize_async.await_args
-        assert init_call.kwargs["scenario_strategies"] == [strategy_a, strategy_b]
+        assert init_call.kwargs["scenario_techniques"] == [technique_a, technique_b]
 
     async def test_start_run_max_dataset_size_uses_default_config(self, mock_all_registries) -> None:
         """``max_dataset_size`` with no ``dataset_names`` reuses the scenario's default config."""
@@ -688,7 +688,7 @@ class TestScenarioRunServiceExecution:
         mock_scenario_result = MagicMock()
         mock_scenario_result.id = "sr-uuid-1"
         mock_scenario_result.scenario_run_state = "COMPLETED"
-        mock_scenario_result.get_strategies_used.return_value = ["base64"]
+        mock_scenario_result.get_techniques_used.return_value = ["base64"]
         mock_scenario_result.attack_results = {"attack1": []}
         mock_scenario_result.number_tries = 1
         mock_scenario_result.creation_time = datetime(2025, 1, 1, tzinfo=timezone.utc)
@@ -800,7 +800,7 @@ class TestScenarioRunServiceProgressReporting:
                 "attack_b": [mock_undetermined],
             },
         )
-        db_result.get_strategies_used.return_value = ["attack_a", "attack_b"]
+        db_result.get_techniques_used.return_value = ["attack_a", "attack_b"]
         db_result.objective_achieved_rate.return_value = 33
         mock_memory.get_scenario_results.return_value = [db_result]
 
@@ -811,7 +811,7 @@ class TestScenarioRunServiceProgressReporting:
         assert fetched.status == ScenarioRunState.IN_PROGRESS
         assert fetched.total_attacks == 3
         assert fetched.completed_attacks == 3
-        assert fetched.strategies_used == ["attack_a", "attack_b"]
+        assert fetched.techniques_used == ["attack_a", "attack_b"]
         assert fetched.objective_achieved_rate == 33
 
     def test_created_run_shows_zero_counts(self, mock_memory) -> None:
@@ -830,7 +830,7 @@ class TestScenarioRunServiceProgressReporting:
         assert fetched.status == ScenarioRunState.CREATED
         assert fetched.total_attacks == 0
         assert fetched.completed_attacks == 0
-        assert fetched.strategies_used == []
+        assert fetched.techniques_used == []
 
     def test_completed_run_still_shows_full_counts(self, mock_memory) -> None:
         """Test that COMPLETED runs still show accurate counts after the fix."""
@@ -844,7 +844,7 @@ class TestScenarioRunServiceProgressReporting:
             run_state="COMPLETED",
             attack_results={"attack_a": [mock_success]},
         )
-        db_result.get_strategies_used.return_value = ["attack_a"]
+        db_result.get_techniques_used.return_value = ["attack_a"]
         db_result.objective_achieved_rate.return_value = 100
         mock_memory.get_scenario_results.return_value = [db_result]
 
@@ -855,42 +855,42 @@ class TestScenarioRunServiceProgressReporting:
         assert fetched.status == ScenarioRunState.COMPLETED
         assert fetched.total_attacks == 1
         assert fetched.completed_attacks == 1
-        assert fetched.strategies_used == ["attack_a"]
+        assert fetched.techniques_used == ["attack_a"]
         assert fetched.objective_achieved_rate == 100
 
 
-class TestResolveStrategiesAndConverters:
-    """Tests for per-technique converter resolution from ``--strategies`` tokens."""
+class TestResolveTechniquesAndConverters:
+    """Tests for per-technique converter resolution from ``--techniques`` tokens."""
 
-    def test_plain_strategy_no_converters(self, mock_memory) -> None:
+    def test_plain_technique_no_converters(self, mock_memory) -> None:
         service = ScenarioRunService()
         with _patch_converter_registry({}):
-            enums, converters = service._resolve_strategies_and_converters(
-                tokens=["role_play"], strategy_class=_StubStrategy, scenario_name="x"
+            enums, converters = service._resolve_techniques_and_converters(
+                tokens=["role_play"], technique_class=_StubTechnique, scenario_name="x"
             )
-        assert enums == [_StubStrategy.ROLE_PLAY]
+        assert enums == [_StubTechnique.ROLE_PLAY]
         assert converters == {}
 
     def test_single_converter_appended(self, mock_memory) -> None:
         conv = MagicMock(spec=PromptConverter)
         service = ScenarioRunService()
         with _patch_converter_registry({"translation_spanish": conv}):
-            enums, converters = service._resolve_strategies_and_converters(
+            enums, converters = service._resolve_techniques_and_converters(
                 tokens=["role_play:converter.translation_spanish"],
-                strategy_class=_StubStrategy,
+                technique_class=_StubTechnique,
                 scenario_name="x",
             )
-        assert enums == [_StubStrategy.ROLE_PLAY]
+        assert enums == [_StubTechnique.ROLE_PLAY]
         assert converters == {"role_play": [conv]}
 
     def test_aggregate_token_applies_converter_to_all_concrete(self, mock_memory) -> None:
         conv = MagicMock(spec=PromptConverter)
         service = ScenarioRunService()
         with _patch_converter_registry({"c1": conv}):
-            enums, converters = service._resolve_strategies_and_converters(
-                tokens=["easy:converter.c1"], strategy_class=_StubStrategy, scenario_name="x"
+            enums, converters = service._resolve_techniques_and_converters(
+                tokens=["easy:converter.c1"], technique_class=_StubTechnique, scenario_name="x"
             )
-        assert enums == [_StubStrategy.EASY]
+        assert enums == [_StubTechnique.EASY]
         assert converters == {"role_play": [conv], "single_turn": [conv]}
 
     def test_multiple_converters_preserve_order(self, mock_memory) -> None:
@@ -898,9 +898,9 @@ class TestResolveStrategiesAndConverters:
         c2 = MagicMock(spec=PromptConverter)
         service = ScenarioRunService()
         with _patch_converter_registry({"c1": c1, "c2": c2}):
-            _, converters = service._resolve_strategies_and_converters(
+            _, converters = service._resolve_techniques_and_converters(
                 tokens=["role_play:converter.c1:converter.c2"],
-                strategy_class=_StubStrategy,
+                technique_class=_StubTechnique,
                 scenario_name="x",
             )
         assert converters == {"role_play": [c1, c2]}
@@ -910,9 +910,9 @@ class TestResolveStrategiesAndConverters:
         c2 = MagicMock(spec=PromptConverter)
         service = ScenarioRunService()
         with _patch_converter_registry({"c1": c1, "c2": c2}):
-            _, converters = service._resolve_strategies_and_converters(
+            _, converters = service._resolve_techniques_and_converters(
                 tokens=["easy:converter.c1", "role_play:converter.c2"],
-                strategy_class=_StubStrategy,
+                technique_class=_StubTechnique,
                 scenario_name="x",
             )
         # role_play is targeted by both the aggregate token and the concrete token.
@@ -923,42 +923,42 @@ class TestResolveStrategiesAndConverters:
         service = ScenarioRunService()
         with _patch_converter_registry({"known": MagicMock(spec=PromptConverter)}):
             with pytest.raises(ValueError, match="not a registered converter"):
-                service._resolve_strategies_and_converters(
+                service._resolve_techniques_and_converters(
                     tokens=["role_play:converter.missing"],
-                    strategy_class=_StubStrategy,
+                    technique_class=_StubTechnique,
                     scenario_name="x",
                 )
 
     def test_unknown_modifier_prefix_raises(self, mock_memory) -> None:
         service = ScenarioRunService()
         with _patch_converter_registry({}):
-            with pytest.raises(ValueError, match="Unknown strategy modifier"):
-                service._resolve_strategies_and_converters(
+            with pytest.raises(ValueError, match="Unknown technique modifier"):
+                service._resolve_techniques_and_converters(
                     tokens=["role_play:scorer.something"],
-                    strategy_class=_StubStrategy,
+                    technique_class=_StubTechnique,
                     scenario_name="x",
                 )
 
-    def test_unknown_base_strategy_raises(self, mock_memory) -> None:
+    def test_unknown_base_technique_raises(self, mock_memory) -> None:
         service = ScenarioRunService()
         with _patch_converter_registry({}):
             with pytest.raises(ValueError, match="not found for scenario"):
-                service._resolve_strategies_and_converters(
+                service._resolve_techniques_and_converters(
                     tokens=["nope:converter.c1"],
-                    strategy_class=_StubStrategy,
+                    technique_class=_StubTechnique,
                     scenario_name="x",
                 )
 
-    async def test_start_run_forwards_strategy_converters(self, mock_all_registries) -> None:
-        """A converter token is resolved and forwarded through the registry as ``strategy_converters``."""
+    async def test_start_run_forwards_technique_converters(self, mock_all_registries) -> None:
+        """A converter token is resolved and forwarded through the registry as ``technique_converters``."""
         conv = MagicMock(spec=PromptConverter)
         scenario_instance = mock_all_registries["scenario_instance"]
-        scenario_instance._strategy_class = _StubStrategy
+        scenario_instance._technique_class = _StubTechnique
 
         service = ScenarioRunService()
         with _patch_converter_registry({"translation_spanish": conv}):
-            await service.start_run_async(request=_make_request(strategies=["role_play:converter.translation_spanish"]))
+            await service.start_run_async(request=_make_request(techniques=["role_play:converter.translation_spanish"]))
 
         init_call = mock_all_registries["scenario_registry"].create_and_initialize_async.await_args
-        assert init_call.kwargs["scenario_strategies"] == [_StubStrategy.ROLE_PLAY]
-        assert init_call.kwargs["strategy_converters"] == {"role_play": [conv]}
+        assert init_call.kwargs["scenario_techniques"] == [_StubTechnique.ROLE_PLAY]
+        assert init_call.kwargs["technique_converters"] == {"role_play": [conv]}

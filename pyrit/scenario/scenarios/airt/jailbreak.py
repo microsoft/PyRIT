@@ -20,34 +20,34 @@ from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
 from pyrit.scenario.core.scenario import Scenario
 from pyrit.scenario.core.scenario_context import ScenarioContext
-from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
 from pyrit.scenario.core.scenario_target_defaults import get_default_adversarial_target
+from pyrit.scenario.core.scenario_technique import ScenarioTechnique
 from pyrit.score import TrueFalseScorer
 
 
-class JailbreakStrategy(ScenarioStrategy):
+class JailbreakTechnique(ScenarioTechnique):
     """
-    Strategy for jailbreak attacks.
+    Technique for jailbreak attacks.
 
-    The SIMPLE strategy just sends the jailbroken prompt and records the response. It is meant to
+    The SIMPLE technique just sends the jailbroken prompt and records the response. It is meant to
     expose an obvious way of using this scenario without worrying about additional tweaks and changes
     to the prompt.
 
-    COMPLEX strategies use additional techniques to enhance the jailbreak like modifying the
+    COMPLEX techniques use additional techniques to enhance the jailbreak like modifying the
     system prompt or probing the target model for an additional vulnerability (e.g. the SkeletonKeyAttack).
     They are meant to provide a sense of how well a jailbreak generalizes to slight changes in the delivery
     method.
     """
 
-    # Aggregate members (special markers that expand to strategies with matching tags)
+    # Aggregate members (special markers that expand to techniques with matching tags)
     ALL = ("all", {"all"})
     SIMPLE = ("simple", {"simple"})
     COMPLEX = ("complex", {"complex"})
 
-    # Simple strategies
+    # Simple techniques
     PromptSending = ("prompt_sending", {"simple"})
 
-    # Complex strategies
+    # Complex techniques
     ManyShot = ("many_shot", {"complex"})
     SkeletonKey = ("skeleton", {"complex"})
     RolePlay = ("role_play", {"complex"})
@@ -143,8 +143,8 @@ class Jailbreak(Scenario):
 
         super().__init__(
             version=self.VERSION,
-            strategy_class=JailbreakStrategy,
-            default_strategy=JailbreakStrategy.SIMPLE,
+            technique_class=JailbreakTechnique,
+            default_technique=JailbreakTechnique.SIMPLE,
             default_dataset_config=DatasetAttackConfiguration(dataset_names=["airt_harms"], max_dataset_size=4),
             objective_scorer=self._objective_scorer,
             scenario_result_id=scenario_result_id,
@@ -164,14 +164,14 @@ class Jailbreak(Scenario):
             self._adversarial_target = get_default_adversarial_target()
         return self._adversarial_target
 
-    async def _get_atomic_attack_from_strategy_async(
-        self, *, strategy: str, jailbreak_template_name: str, seed_groups: list[SeedAttackGroup]
+    async def _get_atomic_attack_from_technique_async(
+        self, *, technique: str, jailbreak_template_name: str, seed_groups: list[SeedAttackGroup]
     ) -> AtomicAttack:
         """
         Create an atomic attack for a specific jailbreak template.
 
         Args:
-            strategy (str): JailbreakStrategy to use.
+            technique (str): JailbreakTechnique to use.
             jailbreak_template_name (str): Name of the jailbreak template file.
             seed_groups (list[SeedAttackGroup]): Seed groups the attack draws from.
 
@@ -203,7 +203,7 @@ class Jailbreak(Scenario):
             "attack_scoring_config": AttackScoringConfig(objective_scorer=self._objective_scorer),
             "attack_converter_config": converter_config,
         }
-        match strategy:
+        match technique:
             case "many_shot":
                 attack = ManyShotJailbreakAttack(**args)
             case "prompt_sending":
@@ -217,7 +217,7 @@ class Jailbreak(Scenario):
                 args["role_play_definition_path"] = RolePlayPaths.PERSUASION_SCRIPT.value
                 attack = RolePlayAttack(**args)
             case _:
-                raise ValueError(f"Unknown JailbreakStrategy `{strategy}`.")
+                raise ValueError(f"Unknown JailbreakTechnique `{technique}`.")
 
         if not attack:
             raise ValueError(f"Attack cannot be None!")
@@ -246,13 +246,13 @@ class Jailbreak(Scenario):
         atomic_attacks: list[AtomicAttack] = []
 
         seed_groups = list(context.seed_groups)
-        strategies = {s.value for s in context.scenario_strategies}
+        techniques = {s.value for s in context.scenario_techniques}
 
-        for strategy in strategies:
+        for technique in techniques:
             for template_name in self._jailbreaks:
                 for _ in range(self._num_attempts):
-                    atomic_attack = await self._get_atomic_attack_from_strategy_async(
-                        strategy=strategy, jailbreak_template_name=template_name, seed_groups=seed_groups
+                    atomic_attack = await self._get_atomic_attack_from_technique_async(
+                        technique=technique, jailbreak_template_name=template_name, seed_groups=seed_groups
                     )
                     atomic_attacks.append(atomic_attack)
 

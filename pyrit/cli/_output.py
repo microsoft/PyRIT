@@ -97,14 +97,14 @@ def print_scenario_list(*, items: list[RegisteredScenario]) -> None:
         if sc.description:
             print("    Description:")
             print(_wrap(text=sc.description, indent="      "))
-        if sc.aggregate_strategies:
-            print("    Aggregate Strategies:")
-            print(_wrap(text=", ".join(sc.aggregate_strategies), indent="      - "))
-        if sc.all_strategies:
-            print(f"    Available Strategies ({len(sc.all_strategies)}):")
-            print(_wrap(text=", ".join(sc.all_strategies), indent="      "))
-        if sc.default_strategy:
-            print(f"    Default Strategy: {sc.default_strategy}")
+        if sc.aggregate_techniques:
+            print("    Aggregate Techniques:")
+            print(_wrap(text=", ".join(sc.aggregate_techniques), indent="      - "))
+        if sc.all_techniques:
+            print(f"    Available Techniques ({len(sc.all_techniques)}):")
+            print(_wrap(text=", ".join(sc.all_techniques), indent="      "))
+        if sc.default_technique:
+            print(f"    Default Technique: {sc.default_technique}")
         if sc.default_datasets:
             print(f"    Default Datasets ({len(sc.default_datasets)}):")
             print(_wrap(text=", ".join(sc.default_datasets), indent="      "))
@@ -210,7 +210,7 @@ def print_converter_list(*, items: list[dict[str, Any]]) -> None:
         print(
             "\nConverters are registered by initializers. Include an initializer that "
             "registers converters to attach them to scenario techniques, for example:\n"
-            "  --strategies role_play:converter.translation_spanish\n"
+            "  --techniques role_play:converter.translation_spanish\n"
         )
         return
 
@@ -229,7 +229,7 @@ def print_converter_list(*, items: list[dict[str, Any]]) -> None:
     print("\n" + "=" * 80)
     print(f"\nTotal converters: {len(items)}")
     print("\nAttach a converter to a scenario technique with, for example:")
-    print("  --strategies role_play:converter.<name>\n")
+    print("  --techniques role_play:converter.<name>\n")
 
 
 # ---------------------------------------------------------------------------
@@ -262,25 +262,25 @@ def print_dataset_list(*, items: list[dict[str, Any]]) -> None:
 # ---------------------------------------------------------------------------
 
 
-def print_scenario_run_progress(*, run: ScenarioRunSummary, total_strategies: int = 0) -> None:
+def print_scenario_run_progress(*, run: ScenarioRunSummary, total_techniques: int = 0) -> None:
     """
     Print a single-line progress update (overwrites the current line).
 
     Args:
         run: ``ScenarioRunSummary`` from ``GET /api/scenarios/runs/{id}``.
-        total_strategies: Total number of strategies expected (0 if unknown).
+        total_techniques: Total number of techniques expected (0 if unknown).
     """
-    strategies_done = len(run.strategies_used)
-    # Strategies the user passed may be aggregates that expand on the server
-    # (e.g. `single_turn` -> N concrete strategies). Trust whichever count is larger.
-    effective_total = max(total_strategies, strategies_done)
+    techniques_done = len(run.techniques_used)
+    # Techniques the user passed may be aggregates that expand on the server
+    # (e.g. `single_turn` -> N concrete techniques). Trust whichever count is larger.
+    effective_total = max(total_techniques, techniques_done)
 
     parts: list[str] = []
 
     if effective_total > 0:
-        parts.append(f"strategies: {strategies_done}/{effective_total}")
-    elif strategies_done > 0:
-        parts.append(f"strategies: {strategies_done}")
+        parts.append(f"techniques: {techniques_done}/{effective_total}")
+    elif techniques_done > 0:
+        parts.append(f"techniques: {techniques_done}")
 
     if run.total_attacks > 0:
         pct = int((run.completed_attacks / run.total_attacks) * 100)
@@ -317,8 +317,8 @@ def print_scenario_run_summary(*, run: ScenarioRunSummary) -> None:
     if run.error:
         print(f"  Error:          {run.error}")
 
-    if run.strategies_used:
-        print(f"  Strategies:     {', '.join(run.strategies_used)}")
+    if run.techniques_used:
+        print(f"  Techniques:     {', '.join(run.techniques_used)}")
 
 
 # ---------------------------------------------------------------------------

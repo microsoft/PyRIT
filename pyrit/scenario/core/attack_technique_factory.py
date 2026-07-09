@@ -4,7 +4,7 @@
 """
 AttackTechniqueFactory — Self-describing deferred constructor for AttackTechnique instances.
 
-Captures technique-specific configuration (name, strategy tags, attack class,
+Captures technique-specific configuration (name, technique tags, attack class,
 attack-class kwargs, optional adversarial chat, optional seed technique) at
 construction time. Scenarios produce fresh, fully-constructed attacks by calling
 ``create()`` with scenario-specific params (objective target, scorer).
@@ -60,7 +60,7 @@ class AttackTechniqueFactory(Identifiable):
     """
     A self-describing factory that produces AttackTechnique instances on demand.
 
-    Captures technique-specific configuration (name, strategy tags, converters,
+    Captures technique-specific configuration (name, technique tags, converters,
     adversarial config, tree depth, etc.) at construction time. Produces fresh,
     fully-constructed attacks by calling the real constructor with the captured
     params plus scenario-specific objective_target and scoring config.
@@ -74,7 +74,7 @@ class AttackTechniqueFactory(Identifiable):
         *,
         name: str,
         attack_class: type[AttackStrategy[Any, Any]],
-        strategy_tags: list[str] | None = None,
+        technique_tags: list[str] | None = None,
         attack_kwargs: dict[str, Any] | None = None,
         adversarial_chat: PromptTarget | None = None,
         adversarial_system_prompt: str | SeedPrompt | None = None,
@@ -88,9 +88,9 @@ class AttackTechniqueFactory(Identifiable):
 
         Args:
             name: Registry name for this technique. This is used as the
-                scenario strategy name.
+                scenario technique name.
             attack_class: The AttackStrategy subclass to instantiate.
-            strategy_tags: Tags controlling which ``ScenarioStrategy``
+            technique_tags: Tags controlling which ``ScenarioTechnique``
                 aggregates include this technique (e.g. ``"single_turn"``,
                 ``"multi_turn"``, ``"default"``).
             attack_kwargs: Keyword arguments to pass to the attack constructor.
@@ -129,7 +129,7 @@ class AttackTechniqueFactory(Identifiable):
         """
         self._name = name
         self._attack_class = attack_class
-        self._strategy_tags = list(strategy_tags) if strategy_tags else []
+        self._technique_tags = list(technique_tags) if technique_tags else []
         self._attack_kwargs = dict(attack_kwargs) if attack_kwargs else {}
         self._adversarial_chat = adversarial_chat
         self._adversarial_system_prompt = adversarial_system_prompt
@@ -154,7 +154,7 @@ class AttackTechniqueFactory(Identifiable):
         adversarial_chat_system_prompt_path: str | Path | None = None,
         next_message_system_prompt_path: str | Path | None = None,
         num_turns: int = 3,
-        strategy_tags: list[str] | None = None,
+        technique_tags: list[str] | None = None,
         attack_kwargs: dict[str, Any] | None = None,
         adversarial_chat: PromptTarget | None = None,
         uses_adversarial: bool | None = None,
@@ -181,7 +181,7 @@ class AttackTechniqueFactory(Identifiable):
                 after the simulated conversation. Defaults to
                 ``NextMessageSystemPromptPaths.DIRECT.value``.
             num_turns: Number of simulated conversation turns. Defaults to 3.
-            strategy_tags: Tags controlling which ``ScenarioStrategy`` aggregates
+            technique_tags: Tags controlling which ``ScenarioTechnique`` aggregates
                 include this technique (e.g. ``"single_turn"``, ``"multi_turn"``,
                 ``"default"``). Forwarded to the factory constructor.
             attack_kwargs: Keyword arguments forwarded to the attack constructor.
@@ -224,7 +224,7 @@ class AttackTechniqueFactory(Identifiable):
         return cls(
             name=name,
             attack_class=attack_class,
-            strategy_tags=strategy_tags,
+            technique_tags=technique_tags,
             attack_kwargs=attack_kwargs,
             adversarial_chat=adversarial_chat,
             seed_technique=seed_technique,
@@ -321,29 +321,29 @@ class AttackTechniqueFactory(Identifiable):
         return self._name
 
     @property
-    def strategy_tags(self) -> list[str]:
-        """Tags controlling which ``ScenarioStrategy`` aggregates include this technique."""
-        return list(self._strategy_tags)
+    def technique_tags(self) -> list[str]:
+        """Tags controlling which ``ScenarioTechnique`` aggregates include this technique."""
+        return list(self._technique_tags)
 
     @property
     def tags(self) -> list[str]:
-        """Alias for ``strategy_tags`` exposing the Taggable interface (used by ``TagQuery.filter``)."""
-        return list(self._strategy_tags)
+        """Alias for ``technique_tags`` exposing the Taggable interface (used by ``TagQuery.filter``)."""
+        return list(self._technique_tags)
 
-    def add_strategy_tags(self, *tags: str) -> None:
+    def add_technique_tags(self, *tags: str) -> None:
         """
-        Append strategy tags, skipping any already present.
+        Append technique tags, skipping any already present.
 
         Args:
-            *tags: Strategy tags to add to this factory.
+            *tags: Technique tags to add to this factory.
         """
         for tag in tags:
-            if tag not in self._strategy_tags:
-                self._strategy_tags.append(tag)
+            if tag not in self._technique_tags:
+                self._technique_tags.append(tag)
 
     @property
     def attack_class(self) -> type[AttackStrategy[Any, Any]]:
-        """The attack strategy class this factory produces."""
+        """The attack technique class this factory produces."""
         return self._attack_class
 
     @property
@@ -426,7 +426,7 @@ class AttackTechniqueFactory(Identifiable):
                 class constructor accepts ``attack_converter_config``.
 
         Returns:
-            A fresh AttackTechnique with a newly-constructed attack strategy.
+            A fresh AttackTechnique with a newly-constructed attack technique.
 
         Raises:
             ValueError: If a create-time adversarial chat is supplied while the
@@ -702,8 +702,8 @@ class AttackTechniqueFactory(Identifiable):
             "kwargs": kwargs_for_id,
             "uses_adversarial": self._uses_adversarial,
         }
-        if self._strategy_tags:
-            params["strategy_tags"] = list(self._strategy_tags)
+        if self._technique_tags:
+            params["technique_tags"] = list(self._technique_tags)
         if self._adversarial_chat is not None:
             params["adversarial_chat"] = self._serialize_value(self._adversarial_chat)
         if self._adversarial_system_prompt is not None:

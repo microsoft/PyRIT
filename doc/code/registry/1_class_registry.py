@@ -56,8 +56,9 @@ target = OpenAIChatTarget()
 encoding_class = registry.get_class("garak.encoding")
 scenario = encoding_class()  # type: ignore
 
-# Pass dataset configuration to initialize_async
-await scenario.initialize_async(objective_target=target)  # type: ignore
+# Set the objective target, then initialize
+scenario.set_params_from_args(args={"objective_target": target})  # type: ignore
+await scenario.initialize_async()  # type: ignore
 
 # Option 2: Use create_instance() shortcut
 # scenario = registry.create_instance("garak.encoding", objective_target=my_target, ...)

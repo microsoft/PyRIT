@@ -24,6 +24,7 @@ from pyrit.score import (
     SelfAskLikertScorer,
     SelfAskScaleScorer,
     SelfAskTrueFalseScorer,
+    TrueFalseQuestion,
     TrueFalseQuestionPaths,
 )
 
@@ -42,8 +43,8 @@ def _mock_target(json_response: str) -> MagicMock:
 def _make_scorer(scorer_id: str):
     if scorer_id == "true_false":
         target = _mock_target('{"score_value": "True", "description": "d", "rationale": "r", "metadata": "m"}')
-        scorer = SelfAskTrueFalseScorer(
-            chat_target=target, true_false_question_path=TrueFalseQuestionPaths.GROUNDED.value
+        scorer = SelfAskTrueFalseScorer.from_question(
+            chat_target=target, question=TrueFalseQuestion.from_yaml(TrueFalseQuestionPaths.GROUNDED.value)
         )
     elif scorer_id == "category":
         target = _mock_target('{"score_value": "True", "description": "d", "rationale": "r", "category": "harmful"}')
@@ -69,6 +70,19 @@ def _make_scorer(scorer_id: str):
     return scorer, target
 
 
+def _loaded_schema(scorer):
+    """Return the response schema regardless of where the scorer stores it.
+
+    The composition-migrated true/false scorer keeps it on its response handler
+    (``_response_handler.response_schema``); the other, not-yet-migrated scorers still expose
+    ``_response_json_schema`` directly.
+    """
+    handler = getattr(scorer, "_response_handler", None)
+    if handler is not None:
+        return handler.response_schema
+    return scorer._response_json_schema
+
+
 # Expected required-property sets for the schema each scorer loads. Asserting the
 # shape (rather than the full dict) keeps these tests resilient to wording tweaks
 # in the schema descriptions while still pinning the contract that matters.
@@ -85,10 +99,10 @@ _ALL_SCORERS = list(_EXPECTED_REQUIRED)
 
 @pytest.mark.parametrize("scorer_id", _ALL_SCORERS)
 async def test_scorer_loads_response_json_schema(scorer_id: str, patch_central_database):
-    """Each scorer must populate ``_response_json_schema`` from its system prompt YAML."""
+    """Each scorer must load a response schema from its system prompt YAML."""
     scorer, _ = _make_scorer(scorer_id)
 
-    schema = scorer._response_json_schema
+    schema = _loaded_schema(scorer)
     assert schema is not None, f"{scorer_id} scorer did not load a response_json_schema"
     assert schema["additionalProperties"] is False
     assert set(schema["required"]) == _EXPECTED_REQUIRED[scorer_id]
@@ -110,7 +124,7 @@ async def test_scorer_forwards_schema_to_target(scorer_id: str, patch_central_da
 
     _, kwargs = target.send_prompt_async.call_args
     message_piece = kwargs["message"].message_pieces[-1]
-    assert message_piece.prompt_metadata[JSON_SCHEMA_METADATA_KEY] == scorer._response_json_schema
+    assert message_piece.prompt_metadata[JSON_SCHEMA_METADATA_KEY] == _loaded_schema(scorer)
     assert message_piece.prompt_metadata.get("response_format") == "json"
 
 
@@ -120,4 +134,4 @@ async def test_scorer_identifier_includes_schema(scorer_id: str, patch_central_d
     scorer, _ = _make_scorer(scorer_id)
 
     identifier = scorer.get_identifier()
-    assert identifier.params["response_json_schema"] == scorer._response_json_schema
+    assert identifier.params["response_json_schema"] == _loaded_schema(scorer)

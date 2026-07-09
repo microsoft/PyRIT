@@ -14,7 +14,7 @@ from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
 from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
 from pyrit.scenario.core.matrix_atomic_attack_builder import MatrixAtomicAttackBuilder
 from pyrit.scenario.core.scenario import BaselineAttackPolicy, Scenario
-from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
+from pyrit.scenario.core.scenario_technique import ScenarioTechnique
 
 if TYPE_CHECKING:
     from pyrit.scenario.core.atomic_attack import AtomicAttack
@@ -24,11 +24,11 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class DoctorStrategy(ScenarioStrategy):
+class DoctorTechnique(ScenarioTechnique):
     """
-    Strategies for the Doctor scenario.
+    Techniques for the Doctor scenario.
 
-    Each strategy applies a Policy Puppetry prompt-injection template to the
+    Each technique applies a Policy Puppetry prompt-injection template to the
     objective. ``PolicyPuppetry`` wraps the objective in the universal Dr House
     TV-script template; ``PolicyPuppetryLeet`` additionally leetspeak-encodes the
     templated prompt.
@@ -38,9 +38,9 @@ class DoctorStrategy(ScenarioStrategy):
     ALL = ("all", {"all"})
     DEFAULT = ("default", {"default"})
 
-    # Concrete strategies (values match the technique factory names). Both are tagged
+    # Concrete techniques (values match the technique factory names). Both are tagged
     # "default", so DEFAULT and ALL coincide today; ALL exists so a future non-default
-    # technique would diverge from DEFAULT without another default-strategy change.
+    # technique would diverge from DEFAULT without another default-technique change.
     PolicyPuppetry = ("policy_puppetry", {"default"})
     PolicyPuppetryLeet = ("policy_puppetry_leet", {"default"})
 
@@ -58,7 +58,7 @@ DOCTOR_FACTORIES: list[AttackTechniqueFactory] = [
     AttackTechniqueFactory(
         name="policy_puppetry",
         attack_class=PromptSendingAttack,
-        strategy_tags=["default"],
+        technique_tags=["default"],
         attack_kwargs={
             "attack_converter_config": AttackConverterConfig(
                 request_converters=PromptConverterConfiguration.from_converters(
@@ -72,7 +72,7 @@ DOCTOR_FACTORIES: list[AttackTechniqueFactory] = [
     AttackTechniqueFactory(
         name="policy_puppetry_leet",
         attack_class=PromptSendingAttack,
-        strategy_tags=["default"],
+        technique_tags=["default"],
         attack_kwargs={
             "attack_converter_config": AttackConverterConfig(
                 request_converters=PromptConverterConfiguration.from_converters(
@@ -135,8 +135,8 @@ class Doctor(Scenario):
 
         super().__init__(
             version=self.VERSION,
-            strategy_class=DoctorStrategy,
-            default_strategy=DoctorStrategy.DEFAULT,
+            technique_class=DoctorTechnique,
+            default_technique=DoctorTechnique.DEFAULT,
             default_dataset_config=DatasetAttackConfiguration(dataset_names=["garak_doctor"]),
             objective_scorer=objective_scorer,
             scenario_result_id=scenario_result_id,
@@ -157,7 +157,7 @@ class Doctor(Scenario):
         Returns:
             list[AtomicAttack]: The generated atomic attacks.
         """
-        selected_techniques = {strategy.value for strategy in context.scenario_strategies}
+        selected_techniques = {technique.value for technique in context.scenario_techniques}
         technique_factories = {
             factory.name: factory for factory in DOCTOR_FACTORIES if factory.name in selected_techniques
         }

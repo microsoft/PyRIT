@@ -100,6 +100,7 @@ class InsecureCodeScorer(FloatScaleScorer):
             category=self._harm_category,
             objective=objective,
             response_json_schema=self._response_json_schema,
+            numeric_value=True,
         )
 
         # Modify the UnvalidatedScore parsing to check for 'score_value'

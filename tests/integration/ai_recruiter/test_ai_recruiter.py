@@ -52,8 +52,8 @@ async def evaluate_candidate_selection(final_result: str, expected_candidate: st
     )
 
     # Initialize the true/false scorer using the inline question
-    true_false_classifier = SelfAskTrueFalseScorer(
-        chat_target=azure_openai_chat_target, true_false_question=my_true_false_question
+    true_false_classifier = SelfAskTrueFalseScorer.from_question(
+        chat_target=azure_openai_chat_target, question=my_true_false_question
     )
 
     # Build the prompt for the true/false scorer

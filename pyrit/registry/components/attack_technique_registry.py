@@ -14,7 +14,7 @@ later when the factory is decoupled into a buildable component.
 Scenarios and initializers register self-describing factories (via
 ``register_from_factories``), retrieve them with ``get_factories`` /
 ``get_factories_or_raise``, filter them in-place by factory properties (e.g.
-``factory.uses_adversarial`` or strategy tags), and call ``factory.create()``
+``factory.uses_adversarial`` or technique tags), and call ``factory.create()``
 with the scenario's objective target and scorer.
 """
 
@@ -132,7 +132,7 @@ class AttackTechniqueRegistry(Registry["AttackTechniqueFactory", AttackTechnique
         Return all registered factories as a name→factory dict.
 
         Callers filter the result in-place using factory properties (e.g.
-        ``factory.uses_adversarial`` or ``factory.strategy_tags``).
+        ``factory.uses_adversarial`` or ``factory.technique_tags``).
 
         Returns:
             dict[str, AttackTechniqueFactory]: Mapping of technique name to factory.
@@ -144,9 +144,9 @@ class AttackTechniqueRegistry(Registry["AttackTechniqueFactory", AttackTechnique
         Return all registered factories, raising if the registry is empty.
 
         Use this from any code path that needs the registry to be populated
-        (scenario strategy builders, scenario initialization) so an empty
+        (scenario technique builders, scenario initialization) so an empty
         registry surfaces a single, descriptive error instead of silently
-        producing empty strategy enums or empty attack lists.
+        producing empty technique enums or empty attack lists.
 
         Returns:
             dict[str, AttackTechniqueFactory]: Mapping of technique name to factory.
@@ -173,14 +173,14 @@ class AttackTechniqueRegistry(Registry["AttackTechniqueFactory", AttackTechnique
         return self._scorer_override_policy
 
     @staticmethod
-    def build_strategy_class_from_factories(
+    def build_technique_class_from_factories(
         *,
         class_name: str,
         factories: list[AttackTechniqueFactory],
         aggregate_tags: dict[str, TagQuery],
     ) -> type:
         """
-        Build a ``ScenarioStrategy`` enum subclass dynamically from technique factories.
+        Build a ``ScenarioTechnique`` enum subclass dynamically from technique factories.
 
         Creates an enum class with:
         - An ``ALL`` aggregate member (always included).
@@ -199,9 +199,9 @@ class AttackTechniqueRegistry(Registry["AttackTechniqueFactory", AttackTechnique
                 An ``ALL`` aggregate (expanding to all techniques) is always added.
 
         Returns:
-            type: A ``ScenarioStrategy`` subclass with the generated members.
+            type: A ``ScenarioTechnique`` subclass with the generated members.
         """
-        from pyrit.scenario import ScenarioStrategy
+        from pyrit.scenario import ScenarioTechnique
 
         all_aggregate_tag_names = {"all"} | set(aggregate_tags.keys())
 
@@ -214,21 +214,21 @@ class AttackTechniqueRegistry(Registry["AttackTechniqueFactory", AttackTechnique
 
         # Technique members from factories — assign aggregate tags based on TagQuery matching
         for factory in factories:
-            factory_tags = set(factory.strategy_tags)
+            factory_tags = set(factory.technique_tags)
             matched_agg_tags = {agg_name for agg_name, query in aggregate_tags.items() if query.matches(factory_tags)}
             members[factory.name] = (factory.name, factory_tags | matched_agg_tags)
 
         # Build the enum class dynamically
-        strategy_cls = ScenarioStrategy(class_name, members)
+        technique_cls = ScenarioTechnique(class_name, members)
 
         # Override get_aggregate_tags on the generated class
         @classmethod
         def _get_aggregate_tags(cls: type) -> set[str]:
             return set(all_aggregate_tag_names)
 
-        strategy_cls.get_aggregate_tags = _get_aggregate_tags  # type: ignore[ty:invalid-assignment]
+        technique_cls.get_aggregate_tags = _get_aggregate_tags  # type: ignore[ty:invalid-assignment]
 
-        return strategy_cls  # type: ignore[ty:invalid-return-type]
+        return technique_cls  # type: ignore[ty:invalid-return-type]
 
     def register_from_factories(
         self,
@@ -241,12 +241,12 @@ class AttackTechniqueRegistry(Registry["AttackTechniqueFactory", AttackTechnique
 
         Args:
             factories (list[AttackTechniqueFactory]): Self-describing factories to
-                register. Each factory's ``name`` and ``strategy_tags`` properties are
+                register. Each factory's ``name`` and ``technique_tags`` properties are
                 used directly.
         """
         for factory in factories:
             if factory.name not in self.instances:
-                tags: dict[str, str] = dict.fromkeys(factory.strategy_tags, "")
+                tags: dict[str, str] = dict.fromkeys(factory.technique_tags, "")
                 self.register_technique(
                     name=factory.name,
                     factory=factory,

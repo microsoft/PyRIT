@@ -288,8 +288,8 @@ class TestBuildBaselineHelper:
 
 
 @pytest.mark.usefixtures("patch_central_database")
-class TestMatrixStrategyConverters:
-    """Per-technique ``strategy_converters`` are appended via ``factory.create``."""
+class TestMatrixTechniqueConverters:
+    """Per-technique ``technique_converters`` are appended via ``factory.create``."""
 
     def test_converters_forwarded_for_keyed_technique(self):
         from pyrit.prompt_converter import PromptConverter
@@ -300,7 +300,7 @@ class TestMatrixStrategyConverters:
         builder.build(
             technique_factories={"tech": factory},
             dataset_groups={"ds": [_seed_group(objective="o1")]},
-            strategy_converters={"tech": [converter]},
+            technique_converters={"tech": [converter]},
         )
         extra = factory.create.call_args.kwargs["extra_request_converters"]
         assert extra is not None
@@ -314,7 +314,7 @@ class TestMatrixStrategyConverters:
         builder.build(
             technique_factories={"tech": factory},
             dataset_groups={"ds": [_seed_group(objective="o1")]},
-            strategy_converters={"other": [MagicMock(spec=PromptConverter)]},
+            technique_converters={"other": [MagicMock(spec=PromptConverter)]},
         )
         assert factory.create.call_args.kwargs["extra_request_converters"] is None
 
@@ -328,15 +328,15 @@ class TestMatrixStrategyConverters:
         assert factory.create.call_args.kwargs["extra_request_converters"] is None
 
 
-def _strategy(value: str) -> SimpleNamespace:
-    """A minimal strategy stand-in exposing the ``.value`` the resolver reads."""
+def _technique(value: str) -> SimpleNamespace:
+    """A minimal technique stand-in exposing the ``.value`` the resolver reads."""
     return SimpleNamespace(value=value)
 
 
-def _context(*, strategies, seed_groups_by_dataset=None) -> ScenarioContext:
+def _context(*, techniques, seed_groups_by_dataset=None) -> ScenarioContext:
     return ScenarioContext(
         objective_target=MagicMock(spec=PromptTarget),
-        scenario_strategies=strategies,
+        scenario_techniques=techniques,
         dataset_config=MagicMock(),
         memory_labels={"op": "unit"},
         seed_groups_by_dataset=seed_groups_by_dataset or {},
@@ -354,7 +354,7 @@ def _patch_registry(factories: dict):
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestResolveTechniqueFactories:
-    """``resolve_technique_factories`` filters the registry to the selected strategies."""
+    """``resolve_technique_factories`` filters the registry to the selected techniques."""
 
     def test_keeps_only_selected_in_order(self):
         factories = {
@@ -362,14 +362,14 @@ class TestResolveTechniqueFactories:
             "beta": _mock_factory(name="beta"),
             "gamma": _mock_factory(name="gamma"),
         }
-        context = _context(strategies=[_strategy("beta"), _strategy("alpha")])
+        context = _context(techniques=[_technique("beta"), _technique("alpha")])
         with _patch_registry(factories):
             resolved = resolve_technique_factories(context=context)
         assert list(resolved.keys()) == ["beta", "alpha"]
 
-    def test_drops_strategies_without_factory(self):
+    def test_drops_techniques_without_factory(self):
         factories = {"alpha": _mock_factory(name="alpha")}
-        context = _context(strategies=[_strategy("alpha"), _strategy("missing")])
+        context = _context(techniques=[_technique("alpha"), _technique("missing")])
         with _patch_registry(factories):
             resolved = resolve_technique_factories(context=context)
         assert list(resolved.keys()) == ["alpha"]
@@ -378,7 +378,7 @@ class TestResolveTechniqueFactories:
         registry_factories = {"alpha": _mock_factory(name="alpha")}
         local_alpha = _mock_factory(name="alpha")
         local_only = _mock_factory(name="local")
-        context = _context(strategies=[_strategy("alpha"), _strategy("local")])
+        context = _context(techniques=[_technique("alpha"), _technique("local")])
         with _patch_registry(registry_factories):
             resolved = resolve_technique_factories(
                 context=context,
@@ -395,7 +395,7 @@ class TestBuildMatrixAtomicAttacks:
 
     def test_builds_cross_product_grouped_by_technique(self):
         context = _context(
-            strategies=[_strategy("tech")],
+            techniques=[_technique("tech")],
             seed_groups_by_dataset={"ds": [_seed_group(objective="o1")]},
         )
         with _patch_registry({"tech": _mock_factory(name="tech")}):
@@ -405,7 +405,7 @@ class TestBuildMatrixAtomicAttacks:
 
     def test_custom_display_group_fn(self):
         context = _context(
-            strategies=[_strategy("tech")],
+            techniques=[_technique("tech")],
             seed_groups_by_dataset={"ds": [_seed_group(objective="o1")]},
         )
         with _patch_registry({"tech": _mock_factory(name="tech")}):
@@ -418,18 +418,18 @@ class TestBuildMatrixAtomicAttacks:
 
     def test_no_baseline_emitted(self):
         context = _context(
-            strategies=[_strategy("tech")],
+            techniques=[_technique("tech")],
             seed_groups_by_dataset={"ds": [_seed_group(objective="o1")]},
         )
         with _patch_registry({"tech": _mock_factory(name="tech")}):
             result = build_matrix_atomic_attacks(context=context, objective_scorer=MagicMock(spec=TrueFalseScorer))
         assert all(a.atomic_attack_name != "baseline" for a in result)
 
-    def test_strategy_converters_forwarded(self):
+    def test_technique_converters_forwarded(self):
         from pyrit.prompt_converter import PromptConverter
 
         context = _context(
-            strategies=[_strategy("tech")],
+            techniques=[_technique("tech")],
             seed_groups_by_dataset={"ds": [_seed_group(objective="o1")]},
         )
         factory = _mock_factory(name="tech")
@@ -438,7 +438,7 @@ class TestBuildMatrixAtomicAttacks:
             build_matrix_atomic_attacks(
                 context=context,
                 objective_scorer=MagicMock(spec=TrueFalseScorer),
-                strategy_converters={"tech": [converter]},
+                technique_converters={"tech": [converter]},
             )
         extra = factory.create.call_args.kwargs["extra_request_converters"]
         assert extra is not None
@@ -446,7 +446,7 @@ class TestBuildMatrixAtomicAttacks:
 
     def test_extra_factories_used_for_selection(self):
         context = _context(
-            strategies=[_strategy("local")],
+            techniques=[_technique("local")],
             seed_groups_by_dataset={"ds": [_seed_group(objective="o1")]},
         )
         # The selected technique exists only in extra_factories, not the registry.

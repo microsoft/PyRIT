@@ -457,6 +457,7 @@ class SelfAskLikertScorer(FloatScaleScorer):
             category=self._score_category,
             objective=objective,
             response_json_schema=self._response_json_schema,
+            numeric_value=True,
         )
 
         score = unvalidated_score.to_score(
