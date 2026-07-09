@@ -19,13 +19,9 @@ from pyrit.executor.attack.component import (
 )
 from pyrit.executor.attack.component.modality_router import _ModalityFeedbackRouter
 from pyrit.executor.attack.core.attack_config import (
-    DEFAULT_ADVERSARIAL_FIRST_MESSAGE,
-    DEFAULT_ADVERSARIAL_PROMPT_TEMPLATE,
     AttackAdversarialConfig,
     AttackConverterConfig,
     AttackScoringConfig,
-    resolve_adversarial_json_schema,
-    resolve_adversarial_system_prompt,
 )
 from pyrit.executor.attack.multi_turn.multi_turn_attack_strategy import (
     ConversationSession,
@@ -42,7 +38,6 @@ from pyrit.models import (
     ConversationType,
     Message,
     Score,
-    SeedPrompt,
 )
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import CapabilityName
@@ -159,26 +154,22 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
             objective_target=objective_target,
         )
 
-        self._adversarial_chat_system_prompt_template = resolve_adversarial_system_prompt(
+        # The manager owns adversarial-prompt resolution: it resolves the system prompt, coerces the
+        # first / next-message templates (applying the canonical defaults when unset), and fails fast
+        # when a response schema is declared on both the system prompt and the first message.
+        self._resolved_adversarial = _AdversarialConversationManager.resolve_config(
             config=attack_adversarial_config,
             default_system_prompt_path=RTASystemPromptPaths.TEXT_GENERATION.value,
-            required_parameters=["objective"],
-            error_message="Adversarial seed prompt must have an objective",
+            system_prompt_required_parameters=["objective"],
+            system_prompt_error_message="Adversarial seed prompt must have an objective",
+            resolve_user_messages=True,
         )
-        self._set_adversarial_chat_first_message(first_message=attack_adversarial_config.first_message)
-        self._set_adversarial_prompt_template(template=attack_adversarial_config.adversarial_prompt_template)
+        self._adversarial_chat_system_prompt_template = self._resolved_adversarial.system_prompt
+        self._adversarial_chat_first_message = self._resolved_adversarial.first_message
+        self._adversarial_prompt_template = self._resolved_adversarial.next_message_template
 
         # Initialize utilities
         self._prompt_normalizer = prompt_normalizer or PromptNormalizer()
-
-        # Validate up front that a response JSON schema is declared on at most one of the
-        # adversarial system prompt / first message, so a conflicting declaration fails fast at
-        # construction. The per-execution manager re-resolves and owns the schema thereafter
-        # (defaulting to the canonical adversarial_chat schema), so the result is discarded here.
-        resolve_adversarial_json_schema(
-            system_prompt=self._adversarial_chat_system_prompt_template,
-            first_message=self._adversarial_chat_first_message,
-        )
 
         self._conversation_manager = ConversationManager()
 
@@ -545,46 +536,3 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
 
         objective_scores = scoring_results
         return objective_scores[0] if objective_scores else None
-
-    def _set_adversarial_chat_first_message(self, *, first_message: str | SeedPrompt | None) -> None:
-        """
-        Set the first message for the adversarial chat.
-
-        Args:
-            first_message (str | SeedPrompt | None): The first message to set for the adversarial
-                chat. When None, the default first message is used.
-
-        Raises:
-            ValueError: If the first message is not a string, SeedPrompt object, or None.
-        """
-        if first_message is None:
-            first_message = DEFAULT_ADVERSARIAL_FIRST_MESSAGE
-        if isinstance(first_message, str):
-            self._adversarial_chat_first_message = SeedPrompt(
-                value=first_message, data_type="text", is_jinja_template=True
-            )
-        elif isinstance(first_message, SeedPrompt):
-            self._adversarial_chat_first_message = first_message
-        else:
-            raise ValueError("First message must be a string or SeedPrompt object.")
-
-    def _set_adversarial_prompt_template(self, *, template: str | SeedPrompt | None) -> None:
-        """
-        Set the per-turn adversarial prompt template.
-
-        Args:
-            template (str | SeedPrompt | None): The template used to build the adversarial prompt
-                from the objective target's response and score. When None, the default template
-                is used.
-
-        Raises:
-            ValueError: If the template is not a string, SeedPrompt object, or None.
-        """
-        if template is None:
-            template = DEFAULT_ADVERSARIAL_PROMPT_TEMPLATE
-        if isinstance(template, str):
-            self._adversarial_prompt_template = SeedPrompt(value=template, data_type="text", is_jinja_template=True)
-        elif isinstance(template, SeedPrompt):
-            self._adversarial_prompt_template = template
-        else:
-            raise ValueError("Adversarial prompt template must be a string or SeedPrompt object.")

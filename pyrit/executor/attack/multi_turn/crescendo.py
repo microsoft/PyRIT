@@ -24,7 +24,6 @@ from pyrit.executor.attack.core import (
     AttackAdversarialConfig,
     AttackConverterConfig,
     AttackScoringConfig,
-    resolve_adversarial_system_prompt,
 )
 from pyrit.executor.attack.multi_turn.multi_turn_attack_strategy import (
     ConversationSession,
@@ -41,7 +40,6 @@ from pyrit.models import (
     ConversationType,
     Message,
     Score,
-    SeedPrompt,
 )
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import CapabilityName, TargetRequirements
@@ -226,12 +224,16 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
             objective_target=objective_target,
         )
 
-        self._adversarial_chat_system_prompt_template = resolve_adversarial_system_prompt(
+        # The manager owns adversarial-prompt resolution. Crescendo is override mode: it builds each
+        # adversarial prompt itself and passes the text explicitly, so only the system prompt is
+        # resolved here (no first / next-message templates).
+        self._resolved_adversarial = _AdversarialConversationManager.resolve_config(
             config=attack_adversarial_config,
             default_system_prompt_path=CrescendoAttack.DEFAULT_ADVERSARIAL_CHAT_SYSTEM_PROMPT_TEMPLATE_PATH,
-            required_parameters=["objective", "max_turns"],
-            error_message="Crescendo system prompt must have 'objective' and 'max_turns' parameters",
+            system_prompt_required_parameters=["objective", "max_turns"],
+            system_prompt_error_message="Crescendo system prompt must have 'objective' and 'max_turns' parameters",
         )
+        self._adversarial_chat_system_prompt_template = self._resolved_adversarial.system_prompt
 
         # Initialize utilities
         self._prompt_normalizer = prompt_normalizer or PromptNormalizer()
@@ -668,23 +670,6 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
         )
         self._logger.debug(f"Backtracked conversation from {conversation_id} to {new_conversation_id}")
         return new_conversation_id
-
-    def _set_adversarial_chat_system_prompt_template(self, *, system_prompt_template_path: Path | str) -> None:
-        """
-        Set the system prompt template for the adversarial chat.
-
-        Args:
-            system_prompt_template_path (Path | str): Path to the system prompt template.
-
-        Raises:
-            ValueError: If the template doesn't contain required parameters.
-        """
-        sp = SeedPrompt.from_yaml_file(system_prompt_template_path)
-
-        if sp.parameters is None or not all(param in sp.parameters for param in ["objective", "max_turns"]):
-            raise ValueError(f"Crescendo system prompt must have 'objective' and 'max_turns' parameters: '{sp}'")
-
-        self._adversarial_chat_system_prompt_template = sp
 
     async def _generate_next_prompt_async(self, context: CrescendoAttackContext) -> Message:
         """

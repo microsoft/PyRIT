@@ -19,6 +19,11 @@ from pyrit.executor.attack.component.adversarial_conversation_manager import (
     _build_adversarial_prompt_metadata,
     _parse_adversarial_reply,
 )
+from pyrit.executor.attack.core.attack_config import (
+    DEFAULT_ADVERSARIAL_FIRST_MESSAGE,
+    DEFAULT_ADVERSARIAL_PROMPT_TEMPLATE,
+    AttackAdversarialConfig,
+)
 from pyrit.models import (
     JSON_SCHEMA_METADATA_KEY,
     ComponentIdentifier,
@@ -245,6 +250,168 @@ class TestManagerInit:
         assert manager.adversarial_target is target
         assert manager.adversarial_next_user_message is per_turn
         assert manager.adversarial_first_user_message is first
+
+
+# --- resolve_config (attack-facing resolution) -------------------------------
+
+
+def _adversarial_config(**overrides) -> AttackAdversarialConfig:
+    kwargs: dict = {"target": _target()}
+    kwargs.update(overrides)
+    return AttackAdversarialConfig(**kwargs)
+
+
+def _param_system_prompt(*, schema: dict | None = None) -> SeedPrompt:
+    # A SeedPrompt system prompt that declares the ``objective`` parameter the resolver validates.
+    return SeedPrompt(
+        value="system {{ objective }}",
+        data_type="text",
+        parameters=["objective"],
+        response_json_schema=schema,
+        is_jinja_template=True,
+    )
+
+
+class TestResolveConfig:
+    """``resolve_config`` is the single owner of adversarial-prompt resolution the attacks call."""
+
+    def test_template_mode_applies_default_first_and_next_messages(self):
+        # first_message / adversarial_prompt_template unset -> the manager supplies the canonical
+        # defaults so template-mode attacks never re-implement the fallbacks.
+        resolved = _AdversarialConversationManager.resolve_config(
+            config=_adversarial_config(
+                system_prompt="system {{ objective }}",
+                first_message=None,
+                adversarial_prompt_template=None,
+            ),
+            default_system_prompt_path="unused.yaml",
+            system_prompt_required_parameters=["objective"],
+            resolve_user_messages=True,
+        )
+        assert resolved.first_message is not None
+        assert resolved.first_message.value == DEFAULT_ADVERSARIAL_FIRST_MESSAGE
+        assert resolved.first_message.is_jinja_template
+        assert resolved.next_message_template is not None
+        assert resolved.next_message_template.value == DEFAULT_ADVERSARIAL_PROMPT_TEMPLATE
+
+    def test_template_mode_coerces_string_messages(self):
+        resolved = _AdversarialConversationManager.resolve_config(
+            config=_adversarial_config(
+                system_prompt="system {{ objective }}",
+                first_message="open {{ objective }}",
+                adversarial_prompt_template="{{ feedback_text }}",
+            ),
+            default_system_prompt_path="unused.yaml",
+            system_prompt_required_parameters=["objective"],
+            resolve_user_messages=True,
+        )
+        assert isinstance(resolved.first_message, SeedPrompt)
+        assert resolved.first_message.value == "open {{ objective }}"
+        assert isinstance(resolved.next_message_template, SeedPrompt)
+        assert resolved.next_message_template.value == "{{ feedback_text }}"
+
+    def test_template_mode_preserves_seed_prompt_messages(self):
+        first = _first_message()
+        per_turn = _per_turn()
+        resolved = _AdversarialConversationManager.resolve_config(
+            config=_adversarial_config(
+                system_prompt="system {{ objective }}",
+                first_message=first,
+                adversarial_prompt_template=per_turn,
+            ),
+            default_system_prompt_path="unused.yaml",
+            system_prompt_required_parameters=["objective"],
+            resolve_user_messages=True,
+        )
+        assert resolved.first_message is first
+        assert resolved.next_message_template is per_turn
+
+    def test_override_mode_leaves_user_messages_none(self):
+        # The config's first_message / adversarial_prompt_template default to non-None strings, but
+        # override-mode attacks build the adversarial prompt themselves, so both stay None.
+        resolved = _AdversarialConversationManager.resolve_config(
+            config=_adversarial_config(system_prompt="system {{ objective }}"),
+            default_system_prompt_path="unused.yaml",
+            system_prompt_required_parameters=["objective"],
+            resolve_user_messages=False,
+        )
+        assert resolved.first_message is None
+        assert resolved.next_message_template is None
+
+    def test_resolves_inline_system_prompt_string(self):
+        resolved = _AdversarialConversationManager.resolve_config(
+            config=_adversarial_config(system_prompt="system {{ objective }}"),
+            default_system_prompt_path="unused.yaml",
+            system_prompt_required_parameters=["objective"],
+        )
+        assert isinstance(resolved.system_prompt, SeedPrompt)
+        assert resolved.system_prompt.value == "system {{ objective }}"
+
+    def test_preserves_seed_prompt_system_prompt(self):
+        system = _param_system_prompt()
+        resolved = _AdversarialConversationManager.resolve_config(
+            config=_adversarial_config(system_prompt=system),
+            default_system_prompt_path="unused.yaml",
+            system_prompt_required_parameters=["objective"],
+        )
+        assert resolved.system_prompt is system
+
+    def test_raises_when_system_prompt_missing_required_parameters(self):
+        with pytest.raises(ValueError, match="needs an objective"):
+            _AdversarialConversationManager.resolve_config(
+                config=_adversarial_config(system_prompt=_system_prompt("no parameters here", schema=None)),
+                default_system_prompt_path="unused.yaml",
+                system_prompt_required_parameters=["objective"],
+                system_prompt_error_message="Adversarial system prompt needs an objective",
+            )
+
+    def test_raises_when_both_prompts_declare_schema(self):
+        # Template mode resolves the first message, so a schema on both prompts is caught up front.
+        with pytest.raises(ValueError, match="only one of them"):
+            _AdversarialConversationManager.resolve_config(
+                config=_adversarial_config(
+                    system_prompt=_param_system_prompt(schema=SCHEMA),
+                    first_message=_first_message(schema=OTHER_SCHEMA),
+                ),
+                default_system_prompt_path="unused.yaml",
+                system_prompt_required_parameters=["objective"],
+                resolve_user_messages=True,
+            )
+
+    def test_override_mode_ignores_first_message_schema_conflict(self):
+        # Override mode never resolves a first message, so a schema declared there cannot conflict.
+        resolved = _AdversarialConversationManager.resolve_config(
+            config=_adversarial_config(
+                system_prompt=_param_system_prompt(schema=SCHEMA),
+                first_message=_first_message(schema=OTHER_SCHEMA),
+            ),
+            default_system_prompt_path="unused.yaml",
+            system_prompt_required_parameters=["objective"],
+            resolve_user_messages=False,
+        )
+        assert resolved.first_message is None
+
+    def test_raises_on_invalid_first_message_type(self):
+        with pytest.raises(ValueError, match="First message must be a string or SeedPrompt"):
+            _AdversarialConversationManager.resolve_config(
+                config=_adversarial_config(system_prompt="system {{ objective }}", first_message=123),
+                default_system_prompt_path="unused.yaml",
+                system_prompt_required_parameters=["objective"],
+                resolve_user_messages=True,
+            )
+
+    def test_raises_on_invalid_next_message_type(self):
+        with pytest.raises(ValueError, match="Adversarial prompt template must be a string or SeedPrompt"):
+            _AdversarialConversationManager.resolve_config(
+                config=_adversarial_config(
+                    system_prompt="system {{ objective }}",
+                    first_message="open {{ objective }}",
+                    adversarial_prompt_template=123,
+                ),
+                default_system_prompt_path="unused.yaml",
+                system_prompt_required_parameters=["objective"],
+                resolve_user_messages=True,
+            )
 
 
 # --- set_adversarial_system_prompt -------------------------------------------

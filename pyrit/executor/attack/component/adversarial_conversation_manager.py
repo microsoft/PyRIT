@@ -20,7 +20,11 @@ from pyrit.exceptions import (
     remove_markdown_json,
 )
 from pyrit.executor.attack.core.attack_config import (
+    DEFAULT_ADVERSARIAL_FIRST_MESSAGE,
+    DEFAULT_ADVERSARIAL_PROMPT_TEMPLATE,
+    AttackAdversarialConfig,
     resolve_adversarial_json_schema,
+    resolve_adversarial_system_prompt,
 )
 from pyrit.models import (
     JSON_SCHEMA_METADATA_KEY,
@@ -33,6 +37,8 @@ from pyrit.models import (
 from pyrit.prompt_normalizer import PromptNormalizer
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from pyrit.executor.attack.component.modality_router import _ModalityFeedbackRouter
     from pyrit.prompt_target import PromptTarget
 
@@ -81,6 +87,22 @@ class AdversarialTurn:
     objective_message: Message
     reply: AdversarialReply | None = None
     bypassed: bool = False
+
+
+@dataclass(frozen=True)
+class _ResolvedAdversarialConfig:
+    """
+    The adversarial prompts an attack's ``AttackAdversarialConfig`` resolves to.
+
+    Produced once per attack by ``_AdversarialConversationManager.resolve_config`` — the single owner
+    of adversarial-prompt resolution — and reused to build each per-run manager. ``first_message`` and
+    ``next_message_template`` are None in override mode (Crescendo, TAP, Simulated Conversation), where
+    the attack supplies the adversarial prompt text itself and only the system prompt is resolved.
+    """
+
+    system_prompt: SeedPrompt
+    first_message: SeedPrompt | None = None
+    next_message_template: SeedPrompt | None = None
 
 
 def _camel_to_snake(name: str) -> str:
@@ -292,6 +314,96 @@ class _AdversarialConversationManager:
     * **Override mode** (Crescendo, TAP): the attack supplies the fully-built adversarial prompt text
       via ``adversarial_prompt_text`` (or ``prompt_text``) and the manager does everything else.
     """
+
+    @staticmethod
+    def _coerce_seed_prompt(value: str | SeedPrompt | None, *, default: str, error_message: str) -> SeedPrompt:
+        """
+        Coerce a configured prompt value into a Jinja ``SeedPrompt``.
+
+        Args:
+            value: The configured value (inline string, SeedPrompt, or None for the default).
+            default: The default template string used when ``value`` is None.
+            error_message: The error raised when ``value`` is neither a string nor a SeedPrompt.
+
+        Returns:
+            The resolved SeedPrompt.
+
+        Raises:
+            ValueError: If ``value`` is not a string, SeedPrompt, or None.
+        """
+        if value is None:
+            value = default
+        if isinstance(value, str):
+            return SeedPrompt(value=value, data_type="text", is_jinja_template=True)
+        if isinstance(value, SeedPrompt):
+            return value
+        raise ValueError(error_message)
+
+    @classmethod
+    def resolve_config(
+        cls,
+        *,
+        config: AttackAdversarialConfig,
+        default_system_prompt_path: str | Path,
+        system_prompt_required_parameters: list[str],
+        system_prompt_error_message: str | None = None,
+        resolve_user_messages: bool = False,
+    ) -> _ResolvedAdversarialConfig:
+        """
+        Resolve an ``AttackAdversarialConfig`` into the prompts the manager drives its turns with.
+
+        This is the single owner of adversarial-prompt resolution: it resolves the system prompt
+        (inline string / SeedPrompt / default YAML path), coerces the first and next-message templates
+        (template mode only), and fails fast when a response schema is declared on both the system
+        prompt and the first message. Attacks call this once at construction, store the result, and
+        feed it into each per-run manager instead of coercing prompts themselves.
+
+        Args:
+            config: The adversarial configuration supplied to the attack.
+            default_system_prompt_path: Fallback system-prompt YAML path when the config declares none.
+            system_prompt_required_parameters: Parameters the resolved system prompt must support.
+            system_prompt_error_message: Optional custom error for system-prompt validation failures.
+            resolve_user_messages: When True (template mode, e.g. Red Teaming), coerce
+                ``config.first_message`` and ``config.adversarial_prompt_template`` — applying the
+                canonical defaults when unset. When False (override mode, e.g. Crescendo / TAP), the
+                attack supplies the adversarial prompt text itself, so both are left None.
+
+        Returns:
+            _ResolvedAdversarialConfig: The resolved system prompt and (template mode) first / next
+            message templates.
+
+        Raises:
+            ValueError: If the system prompt is missing required parameters, a response schema is
+                declared on both the system prompt and the first message, or a configured prompt value
+                is neither a string nor a SeedPrompt.
+        """
+        system_prompt = resolve_adversarial_system_prompt(
+            config=config,
+            default_system_prompt_path=default_system_prompt_path,
+            required_parameters=system_prompt_required_parameters,
+            error_message=system_prompt_error_message,
+        )
+        first_message: SeedPrompt | None = None
+        next_message_template: SeedPrompt | None = None
+        if resolve_user_messages:
+            first_message = cls._coerce_seed_prompt(
+                config.first_message,
+                default=DEFAULT_ADVERSARIAL_FIRST_MESSAGE,
+                error_message="First message must be a string or SeedPrompt object.",
+            )
+            next_message_template = cls._coerce_seed_prompt(
+                config.adversarial_prompt_template,
+                default=DEFAULT_ADVERSARIAL_PROMPT_TEMPLATE,
+                error_message="Adversarial prompt template must be a string or SeedPrompt object.",
+            )
+        # Fail fast when a response schema is declared on both prompts (the per-run manager re-resolves
+        # and owns the schema thereafter); the result is discarded here.
+        resolve_adversarial_json_schema(system_prompt=system_prompt, first_message=first_message)
+        return _ResolvedAdversarialConfig(
+            system_prompt=system_prompt,
+            first_message=first_message,
+            next_message_template=next_message_template,
+        )
 
     def __init__(
         self,

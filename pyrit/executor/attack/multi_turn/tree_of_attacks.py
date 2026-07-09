@@ -35,7 +35,6 @@ from pyrit.executor.attack.core.attack_config import (
     AttackAdversarialConfig,
     AttackConverterConfig,
     AttackScoringConfig,
-    resolve_adversarial_system_prompt,
 )
 from pyrit.executor.attack.core.attack_strategy import AttackStrategy
 from pyrit.executor.attack.multi_turn import MultiTurnAttackContext
@@ -1400,12 +1399,16 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
 
         # Load system prompts. The adversarial system prompt may be supplied inline (string or
         # SeedPrompt) via the config, or fall back to the configured/default YAML path.
-        self._adversarial_chat_system_seed_prompt = resolve_adversarial_system_prompt(
+        # The manager owns adversarial-prompt resolution. TAP is override mode: it builds each
+        # adversarial prompt itself and passes the text explicitly, so only the system prompt is
+        # resolved here (no first / next-message templates).
+        self._resolved_adversarial = _AdversarialConversationManager.resolve_config(
             config=attack_adversarial_config,
             default_system_prompt_path=TreeOfAttacksWithPruningAttack.DEFAULT_ADVERSARIAL_SYSTEM_PROMPT_PATH,
-            required_parameters=["desired_prefix"],
-            error_message="Adversarial seed prompt must have a desired_prefix",
+            system_prompt_required_parameters=["desired_prefix"],
+            system_prompt_error_message="Adversarial seed prompt must have a desired_prefix",
         )
+        self._adversarial_chat_system_seed_prompt = self._resolved_adversarial.system_prompt
         self._load_adversarial_prompts()
 
         # Initialize converter configuration
