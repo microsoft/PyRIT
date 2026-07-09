@@ -29,7 +29,7 @@ from __future__ import annotations
 import inspect
 import logging
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Any, Generic, TypeVar
+from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar
 
 from pyrit.registry.registry_metadata import RegistryMetadata
 from pyrit.registry.resolution import (
@@ -50,6 +50,7 @@ logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
 MetadataT = TypeVar("MetadataT", bound=RegistryMetadata)
+ConfigurableT = TypeVar("ConfigurableT", bound="SupportsParamBag")
 
 
 def _get_metadata_value(metadata: Any, key: str) -> tuple[bool, Any]:
@@ -125,6 +126,14 @@ def _matches_filters(
                 return False
 
     return True
+
+
+class SupportsParamBag(Protocol):
+    """Instances that can populate their parameter bag from a flat argument dict."""
+
+    def set_params_from_args(self, *, args: dict[str, Any]) -> None:
+        """Populate the instance's parameter bag from a flat argument dict."""
+        ...
 
 
 class Registry(ABC, Generic[T, MetadataT]):
@@ -646,3 +655,53 @@ class Registry(ABC, Generic[T, MetadataT]):
             Iterator[str]: An iterator over sorted registered names.
         """
         return iter(self.get_class_names())
+
+
+class ParamBagRegistry(Registry[ConfigurableT, MetadataT]):
+    """
+    Registry whose components carry a parameter bag populated post-construction.
+
+    Extends the base ``Registry`` (catalog + ``create_instance`` from a flat arg
+    dict) with the shared ``create → set-parameters`` lifecycle prefix used by the
+    registries whose component type supports ``set_params_from_args`` (``Scenario``,
+    ``PyRITInitializer``). The component type parameter is bound to
+    ``SupportsParamBag``, so ``_create_and_configure`` is type-safe without a cast.
+
+    Subclasses layer the diverging *post*-configure step on top:
+    ``ScenarioRegistry`` initializes, ``InitializerRegistry`` validates.
+    """
+
+    def _create_and_configure(
+        self,
+        name: str,
+        *,
+        params: dict[str, Any] | None = None,
+        constructor_kwargs: dict[str, Any] | None = None,
+    ) -> ConfigurableT:
+        """
+        Build an instance and, when params are supplied, populate its parameter bag.
+
+        Shared ``create → set-parameters`` prefix behind the domain registries'
+        public lifecycle methods (``ScenarioRegistry.create_and_initialize_async``
+        and ``InitializerRegistry.create_and_configure``): both construct the
+        instance, then route parameters through the same
+        ``set_params_from_args(args=...)`` entry point. They differ only in what
+        happens *after* — initialize vs validate — which stays in the subclass.
+
+        Args:
+            name (str): The registry name of the class to build.
+            params (dict[str, Any] | None): Parameters to set via
+                ``set_params_from_args``. When ``None`` the step is skipped and the
+                instance keeps its constructor defaults; an empty dict still calls
+                ``set_params_from_args`` so declared defaults are injected.
+            constructor_kwargs (dict[str, Any] | None): Extra constructor arguments
+                forwarded to ``create_instance`` (e.g. ``scenario_result_id``).
+
+        Returns:
+            ConfigurableT: The constructed, parameterized instance. The caller owns
+            any further lifecycle steps (initialize / validate).
+        """
+        instance = self.create_instance(name, **(constructor_kwargs or {}))
+        if params is not None:
+            instance.set_params_from_args(args=params)
+        return instance

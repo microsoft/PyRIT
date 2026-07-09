@@ -19,6 +19,17 @@
 #
 # Note in this doc the ! prefaces all commands in the terminal so we can run in a Jupyter Notebook.
 #
+# ## Starting a Backend Server
+#
+# `pyrit_scan` is a thin client that talks to a PyRIT backend server (by default at `http://localhost:8000`).
+# Before running any command that reaches the backend (listing scenarios, running a scan, etc.) you need a
+# server. Start a local one with `--start-server`; it launches a detached `pyrit_backend` process that stays
+# up and is reused by every command below. We stop it again at the end of the notebook.
+
+# %%
+# !pyrit_scan --start-server
+
+# %% [markdown]
 # ## Quick Start
 #
 # For help:
@@ -150,7 +161,7 @@
 
 from pyrit.common import apply_defaults
 from pyrit.prompt_target.openai.openai_chat_target import OpenAIChatTarget
-from pyrit.scenario import DatasetConfiguration, Scenario, ScenarioStrategy
+from pyrit.scenario import DatasetAttackConfiguration, Scenario, ScenarioStrategy
 from pyrit.score import SelfAskRefusalScorer, TrueFalseInverterScorer
 from pyrit.setup import initialize_pyrit_async
 
@@ -175,7 +186,7 @@ class MyCustomScenario(Scenario):
             objective_scorer=TrueFalseInverterScorer(scorer=SelfAskRefusalScorer(chat_target=OpenAIChatTarget())),
             strategy_class=MyCustomStrategy,
             default_strategy=MyCustomStrategy.ALL,
-            default_dataset_config=DatasetConfiguration(dataset_names=["harmbench"]),
+            default_dataset_config=DatasetAttackConfiguration(dataset_names=["harmbench"]),
             scenario_result_id=scenario_result_id,
         )
         # ... your scenario-specific initialization code
@@ -204,3 +215,11 @@ MyCustomScenario()
 # ```
 #
 # The scenario name is automatically converted from the class name (e.g., `MyCustomScenario` becomes `my_custom_scenario`).
+
+# %% [markdown]
+# ## Stopping the Backend Server
+#
+# When you're done, stop the local backend that we started at the top of the notebook.
+
+# %%
+# !pyrit_scan --stop-server

@@ -103,7 +103,7 @@ ENV_TARGET_CONFIGS: list[TargetConfig] = [
         target_class=OpenAIChatTarget,
         endpoint_var="PLATFORM_OPENAI_CHAT_ENDPOINT",
         key_var="PLATFORM_OPENAI_CHAT_KEY",
-        model_var="PLATFORM_OPENAI_CHAT_GPT4O_MODEL",
+        model_var="PLATFORM_OPENAI_CHAT_MODEL",
     ),
     TargetConfig(
         registry_name="azure_openai_gpt4o",
@@ -243,7 +243,7 @@ ENV_TARGET_CONFIGS: list[TargetConfig] = [
         target_class=OpenAIChatTarget,
         endpoint_var="AZURE_FOUNDRY_PHI4_ENDPOINT",
         key_var="AZURE_CHAT_PHI4_KEY",
-        model_var="AZURE_FOUNDRY_PHI4_MODEL",
+        model_var="AZURE_CHAT_PHI4_MODEL",
     ),
     TargetConfig(
         registry_name="azure_foundry_mistral_large",

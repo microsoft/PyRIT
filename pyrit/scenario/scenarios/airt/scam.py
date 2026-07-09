@@ -100,7 +100,7 @@ class Scam(Scenario):
         return ["airt_scams"]
 
     @classmethod
-    def supported_parameters(cls) -> list[Parameter]:
+    def additional_parameters(cls) -> list[Parameter]:
         """
         Declare custom parameters this scenario accepts from the CLI / config file.
 

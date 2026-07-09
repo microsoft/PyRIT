@@ -253,7 +253,8 @@ class TestScenarioInitialization2:
 
         assert scenario.atomic_attack_count == 0
 
-        await scenario.initialize_async(objective_target=mock_objective_target)
+        scenario.set_params_from_args(args={"objective_target": mock_objective_target})
+        await scenario.initialize_async()
 
         assert scenario.atomic_attack_count == len(mock_atomic_attacks)
         assert scenario._atomic_attacks == mock_atomic_attacks
@@ -265,7 +266,8 @@ class TestScenarioInitialization2:
             version=1,
         )
 
-        await scenario.initialize_async(objective_target=mock_objective_target)
+        scenario.set_params_from_args(args={"objective_target": mock_objective_target})
+        await scenario.initialize_async()
 
         assert scenario._objective_target == mock_objective_target
         # Verify it's a ComponentIdentifier with the expected class_name
@@ -289,7 +291,13 @@ class TestScenarioInitialization2:
             version=1,
         )
 
-        await scenario.initialize_async(objective_target=mock_objective_target, max_retries=3)
+        scenario.set_params_from_args(
+            args={
+                "objective_target": mock_objective_target,
+                "max_retries": 3,
+            }
+        )
+        await scenario.initialize_async()
 
         assert scenario._max_retries == 3
 
@@ -300,7 +308,13 @@ class TestScenarioInitialization2:
             version=1,
         )
 
-        await scenario.initialize_async(objective_target=mock_objective_target, max_concurrency=5)
+        scenario.set_params_from_args(
+            args={
+                "objective_target": mock_objective_target,
+                "max_concurrency": 5,
+            }
+        )
+        await scenario.initialize_async()
 
         assert scenario._max_concurrency == 5
 
@@ -312,7 +326,13 @@ class TestScenarioInitialization2:
             version=1,
         )
 
-        await scenario.initialize_async(objective_target=mock_objective_target, memory_labels=labels)
+        scenario.set_params_from_args(
+            args={
+                "objective_target": mock_objective_target,
+                "memory_labels": labels,
+            }
+        )
+        await scenario.initialize_async()
 
         assert scenario._memory_labels == labels
 
@@ -323,7 +343,8 @@ class TestScenarioInitialization2:
             version=1,
         )
 
-        await scenario.initialize_async(objective_target=mock_objective_target)
+        scenario.set_params_from_args(args={"objective_target": mock_objective_target})
+        await scenario.initialize_async()
 
         assert scenario._max_retries == 0
         assert scenario._max_concurrency == 4
@@ -335,7 +356,8 @@ class TestScenarioInitialization2:
         scenario = ConcreteScenario(name="Test Scenario", version=1)
 
         with patch("pyrit.prompt_target.common.target_requirements.TargetRequirements.validate") as mock_validate:
-            await scenario.initialize_async(objective_target=mock_objective_target)
+            scenario.set_params_from_args(args={"objective_target": mock_objective_target})
+            await scenario.initialize_async()
 
         mock_validate.assert_called_once_with(target=mock_objective_target)
 
@@ -348,8 +370,9 @@ class TestScenarioInitialization2:
             "pyrit.prompt_target.common.target_requirements.TargetRequirements.validate",
             side_effect=ValueError("Target must natively support 'editable_history'"),
         ):
+            scenario.set_params_from_args(args={"objective_target": mock_objective_target})
             with pytest.raises(ValueError, match="editable_history"):
-                await scenario.initialize_async(objective_target=mock_objective_target)
+                await scenario.initialize_async()
 
     def test_scenario_base_target_requirements_is_empty(self):
         """Base Scenario declares an empty TargetRequirements so it accepts any target by default."""
@@ -375,7 +398,8 @@ class TestScenarioExecution:
             version=1,
             atomic_attacks_to_return=mock_atomic_attacks,
         )
-        await scenario.initialize_async(objective_target=mock_objective_target)
+        scenario.set_params_from_args(args={"objective_target": mock_objective_target})
+        await scenario.initialize_async()
 
         result = await scenario.run_async()
 
@@ -409,7 +433,13 @@ class TestScenarioExecution:
             version=1,
             atomic_attacks_to_return=mock_atomic_attacks,
         )
-        await scenario.initialize_async(objective_target=mock_objective_target, max_concurrency=5)
+        scenario.set_params_from_args(
+            args={
+                "objective_target": mock_objective_target,
+                "max_concurrency": 5,
+            }
+        )
+        await scenario.initialize_async()
 
         result = await scenario.run_async()
 
@@ -442,7 +472,8 @@ class TestScenarioExecution:
             version=1,
             atomic_attacks_to_return=mock_atomic_attacks,
         )
-        await scenario.initialize_async(objective_target=mock_objective_target)
+        scenario.set_params_from_args(args={"objective_target": mock_objective_target})
+        await scenario.initialize_async()
 
         result = await scenario.run_async()
 
@@ -465,7 +496,13 @@ class TestScenarioExecution:
             atomic_attacks_to_return=mock_atomic_attacks,
         )
         # Single worker so abort-on-first-failure is deterministic.
-        await scenario.initialize_async(objective_target=mock_objective_target, max_concurrency=1)
+        scenario.set_params_from_args(
+            args={
+                "objective_target": mock_objective_target,
+                "max_concurrency": 1,
+            }
+        )
+        await scenario.initialize_async()
 
         with pytest.raises(Exception, match="Test error"):
             await scenario.run_async()
@@ -499,7 +536,8 @@ class TestScenarioExecution:
             version=5,
             atomic_attacks_to_return=mock_atomic_attacks,
         )
-        await scenario.initialize_async(objective_target=mock_objective_target)
+        scenario.set_params_from_args(args={"objective_target": mock_objective_target})
+        await scenario.initialize_async()
 
         result = await scenario.run_async()
 
@@ -537,7 +575,8 @@ class TestScenarioProperties:
 
         assert scenario.atomic_attack_count == 0
 
-        await scenario.initialize_async(objective_target=mock_objective_target)
+        scenario.set_params_from_args(args={"objective_target": mock_objective_target})
+        await scenario.initialize_async()
 
         assert scenario.atomic_attack_count == 3
 
@@ -564,7 +603,8 @@ class TestScenarioProperties:
             version=1,
             atomic_attacks_to_return=single_run,
         )
-        await scenario1.initialize_async(objective_target=mock_objective_target)
+        scenario1.set_params_from_args(args={"objective_target": mock_objective_target})
+        await scenario1.initialize_async()
         assert scenario1.atomic_attack_count == 1
 
         many_runs = []
@@ -586,7 +626,8 @@ class TestScenarioProperties:
             version=1,
             atomic_attacks_to_return=many_runs,
         )
-        await scenario2.initialize_async(objective_target=mock_objective_target)
+        scenario2.set_params_from_args(args={"objective_target": mock_objective_target})
+        await scenario2.initialize_async()
         assert scenario2.atomic_attack_count == 10
 
 
@@ -772,11 +813,14 @@ class TestScenarioBaselineOnlyExecution:
         }
 
         # Initialize with None (default strategy) — [] also works, both expand defaults
-        await scenario.initialize_async(
-            objective_target=mock_objective_target,
-            scenario_strategies=None,
-            dataset_config=mock_dataset_config,
+        scenario.set_params_from_args(
+            args={
+                "objective_target": mock_objective_target,
+                "scenario_strategies": None,
+                "dataset_config": mock_dataset_config,
+            }
         )
+        await scenario.initialize_async()
 
         # Should have exactly one attack - the baseline
         assert scenario.atomic_attack_count == 1
@@ -799,11 +843,14 @@ class TestScenarioBaselineOnlyExecution:
         }
 
         # Initialize with None — [] also expands defaults now, both are equivalent
-        await scenario.initialize_async(
-            objective_target=mock_objective_target,
-            scenario_strategies=None,  # same as [] now
-            dataset_config=mock_dataset_config,
+        scenario.set_params_from_args(
+            args={
+                "objective_target": mock_objective_target,
+                "scenario_strategies": None,  # same as [] now
+                "dataset_config": mock_dataset_config,
+            }
         )
+        await scenario.initialize_async()
 
         # Mock the baseline attack's run_async
         scenario._atomic_attacks[0].run_async = create_mock_run_async(
@@ -828,11 +875,14 @@ class TestScenarioBaselineOnlyExecution:
         mock_dataset_config = MagicMock(spec=DatasetConfiguration)
 
         # None strategies with no baseline: _get_atomic_attacks_async returns []
-        await scenario.initialize_async(
-            objective_target=mock_objective_target,
-            scenario_strategies=None,
-            dataset_config=mock_dataset_config,
+        scenario.set_params_from_args(
+            args={
+                "objective_target": mock_objective_target,
+                "scenario_strategies": None,
+                "dataset_config": mock_dataset_config,
+            }
         )
+        await scenario.initialize_async()
 
         # But running should fail because there are no atomic attacks
         with pytest.raises(ValueError, match="Cannot run scenario with no atomic attacks"):
@@ -857,11 +907,14 @@ class TestScenarioBaselineOnlyExecution:
         mock_dataset_config = MagicMock(spec=DatasetAttackConfiguration)
         mock_dataset_config.get_attack_groups_by_dataset_async.return_value = {"default": expected_seeds}
 
-        await scenario.initialize_async(
-            objective_target=mock_objective_target,
-            scenario_strategies=None,
-            dataset_config=mock_dataset_config,
+        scenario.set_params_from_args(
+            args={
+                "objective_target": mock_objective_target,
+                "scenario_strategies": None,
+                "dataset_config": mock_dataset_config,
+            }
         )
+        await scenario.initialize_async()
 
         # Verify the baseline attack has the expected seed groups
         baseline_attack = scenario._atomic_attacks[0]
@@ -976,11 +1029,14 @@ class TestScenarioBaselineUniformObjectives:
             side_effect=_sample_first_k,
         ) as mock_sample:
             scenario = StrategyScenario(name="ADO 9012 regression", version=1)
-            await scenario.initialize_async(
-                objective_target=mock_objective_target,
-                scenario_strategies=None,
-                dataset_config=config,
+            scenario.set_params_from_args(
+                args={
+                    "objective_target": mock_objective_target,
+                    "scenario_strategies": None,
+                    "dataset_config": config,
+                }
             )
+            await scenario.initialize_async()
 
         assert mock_sample.call_count == 1
 
@@ -1084,7 +1140,8 @@ class TestScenarioResumption:
             atomic_attacks_to_return=mock_atomic_attacks,
         )
 
-        await scenario.initialize_async(objective_target=mock_objective_target)
+        scenario.set_params_from_args(args={"objective_target": mock_objective_target})
+        await scenario.initialize_async()
 
         # Capture the created scenario_result_id
         original_id = scenario._scenario_result_id
@@ -1098,7 +1155,8 @@ class TestScenarioResumption:
             scenario_result_id=original_id,
         )
 
-        await scenario2.initialize_async(objective_target=mock_objective_target)
+        scenario2.set_params_from_args(args={"objective_target": mock_objective_target})
+        await scenario2.initialize_async()
 
         # Should reuse the same ID (no new creation)
         assert scenario2._scenario_result_id == original_id
@@ -1112,8 +1170,9 @@ class TestScenarioResumption:
             scenario_result_id="nonexistent-id",
         )
 
+        scenario.set_params_from_args(args={"objective_target": mock_objective_target})
         with pytest.raises(ValueError, match="not found in memory"):
-            await scenario.initialize_async(objective_target=mock_objective_target)
+            await scenario.initialize_async()
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -1134,10 +1193,13 @@ class TestScenarioParallelExecution:
             version=1,
             atomic_attacks_to_return=mock_atomic_attacks,
         )
-        await scenario.initialize_async(
-            objective_target=mock_objective_target,
-            max_concurrency=4,
+        scenario.set_params_from_args(
+            args={
+                "objective_target": mock_objective_target,
+                "max_concurrency": 4,
+            }
         )
+        await scenario.initialize_async()
 
         await scenario.run_async()
 
@@ -1202,10 +1264,13 @@ class TestScenarioParallelExecution:
             version=1,
             atomic_attacks_to_return=mock_atomic_attacks,
         )
-        await scenario.initialize_async(
-            objective_target=mock_objective_target,
-            max_concurrency=2,
+        scenario.set_params_from_args(
+            args={
+                "objective_target": mock_objective_target,
+                "max_concurrency": 2,
+            }
         )
+        await scenario.initialize_async()
 
         await scenario.run_async()
 
@@ -1254,10 +1319,13 @@ class TestScenarioParallelExecution:
             version=1,
             atomic_attacks_to_return=mock_atomic_attacks,
         )
-        await scenario.initialize_async(
-            objective_target=mock_objective_target,
-            max_concurrency=6,
+        scenario.set_params_from_args(
+            args={
+                "objective_target": mock_objective_target,
+                "max_concurrency": 6,
+            }
         )
+        await scenario.initialize_async()
 
         result = await scenario.run_async()
 
@@ -1311,10 +1379,13 @@ class TestScenarioParallelExecution:
             version=1,
             atomic_attacks_to_return=mock_atomic_attacks,
         )
-        await scenario.initialize_async(
-            objective_target=mock_objective_target,
-            max_concurrency=2,
+        scenario.set_params_from_args(
+            args={
+                "objective_target": mock_objective_target,
+                "max_concurrency": 2,
+            }
         )
+        await scenario.initialize_async()
 
         with pytest.raises(RuntimeError, match="boom"):
             await scenario.run_async()
@@ -1351,10 +1422,13 @@ class TestScenarioParallelExecution:
             version=1,
             atomic_attacks_to_return=mock_atomic_attacks,
         )
-        await scenario.initialize_async(
-            objective_target=mock_objective_target,
-            max_concurrency=3,
+        scenario.set_params_from_args(
+            args={
+                "objective_target": mock_objective_target,
+                "max_concurrency": 3,
+            }
         )
+        await scenario.initialize_async()
 
         with pytest.raises(ExceptionGroup) as exc_info:
             await scenario.run_async()
@@ -1383,10 +1457,13 @@ class TestScenarioParallelExecution:
             version=1,
             atomic_attacks_to_return=mock_atomic_attacks,
         )
-        await scenario.initialize_async(
-            objective_target=mock_objective_target,
-            max_concurrency=3,
+        scenario.set_params_from_args(
+            args={
+                "objective_target": mock_objective_target,
+                "max_concurrency": 3,
+            }
         )
+        await scenario.initialize_async()
 
         # Bare RuntimeError, not ExceptionGroup.
         with pytest.raises(RuntimeError, match="solo boom"):
@@ -1404,7 +1481,13 @@ class TestScenarioParallelExecution:
             version=1,
             atomic_attacks_to_return=mock_atomic_attacks,
         )
-        await scenario.initialize_async(objective_target=mock_objective_target, max_concurrency=1)
+        scenario.set_params_from_args(
+            args={
+                "objective_target": mock_objective_target,
+                "max_concurrency": 1,
+            }
+        )
+        await scenario.initialize_async()
 
         await scenario.run_async()
 

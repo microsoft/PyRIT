@@ -48,7 +48,7 @@ from pathlib import Path
 
 from pyrit.output.scenario_result.pretty import PrettyScenarioResultMemoryPrinter
 from pyrit.registry import TargetRegistry
-from pyrit.scenario import DatasetConfiguration
+from pyrit.scenario import DatasetAttackConfiguration
 from pyrit.scenario.scenarios.adaptive import TextAdaptive
 from pyrit.setup import initialize_from_config_async
 
@@ -66,9 +66,8 @@ printer = PrettyScenarioResultMemoryPrinter()
 # %%
 scenario = TextAdaptive()
 
-await scenario.initialize_async(  # type: ignore
-    objective_target=objective_target,
-)
+scenario.set_params_from_args(args={"objective_target": objective_target})  # type: ignore
+await scenario.initialize_async()  # type: ignore
 result = await scenario.run_async()  # type: ignore
 await printer.write_async(result)  # type: ignore
 
@@ -81,7 +80,7 @@ await printer.write_async(result)  # type: ignore
 #   `EpsilonGreedyTechniqueSelector(epsilon=..., random_seed=...)`
 #   to tune the selection algorithm. Defaults to an epsilon-greedy selector with
 #   `epsilon=0.2`.
-# - **`scenario_strategies`** (on `initialize_async`) — restricts which techniques the
+# - **`scenario_strategies`** (a run param) — restricts which techniques the
 #   selector can pick from. Use `TextAdaptive.get_strategy_class()` to access the enum.
 #
 # The cell below exercises all of them at once.
@@ -97,16 +96,18 @@ configured_scenario = TextAdaptive(
         random_seed=42,
     ),
 )
-configured_scenario.set_params_from_args(args={"max_attempts_per_objective": 5})
-
-await configured_scenario.initialize_async(  # type: ignore
-    objective_target=objective_target,
-    scenario_strategies=[strategy_class("single_turn")],
-    dataset_config=DatasetConfiguration(
-        dataset_names=["airt_hate", "airt_violence"],
-        max_dataset_size=4,
-    ),
+configured_scenario.set_params_from_args(  # type: ignore
+    args={
+        "max_attempts_per_objective": 5,
+        "objective_target": objective_target,
+        "scenario_strategies": [strategy_class("single_turn")],
+        "dataset_config": DatasetAttackConfiguration(
+            dataset_names=["airt_hate", "airt_violence"],
+            max_dataset_size=4,
+        ),
+    }
 )
+await configured_scenario.initialize_async()  # type: ignore
 configured_result = await configured_scenario.run_async()  # type: ignore
 await printer.write_async(configured_result)  # type: ignore
 
@@ -125,16 +126,18 @@ resumed_scenario = TextAdaptive(
     ),
     scenario_result_id=str(configured_result.id),
 )
-resumed_scenario.set_params_from_args(args={"max_attempts_per_objective": 5})
-
-await resumed_scenario.initialize_async(  # type: ignore
-    objective_target=objective_target,
-    scenario_strategies=[strategy_class("single_turn")],
-    dataset_config=DatasetConfiguration(
-        dataset_names=["airt_hate", "airt_violence"],
-        max_dataset_size=4,
-    ),
+resumed_scenario.set_params_from_args(  # type: ignore
+    args={
+        "max_attempts_per_objective": 5,
+        "objective_target": objective_target,
+        "scenario_strategies": [strategy_class("single_turn")],
+        "dataset_config": DatasetAttackConfiguration(
+            dataset_names=["airt_hate", "airt_violence"],
+            max_dataset_size=4,
+        ),
+    }
 )
+await resumed_scenario.initialize_async()  # type: ignore
 resumed_result = await resumed_scenario.run_async()  # type: ignore
 await printer.write_async(resumed_result)  # type: ignore
 

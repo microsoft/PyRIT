@@ -13,9 +13,9 @@ Scenarios orchestrate multi-attack security testing campaigns. Each scenario gro
 All scenarios inherit from `Scenario` (ABC) and must:
 
 1. **Define `VERSION`** as a class constant (increment on breaking changes)
-2. **Optionally declare `BASELINE_ATTACK_POLICY`** (defaults to `BaselineAttackPolicy.Enabled` — a baseline `PromptSendingAttack` is prepended and callers can opt out per run via `initialize_async(include_baseline=False)`):
+2. **Optionally declare `BASELINE_ATTACK_POLICY`** (defaults to `BaselineAttackPolicy.Enabled` — a baseline `PromptSendingAttack` is prepended and callers can opt out per run by setting `include_baseline=False` in the run params, see "Run Parameters" below):
    - `BaselineAttackPolicy.Disabled` — baseline supported but off by default (e.g. `Jailbreak`, where templates dominate the run).
-   - `BaselineAttackPolicy.Forbidden` — baseline is meaningless for this scenario's comparison axis (e.g. `AdversarialBenchmark`, which compares against gold-standard answers). Explicit `include_baseline=True` raises `ValueError`.
+   - `BaselineAttackPolicy.Forbidden` — baseline is meaningless for this scenario's comparison axis (e.g. `AdversarialBenchmark`, which compares against gold-standard answers). Supplying `include_baseline=True` raises `ValueError`.
 3. **Pass `strategy_class`, `default_strategy`, and `default_dataset_config` to `super().__init__()`:**
 
 ```python
@@ -80,6 +80,34 @@ Requirements:
 - **All constructor parameters must be optional** (default to `None`) so the registry can instantiate the scenario with no arguments for metadata introspection. Defer required-input validation to `initialize_async()` or `_build_atomic_attacks_async()`. `ScenarioRegistry._build_metadata` raises `TypeError` if `scenario_class()` cannot be called with no arguments.
 - `super().__init__()` called with `version`, `strategy_class`, `default_strategy`, `default_dataset_config`, `objective_scorer`
 - complex objects like `adversarial_chat` or `objective_scorer` should be passed into the constructor.
+
+## Run Parameters
+
+Run-time inputs (target, strategies, dataset config, concurrency, labels, baseline flag) are **not** arguments to `initialize_async`. They flow through a single parameter bag (`self.params`), populated by `set_params_from_args` from the merged CLI / config / programmatic arguments. `initialize_async` takes no arguments and reads everything from the bag:
+
+```python
+scenario.set_params_from_args(args={"objective_target": target, "max_concurrency": 8})
+await scenario.initialize_async()
+```
+
+The base `Scenario` declares the common run inputs once in `_common_scenario_parameters()`: `objective_target` (a `RegistryReference` — resolved by name or supplied as an instance), the `opaque` live objects `scenario_strategies` / `strategy_converters` / `dataset_config` / `memory_labels` (passed by identity, never coerced or deep-copied), and the scalars `max_concurrency` / `max_retries` / `include_baseline`.
+
+### Declaring custom parameters — add via `additional_parameters`
+
+The base `Scenario` composes `supported_parameters()` as `_common_scenario_parameters() + additional_parameters()`. To add your own parameters, override **`additional_parameters()`** and return just your extras — the common inputs are included for you, so there's no `super()` call to forget:
+
+```python
+@classmethod
+def additional_parameters(cls) -> list[Parameter]:
+    return [
+        Parameter(name="max_turns", description="...", param_type=int, default=5),
+    ]
+```
+
+- **Add (common case):** override `additional_parameters` and return `[Parameter(...)]`
+- **Remove / replace a common input (rare):** override `supported_parameters` directly and compose against `super()`, e.g. `return [p for p in super().supported_parameters() if p.name != "dataset_config"]`
+
+Dropping a common input is not silent: `set_params_from_args` rejects any value supplied for an undeclared parameter, so the registry/CLI/programmatic path fails loudly. If a scenario resolves its strategies differently (e.g. pairing attacks with converters), override the `_resolve_scenario_strategies` hook rather than `initialize_async` (see `RedTeamAgent`).
 
 ## Dataset Loading
 
@@ -272,6 +300,8 @@ New scenarios must be registered in `pyrit/scenario/__init__.py` as virtual pack
 ## Common Review Issues
 
 - Accessing `self._objective_target` or `self._scenario_strategies` before `initialize_async()`
+- Overriding `supported_parameters()` without composing against `super()` (silently drops the common run inputs)
+- Adding arguments back onto `initialize_async` instead of declaring them via `supported_parameters()` and reading from `self.params`
 - Forgetting `@apply_defaults` on `__init__`
 - Empty `seed_groups` passed to `AtomicAttack`
 - Missing `VERSION` class constant

@@ -16,11 +16,20 @@ from pyrit.score import Scorer
 _TEST_SCORER_ID = ComponentIdentifier(class_name="MockScorer", class_module="tests.unit.scenarios")
 
 
-def _make_scenario(*, declared_params: list[Parameter]) -> Scenario:
+def _make_scenario(
+    *,
+    declared_params: list[Parameter],
+    include_common_params: bool = False,
+    remove_common: list[str] | None = None,
+) -> Scenario:
     """Build a minimal Scenario subclass that declares the given parameters.
 
     Each test gets its own subclass so declared-parameter state never leaks
-    across tests.
+    across tests. By default the subclass *replaces* the base parameters so
+    coercion/validation assertions see only ``declared_params`` in isolation;
+    pass ``include_common_params=True`` to compose with the base common params
+    (e.g. when a test needs ``objective_target`` for the initialize flow), and
+    ``remove_common`` to drop specific common params (composition "remove").
     """
     params_to_declare = declared_params
 
@@ -38,7 +47,10 @@ def _make_scenario(*, declared_params: list[Parameter]) -> Scenario:
 
         @classmethod
         def supported_parameters(cls) -> list[Parameter]:
-            return list(params_to_declare)
+            base = super().supported_parameters() if include_common_params else []
+            if remove_common:
+                base = [p for p in base if p.name not in remove_common]
+            return base + list(params_to_declare)
 
         async def _resolve_seed_groups_by_dataset_async(self):
             return {}
@@ -61,15 +73,45 @@ def _make_scenario(*, declared_params: list[Parameter]) -> Scenario:
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestSupportedParametersDefault:
-    """The base Scenario.supported_parameters() returns an empty list by default."""
+    """A subclass that overrides supported_parameters replaces the base declaration."""
 
-    def test_default_supported_parameters_is_empty(self) -> None:
+    def test_override_replacing_with_empty_is_respected(self) -> None:
         scenario = _make_scenario(declared_params=[])
         assert scenario.supported_parameters() == []
 
     def test_default_params_dict_is_empty(self) -> None:
         scenario = _make_scenario(declared_params=[])
         assert scenario.params == {}
+
+    def test_base_default_declares_common_params(self) -> None:
+        names = [p.name for p in Scenario._common_scenario_parameters()]
+        assert names == [p.name for p in Scenario.supported_parameters()]
+        assert "objective_target" in names
+        assert "max_concurrency" in names
+
+    def test_additional_parameters_compose_with_common(self) -> None:
+        """Overriding additional_parameters appends to the common inputs without super()."""
+
+        class _AdditionalParamsScenario(Scenario):
+            @classmethod
+            def additional_parameters(cls) -> list[Parameter]:
+                return [Parameter(name="max_turns", description="d", param_type=int, default=5)]
+
+        names = [p.name for p in _AdditionalParamsScenario.supported_parameters()]
+        common_names = [p.name for p in Scenario._common_scenario_parameters()]
+        assert names == common_names + ["max_turns"]
+
+    def test_supported_parameters_override_can_remove_common(self) -> None:
+        """Overriding supported_parameters directly is still the escape hatch for removal."""
+
+        class _RemoveCommonScenario(Scenario):
+            @classmethod
+            def supported_parameters(cls) -> list[Parameter]:
+                return [p for p in super().supported_parameters() if p.name != "dataset_config"]
+
+        names = [p.name for p in _RemoveCommonScenario.supported_parameters()]
+        assert "dataset_config" not in names
+        assert "objective_target" in names
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -523,11 +565,12 @@ class TestParamPersistenceJsonSafety:
 
     async def test_json_safe_params_persist_on_init(self) -> None:
         scenario = _make_scenario(
-            declared_params=[Parameter(name="max_turns", description="d", param_type=int, default=5)]
+            declared_params=[Parameter(name="max_turns", description="d", param_type=int, default=5)],
+            include_common_params=True,
         )
-        scenario.set_params_from_args(args={"max_turns": 10})
+        scenario.set_params_from_args(args={"max_turns": 10, "objective_target": self._mock_target()})
 
-        await scenario.initialize_async(objective_target=self._mock_target())
+        await scenario.initialize_async()
 
         stored = scenario._memory.get_scenario_results(scenario_result_ids=[scenario._scenario_result_id])[0]
         assert stored.scenario_identifier.params["max_turns"] == 10
@@ -539,8 +582,102 @@ class TestParamPersistenceJsonSafety:
             pass
 
         # param_type=None passes the raw value straight through set_params_from_args.
-        scenario = _make_scenario(declared_params=[Parameter(name="blob", description="d")])
-        scenario.set_params_from_args(args={"blob": _NotJsonable()})
+        scenario = _make_scenario(
+            declared_params=[Parameter(name="blob", description="d")],
+            include_common_params=True,
+        )
+        scenario.set_params_from_args(args={"blob": _NotJsonable(), "objective_target": self._mock_target()})
 
         with pytest.raises(ValidationError):
-            await scenario.initialize_async(objective_target=self._mock_target())
+            await scenario.initialize_async()
+
+
+def _mock_objective_target() -> MagicMock:
+    target = MagicMock()
+    target.get_identifier.return_value = ComponentIdentifier(class_name="MockTarget", class_module="test")
+    return target
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestCommonParameterComposition:
+    """Subclasses compose against the base common params (extend / remove)."""
+
+    def test_extend_keeps_common_and_adds_custom(self) -> None:
+        scenario = _make_scenario(
+            declared_params=[Parameter(name="max_turns", description="d", param_type=int, default=5)],
+            include_common_params=True,
+        )
+        names = [p.name for p in scenario.supported_parameters()]
+        assert "objective_target" in names
+        assert "max_concurrency" in names
+        assert names[-1] == "max_turns"
+
+    def test_removed_common_param_is_rejected_when_supplied(self) -> None:
+        scenario = _make_scenario(
+            declared_params=[],
+            include_common_params=True,
+            remove_common=["max_retries"],
+        )
+        assert "max_retries" not in {p.name for p in scenario.supported_parameters()}
+        with pytest.raises(ValueError):
+            scenario.set_params_from_args(args={"max_retries": 3})
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestObjectiveTargetResolution:
+    """initialize_async resolves the bag's objective_target into a live target."""
+
+    async def test_instance_passes_through(self) -> None:
+        target = _mock_objective_target()
+        scenario = _make_scenario(declared_params=[], include_common_params=True)
+        scenario.set_params_from_args(args={"objective_target": target})
+        await scenario.initialize_async()
+        assert scenario._objective_target is target
+
+    async def test_missing_target_raises(self) -> None:
+        scenario = _make_scenario(declared_params=[], include_common_params=True)
+        scenario.set_params_from_args(args={})
+        with pytest.raises(ValueError, match="objective_target is required"):
+            await scenario.initialize_async()
+
+    async def test_registered_name_resolves_via_target_registry(self) -> None:
+        from pyrit.prompt_target import PromptTarget
+        from pyrit.registry import TargetRegistry
+
+        target = MagicMock(spec=PromptTarget)
+        target.get_identifier.return_value = ComponentIdentifier(class_name="MockTarget", class_module="test")
+        TargetRegistry.reset_registry_singleton()
+        TargetRegistry.get_registry_singleton().instances.register(target, name="my_target")
+        try:
+            scenario = _make_scenario(declared_params=[], include_common_params=True)
+            scenario.set_params_from_args(args={"objective_target": "my_target"})
+            await scenario.initialize_async()
+            assert scenario._objective_target is target
+        finally:
+            TargetRegistry.reset_registry_singleton()
+
+    async def test_unregistered_name_raises(self) -> None:
+        from pyrit.registry import TargetRegistry
+
+        TargetRegistry.reset_registry_singleton()
+        try:
+            scenario = _make_scenario(declared_params=[], include_common_params=True)
+            scenario.set_params_from_args(args={"objective_target": "does-not-exist"})
+            with pytest.raises(ValueError, match="not found"):
+                await scenario.initialize_async()
+        finally:
+            TargetRegistry.reset_registry_singleton()
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestOpaquePassthrough:
+    """Opaque common params reach initialize_async as live objects, unchanged."""
+
+    async def test_strategy_converters_identity_preserved(self) -> None:
+        converters = {"technique": [object()]}
+        scenario = _make_scenario(declared_params=[], include_common_params=True)
+        scenario.set_params_from_args(
+            args={"objective_target": _mock_objective_target(), "strategy_converters": converters}
+        )
+        await scenario.initialize_async()
+        assert scenario._strategy_converters is converters

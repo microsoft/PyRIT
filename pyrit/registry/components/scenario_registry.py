@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Any
 
 from pyrit.models import class_name_to_snake_case
 from pyrit.models.identifiers.scenario_identifier import ScenarioIdentifier
-from pyrit.registry.registry import Registry
+from pyrit.registry.registry import ParamBagRegistry
 from pyrit.registry.registry_metadata import RegistryMetadata
 
 if TYPE_CHECKING:
@@ -54,7 +54,7 @@ class ScenarioMetadata(RegistryMetadata):
     supported_parameters: tuple[Parameter, ...] = field(kw_only=True, default=())
 
 
-class ScenarioRegistry(Registry["Scenario", ScenarioMetadata]):
+class ScenarioRegistry(ParamBagRegistry["Scenario", ScenarioMetadata]):
     """
     Registry for discovering and managing available scenario classes.
 
@@ -177,13 +177,15 @@ class ScenarioRegistry(Registry["Scenario", ScenarioMetadata]):
 
         1. **create** the scenario via ``create_instance`` (seeding
            ``scenario_result_id`` when resuming an existing run),
-        2. **set parameters** — the scenario-specific declared parameters (from
-           ``supported_parameters()``) are coerced/validated/injected via
-           ``Scenario.set_params_from_args``,
-        3. **initialize** — the run-resolved common parameters (``objective_target``,
-           ``scenario_strategies``, ``dataset_config``, ``max_concurrency``,
-           ``max_retries``, ``memory_labels``, ``include_baseline``) are forwarded
-           to ``Scenario.initialize_async``.
+        2. **set parameters** — the scenario-specific declared parameters
+           (``scenario_params``) and the common run-resolved parameters
+           (``initialize_kwargs`` — ``objective_target``, ``scenario_strategies``,
+           ``dataset_config``, ``max_concurrency``, ``max_retries``,
+           ``memory_labels``, ``include_baseline``) are merged into a single
+           ``Scenario.set_params_from_args`` call, so every value flows through the
+           one coerce/validate/inject-defaults path,
+        3. **initialize** — ``Scenario.initialize_async()`` is called with no
+           arguments; it reads every input from the now-populated bag.
 
         Prefer this over manually chaining ``create_instance`` +
         ``set_params_from_args`` + ``initialize_async``.
@@ -194,8 +196,8 @@ class ScenarioRegistry(Registry["Scenario", ScenarioMetadata]):
                 parameters to set before initialization. Defaults to an empty mapping.
             scenario_result_id (str | None): Existing scenario-result id to resume,
                 or ``None`` to start a fresh run.
-            **initialize_kwargs (Any): Run-resolved common parameters forwarded to
-                ``Scenario.initialize_async`` (notably ``objective_target``).
+            **initialize_kwargs (Any): Common run-resolved parameters merged into the
+                param bag (notably ``objective_target``).
 
         Returns:
             Scenario: The fully initialized scenario, ready for ``run_async``.
@@ -204,7 +206,7 @@ class ScenarioRegistry(Registry["Scenario", ScenarioMetadata]):
         if scenario_result_id:
             constructor_kwargs["scenario_result_id"] = scenario_result_id
 
-        scenario = self.create_instance(name, **constructor_kwargs)
-        scenario.set_params_from_args(args=scenario_params or {})
-        await scenario.initialize_async(**initialize_kwargs)
+        merged_args = {**(scenario_params or {}), **initialize_kwargs}
+        scenario = self._create_and_configure(name, params=merged_args, constructor_kwargs=constructor_kwargs)
+        await scenario.initialize_async()
         return scenario

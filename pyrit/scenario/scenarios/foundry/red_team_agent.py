@@ -10,12 +10,11 @@ available attacks against specified datasets.
 """
 
 import logging
-from collections.abc import Sequence
 from dataclasses import dataclass, field
 from inspect import signature
 from typing import TYPE_CHECKING, Any, TypeVar, cast
 
-from pyrit.common import REQUIRED_VALUE, apply_defaults
+from pyrit.common import apply_defaults
 from pyrit.datasets import TextJailBreak
 from pyrit.executor.attack import CrescendoAttack, PromptSendingAttack, RedTeamingAttack, TreeOfAttacksWithPruningAttack
 from pyrit.executor.attack.core.attack_config import AttackAdversarialConfig, AttackConverterConfig, AttackScoringConfig
@@ -55,6 +54,8 @@ from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
 from pyrit.scenario.core.scenario_target_defaults import get_default_adversarial_target
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from pyrit.executor.attack.core.attack_strategy import AttackStrategy
 
 AttackStrategyT = TypeVar("AttackStrategyT", bound="AttackStrategy[Any, Any]")
@@ -249,48 +250,31 @@ class RedTeamAgent(Scenario):
 
         self._scenario_composites: list[FoundryComposite] = []
 
-    @apply_defaults
-    async def initialize_async(
+    def _resolve_scenario_strategies(
         self,
         *,
-        objective_target: PromptTarget = REQUIRED_VALUE,  # type: ignore[ty:invalid-parameter-default]
-        scenario_strategies: Sequence["FoundryStrategy | FoundryComposite"] | None = None,
-        dataset_config: DatasetAttackConfiguration | None = None,
-        max_concurrency: int = 4,
-        max_retries: int = 0,
-        memory_labels: dict[str, str] | None = None,
-        include_baseline: bool | None = None,
-    ) -> None:
+        scenario_strategies: "Sequence[FoundryStrategy | FoundryComposite] | None",
+    ) -> list[ScenarioStrategy]:
         """
-        Initialize the scenario.
+        Resolve Foundry strategies, expanding composites up-front.
+
+        Overrides the base hook to widen the accepted strategy types (``FoundryComposite``
+        is a dataclass, not a ``ScenarioStrategy`` enum member) and to expand composites:
+        ``_resolve_foundry_strategies`` populates ``self._scenario_composites`` (consumed by
+        ``_build_atomic_attacks_async``) and returns the flat concrete strategy list the base
+        class tracks. The bag stores ``scenario_strategies`` as an opaque value, so
+        ``FoundryComposite`` objects reach this hook unchanged.
 
         Args:
-            objective_target (PromptTarget): The target system to attack.
-            scenario_strategies (Sequence[FoundryStrategy | FoundryComposite] | None): The
-                strategies to execute. Accepts bare FoundryStrategy enum members, FoundryComposite
-                objects (for pairing an attack with converters), or a mix of both.
+            scenario_strategies (Sequence[FoundryStrategy | FoundryComposite] | None):
+                The strategies to execute. Accepts bare ``FoundryStrategy`` enum members,
+                ``FoundryComposite`` objects (pairing an attack with converters), or a mix.
                 If None, uses the default aggregate (EASY).
-            dataset_config (DatasetAttackConfiguration | None): Configuration for the dataset source.
-            max_concurrency (int): Maximum number of concurrent attack executions. Defaults to 4.
-            max_retries (int): Maximum number of retries on failure. Defaults to 0.
-            memory_labels (dict[str, str] | None): Labels to attach to all memory entries.
-            include_baseline (bool | None): See ``Scenario.initialize_async``.
+
+        Returns:
+            list[ScenarioStrategy]: Flat list of constituent strategies for base-class tracking.
         """
-        # This override exists to widen the accepted strategy types (FoundryComposite is a
-        # dataclass, not a ScenarioStrategy enum member) and to expand composites up-front:
-        # _resolve_foundry_strategies populates self._scenario_composites (consumed by
-        # _build_atomic_attacks_async) and returns the flat concrete strategy list the base
-        # class tracks.
-        flat_strategies = self._resolve_foundry_strategies(scenario_strategies)
-        await super().initialize_async(
-            objective_target=objective_target,
-            scenario_strategies=flat_strategies,
-            dataset_config=dataset_config,
-            max_concurrency=max_concurrency,
-            max_retries=max_retries,
-            memory_labels=memory_labels,
-            include_baseline=include_baseline,
-        )
+        return self._resolve_foundry_strategies(scenario_strategies)
 
     def _resolve_foundry_strategies(
         self,

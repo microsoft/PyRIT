@@ -105,11 +105,14 @@ class TestWebInjectionAtomicAttacks:
     async def test_atomic_attacks_one_per_strategy_plus_baseline(self, mock_objective_target, dataset_values):
         scenario = WebInjection()
         with patch.object(WebInjection, "_load_dataset_values", return_value=dataset_values):
-            await scenario.initialize_async(
-                objective_target=mock_objective_target,
-                scenario_strategies=[WebInjectionStrategy.ALL],
-                include_baseline=True,
+            scenario.set_params_from_args(
+                args={
+                    "objective_target": mock_objective_target,
+                    "scenario_strategies": [WebInjectionStrategy.ALL],
+                    "include_baseline": True,
+                }
             )
+            await scenario.initialize_async()
             attacks = scenario._atomic_attacks
 
         # 8 strategies + 1 baseline
@@ -123,11 +126,14 @@ class TestWebInjectionAtomicAttacks:
     async def test_no_baseline_when_disabled(self, mock_objective_target, dataset_values):
         scenario = WebInjection()
         with patch.object(WebInjection, "_load_dataset_values", return_value=dataset_values):
-            await scenario.initialize_async(
-                objective_target=mock_objective_target,
-                scenario_strategies=[WebInjectionStrategy.XSS],
-                include_baseline=False,
+            scenario.set_params_from_args(
+                args={
+                    "objective_target": mock_objective_target,
+                    "scenario_strategies": [WebInjectionStrategy.XSS],
+                    "include_baseline": False,
+                }
             )
+            await scenario.initialize_async()
             attacks = scenario._atomic_attacks
 
         assert all(a.atomic_attack_name != "baseline" for a in attacks)
@@ -136,11 +142,14 @@ class TestWebInjectionAtomicAttacks:
     async def test_seed_groups_pair_objective_and_prompt(self, mock_objective_target, dataset_values):
         scenario = WebInjection()
         with patch.object(WebInjection, "_load_dataset_values", return_value=dataset_values):
-            await scenario.initialize_async(
-                objective_target=mock_objective_target,
-                scenario_strategies=[WebInjectionStrategy.MarkdownXSS],
-                include_baseline=False,
+            scenario.set_params_from_args(
+                args={
+                    "objective_target": mock_objective_target,
+                    "scenario_strategies": [WebInjectionStrategy.MarkdownXSS],
+                    "include_baseline": False,
+                }
             )
+            await scenario.initialize_async()
             attack = scenario._atomic_attacks[0]
 
         assert len(attack._seed_groups) > 0
@@ -154,11 +163,14 @@ class TestWebInjectionAtomicAttacks:
     async def test_exfil_strategy_uses_markdown_scorer(self, mock_objective_target, dataset_values):
         scenario = WebInjection()
         with patch.object(WebInjection, "_load_dataset_values", return_value=dataset_values):
-            await scenario.initialize_async(
-                objective_target=mock_objective_target,
-                scenario_strategies=[WebInjectionStrategy.PlaygroundMarkdownExfil],
-                include_baseline=False,
+            scenario.set_params_from_args(
+                args={
+                    "objective_target": mock_objective_target,
+                    "scenario_strategies": [WebInjectionStrategy.PlaygroundMarkdownExfil],
+                    "include_baseline": False,
+                }
             )
+            await scenario.initialize_async()
             attack = scenario._atomic_attacks[0].attack_technique.attack
 
         assert isinstance(attack, PromptSendingAttack)
@@ -168,11 +180,14 @@ class TestWebInjectionAtomicAttacks:
     async def test_xss_strategy_uses_xss_scorer(self, mock_objective_target, dataset_values):
         scenario = WebInjection()
         with patch.object(WebInjection, "_load_dataset_values", return_value=dataset_values):
-            await scenario.initialize_async(
-                objective_target=mock_objective_target,
-                scenario_strategies=[WebInjectionStrategy.TaskXSS],
-                include_baseline=False,
+            scenario.set_params_from_args(
+                args={
+                    "objective_target": mock_objective_target,
+                    "scenario_strategies": [WebInjectionStrategy.TaskXSS],
+                    "include_baseline": False,
+                }
             )
+            await scenario.initialize_async()
             attack = scenario._atomic_attacks[0].attack_technique.attack
 
         scorer = attack._objective_scorer
@@ -187,19 +202,25 @@ class TestWebInjectionAtomicAttacks:
         }
         scenario = WebInjection()
         with patch.object(WebInjection, "_load_dataset_values", return_value=empty):
+            scenario.set_params_from_args(
+                args={
+                    "objective_target": mock_objective_target,
+                    "scenario_strategies": [WebInjectionStrategy.MarkdownImageExfil],
+                }
+            )
             with pytest.raises(ValueError):
-                await scenario.initialize_async(
-                    objective_target=mock_objective_target,
-                    scenario_strategies=[WebInjectionStrategy.MarkdownImageExfil],
-                )
+                await scenario.initialize_async()
 
     async def test_max_prompts_per_strategy_caps_output(self, mock_objective_target, dataset_values):
         scenario = WebInjection(max_prompts_per_strategy=3)
         with patch.object(WebInjection, "_load_dataset_values", return_value=dataset_values):
-            await scenario.initialize_async(
-                objective_target=mock_objective_target,
-                scenario_strategies=[WebInjectionStrategy.MarkdownURIImageExfilExtended],
-                include_baseline=False,
+            scenario.set_params_from_args(
+                args={
+                    "objective_target": mock_objective_target,
+                    "scenario_strategies": [WebInjectionStrategy.MarkdownURIImageExfilExtended],
+                    "include_baseline": False,
+                }
             )
+            await scenario.initialize_async()
             attack = scenario._atomic_attacks[0]
         assert len(attack._seed_groups) == 3
