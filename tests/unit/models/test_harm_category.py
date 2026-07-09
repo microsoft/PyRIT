@@ -8,6 +8,7 @@ import logging
 import pytest
 
 from pyrit.models.harm_category import (
+    _HARM_CATEGORY_DEFINITIONS,
     HARM_CATEGORY_TAXONOMY_VERSION,
     HarmCategory,
     standardize_harm_categories,
@@ -134,3 +135,18 @@ def test_parse_many_returns_all() -> None:
 
 def test_parse_unknown_returns_other() -> None:
     assert HarmCategory.parse("totally-unknown") == HarmCategory.OTHER
+
+
+def test_every_category_has_a_definition() -> None:
+    missing = [member.name for member in HarmCategory if not _HARM_CATEGORY_DEFINITIONS.get(member.name, "").strip()]
+    assert not missing, f"HarmCategory members missing a definition: {missing}"
+
+
+def test_no_stray_definition_keys() -> None:
+    valid_names = {member.name for member in HarmCategory}
+    stray = sorted(set(_HARM_CATEGORY_DEFINITIONS) - valid_names)
+    assert not stray, f"Definitions reference unknown HarmCategory names: {stray}"
+
+
+def test_get_definition_returns_defined_text() -> None:
+    assert HarmCategory.get_definition(HarmCategory.MALWARE) == "Creating or distributing malicious software."
