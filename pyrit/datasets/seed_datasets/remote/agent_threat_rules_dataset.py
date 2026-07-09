@@ -122,6 +122,10 @@ class _AgentThreatRulesDataset(_RemoteDatasetLoader):
     harm_categories: list[str] = []
     modalities: list[str] = ["text"]
     size: str = "large"  # 1,054 seeds
+    # ATR's upstream corpus grows over time, but this loader pins to a specific commit
+    # by default (see ``source`` below) so a default fetch returns a static, reproducible
+    # snapshot. It is therefore intentionally NOT tagged as a "feed"; unpin the source
+    # (pass ``main`` or a newer ref) to track upstream additions.
     tags: set[str] = {"safety", "agent_security", "prompt_injection"}
 
     def __init__(

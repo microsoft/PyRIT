@@ -68,6 +68,10 @@ class _PromptIntelDataset(_RemoteDatasetLoader):
     PROMPT_WEB_URL = "https://promptintel.novahunting.ai/prompt"
     MAX_PAGE_LIMIT = 100
 
+    # PromptIntel is a live registry API that continuously gains new records, so it is
+    # tagged as a "feed" to distinguish it from static, versioned dataset releases.
+    tags: set[str] = {"feed"}
+
     def __init__(
         self,
         *,
