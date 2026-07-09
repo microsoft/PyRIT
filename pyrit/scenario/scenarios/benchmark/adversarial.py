@@ -62,11 +62,11 @@ def _build_benchmark_strategy() -> type[ScenarioStrategy]:
         class_name="BenchmarkStrategy",
         factories=factories,
         aggregate_tags={
-            "default": TagQuery.any_of("default"),
             "light": TagQuery.any_of("light"),
             "single_turn": TagQuery.any_of("single_turn"),
             "multi_turn": TagQuery.any_of("multi_turn"),
         },
+        default_technique_names={"role_play", "many_shot"},
     )
 
 

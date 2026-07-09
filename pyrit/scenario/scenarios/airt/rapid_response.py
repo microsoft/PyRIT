@@ -49,12 +49,13 @@ def _build_rapid_response_strategy() -> type[ScenarioStrategy]:
 
     return AttackTechniqueRegistry.build_strategy_class_from_factories(  # type: ignore[ty:invalid-return-type]
         class_name="RapidResponseStrategy",
-        factories=TagQuery.all("core").filter(factories),
+        factories=factories,
+        available=TagQuery.all("core"),
         aggregate_tags={
-            "default": TagQuery.any_of("default"),
             "single_turn": TagQuery.any_of("single_turn"),
             "multi_turn": TagQuery.any_of("multi_turn"),
         },
+        default_technique_names={"role_play", "many_shot"},
     )
 
 

@@ -191,5 +191,5 @@ class TestDoctorStrategyTags:
         assert "default" in DoctorStrategy.get_aggregate_tags()
 
     def test_concrete_strategy_values(self):
-        assert DoctorStrategy.PolicyPuppetry.value == "policy_puppetry"
-        assert DoctorStrategy.PolicyPuppetryLeet.value == "policy_puppetry_leet"
+        assert DoctorStrategy("policy_puppetry").value == "policy_puppetry"
+        assert DoctorStrategy("policy_puppetry_leet").value == "policy_puppetry_leet"
