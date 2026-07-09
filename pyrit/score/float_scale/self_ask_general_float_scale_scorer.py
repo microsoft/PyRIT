@@ -164,6 +164,7 @@ class SelfAskGeneralFloatScaleScorer(FloatScaleScorer):
             metadata_output_key=self._metadata_output_key,
             category_output_key=self._category_output_key,
             response_json_schema=self._response_json_schema,
+            numeric_value=True,
         )
 
         score = unvalidated.to_score(

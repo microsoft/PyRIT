@@ -5,19 +5,13 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from pyrit.exceptions.exception_classes import InvalidJsonException
 from pyrit.models import (
-    JsonSchemaDefinition,
     Message,
-    PromptDataType,
     Score,
-    UnvalidatedScore,
 )
 from pyrit.score.scorer import Scorer
 
 if TYPE_CHECKING:
-    from uuid import UUID
-
     from pyrit.prompt_target.common.prompt_target import PromptTarget
     from pyrit.score.scorer_evaluation.scorer_metrics import HarmScorerMetrics
     from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
@@ -138,50 +132,3 @@ class FloatScaleScorer(Scorer):
             eval_hash=eval_hash,
             harm_category=self.evaluation_file_mapping.harm_category,
         )
-
-    async def _score_value_with_llm_async(
-        self,
-        *,
-        prompt_target: PromptTarget,
-        system_prompt: str,
-        message_value: str,
-        message_data_type: PromptDataType,
-        scored_prompt_id: str | UUID,
-        prepended_text_message_piece: str | None = None,
-        category: str | UUID | None = None,
-        objective: str | None = None,
-        score_value_output_key: str = "score_value",
-        rationale_output_key: str = "rationale",
-        description_output_key: str = "description",
-        metadata_output_key: str = "metadata",
-        category_output_key: str = "category",
-        response_json_schema: JsonSchemaDefinition | None = None,
-    ) -> UnvalidatedScore:
-        score: UnvalidatedScore | None = None
-        try:
-            score = await super()._score_value_with_llm_async(
-                prompt_target=prompt_target,
-                system_prompt=system_prompt,
-                message_value=message_value,
-                message_data_type=message_data_type,
-                scored_prompt_id=scored_prompt_id,
-                prepended_text_message_piece=prepended_text_message_piece,
-                category=category,
-                objective=objective,
-                score_value_output_key=score_value_output_key,
-                rationale_output_key=rationale_output_key,
-                description_output_key=description_output_key,
-                metadata_output_key=metadata_output_key,
-                category_output_key=category_output_key,
-                response_json_schema=response_json_schema,
-            )
-            if score is None:
-                raise ValueError("Score returned None")
-            # raise an exception if it's not parsable as a float
-            float(score.raw_score_value)
-        except ValueError:
-            score_value = score.raw_score_value if score else "None"
-            raise InvalidJsonException(
-                message=(f"Invalid JSON response, score_value should be a float not this: {score_value}")
-            ) from None
-        return score

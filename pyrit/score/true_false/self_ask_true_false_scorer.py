@@ -12,6 +12,8 @@ from pyrit.common import verify_and_resolve_path
 from pyrit.common.path import SCORER_SEED_PROMPT_PATH
 from pyrit.models import ComponentIdentifier, MessagePiece, Score, SeedPrompt
 from pyrit.prompt_target import CHAT_TARGET_REQUIREMENTS, PromptTarget
+from pyrit.score.llm_scoring import _run_llm_scoring_async
+from pyrit.score.response_handler import JsonSchemaResponseHandler
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.true_false.true_false_score_aggregator import (
     TrueFalseAggregatorFunc,
@@ -223,16 +225,17 @@ class SelfAskTrueFalseScorer(TrueFalseScorer):
             scoring_value = f"objective: {objective}\nresponse: {message_piece.converted_value}"
             scoring_data_type = "text"
 
-        unvalidated_score = await self._score_value_with_llm_async(
-            prompt_target=self._prompt_target,
+        unvalidated_score = await _run_llm_scoring_async(
+            chat_target=self._prompt_target,
             system_prompt=self._system_prompt,
-            message_value=scoring_value,
-            message_data_type=scoring_data_type,
+            response_handler=JsonSchemaResponseHandler(response_schema=self._response_json_schema),
+            value=scoring_value,
+            data_type=scoring_data_type,
             scored_prompt_id=message_piece.id,
-            prepended_text_message_piece=prepended_text,
+            scorer_identifier=self.get_identifier(),
+            prepended_text=prepended_text,
             category=self._score_category,
             objective=objective,
-            response_json_schema=self._response_json_schema,
         )
 
         score = unvalidated_score.to_score(score_value=unvalidated_score.raw_score_value, score_type="true_false")

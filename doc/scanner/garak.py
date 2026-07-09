@@ -56,11 +56,14 @@ objective_target = TargetRegistry.get_registry_singleton().instances.get("openai
 dataset_config = EncodingDatasetConfiguration(dataset_names=["garak_slur_terms_en"], max_dataset_size=1)
 
 scenario = Encoding()
-await scenario.initialize_async(  # type: ignore
-    objective_target=objective_target,
-    scenario_strategies=[EncodingStrategy.Base64],
-    dataset_config=dataset_config,
+scenario.set_params_from_args(  # type: ignore
+    args={
+        "objective_target": objective_target,
+        "scenario_strategies": [EncodingStrategy.Base64],
+        "dataset_config": dataset_config,
+    }
 )
+await scenario.initialize_async()  # type: ignore
 
 print(f"Scenario: {scenario.name}")
 print(f"Atomic attacks: {scenario.atomic_attack_count}")

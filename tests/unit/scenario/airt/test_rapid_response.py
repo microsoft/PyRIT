@@ -215,7 +215,8 @@ class TestRapidResponseBasic:
     ):
         mock_get_scorer.return_value = mock_objective_scorer
         scenario = RapidResponse()
-        await scenario.initialize_async(objective_target=mock_objective_target)
+        scenario.set_params_from_args(args={"objective_target": mock_objective_target})
+        await scenario.initialize_async()
         # DEFAULT expands to PromptSending + ManyShot → 2 composites
         assert len(scenario._scenario_strategies) == 2
 
@@ -230,8 +231,9 @@ class TestRapidResponseBasic:
             "pyrit.scenario.core.dataset_configuration.DatasetConfiguration._fetch_dataset_async",
             new_callable=AsyncMock,
         ):
+            scenario.set_params_from_args(args={"objective_target": mock_objective_target})
             with pytest.raises(ValueError, match="could not be loaded"):
-                await scenario.initialize_async(objective_target=mock_objective_target)
+                await scenario.initialize_async()
 
     @patch("pyrit.scenario.core.scenario.Scenario._get_default_objective_scorer")
     @patch.object(
@@ -250,7 +252,13 @@ class TestRapidResponseBasic:
         mock_get_scorer.return_value = mock_objective_scorer
         labels = {"test_run": "123"}
         scenario = RapidResponse()
-        await scenario.initialize_async(objective_target=mock_objective_target, memory_labels=labels)
+        scenario.set_params_from_args(
+            args={
+                "objective_target": mock_objective_target,
+                "memory_labels": labels,
+            }
+        )
+        await scenario.initialize_async()
         assert scenario._memory_labels == labels
 
     @pytest.mark.parametrize("harm_category", ALL_HARM_CATEGORIES)
@@ -290,7 +298,8 @@ class TestRapidResponseAttackGeneration:
             init_kwargs = {"objective_target": mock_objective_target, "include_baseline": False}
             if strategies:
                 init_kwargs["scenario_strategies"] = strategies
-            await scenario.initialize_async(**init_kwargs)
+            scenario.set_params_from_args(args=init_kwargs)
+            await scenario.initialize_async()
             return scenario._atomic_attacks
 
     async def test_default_strategy_produces_role_play_and_many_shot(
@@ -387,12 +396,15 @@ class TestRapidResponseAttackGeneration:
             patch.object(AttackTechniqueFactory, "create", _spy_create),
         ):
             scenario = RapidResponse(objective_scorer=mock_objective_scorer)
-            await scenario.initialize_async(
-                objective_target=mock_objective_target,
-                include_baseline=False,
-                scenario_strategies=[role_play],
-                strategy_converters={role_play.value: [converter]},
+            scenario.set_params_from_args(
+                args={
+                    "objective_target": mock_objective_target,
+                    "include_baseline": False,
+                    "scenario_strategies": [role_play],
+                    "strategy_converters": {role_play.value: [converter]},
+                }
             )
+            await scenario.initialize_async()
 
         # ROLE_PLAY was selected with a converter modifier, so every resulting factory.create
         # call must receive the extra request converter.
@@ -483,11 +495,14 @@ class TestRapidResponseAttackGeneration:
                 objective_scorer=mock_objective_scorer,
             )
             # Select ALL which includes role_play, many_shot, tap — none have factories
-            await scenario.initialize_async(
-                objective_target=mock_objective_target,
-                scenario_strategies=[_strategy_class().ALL],
-                include_baseline=False,
+            scenario.set_params_from_args(
+                args={
+                    "objective_target": mock_objective_target,
+                    "scenario_strategies": [_strategy_class().ALL],
+                    "include_baseline": False,
+                }
             )
+            await scenario.initialize_async()
             attacks = scenario._atomic_attacks
             # Only prompt_sending should have produced attacks
             assert len(attacks) == 1

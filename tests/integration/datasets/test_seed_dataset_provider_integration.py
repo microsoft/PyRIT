@@ -687,12 +687,15 @@ class TestHarmbenchMetadataInScenario:
         # This is the critical call — it loads seed groups from memory
         # and builds atomic attacks. If metadata broke the pipeline,
         # this would raise ValueError about missing seed_groups.
-        await rta.initialize_async(
-            objective_target=target,
-            max_concurrency=1,
-            scenario_strategies=[FoundryStrategy.Base64],
-            include_baseline=False,
+        rta.set_params_from_args(
+            args={
+                "objective_target": target,
+                "max_concurrency": 1,
+                "scenario_strategies": [FoundryStrategy.Base64],
+                "include_baseline": False,
+            }
         )
+        await rta.initialize_async()
 
         # Verify the scenario got objectives from harmbench
         attacks = rta._atomic_attacks
