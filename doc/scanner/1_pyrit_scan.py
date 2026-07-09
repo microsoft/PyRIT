@@ -72,12 +72,12 @@
 #
 # 1. A Scenario. Many are defined in `pyrit.scenario.scenarios`. But you can also define your own in initialization_scripts.
 # 2. Initializers (which can be supplied via `--initializers` or `--initialization-scripts` or `initializers` section of config file (see [here](../getting_started/pyrit_conf.md))). Scenarios often don't need many arguments, but they can be configured in different ways. And at the very least, most need an `objective_target` (the thing you're running a scan against) which you can configure by using the `--target` flag if your initializer registers targets (e.g. `target` initializer)
-# 3. Scenario Techniques (optional). These are supplied by the `--scenario-techniques` flag and tell the scenario what to test, but they are always optional. Also note you can obtain these by running `--list-scenarios`
+# 3. Scenario Techniques (optional). These are supplied by the `--techniques` flag and tell the scenario what to test, but they are always optional. Also note you can obtain these by running `--list-scenarios`
 #
 # Basic usage will look something like:
 #
 # ```shell
-# pyrit_scan <scenario> --target <target_name> --initializers <initializer1> <initializer2> --scenario-techniques <technique1> <technique2>
+# pyrit_scan <scenario> --target <target_name> --initializers <initializer1> <initializer2> --techniques <technique1> <technique2>
 # ```
 #
 # You can also override scenario parameters directly from the CLI:
@@ -89,7 +89,7 @@
 # Or concretely:
 #
 # ```shell
-# !pyrit_scan foundry.red_team_agent --target openai_chat --initializers target --scenario-techniques base64
+# !pyrit_scan foundry.red_team_agent --target openai_chat --initializers target --techniques base64
 # ```
 #
 # Example with a basic configuration that runs the Foundry scenario against the objective target defined in the `target` initializer.
