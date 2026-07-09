@@ -1106,18 +1106,18 @@ class TestAddMessage:
                 await attack_service.add_message_async(attack_result_id="test-id", request=request)
 
     async def test_add_message_surfaces_stored_error_piece_on_send_failure(self, attack_service, mock_memory) -> None:
-        """When the normalizer stores an error piece then raises, the send returns it inline (no raise)."""
+        """When the normalizer stores an error piece then raises, the send returns that turn inline (no raise)."""
         ar = make_attack_result(conversation_id="test-id")
         mock_memory.get_attack_results.return_value = [ar]
-        mock_memory.get_conversation_messages.return_value = []
 
         # The PromptNormalizer persists a full error piece before re-raising; model
         # that by flipping to return the stored error piece only after send fails.
+        traceback_text = "Connection error.\nAPIConnectionError('Connection error.')\nTraceback..."
         error_piece = MessagePiece(
             role="assistant",
-            original_value="Connection error.\nAPIConnectionError('Connection error.')\nTraceback...",
+            original_value=traceback_text,
             original_value_data_type="error",
-            converted_value="Connection error.\nAPIConnectionError('Connection error.')\nTraceback...",
+            converted_value=traceback_text,
             converted_value_data_type="error",
             conversation_id="test-id",
             sequence=1,
@@ -1125,6 +1125,11 @@ class TestAddMessage:
         )
         state = {"sent": False}
         mock_memory.get_message_pieces.side_effect = lambda **_: [error_piece] if state["sent"] else []
+        # The conversation-messages read (used to build the response DTO) must include
+        # the stored error turn so we can assert it is surfaced to the caller.
+        mock_memory.get_conversation_messages.side_effect = lambda **_: (
+            [Message(message_pieces=[error_piece])] if state["sent"] else []
+        )
 
         async def _raise_after_store(**_):
             state["sent"] = True
@@ -1149,11 +1154,18 @@ class TestAddMessage:
                 target_registry_name="test-target",
             )
 
-            # Should NOT raise: the stored error piece is surfaced via the normal response.
+            # Should NOT raise: the stored error turn is surfaced via the normal response.
             result = await attack_service.add_message_async(attack_result_id="test-id", request=request)
 
-            assert result.attack is not None
             mock_normalizer.send_prompt_async.assert_called_once()
+            assert result.attack is not None
+
+            # The error turn (response_error="processing" + traceback) must come back in the response,
+            # so the send-time view matches the conversation-reload view.
+            returned_pieces = [piece for message in result.messages.messages for piece in message.message_pieces]
+            error_views = [piece for piece in returned_pieces if piece.response_error == "processing"]
+            assert len(error_views) == 1
+            assert "APIConnectionError" in error_views[0].converted_value
 
     async def test_add_message_reraises_when_send_fails_without_stored_error_piece(
         self, attack_service, mock_memory
