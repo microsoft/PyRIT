@@ -2,7 +2,6 @@
 # Licensed under the MIT license.
 
 
-import uuid
 from collections.abc import Sequence
 from typing import Literal
 from uuid import uuid4
@@ -11,8 +10,6 @@ import pytest
 
 from pyrit.memory import MemoryInterface, PromptMemoryEntry
 from pyrit.models import (
-    AtomicAttackIdentifier,
-    AttackResult,
     ComponentIdentifier,
     IdentifierFilter,
     IdentifierType,
@@ -30,9 +27,7 @@ def _test_scorer_id(name: str = "TestScorer") -> ComponentIdentifier:
     )
 
 
-def test_get_scores_by_attack_id_and_label(
-    sqlite_instance: MemoryInterface, sample_conversations: Sequence[MessagePiece]
-):
+def test_get_scores_by_label(sqlite_instance: MemoryInterface, sample_conversations: Sequence[MessagePiece]):
     # create list of scores that are associated with sample conversation entries
     # assert that that list of scores is the same as expected :-)
 
@@ -40,19 +35,6 @@ def test_get_scores_by_attack_id_and_label(
     assert prompt_id is not None, "Prompt ID should not be None"
 
     sqlite_instance.add_message_pieces_to_memory(message_pieces=sample_conversations)
-
-    # attack_identifier is no longer stamped on pieces; the deprecated attack_id filter
-    # resolves to an attack's main conversation via persisted AttackResults.
-    attack_strategy_id = ComponentIdentifier(class_name="TestAttack", class_module="test.module")
-    sqlite_instance.add_attack_results_to_memory(
-        attack_results=[
-            AttackResult(
-                conversation_id=sample_conversations[0].conversation_id,
-                objective="test objective",
-                atomic_attack_identifier=AtomicAttackIdentifier.build(attack_identifier=attack_strategy_id),
-            )
-        ]
-    )
 
     score = Score(
         score_value=str(0.8),
@@ -67,8 +49,8 @@ def test_get_scores_by_attack_id_and_label(
 
     sqlite_instance.add_scores_to_memory(scores=[score])
 
-    # Fetch the score we just added
-    db_score = sqlite_instance.get_prompt_scores(attack_id=attack_strategy_id.hash)
+    # Fetch the score we just added by label
+    db_score = sqlite_instance.get_prompt_scores(labels=sample_conversations[0].labels)
 
     assert len(db_score) == 1
     assert db_score[0].score_value == score.score_value
@@ -80,23 +62,11 @@ def test_get_scores_by_attack_id_and_label(
     assert db_score[0].scorer_class_identifier == score.scorer_class_identifier
     assert db_score[0].message_piece_id == score.message_piece_id
 
-    db_score = sqlite_instance.get_prompt_scores(labels=sample_conversations[0].labels)
-    assert len(db_score) == 1
-    assert db_score[0].score_value == score.score_value
-
     db_score = sqlite_instance.get_scores(score_ids=[str(score.id)])
     assert len(db_score) == 1
     assert db_score[0].score_value == score.score_value
 
-    db_score = sqlite_instance.get_prompt_scores(
-        attack_id=attack_strategy_id.hash,
-        labels={"x": "y"},
-    )
-    assert len(db_score) == 0
-
-    db_score = sqlite_instance.get_prompt_scores(
-        attack_id=str(uuid.uuid4()),
-    )
+    db_score = sqlite_instance.get_prompt_scores(labels={"x": "y"})
     assert len(db_score) == 0
 
     db_score = sqlite_instance.get_scores()

@@ -144,31 +144,3 @@ def test_persuasion_converter_identifier_includes_technique(sqlite_instance):
     prompt_persuasion = PersuasionConverter(converter_target=prompt_target, persuasion_technique="logical_appeal")
     identifier = prompt_persuasion.get_identifier()
     assert identifier.params["persuasion_technique"] == "logical_appeal"
-
-
-async def test_send_persuasion_prompt_async_emits_deprecation_warning_and_delegates(sqlite_instance):
-    """``send_persuasion_prompt_async`` is a deprecated shim that warns and delegates to the retry helper."""
-    prompt_target = MockPromptTarget()
-    prompt_persuasion = PersuasionConverter(
-        converter_target=prompt_target, persuasion_technique="authority_endorsement"
-    )
-
-    request = Message(
-        message_pieces=[
-            MessagePiece(
-                role="user",
-                conversation_id="conv-1",
-                original_value="test input",
-                original_value_data_type="text",
-            )
-        ]
-    )
-
-    with patch.object(
-        prompt_persuasion, "_send_with_retries_async", new=AsyncMock(return_value="shim response")
-    ) as mock_send:
-        with pytest.warns(DeprecationWarning, match="send_persuasion_prompt_async"):
-            result = await prompt_persuasion.send_persuasion_prompt_async(request)
-
-    assert result == "shim response"
-    mock_send.assert_awaited_once_with(request)

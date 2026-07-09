@@ -4,7 +4,6 @@
 import os
 from datetime import datetime, timezone
 
-from pyrit.common.deprecation import print_deprecation_message
 from pyrit.models import AttackResult, ConversationType, Message, Score
 from pyrit.output.attack_result.base import AttackResultPrinterBase
 from pyrit.output.conversation.markdown import MarkdownConversationPrinter
@@ -122,35 +121,6 @@ class MarkdownAttackResultPrinter(AttackResultPrinterBase):
         markdown_lines.append(f"*Report generated at {timestamp_utc}*")
 
         return "\n".join(markdown_lines)
-
-    async def print_result_async(
-        self,
-        result: AttackResult,
-        *,
-        include_auxiliary_scores: bool = False,
-        include_pruned_conversations: bool = False,
-        include_adversarial_conversation: bool = False,
-    ) -> None:
-        """Use ``write_async`` instead. This method is deprecated."""
-        print_deprecation_message(old_item="print_result_async", new_item="write_async", removed_in="0.16.0")
-        await self.write_async(
-            result,
-            include_auxiliary_scores=include_auxiliary_scores,
-            include_pruned_conversations=include_pruned_conversations,
-            include_adversarial_conversation=include_adversarial_conversation,
-        )
-
-    async def output_conversation_async(self, result: AttackResult, *, include_scores: bool = False) -> None:
-        """Use ``write_async`` instead. This method is deprecated."""
-        print_deprecation_message(old_item="output_conversation_async", new_item="write_async", removed_in="0.16.0")
-        lines = await self._get_conversation_markdown_async(result=result, include_scores=include_scores)
-        await self._write_async("\n".join(lines))
-
-    async def print_summary_async(self, result: AttackResult) -> None:
-        """Use ``write_async`` instead. This method is deprecated."""
-        print_deprecation_message(old_item="print_summary_async", new_item="write_async", removed_in="0.16.0")
-        markdown_lines = await self._get_summary_markdown_async(result)
-        await self._write_async("\n".join(markdown_lines))
 
     async def _get_conversation_markdown_async(
         self, *, result: AttackResult, include_scores: bool = False

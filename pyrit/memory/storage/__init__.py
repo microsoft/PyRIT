@@ -16,7 +16,6 @@ holds the blob payloads those records point to.
 """
 
 from pyrit.memory.storage.data_url_converter import (
-    convert_local_image_to_data_url,
     convert_local_image_to_data_url_async,
 )
 from pyrit.memory.storage.serializers import (
@@ -45,7 +44,6 @@ __all__ = [
     "AudioPathDataTypeSerializer",
     "AzureBlobStorageIO",
     "BinaryPathDataTypeSerializer",
-    "convert_local_image_to_data_url",
     "convert_local_image_to_data_url_async",
     "DataTypeSerializer",
     "data_serializer_factory",

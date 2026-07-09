@@ -360,7 +360,6 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
         self._adversarial_chat.set_system_prompt(
             system_prompt=system_prompt,
             conversation_id=context.session.adversarial_chat_conversation_id,
-            labels=context.memory_labels,  # deprecated
         )
 
         # Initialize backtrack count in context
@@ -586,6 +585,9 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
             seed_message=seed_message,
             prompt_metadata=prompt_metadata,
         )
+        if context.memory_labels:
+            for piece in message.message_pieces:
+                piece.labels = context.memory_labels
 
         with execution_context(
             component_role=ComponentRole.ADVERSARIAL_CHAT,
@@ -598,7 +600,6 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
                 message=message,
                 conversation_id=context.session.adversarial_chat_conversation_id,
                 target=self._adversarial_chat,
-                labels=context.memory_labels,
             )
 
         if not response:
@@ -696,13 +697,15 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
             objective_target_conversation_id=context.session.conversation_id,
             objective=context.objective,
         ):
+            if context.memory_labels:
+                for piece in attack_message.message_pieces:
+                    piece.labels = context.memory_labels
             response = await self._prompt_normalizer.send_prompt_async(
                 message=attack_message,
                 target=self._objective_target,
                 conversation_id=context.session.conversation_id,
                 request_converter_configurations=self._request_converters,
                 response_converter_configurations=self._response_converters,
-                labels=context.memory_labels,
             )
 
         if not response:

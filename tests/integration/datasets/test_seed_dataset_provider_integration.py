@@ -676,7 +676,7 @@ class TestHarmbenchMetadataInScenario:
 
         # Mock scorer to avoid Azure dependency
         mock_scorer = MagicMock(spec=TrueFalseScorer)
-        mock_scorer.get_identifier.return_value = ComponentIdentifier.from_dict({"__type__": "MockScorer"})
+        mock_scorer.get_identifier.return_value = ComponentIdentifier.model_validate({"__type__": "MockScorer"})
 
         target = TextTarget()
         rta = RedTeamAgent(

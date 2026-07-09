@@ -71,7 +71,7 @@ class TestWebInjectionInitialization:
 
     def test_default_dataset_names(self):
         config = WebInjection()._default_dataset_config
-        names = config.get_default_dataset_names()
+        names = config.dataset_names
         assert "garak_example_domains_xss" in names
         assert "garak_markdown_js" in names
         assert "garak_web_html_js" in names

@@ -2,7 +2,6 @@
 # Licensed under the MIT license.
 
 import logging
-import warnings
 
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
@@ -33,28 +32,6 @@ class _SimpleSafetyTestsDataset(_RemoteDatasetLoader):
     modalities: tuple[Modality, ...] = (Modality.TEXT,)
     size: str = "small"  # 100 critical safety test prompts
     tags: frozenset[str] = frozenset({"safety"})
-
-    def __init__(
-        self,
-        *,
-        split: str | None = None,
-    ) -> None:
-        """
-        Initialize the SimpleSafetyTests dataset loader.
-
-        Args:
-            split: **Deprecated.** Upstream ``Bertievidgen/SimpleSafetyTests`` publishes
-                only the ``"test"`` split, so this kwarg has no effect. It will be
-                removed in v0.16.0.
-        """
-        if split is not None:
-            warnings.warn(
-                "'split' is deprecated and will be removed in v0.16.0. "
-                "Upstream Bertievidgen/SimpleSafetyTests publishes only the 'test' "
-                "split, so this kwarg has no effect.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
 
     @property
     def dataset_name(self) -> str:

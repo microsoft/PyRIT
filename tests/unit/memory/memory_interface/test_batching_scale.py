@@ -50,7 +50,7 @@ def _create_score(message_piece_id: str) -> Score:
         score_category=["test"],
         score_rationale="test rationale",
         score_metadata={},
-        scorer_class_identifier=ComponentIdentifier.from_dict({"__type__": "TestScorer"}),
+        scorer_class_identifier=ComponentIdentifier.model_validate({"__type__": "TestScorer"}),
         message_piece_id=message_piece_id,
     )
 

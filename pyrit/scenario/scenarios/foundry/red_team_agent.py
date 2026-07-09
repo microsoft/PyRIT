@@ -50,7 +50,7 @@ from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
 from pyrit.scenario.core.scenario import Scenario
 from pyrit.scenario.core.scenario_context import ScenarioContext
-from pyrit.scenario.core.scenario_strategy import ScenarioCompositeStrategy, ScenarioStrategy
+from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
 from pyrit.scenario.core.scenario_target_defaults import get_default_adversarial_target
 
 if TYPE_CHECKING:
@@ -253,7 +253,7 @@ class RedTeamAgent(Scenario):
     def _resolve_scenario_strategies(
         self,
         *,
-        scenario_strategies: "Sequence[FoundryStrategy | FoundryComposite | ScenarioCompositeStrategy] | None",
+        scenario_strategies: "Sequence[FoundryStrategy | FoundryComposite] | None",
     ) -> list[ScenarioStrategy]:
         """
         Resolve Foundry strategies, expanding composites up-front.
@@ -266,10 +266,9 @@ class RedTeamAgent(Scenario):
         ``FoundryComposite`` objects reach this hook unchanged.
 
         Args:
-            scenario_strategies (Sequence[FoundryStrategy | FoundryComposite | ScenarioCompositeStrategy] | None):
+            scenario_strategies (Sequence[FoundryStrategy | FoundryComposite] | None):
                 The strategies to execute. Accepts bare ``FoundryStrategy`` enum members,
                 ``FoundryComposite`` objects (pairing an attack with converters), or a mix.
-                Passing ``ScenarioCompositeStrategy`` is deprecated — use ``FoundryComposite``.
                 If None, uses the default aggregate (EASY).
 
         Returns:
@@ -279,7 +278,7 @@ class RedTeamAgent(Scenario):
 
     def _resolve_foundry_strategies(
         self,
-        strategies: "Sequence[FoundryStrategy | FoundryComposite | ScenarioCompositeStrategy] | None",
+        strategies: "Sequence[FoundryStrategy | FoundryComposite] | None",
     ) -> list[ScenarioStrategy]:
         """
         Resolve strategies and build FoundryComposite objects.
@@ -305,18 +304,6 @@ class RedTeamAgent(Scenario):
         seen: set[FoundryStrategy] = set()
 
         for item in strategies:
-            if isinstance(item, ScenarioCompositeStrategy):
-                # Legacy backward-compat: convert to FoundryComposite (ScenarioCompositeStrategy
-                # is deprecated — use FoundryComposite directly instead).
-                # Route by tags rather than position: the first attack-tagged strategy
-                # becomes `attack`; all converter-tagged strategies become `converters`.
-                foundry_strats = [s for s in item.strategies if isinstance(s, FoundryStrategy)]
-                if not foundry_strats:
-                    continue
-                attack_strat = next((s for s in foundry_strats if "attack" in s.tags), None)
-                converter_strats = [s for s in foundry_strats if "attack" not in s.tags]
-                item = FoundryComposite(attack=attack_strat, converters=converter_strats)
-
             if isinstance(item, FoundryComposite):
                 composites.append(item)
                 if item.attack:

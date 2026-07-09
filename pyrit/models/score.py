@@ -20,7 +20,6 @@ from pydantic import (
     model_validator,
 )
 
-from pyrit.common.deprecation import print_deprecation_message
 from pyrit.models.identifiers.component_identifier import ComponentIdentifier
 
 ScoreType = Literal["true_false", "float_scale", "unknown"]
@@ -164,60 +163,6 @@ class Score(BaseModel):
         return f"{category_str}: {self.score_value}"
 
     __repr__ = __str__
-
-    # ------------------------------------------------------------------ #
-    # Deprecated method shims (removed in 0.16.0)
-    # ------------------------------------------------------------------ #
-    def to_dict(self) -> dict[str, Any]:
-        """
-        Return a JSON-mode dict representation (DEPRECATED — use ``model_dump``).
-
-        Returns:
-            A JSON-mode dict representation of the score (same as
-            ``self.model_dump(mode="json")``).
-        """
-        print_deprecation_message(
-            old_item="Score.to_dict()",
-            new_item='Score.model_dump(mode="json")',
-            removed_in="0.16.0",
-        )
-        return self.model_dump(mode="json")
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> Score:
-        """
-        Construct a Score from a dict (DEPRECATED — use ``model_validate``).
-
-        Args:
-            data: A dict matching the Score field schema.
-
-        Returns:
-            A new ``Score`` (same as ``cls.model_validate(data)``).
-        """
-        print_deprecation_message(
-            old_item="Score.from_dict()",
-            new_item="Score.model_validate()",
-            removed_in="0.16.0",
-        )
-        return cls.model_validate(data)
-
-    def validate(self, *args: Any, **kwargs: Any) -> None:  # type: ignore[ty:invalid-method-override]
-        """
-        Re-run construction-time validation (DEPRECATED).
-
-        Validation now happens automatically when a ``Score`` is constructed, so
-        there is no need to call this. It is retained only as a no-op-style shim that
-        re-validates the current instance. Any positional/keyword arguments are ignored.
-
-        Raises:
-            ValueError: If the value is incompatible with the score-type constraints.
-        """
-        print_deprecation_message(
-            old_item="Score.validate()",
-            new_item="construction-time validation (Score(...))",
-            removed_in="0.16.0",
-        )
-        self._check_score_value()
 
 
 @dataclass

@@ -8,7 +8,6 @@ from typing import Any
 import jwt
 
 from pyrit.auth.authenticator import Authenticator
-from pyrit.common.deprecation import print_deprecation_message
 
 logger = logging.getLogger(__name__)
 
@@ -101,20 +100,6 @@ class ManualCopilotAuthenticator(Authenticator):
             dict[str, Any]: The JWT claims decoded from the access token.
         """
         return self._claims
-
-    async def get_claims(self) -> dict[str, Any]:  # pyrit-async-suffix-exempt
-        """
-        Return the JWT claims (deprecated alias of ``get_claims_async``).
-
-        Returns:
-            dict[str, Any]: The JWT claims decoded from the access token.
-        """
-        print_deprecation_message(
-            old_item="ManualCopilotAuthenticator.get_claims",
-            new_item="ManualCopilotAuthenticator.get_claims_async",
-            removed_in="0.16.0",
-        )
-        return await self.get_claims_async()
 
     async def refresh_token_async(self) -> str:
         """

@@ -36,12 +36,9 @@ class PDFConverter(PromptConverter):
     SUPPORTED_INPUT_TYPES = ("text",)
     SUPPORTED_OUTPUT_TYPES = ("binary_path",)
 
-    # Grandfathered: all parameters are part of the public positional API.
-    # TODO: remove this opt-out and insert ``*,`` after ``self`` in 0.16.0.
-    _brick_legacy_init = True
-
     def __init__(
         self,
+        *,
         prompt_template: SeedPrompt | None = None,
         font_type: str = "Helvetica",
         font_size: int = 12,

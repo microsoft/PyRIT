@@ -10,7 +10,6 @@ import importlib
 from typing import TYPE_CHECKING
 
 from pyrit.output.scorer.base import ScorerPrinterBase as ScorerPrinter
-from pyrit.output.scorer.pretty import PrettyScorerMemoryPrinter as ConsoleScorerPrinter
 from pyrit.score.batch_scorer import BatchScorer
 from pyrit.score.conversation_scorer import ConversationScorer, create_conversation_scorer
 from pyrit.score.float_scale.azure_content_filter_scorer import AzureContentFilterScorer
@@ -130,7 +129,6 @@ __all__ = [
     "AzureContentFilterScorer",
     "BatchScorer",
     "ContentClassifierPaths",
-    "ConsoleScorerPrinter",
     "ConversationScorer",
     "CredentialLeakScorer",
     "DecodingScorer",

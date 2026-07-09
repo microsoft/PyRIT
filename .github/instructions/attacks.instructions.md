@@ -37,12 +37,6 @@ Requirements:
   raise `TypeError` at import time.
 - ``super().__init__(...)`` must be invoked with at minimum
   ``objective_target`` and ``context_type``.
-- Existing subclasses that cannot adopt the contract immediately may set
-  the class attribute ``_brick_legacy_init = True`` to opt into a
-  one-release grace period that downgrades the error to a
-  ``DeprecationWarning(removed_in="0.16.0")``. The opt-out is removed in
-  0.16.0; classes that still violate the contract at that point will hard
-  fail.
 - ``AttackTechniqueFactory`` already rejects ``**kwargs`` in attack
   ``__init__`` at factory-registration time
   (`pyrit/scenario/core/attack_technique_factory.py`); the new

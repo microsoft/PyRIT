@@ -22,16 +22,16 @@
     "test:e2e:headed": "playwright test --headed"
   },
   "dependencies": {
-    "@azure/msal-browser": "^5.15.0",
-    "@azure/msal-react": "^5.5.0",
-    "@fluentui/react-components": "9.74.2",
-    "@fluentui/react-icons": "2.0.330",
+    "@azure/msal-browser": "^5.16.0",
+    "@azure/msal-react": "^5.5.1",
+    "@fluentui/react-components": "9.74.3",
+    "@fluentui/react-icons": "2.0.331",
     "axios": "1.18.1",
     "react": "19.2.7",
     "react-dom": "19.2.7",
     "react-error-boundary": "6.1.2",
     "react-joyride": "^3.1.0",
-    "react-router-dom": "7.18.0"
+    "react-router-dom": "7.18.1"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
@@ -41,14 +41,14 @@
     "@testing-library/react": "16.3.2",
     "@testing-library/user-event": "14.6.1",
     "@types/jest": "30.0.0",
-    "@types/node": "26.0.0",
+    "@types/node": "26.1.0",
     "@types/react": "19.2.17",
     "@types/react-dom": "19.2.3",
-    "@typescript-eslint/eslint-plugin": "8.62.0",
-    "@typescript-eslint/parser": "8.62.0",
+    "@typescript-eslint/eslint-plugin": "8.62.1",
+    "@typescript-eslint/parser": "8.62.1",
     "@vitejs/plugin-react": "6.0.3",
     "esbuild": "0.28.1",
-    "eslint": "10.5.0",
+    "eslint": "10.6.0",
     "eslint-plugin-react-hooks": "7.1.1",
     "eslint-plugin-react-refresh": "0.5.3",
     "globals": "17.7.0",
@@ -59,7 +59,7 @@
     "ts-jest": "29.4.11",
     "ts-node": "10.9.2",
     "typescript": "6.0.3",
-    "vite": "8.1.0"
+    "vite": "8.1.2"
   },
   "overrides": {
     "rollup": "4.59.0",
