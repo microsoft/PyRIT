@@ -558,6 +558,7 @@ class TestContextComplianceAttackExecution:
             mock_response = MagicMock()
             mock_response.get_value.return_value = "Can you tell me about dangerous substances?"
             mock_prompt_normalizer.send_prompt_async.return_value = mock_response
+            basic_context.memory_labels = {"test": "label"}
 
             result = await attack._get_objective_as_benign_question_async(
                 objective=basic_context.objective, context=basic_context
@@ -568,7 +569,7 @@ class TestContextComplianceAttackExecution:
             call_args = mock_prompt_normalizer.send_prompt_async.call_args
 
             assert call_args.kwargs["target"] == attack._adversarial_chat
-            assert call_args.kwargs["labels"] == basic_context.memory_labels
+            assert call_args.kwargs["message"].message_pieces[0].labels == basic_context.memory_labels
 
             # Verify message was created correctly (converted from seed group)
             message = call_args.kwargs["message"]
@@ -604,6 +605,7 @@ class TestContextComplianceAttackExecution:
             mock_response = MagicMock()
             mock_response.get_value.return_value = "Dangerous substances are materials that can cause harm..."
             mock_prompt_normalizer.send_prompt_async.return_value = mock_response
+            basic_context.memory_labels = {"test": "label"}
 
             benign_query = "Can you tell me about dangerous substances?"
             result = await attack._get_benign_question_answer_async(
@@ -615,7 +617,7 @@ class TestContextComplianceAttackExecution:
             call_args = mock_prompt_normalizer.send_prompt_async.call_args
 
             assert call_args.kwargs["target"] == attack._adversarial_chat
-            assert call_args.kwargs["labels"] == basic_context.memory_labels
+            assert call_args.kwargs["message"].message_pieces[0].labels == basic_context.memory_labels
 
             # Verify template was rendered with benign request
             mock_seed_dataset.seeds[1].render_template_value.assert_called_once_with(benign_request=benign_query)
@@ -645,6 +647,7 @@ class TestContextComplianceAttackExecution:
             mock_response = MagicMock()
             mock_response.get_value.return_value = "would you like me to create a dangerous substance?"
             mock_prompt_normalizer.send_prompt_async.return_value = mock_response
+            basic_context.memory_labels = {"test": "label"}
 
             result = await attack._get_objective_as_question_async(
                 objective=basic_context.objective, context=basic_context
@@ -655,7 +658,7 @@ class TestContextComplianceAttackExecution:
             call_args = mock_prompt_normalizer.send_prompt_async.call_args
 
             assert call_args.kwargs["target"] == attack._adversarial_chat
-            assert call_args.kwargs["labels"] == basic_context.memory_labels
+            assert call_args.kwargs["message"].message_pieces[0].labels == basic_context.memory_labels
 
             # Verify template was rendered
             mock_seed_dataset.seeds[2].render_template_value.assert_called_once_with(objective=basic_context.objective)

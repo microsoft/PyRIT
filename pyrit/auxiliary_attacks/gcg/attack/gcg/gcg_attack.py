@@ -17,6 +17,12 @@ from pyrit.auxiliary_attacks.gcg.attack.base.attack_manager import (
     get_embedding_matrix,
     get_embeddings,
 )
+from pyrit.auxiliary_attacks.gcg.default_implementations import (
+    CrossEntropyLoss,
+    LengthPreservingFilter,
+    StandardGCGSampling,
+)
+from pyrit.auxiliary_attacks.gcg.extension_protocols import CandidateFilter, LossFunction, SamplingStrategy
 
 logger = logging.getLogger(__name__)
 
@@ -125,6 +131,99 @@ class GCGPromptManager(PromptManager):
 class GCGMultiPromptAttack(MultiPromptAttack):
     """GCG-specific multi-prompt attack that implements the GCG optimization step."""
 
+    def __init__(
+        self,
+        goals: list[str],
+        targets: list[str],
+        workers: list[Any],
+        control_init: str = "! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! !",
+        test_prefixes: list[str] | None = None,
+        logfile: str | None = None,
+        managers: dict[str, Any] | None = None,
+        test_goals: list[str] | None = None,
+        test_targets: list[str] | None = None,
+        test_workers: list[Any] | None = None,
+        *,
+        sampling: SamplingStrategy | None = None,
+        loss: LossFunction | None = None,
+        candidate_filter: CandidateFilter | None = None,
+    ) -> None:
+        super().__init__(
+            goals,
+            targets,
+            workers,
+            control_init,
+            test_prefixes,
+            logfile,
+            managers,
+            test_goals,
+            test_targets,
+            test_workers,
+        )
+        self._sampling = sampling
+        self._loss = loss
+        self._candidate_filter = candidate_filter
+
+    def _resolve_sampling(self) -> SamplingStrategy:
+        sampling = getattr(self, "_sampling", None)
+        if sampling is not None:
+            return sampling
+        return StandardGCGSampling()
+
+    def _resolve_loss(self, *, target_weight: float, control_weight: float) -> LossFunction:
+        loss = getattr(self, "_loss", None)
+        if loss is not None:
+            return loss
+        return CrossEntropyLoss(target_weight=target_weight, control_weight=control_weight)
+
+    def _resolve_candidate_filter(self, *, filter_cand: bool) -> CandidateFilter:
+        candidate_filter = getattr(self, "_candidate_filter", None)
+        if candidate_filter is not None:
+            return candidate_filter
+        return LengthPreservingFilter(filter=filter_cand)
+
+    def _sample_control_candidates(
+        self,
+        *,
+        worker_index: int,
+        gradient: torch.Tensor,
+        batch_size: int,
+        topk: int,
+        temp: float,
+        allow_non_ascii: bool,
+    ) -> torch.Tensor:
+        sampler = self._resolve_sampling()
+        prompt_manager = self.prompts[worker_index]
+        return sampler.sample_candidates(
+            gradient=gradient,
+            control_tokens=prompt_manager.control_toks,
+            batch_size=batch_size,
+            top_k=topk,
+            temperature=temp,
+            allow_non_ascii=allow_non_ascii,
+            non_ascii_tokens=prompt_manager.disallowed_toks,
+        )
+
+    def _filter_control_candidates(
+        self,
+        *,
+        worker_index: int,
+        control_cand: torch.Tensor,
+        filter_cand: bool,
+    ) -> list[str]:
+        candidate_filter = self._resolve_candidate_filter(filter_cand=filter_cand)
+        return candidate_filter.filter_candidates(
+            candidate_tokens=control_cand,
+            tokenizer=self.workers[worker_index].tokenizer,
+            current_control=self.control_str,
+        )
+
+    def _get_control_length(self, *, control: str) -> int | None:
+        try:
+            return len(self.workers[0].tokenizer(control).input_ids[1:])
+        except (AttributeError, TypeError, ValueError):
+            return None
+
     def step(
         self,
         *,
@@ -158,6 +257,7 @@ class GCGMultiPromptAttack(MultiPromptAttack):
         """
         main_device = self.models[0].device
         control_cands = []
+        loss_function = self._resolve_loss(target_weight=target_weight, control_weight=control_weight)
 
         for j, worker in enumerate(self.workers):
             worker(self.prompts[j], "grad", worker.model)
@@ -171,10 +271,19 @@ class GCGMultiPromptAttack(MultiPromptAttack):
                 grad = torch.zeros_like(new_grad)
             if grad.shape != new_grad.shape:
                 with torch.no_grad():
-                    control_cand = self.prompts[j - 1].sample_control(grad, batch_size, topk, temp, allow_non_ascii)
+                    control_cand = self._sample_control_candidates(
+                        worker_index=j - 1,
+                        gradient=grad,
+                        batch_size=batch_size,
+                        topk=topk,
+                        temp=temp,
+                        allow_non_ascii=allow_non_ascii,
+                    )
                     control_cands.append(
-                        self.get_filtered_cands(
-                            j - 1, control_cand, filter_cand=filter_cand, curr_control=self.control_str
+                        self._filter_control_candidates(
+                            worker_index=j - 1,
+                            control_cand=control_cand,
+                            filter_cand=filter_cand,
                         )
                     )
                 grad = new_grad
@@ -182,9 +291,20 @@ class GCGMultiPromptAttack(MultiPromptAttack):
                 grad += new_grad
 
         with torch.no_grad():
-            control_cand = self.prompts[j].sample_control(grad, batch_size, topk, temp, allow_non_ascii)
+            control_cand = self._sample_control_candidates(
+                worker_index=j,
+                gradient=grad,
+                batch_size=batch_size,
+                topk=topk,
+                temp=temp,
+                allow_non_ascii=allow_non_ascii,
+            )
             control_cands.append(
-                self.get_filtered_cands(j, control_cand, filter_cand=filter_cand, curr_control=self.control_str)
+                self._filter_control_candidates(
+                    worker_index=j,
+                    control_cand=control_cand,
+                    filter_cand=filter_cand,
+                )
             )
         del grad, control_cand
         gc.collect()
@@ -205,14 +325,14 @@ class GCGMultiPromptAttack(MultiPromptAttack):
                         worker(self.prompts[k][i], "logits", worker.model, cand, return_ids=True)
                     logits, ids = zip(*[worker.results.get() for worker in self.workers])
                     loss[j * batch_size : (j + 1) * batch_size] += sum(
-                        target_weight * self.prompts[k][i].target_loss(logit, id).mean(dim=-1).to(main_device)
+                        loss_function.compute_loss(
+                            logits=logit,
+                            token_ids=id,
+                            target_slice=self.prompts[k][i]._target_slice,
+                            control_slice=self.prompts[k][i]._control_slice,
+                        ).to(main_device)
                         for k, (logit, id) in enumerate(zip(logits, ids))
                     )
-                    if control_weight != 0:
-                        loss[j * batch_size : (j + 1) * batch_size] += sum(
-                            control_weight * self.prompts[k][i].control_loss(logit, id).mean(dim=-1).to(main_device)
-                            for k, (logit, id) in enumerate(zip(logits, ids))
-                        )
                     del logits, ids
                     gc.collect()
 
@@ -229,7 +349,9 @@ class GCGMultiPromptAttack(MultiPromptAttack):
         del control_cands, loss
         gc.collect()
 
-        logger.info(f"Current length: {len(self.workers[0].tokenizer(next_control).input_ids[1:])}")
+        current_length = self._get_control_length(control=next_control)
+        if current_length is not None:
+            logger.info(f"Current length: {current_length}")
         logger.info(next_control)
 
         return next_control, cand_loss.item() / len(self.prompts[0]) / len(self.workers)

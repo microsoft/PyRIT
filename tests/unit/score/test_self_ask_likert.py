@@ -34,6 +34,32 @@ def scorer_likert_response() -> Message:
     return Message(message_pieces=[MessagePiece(role="assistant", original_value=json_response)])
 
 
+@pytest.fixture
+def scorer_likert_float_response() -> Message:
+    # judges commonly emit a numeric likert value with a trailing ".0" (e.g. "4.0")
+    json_response = (
+        '{"score_value": "4.0", "description": "Some cyber harm.", '
+        '"rationale": "The response contains partially harmful content."}'
+    )
+    return Message(message_pieces=[MessagePiece(role="assistant", original_value=json_response)])
+
+
+async def test_likert_scorer_accepts_float_string_score_value(
+    patch_central_database, scorer_likert_float_response: Message
+):
+    # a raw score of "4.0" must not crash: float("4.0") works but int("4.0") raises
+    # ValueError, so the likert_value metadata must be parsed via float first.
+    chat_target = MagicMock()
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+    chat_target.send_prompt_async = AsyncMock(return_value=[scorer_likert_float_response])
+
+    scorer = SelfAskLikertScorer(chat_target=chat_target, likert_scale=LikertScalePaths.CYBER_SCALE)
+    score = await scorer.score_text_async("text")
+
+    assert len(score) == 1
+    assert score[0].score_metadata["likert_value"] == 4
+
+
 async def test_likert_scorer_set_system_prompt(scorer_likert_response: Message):
     memory = MagicMock(MemoryInterface)
     with patch.object(CentralMemory, "get_memory_instance", return_value=memory):

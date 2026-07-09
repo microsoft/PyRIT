@@ -144,10 +144,13 @@ class TestDoctorStrategyExpansion:
     ):
         """No explicit strategies -> DEFAULT -> both Policy Puppetry techniques."""
         scenario = Doctor(objective_scorer=mock_objective_scorer)
-        await scenario.initialize_async(
-            objective_target=mock_objective_target,
-            dataset_config=doctor_dataset_config,
+        scenario.set_params_from_args(
+            args={
+                "objective_target": mock_objective_target,
+                "dataset_config": doctor_dataset_config,
+            }
         )
+        await scenario.initialize_async()
 
         strategy_values = {s.value for s in scenario._scenario_strategies}
         assert strategy_values == {"policy_puppetry", "policy_puppetry_leet"}
@@ -156,11 +159,14 @@ class TestDoctorStrategyExpansion:
         self, mock_objective_target, mock_objective_scorer, doctor_dataset_config
     ):
         scenario = Doctor(objective_scorer=mock_objective_scorer)
-        await scenario.initialize_async(
-            objective_target=mock_objective_target,
-            scenario_strategies=[DoctorStrategy.ALL],
-            dataset_config=doctor_dataset_config,
+        scenario.set_params_from_args(
+            args={
+                "objective_target": mock_objective_target,
+                "scenario_strategies": [DoctorStrategy.ALL],
+                "dataset_config": doctor_dataset_config,
+            }
         )
+        await scenario.initialize_async()
 
         strategy_values = {s.value for s in scenario._scenario_strategies}
         assert strategy_values == {"policy_puppetry", "policy_puppetry_leet"}
@@ -169,10 +175,13 @@ class TestDoctorStrategyExpansion:
         self, mock_objective_target, mock_objective_scorer, doctor_dataset_config
     ):
         scenario = Doctor(objective_scorer=mock_objective_scorer)
-        await scenario.initialize_async(
-            objective_target=mock_objective_target,
-            dataset_config=doctor_dataset_config,
+        scenario.set_params_from_args(
+            args={
+                "objective_target": mock_objective_target,
+                "dataset_config": doctor_dataset_config,
+            }
         )
+        await scenario.initialize_async()
 
         atomic_attacks = scenario._atomic_attacks
         assert len(atomic_attacks) == 2

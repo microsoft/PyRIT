@@ -15,6 +15,7 @@ ARCHITECTURE:
 - AI-generated attacks may have multiple related conversations
 """
 
+import logging
 import mimetypes
 import uuid
 from collections.abc import Sequence
@@ -67,6 +68,8 @@ from pyrit.models import (
     PromptDataType,
 )
 from pyrit.prompt_normalizer import PromptConverterConfiguration, PromptNormalizer
+
+logger = logging.getLogger(__name__)
 
 
 class AttackService:
@@ -349,7 +352,7 @@ class AttackService:
             await self._store_prepended_messages_async(
                 conversation_id=conversation_id,
                 prepended=request.prepended_conversation,
-                labels=labels,  # deprecated
+                labels=labels,
                 target_identifier=target_identifier,
             )
 
@@ -623,20 +626,38 @@ class AttackService:
 
         if request.send:
             assert target_registry_name is not None  # validated above
-            await self._send_and_store_message_async(
-                conversation_id=msg_conversation_id,
-                target_registry_name=target_registry_name,
-                request=request,
-                sequence=sequence,
-                labels=attack_labels,  # deprecated
-            )
+            try:
+                await self._send_and_store_message_async(
+                    conversation_id=msg_conversation_id,
+                    target_registry_name=target_registry_name,
+                    request=request,
+                    sequence=sequence,
+                    labels=attack_labels,
+                )
+            except Exception:
+                # PromptNormalizer persists a full error piece (response_error +
+                # traceback) to memory *before* re-raising. Surface that stored
+                # piece inline so the send (POST) response matches the
+                # conversation-reload (GET) view instead of collapsing to a
+                # generic 500. If no new error piece was stored (the failure
+                # happened before the send, e.g. target lookup), re-raise so the
+                # route still reports a real error.
+                prior_ids = {p.id for p in existing}
+                current_pieces = self._memory.get_message_pieces(conversation_id=msg_conversation_id)
+                if not any(p.id not in prior_ids and p.has_error() for p in current_pieces):
+                    raise
+                logger.exception(
+                    "Send failed for attack '%s' conversation '%s'; surfacing stored error piece.",
+                    attack_result_id,
+                    msg_conversation_id,
+                )
         else:
             existing_metadata = self._memory._get_conversation(conversation_id=msg_conversation_id)
             await self._store_message_only_async(
                 conversation_id=msg_conversation_id,
                 request=request,
                 sequence=sequence,
-                labels=attack_labels,  # deprecated
+                labels=attack_labels,
                 target_identifier=existing_metadata.target_identifier if existing_metadata else None,
             )
 
@@ -1020,7 +1041,7 @@ class AttackService:
         *,
         conversation_id: str,
         prepended: list[Any],
-        labels: dict[str, str] | None = None,  # deprecated
+        labels: dict[str, str] | None = None,
         target_identifier: ComponentIdentifier | None = None,
     ) -> None:
         """Store prepended conversation messages in memory."""
@@ -1036,8 +1057,9 @@ class AttackService:
                     role=msg.role,
                     conversation_id=conversation_id,
                     sequence=seq,
-                    labels=labels,  # deprecated
                 )
+                if labels:
+                    piece.labels = labels
                 self._memory.add_message_pieces_to_memory(message_pieces=[piece])
 
     async def _send_and_store_message_async(
@@ -1047,7 +1069,7 @@ class AttackService:
         target_registry_name: str,
         request: AddMessageRequest,
         sequence: int,
-        labels: dict[str, str] | None = None,  # deprecated
+        labels: dict[str, str] | None = None,
     ) -> None:
         """Send message to target via normalizer and store response."""
         target_obj = get_target_service().get_target_object(target_registry_name=target_registry_name)
@@ -1062,8 +1084,10 @@ class AttackService:
             request=request,
             conversation_id=conversation_id,
             sequence=sequence,
-            labels=labels,  # deprecated
         )
+        if labels:
+            for piece in pyrit_message.message_pieces:
+                piece.labels = labels
 
         converter_configs = self._get_converter_configs(request)
 
@@ -1073,7 +1097,6 @@ class AttackService:
             target=target_obj,
             conversation_id=conversation_id,
             request_converter_configurations=converter_configs,
-            labels=labels,
         )
         # PromptNormalizer stores both request and response in memory automatically
 
@@ -1083,7 +1106,7 @@ class AttackService:
         conversation_id: str,
         request: AddMessageRequest,
         sequence: int,
-        labels: dict[str, str] | None = None,  # deprecated
+        labels: dict[str, str] | None = None,
         target_identifier: ComponentIdentifier | None = None,
     ) -> None:
         """Store message without sending (send=False)."""
@@ -1097,8 +1120,9 @@ class AttackService:
                 role=request.role,
                 conversation_id=conversation_id,
                 sequence=sequence,
-                labels=labels,  # deprecated
             )
+            if labels:
+                piece.labels = labels
             self._memory.add_message_pieces_to_memory(message_pieces=[piece])
 
     def _resolve_video_remix_metadata(self, request: AddMessageRequest) -> None:

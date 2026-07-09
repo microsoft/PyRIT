@@ -19,7 +19,8 @@ from sqlalchemy.sql.sqltypes import NullType
 from pyrit.memory.alembic.versions.ab8f2c1a9d07_pre_alembic_release_schema import INITIAL_METADATA
 from pyrit.memory.memory_models import EmbeddingDataEntry, PromptMemoryEntry
 from pyrit.memory.migration import run_schema_migrations
-from pyrit.models import Conversation, MessagePiece
+from pyrit.memory.storage.serializers import set_message_piece_sha256_async
+from pyrit.models import Conversation, MessagePiece, flatten_to_message_pieces
 from pyrit.prompt_converter.base64_converter import Base64Converter
 from pyrit.prompt_target.text_target import TextTarget
 from unit.mocks import get_sample_conversation_entries
@@ -343,7 +344,7 @@ async def test_insert_entry(sqlite_instance):
         original_value="Hello",
         converted_value="Hello after conversion",
     )
-    await message_piece_entry.set_sha256_values_async()
+    await set_message_piece_sha256_async(message_piece_entry)
 
     message_piece_entry.original_value = "Hello"
     message_piece_entry.converted_value = "Hello after conversion"
@@ -775,11 +776,10 @@ def test_get_conversation_stats_returns_empty_for_unknown_ids(sqlite_instance):
 def test_get_conversation_stats_counts_distinct_sequences(sqlite_instance, sample_conversation_entries):
     """Test that message_count reflects distinct sequence numbers, not raw rows."""
     # Extract conversation IDs and sequences before inserting (entries get detached after commit)
-    from pyrit.models import Message
     from unit.mocks import get_sample_conversations
 
     conversations = get_sample_conversations()
-    pieces = Message.flatten_to_message_pieces(conversations)
+    pieces = flatten_to_message_pieces(conversations)
     expected: dict[str, set[int]] = {}
     for p in pieces:
         expected.setdefault(p.conversation_id, set()).add(p.sequence)

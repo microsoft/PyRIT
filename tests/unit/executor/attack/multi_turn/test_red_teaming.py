@@ -223,7 +223,7 @@ class TestRedTeamingAttackInitialization:
     ):
         """Test that attack initializes correctly with different system prompt paths."""
         adversarial_config = AttackAdversarialConfig(
-            target=mock_adversarial_chat, system_prompt_path=system_prompt_path
+            target=mock_adversarial_chat, system_prompt=SeedPrompt.from_yaml_file(system_prompt_path)
         )
         scoring_config = AttackScoringConfig(objective_scorer=mock_objective_scorer)
 
@@ -267,20 +267,11 @@ class TestRedTeamingAttackInitialization:
         if expected_type is str:
             assert attack._adversarial_chat_first_message.data_type == "text"
 
-    def test_init_with_invalid_system_prompt_path_raises_error(
-        self, mock_objective_target: MagicMock, mock_objective_scorer: MagicMock, mock_adversarial_chat: MagicMock
-    ):
-        """Test that invalid system prompt path raises FileNotFoundError."""
-        adversarial_config = AttackAdversarialConfig(
-            target=mock_adversarial_chat, system_prompt_path="nonexistent_file.yaml"
-        )
-        scoring_config = AttackScoringConfig(objective_scorer=mock_objective_scorer)
-
+    def test_init_with_invalid_system_prompt_path_raises_error(self, mock_adversarial_chat: MagicMock):
+        """Test that loading a nonexistent system prompt path raises FileNotFoundError."""
         with pytest.raises(FileNotFoundError):
-            RedTeamingAttack(
-                objective_target=mock_objective_target,
-                attack_adversarial_config=adversarial_config,
-                attack_scoring_config=scoring_config,
+            AttackAdversarialConfig(
+                target=mock_adversarial_chat, system_prompt=SeedPrompt.from_yaml_file("nonexistent_file.yaml")
             )
 
     def test_init_with_all_custom_configurations(
@@ -700,6 +691,11 @@ class TestSetupPhase:
         # Add memory labels to both attack and context
         attack._memory_labels = {"strategy_label": "strategy_value", "common": "strategy"}
         basic_context.memory_labels = {"context_label": "context_value", "common": "context"}
+        basic_context.prepended_conversation = [
+            Message.from_prompt(prompt="prepended user", role="user"),
+            Message.from_prompt(prompt="prepended assistant", role="assistant"),
+        ]
+        attack._memory = MagicMock()
 
         # Mock that simulates initialize_context_async merging labels
         async def mock_initialize(*, context, memory_labels=None, **kwargs):
@@ -717,6 +713,8 @@ class TestSetupPhase:
             "context_label": "context_value",
             "common": "context",
         }
+        added_message = attack._memory.add_message_to_memory.call_args_list[0].kwargs["request"]
+        assert added_message.message_pieces[0].labels == basic_context.memory_labels
 
     async def test_setup_sets_adversarial_chat_system_prompt(
         self,
@@ -884,6 +882,7 @@ class TestPromptGeneration:
 
         basic_context.executed_turns = 1
         basic_context.next_message = None  # No message
+        basic_context.memory_labels = {"test": "label"}
         # The manager always validates the adversarial reply against the canonical adversarial_chat
         # schema, so the reply is JSON and ``next_message`` is extracted as the objective prompt.
         adversarial_response = _adversarial_reply_message("Adversarial next message")
@@ -893,6 +892,39 @@ class TestPromptGeneration:
 
         assert result.get_value() == "Adversarial next message"
         mock_prompt_normalizer.send_prompt_async.assert_called_once()
+        sent_message = mock_prompt_normalizer.send_prompt_async.call_args.kwargs["message"]
+        assert sent_message.message_pieces[0].labels == basic_context.memory_labels
+
+    async def test_send_prompt_to_objective_target_applies_memory_labels(
+        self,
+        mock_objective_target: MagicMock,
+        mock_objective_scorer: MagicMock,
+        mock_adversarial_chat: MagicMock,
+        mock_prompt_normalizer: MagicMock,
+        basic_context: MultiTurnAttackContext,
+        sample_response: Message,
+    ):
+        """Test that memory labels are applied before sending prompts to the objective target."""
+        adversarial_config = AttackAdversarialConfig(target=mock_adversarial_chat)
+        scoring_config = AttackScoringConfig(objective_scorer=mock_objective_scorer)
+        mock_objective_target.configuration.includes.return_value = True
+
+        attack = RedTeamingAttack(
+            objective_target=mock_objective_target,
+            attack_adversarial_config=adversarial_config,
+            attack_scoring_config=scoring_config,
+            prompt_normalizer=mock_prompt_normalizer,
+        )
+
+        basic_context.memory_labels = {"test": "label"}
+        message = Message.from_prompt(prompt="target prompt", role="user")
+        mock_prompt_normalizer.send_prompt_async.return_value = sample_response
+
+        result = await attack._send_prompt_to_objective_target_async(context=basic_context, message=message)
+
+        assert result == sample_response
+        sent_message = mock_prompt_normalizer.send_prompt_async.call_args.kwargs["message"]
+        assert sent_message.message_pieces[0].labels == basic_context.memory_labels
 
     async def test_generate_next_prompt_raises_on_none_response(
         self,

@@ -576,13 +576,15 @@ class _TreeOfAttacksNode:
             objective_target_conversation_id=self.objective_target_conversation_id,
             objective=self._objective,
         ):
+            if self._memory_labels:
+                for piece in message.message_pieces:
+                    piece.labels = self._memory_labels
             response = await self._prompt_normalizer.send_prompt_async(
                 message=message,
                 request_converter_configurations=self._request_converters,
                 response_converter_configurations=self._response_converters,
                 conversation_id=self.objective_target_conversation_id,
                 target=self._objective_target,
-                labels=self._memory_labels,
             )
 
         # Store the full response so subsequent turns can forward media when supported.
@@ -653,13 +655,15 @@ class _TreeOfAttacksNode:
             objective_target_conversation_id=self.objective_target_conversation_id,
             objective=self._objective,
         ):
+            if self._memory_labels:
+                for piece in message.message_pieces:
+                    piece.labels = self._memory_labels
             response = await self._prompt_normalizer.send_prompt_async(
                 message=message,
                 request_converter_configurations=self._request_converters,
                 response_converter_configurations=self._response_converters,
                 conversation_id=self.objective_target_conversation_id,
                 target=self._objective_target,
-                labels=self._memory_labels,
             )
 
         # Store the full response so subsequent turns can forward media when supported.

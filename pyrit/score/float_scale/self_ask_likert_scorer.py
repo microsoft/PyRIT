@@ -457,6 +457,7 @@ class SelfAskLikertScorer(FloatScaleScorer):
             category=self._score_category,
             objective=objective,
             response_json_schema=self._response_json_schema,
+            numeric_value=True,
         )
 
         score = unvalidated_score.to_score(
@@ -470,6 +471,6 @@ class SelfAskLikertScorer(FloatScaleScorer):
             score_type="float_scale",
         )
 
-        score.score_metadata = {"likert_value": int(unvalidated_score.raw_score_value)}
+        score.score_metadata = {"likert_value": int(float(unvalidated_score.raw_score_value))}
 
         return [score]

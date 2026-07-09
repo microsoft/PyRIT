@@ -329,7 +329,7 @@ class TestXPIAWorkflowPerform:
         # Check that message was passed (converted from seed_group)
         assert "message" in call_args.kwargs
         assert call_args.kwargs["target"] == workflow._attack_setup_target
-        assert call_args.kwargs["labels"] == valid_context.memory_labels
+        assert call_args.kwargs["message"].message_pieces[0].labels == valid_context.memory_labels
         assert call_args.kwargs["conversation_id"] == valid_context.attack_setup_target_conversation_id
 
     @patch("pyrit.executor.workflow.xpia.CentralMemory")
@@ -676,3 +676,44 @@ class TestXPIAGuards:
         assert context.processing_callback is not None
         with pytest.raises(RuntimeError, match="context.processing_prompt is not initialized"):
             await context.processing_callback()
+
+    async def test_xpia_test_processing_callback_applies_memory_labels(self) -> None:
+        """Test that the XPIA test callback applies memory labels to the processing prompt."""
+        from pyrit.executor.workflow.xpia import XPIATestWorkflow
+
+        mock_target = MagicMock(spec=PromptTarget)
+        mock_target.get_identifier.return_value = ComponentIdentifier(
+            class_name="MockTarget", class_module="test_module"
+        )
+        mock_processing_target = MagicMock(spec=PromptTarget)
+        mock_processing_target.get_identifier.return_value = ComponentIdentifier(
+            class_name="MockProcessingTarget", class_module="test_module"
+        )
+        mock_scorer = MagicMock(spec=Scorer)
+        mock_scorer.get_identifier.return_value = ComponentIdentifier(
+            class_name="MockScorer", class_module="test_module"
+        )
+        mock_normalizer = MagicMock(spec=PromptNormalizer)
+        mock_normalizer.send_prompt_async = AsyncMock(
+            return_value=Message.from_prompt(prompt="processing response", role="assistant")
+        )
+        workflow = XPIATestWorkflow(
+            attack_setup_target=mock_target,
+            processing_target=mock_processing_target,
+            scorer=mock_scorer,
+            prompt_normalizer=mock_normalizer,
+        )
+
+        context = XPIAContext(
+            attack_content=Message.from_prompt(prompt="attack content", role="user"),
+            processing_prompt=Message.from_prompt(prompt="processing prompt", role="user"),
+            memory_labels={"test": "label"},
+        )
+
+        await workflow._setup_async(context=context)
+        assert context.processing_callback is not None
+        result = await context.processing_callback()
+
+        assert result == "processing response"
+        sent_message = mock_normalizer.send_prompt_async.call_args.kwargs["message"]
+        assert sent_message.message_pieces[0].labels == context.memory_labels

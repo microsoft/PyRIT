@@ -7,8 +7,6 @@ Base class for scenario attack strategies with group-based aggregation.
 This module provides a generic base class for creating enum-based attack strategy
 hierarchies where strategies can be grouped by categories (e.g., complexity, encoding type)
 and automatically expanded during scenario initialization.
-
-It also provides ScenarioCompositeStrategy for representing composed attack strategies.
 """
 
 from __future__ import annotations
@@ -225,7 +223,7 @@ class ScenarioStrategy(Enum, metaclass=_DeprecatedEnumMeta):
         Resolve strategy inputs into a concrete, ordered, deduplicated list.
 
         Handles None (returns expanded default), plain strategies, and aggregate strategies.
-        Non-cls items (e.g., ScenarioCompositeStrategy) are silently skipped for
+        Non-cls items (e.g., FoundryComposite) are silently skipped for
         backward compatibility.
 
         Args:
@@ -255,104 +253,3 @@ class ScenarioStrategy(Enum, metaclass=_DeprecatedEnumMeta):
                     seen.add(item)
                     result.append(item)
         return result
-
-
-class ScenarioCompositeStrategy:
-    """
-    Represents a composition of one or more attack strategies.
-
-    This class encapsulates a collection of ScenarioStrategy instances along with
-    an auto-generated descriptive name, making it easy to represent both single strategies
-    and composed multi-strategy attacks.
-
-    The name is automatically derived from the strategies:
-    - Single strategy: Uses the strategy's value (e.g., "base64")
-    - Multiple strategies: Generates "ComposedStrategy(base64, rot13)"
-
-    Example:
-        >>> # Single strategy composition
-        >>> single = ScenarioCompositeStrategy(strategies=[FoundryStrategy.Base64])
-        >>> print(single.name)  # "base64"
-        >>>
-        >>> # Multi-strategy composition
-        >>> composed = ScenarioCompositeStrategy(strategies=[
-        ...     FoundryStrategy.Base64,
-        ...     FoundryStrategy.ROT13
-        ... ])
-        >>> print(composed.name)  # "ComposedStrategy(base64, rot13)"
-    """
-
-    def __init__(self, *, strategies: Sequence[ScenarioStrategy]) -> None:
-        """
-        Initialize a ScenarioCompositeStrategy.
-
-        The name is automatically generated based on the strategies.
-
-        Args:
-            strategies (Sequence[ScenarioStrategy]): The sequence of strategies in this composition.
-                Must contain at least one strategy.
-
-        Raises:
-            ValueError: If strategies list is empty.
-
-        Example:
-            >>> # Single strategy
-            >>> composite = ScenarioCompositeStrategy(strategies=[FoundryStrategy.Base64])
-            >>> print(composite.name)  # "base64"
-            >>>
-            >>> # Multiple strategies
-            >>> composite = ScenarioCompositeStrategy(strategies=[
-            ...     FoundryStrategy.Base64,
-            ...     FoundryStrategy.Atbash
-            ... ])
-            >>> print(composite.name)  # "ComposedStrategy(base64, atbash)"
-        """
-        if not strategies:
-            raise ValueError("strategies list cannot be empty")
-
-        print_deprecation_message(
-            old_item="ScenarioCompositeStrategy",
-            new_item="FoundryComposite (from pyrit.scenario.scenarios.foundry)",
-            # Extended to 0.18.0 to give external callers (e.g. Foundry) time to migrate.
-            removed_in="0.18.0",
-        )
-
-        self._strategies = list(strategies)
-        if len(self._strategies) == 1:
-            self._name = str(self._strategies[0].value)
-        else:
-            strategy_names = ", ".join(s.value for s in self._strategies)
-            self._name = f"ComposedStrategy({strategy_names})"
-
-    @property
-    def name(self) -> str:
-        """The name of the composite strategy."""
-        return self._name
-
-    @property
-    def strategies(self) -> list[ScenarioStrategy]:
-        """The list of strategies in this composition."""
-        return self._strategies
-
-    @property
-    def is_single_strategy(self) -> bool:
-        """Check if this composition contains only a single strategy."""
-        return len(self._strategies) == 1
-
-    def __repr__(self) -> str:
-        """
-        Get string representation of the composite strategy.
-
-        Returns:
-            str: Representation as string.
-        """
-        return f"ScenarioCompositeStrategy(name='{self._name}', strategies={self._strategies})"
-
-    def __str__(self) -> str:
-        """
-        Get human-readable string representation.
-
-        Returns:
-            str: Name as string literal.
-        """
-        return self._name

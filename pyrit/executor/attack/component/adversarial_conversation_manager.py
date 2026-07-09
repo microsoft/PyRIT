@@ -556,7 +556,6 @@ class _AdversarialConversationManager:
         self._adversarial_target.set_system_prompt(
             system_prompt=rendered,
             conversation_id=self._conversation_id,
-            labels=self._memory_labels,  # deprecated
         )
 
     def _render_first_message(self) -> str:
@@ -860,11 +859,13 @@ class _AdversarialConversationManager:
             objective_target_conversation_id=self._objective_target_conversation_id,
             objective=self._objective,
         ):
+            if self._memory_labels:
+                for piece in message.message_pieces:
+                    piece.labels = self._memory_labels
             response = await self._prompt_normalizer.send_prompt_async(
                 message=message,
                 conversation_id=self._conversation_id,
                 target=self._adversarial_target,
-                labels=self._memory_labels,
             )
 
         if not response:

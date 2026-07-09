@@ -197,7 +197,8 @@ class TestCyberBasic:
         mock_objective_scorer,
     ):
         scenario = Cyber(objective_scorer=mock_objective_scorer)
-        await scenario.initialize_async(objective_target=mock_objective_target)
+        scenario.set_params_from_args(args={"objective_target": mock_objective_target})
+        await scenario.initialize_async()
         # DEFAULT expands to red_teaming (the only registered Cyber technique); a
         # PromptSendingAttack baseline is added separately via the baseline
         # policy, not as a strategy.
@@ -212,8 +213,9 @@ class TestCyberBasic:
             "pyrit.scenario.core.dataset_configuration.DatasetConfiguration._fetch_dataset_async",
             new_callable=AsyncMock,
         ):
+            scenario.set_params_from_args(args={"objective_target": mock_objective_target})
             with pytest.raises(ValueError, match="could not be loaded"):
-                await scenario.initialize_async(objective_target=mock_objective_target)
+                await scenario.initialize_async()
 
     @patch.object(
         DatasetAttackConfiguration,
@@ -229,7 +231,13 @@ class TestCyberBasic:
     ):
         labels = {"test_run": "123"}
         scenario = Cyber(objective_scorer=mock_objective_scorer)
-        await scenario.initialize_async(objective_target=mock_objective_target, memory_labels=labels)
+        scenario.set_params_from_args(
+            args={
+                "objective_target": mock_objective_target,
+                "memory_labels": labels,
+            }
+        )
+        await scenario.initialize_async()
         assert scenario._memory_labels == labels
 
     @patch.object(
@@ -245,7 +253,13 @@ class TestCyberBasic:
         mock_objective_scorer,
     ):
         scenario = Cyber(objective_scorer=mock_objective_scorer)
-        await scenario.initialize_async(objective_target=mock_objective_target, max_concurrency=20)
+        scenario.set_params_from_args(
+            args={
+                "objective_target": mock_objective_target,
+                "max_concurrency": 20,
+            }
+        )
+        await scenario.initialize_async()
         assert scenario._max_concurrency == 20
 
 
@@ -278,7 +292,8 @@ class TestCyberAttackGeneration:
             init_kwargs = {"objective_target": mock_objective_target, "include_baseline": False}
             if strategies:
                 init_kwargs["scenario_strategies"] = strategies
-            await scenario.initialize_async(**init_kwargs)
+            scenario.set_params_from_args(args=init_kwargs)
+            await scenario.initialize_async()
             return scenario._atomic_attacks
 
     async def test_all_strategy_produces_red_teaming(self, mock_objective_target, mock_objective_scorer):

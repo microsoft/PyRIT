@@ -356,9 +356,6 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
         # Initialize backtrack count in context
         context.backtrack_count = 0
 
-        # Initialize backtrack count in context
-        context.backtrack_count = 0
-
     async def _perform_async(self, *, context: CrescendoAttackContext) -> CrescendoAttackResult:
         """
         Execute the Crescendo attack by iteratively generating prompts,
@@ -568,13 +565,15 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
             objective_target_conversation_id=context.session.conversation_id,
             objective=context.objective,
         ):
+            if context.memory_labels:
+                for piece in attack_message.message_pieces:
+                    piece.labels = context.memory_labels
             response = await self._prompt_normalizer.send_prompt_async(
                 message=attack_message,
                 target=self._objective_target,
                 conversation_id=context.session.conversation_id,
                 request_converter_configurations=self._request_converters,
                 response_converter_configurations=self._response_converters,
-                labels=context.memory_labels,
             )
 
         if not response:

@@ -1019,7 +1019,8 @@ class TestAddMessage:
             await attack_service.add_message_async(attack_result_id="test-id", request=request)
 
             call_kwargs = mock_normalizer.send_prompt_async.call_args[1]
-            assert call_kwargs["labels"] == {"env": "staging"}
+            sent_message = call_kwargs["message"]
+            assert all(piece.labels == {"env": "staging"} for piece in sent_message.message_pieces)
 
     async def test_add_message_raises_when_send_without_registry_name(self, attack_service, mock_memory) -> None:
         """Test that add_message raises ValueError when send=True but target_registry_name missing."""
@@ -1102,6 +1103,99 @@ class TestAddMessage:
             )
 
             with pytest.raises(ValueError, match="Target object .* not found"):
+                await attack_service.add_message_async(attack_result_id="test-id", request=request)
+
+    async def test_add_message_surfaces_stored_error_piece_on_send_failure(self, attack_service, mock_memory) -> None:
+        """When the normalizer stores an error piece then raises, the send returns that turn inline (no raise)."""
+        ar = make_attack_result(conversation_id="test-id")
+        mock_memory.get_attack_results.return_value = [ar]
+
+        # The PromptNormalizer persists a full error piece before re-raising; model
+        # that by flipping to return the stored error piece only after send fails.
+        traceback_text = "Connection error.\nAPIConnectionError('Connection error.')\nTraceback..."
+        error_piece = MessagePiece(
+            role="assistant",
+            original_value=traceback_text,
+            original_value_data_type="error",
+            converted_value=traceback_text,
+            converted_value_data_type="error",
+            conversation_id="test-id",
+            sequence=1,
+            response_error="processing",
+        )
+        state = {"sent": False}
+        mock_memory.get_message_pieces.side_effect = lambda **_: [error_piece] if state["sent"] else []
+        # The conversation-messages read (used to build the response DTO) must include
+        # the stored error turn so we can assert it is surfaced to the caller.
+        mock_memory.get_conversation_messages.side_effect = lambda **_: (
+            [Message(message_pieces=[error_piece])] if state["sent"] else []
+        )
+
+        async def _raise_after_store(**_):
+            state["sent"] = True
+            raise Exception("Error sending prompt with conversation ID: test-id")
+
+        with (
+            patch("pyrit.backend.services.attack_service.get_target_service") as mock_get_target_svc,
+            patch("pyrit.backend.services.attack_service.PromptNormalizer") as mock_normalizer_cls,
+        ):
+            mock_target_svc = MagicMock()
+            mock_target_svc.get_target_object.return_value = _make_matching_target_mock()
+            mock_get_target_svc.return_value = mock_target_svc
+
+            mock_normalizer = MagicMock()
+            mock_normalizer.send_prompt_async = AsyncMock(side_effect=_raise_after_store)
+            mock_normalizer_cls.return_value = mock_normalizer
+
+            request = AddMessageRequest(
+                pieces=[MessagePieceRequest(original_value="Hello")],
+                target_conversation_id="test-id",
+                send=True,
+                target_registry_name="test-target",
+            )
+
+            # Should NOT raise: the stored error turn is surfaced via the normal response.
+            result = await attack_service.add_message_async(attack_result_id="test-id", request=request)
+
+            mock_normalizer.send_prompt_async.assert_called_once()
+            assert result.attack is not None
+
+            # The error turn (response_error="processing" + traceback) must come back in the response,
+            # so the send-time view matches the conversation-reload view.
+            returned_pieces = [piece for message in result.messages.messages for piece in message.message_pieces]
+            error_views = [piece for piece in returned_pieces if piece.response_error == "processing"]
+            assert len(error_views) == 1
+            assert "APIConnectionError" in error_views[0].converted_value
+
+    async def test_add_message_reraises_when_send_fails_without_stored_error_piece(
+        self, attack_service, mock_memory
+    ) -> None:
+        """If the send fails but no error piece was stored, the exception propagates (real error)."""
+        ar = make_attack_result(conversation_id="test-id")
+        mock_memory.get_attack_results.return_value = [ar]
+        mock_memory.get_message_pieces.return_value = []  # no error piece ever stored
+        mock_memory.get_conversation_messages.return_value = []
+
+        with (
+            patch("pyrit.backend.services.attack_service.get_target_service") as mock_get_target_svc,
+            patch("pyrit.backend.services.attack_service.PromptNormalizer") as mock_normalizer_cls,
+        ):
+            mock_target_svc = MagicMock()
+            mock_target_svc.get_target_object.return_value = _make_matching_target_mock()
+            mock_get_target_svc.return_value = mock_target_svc
+
+            mock_normalizer = MagicMock()
+            mock_normalizer.send_prompt_async = AsyncMock(side_effect=RuntimeError("boom"))
+            mock_normalizer_cls.return_value = mock_normalizer
+
+            request = AddMessageRequest(
+                pieces=[MessagePieceRequest(original_value="Hello")],
+                target_conversation_id="test-id",
+                send=True,
+                target_registry_name="test-target",
+            )
+
+            with pytest.raises(RuntimeError, match="boom"):
                 await attack_service.add_message_async(attack_result_id="test-id", request=request)
 
     async def test_add_message_with_converter_ids_gets_converters(self, attack_service, mock_memory) -> None:

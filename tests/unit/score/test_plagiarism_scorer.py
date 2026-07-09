@@ -227,7 +227,7 @@ class TestPlagiarismScorerUtilityFunctions:
     @pytest.fixture
     def scorer(self):
         """Create a scorer instance for testing utility methods."""
-        return PlagiarismScorer("test reference text")
+        return PlagiarismScorer(reference_text="test reference text")
 
     def test_tokenize_basic(self, scorer):
         """Test basic tokenization functionality."""

@@ -8,6 +8,7 @@
 #       format_version: '1.3'
 #       jupytext_version: 1.19.1
 # ---
+
 # %% [markdown]
 # # True/False Scorers
 # %% [markdown]
@@ -100,6 +101,19 @@ print(f"[markdown] plain text   -> {plain.get_value()}")
 # %% [markdown]
 # `SubStringScorer` is the simplest fast scorer of all — see the
 # [overview](0_scoring.ipynb#scoring-directly) for an example.
+# %% [markdown]
+# ### StaticPromptInjectionScorer
+#
+# `StaticPromptInjectionScorer` is a `RegexScorer` subclass that flags prompt-injection attempts
+# locally (OWASP LLM01) — instruction override, system-prompt extraction, jailbreak role-play, and
+# encoding-based evasion. It favors recall over precision, so use it as a cheap pre-filter ahead of
+# a model-based scorer such as `PromptShieldScorer`.
+#
+# ### DecodingScorer
+#
+# `DecodingScorer` checks whether the request text (its `original_value`, `converted_value`, or
+# decoded metadata) appears in the response — the fast, deterministic way to tell whether a target
+# decoded an encoded prompt. It backs the Garak encoding scenario.
 # %% [markdown]
 # ## Slow scorers (LLM self-ask)
 #
@@ -194,3 +208,14 @@ print(f"[category] value={scored.get_value()} category={scored.score_category}")
 # - **`GandalfScorer`** — checks whether a Gandalf challenge password was revealed.
 #
 # Both need their respective endpoints/credentials even though they are not "self-ask".
+# %% [markdown]
+# ## Multimodal scorers
+#
+# Audio and video responses are scored by transcribing or sampling them and delegating to a
+# text/image true/false scorer:
+#
+# - **`AudioTrueFalseScorer`** — transcribes an `audio_path` response (Azure Speech-to-Text) and
+#   scores the transcript with a wrapped `TrueFalseScorer`.
+# - **`VideoTrueFalseScorer`** — extracts frames from a `video_path` response and scores them with a
+#   wrapped image `TrueFalseScorer` (True if *any* frame matches); an optional audio scorer is
+#   AND-combined so both the visuals and the transcript must match.

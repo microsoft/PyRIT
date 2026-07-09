@@ -24,7 +24,7 @@ from pyrit.registry.instance_registry import (
     RegistryEntry,
     SupportsInstances,
 )
-from pyrit.registry.registry import Registry
+from pyrit.registry.registry import ParamBagRegistry, Registry
 from pyrit.registry.registry_metadata import RegistryMetadata
 from pyrit.registry.tag_query import TagQuery
 
@@ -35,6 +35,7 @@ __all__ = [
     "ConverterMetadata",
     "DefaultInstanceRegistry",
     "InstanceRegistry",
+    "ParamBagRegistry",
     "Registry",
     "RegistryMetadata",
     "SupportsInstances",

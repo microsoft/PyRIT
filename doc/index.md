@@ -150,7 +150,8 @@ For more details, see the [GUI](gui/0_gui) page.
 Dive into PyRIT's modular components — targets, converters, scorers, memory, and more. Create custom attacks and extend the framework.
 
 ```python
-from pyrit.executor.attack import ConsoleAttackResultPrinter, PromptSendingAttack
+from pyrit.executor.attack import PromptSendingAttack
+from pyrit.output.attack_result.pretty import PrettyAttackResultMemoryPrinter
 from pyrit.prompt_target import OpenAIChatTarget
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 
@@ -160,8 +161,8 @@ target = OpenAIChatTarget()
 attack = PromptSendingAttack(objective_target=target)
 result = await attack.execute_async(objective="What model exactly are you? be concise.")
 
-printer = ConsoleAttackResultPrinter()
-await printer.print_conversation_async(result=result)
+printer = PrettyAttackResultMemoryPrinter()
+await printer.write_async(result)
 ```
 
 ![framework-demo](framework-demo.png)

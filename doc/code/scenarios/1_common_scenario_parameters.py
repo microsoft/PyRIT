@@ -39,14 +39,14 @@ objective_target = TargetRegistry.get_registry_singleton().instances.get("openai
 # %% [markdown]
 # ## Dataset Configuration
 #
-# `DatasetConfiguration` controls which prompts (objectives) are sent to the target.
+# `DatasetAttackConfiguration` controls which prompts (objectives) are sent to the target.
 # The simplest approach uses `dataset_names` to load datasets by name from memory.
 # By default, `RedTeamAgent` loads four random objectives from HarmBench [@mazeika2024harmbench].
 
 # %%
-from pyrit.scenario import DatasetConfiguration
+from pyrit.scenario import DatasetAttackConfiguration
 
-dataset_config = DatasetConfiguration(dataset_names=["harmbench"], max_dataset_size=2)
+dataset_config = DatasetAttackConfiguration(dataset_names=["harmbench"], max_dataset_size=2)
 
 # %% [markdown]
 # For more control, use `SeedDatasetProvider` to fetch datasets and pass explicit `seed_groups`.
@@ -60,7 +60,7 @@ datasets = await SeedDatasetProvider.fetch_datasets_async(dataset_names=["harmbe
 seed_groups: list[SeedGroup] = datasets[0].seed_groups  # type: ignore
 
 # Pass explicit seed_groups instead of dataset_names
-dataset_config = DatasetConfiguration(seed_groups=seed_groups, max_dataset_size=2)
+dataset_config = DatasetAttackConfiguration(seed_groups=seed_groups, max_dataset_size=2)
 
 # %% [markdown]
 # ## Strategy Selection and Composition
@@ -103,8 +103,8 @@ scenario_strategies = [
 # ## Baseline Execution
 #
 # The baseline sends each objective directly to the target without any converters or multi-turn
-# strategies. It is included automatically when `initialize_async` is called with
-# `include_baseline=True` (the default for scenarios that support a baseline). This is useful for:
+# strategies. It is included automatically when `include_baseline=True` (the default for
+# scenarios that support a baseline). This is useful for:
 #
 # - **Measuring default defenses** — how does the target respond to unmodified harmful prompts?
 # - **Establishing comparison points** — compare baseline refusal rates against attack-enhanced runs
@@ -112,11 +112,14 @@ scenario_strategies = [
 
 # %%
 baseline_scenario = RedTeamAgent()
-await baseline_scenario.initialize_async(  # type: ignore
-    objective_target=objective_target,
-    scenario_strategies=None,  # Uses default strategies; baseline is prepended automatically
-    dataset_config=dataset_config,
+baseline_scenario.set_params_from_args(  # type: ignore
+    args={
+        "objective_target": objective_target,
+        "scenario_strategies": None,  # Uses default strategies; baseline is prepended automatically
+        "dataset_config": dataset_config,
+    }
 )
+await baseline_scenario.initialize_async()  # type: ignore
 baseline_result = await baseline_scenario.run_async()  # type: ignore
 await output_scenario_async(baseline_result)  # type: ignore [top-level-await]
 
@@ -134,15 +137,18 @@ await output_scenario_async(baseline_result, sort_groups_by_success_rate=True)
 
 # %% [markdown]
 # To disable the automatic baseline entirely (e.g., when you only want attack strategies with no
-# comparison), pass `include_baseline=False` to `initialize_async`:
+# comparison), set `include_baseline=False` in the run params:
 #
 # ```python
 # scenario = RedTeamAgent()
-# await scenario.initialize_async(
-#     objective_target=objective_target,
-#     scenario_strategies=[FoundryStrategy.Base64],
-#     include_baseline=False,
+# scenario.set_params_from_args(
+#     args={
+#         "objective_target": objective_target,
+#         "scenario_strategies": [FoundryStrategy.Base64],
+#         "include_baseline": False,
+#     }
 # )
+# await scenario.initialize_async()
 # ```
 
 # %% [markdown]
@@ -165,11 +171,14 @@ inverted_scorer = TrueFalseInverterScorer(scorer=refusal_scorer)
 custom_scenario = RedTeamAgent(
     attack_scoring_config=AttackScoringConfig(objective_scorer=inverted_scorer),
 )
-await custom_scenario.initialize_async(  # type: ignore
-    objective_target=objective_target,
-    scenario_strategies=[FoundryStrategy.Base64],
-    dataset_config=dataset_config,
+custom_scenario.set_params_from_args(  # type: ignore
+    args={
+        "objective_target": objective_target,
+        "scenario_strategies": [FoundryStrategy.Base64],
+        "dataset_config": dataset_config,
+    }
 )
+await custom_scenario.initialize_async()  # type: ignore
 
 custom_result = await custom_scenario.run_async()  # type: ignore
 await output_scenario_async(custom_result)

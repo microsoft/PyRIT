@@ -173,10 +173,13 @@ class TestTextAdaptiveAtomicAttacks:
                 objective_scorer=mock_objective_scorer,
                 **scenario_kwargs,
             )
-            await scenario.initialize_async(
-                objective_target=mock_objective_target,
-                include_baseline=False,
+            scenario.set_params_from_args(
+                args={
+                    "objective_target": mock_objective_target,
+                    "include_baseline": False,
+                }
             )
+            await scenario.initialize_async()
             return scenario, scenario._atomic_attacks
 
     async def test_one_atomic_per_objective(self, mock_objective_target, mock_objective_scorer):
@@ -224,10 +227,13 @@ class TestTextAdaptiveAtomicAttacks:
             scenario = TextAdaptive(objective_scorer=mock_objective_scorer)
             # Spy on the dispatcher construction that initialize_async triggers.
             with patch.object(AdaptiveTechniqueDispatcher, "__init__", _spy_init):
-                await scenario.initialize_async(
-                    objective_target=mock_objective_target,
-                    include_baseline=False,
+                scenario.set_params_from_args(
+                    args={
+                        "objective_target": mock_objective_target,
+                        "include_baseline": False,
+                    }
                 )
+                await scenario.initialize_async()
 
         # One dispatcher per dataset; all share the same selector identity.
         assert len(selectors_seen) == 2
@@ -274,11 +280,14 @@ class TestTextAdaptiveAtomicAttacks:
             # Force the factory map to be empty; initialize_async builds the atomic
             # attacks and must raise when no techniques are usable.
             with patch.object(scenario, "_get_attack_technique_factories", return_value={}):
+                scenario.set_params_from_args(
+                    args={
+                        "objective_target": mock_objective_target,
+                        "include_baseline": False,
+                    }
+                )
                 with pytest.raises(ValueError, match="no usable techniques"):
-                    await scenario.initialize_async(
-                        objective_target=mock_objective_target,
-                        include_baseline=False,
-                    )
+                    await scenario.initialize_async()
 
     async def test_techniques_with_seed_technique_are_kept(self, mock_objective_target, mock_objective_scorer):
         """Factories that declare a ``seed_technique`` participate in the pool
@@ -301,11 +310,14 @@ class TestTextAdaptiveAtomicAttacks:
             strategy_class = scenario.get_strategy_class()
             factories = {"role_play": plain_factory, "many_shot": seeded_factory}
             with patch.object(scenario, "_get_attack_technique_factories", return_value=factories):
-                await scenario.initialize_async(
-                    objective_target=mock_objective_target,
-                    include_baseline=False,
-                    scenario_strategies=[strategy_class("role_play"), strategy_class("many_shot")],
+                scenario.set_params_from_args(
+                    args={
+                        "objective_target": mock_objective_target,
+                        "include_baseline": False,
+                        "scenario_strategies": [strategy_class("role_play"), strategy_class("many_shot")],
+                    }
                 )
+                await scenario.initialize_async()
                 attacks = scenario._atomic_attacks
                 techniques = scenario._build_techniques_dict(objective_target=mock_objective_target)
 
@@ -342,11 +354,14 @@ class TestTextAdaptiveAtomicAttacks:
             strategy_class = scenario.get_strategy_class()
             factories = {"role_play": plain_factory, "many_shot": incompatible_factory}
             with patch.object(scenario, "_get_attack_technique_factories", return_value=factories):
-                await scenario.initialize_async(
-                    objective_target=mock_objective_target,
-                    include_baseline=False,
-                    scenario_strategies=[strategy_class("role_play"), strategy_class("many_shot")],
+                scenario.set_params_from_args(
+                    args={
+                        "objective_target": mock_objective_target,
+                        "include_baseline": False,
+                        "scenario_strategies": [strategy_class("role_play"), strategy_class("many_shot")],
+                    }
                 )
+                await scenario.initialize_async()
                 attacks = scenario._atomic_attacks
                 techniques = scenario._build_techniques_dict(objective_target=mock_objective_target)
 
@@ -396,11 +411,14 @@ class TestTextAdaptiveAtomicAttacks:
                 import logging
 
                 with caplog.at_level(logging.WARNING):
-                    await scenario.initialize_async(
-                        objective_target=mock_objective_target,
-                        include_baseline=False,
-                        scenario_strategies=[strategy_class("role_play")],
+                    scenario.set_params_from_args(
+                        args={
+                            "objective_target": mock_objective_target,
+                            "include_baseline": False,
+                            "scenario_strategies": [strategy_class("role_play")],
+                        }
                     )
+                    await scenario.initialize_async()
                     attacks = scenario._atomic_attacks
 
         # Only the compatible objective produced an atomic attack.
@@ -436,11 +454,14 @@ class TestTextAdaptiveAtomicAttacks:
                 "_get_attack_technique_factories",
                 return_value={"role_play": narrow_factory},
             ):
-                await scenario.initialize_async(
-                    objective_target=mock_objective_target,
-                    include_baseline=False,
-                    scenario_strategies=[strategy_class("role_play")],
+                scenario.set_params_from_args(
+                    args={
+                        "objective_target": mock_objective_target,
+                        "include_baseline": False,
+                        "scenario_strategies": [strategy_class("role_play")],
+                    }
                 )
+                await scenario.initialize_async()
 
         narrow_factory.create.assert_called_once()
         kwargs = narrow_factory.create.call_args.kwargs
@@ -481,11 +502,14 @@ class TestTextAdaptiveAtomicAttacks:
             factories = {"role_play": good_factory, "tap": strict_factory}
             with patch.object(scenario, "_get_attack_technique_factories", return_value=factories):
                 with caplog.at_level(logging.WARNING):
-                    await scenario.initialize_async(
-                        objective_target=mock_objective_target,
-                        include_baseline=False,
-                        scenario_strategies=[strategy_class("role_play"), strategy_class("tap")],
+                    scenario.set_params_from_args(
+                        args={
+                            "objective_target": mock_objective_target,
+                            "include_baseline": False,
+                            "scenario_strategies": [strategy_class("role_play"), strategy_class("tap")],
+                        }
                     )
+                    await scenario.initialize_async()
                     techniques = scenario._build_techniques_dict(objective_target=mock_objective_target)
 
         # Strict factory's create is never called — incompatibility surfaces
@@ -524,11 +548,14 @@ class TestTextAdaptiveAtomicAttacks:
             factories = {"role_play": good_factory, "tap": bad_factory}
             with patch.object(scenario, "_get_attack_technique_factories", return_value=factories):
                 with caplog.at_level(logging.WARNING):
-                    await scenario.initialize_async(
-                        objective_target=mock_objective_target,
-                        include_baseline=False,
-                        scenario_strategies=[strategy_class("role_play"), strategy_class("tap")],
+                    scenario.set_params_from_args(
+                        args={
+                            "objective_target": mock_objective_target,
+                            "include_baseline": False,
+                            "scenario_strategies": [strategy_class("role_play"), strategy_class("tap")],
+                        }
                     )
+                    await scenario.initialize_async()
                     attacks = scenario._atomic_attacks
                     techniques = scenario._build_techniques_dict(objective_target=mock_objective_target)
 
@@ -560,12 +587,15 @@ class TestTextAdaptiveAtomicAttacks:
                 "_get_attack_technique_factories",
                 return_value={"tap": bad_factory},
             ):
+                scenario.set_params_from_args(
+                    args={
+                        "objective_target": mock_objective_target,
+                        "include_baseline": False,
+                        "scenario_strategies": [strategy_class("tap")],
+                    }
+                )
                 with pytest.raises(ValueError, match="incompatible with scenario scorer.*tap"):
-                    await scenario.initialize_async(
-                        objective_target=mock_objective_target,
-                        include_baseline=False,
-                        scenario_strategies=[strategy_class("tap")],
-                    )
+                    await scenario.initialize_async()
 
 
 @pytest.mark.usefixtures(*FIXTURES)
@@ -580,10 +610,13 @@ class TestTextAdaptiveBaselinePolicy:
         ):
             scenario = TextAdaptive(objective_scorer=mock_objective_scorer)
             # Baseline is Enabled by default, so explicit include_baseline=True must not raise.
-            await scenario.initialize_async(
-                objective_target=mock_objective_target,
-                include_baseline=True,
+            scenario.set_params_from_args(
+                args={
+                    "objective_target": mock_objective_target,
+                    "include_baseline": True,
+                }
             )
+            await scenario.initialize_async()
 
     async def test_baseline_emitted_at_index_zero_by_default(self, mock_objective_target, mock_objective_scorer):
         """
@@ -602,7 +635,8 @@ class TestTextAdaptiveBaselinePolicy:
             scenario = TextAdaptive(objective_scorer=mock_objective_scorer)
             with warnings.catch_warnings():
                 warnings.simplefilter("error", DeprecationWarning)
-                await scenario.initialize_async(objective_target=mock_objective_target)
+                scenario.set_params_from_args(args={"objective_target": mock_objective_target})
+                await scenario.initialize_async()
 
             assert scenario._atomic_attacks, "expected at least one atomic attack"
             assert scenario._atomic_attacks[0].atomic_attack_name == "baseline", (

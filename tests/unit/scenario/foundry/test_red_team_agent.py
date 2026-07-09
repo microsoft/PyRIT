@@ -13,7 +13,7 @@ from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
 from pyrit.models import ComponentIdentifier, SeedAttackGroup, SeedObjective
 from pyrit.prompt_converter import Base64Converter
 from pyrit.prompt_target import PromptTarget
-from pyrit.scenario import AtomicAttack, DatasetAttackConfiguration, ScenarioCompositeStrategy
+from pyrit.scenario import AtomicAttack, DatasetAttackConfiguration
 from pyrit.scenario.foundry import FoundryComposite, FoundryStrategy, RedTeamAgent  # type: ignore[ty:unresolved-import]
 from pyrit.score import FloatScaleThresholdScorer, TrueFalseScorer
 
@@ -125,11 +125,14 @@ class TestFoundryInitialization:
                 attack_scoring_config=AttackScoringConfig(objective_scorer=mock_objective_scorer),
             )
 
-            await scenario.initialize_async(
-                objective_target=mock_objective_target,
-                scenario_strategies=[FoundryStrategy.Base64],
-                dataset_config=mock_dataset_config,
+            scenario.set_params_from_args(
+                args={
+                    "objective_target": mock_objective_target,
+                    "scenario_strategies": [FoundryStrategy.Base64],
+                    "dataset_config": mock_dataset_config,
+                }
             )
+            await scenario.initialize_async()
             assert scenario.atomic_attack_count > 0
             assert scenario.name == "RedTeamAgent"
 
@@ -153,11 +156,14 @@ class TestFoundryInitialization:
                 attack_scoring_config=AttackScoringConfig(objective_scorer=mock_objective_scorer),
             )
 
-            await scenario.initialize_async(
-                objective_target=mock_objective_target,
-                scenario_strategies=strategies,
-                dataset_config=mock_dataset_config,
+            scenario.set_params_from_args(
+                args={
+                    "objective_target": mock_objective_target,
+                    "scenario_strategies": strategies,
+                    "dataset_config": mock_dataset_config,
+                }
             )
+            await scenario.initialize_async()
             assert scenario.atomic_attack_count >= len(strategies)
 
     def test_init_with_custom_adversarial_target(
@@ -197,11 +203,14 @@ class TestFoundryInitialization:
 
             assert scenario._memory_labels == {}
 
-            await scenario.initialize_async(
-                objective_target=mock_objective_target,
-                memory_labels=memory_labels,
-                dataset_config=mock_dataset_config,
+            scenario.set_params_from_args(
+                args={
+                    "objective_target": mock_objective_target,
+                    "memory_labels": memory_labels,
+                    "dataset_config": mock_dataset_config,
+                }
             )
+            await scenario.initialize_async()
 
             assert scenario._memory_labels == memory_labels
 
@@ -239,8 +248,13 @@ class TestFoundryInitialization:
             "pyrit.scenario.core.dataset_configuration.DatasetConfiguration._fetch_dataset_async",
             new_callable=AsyncMock,
         ):
+            scenario.set_params_from_args(
+                args={
+                    "objective_target": mock_objective_target,
+                }
+            )
             with pytest.raises(ValueError, match="could not be loaded"):
-                await scenario.initialize_async(objective_target=mock_objective_target)
+                await scenario.initialize_async()
 
 
 @pytest.mark.usefixtures(*FIXTURES)
@@ -261,11 +275,14 @@ class TestFoundryStrategyNormalization:
                 attack_scoring_config=AttackScoringConfig(objective_scorer=mock_objective_scorer),
             )
 
-            await scenario.initialize_async(
-                objective_target=mock_objective_target,
-                scenario_strategies=[FoundryStrategy.EASY],
-                dataset_config=mock_dataset_config,
+            scenario.set_params_from_args(
+                args={
+                    "objective_target": mock_objective_target,
+                    "scenario_strategies": [FoundryStrategy.EASY],
+                    "dataset_config": mock_dataset_config,
+                }
             )
+            await scenario.initialize_async()
             # EASY should expand to multiple attack strategies
             assert scenario.atomic_attack_count > 1
 
@@ -283,11 +300,14 @@ class TestFoundryStrategyNormalization:
                 attack_scoring_config=AttackScoringConfig(objective_scorer=mock_objective_scorer),
             )
 
-            await scenario.initialize_async(
-                objective_target=mock_objective_target,
-                scenario_strategies=[FoundryStrategy.MODERATE],
-                dataset_config=mock_dataset_config,
+            scenario.set_params_from_args(
+                args={
+                    "objective_target": mock_objective_target,
+                    "scenario_strategies": [FoundryStrategy.MODERATE],
+                    "dataset_config": mock_dataset_config,
+                }
             )
+            await scenario.initialize_async()
             # MODERATE should expand to moderate attack strategies (currently only 1: Tense)
             assert scenario.atomic_attack_count >= 1
 
@@ -306,11 +326,14 @@ class TestFoundryStrategyNormalization:
                 attack_scoring_config=AttackScoringConfig(objective_scorer=mock_float_threshold_scorer),
             )
 
-            await scenario.initialize_async(
-                objective_target=mock_objective_target,
-                scenario_strategies=[FoundryStrategy.DIFFICULT],
-                dataset_config=mock_dataset_config,
+            scenario.set_params_from_args(
+                args={
+                    "objective_target": mock_objective_target,
+                    "scenario_strategies": [FoundryStrategy.DIFFICULT],
+                    "dataset_config": mock_dataset_config,
+                }
             )
+            await scenario.initialize_async()
             # DIFFICULT should expand to multiple attack strategies
             assert scenario.atomic_attack_count > 1
 
@@ -328,11 +351,14 @@ class TestFoundryStrategyNormalization:
                 attack_scoring_config=AttackScoringConfig(objective_scorer=mock_objective_scorer),
             )
 
-            await scenario.initialize_async(
-                objective_target=mock_objective_target,
-                scenario_strategies=[FoundryStrategy.EASY, FoundryStrategy.MODERATE],
-                dataset_config=mock_dataset_config,
+            scenario.set_params_from_args(
+                args={
+                    "objective_target": mock_objective_target,
+                    "scenario_strategies": [FoundryStrategy.EASY, FoundryStrategy.MODERATE],
+                    "dataset_config": mock_dataset_config,
+                }
             )
+            await scenario.initialize_async()
             # Combined difficulty levels should expand to multiple strategies
             assert scenario.atomic_attack_count > 5  # EASY has 20, MODERATE has 1, combined should have more
 
@@ -350,14 +376,17 @@ class TestFoundryStrategyNormalization:
                 attack_scoring_config=AttackScoringConfig(objective_scorer=mock_objective_scorer),
             )
 
-            await scenario.initialize_async(
-                objective_target=mock_objective_target,
-                scenario_strategies=[
-                    FoundryStrategy.EASY,
-                    FoundryStrategy.Base64,  # Specific strategy
-                ],
-                dataset_config=mock_dataset_config,
+            scenario.set_params_from_args(
+                args={
+                    "objective_target": mock_objective_target,
+                    "scenario_strategies": [
+                        FoundryStrategy.EASY,
+                        FoundryStrategy.Base64,  # Specific strategy
+                    ],
+                    "dataset_config": mock_dataset_config,
+                }
             )
+            await scenario.initialize_async()
             # EASY expands to 20 strategies, but Base64 might already be in EASY, so at least 20
             assert scenario.atomic_attack_count >= 20
 
@@ -380,11 +409,14 @@ class TestFoundryAttackCreation:
                 attack_scoring_config=AttackScoringConfig(objective_scorer=mock_objective_scorer),
             )
 
-            await scenario.initialize_async(
-                objective_target=mock_objective_target,
-                scenario_strategies=[FoundryStrategy.Base64],
-                dataset_config=mock_dataset_config,
+            scenario.set_params_from_args(
+                args={
+                    "objective_target": mock_objective_target,
+                    "scenario_strategies": [FoundryStrategy.Base64],
+                    "dataset_config": mock_dataset_config,
+                }
             )
+            await scenario.initialize_async()
 
             # Get the composite strategy that was created during initialization
             composite_strategy = scenario._scenario_composites[0]
@@ -415,11 +447,14 @@ class TestFoundryAttackCreation:
                 attack_scoring_config=AttackScoringConfig(objective_scorer=mock_objective_scorer),
             )
 
-            await scenario.initialize_async(
-                objective_target=mock_objective_target,
-                scenario_strategies=[FoundryStrategy.Crescendo],
-                dataset_config=mock_dataset_config,
+            scenario.set_params_from_args(
+                args={
+                    "objective_target": mock_objective_target,
+                    "scenario_strategies": [FoundryStrategy.Crescendo],
+                    "dataset_config": mock_dataset_config,
+                }
             )
+            await scenario.initialize_async()
 
             # Get the composite strategy that was created during initialization
             composite_strategy = scenario._scenario_composites[0]
@@ -449,11 +484,14 @@ class TestFoundryGetAttack:
                 attack_scoring_config=AttackScoringConfig(objective_scorer=mock_objective_scorer),
             )
 
-            await scenario.initialize_async(
-                objective_target=mock_objective_target,
-                scenario_strategies=[FoundryStrategy.Base64],
-                dataset_config=mock_dataset_config,
+            scenario.set_params_from_args(
+                args={
+                    "objective_target": mock_objective_target,
+                    "scenario_strategies": [FoundryStrategy.Base64],
+                    "dataset_config": mock_dataset_config,
+                }
             )
+            await scenario.initialize_async()
 
             attack = scenario._get_attack(
                 attack_type=PromptSendingAttack,
@@ -482,11 +520,14 @@ class TestFoundryGetAttack:
                 attack_scoring_config=AttackScoringConfig(objective_scorer=mock_objective_scorer),
             )
 
-            await scenario.initialize_async(
-                objective_target=mock_objective_target,
-                scenario_strategies=[FoundryStrategy.Crescendo],
-                dataset_config=mock_dataset_config,
+            scenario.set_params_from_args(
+                args={
+                    "objective_target": mock_objective_target,
+                    "scenario_strategies": [FoundryStrategy.Crescendo],
+                    "dataset_config": mock_dataset_config,
+                }
             )
+            await scenario.initialize_async()
 
             attack = scenario._get_attack(
                 attack_type=CrescendoAttack,
@@ -540,11 +581,14 @@ class TestFoundryAllStrategies:
                 attack_scoring_config=AttackScoringConfig(objective_scorer=mock_objective_scorer),
             )
 
-            await scenario.initialize_async(
-                objective_target=mock_objective_target,
-                scenario_strategies=[strategy],
-                dataset_config=mock_dataset_config,
+            scenario.set_params_from_args(
+                args={
+                    "objective_target": mock_objective_target,
+                    "scenario_strategies": [strategy],
+                    "dataset_config": mock_dataset_config,
+                }
             )
+            await scenario.initialize_async()
 
             # Get the composite strategy that was created during initialization
             composite_strategy = scenario._scenario_composites[0]
@@ -581,11 +625,14 @@ class TestFoundryAllStrategies:
                 attack_scoring_config=AttackScoringConfig(objective_scorer=mock_objective_scorer),
             )
 
-            await scenario.initialize_async(
-                objective_target=mock_objective_target,
-                scenario_strategies=[strategy],
-                dataset_config=mock_dataset_config,
+            scenario.set_params_from_args(
+                args={
+                    "objective_target": mock_objective_target,
+                    "scenario_strategies": [strategy],
+                    "dataset_config": mock_dataset_config,
+                }
             )
+            await scenario.initialize_async()
 
             # Get the composite strategy that was created during initialization
             composite_strategy = scenario._scenario_composites[0]
@@ -618,12 +665,15 @@ class TestFoundryProperties:
             # Before initialize_async, composites should be empty
             assert len(scenario._scenario_composites) == 0
 
-            await scenario.initialize_async(
-                objective_target=mock_objective_target,
-                scenario_strategies=strategies,
-                dataset_config=mock_dataset_config,
-                include_baseline=False,
+            scenario.set_params_from_args(
+                args={
+                    "objective_target": mock_objective_target,
+                    "scenario_strategies": strategies,
+                    "dataset_config": mock_dataset_config,
+                    "include_baseline": False,
+                }
             )
+            await scenario.initialize_async()
 
             # After initialize_async, composites should be set
             assert len(scenario._scenario_composites) == len(strategies)
@@ -657,11 +707,14 @@ class TestFoundryProperties:
                 attack_scoring_config=AttackScoringConfig(objective_scorer=mock_objective_scorer),
             )
 
-            await scenario.initialize_async(
-                objective_target=mock_objective_target,
-                scenario_strategies=strategies,
-                dataset_config=mock_dataset_config,
+            scenario.set_params_from_args(
+                args={
+                    "objective_target": mock_objective_target,
+                    "scenario_strategies": strategies,
+                    "dataset_config": mock_dataset_config,
+                }
             )
+            await scenario.initialize_async()
             # Should have at least as many runs as specific strategies provided
             assert scenario.atomic_attack_count >= len(strategies)
 
@@ -680,12 +733,15 @@ class TestFoundryProperties:
             scenario = RedTeamAgent(
                 attack_scoring_config=AttackScoringConfig(objective_scorer=mock_objective_scorer),
             )
-            await scenario.initialize_async(
-                objective_target=mock_objective_target,
-                scenario_strategies=[composite],
-                dataset_config=mock_dataset_config,
-                include_baseline=False,
+            scenario.set_params_from_args(
+                args={
+                    "objective_target": mock_objective_target,
+                    "scenario_strategies": [composite],
+                    "dataset_config": mock_dataset_config,
+                    "include_baseline": False,
+                }
             )
+            await scenario.initialize_async()
 
         assert len(scenario._scenario_composites) == 1
         result = scenario._scenario_composites[0]
@@ -708,99 +764,20 @@ class TestFoundryProperties:
             scenario = RedTeamAgent(
                 attack_scoring_config=AttackScoringConfig(objective_scorer=mock_objective_scorer),
             )
-            await scenario.initialize_async(
-                objective_target=mock_objective_target,
-                scenario_strategies=[composite, FoundryStrategy.ROT13],
-                dataset_config=mock_dataset_config,
-                include_baseline=False,
+            scenario.set_params_from_args(
+                args={
+                    "objective_target": mock_objective_target,
+                    "scenario_strategies": [composite, FoundryStrategy.ROT13],
+                    "dataset_config": mock_dataset_config,
+                    "include_baseline": False,
+                }
             )
+            await scenario.initialize_async()
 
         assert len(scenario._scenario_composites) == 2
         assert scenario._scenario_composites[0].attack == FoundryStrategy.Crescendo
         assert scenario._scenario_composites[1].attack is None
         assert scenario._scenario_composites[1].converters == [FoundryStrategy.ROT13]
-
-    @pytest.mark.filterwarnings("ignore::DeprecationWarning")
-    async def test_initialize_converts_scenario_composite_strategy_to_foundry_composite(
-        self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups, mock_dataset_config
-    ):
-        """ScenarioCompositeStrategy passed to initialize_async is converted to FoundryComposite."""
-        legacy = ScenarioCompositeStrategy(strategies=[FoundryStrategy.Crescendo, FoundryStrategy.Base64])
-
-        with patch.object(
-            RedTeamAgent,
-            "_resolve_seed_groups_by_dataset_async",
-            new_callable=AsyncMock,
-            return_value={"memory": mock_memory_seed_groups},
-        ):
-            scenario = RedTeamAgent(
-                attack_scoring_config=AttackScoringConfig(objective_scorer=mock_objective_scorer),
-            )
-            await scenario.initialize_async(
-                objective_target=mock_objective_target,
-                scenario_strategies=[legacy],  # type: ignore[arg-type]
-                dataset_config=mock_dataset_config,
-                include_baseline=False,
-            )
-
-        assert len(scenario._scenario_composites) == 1
-        result = scenario._scenario_composites[0]
-        assert result.attack == FoundryStrategy.Crescendo
-        assert result.converters == [FoundryStrategy.Base64]
-
-    @pytest.mark.filterwarnings("ignore::DeprecationWarning")
-    async def test_initialize_converts_converter_first_composite_strategy(
-        self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups, mock_dataset_config
-    ):
-        """Converter-first ScenarioCompositeStrategy is routed by tags, not position."""
-        legacy = ScenarioCompositeStrategy(strategies=[FoundryStrategy.Base64, FoundryStrategy.Crescendo])
-
-        with patch.object(
-            RedTeamAgent,
-            "_resolve_seed_groups_by_dataset_async",
-            new_callable=AsyncMock,
-            return_value={"memory": mock_memory_seed_groups},
-        ):
-            scenario = RedTeamAgent(
-                attack_scoring_config=AttackScoringConfig(objective_scorer=mock_objective_scorer),
-            )
-            await scenario.initialize_async(
-                objective_target=mock_objective_target,
-                scenario_strategies=[legacy],  # type: ignore[arg-type]
-                dataset_config=mock_dataset_config,
-                include_baseline=False,
-            )
-
-        result = scenario._scenario_composites[0]
-        assert result.attack == FoundryStrategy.Crescendo
-        assert result.converters == [FoundryStrategy.Base64]
-
-    @pytest.mark.filterwarnings("ignore::DeprecationWarning")
-    async def test_initialize_converts_converter_only_composite_strategy(
-        self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups, mock_dataset_config
-    ):
-        """Converter-only ScenarioCompositeStrategy maps to attack=None."""
-        legacy = ScenarioCompositeStrategy(strategies=[FoundryStrategy.Base64, FoundryStrategy.ROT13])
-
-        with patch.object(
-            RedTeamAgent,
-            "_resolve_seed_groups_by_dataset_async",
-            new_callable=AsyncMock,
-            return_value={"memory": mock_memory_seed_groups},
-        ):
-            scenario = RedTeamAgent(
-                attack_scoring_config=AttackScoringConfig(objective_scorer=mock_objective_scorer),
-            )
-            await scenario.initialize_async(
-                objective_target=mock_objective_target,
-                scenario_strategies=[legacy],  # type: ignore[arg-type]
-                dataset_config=mock_dataset_config,
-                include_baseline=False,
-            )
-
-        result = scenario._scenario_composites[0]
-        assert result.attack is None
-        assert set(result.converters) == {FoundryStrategy.Base64, FoundryStrategy.ROT13}
 
 
 @pytest.mark.usefixtures(*FIXTURES)
@@ -822,12 +799,15 @@ class TestRedTeamAgentBaselineUniformity:
             scenario = RedTeamAgent(
                 attack_scoring_config=AttackScoringConfig(objective_scorer=mock_objective_scorer),
             )
-            await scenario.initialize_async(
-                objective_target=mock_objective_target,
-                scenario_strategies=[FoundryStrategy.Base64],
-                dataset_config=config,
-                include_baseline=True,
+            scenario.set_params_from_args(
+                args={
+                    "objective_target": mock_objective_target,
+                    "scenario_strategies": [FoundryStrategy.Base64],
+                    "dataset_config": config,
+                    "include_baseline": True,
+                }
             )
+            await scenario.initialize_async()
 
         assert mock_sample.call_count == 1
         assert scenario._atomic_attacks[0].atomic_attack_name == "baseline"

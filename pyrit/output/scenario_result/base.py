@@ -3,7 +3,6 @@
 
 from abc import abstractmethod
 
-from pyrit.common.deprecation import print_deprecation_message
 from pyrit.models import ScenarioResult
 from pyrit.output.base import PrinterBase
 
@@ -27,13 +26,3 @@ class ScenarioResultPrinterBase(PrinterBase):
         Returns:
             str: The rendered scenario result text.
         """
-
-    async def print_summary_async(self, result: ScenarioResult) -> None:
-        """
-        Use ``write_async`` instead. This method is deprecated.
-
-        Args:
-            result (ScenarioResult): The scenario result to summarize.
-        """
-        print_deprecation_message(old_item="print_summary_async", new_item="write_async", removed_in="0.16.0")
-        await self.write_async(result)
