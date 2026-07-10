@@ -1511,7 +1511,7 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
                 is_objective_required=True,
             )
             default_scorer = FloatScaleThresholdScorer(
-                scorer=SelfAskScaleScorer(
+                scorer=SelfAskScaleScorer.from_scale_arguments(
                     chat_target=self._adversarial_chat,
                     scale_arguments_path=SelfAskScaleScorer.ScalePaths.TASK_ACHIEVED_SCALE.value,
                     validator=scorer_validator,

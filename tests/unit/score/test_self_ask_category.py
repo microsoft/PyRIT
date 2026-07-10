@@ -49,16 +49,16 @@ def scorer_category_response_false() -> Message:
     return Message(message_pieces=[MessagePiece(role="assistant", original_value=json_response)])
 
 
-def test_category_scorer_set_no_category_found():
+def test_category_scorer_set_no_category_found(patch_central_database):
     chat_target = MagicMock()
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
-    scorer = SelfAskCategoryScorer(
+    scorer = SelfAskCategoryScorer.from_content_classifier(
         chat_target=chat_target,
         content_classifier_path=ContentClassifierPaths.HARMFUL_CONTENT_CLASSIFIER.value,
     )
 
     # assert that the category content was loaded into system prompt
-    assert scorer._no_category_found_category in "no_harm"
+    assert "no_harm" in scorer._system_prompt
     assert "intended to harm an individual" in scorer._system_prompt
 
 
@@ -67,7 +67,7 @@ async def test_category_scorer_set_system_prompt(scorer_category_response_bullyi
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
 
     chat_target.send_prompt_async = AsyncMock(return_value=[scorer_category_response_bullying])
-    scorer = SelfAskCategoryScorer(
+    scorer = SelfAskCategoryScorer.from_content_classifier(
         chat_target=chat_target,
         content_classifier_path=ContentClassifierPaths.HARMFUL_CONTENT_CLASSIFIER.value,
     )
@@ -83,7 +83,7 @@ async def test_category_scorer_score(scorer_category_response_bullying: Message,
 
     chat_target.send_prompt_async = AsyncMock(return_value=[scorer_category_response_bullying])
 
-    scorer = SelfAskCategoryScorer(
+    scorer = SelfAskCategoryScorer.from_content_classifier(
         chat_target=chat_target,
         content_classifier_path=ContentClassifierPaths.HARMFUL_CONTENT_CLASSIFIER.value,
     )
@@ -105,7 +105,7 @@ async def test_category_scorer_score_false(scorer_category_response_false: Messa
 
     chat_target.send_prompt_async = AsyncMock(return_value=[scorer_category_response_false])
 
-    scorer = SelfAskCategoryScorer(
+    scorer = SelfAskCategoryScorer.from_content_classifier(
         chat_target=chat_target,
         content_classifier_path=ContentClassifierPaths.HARMFUL_CONTENT_CLASSIFIER.value,
     )
@@ -126,7 +126,7 @@ async def test_category_scorer_adds_to_memory(scorer_category_response_false: Me
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     chat_target.send_prompt_async = AsyncMock(return_value=[scorer_category_response_false])
     with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
-        scorer = SelfAskCategoryScorer(
+        scorer = SelfAskCategoryScorer.from_content_classifier(
             chat_target=chat_target,
             content_classifier_path=ContentClassifierPaths.HARMFUL_CONTENT_CLASSIFIER.value,
         )
@@ -143,7 +143,7 @@ async def test_self_ask_objective_scorer_bad_json_exception_retries(patch_centra
     bad_json_resp = Message(message_pieces=[MessagePiece(role="assistant", original_value="this is not a json")])
     chat_target.send_prompt_async = AsyncMock(return_value=[bad_json_resp])
     with patch.object(CentralMemory, "get_memory_instance", return_value=MagicMock()):
-        scorer = SelfAskCategoryScorer(
+        scorer = SelfAskCategoryScorer.from_content_classifier(
             chat_target=chat_target,
             content_classifier_path=ContentClassifierPaths.HARMFUL_CONTENT_CLASSIFIER.value,
         )
@@ -173,7 +173,7 @@ async def test_self_ask_objective_scorer_json_missing_key_exception_retries(patc
     bad_json_resp = Message(message_pieces=[MessagePiece(role="assistant", original_value=json_response)])
     chat_target.send_prompt_async = AsyncMock(return_value=[bad_json_resp])
     with patch.object(CentralMemory, "get_memory_instance", return_value=MagicMock()):
-        scorer = SelfAskCategoryScorer(
+        scorer = SelfAskCategoryScorer.from_content_classifier(
             chat_target=chat_target,
             content_classifier_path=ContentClassifierPaths.HARMFUL_CONTENT_CLASSIFIER.value,
         )
@@ -197,7 +197,7 @@ async def test_score_prompts_batch_async(
     chat_target.send_prompt_async = AsyncMock()
     chat_target._max_requests_per_minute = max_requests_per_minute
     with patch.object(CentralMemory, "get_memory_instance", return_value=MagicMock()):
-        scorer = SelfAskCategoryScorer(
+        scorer = SelfAskCategoryScorer.from_content_classifier(
             chat_target=chat_target,
             content_classifier_path=ContentClassifierPaths.HARMFUL_CONTENT_CLASSIFIER.value,
         )
@@ -225,7 +225,7 @@ async def test_blocked_response_returns_false_without_invoking_llm(patch_central
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     chat_target.send_prompt_async = AsyncMock()
 
-    scorer = SelfAskCategoryScorer(
+    scorer = SelfAskCategoryScorer.from_content_classifier(
         chat_target=chat_target,
         content_classifier_path=ContentClassifierPaths.HARMFUL_CONTENT_CLASSIFIER.value,
     )

@@ -53,7 +53,7 @@ async def test_likert_scorer_accepts_float_string_score_value(
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     chat_target.send_prompt_async = AsyncMock(return_value=[scorer_likert_float_response])
 
-    scorer = SelfAskLikertScorer(chat_target=chat_target, likert_scale=LikertScalePaths.CYBER_SCALE)
+    scorer = SelfAskLikertScorer.from_likert_scale(chat_target=chat_target, likert_scale=LikertScalePaths.CYBER_SCALE)
     score = await scorer.score_text_async("text")
 
     assert len(score) == 1
@@ -67,7 +67,9 @@ async def test_likert_scorer_set_system_prompt(scorer_likert_response: Message):
         chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
         chat_target.send_prompt_async = AsyncMock(return_value=[scorer_likert_response])
 
-        scorer = SelfAskLikertScorer(chat_target=chat_target, likert_scale=LikertScalePaths.CYBER_SCALE)
+        scorer = SelfAskLikertScorer.from_likert_scale(
+            chat_target=chat_target, likert_scale=LikertScalePaths.CYBER_SCALE
+        )
 
         await scorer.score_text_async(text="string")
 
@@ -89,7 +91,9 @@ async def test_likert_scorer_adds_to_memory(scorer_likert_response: Message):
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     chat_target.send_prompt_async = AsyncMock(return_value=[scorer_likert_response])
     with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
-        scorer = SelfAskLikertScorer(chat_target=chat_target, likert_scale=LikertScalePaths.CYBER_SCALE)
+        scorer = SelfAskLikertScorer.from_likert_scale(
+            chat_target=chat_target, likert_scale=LikertScalePaths.CYBER_SCALE
+        )
 
         await scorer.score_text_async(text="string")
 
@@ -102,7 +106,7 @@ async def test_likert_scorer_score(patch_central_database, scorer_likert_respons
 
     chat_target.send_prompt_async = AsyncMock(return_value=[scorer_likert_response])
 
-    scorer = SelfAskLikertScorer(chat_target=chat_target, likert_scale=LikertScalePaths.CYBER_SCALE)
+    scorer = SelfAskLikertScorer.from_likert_scale(chat_target=chat_target, likert_scale=LikertScalePaths.CYBER_SCALE)
 
     score = await scorer.score_text_async("No cyber harm")
 
@@ -123,7 +127,7 @@ async def test_self_ask_scorer_bad_json_exception_retries():
 
     bad_json_resp = Message(message_pieces=[MessagePiece(role="assistant", original_value="this is not a json")])
     chat_target.send_prompt_async = AsyncMock(return_value=[bad_json_resp])
-    scorer = SelfAskLikertScorer(chat_target=chat_target, likert_scale=LikertScalePaths.CYBER_SCALE)
+    scorer = SelfAskLikertScorer.from_likert_scale(chat_target=chat_target, likert_scale=LikertScalePaths.CYBER_SCALE)
 
     with pytest.raises(InvalidJsonException, match="Error in scorer SelfAskLikertScorer"):
         await scorer.score_text_async("this has no bullying")
@@ -151,7 +155,7 @@ async def test_self_ask_likert_scorer_json_missing_key_exception_retries():
     bad_json_resp = Message(message_pieces=[MessagePiece(role="assistant", original_value=json_response)])
 
     chat_target.send_prompt_async = AsyncMock(return_value=[bad_json_resp])
-    scorer = SelfAskLikertScorer(chat_target=chat_target, likert_scale=LikertScalePaths.CYBER_SCALE)
+    scorer = SelfAskLikertScorer.from_likert_scale(chat_target=chat_target, likert_scale=LikertScalePaths.CYBER_SCALE)
 
     with pytest.raises(InvalidJsonException, match="Error in scorer SelfAskLikertScorer"):
         await scorer.score_text_async("this has no bullying")
@@ -208,7 +212,7 @@ def test_custom_scale_sets_min_max(tmp_path: Path, min_val: int, max_val: int):
         custom_path = _make_custom_scale_yaml(tmp_path, min_val=min_val, max_val=max_val)
         with patch.object(LikertScalePaths, "path", new_callable=lambda: property(lambda self: Path(custom_path))):
             with patch.object(LikertScalePaths, "evaluation_files", new_callable=lambda: property(lambda self: None)):
-                scorer = SelfAskLikertScorer(
+                scorer = SelfAskLikertScorer.from_likert_scale(
                     chat_target=chat_target,
                     likert_scale=LikertScalePaths.CYBER_SCALE,
                 )
@@ -224,7 +228,7 @@ def test_default_1_to_5_scale_sets_min_max():
         chat_target = MagicMock()
         chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
 
-        scorer = SelfAskLikertScorer(
+        scorer = SelfAskLikertScorer.from_likert_scale(
             chat_target=chat_target,
             likert_scale=LikertScalePaths.VIOLENCE_SCALE,
         )
@@ -244,7 +248,7 @@ def test_custom_scale_system_prompt_contains_dynamic_range(tmp_path: Path, min_v
         custom_path = _make_custom_scale_yaml(tmp_path, min_val=min_val, max_val=max_val)
         with patch.object(LikertScalePaths, "path", new_callable=lambda: property(lambda self: Path(custom_path))):
             with patch.object(LikertScalePaths, "evaluation_files", new_callable=lambda: property(lambda self: None)):
-                scorer = SelfAskLikertScorer(
+                scorer = SelfAskLikertScorer.from_likert_scale(
                     chat_target=chat_target,
                     likert_scale=LikertScalePaths.CYBER_SCALE,
                 )
@@ -290,7 +294,7 @@ async def test_custom_scale_score_normalisation(
     custom_path = _make_custom_scale_yaml(tmp_path, min_val=min_val, max_val=max_val)
     with patch.object(LikertScalePaths, "path", new_callable=lambda: property(lambda self: Path(custom_path))):
         with patch.object(LikertScalePaths, "evaluation_files", new_callable=lambda: property(lambda self: None)):
-            scorer = SelfAskLikertScorer(
+            scorer = SelfAskLikertScorer.from_likert_scale(
                 chat_target=chat_target,
                 likert_scale=LikertScalePaths.CYBER_SCALE,
             )
@@ -313,7 +317,7 @@ def test_likert_scale_negative_value_rejected(tmp_path: Path):
         with patch.object(LikertScalePaths, "path", new_callable=lambda: property(lambda self: Path(custom_path))):
             with patch.object(LikertScalePaths, "evaluation_files", new_callable=lambda: property(lambda self: None)):
                 with pytest.raises(ValueError, match="non-negative"):
-                    SelfAskLikertScorer(
+                    SelfAskLikertScorer.from_likert_scale(
                         chat_target=chat_target,
                         likert_scale=LikertScalePaths.CYBER_SCALE,
                     )
@@ -339,7 +343,7 @@ def test_likert_scale_missing_category_rejected(tmp_path: Path):
         with patch.object(LikertScalePaths, "path", new_callable=lambda: property(lambda self: Path(yaml_file))):
             with patch.object(LikertScalePaths, "evaluation_files", new_callable=lambda: property(lambda self: None)):
                 with pytest.raises(ValueError, match="missing required field 'category'"):
-                    SelfAskLikertScorer(
+                    SelfAskLikertScorer.from_likert_scale(
                         chat_target=chat_target,
                         likert_scale=LikertScalePaths.CYBER_SCALE,
                     )
@@ -361,7 +365,7 @@ def test_likert_scale_missing_scale_descriptions_rejected(tmp_path: Path):
         with patch.object(LikertScalePaths, "path", new_callable=lambda: property(lambda self: Path(yaml_file))):
             with patch.object(LikertScalePaths, "evaluation_files", new_callable=lambda: property(lambda self: None)):
                 with pytest.raises(ValueError, match="scale_descriptions"):
-                    SelfAskLikertScorer(
+                    SelfAskLikertScorer.from_likert_scale(
                         chat_target=chat_target,
                         likert_scale=LikertScalePaths.CYBER_SCALE,
                     )
@@ -390,7 +394,7 @@ def test_likert_scale_non_integer_score_value_rejected(tmp_path: Path):
         with patch.object(LikertScalePaths, "path", new_callable=lambda: property(lambda self: Path(yaml_file))):
             with patch.object(LikertScalePaths, "evaluation_files", new_callable=lambda: property(lambda self: None)):
                 with pytest.raises(ValueError, match="non-negative integer"):
-                    SelfAskLikertScorer(
+                    SelfAskLikertScorer.from_likert_scale(
                         chat_target=chat_target,
                         likert_scale=LikertScalePaths.CYBER_SCALE,
                     )
@@ -419,7 +423,7 @@ def test_likert_scale_missing_score_value_key_rejected(tmp_path: Path):
         with patch.object(LikertScalePaths, "path", new_callable=lambda: property(lambda self: Path(yaml_file))):
             with patch.object(LikertScalePaths, "evaluation_files", new_callable=lambda: property(lambda self: None)):
                 with pytest.raises(ValueError, match="missing required key 'score_value'"):
-                    SelfAskLikertScorer(
+                    SelfAskLikertScorer.from_likert_scale(
                         chat_target=chat_target,
                         likert_scale=LikertScalePaths.CYBER_SCALE,
                     )
@@ -456,7 +460,7 @@ def test_custom_likert_path_creates_scorer(tmp_path: Path):
         chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
 
         custom_path = _make_custom_scale_yaml(tmp_path, category="custom_cat", min_val=0, max_val=3)
-        scorer = SelfAskLikertScorer(chat_target=chat_target, custom_likert_path=custom_path)
+        scorer = SelfAskLikertScorer.from_likert_scale(chat_target=chat_target, custom_likert_path=custom_path)
 
         assert scorer._min_scale_value == 0
         assert scorer._max_scale_value == 3
@@ -471,7 +475,9 @@ def test_custom_likert_path_file_not_found():
         chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
 
         with pytest.raises(FileNotFoundError, match="Custom Likert scale file not found"):
-            SelfAskLikertScorer(chat_target=chat_target, custom_likert_path=Path("/does/not/exist.yaml"))
+            SelfAskLikertScorer.from_likert_scale(
+                chat_target=chat_target, custom_likert_path=Path("/does/not/exist.yaml")
+            )
 
 
 def test_custom_likert_path_non_yaml_rejected(tmp_path: Path):
@@ -485,7 +491,7 @@ def test_custom_likert_path_non_yaml_rejected(tmp_path: Path):
         chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
 
         with pytest.raises(ValueError, match="must be a YAML file"):
-            SelfAskLikertScorer(chat_target=chat_target, custom_likert_path=bad_file)
+            SelfAskLikertScorer.from_likert_scale(chat_target=chat_target, custom_likert_path=bad_file)
 
 
 def test_custom_system_prompt_non_yaml_rejected(tmp_path: Path):
@@ -499,7 +505,7 @@ def test_custom_system_prompt_non_yaml_rejected(tmp_path: Path):
         chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
 
         with pytest.raises(ValueError, match="must be a YAML file"):
-            SelfAskLikertScorer(
+            SelfAskLikertScorer.from_likert_scale(
                 chat_target=chat_target,
                 likert_scale=LikertScalePaths.CYBER_SCALE,
                 custom_system_prompt_path=bad_file,
@@ -516,7 +522,7 @@ def test_custom_system_prompt_path_used_in_system_prompt(tmp_path: Path):
         custom_prompt_path = _make_custom_system_prompt_yaml(tmp_path)
         custom_likert_path = _make_custom_scale_yaml(tmp_path, category="test_cat", min_val=1, max_val=5)
 
-        scorer = SelfAskLikertScorer(
+        scorer = SelfAskLikertScorer.from_likert_scale(
             chat_target=chat_target,
             custom_likert_path=custom_likert_path,
             custom_system_prompt_path=custom_prompt_path,
@@ -538,7 +544,7 @@ def test_custom_system_prompt_missing_params_rejected(tmp_path: Path):
         custom_likert_path = _make_custom_scale_yaml(tmp_path)
 
         with pytest.raises(ValueError, match="Custom system prompt YAML must define parameters"):
-            SelfAskLikertScorer(
+            SelfAskLikertScorer.from_likert_scale(
                 chat_target=chat_target,
                 custom_likert_path=custom_likert_path,
                 custom_system_prompt_path=bad_prompt_path,
@@ -553,7 +559,7 @@ def test_both_likert_scale_and_custom_path_raises():
         chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
 
         with pytest.raises(ValueError, match="Only one of"):
-            SelfAskLikertScorer(
+            SelfAskLikertScorer.from_likert_scale(
                 chat_target=chat_target,
                 likert_scale=LikertScalePaths.CYBER_SCALE,
                 custom_likert_path=Path("dummy.yaml"),
@@ -568,7 +574,7 @@ def test_neither_likert_scale_nor_custom_path_raises():
         chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
 
         with pytest.raises(ValueError, match="One of"):
-            SelfAskLikertScorer(chat_target=chat_target)
+            SelfAskLikertScorer.from_likert_scale(chat_target=chat_target)
 
 
 def test_custom_system_prompt_file_not_found():
@@ -579,7 +585,7 @@ def test_custom_system_prompt_file_not_found():
         chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
 
         with pytest.raises(FileNotFoundError, match="Custom system prompt file not found"):
-            SelfAskLikertScorer(
+            SelfAskLikertScorer.from_likert_scale(
                 chat_target=chat_target,
                 likert_scale=LikertScalePaths.CYBER_SCALE,
                 custom_system_prompt_path=Path("/does/not/exist.yaml"),
@@ -597,7 +603,7 @@ def test_custom_likert_yaml_not_a_dict_rejected(tmp_path: Path):
         chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
 
         with pytest.raises(ValueError, match="must contain a YAML mapping/dictionary"):
-            SelfAskLikertScorer(chat_target=chat_target, custom_likert_path=yaml_file)
+            SelfAskLikertScorer.from_likert_scale(chat_target=chat_target, custom_likert_path=yaml_file)
 
 
 def test_likert_scale_single_unique_value_rejected(tmp_path: Path):
@@ -621,4 +627,4 @@ def test_likert_scale_single_unique_value_rejected(tmp_path: Path):
         chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
 
         with pytest.raises(ValueError, match="at least two distinct score values"):
-            SelfAskLikertScorer(chat_target=chat_target, custom_likert_path=yaml_file)
+            SelfAskLikertScorer.from_likert_scale(chat_target=chat_target, custom_likert_path=yaml_file)

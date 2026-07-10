@@ -194,7 +194,7 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
             # Use provided adversarial chat target for scoring
             scoring_chat_target = attack_adversarial_config.target
             objective_scorer = FloatScaleThresholdScorer(
-                scorer=SelfAskScaleScorer(
+                scorer=SelfAskScaleScorer.from_scale_arguments(
                     chat_target=scoring_chat_target,
                     scale_arguments_path=SelfAskScaleScorer.ScalePaths.TASK_ACHIEVED_SCALE.value,
                     system_prompt_path=SelfAskScaleScorer.SystemPaths.RED_TEAMER_SYSTEM_PROMPT.value,
