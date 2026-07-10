@@ -101,7 +101,7 @@ print(f"[plagiarism] independent -> {original.get_value()}")
 from pyrit.prompt_target import OpenAIChatTarget
 from pyrit.score import LikertScalePaths, SelfAskLikertScorer
 
-misinfo_scorer = SelfAskLikertScorer(
+misinfo_scorer = SelfAskLikertScorer.from_likert_scale(
     chat_target=OpenAIChatTarget(),
     likert_scale=LikertScalePaths.MISINFORMATION_SCALE,
 )

@@ -150,7 +150,7 @@ from pyrit.prompt_target import OpenAIChatTarget
 from pyrit.score import LikertScalePaths, SelfAskLikertScorer
 
 gpt4o_endpoint = os.environ.get("AZURE_OPENAI_GPT4O_ENDPOINT")
-harm_scorer = SelfAskLikertScorer(
+harm_scorer = SelfAskLikertScorer.from_likert_scale(
     chat_target=OpenAIChatTarget(
         endpoint=gpt4o_endpoint,
         api_key=get_azure_openai_auth(gpt4o_endpoint),
@@ -301,7 +301,9 @@ from pyrit.score.scorer_evaluation.scorer_evaluator import ScorerEvalDatasetFile
 from pyrit.score.scorer_evaluation.scorer_metrics import HarmScorerMetrics
 
 # Create a harm scorer using the hate speech Likert scale
-likert_scorer = SelfAskLikertScorer(chat_target=OpenAIChatTarget(), likert_scale=LikertScalePaths.EXPLOITS_SCALE)
+likert_scorer = SelfAskLikertScorer.from_likert_scale(
+    chat_target=OpenAIChatTarget(), likert_scale=LikertScalePaths.EXPLOITS_SCALE
+)
 
 # # Configure evaluation to use a small sample dataset
 # likert_scorer.evaluation_file_mapping = ScorerEvalDatasetFiles(

@@ -238,7 +238,7 @@ scorer_target_b = OpenAIChatTarget(
 )
 rr_scorer_target = RoundRobinTarget(targets=[scorer_target_a, scorer_target_b], weights=[2, 1])
 
-scorer = SelfAskCategoryScorer(
+scorer = SelfAskCategoryScorer.from_content_classifier(
     chat_target=rr_scorer_target,
     content_classifier_path=ContentClassifierPaths.HARMFUL_CONTENT_CLASSIFIER.value,
 )

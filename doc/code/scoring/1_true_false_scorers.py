@@ -127,11 +127,11 @@ print(f"[markdown] plain text   -> {plain.get_value()}")
 # detecting a successful prompt injection.
 # %%
 from pyrit.prompt_target import OpenAIChatTarget
-from pyrit.score import SelfAskTrueFalseScorer, TrueFalseQuestionPaths
+from pyrit.score import SelfAskTrueFalseScorer, TrueFalseQuestion, TrueFalseQuestionPaths
 
-injection_scorer = SelfAskTrueFalseScorer(
+injection_scorer = SelfAskTrueFalseScorer.from_question(
     chat_target=OpenAIChatTarget(),
-    true_false_question_path=TrueFalseQuestionPaths.PROMPT_INJECTION.value,
+    question=TrueFalseQuestion.from_yaml(TrueFalseQuestionPaths.PROMPT_INJECTION.value),
 )
 
 dan_response = """
@@ -180,7 +180,7 @@ print(f"[refusal] explicit refusal -> {refusal_score.get_value()}")
 # %%
 from pyrit.score import ContentClassifierPaths, SelfAskCategoryScorer
 
-category_scorer = SelfAskCategoryScorer(
+category_scorer = SelfAskCategoryScorer.from_content_classifier(
     chat_target=OpenAIChatTarget(),
     content_classifier_path=ContentClassifierPaths.HARMFUL_CONTENT_CLASSIFIER.value,
 )

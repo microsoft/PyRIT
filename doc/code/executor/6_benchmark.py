@@ -177,7 +177,7 @@ print(f"\nOverall success rate: {success}/{len(all_answers)} = {success / len(al
 
 # %%
 # Create the pronoun scorer
-pronoun_scorer = SelfAskCategoryScorer(
+pronoun_scorer = SelfAskCategoryScorer.from_content_classifier(
     content_classifier_path=Path(SCORER_CONTENT_CLASSIFIERS_PATH) / "pronoun_category_score.yaml",
     chat_target=objective_target,
 )
