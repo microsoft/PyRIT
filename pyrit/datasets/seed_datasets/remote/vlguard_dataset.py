@@ -8,7 +8,7 @@ import os
 import uuid
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING, ClassVar, cast
+from typing import TYPE_CHECKING, ClassVar
 
 from huggingface_hub import hf_hub_download
 from typing_extensions import override
@@ -98,23 +98,20 @@ class _VLGuardDataset(_RemoteDatasetLoader):
     Paper: Safety Fine-Tuning at (Almost) No Cost: A Baseline for Vision Large Language Models (ICML 2024)
     """
 
-    HARM_SUBCATEGORY_ALIAS_OVERRIDES: dict[str, list[HarmCategory]] = cast(
-        "dict[str, list[HarmCategory]]",
-        {
-            "personal data": [HarmCategory.PPI],
-            "professional advice": [
-                HarmCategory.LEGAL_ADVICE,
-                HarmCategory.FINANCIAL_ADVICE,
-                HarmCategory.HEALTH_DIAGNOSIS,
-            ],
-            "political": [HarmCategory.CAMPAIGNING],
-            "sexually explicit": [HarmCategory.SEXUAL_CONTENT],
-            "violence": [HarmCategory.VIOLENT_CONTENT],
-            "disinformation": [HarmCategory.INFO_INTEGRITY],
-            "sex": [HarmCategory.REPRESENTATIONAL, HarmCategory.HATESPEECH],
-            "race": [HarmCategory.REPRESENTATIONAL, HarmCategory.HATESPEECH],
-        },
-    )
+    HARM_SUBCATEGORY_ALIAS_OVERRIDES: dict[str, list[HarmCategory]] = {
+        "personal data": [HarmCategory.PPI],
+        "professional advice": [
+            HarmCategory.LEGAL_ADVICE,
+            HarmCategory.FINANCIAL_ADVICE,
+            HarmCategory.HEALTH_DIAGNOSIS,
+        ],
+        "political": [HarmCategory.CAMPAIGNING],
+        "sexually explicit": [HarmCategory.SEXUAL_CONTENT],
+        "violence": [HarmCategory.VIOLENT_CONTENT],
+        "disinformation": [HarmCategory.INFO_INTEGRITY],
+        "sex": [HarmCategory.REPRESENTATIONAL, HarmCategory.HATESPEECH],
+        "race": [HarmCategory.REPRESENTATIONAL, HarmCategory.HATESPEECH],
+    }
     _HF_REPO_ID: ClassVar[str] = "ys-zong/VLGuard"
 
     _AUTHORS = [

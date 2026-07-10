@@ -5,7 +5,7 @@ import io
 import logging
 import uuid
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, cast
+from typing import TYPE_CHECKING, Any, ClassVar
 from urllib.parse import urlparse
 
 from typing_extensions import override
@@ -131,53 +131,47 @@ class _MSTSDataset(_RemoteDatasetLoader):
         "Suicide & Self-Harm",
         "Other",
     ]
-    HARM_CATEGORY_ALIAS_OVERRIDES: dict[str, list[HarmCategory]] = cast(
-        "dict[str, list[HarmCategory]]",
-        {
-            "violent crimes": [HarmCategory.VIOLENT_CONTENT],
-            "non-violent crimes": [HarmCategory.COORDINATION_HARM],
-            "sex-related crimes": [HarmCategory.SEXUAL_CONTENT],
-            "suicide & self-harm": [HarmCategory.SUICIDE, HarmCategory.SELF_HARM],
-            "other": [HarmCategory.OTHER],
-        },
-    )
+    HARM_CATEGORY_ALIAS_OVERRIDES: dict[str, list[HarmCategory]] = {
+        "violent crimes": [HarmCategory.VIOLENT_CONTENT],
+        "non-violent crimes": [HarmCategory.COORDINATION_HARM],
+        "sex-related crimes": [HarmCategory.SEXUAL_CONTENT],
+        "suicide & self-harm": [HarmCategory.SUICIDE, HarmCategory.SELF_HARM],
+        "other": [HarmCategory.OTHER],
+    }
     # The 21 fine-grained hazard_subcategory values resolve far more precisely than
     # the 5 top-level hazard_category buckets (e.g. the "Other" bucket splits into
     # "Conspiracy theories" -> INFO_INTEGRITY and "Gross behaviour" -> OTHER). When a
     # row's subcategory is present and recognized it takes precedence; otherwise the
     # loader falls back to the coarse hazard_category mapping above.
-    HAZARD_SUBCATEGORY_ALIAS_OVERRIDES: dict[str, list[HarmCategory]] = cast(
-        "dict[str, list[HarmCategory]]",
-        {
-            "property damage": [HarmCategory.COORDINATION_HARM],
-            "sale, purchase or ownership of illegal, regulated or unregistered items": [
-                HarmCategory.REGULATED_GOODS,
-                HarmCategory.COORDINATION_HARM,
-            ],
-            "environmental pollution": [HarmCategory.OTHER],
-            "production of illegal, regulated or unregistered items": [
-                HarmCategory.REGULATED_GOODS,
-                HarmCategory.COORDINATION_HARM,
-            ],
-            "reckless endangerment": [HarmCategory.DANGEROUS_SITUATIONS],
-            "dangerous challenges": [HarmCategory.DANGEROUS_SITUATIONS],
-            "scams & fraud": [HarmCategory.SCAMS, HarmCategory.DECEPTION],
-            "self-harm": [HarmCategory.SELF_HARM],
-            "physical assault": [HarmCategory.VIOLENT_CONTENT],
-            "murder": [HarmCategory.VIOLENT_CONTENT],
-            "gross behaviour": [HarmCategory.OTHER],
-            "sexual harassment": [HarmCategory.HARASSMENT, HarmCategory.SEXUAL_SOLICITATION],
-            "trespassing": [HarmCategory.COORDINATION_HARM],
-            "terror": [HarmCategory.VIOLENT_EXTREMISM, HarmCategory.COORDINATION_HARM],
-            "conspiracy theories": [HarmCategory.INFO_INTEGRITY],
-            "eating disorders": [HarmCategory.EATING_DISORDERS, HarmCategory.SELF_HARM],
-            "suicide": [HarmCategory.SUICIDE, HarmCategory.SELF_HARM],
-            "sexual assault": [HarmCategory.SEXUAL_CONTENT, HarmCategory.VIOLENT_CONTENT],
-            "indecent exposure": [HarmCategory.SEXUAL_CONTENT],
-            "theft": [HarmCategory.COORDINATION_HARM],
-            "mass violence": [HarmCategory.VIOLENT_CONTENT, HarmCategory.VIOLENT_EXTREMISM],
-        },
-    )
+    HAZARD_SUBCATEGORY_ALIAS_OVERRIDES: dict[str, list[HarmCategory]] = {
+        "property damage": [HarmCategory.COORDINATION_HARM],
+        "sale, purchase or ownership of illegal, regulated or unregistered items": [
+            HarmCategory.REGULATED_GOODS,
+            HarmCategory.COORDINATION_HARM,
+        ],
+        "environmental pollution": [HarmCategory.OTHER],
+        "production of illegal, regulated or unregistered items": [
+            HarmCategory.REGULATED_GOODS,
+            HarmCategory.COORDINATION_HARM,
+        ],
+        "reckless endangerment": [HarmCategory.DANGEROUS_SITUATIONS],
+        "dangerous challenges": [HarmCategory.DANGEROUS_SITUATIONS],
+        "scams & fraud": [HarmCategory.SCAMS, HarmCategory.DECEPTION],
+        "self-harm": [HarmCategory.SELF_HARM],
+        "physical assault": [HarmCategory.VIOLENT_CONTENT],
+        "murder": [HarmCategory.VIOLENT_CONTENT],
+        "gross behaviour": [HarmCategory.OTHER],
+        "sexual harassment": [HarmCategory.HARASSMENT, HarmCategory.SEXUAL_SOLICITATION],
+        "trespassing": [HarmCategory.COORDINATION_HARM],
+        "terror": [HarmCategory.VIOLENT_EXTREMISM, HarmCategory.COORDINATION_HARM],
+        "conspiracy theories": [HarmCategory.INFO_INTEGRITY],
+        "eating disorders": [HarmCategory.EATING_DISORDERS, HarmCategory.SELF_HARM],
+        "suicide": [HarmCategory.SUICIDE, HarmCategory.SELF_HARM],
+        "sexual assault": [HarmCategory.SEXUAL_CONTENT, HarmCategory.VIOLENT_CONTENT],
+        "indecent exposure": [HarmCategory.SEXUAL_CONTENT],
+        "theft": [HarmCategory.COORDINATION_HARM],
+        "mass violence": [HarmCategory.VIOLENT_CONTENT, HarmCategory.VIOLENT_EXTREMISM],
+    }
     modalities: list[str] = ["text", "image"]
     size: str = "large"
     tags: set[str] = {"default", "safety", "multimodal", "multilingual"}

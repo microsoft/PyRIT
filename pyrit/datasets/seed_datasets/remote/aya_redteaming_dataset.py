@@ -3,7 +3,7 @@
 
 import ast
 import logging
-from typing import Literal, cast
+from typing import Literal
 
 from typing_extensions import override
 
@@ -124,25 +124,22 @@ class _AyaRedteamingDataset(_RemoteDatasetLoader):
             cache=cache,
         )
 
-        harm_category_alias_overrides: dict[str, list[HarmCategory]] = cast(
-            "dict[str, list[HarmCategory]]",
-            {
-                "bullying & harassment": [HarmCategory.HARASSMENT],
-                "discrimination & injustice": [HarmCategory.HATESPEECH, HarmCategory.REPRESENTATIONAL],
-                "graphic material": [HarmCategory.VIOLENT_CONTENT],
-                "harms of representation allocation and quality of service": [
-                    HarmCategory.REPRESENTATIONAL,
-                    HarmCategory.ALLOCATION,
-                    HarmCategory.QUALITY_OF_SERVICE,
-                ],
-                "non-consensual sexual content": [HarmCategory.SEXUAL_CONTENT, HarmCategory.NONCONSENSUAL_UPLOAD],
-                "violence, threats & incitement": [
-                    HarmCategory.VIOLENT_CONTENT,
-                    HarmCategory.VIOLENT_THREATS,
-                    HarmCategory.COORDINATION_HARM,
-                ],
-            },
-        )
+        harm_category_alias_overrides: dict[str, list[HarmCategory]] = {
+            "bullying & harassment": [HarmCategory.HARASSMENT],
+            "discrimination & injustice": [HarmCategory.HATESPEECH, HarmCategory.REPRESENTATIONAL],
+            "graphic material": [HarmCategory.VIOLENT_CONTENT],
+            "harms of representation allocation and quality of service": [
+                HarmCategory.REPRESENTATIONAL,
+                HarmCategory.ALLOCATION,
+                HarmCategory.QUALITY_OF_SERVICE,
+            ],
+            "non-consensual sexual content": [HarmCategory.SEXUAL_CONTENT, HarmCategory.NONCONSENSUAL_UPLOAD],
+            "violence, threats & incitement": [
+                HarmCategory.VIOLENT_CONTENT,
+                HarmCategory.VIOLENT_THREATS,
+                HarmCategory.COORDINATION_HARM,
+            ],
+        }
         seed_prompts: list[SeedPrompt] = []
 
         for example in examples:

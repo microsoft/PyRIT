@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 import logging
-from typing import Literal, cast
+from typing import Literal
 
 from typing_extensions import override
 
@@ -122,33 +122,30 @@ class _PKUSafeRLHFDataset(_RemoteDatasetLoader):
             split="train",
         )
 
-        harm_category_alias_overrides: dict[str, list[HarmCategory]] = cast(
-            "dict[str, list[HarmCategory]]",
-            {
-                "Animal Abuse": [HarmCategory.OTHER],
-                "Copyright Issues": [HarmCategory.COPYRIGHT],
-                "Cybercrime": [HarmCategory.MALWARE, HarmCategory.COORDINATION_HARM],
-                "Discriminatory Behavior": [HarmCategory.HATESPEECH, HarmCategory.REPRESENTATIONAL],
-                "Disrupting Public Order": [HarmCategory.COORDINATION_HARM],
-                "Drugs": [HarmCategory.DRUG_USE, HarmCategory.REGULATED_GOODS],
-                "Economic Crime": [HarmCategory.SCAMS, HarmCategory.DECEPTION],
-                "Endangering National Security": [
-                    HarmCategory.COORDINATION_HARM,
-                    HarmCategory.INFRASTRUCTURE_RISK,
-                    HarmCategory.MILITARY,
-                ],
-                "Endangering Public Health": [HarmCategory.PUBLIC_HEALTH],
-                "Environmental Damage": [HarmCategory.OTHER],
-                "Human Trafficking": [HarmCategory.COORDINATION_HARM, HarmCategory.SEXUAL_SOLICITATION],
-                "Insulting Behavior": [HarmCategory.HARASSMENT],
-                "Mental Manipulation": [HarmCategory.DECEPTION],
-                "Physical Harm": [HarmCategory.VIOLENT_CONTENT],
-                "Privacy Violation": [HarmCategory.PPI],
-                "Psychological Harm": [HarmCategory.MENTAL_HEALTH, HarmCategory.EMOTIONAL],
-                "Violence": [HarmCategory.VIOLENT_CONTENT],
-                "White-Collar Crime": [HarmCategory.SCAMS, HarmCategory.DECEPTION],
-            },
-        )
+        harm_category_alias_overrides: dict[str, list[HarmCategory]] = {
+            "Animal Abuse": [HarmCategory.OTHER],
+            "Copyright Issues": [HarmCategory.COPYRIGHT],
+            "Cybercrime": [HarmCategory.MALWARE, HarmCategory.COORDINATION_HARM],
+            "Discriminatory Behavior": [HarmCategory.HATESPEECH, HarmCategory.REPRESENTATIONAL],
+            "Disrupting Public Order": [HarmCategory.COORDINATION_HARM],
+            "Drugs": [HarmCategory.DRUG_USE, HarmCategory.REGULATED_GOODS],
+            "Economic Crime": [HarmCategory.SCAMS, HarmCategory.DECEPTION],
+            "Endangering National Security": [
+                HarmCategory.COORDINATION_HARM,
+                HarmCategory.INFRASTRUCTURE_RISK,
+                HarmCategory.MILITARY,
+            ],
+            "Endangering Public Health": [HarmCategory.PUBLIC_HEALTH],
+            "Environmental Damage": [HarmCategory.OTHER],
+            "Human Trafficking": [HarmCategory.COORDINATION_HARM, HarmCategory.SEXUAL_SOLICITATION],
+            "Insulting Behavior": [HarmCategory.HARASSMENT],
+            "Mental Manipulation": [HarmCategory.DECEPTION],
+            "Physical Harm": [HarmCategory.VIOLENT_CONTENT],
+            "Privacy Violation": [HarmCategory.PPI],
+            "Psychological Harm": [HarmCategory.MENTAL_HEALTH, HarmCategory.EMOTIONAL],
+            "Violence": [HarmCategory.VIOLENT_CONTENT],
+            "White-Collar Crime": [HarmCategory.SCAMS, HarmCategory.DECEPTION],
+        }
         seed_prompts: list[SeedPrompt] = []
 
         for item in data:

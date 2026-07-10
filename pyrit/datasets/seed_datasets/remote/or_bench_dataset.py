@@ -153,15 +153,12 @@ class _ORBenchToxicDataset(_ORBenchBaseDataset):
     # Unlike the benign 80k/hard subsets, or-bench-toxic prompts are genuinely harmful,
     # so their `category` is a real harm domain and is standardized to the taxonomy.
     MAPS_HARM_CATEGORIES: bool = True
-    HARM_ALIAS_OVERRIDES: dict[str, list[HarmCategory]] = cast(
-        "dict[str, list[HarmCategory]]",
-        {
-            "hate": [HarmCategory.HATESPEECH, HarmCategory.REPRESENTATIONAL],
-            "privacy": [HarmCategory.PPI],
-            "harmful": [HarmCategory.OTHER],
-            "unethical": [HarmCategory.OTHER],
-        },
-    )
+    HARM_ALIAS_OVERRIDES: dict[str, list[HarmCategory]] = {
+        "hate": [HarmCategory.HATESPEECH, HarmCategory.REPRESENTATIONAL],
+        "privacy": [HarmCategory.PPI],
+        "harmful": [HarmCategory.OTHER],
+        "unethical": [HarmCategory.OTHER],
+    }
     DESCRIPTION: str = (
         "OR-Bench Toxic contains toxic prompts that language models should correctly refuse. "
         "Used as a contrast set to evaluate refusal calibration."

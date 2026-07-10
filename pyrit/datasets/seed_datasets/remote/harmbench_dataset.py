@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from typing import Literal, cast
+from typing import Literal
 
 from typing_extensions import override
 
@@ -78,20 +78,17 @@ class _HarmBenchDataset(_RemoteDatasetLoader):
         )
 
         # Validate and process examples
-        harm_category_alias_overrides: dict[str, list[HarmCategory]] = cast(
-            "dict[str, list[HarmCategory]]",
-            {
-                "chemical_biological": [HarmCategory.CBRN],
-                "cybercrime_intrusion": [HarmCategory.COORDINATION_HARM, HarmCategory.MALWARE],
-                "cybercrime": [HarmCategory.COORDINATION_HARM, HarmCategory.MALWARE],
-                "harassment_bullying": [HarmCategory.HARASSMENT],
-                "illegal": [HarmCategory.COORDINATION_HARM],
-                "illegal_activity": [HarmCategory.COORDINATION_HARM],
-                "misinformation_disinformation": [HarmCategory.INFO_INTEGRITY],
-                "harmful": [HarmCategory.OTHER],
-                "copyright": [HarmCategory.COPYRIGHT],
-            },
-        )
+        harm_category_alias_overrides: dict[str, list[HarmCategory]] = {
+            "chemical_biological": [HarmCategory.CBRN],
+            "cybercrime_intrusion": [HarmCategory.COORDINATION_HARM, HarmCategory.MALWARE],
+            "cybercrime": [HarmCategory.COORDINATION_HARM, HarmCategory.MALWARE],
+            "harassment_bullying": [HarmCategory.HARASSMENT],
+            "illegal": [HarmCategory.COORDINATION_HARM],
+            "illegal_activity": [HarmCategory.COORDINATION_HARM],
+            "misinformation_disinformation": [HarmCategory.INFO_INTEGRITY],
+            "harmful": [HarmCategory.OTHER],
+            "copyright": [HarmCategory.COPYRIGHT],
+        }
 
         seeds: list[SeedUnion] = []
         for example in examples:

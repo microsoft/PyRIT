@@ -2,7 +2,6 @@
 # Licensed under the MIT license.
 
 import logging
-from typing import cast
 
 from typing_extensions import override
 
@@ -28,25 +27,22 @@ class _JBBBehaviorsDataset(_RemoteDatasetLoader):
     before using these prompts against production LLMs.
     """
 
-    HARM_CATEGORY_ALIAS_OVERRIDES: dict[str, list[HarmCategory]] = cast(
-        "dict[str, list[HarmCategory]]",
-        {
-            "disinformation": [HarmCategory.INFO_INTEGRITY],
-            "economic harm": [HarmCategory.SCAMS],
-            "expert advice": [HarmCategory.HEALTH_DIAGNOSIS, HarmCategory.LEGAL_ADVICE, HarmCategory.FINANCIAL_ADVICE],
-            "fraud/deception": [HarmCategory.SCAMS, HarmCategory.DECEPTION],
-            "government decision-making": [HarmCategory.HIGH_RISK_GOVERNMENT],
-            "harassment/discrimination": [
-                HarmCategory.HARASSMENT,
-                HarmCategory.HATESPEECH,
-                HarmCategory.REPRESENTATIONAL,
-            ],
-            "malware/hacking": [HarmCategory.MALWARE],
-            "physical harm": [HarmCategory.VIOLENT_CONTENT, HarmCategory.COORDINATION_HARM],
-            "privacy": [HarmCategory.PPI],
-            "sexual/adult content": [HarmCategory.SEXUAL_CONTENT],
-        },
-    )
+    HARM_CATEGORY_ALIAS_OVERRIDES: dict[str, list[HarmCategory]] = {
+        "disinformation": [HarmCategory.INFO_INTEGRITY],
+        "economic harm": [HarmCategory.SCAMS],
+        "expert advice": [HarmCategory.HEALTH_DIAGNOSIS, HarmCategory.LEGAL_ADVICE, HarmCategory.FINANCIAL_ADVICE],
+        "fraud/deception": [HarmCategory.SCAMS, HarmCategory.DECEPTION],
+        "government decision-making": [HarmCategory.HIGH_RISK_GOVERNMENT],
+        "harassment/discrimination": [
+            HarmCategory.HARASSMENT,
+            HarmCategory.HATESPEECH,
+            HarmCategory.REPRESENTATIONAL,
+        ],
+        "malware/hacking": [HarmCategory.MALWARE],
+        "physical harm": [HarmCategory.VIOLENT_CONTENT, HarmCategory.COORDINATION_HARM],
+        "privacy": [HarmCategory.PPI],
+        "sexual/adult content": [HarmCategory.SEXUAL_CONTENT],
+    }
 
     _AUTHORS = [
         "Patrick Chao",

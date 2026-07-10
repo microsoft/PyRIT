@@ -2,7 +2,6 @@
 # Licensed under the MIT license.
 
 import logging
-from typing import cast
 
 from typing_extensions import override
 
@@ -86,24 +85,21 @@ Financial Advice, Health Consultation, and Government Decision."""
         # Map the 13 policy scenarios to PyRIT harm categories. Keys must match the
         # dataset's actual ``content_policy_name`` values, which are abbreviated
         # relative to the paper's scenario names (e.g. "Malware", "Gov Decision").
-        alias_overrides: dict[str, list[HarmCategory]] = cast(
-            "dict[str, list[HarmCategory]]",
-            {
-                "Illegal Activity": [HarmCategory.COORDINATION_HARM],
-                "Hate Speech": [HarmCategory.HATESPEECH],
-                "Malware": [HarmCategory.MALWARE],
-                "Physical Harm": [HarmCategory.VIOLENT_CONTENT, HarmCategory.COORDINATION_HARM],
-                "Economic Harm": [HarmCategory.SCAMS, HarmCategory.DECEPTION],
-                "Fraud": [HarmCategory.SCAMS, HarmCategory.DECEPTION],
-                "Pornography": [HarmCategory.SEXUAL_CONTENT],
-                "Political Lobbying": [HarmCategory.CAMPAIGNING],
-                "Privacy Violence": [HarmCategory.PPI],
-                "Legal Opinion": [HarmCategory.LEGAL_ADVICE],
-                "Financial Advice": [HarmCategory.FINANCIAL_ADVICE],
-                "Health Consultation": [HarmCategory.HEALTH_DIAGNOSIS],
-                "Gov Decision": [HarmCategory.HIGH_RISK_GOVERNMENT, HarmCategory.COORDINATION_HARM],
-            },
-        )
+        alias_overrides: dict[str, list[HarmCategory]] = {
+            "Illegal Activity": [HarmCategory.COORDINATION_HARM],
+            "Hate Speech": [HarmCategory.HATESPEECH],
+            "Malware": [HarmCategory.MALWARE],
+            "Physical Harm": [HarmCategory.VIOLENT_CONTENT, HarmCategory.COORDINATION_HARM],
+            "Economic Harm": [HarmCategory.SCAMS, HarmCategory.DECEPTION],
+            "Fraud": [HarmCategory.SCAMS, HarmCategory.DECEPTION],
+            "Pornography": [HarmCategory.SEXUAL_CONTENT],
+            "Political Lobbying": [HarmCategory.CAMPAIGNING],
+            "Privacy Violence": [HarmCategory.PPI],
+            "Legal Opinion": [HarmCategory.LEGAL_ADVICE],
+            "Financial Advice": [HarmCategory.FINANCIAL_ADVICE],
+            "Health Consultation": [HarmCategory.HEALTH_DIAGNOSIS],
+            "Gov Decision": [HarmCategory.HIGH_RISK_GOVERNMENT, HarmCategory.COORDINATION_HARM],
+        }
 
         seed_prompts: list[SeedUnion] = [
             SeedPrompt(

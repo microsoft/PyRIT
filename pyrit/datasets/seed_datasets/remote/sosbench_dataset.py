@@ -2,7 +2,6 @@
 # Licensed under the MIT license.
 
 import logging
-from typing import cast
 
 from typing_extensions import override
 
@@ -77,17 +76,14 @@ class _SOSBenchDataset(_RemoteDatasetLoader):
         # health misinformation (PUBLIC_HEALTH), physics prompts concern radioactive
         # isotopes (CBRN, radiological), pharmacy prompts synthesize designer drugs
         # (PSEUDO_PHARMA), and chemistry prompts describe hazardous synthesis (CBRN).
-        alias_overrides: dict[str, list[HarmCategory]] = cast(
-            "dict[str, list[HarmCategory]]",
-            {
-                "chemistry": [HarmCategory.CBRN],
-                "biology": [HarmCategory.PUBLIC_HEALTH],
-                "physics": [HarmCategory.CBRN],
-                "medical": [HarmCategory.PUBLIC_HEALTH],
-                "pharmacy": [HarmCategory.PSEUDO_PHARMA],
-                "psychology": [HarmCategory.MENTAL_HEALTH],
-            },
-        )
+        alias_overrides: dict[str, list[HarmCategory]] = {
+            "chemistry": [HarmCategory.CBRN],
+            "biology": [HarmCategory.PUBLIC_HEALTH],
+            "physics": [HarmCategory.CBRN],
+            "medical": [HarmCategory.PUBLIC_HEALTH],
+            "pharmacy": [HarmCategory.PSEUDO_PHARMA],
+            "psychology": [HarmCategory.MENTAL_HEALTH],
+        }
 
         seed_prompts: list[SeedUnion] = [
             SeedPrompt(

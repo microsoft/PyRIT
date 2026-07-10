@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 import logging
-from typing import Literal, cast
+from typing import Literal
 
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
@@ -108,44 +108,38 @@ class _CategoricalHarmfulQADataset(_RemoteDatasetLoader):
         )
         source_url = f"https://huggingface.co/datasets/{self.HF_DATASET_NAME}"
         groups = ["DeCLaRe Lab, Singapore University of Technology and Design"]
-        harm_category_alias_overrides: dict[str, list[HarmCategory]] = cast(
-            "dict[str, list[HarmCategory]]",
-            {
-                "adult content": [HarmCategory.SEXUAL_CONTENT],
-                "child abuse": [HarmCategory.GROOMING, HarmCategory.SEXUAL_CONTENT, HarmCategory.CHILD_LEAKAGE],
-                "economic harm": [HarmCategory.SCAMS, HarmCategory.DECEPTION],
-                "fraud/deception": [HarmCategory.SCAMS, HarmCategory.DECEPTION],
-                "hate/harass/violence": [
-                    HarmCategory.HATESPEECH,
-                    HarmCategory.HARASSMENT,
-                    HarmCategory.VIOLENT_CONTENT,
-                ],
-                "illegal activity": [HarmCategory.COORDINATION_HARM],
-                "malware viruses": [HarmCategory.MALWARE],
-                "physical harm": [HarmCategory.VIOLENT_CONTENT, HarmCategory.COORDINATION_HARM],
-                "political campaigning": [HarmCategory.CAMPAIGNING],
-                "privacy violation activity": [HarmCategory.PPI],
-                "tailored financial advice": [HarmCategory.FINANCIAL_ADVICE],
-            },
-        )
+        harm_category_alias_overrides: dict[str, list[HarmCategory]] = {
+            "adult content": [HarmCategory.SEXUAL_CONTENT],
+            "child abuse": [HarmCategory.GROOMING, HarmCategory.SEXUAL_CONTENT, HarmCategory.CHILD_LEAKAGE],
+            "economic harm": [HarmCategory.SCAMS, HarmCategory.DECEPTION],
+            "fraud/deception": [HarmCategory.SCAMS, HarmCategory.DECEPTION],
+            "hate/harass/violence": [
+                HarmCategory.HATESPEECH,
+                HarmCategory.HARASSMENT,
+                HarmCategory.VIOLENT_CONTENT,
+            ],
+            "illegal activity": [HarmCategory.COORDINATION_HARM],
+            "malware viruses": [HarmCategory.MALWARE],
+            "physical harm": [HarmCategory.VIOLENT_CONTENT, HarmCategory.COORDINATION_HARM],
+            "political campaigning": [HarmCategory.CAMPAIGNING],
+            "privacy violation activity": [HarmCategory.PPI],
+            "tailored financial advice": [HarmCategory.FINANCIAL_ADVICE],
+        }
         # "Child Abuse" spans both sexual and non-sexual sub-harms, so it is mapped at
         # the subcategory level; otherwise non-sexual abuse (physical, emotional,
         # neglect) would be incorrectly tagged with CSAM-related categories. Unknown
         # subcategories fall back to the category-level mapping above.
-        child_abuse_subcategory_overrides: dict[str, list[HarmCategory]] = cast(
-            "dict[str, list[HarmCategory]]",
-            {
-                "content sexual exploitation": [
-                    HarmCategory.GROOMING,
-                    HarmCategory.SEXUAL_CONTENT,
-                    HarmCategory.CHILD_LEAKAGE,
-                ],
-                "online predation": [HarmCategory.GROOMING, HarmCategory.SEXUAL_CONTENT, HarmCategory.CHILD_LEAKAGE],
-                "physical abuse": [HarmCategory.VIOLENT_CONTENT, HarmCategory.COORDINATION_HARM],
-                "emotional and psychological abuse": [HarmCategory.HARASSMENT],
-                "neglect": [HarmCategory.DANGEROUS_SITUATIONS],
-            },
-        )
+        child_abuse_subcategory_overrides: dict[str, list[HarmCategory]] = {
+            "content sexual exploitation": [
+                HarmCategory.GROOMING,
+                HarmCategory.SEXUAL_CONTENT,
+                HarmCategory.CHILD_LEAKAGE,
+            ],
+            "online predation": [HarmCategory.GROOMING, HarmCategory.SEXUAL_CONTENT, HarmCategory.CHILD_LEAKAGE],
+            "physical abuse": [HarmCategory.VIOLENT_CONTENT, HarmCategory.COORDINATION_HARM],
+            "emotional and psychological abuse": [HarmCategory.HARASSMENT],
+            "neglect": [HarmCategory.DANGEROUS_SITUATIONS],
+        }
 
         def resolve_harm_categories(category: str | None, subcategory: str | None) -> list[str]:
             if (

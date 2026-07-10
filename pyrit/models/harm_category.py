@@ -5,6 +5,7 @@
 
 import logging
 import os
+import sys
 from collections.abc import Mapping
 from enum import Enum
 from typing import cast
@@ -13,11 +14,11 @@ import yaml
 
 logger = logging.getLogger(__name__)
 
-try:
-    from enum import StrEnum  # type: ignore[attr-defined]
-except ImportError:  # Python 3.10 and below
+if sys.version_info >= (3, 11):
+    from enum import StrEnum
+else:  # Python 3.10 and below
 
-    class StrEnum(str, Enum):  # type: ignore[misc]
+    class StrEnum(str, Enum):
         """Minimal backport of enum.StrEnum for Python < 3.11."""
 
         __str__ = str.__str__
@@ -106,89 +107,86 @@ class HarmCategory(StrEnum):
         if _HARM_CATEGORY_ALIASES:
             return
         _HARM_CATEGORY_ALIASES.update(
-            cast(
-                "dict[str, list[HarmCategory]]",
-                {
-                    "ableism": [cls.REPRESENTATIONAL, cls.HATESPEECH],
-                    "bias": [cls.REPRESENTATIONAL, cls.HATESPEECH],
-                    "bullying": [cls.HARASSMENT],
-                    "chemistry": [cls.CBRN],
-                    "controlled/regulated substances": [cls.DRUG_USE],
-                    "copyright issues": [cls.COPYRIGHT],
-                    "copyright/trademark/plagiarism": [cls.COPYRIGHT, cls.TRADEMARK, cls.PLAGIARISM],
-                    "criminal planning/confessions": [cls.COORDINATION_HARM],
-                    "discriminatory behavior": [cls.REPRESENTATIONAL, cls.HATESPEECH],
-                    "discrimination": [cls.REPRESENTATIONAL, cls.HATESPEECH],
-                    "drugs": [cls.DRUG_USE],
-                    "economic crime": [cls.SCAMS, cls.DECEPTION],
-                    "endangering national security": [cls.HIGH_RISK_GOVERNMENT],
-                    "endangering public health": [cls.PUBLIC_HEALTH],
-                    "fraud/deception": [cls.SCAMS, cls.DECEPTION],
-                    "guns and illegal weapons": [cls.MILITARY],
-                    "hate/identity hate": [cls.HATESPEECH, cls.REPRESENTATIONAL],
-                    "high risk gov decision making": [cls.HIGH_RISK_GOVERNMENT],
-                    "homophobia": [cls.REPRESENTATIONAL, cls.HATESPEECH],
-                    "human trafficking": [cls.COORDINATION_HARM],
-                    "illegal": [cls.COORDINATION_HARM],
-                    "insulting behavior": [cls.HARASSMENT],
-                    "medicine": [cls.PUBLIC_HEALTH],
-                    "mental manipulation": [cls.MENTAL_HEALTH],
-                    "misogyny": [cls.REPRESENTATIONAL, cls.HATESPEECH],
-                    "pharmacology": [cls.PSEUDO_PHARMA],
-                    "physical harm": [cls.VIOLENT_CONTENT],
-                    "pii/privacy": [cls.PPI],
-                    "political/misinformation/conspiracy": [cls.INFO_INTEGRITY, cls.CAMPAIGNING],
-                    "privacy violation": [cls.PPI],
-                    "psychological harm": [cls.EMOTIONAL],
-                    "psychology": [cls.MENTAL_HEALTH],
-                    "racism": [cls.REPRESENTATIONAL, cls.HATESPEECH],
-                    "religious discrimination": [cls.REPRESENTATIONAL, cls.HATESPEECH],
-                    "sexism": [cls.REPRESENTATIONAL, cls.HATESPEECH],
-                    "sexual": [cls.SEXUAL_CONTENT],
-                    "sexual content": [cls.SEXUAL_CONTENT],
-                    "sexual violence": [cls.SEXUAL_CONTENT, cls.VIOLENT_CONTENT],
-                    "sexualization": [cls.SEXUALIZATION],
-                    "stereotyping": [cls.REPRESENTATIONAL],
-                    "suicide and self harm": [cls.SUICIDE, cls.SELF_HARM],
-                    "threat": [cls.VIOLENT_THREATS],
-                    "grooming": [cls.GROOMING],
-                    "child leakage": [cls.CHILD_LEAKAGE],
-                    "dangerous situations": [cls.DANGEROUS_SITUATIONS],
-                    "violent": [cls.VIOLENT_CONTENT],
-                    "violence": [cls.VIOLENT_CONTENT],
-                    "white-collar crime": [cls.SCAMS, cls.DECEPTION],
-                    # Cross-dataset labels that recurred in >=2 loader override maps,
-                    # promoted here so loaders don't redefine them individually.
-                    "adult content": [cls.SEXUAL_CONTENT],
-                    "chemical_biological": [cls.CBRN],
-                    "child abuse": [cls.CHILD_LEAKAGE, cls.GROOMING, cls.SEXUAL_CONTENT],
-                    "copyright": [cls.COPYRIGHT],
-                    "cybercrime": [cls.COORDINATION_HARM, cls.MALWARE],
-                    "cybercrime_intrusion": [cls.COORDINATION_HARM, cls.MALWARE],
-                    "defamation": [cls.REPUTATIONAL_DAMAGE],
-                    "disinformation": [cls.INFO_INTEGRITY],
-                    "environmental crimes": [cls.COORDINATION_HARM],
-                    "expert advice": [cls.FINANCIAL_ADVICE, cls.HEALTH_DIAGNOSIS, cls.LEGAL_ADVICE],
-                    "fraud": [cls.DECEPTION, cls.SCAMS],
-                    "government decision-making": [cls.HIGH_RISK_GOVERNMENT],
-                    "harassment/discrimination": [cls.HARASSMENT, cls.HATESPEECH, cls.REPRESENTATIONAL],
-                    "hate": [cls.HATESPEECH, cls.REPRESENTATIONAL],
-                    "illegal activities": [cls.COORDINATION_HARM],
-                    "illegal activity": [cls.COORDINATION_HARM],
-                    "legal opinion": [cls.LEGAL_ADVICE],
-                    "malware generation": [cls.MALWARE],
-                    "malware/hacking": [cls.MALWARE],
-                    "misinformation_disinformation": [cls.INFO_INTEGRITY],
-                    "political campaigning": [cls.CAMPAIGNING],
-                    "pornography": [cls.SEXUAL_CONTENT],
-                    "privacy": [cls.PPI],
-                    "privacy violations": [cls.PPI],
-                    "sex-related crimes": [cls.SEXUAL_CONTENT],
-                    "sexual/adult content": [cls.SEXUAL_CONTENT],
-                    "suicide & self-harm": [cls.SUICIDE, cls.SELF_HARM],
-                    "theft": [cls.COORDINATION_HARM],
-                },
-            )
+            {
+                "ableism": [cls.REPRESENTATIONAL, cls.HATESPEECH],
+                "bias": [cls.REPRESENTATIONAL, cls.HATESPEECH],
+                "bullying": [cls.HARASSMENT],
+                "chemistry": [cls.CBRN],
+                "controlled/regulated substances": [cls.DRUG_USE],
+                "copyright issues": [cls.COPYRIGHT],
+                "copyright/trademark/plagiarism": [cls.COPYRIGHT, cls.TRADEMARK, cls.PLAGIARISM],
+                "criminal planning/confessions": [cls.COORDINATION_HARM],
+                "discriminatory behavior": [cls.REPRESENTATIONAL, cls.HATESPEECH],
+                "discrimination": [cls.REPRESENTATIONAL, cls.HATESPEECH],
+                "drugs": [cls.DRUG_USE],
+                "economic crime": [cls.SCAMS, cls.DECEPTION],
+                "endangering national security": [cls.HIGH_RISK_GOVERNMENT],
+                "endangering public health": [cls.PUBLIC_HEALTH],
+                "fraud/deception": [cls.SCAMS, cls.DECEPTION],
+                "guns and illegal weapons": [cls.MILITARY],
+                "hate/identity hate": [cls.HATESPEECH, cls.REPRESENTATIONAL],
+                "high risk gov decision making": [cls.HIGH_RISK_GOVERNMENT],
+                "homophobia": [cls.REPRESENTATIONAL, cls.HATESPEECH],
+                "human trafficking": [cls.COORDINATION_HARM],
+                "illegal": [cls.COORDINATION_HARM],
+                "insulting behavior": [cls.HARASSMENT],
+                "medicine": [cls.PUBLIC_HEALTH],
+                "mental manipulation": [cls.MENTAL_HEALTH],
+                "misogyny": [cls.REPRESENTATIONAL, cls.HATESPEECH],
+                "pharmacology": [cls.PSEUDO_PHARMA],
+                "physical harm": [cls.VIOLENT_CONTENT],
+                "pii/privacy": [cls.PPI],
+                "political/misinformation/conspiracy": [cls.INFO_INTEGRITY, cls.CAMPAIGNING],
+                "privacy violation": [cls.PPI],
+                "psychological harm": [cls.EMOTIONAL],
+                "psychology": [cls.MENTAL_HEALTH],
+                "racism": [cls.REPRESENTATIONAL, cls.HATESPEECH],
+                "religious discrimination": [cls.REPRESENTATIONAL, cls.HATESPEECH],
+                "sexism": [cls.REPRESENTATIONAL, cls.HATESPEECH],
+                "sexual": [cls.SEXUAL_CONTENT],
+                "sexual content": [cls.SEXUAL_CONTENT],
+                "sexual violence": [cls.SEXUAL_CONTENT, cls.VIOLENT_CONTENT],
+                "sexualization": [cls.SEXUALIZATION],
+                "stereotyping": [cls.REPRESENTATIONAL],
+                "suicide and self harm": [cls.SUICIDE, cls.SELF_HARM],
+                "threat": [cls.VIOLENT_THREATS],
+                "grooming": [cls.GROOMING],
+                "child leakage": [cls.CHILD_LEAKAGE],
+                "dangerous situations": [cls.DANGEROUS_SITUATIONS],
+                "violent": [cls.VIOLENT_CONTENT],
+                "violence": [cls.VIOLENT_CONTENT],
+                "white-collar crime": [cls.SCAMS, cls.DECEPTION],
+                # Cross-dataset labels that recurred in >=2 loader override maps,
+                # promoted here so loaders don't redefine them individually.
+                "adult content": [cls.SEXUAL_CONTENT],
+                "chemical_biological": [cls.CBRN],
+                "child abuse": [cls.CHILD_LEAKAGE, cls.GROOMING, cls.SEXUAL_CONTENT],
+                "copyright": [cls.COPYRIGHT],
+                "cybercrime": [cls.COORDINATION_HARM, cls.MALWARE],
+                "cybercrime_intrusion": [cls.COORDINATION_HARM, cls.MALWARE],
+                "defamation": [cls.REPUTATIONAL_DAMAGE],
+                "disinformation": [cls.INFO_INTEGRITY],
+                "environmental crimes": [cls.COORDINATION_HARM],
+                "expert advice": [cls.FINANCIAL_ADVICE, cls.HEALTH_DIAGNOSIS, cls.LEGAL_ADVICE],
+                "fraud": [cls.DECEPTION, cls.SCAMS],
+                "government decision-making": [cls.HIGH_RISK_GOVERNMENT],
+                "harassment/discrimination": [cls.HARASSMENT, cls.HATESPEECH, cls.REPRESENTATIONAL],
+                "hate": [cls.HATESPEECH, cls.REPRESENTATIONAL],
+                "illegal activities": [cls.COORDINATION_HARM],
+                "illegal activity": [cls.COORDINATION_HARM],
+                "legal opinion": [cls.LEGAL_ADVICE],
+                "malware generation": [cls.MALWARE],
+                "malware/hacking": [cls.MALWARE],
+                "misinformation_disinformation": [cls.INFO_INTEGRITY],
+                "political campaigning": [cls.CAMPAIGNING],
+                "pornography": [cls.SEXUAL_CONTENT],
+                "privacy": [cls.PPI],
+                "privacy violations": [cls.PPI],
+                "sex-related crimes": [cls.SEXUAL_CONTENT],
+                "sexual/adult content": [cls.SEXUAL_CONTENT],
+                "suicide & self-harm": [cls.SUICIDE, cls.SELF_HARM],
+                "theft": [cls.COORDINATION_HARM],
+            }
         )
 
     @classmethod
@@ -393,123 +391,120 @@ class HarmCategoryPillar(StrEnum):
         if _PILLAR_TO_CATEGORIES:
             return
         _PILLAR_TO_CATEGORIES.update(
-            cast(
-                "dict[HarmCategoryPillar, list[HarmCategory]]",
-                {
-                    cls.CHILD_SAFETY: [
-                        HarmCategory.SEXUALIZATION,
-                        HarmCategory.GROOMING,
-                        HarmCategory.CHILD_LEAKAGE,
-                        HarmCategory.DANGEROUS_SITUATIONS,
-                        HarmCategory.VIOLENT_CONTENT,
-                        HarmCategory.HARASSMENT,
-                        HarmCategory.SUICIDE,
-                        HarmCategory.SELF_HARM,
-                        HarmCategory.EATING_DISORDERS,
-                        HarmCategory.DRUG_USE,
-                    ],
-                    cls.HARMFUL_CONTENT: [
-                        HarmCategory.HATESPEECH,
-                        HarmCategory.HARASSMENT,
-                        HarmCategory.VIOLENT_CONTENT,
-                        HarmCategory.SEXUAL_CONTENT,
-                        HarmCategory.PROFANITY,
-                    ],
-                    cls.FAIRNESS: [
-                        HarmCategory.QUALITY_OF_SERVICE,
-                        HarmCategory.ALLOCATION,
-                        HarmCategory.REPRESENTATIONAL,
-                    ],
-                    cls.SELF_INJURY: [
-                        HarmCategory.SUICIDE,
-                        HarmCategory.SELF_HARM,
-                        HarmCategory.EATING_DISORDERS,
-                        HarmCategory.DRUG_USE,
-                    ],
-                    cls.INCITEMENT: [
-                        HarmCategory.VIOLENT_THREATS,
-                        HarmCategory.VIOLENT_EXTREMISM,
-                        HarmCategory.COORDINATION_HARM,
-                    ],
-                    cls.SENSITIVE_GOODS_SERVICES: [
-                        HarmCategory.REGULATED_GOODS,
-                        HarmCategory.SEXUAL_SOLICITATION,
-                    ],
-                    cls.SPAM_SCAMS: [
-                        HarmCategory.SCAMS,
-                        HarmCategory.SPAM,
-                    ],
-                    cls.INAUTHENTIC_ACCOUNTS: [
-                        HarmCategory.IMPERSONATION,
-                        HarmCategory.FAKE_ACCOUNTS,
-                    ],
-                    cls.INFO_INTEGRITY: [
-                        HarmCategory.INFO_INTEGRITY,
-                        HarmCategory.CURRENT_EVENTS_MISINFO,
-                        HarmCategory.HISTORICAL_EVENTS_BIAS,
-                    ],
-                    cls.ELECTION_INTEGRITY: [
-                        HarmCategory.ELECTION_INTEGRITY,
-                    ],
-                    cls.PERSUASION: [
-                        HarmCategory.DECEPTION,
-                        HarmCategory.COVERT_TARGETED,
-                        HarmCategory.REPUTATIONAL_DAMAGE,
-                    ],
-                    cls.IP: [
-                        HarmCategory.COPYRIGHT,
-                        HarmCategory.TRADEMARK,
-                        HarmCategory.IP_UPLOAD,
-                        HarmCategory.PLAGIARISM,
-                    ],
-                    cls.PRIVACY: [
-                        HarmCategory.PROPRIETARY_INFO,
-                        HarmCategory.PPI,
-                        HarmCategory.PUBLIC_FIGURES,
-                        HarmCategory.NONCONSENSUAL_UPLOAD,
-                    ],
-                    cls.EXPLOITS: [
-                        HarmCategory.INSECURE_CODE,
-                        HarmCategory.MALWARE,
-                    ],
-                    cls.WEAPONS: [
-                        HarmCategory.MILITARY,
-                        HarmCategory.CBRN,
-                    ],
-                    cls.HIGH_RISK_DECISIONS: [
-                        HarmCategory.HIGH_RISK_GOVERNMENT,
-                        HarmCategory.INFRASTRUCTURE_RISK,
-                    ],
-                    cls.FINANCE: [
-                        HarmCategory.FINANCIAL_ADVICE,
-                        HarmCategory.MLM,
-                        HarmCategory.GAMBLING,
-                        HarmCategory.LENDING,
-                        HarmCategory.FINANCIAL_ELIGIBILITY,
-                    ],
-                    cls.HEALTH: [
-                        HarmCategory.HEALTH_DIAGNOSIS,
-                        HarmCategory.PSEUDO_PHARMA,
-                        HarmCategory.PUBLIC_HEALTH,
-                    ],
-                    cls.POLITICS: [
-                        HarmCategory.CAMPAIGNING,
-                    ],
-                    cls.LEGAL: [
-                        HarmCategory.LEGAL_ADVICE,
-                    ],
-                    cls.PSYCHOSOCIAL: [
-                        HarmCategory.ROMANTIC,
-                        HarmCategory.SELF_VALIDATION,
-                        HarmCategory.MENTAL_HEALTH,
-                        HarmCategory.EMOTIONAL,
-                    ],
-                    cls.ATTRIBUTE_INFERENCE: [
-                        HarmCategory.PROTECTED_INFERENCE,
-                        HarmCategory.EMOTION_INFERENCE,
-                    ],
-                },
-            )
+            {
+                cls.CHILD_SAFETY: [
+                    HarmCategory.SEXUALIZATION,
+                    HarmCategory.GROOMING,
+                    HarmCategory.CHILD_LEAKAGE,
+                    HarmCategory.DANGEROUS_SITUATIONS,
+                    HarmCategory.VIOLENT_CONTENT,
+                    HarmCategory.HARASSMENT,
+                    HarmCategory.SUICIDE,
+                    HarmCategory.SELF_HARM,
+                    HarmCategory.EATING_DISORDERS,
+                    HarmCategory.DRUG_USE,
+                ],
+                cls.HARMFUL_CONTENT: [
+                    HarmCategory.HATESPEECH,
+                    HarmCategory.HARASSMENT,
+                    HarmCategory.VIOLENT_CONTENT,
+                    HarmCategory.SEXUAL_CONTENT,
+                    HarmCategory.PROFANITY,
+                ],
+                cls.FAIRNESS: [
+                    HarmCategory.QUALITY_OF_SERVICE,
+                    HarmCategory.ALLOCATION,
+                    HarmCategory.REPRESENTATIONAL,
+                ],
+                cls.SELF_INJURY: [
+                    HarmCategory.SUICIDE,
+                    HarmCategory.SELF_HARM,
+                    HarmCategory.EATING_DISORDERS,
+                    HarmCategory.DRUG_USE,
+                ],
+                cls.INCITEMENT: [
+                    HarmCategory.VIOLENT_THREATS,
+                    HarmCategory.VIOLENT_EXTREMISM,
+                    HarmCategory.COORDINATION_HARM,
+                ],
+                cls.SENSITIVE_GOODS_SERVICES: [
+                    HarmCategory.REGULATED_GOODS,
+                    HarmCategory.SEXUAL_SOLICITATION,
+                ],
+                cls.SPAM_SCAMS: [
+                    HarmCategory.SCAMS,
+                    HarmCategory.SPAM,
+                ],
+                cls.INAUTHENTIC_ACCOUNTS: [
+                    HarmCategory.IMPERSONATION,
+                    HarmCategory.FAKE_ACCOUNTS,
+                ],
+                cls.INFO_INTEGRITY: [
+                    HarmCategory.INFO_INTEGRITY,
+                    HarmCategory.CURRENT_EVENTS_MISINFO,
+                    HarmCategory.HISTORICAL_EVENTS_BIAS,
+                ],
+                cls.ELECTION_INTEGRITY: [
+                    HarmCategory.ELECTION_INTEGRITY,
+                ],
+                cls.PERSUASION: [
+                    HarmCategory.DECEPTION,
+                    HarmCategory.COVERT_TARGETED,
+                    HarmCategory.REPUTATIONAL_DAMAGE,
+                ],
+                cls.IP: [
+                    HarmCategory.COPYRIGHT,
+                    HarmCategory.TRADEMARK,
+                    HarmCategory.IP_UPLOAD,
+                    HarmCategory.PLAGIARISM,
+                ],
+                cls.PRIVACY: [
+                    HarmCategory.PROPRIETARY_INFO,
+                    HarmCategory.PPI,
+                    HarmCategory.PUBLIC_FIGURES,
+                    HarmCategory.NONCONSENSUAL_UPLOAD,
+                ],
+                cls.EXPLOITS: [
+                    HarmCategory.INSECURE_CODE,
+                    HarmCategory.MALWARE,
+                ],
+                cls.WEAPONS: [
+                    HarmCategory.MILITARY,
+                    HarmCategory.CBRN,
+                ],
+                cls.HIGH_RISK_DECISIONS: [
+                    HarmCategory.HIGH_RISK_GOVERNMENT,
+                    HarmCategory.INFRASTRUCTURE_RISK,
+                ],
+                cls.FINANCE: [
+                    HarmCategory.FINANCIAL_ADVICE,
+                    HarmCategory.MLM,
+                    HarmCategory.GAMBLING,
+                    HarmCategory.LENDING,
+                    HarmCategory.FINANCIAL_ELIGIBILITY,
+                ],
+                cls.HEALTH: [
+                    HarmCategory.HEALTH_DIAGNOSIS,
+                    HarmCategory.PSEUDO_PHARMA,
+                    HarmCategory.PUBLIC_HEALTH,
+                ],
+                cls.POLITICS: [
+                    HarmCategory.CAMPAIGNING,
+                ],
+                cls.LEGAL: [
+                    HarmCategory.LEGAL_ADVICE,
+                ],
+                cls.PSYCHOSOCIAL: [
+                    HarmCategory.ROMANTIC,
+                    HarmCategory.SELF_VALIDATION,
+                    HarmCategory.MENTAL_HEALTH,
+                    HarmCategory.EMOTIONAL,
+                ],
+                cls.ATTRIBUTE_INFERENCE: [
+                    HarmCategory.PROTECTED_INFERENCE,
+                    HarmCategory.EMOTION_INFERENCE,
+                ],
+            }
         )
         for pillar, categories in _PILLAR_TO_CATEGORIES.items():
             for category in categories:

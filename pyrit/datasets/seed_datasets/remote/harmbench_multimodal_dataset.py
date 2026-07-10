@@ -4,7 +4,7 @@
 import logging
 import uuid
 from enum import Enum
-from typing import Literal, cast
+from typing import Literal
 
 from typing_extensions import override
 
@@ -139,22 +139,19 @@ class _HarmBenchMultimodalDataset(_RemoteDatasetLoader):
 
         prompts: list[SeedUnion] = []
         failed_image_count = 0
-        harm_category_alias_overrides: dict[str, list[HarmCategory]] = cast(
-            "dict[str, list[HarmCategory]]",
-            {
-                "chemical_biological": [HarmCategory.CBRN],
-                "cybercrime_intrusion": [HarmCategory.COORDINATION_HARM, HarmCategory.MALWARE],
-                "harassment_bullying": [
-                    HarmCategory.HARASSMENT,
-                    HarmCategory.HATESPEECH,
-                    HarmCategory.REPRESENTATIONAL,
-                ],
-                "illegal": [HarmCategory.COORDINATION_HARM],
-                "misinformation_disinformation": [HarmCategory.INFO_INTEGRITY],
-                "harmful": [HarmCategory.OTHER],
-                "copyright": [HarmCategory.COPYRIGHT],
-            },
-        )
+        harm_category_alias_overrides: dict[str, list[HarmCategory]] = {
+            "chemical_biological": [HarmCategory.CBRN],
+            "cybercrime_intrusion": [HarmCategory.COORDINATION_HARM, HarmCategory.MALWARE],
+            "harassment_bullying": [
+                HarmCategory.HARASSMENT,
+                HarmCategory.HATESPEECH,
+                HarmCategory.REPRESENTATIONAL,
+            ],
+            "illegal": [HarmCategory.COORDINATION_HARM],
+            "misinformation_disinformation": [HarmCategory.INFO_INTEGRITY],
+            "harmful": [HarmCategory.OTHER],
+            "copyright": [HarmCategory.COPYRIGHT],
+        }
 
         for example in examples:
             missing_keys = required_keys - example.keys()

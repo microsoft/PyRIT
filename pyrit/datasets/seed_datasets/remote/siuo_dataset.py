@@ -4,7 +4,7 @@
 import logging
 import uuid
 from enum import Enum
-from typing import TYPE_CHECKING, ClassVar, Literal, cast
+from typing import TYPE_CHECKING, ClassVar, Literal
 
 from typing_extensions import override
 
@@ -110,21 +110,18 @@ class _SIUODataset(_RemoteDatasetLoader):
     size: str = "medium"
     tags: frozenset[str] = frozenset({"default", "safety", "multimodal"})
 
-    HARM_CATEGORY_ALIAS_OVERRIDES: dict[str, list[HarmCategory]] = cast(
-        "dict[str, list[HarmCategory]]",
-        {
-            "illegal activities & crime": [HarmCategory.COORDINATION_HARM],
-            "illegal activity": [HarmCategory.COORDINATION_HARM],
-            "privacy violation": [HarmCategory.PPI],
-            "morality": [HarmCategory.OTHER],
-            "dangerous behavior": [HarmCategory.DANGEROUS_SITUATIONS],
-            "discrimination & stereotyping": [HarmCategory.REPRESENTATIONAL, HarmCategory.HATESPEECH],
-            "information misinterpretation": [HarmCategory.INFO_INTEGRITY],
-            "religion beliefs": [HarmCategory.PROTECTED_INFERENCE],
-            "controversial topics, politics": [HarmCategory.INFO_INTEGRITY],
-            "controversial politics": [HarmCategory.INFO_INTEGRITY],
-        },
-    )
+    HARM_CATEGORY_ALIAS_OVERRIDES: dict[str, list[HarmCategory]] = {
+        "illegal activities & crime": [HarmCategory.COORDINATION_HARM],
+        "illegal activity": [HarmCategory.COORDINATION_HARM],
+        "privacy violation": [HarmCategory.PPI],
+        "morality": [HarmCategory.OTHER],
+        "dangerous behavior": [HarmCategory.DANGEROUS_SITUATIONS],
+        "discrimination & stereotyping": [HarmCategory.REPRESENTATIONAL, HarmCategory.HATESPEECH],
+        "information misinterpretation": [HarmCategory.INFO_INTEGRITY],
+        "religion beliefs": [HarmCategory.PROTECTED_INFERENCE],
+        "controversial topics, politics": [HarmCategory.INFO_INTEGRITY],
+        "controversial politics": [HarmCategory.INFO_INTEGRITY],
+    }
 
     def __init__(
         self,

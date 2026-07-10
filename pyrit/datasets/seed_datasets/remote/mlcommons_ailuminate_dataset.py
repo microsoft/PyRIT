@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 import logging
-from typing import TYPE_CHECKING, Literal, cast
+from typing import TYPE_CHECKING, Literal
 
 from typing_extensions import override
 
@@ -106,45 +106,42 @@ class _MLCommonsAILuminateDataset(_RemoteDatasetLoader):
             source_type=self.source_type,
             cache=cache,
         )
-        harm_category_alias_overrides: dict[str, list[HarmCategory]] = cast(
-            "dict[str, list[HarmCategory]]",
-            {
-                "vcr": [HarmCategory.VIOLENT_CONTENT],
-                "violent crimes": [HarmCategory.VIOLENT_CONTENT],
-                "src": [HarmCategory.SEXUAL_CONTENT],
-                "sex-related crimes": [HarmCategory.SEXUAL_CONTENT],
-                "cse": [HarmCategory.SEXUAL_CONTENT, HarmCategory.GROOMING],
-                "child sexual exploitation": [HarmCategory.SEXUAL_CONTENT, HarmCategory.GROOMING],
-                "ssh": [HarmCategory.SUICIDE, HarmCategory.SELF_HARM],
-                "suicide & self-harm": [HarmCategory.SUICIDE, HarmCategory.SELF_HARM],
-                "iwp": [HarmCategory.CBRN, HarmCategory.MILITARY],
-                "indiscriminate weapons (cbrne)": [HarmCategory.CBRN, HarmCategory.MILITARY],
-                "ipv": [HarmCategory.COPYRIGHT, HarmCategory.TRADEMARK, HarmCategory.PLAGIARISM],
-                "intellectual property violations": [
-                    HarmCategory.COPYRIGHT,
-                    HarmCategory.TRADEMARK,
-                    HarmCategory.PLAGIARISM,
-                ],
-                "dfm": [HarmCategory.REPUTATIONAL_DAMAGE],
-                "defamation": [HarmCategory.REPUTATIONAL_DAMAGE],
-                "ncr": [HarmCategory.COORDINATION_HARM],
-                "non-violent crimes": [HarmCategory.COORDINATION_HARM],
-                "hte": [HarmCategory.HATESPEECH, HarmCategory.HARASSMENT],
-                "hate": [HarmCategory.HATESPEECH, HarmCategory.HARASSMENT],
-                "prv": [HarmCategory.PPI],
-                "privacy violations": [HarmCategory.PPI],
-                "spc_ele": [HarmCategory.CAMPAIGNING],
-                "specialized advice; elections": [HarmCategory.CAMPAIGNING],
-                "spc_fin": [HarmCategory.FINANCIAL_ADVICE],
-                "specialized advice; financial": [HarmCategory.FINANCIAL_ADVICE],
-                "spc_hlt": [HarmCategory.PUBLIC_HEALTH],
-                "specialized advice; health": [HarmCategory.PUBLIC_HEALTH],
-                "sxc_prn": [HarmCategory.SEXUAL_CONTENT],
-                "sexual content; pornographic": [HarmCategory.SEXUAL_CONTENT],
-                "spc_lgl": [HarmCategory.LEGAL_ADVICE],
-                "specialized advice; legal": [HarmCategory.LEGAL_ADVICE],
-            },
-        )
+        harm_category_alias_overrides: dict[str, list[HarmCategory]] = {
+            "vcr": [HarmCategory.VIOLENT_CONTENT],
+            "violent crimes": [HarmCategory.VIOLENT_CONTENT],
+            "src": [HarmCategory.SEXUAL_CONTENT],
+            "sex-related crimes": [HarmCategory.SEXUAL_CONTENT],
+            "cse": [HarmCategory.SEXUAL_CONTENT, HarmCategory.GROOMING],
+            "child sexual exploitation": [HarmCategory.SEXUAL_CONTENT, HarmCategory.GROOMING],
+            "ssh": [HarmCategory.SUICIDE, HarmCategory.SELF_HARM],
+            "suicide & self-harm": [HarmCategory.SUICIDE, HarmCategory.SELF_HARM],
+            "iwp": [HarmCategory.CBRN, HarmCategory.MILITARY],
+            "indiscriminate weapons (cbrne)": [HarmCategory.CBRN, HarmCategory.MILITARY],
+            "ipv": [HarmCategory.COPYRIGHT, HarmCategory.TRADEMARK, HarmCategory.PLAGIARISM],
+            "intellectual property violations": [
+                HarmCategory.COPYRIGHT,
+                HarmCategory.TRADEMARK,
+                HarmCategory.PLAGIARISM,
+            ],
+            "dfm": [HarmCategory.REPUTATIONAL_DAMAGE],
+            "defamation": [HarmCategory.REPUTATIONAL_DAMAGE],
+            "ncr": [HarmCategory.COORDINATION_HARM],
+            "non-violent crimes": [HarmCategory.COORDINATION_HARM],
+            "hte": [HarmCategory.HATESPEECH, HarmCategory.HARASSMENT],
+            "hate": [HarmCategory.HATESPEECH, HarmCategory.HARASSMENT],
+            "prv": [HarmCategory.PPI],
+            "privacy violations": [HarmCategory.PPI],
+            "spc_ele": [HarmCategory.CAMPAIGNING],
+            "specialized advice; elections": [HarmCategory.CAMPAIGNING],
+            "spc_fin": [HarmCategory.FINANCIAL_ADVICE],
+            "specialized advice; financial": [HarmCategory.FINANCIAL_ADVICE],
+            "spc_hlt": [HarmCategory.PUBLIC_HEALTH],
+            "specialized advice; health": [HarmCategory.PUBLIC_HEALTH],
+            "sxc_prn": [HarmCategory.SEXUAL_CONTENT],
+            "sexual content; pornographic": [HarmCategory.SEXUAL_CONTENT],
+            "spc_lgl": [HarmCategory.LEGAL_ADVICE],
+            "specialized advice; legal": [HarmCategory.LEGAL_ADVICE],
+        }
 
         seed_prompts: list[SeedUnion] = [
             SeedPrompt(

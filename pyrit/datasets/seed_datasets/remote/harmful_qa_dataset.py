@@ -2,7 +2,6 @@
 # Licensed under the MIT license.
 
 import logging
-from typing import cast
 
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
@@ -22,9 +21,7 @@ logger = logging.getLogger(__name__)
 # Authored grouped by category so the audit is reviewable ("are these really OTHER?"); the
 # flat id->category index used at load time is derived from it once, below.
 # fmt: off
-_IDS_BY_HARM_CATEGORY: dict[HarmCategory, tuple[int, ...]] = cast(
-    "dict[HarmCategory, tuple[int, ...]]",
-    {
+_IDS_BY_HARM_CATEGORY: dict[HarmCategory, tuple[int, ...]] = {
         HarmCategory.HATESPEECH: (
             1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 85, 92, 100, 174, 185, 1252,
             1289, 1299, 1369, 1379, 1444, 1464, 1472, 1477, 1483, 1490, 1494, 1546, 1557, 1762, 1802, 1803, 1808,
@@ -197,8 +194,7 @@ _IDS_BY_HARM_CATEGORY: dict[HarmCategory, tuple[int, ...]] = cast(
             1851, 1853, 1854, 1857, 1859, 1860, 1881, 1884, 1885, 1890, 1896, 1900, 1941, 1942, 1943, 1944, 1945,
             1946, 1947, 1948, 1949, 1950, 1951, 1952, 1953, 1954, 1955, 1956, 1957, 1958, 1959, 1960
         ),
-    },
-)
+    }
 # fmt: on
 
 # Flat index built once at import for O(1) per-row lookup.

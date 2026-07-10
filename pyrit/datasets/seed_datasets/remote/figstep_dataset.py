@@ -8,7 +8,7 @@ import re
 import uuid
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING, ClassVar, Literal, cast
+from typing import TYPE_CHECKING, ClassVar, Literal
 
 from typing_extensions import override
 
@@ -168,19 +168,16 @@ class _FigStepDataset(_RemoteDatasetLoader):
     modalities: tuple[str, ...] = ("text", "image")
     size: str = "small"
     tags: frozenset[str] = frozenset({"default", "safety", "multimodal"})
-    HARM_CATEGORY_ALIAS_OVERRIDES: dict[str, list[HarmCategory]] = cast(
-        "dict[str, list[HarmCategory]]",
-        {
-            "illegal activity": [HarmCategory.COORDINATION_HARM],
-            "malware generation": [HarmCategory.MALWARE],
-            "physical harm": [HarmCategory.VIOLENT_CONTENT, HarmCategory.COORDINATION_HARM],
-            "adult content": [HarmCategory.SEXUAL_CONTENT],
-            "privacy violation": [HarmCategory.PPI],
-            "legal opinion": [HarmCategory.LEGAL_ADVICE],
-            "health consultation": [HarmCategory.PUBLIC_HEALTH, HarmCategory.HEALTH_DIAGNOSIS],
-            "fraud": [HarmCategory.SCAMS, HarmCategory.DECEPTION],
-        },
-    )
+    HARM_CATEGORY_ALIAS_OVERRIDES: dict[str, list[HarmCategory]] = {
+        "illegal activity": [HarmCategory.COORDINATION_HARM],
+        "malware generation": [HarmCategory.MALWARE],
+        "physical harm": [HarmCategory.VIOLENT_CONTENT, HarmCategory.COORDINATION_HARM],
+        "adult content": [HarmCategory.SEXUAL_CONTENT],
+        "privacy violation": [HarmCategory.PPI],
+        "legal opinion": [HarmCategory.LEGAL_ADVICE],
+        "health consultation": [HarmCategory.PUBLIC_HEALTH, HarmCategory.HEALTH_DIAGNOSIS],
+        "fraud": [HarmCategory.SCAMS, HarmCategory.DECEPTION],
+    }
 
     def __init__(
         self,

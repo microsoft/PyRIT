@@ -3,7 +3,7 @@
 
 import json
 import logging
-from typing import Any, cast
+from typing import Any
 
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
@@ -128,21 +128,18 @@ class _ToxicChatDataset(_RemoteDatasetLoader):
 
         # toxicity/jailbreaking flags plus OpenAI-moderation category names are not in the
         # generic alias table, so map them (and broaden the too-narrow "violence") here.
-        toxic_chat_alias_overrides: dict[str, list[HarmCategory]] = cast(
-            "dict[str, list[HarmCategory]]",
-            {
-                "toxicity": [HarmCategory.HARASSMENT],
-                "jailbreaking": [HarmCategory.DECEPTION],
-                "hate": [HarmCategory.HATESPEECH, HarmCategory.REPRESENTATIONAL],
-                "hate/threatening": [HarmCategory.HATESPEECH, HarmCategory.VIOLENT_THREATS],
-                "harassment/threatening": [HarmCategory.HARASSMENT, HarmCategory.VIOLENT_THREATS],
-                "self-harm/intent": [HarmCategory.SELF_HARM],
-                "self-harm/instructions": [HarmCategory.SELF_HARM],
-                "sexual/minors": [HarmCategory.SEXUALIZATION, HarmCategory.SEXUAL_CONTENT],
-                "violence": [HarmCategory.VIOLENT_CONTENT, HarmCategory.VIOLENT_THREATS],
-                "violence/graphic": [HarmCategory.VIOLENT_CONTENT],
-            },
-        )
+        toxic_chat_alias_overrides: dict[str, list[HarmCategory]] = {
+            "toxicity": [HarmCategory.HARASSMENT],
+            "jailbreaking": [HarmCategory.DECEPTION],
+            "hate": [HarmCategory.HATESPEECH, HarmCategory.REPRESENTATIONAL],
+            "hate/threatening": [HarmCategory.HATESPEECH, HarmCategory.VIOLENT_THREATS],
+            "harassment/threatening": [HarmCategory.HARASSMENT, HarmCategory.VIOLENT_THREATS],
+            "self-harm/intent": [HarmCategory.SELF_HARM],
+            "self-harm/instructions": [HarmCategory.SELF_HARM],
+            "sexual/minors": [HarmCategory.SEXUALIZATION, HarmCategory.SEXUAL_CONTENT],
+            "violence": [HarmCategory.VIOLENT_CONTENT, HarmCategory.VIOLENT_THREATS],
+            "violence/graphic": [HarmCategory.VIOLENT_CONTENT],
+        }
         seed_prompts: list[SeedUnion] = []
         for item in data:
             user_input = item["user_input"]
