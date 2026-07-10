@@ -4,7 +4,7 @@
 """
 Constructor contract enforcement for PyRIT's pluggable brick base classes.
 
-Several PyRIT base classes (``PromptConverter``, ``Scorer``, ``PromptTarget``,
+Several PyRIT base classes (``Converter``, ``Scorer``, ``PromptTarget``,
 ``Scenario``, ``AttackStrategy``, ``SeedDatasetProvider``) are extension
 points that users routinely swap in and out. To make those swaps predictable,
 every subclass must use the keyword-only constructor shape mandated by the

@@ -292,11 +292,11 @@ class TestMatrixTechniqueConverters:
     """Per-technique ``technique_converters`` are appended via ``factory.create``."""
 
     def test_converters_forwarded_for_keyed_technique(self):
-        from pyrit.prompt_converter import PromptConverter
+        from pyrit.converter import Converter
 
         builder = _builder()
         factory = _mock_factory(name="tech")
-        converter = MagicMock(spec=PromptConverter)
+        converter = MagicMock(spec=Converter)
         builder.build(
             technique_factories={"tech": factory},
             dataset_groups={"ds": [_seed_group(objective="o1")]},
@@ -307,14 +307,14 @@ class TestMatrixTechniqueConverters:
         assert len(extra) == 1
 
     def test_unkeyed_technique_gets_no_converters(self):
-        from pyrit.prompt_converter import PromptConverter
+        from pyrit.converter import Converter
 
         builder = _builder()
         factory = _mock_factory(name="tech")
         builder.build(
             technique_factories={"tech": factory},
             dataset_groups={"ds": [_seed_group(objective="o1")]},
-            technique_converters={"other": [MagicMock(spec=PromptConverter)]},
+            technique_converters={"other": [MagicMock(spec=Converter)]},
         )
         assert factory.create.call_args.kwargs["extra_request_converters"] is None
 
@@ -426,14 +426,14 @@ class TestBuildMatrixAtomicAttacks:
         assert all(a.atomic_attack_name != "baseline" for a in result)
 
     def test_technique_converters_forwarded(self):
-        from pyrit.prompt_converter import PromptConverter
+        from pyrit.converter import Converter
 
         context = _context(
             techniques=[_technique("tech")],
             seed_groups_by_dataset={"ds": [_seed_group(objective="o1")]},
         )
         factory = _mock_factory(name="tech")
-        converter = MagicMock(spec=PromptConverter)
+        converter = MagicMock(spec=Converter)
         with _patch_registry({"tech": factory}):
             build_matrix_atomic_attacks(
                 context=context,

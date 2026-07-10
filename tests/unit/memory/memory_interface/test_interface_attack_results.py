@@ -1228,7 +1228,7 @@ def _make_attack_result_with_identifier(
         children["request_converters"] = [
             ComponentIdentifier(
                 class_name=name,
-                class_module="pyrit.prompt_converter",
+                class_module="pyrit.converter",
             )
             for name in converter_class_names
         ]

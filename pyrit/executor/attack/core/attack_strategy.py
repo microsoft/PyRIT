@@ -602,7 +602,7 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
         Get request converter configurations used by this strategy.
 
         Returns:
-            list[Any]: The list of request PromptConverterConfiguration objects.
+            list[Any]: The list of request ConverterConfiguration objects.
         """
         return self._request_converters
 

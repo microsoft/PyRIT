@@ -127,7 +127,7 @@ await output_attack_async(results.completed_results[0])
 #
 # ### Example: Loading a System Prompt
 #
-# The following example shows how a `PromptConverter` might load its system prompt from a YAML file:
+# The following example shows how a `Converter` might load its system prompt from a YAML file:
 
 # %%
 from pyrit.common.path import CONVERTER_SEED_PROMPT_PATH

@@ -7,11 +7,11 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from pyrit.converter import Base64Converter, ROT13Converter
 from pyrit.executor.attack.core.attack_config import AttackConverterConfig, AttackScoringConfig
 from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
 from pyrit.models import ComponentIdentifier, Identifiable, SeedAttackTechniqueGroup, SeedPrompt
-from pyrit.prompt_converter import Base64Converter, ROT13Converter
-from pyrit.prompt_normalizer import PromptConverterConfiguration
+from pyrit.prompt_normalizer import ConverterConfiguration
 from pyrit.prompt_target import PromptTarget
 from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory, ScorerOverridePolicy
@@ -288,7 +288,7 @@ class TestFactoryCreate:
         """``extra_request_converters`` become the request converters when none are baked."""
         factory = AttackTechniqueFactory(name="test", attack_class=_StubAttack)
         target = MagicMock(spec=PromptTarget)
-        extra = PromptConverterConfiguration.from_converters(converters=[Base64Converter()])
+        extra = ConverterConfiguration.from_converters(converters=[Base64Converter()])
 
         technique = factory.create(
             objective_target=target,
@@ -302,8 +302,8 @@ class TestFactoryCreate:
 
     def test_create_appends_extra_request_converters_on_top_of_baked(self):
         """``extra_request_converters`` are appended after baked request converters; responses are preserved."""
-        baked_request = PromptConverterConfiguration.from_converters(converters=[Base64Converter()])
-        baked_response = PromptConverterConfiguration.from_converters(converters=[ROT13Converter()])
+        baked_request = ConverterConfiguration.from_converters(converters=[Base64Converter()])
+        baked_response = ConverterConfiguration.from_converters(converters=[ROT13Converter()])
         baked = AttackConverterConfig(request_converters=baked_request, response_converters=baked_response)
         factory = AttackTechniqueFactory(
             name="test",
@@ -311,7 +311,7 @@ class TestFactoryCreate:
             attack_kwargs={"attack_converter_config": baked},
         )
         target = MagicMock(spec=PromptTarget)
-        extra = PromptConverterConfiguration.from_converters(converters=[Base64Converter()])
+        extra = ConverterConfiguration.from_converters(converters=[Base64Converter()])
 
         technique = factory.create(
             objective_target=target,
@@ -335,7 +335,7 @@ class TestFactoryCreate:
 
         factory = AttackTechniqueFactory(name="test", attack_class=_NoConverterAttack, uses_adversarial=False)
         target = MagicMock(spec=PromptTarget)
-        extra = PromptConverterConfiguration.from_converters(converters=[Base64Converter()])
+        extra = ConverterConfiguration.from_converters(converters=[Base64Converter()])
 
         technique = factory.create(
             objective_target=target,

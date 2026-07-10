@@ -66,10 +66,10 @@ for result in results:
 # Because you have labeled `group1`, you can retrieve these prompts later. For example, you could score them as shown [here](../scoring/0_scoring.ipynb#batch-scoring). Or you could resend them as shown below; this script will resend any prompts with the label regardless of modality.
 
 # %%
+from pyrit.converter import Base64Converter
 from pyrit.executor.attack import AttackConverterConfig
 from pyrit.memory import CentralMemory
-from pyrit.prompt_converter import Base64Converter
-from pyrit.prompt_normalizer import PromptConverterConfiguration
+from pyrit.prompt_normalizer import ConverterConfiguration
 from pyrit.prompt_target import TextTarget
 
 memory = CentralMemory.get_memory_instance()
@@ -86,7 +86,7 @@ original_user_prompts = [prompt.original_value for prompt in prompts if prompt.a
 
 # we can now send them to a new target, using different converters
 
-converters = PromptConverterConfiguration.from_converters(converters=[Base64Converter()])
+converters = ConverterConfiguration.from_converters(converters=[Base64Converter()])
 converter_config = AttackConverterConfig(request_converters=converters)
 
 text_target = TextTarget()

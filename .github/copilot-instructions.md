@@ -30,7 +30,7 @@ Aim for fewer, higher-signal comments. A review with 2-3 important comments is b
 BEFORE editing or code-reviewing any file, you MUST read the `.github/instructions/` files whose `applyTo` patterns match the files you are about to edit. For example:
 - Editing/code-reviewing `pyrit/**/*.py` → read `style-guide.instructions.md` and `user-custom.instructions.md`
 - Editing/code-reviewing `pyrit/scenario/**` → also read `scenarios.instructions.md`
-- Editing/code-reviewing `pyrit/prompt_converter/**` → also read `converters.instructions.md`
+- Editing/code-reviewing `pyrit/converter/**` → also read `converters.instructions.md`
 - Editing/code-reviewing `tests/**` → also read `test.instructions.md`
 - Editing/code-reviewing `doc/**/*.py` or `doc/**/*.ipynb` → also read `docs.instructions.md`
 - Editing/code-reviewing `frontend/**/*.{ts,tsx}` → also read `frontend-style-guide.instructions.md`
