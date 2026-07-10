@@ -7,7 +7,7 @@ techniques per-objective using a ``TechniqueSelector``.
 
 Owns selector wiring, dispatcher construction, and per-dataset atomic-attack
 emission. Concrete subclasses (``TextAdaptive``, future ``ImageAdaptive`` /
-``AudioAdaptive``) only declare strategy class, default datasets, version,
+``AudioAdaptive``) only declare technique class, default datasets, version,
 and atomic-attack prefix.
 
 Baseline policy is ``Enabled``: prompt_sending runs as a separate baseline
@@ -36,7 +36,7 @@ if TYPE_CHECKING:
     from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
     from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
     from pyrit.scenario.core.scenario_context import ScenarioContext
-    from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
+    from pyrit.scenario.core.scenario_technique import ScenarioTechnique
     from pyrit.score import TrueFalseScorer
 
 logger = logging.getLogger(__name__)
@@ -67,14 +67,14 @@ class AdaptiveScenario(Scenario):
 
     @classmethod
     @abstractmethod
-    def get_strategy_class(cls) -> type[ScenarioStrategy]:
-        """Return the scenario's strategy enum (subclasses must override)."""
+    def get_technique_class(cls) -> type[ScenarioTechnique]:
+        """Return the scenario's technique enum (subclasses must override)."""
         raise NotImplementedError
 
     @classmethod
     @abstractmethod
-    def get_default_strategy(cls) -> ScenarioStrategy:
-        """Return the scenario's default strategy aggregate (subclasses must override)."""
+    def get_default_technique(cls) -> ScenarioTechnique:
+        """Return the scenario's default technique aggregate (subclasses must override)."""
         raise NotImplementedError
 
     @classmethod
@@ -107,8 +107,8 @@ class AdaptiveScenario(Scenario):
 
         super().__init__(
             version=self.VERSION,
-            strategy_class=self.get_strategy_class(),
-            default_strategy=self.get_default_strategy(),
+            technique_class=self.get_technique_class(),
+            default_technique=self.get_default_technique(),
             default_dataset_config=self.default_dataset_config(),
             objective_scorer=objective_scorer,
             scenario_result_id=scenario_result_id,
@@ -121,15 +121,15 @@ class AdaptiveScenario(Scenario):
         ``AttackTechniqueRegistry``.
 
         The catalog defines the deterministic baseline pool — it is also the
-        source of truth for the strategy enum's valid values, so iteration
+        source of truth for the technique enum's valid values, so iteration
         order and presence of techniques do not depend on registry
         initialization order. Registry-registered factories whose name
         matches a catalog entry **override** the catalog default, letting
         operators swap in tuned configurations (custom adversarial chat,
         different converter chain, etc.) without editing core. Factories
-        registered only in the registry (no matching strategy enum value)
+        registered only in the registry (no matching technique enum value)
         are returned too but the scenario will only consume those whose
-        names appear in ``self._scenario_strategies``. When the registry
+        names appear in ``self._scenario_techniques``. When the registry
         has not been initialized yet, the catalog alone is used.
 
         Subclasses may override to further customize the pool.
@@ -149,7 +149,7 @@ class AdaptiveScenario(Scenario):
         except RuntimeError:
             # Registry not initialized yet (e.g. bare CLI parse before
             # TechniqueInitializer has run). Catalog alone is the
-            # safe fallback and matches the strategy enum's value set.
+            # safe fallback and matches the technique enum's value set.
             registry_overrides = {}
         return {**catalog, **registry_overrides}
 
@@ -200,13 +200,13 @@ class AdaptiveScenario(Scenario):
         objective_target: PromptTarget,
     ) -> dict[str, TechniqueBundle]:
         """
-        Resolve selected strategies into a ``{eval_hash: TechniqueBundle}`` map.
+        Resolve selected techniques into a ``{eval_hash: TechniqueBundle}`` map.
 
-        Each bundle carries the inner attack strategy along with the factory's
+        Each bundle carries the inner attack technique along with the factory's
         ``seed_technique`` and ``adversarial_chat`` so the dispatcher can
         reproduce the static ``AtomicAttack`` execution path per attempt.
 
-        Technique keys are eval hashes derived from the inner attack strategy's
+        Technique keys are eval hashes derived from the inner attack technique's
         identifier (run through ``AtomicAttackEvaluationIdentifier`` so seeds,
         scorers, and operational target params are excluded). The same hash is
         auto-stamped on every persisted ``AttackResultEntry.atomic_attack_identifier``
@@ -223,13 +223,13 @@ class AdaptiveScenario(Scenario):
 
         Returns:
             dict[str, TechniqueBundle]: Mapping from technique eval hash to its
-                bundle, in the order selected strategies were resolved.
+                bundle, in the order selected techniques were resolved.
 
         Raises:
             ValueError: If no techniques remain after filtering. Includes the
                 requested techniques and skip reasons.
         """
-        selected_techniques = sorted({s.value for s in self._scenario_strategies})
+        selected_techniques = sorted({s.value for s in self._scenario_techniques})
         factories = self._get_attack_technique_factories()
 
         techniques: dict[str, TechniqueBundle] = {}
@@ -277,8 +277,8 @@ class AdaptiveScenario(Scenario):
                 details.append(f"incompatible with scenario scorer: {sorted(skipped_incompatible)}")
             suffix = f" ({'; '.join(details)})" if details else ""
             raise ValueError(
-                f"{type(self).__name__}: no usable techniques after resolving strategies. "
-                f"Check the --strategies selection.{suffix}"
+                f"{type(self).__name__}: no usable techniques after resolving techniques. "
+                f"Check the --techniques selection.{suffix}"
             )
 
         return techniques

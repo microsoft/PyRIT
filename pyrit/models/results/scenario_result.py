@@ -153,12 +153,12 @@ class ScenarioResult(BaseModel):
         """Primary scorer the scenario evaluates with, delegated to the identifier."""
         return self.scenario_identifier.objective_scorer
 
-    def get_strategies_used(self) -> list[str]:
+    def get_techniques_used(self) -> list[str]:
         """
-        Get the list of strategies used in this scenario.
+        Get the list of techniques used in this scenario.
 
         Returns:
-            list[str]: Atomic attack strategy names present in the results.
+            list[str]: Atomic attack technique names present in the results.
 
         """
         return list(self.attack_results.keys())
@@ -197,19 +197,19 @@ class ScenarioResult(BaseModel):
 
         """
         objectives: list[str] = []
-        strategies_to_process: list[list[AttackResult]]
+        techniques_to_process: list[list[AttackResult]]
 
         if not atomic_attack_name:
             # Include all atomic attacks
-            strategies_to_process = list(self.attack_results.values())
+            techniques_to_process = list(self.attack_results.values())
         else:
             # Include only specified atomic attack
             if atomic_attack_name in self.attack_results:
-                strategies_to_process = [self.attack_results[atomic_attack_name]]
+                techniques_to_process = [self.attack_results[atomic_attack_name]]
             else:
-                strategies_to_process = []
+                techniques_to_process = []
 
-        for results in strategies_to_process:
+        for results in techniques_to_process:
             objectives.extend(result.objective for result in results)
 
         return list(set(objectives))

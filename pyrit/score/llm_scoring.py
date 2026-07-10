@@ -85,7 +85,10 @@ async def _run_llm_scoring_async(
         system_prompt=system_prompt,
         conversation_id=conversation_id,
     )
-    prompt_metadata: dict[str, Any] = {"response_format": "json"}
+    prompt_metadata: dict[str, Any] = {}
+    response_format = response_handler.response_format
+    if response_format is not None:
+        prompt_metadata["response_format"] = response_format
     response_schema = response_handler.response_schema
     if response_schema is not None:
         # Always forward the schema; the target's normalization pipeline omits it

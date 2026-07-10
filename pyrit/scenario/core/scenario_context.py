@@ -21,7 +21,7 @@ if TYPE_CHECKING:
     from pyrit.models import SeedAttackGroup
     from pyrit.prompt_target import PromptTarget
     from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
-    from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
+    from pyrit.scenario.core.scenario_technique import ScenarioTechnique
 
 
 @dataclass(frozen=True)
@@ -36,8 +36,8 @@ class ScenarioContext:
 
     Attributes:
         objective_target (PromptTarget): The target system the scenario attacks.
-        scenario_strategies (Sequence[ScenarioStrategy]): The resolved, concrete
-            strategies selected for this run (aggregates already expanded).
+        scenario_techniques (Sequence[ScenarioTechnique]): The resolved, concrete
+            techniques selected for this run (aggregates already expanded).
         dataset_config (DatasetAttackConfiguration): The effective dataset configuration
             (caller-supplied or the scenario's default).
         memory_labels (dict[str, str]): Labels applied to every attack run.
@@ -54,7 +54,7 @@ class ScenarioContext:
     """
 
     objective_target: PromptTarget
-    scenario_strategies: Sequence[ScenarioStrategy]
+    scenario_techniques: Sequence[ScenarioTechnique]
     dataset_config: DatasetAttackConfiguration
     memory_labels: dict[str, str] = field(default_factory=dict)
     include_baseline: bool = False

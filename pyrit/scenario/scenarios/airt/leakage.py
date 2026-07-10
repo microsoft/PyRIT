@@ -8,24 +8,21 @@ from functools import cache
 from typing import TYPE_CHECKING
 
 from pyrit.common import apply_defaults
-from pyrit.common.path import DATASETS_PATH, SCORER_SEED_PROMPT_PATH
-from pyrit.executor.attack import AttackConverterConfig, PromptSendingAttack
-from pyrit.prompt_converter import AddImageTextConverter, FirstLetterConverter
-from pyrit.prompt_normalizer import PromptConverterConfiguration
+from pyrit.common.path import SCORER_SEED_PROMPT_PATH
 from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
 from pyrit.registry.tag_query import TagQuery
-from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
 from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
 from pyrit.scenario.core.matrix_atomic_attack_builder import build_matrix_atomic_attacks
 from pyrit.scenario.core.scenario import Scenario
-from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
+from pyrit.scenario.core.scenario_technique import ScenarioTechnique
 
 if TYPE_CHECKING:
     from pathlib import Path
 
     from pyrit.scenario.core.atomic_attack import AtomicAttack
+    from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
     from pyrit.scenario.core.scenario_context import ScenarioContext
-    from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
+    from pyrit.scenario.core.scenario_technique import ScenarioTechnique
     from pyrit.score import TrueFalseScorer
 
 logger = logging.getLogger(__name__)
@@ -34,56 +31,47 @@ logger = logging.getLogger(__name__)
 # Leakage-specific technique catalog
 # ---------------------------------------------------------------------------
 
-_BLANK_IMAGE_PATH = str(DATASETS_PATH / "seed_datasets" / "local" / "examples" / "blank_canvas.png")
 
-LEAKAGE_FACTORIES: list[AttackTechniqueFactory] = [
-    AttackTechniqueFactory(
-        name="first_letter",
-        attack_class=PromptSendingAttack,
-        strategy_tags=["single_turn", "default"],
-        attack_kwargs={
-            "attack_converter_config": AttackConverterConfig(
-                request_converters=PromptConverterConfiguration.from_converters(converters=[FirstLetterConverter()])
-            ),
-        },
-    ),
-    AttackTechniqueFactory(
-        name="image",
-        attack_class=PromptSendingAttack,
-        strategy_tags=["single_turn", "default"],
-        attack_kwargs={
-            "attack_converter_config": AttackConverterConfig(
-                request_converters=PromptConverterConfiguration.from_converters(
-                    converters=[AddImageTextConverter(img_to_add=_BLANK_IMAGE_PATH)]
-                )
-            ),
-        },
-    ),
-]
+@cache
+def _leakage_factories() -> list[AttackTechniqueFactory]:
+    """
+    Return the AIRT source-owned leakage techniques (``first_letter``, ``image``).
+
+    Imported lazily from the shared catalog (``techniques.airt``) to avoid an
+    import cycle during ``pyrit.scenario`` package initialization. These live in
+    the catalog but are not registered into the global registry — Leakage passes
+    them explicitly, so the shared technique pool for other scenarios is unchanged.
+
+    Returns:
+        list[AttackTechniqueFactory]: The leakage-owned technique factories.
+    """
+    from pyrit.setup.initializers.techniques.airt import get_technique_factories
+
+    return get_technique_factories()
 
 
 @cache
-def _build_leakage_strategy() -> type[ScenarioStrategy]:
+def _build_leakage_technique() -> type[ScenarioTechnique]:
     """
-    Build the Leakage strategy class dynamically from core + leakage-specific factories.
+    Build the Leakage technique class dynamically from core + leakage-specific factories.
 
     Combines core factories (from the registry) with leakage-unique factories
-    (``first_letter``, ``image``) to provide the full set of attack strategies.
+    (``first_letter``, ``image``) to provide the full set of attack techniques.
 
     Returns:
-        type[ScenarioStrategy]: The dynamically generated strategy enum class.
+        type[ScenarioTechnique]: The dynamically generated technique enum class.
     """
     registry = AttackTechniqueRegistry.get_registry_singleton()
     core_factories = list(registry.get_factories_or_raise().values())
-    all_factories = core_factories + LEAKAGE_FACTORIES
-    return AttackTechniqueRegistry.build_strategy_class_from_factories(  # type: ignore[return-value, ty:invalid-return-type]
-        class_name="LeakageStrategy",
+    all_factories = core_factories + _leakage_factories()
+    return AttackTechniqueRegistry.build_technique_class_from_factories(  # type: ignore[return-value, ty:invalid-return-type]
+        class_name="LeakageTechnique",
         factories=all_factories,
         aggregate_tags={
-            "default": TagQuery.any_of("default"),
             "single_turn": TagQuery.any_of("single_turn"),
             "multi_turn": TagQuery.any_of("multi_turn"),
         },
+        default_technique_names={"role_play", "many_shot", "first_letter", "image"},
     )
 
 
@@ -131,12 +119,12 @@ class Leakage(Scenario):
         if not objective_scorer:
             objective_scorer = self._get_default_objective_scorer()
 
-        strategy_class = _build_leakage_strategy()
+        technique_class = _build_leakage_technique()
 
         super().__init__(
             version=self.VERSION,
-            strategy_class=strategy_class,
-            default_strategy=strategy_class("default"),
+            technique_class=technique_class,
+            default_technique=technique_class("default"),
             default_dataset_config=DatasetAttackConfiguration(dataset_names=["airt_leakage"], max_dataset_size=4),
             objective_scorer=objective_scorer,
             scenario_result_id=scenario_result_id,
@@ -160,6 +148,6 @@ class Leakage(Scenario):
         return build_matrix_atomic_attacks(
             context=context,
             objective_scorer=self._objective_scorer,
-            strategy_converters=self._strategy_converters,
-            extra_factories={factory.name: factory for factory in LEAKAGE_FACTORIES},
+            technique_converters=self._technique_converters,
+            extra_factories={factory.name: factory for factory in _leakage_factories()},
         )

@@ -18,23 +18,24 @@ if TYPE_CHECKING:
 
     from pyrit.scenario.core.atomic_attack import AtomicAttack
     from pyrit.scenario.core.scenario_context import ScenarioContext
-    from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
+    from pyrit.scenario.core.scenario_technique import ScenarioTechnique
     from pyrit.score import TrueFalseScorer
 
 logger = logging.getLogger(__name__)
 
-# Techniques Cyber selects from the shared catalog. ``DEFAULT`` is wired to ``any_of("core")``
-# (see _build_cyber_strategy), so adding a technique here that carries the ``core`` tag pulls it
-# into DEFAULT, while a technique lacking ``core`` (e.g. an ``extra``-group technique) would stay
-# in ALL but be silently dropped from DEFAULT. Either case breaks the current DEFAULT == ALL
-# invariant (guarded by test_default_matches_all); revisit the aggregate wiring if that happens.
+# Techniques Cyber selects from the shared catalog. Cyber declares its own DEFAULT by naming
+# these techniques (see _build_cyber_technique), rather than relying on a catalog-wide ``default``
+# tag. Adding a technique here that is not also in ``_CYBER_DEFAULT_TECHNIQUE_NAMES`` would keep
+# it in ALL but out of DEFAULT, breaking the current DEFAULT == ALL invariant guarded by
+# test_default_matches_all; keep the two sets in sync if this list grows.
 _CYBER_TECHNIQUE_NAMES = {"red_teaming"}
+_CYBER_DEFAULT_TECHNIQUE_NAMES = {"red_teaming"}
 
 
 @cache
-def _build_cyber_strategy() -> type[ScenarioStrategy]:
+def _build_cyber_technique() -> type[ScenarioTechnique]:
     """
-    Build the Cyber strategy class dynamically from the registered technique factories.
+    Build the Cyber technique class dynamically from the registered technique factories.
 
     Selects only the ``red_teaming`` factory from the singleton
     ``AttackTechniqueRegistry``. A plain ``PromptSendingAttack`` baseline is
@@ -45,7 +46,7 @@ def _build_cyber_strategy() -> type[ScenarioStrategy]:
     same single ``red_teaming`` technique as ``ALL``.
 
     Returns:
-        type[ScenarioStrategy]: The dynamically generated strategy enum class.
+        type[ScenarioTechnique]: The dynamically generated technique enum class.
     """
     from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
     from pyrit.registry.tag_query import TagQuery
@@ -54,17 +55,16 @@ def _build_cyber_strategy() -> type[ScenarioStrategy]:
     factories = registry.get_factories_or_raise()
     cyber_factories = [f for name, f in factories.items() if name in _CYBER_TECHNIQUE_NAMES]
 
-    return AttackTechniqueRegistry.build_strategy_class_from_factories(  # type: ignore[ty:invalid-return-type]
-        class_name="CyberStrategy",
+    return AttackTechniqueRegistry.build_technique_class_from_factories(  # type: ignore[ty:invalid-return-type]
+        class_name="CyberTechnique",
         factories=cyber_factories,
         aggregate_tags={
-            # Cyber curates a single technique (red_teaming) at the scenario level. That
-            # technique carries the canonical ``core`` tag but not the catalog-wide
-            # ``default`` tag, so DEFAULT matches ``core`` here to select it (rather than
-            # tagging red_teaming ``default`` globally, which would alter other scenarios).
-            "default": TagQuery.any_of("core"),
             "multi_turn": TagQuery.any_of("multi_turn"),
         },
+        # Cyber curates a single technique (red_teaming) at the scenario level. It declares that
+        # as its DEFAULT by name rather than tagging red_teaming ``default`` globally, which would
+        # alter other scenarios.
+        default_technique_names=_CYBER_DEFAULT_TECHNIQUE_NAMES,
     )
 
 
@@ -108,13 +108,13 @@ class Cyber(Scenario):
             objective_scorer if objective_scorer else self._get_default_objective_scorer()
         )
 
-        strategy_class = _build_cyber_strategy()
+        technique_class = _build_cyber_technique()
 
         super().__init__(
             version=self.VERSION,
             objective_scorer=self._objective_scorer,
-            strategy_class=strategy_class,
-            default_strategy=strategy_class("default"),
+            technique_class=technique_class,
+            default_technique=technique_class("default"),
             default_dataset_config=DatasetAttackConfiguration(dataset_names=["airt_malware"], max_dataset_size=4),
             scenario_result_id=scenario_result_id,
         )
@@ -135,5 +135,5 @@ class Cyber(Scenario):
         return build_matrix_atomic_attacks(
             context=context,
             objective_scorer=self._objective_scorer,
-            strategy_converters=self._strategy_converters,
+            technique_converters=self._technique_converters,
         )

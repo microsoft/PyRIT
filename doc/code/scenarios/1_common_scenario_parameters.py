@@ -12,10 +12,10 @@
 # # Common Scenario Parameters
 #
 # This guide covers the key parameters for configuring scenarios programmatically: datasets,
-# strategies, baseline execution, and custom scorers. All examples use `RedTeamAgent` but the
+# techniques, baseline execution, and custom scorers. All examples use `RedTeamAgent` but the
 # patterns apply to any scenario.
 #
-# > **Two selection axes**: *Strategies* select attack techniques (*how* attacks run — e.g., prompt
+# > **Two selection axes**: *Techniques* select attack techniques (*how* attacks run — e.g., prompt
 # > sending, role play, TAP). *Datasets* select objectives (*what* is tested — e.g., harm categories,
 # > compliance topics). Use `--dataset-names` on the CLI to filter by content category.
 #
@@ -30,7 +30,7 @@ from pathlib import Path
 
 from pyrit.output import output_scenario_async
 from pyrit.registry import TargetRegistry
-from pyrit.scenario.foundry import FoundryStrategy, RedTeamAgent
+from pyrit.scenario.foundry import FoundryTechnique, RedTeamAgent
 from pyrit.setup import initialize_from_config_async
 
 await initialize_from_config_async(config_path=Path("../../scanner/pyrit_conf.yaml"))  # type: ignore
@@ -63,59 +63,59 @@ seed_groups: list[SeedGroup] = datasets[0].seed_groups  # type: ignore
 dataset_config = DatasetAttackConfiguration(seed_groups=seed_groups, max_dataset_size=2)
 
 # %% [markdown]
-# ## Strategy Selection and Composition
+# ## Technique Selection and Composition
 #
-# `FoundryStrategy` is an enum that defines which attack strategies the scenario runs. There are
-# three ways to specify strategies:
+# `FoundryTechnique` is an enum that defines which attack techniques the scenario runs. There are
+# three ways to specify techniques:
 #
-# **Individual strategies** — a single converter or multi-turn attack:
+# **Individual techniques** — a single converter or multi-turn attack:
 
 # %%
-single_strategy = [FoundryStrategy.Base64]
+single_technique = [FoundryTechnique.Base64]
 
 # %% [markdown]
-# **Aggregate strategies** — tag-based groups that expand to all matching strategies. For example,
-# `EASY` expands to all strategies tagged as easy (Base64, Binary, CharSwap, etc.):
+# **Aggregate techniques** — tag-based groups that expand to all matching techniques. For example,
+# `EASY` expands to all techniques tagged as easy (Base64, Binary, CharSwap, etc.):
 
 # %%
-aggregate_strategy = [FoundryStrategy.EASY]
+aggregate_technique = [FoundryTechnique.EASY]
 
 # %% [markdown]
-# **Composite strategies** — pair an attack with one or more converters using `FoundryComposite`.
+# **Composite techniques** — pair an attack with one or more converters using `FoundryComposite`.
 # For example, to run Crescendo with Base64 encoding applied:
 
 # %%
 from pyrit.scenario.foundry import FoundryComposite
 
-composite_strategy = [FoundryComposite(attack=FoundryStrategy.Crescendo, converters=[FoundryStrategy.Base64])]
+composite_technique = [FoundryComposite(attack=FoundryTechnique.Crescendo, converters=[FoundryTechnique.Base64])]
 
 # %% [markdown]
 # You can mix all three types in a single list:
 
 # %%
-scenario_strategies = [
-    FoundryStrategy.Base64,
-    FoundryStrategy.Binary,
-    FoundryComposite(attack=FoundryStrategy.Crescendo, converters=[FoundryStrategy.Caesar]),
+scenario_techniques = [
+    FoundryTechnique.Base64,
+    FoundryTechnique.Binary,
+    FoundryComposite(attack=FoundryTechnique.Crescendo, converters=[FoundryTechnique.Caesar]),
 ]
 
 # %% [markdown]
 # ## Baseline Execution
 #
 # The baseline sends each objective directly to the target without any converters or multi-turn
-# strategies. It is included automatically when `include_baseline=True` (the default for
+# techniques. It is included automatically when `include_baseline=True` (the default for
 # scenarios that support a baseline). This is useful for:
 #
 # - **Measuring default defenses** — how does the target respond to unmodified harmful prompts?
 # - **Establishing comparison points** — compare baseline refusal rates against attack-enhanced runs
-# - **Calculating attack lift** — how much does each strategy improve over the baseline?
+# - **Calculating attack lift** — how much does each technique improve over the baseline?
 
 # %%
 baseline_scenario = RedTeamAgent()
 baseline_scenario.set_params_from_args(  # type: ignore
     args={
         "objective_target": objective_target,
-        "scenario_strategies": None,  # Uses default strategies; baseline is prepended automatically
+        "scenario_techniques": None,  # Uses default techniques; baseline is prepended automatically
         "dataset_config": dataset_config,
     }
 )
@@ -127,7 +127,7 @@ await output_scenario_async(baseline_result)  # type: ignore [top-level-await]
 # ### Sorting the Per-Group Breakdown by Success Rate
 #
 # By default, the **Per-Group Breakdown** lists groups in the order they were executed. The baseline
-# run above produces a row for every default strategy, which makes it hard to spot the most
+# run above produces a row for every default technique, which makes it hard to spot the most
 # successful ones at a glance. Pass `sort_groups_by_success_rate=True` to `output_scenario_async` to
 # re-render the same result with the highest success rates at the top (groups with equal rates keep
 # their original relative order):
@@ -136,7 +136,7 @@ await output_scenario_async(baseline_result)  # type: ignore [top-level-await]
 await output_scenario_async(baseline_result, sort_groups_by_success_rate=True)
 
 # %% [markdown]
-# To disable the automatic baseline entirely (e.g., when you only want attack strategies with no
+# To disable the automatic baseline entirely (e.g., when you only want attack techniques with no
 # comparison), set `include_baseline=False` in the run params:
 #
 # ```python
@@ -144,7 +144,7 @@ await output_scenario_async(baseline_result, sort_groups_by_success_rate=True)
 # scenario.set_params_from_args(
 #     args={
 #         "objective_target": objective_target,
-#         "scenario_strategies": [FoundryStrategy.Base64],
+#         "scenario_techniques": [FoundryTechnique.Base64],
 #         "include_baseline": False,
 #     }
 # )
@@ -174,7 +174,7 @@ custom_scenario = RedTeamAgent(
 custom_scenario.set_params_from_args(  # type: ignore
     args={
         "objective_target": objective_target,
-        "scenario_strategies": [FoundryStrategy.Base64],
+        "scenario_techniques": [FoundryTechnique.Base64],
         "dataset_config": dataset_config,
     }
 )

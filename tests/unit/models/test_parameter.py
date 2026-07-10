@@ -321,7 +321,7 @@ class TestCoerceValuePassthrough:
     def test_opaque_param_passes_value_through_by_identity(self) -> None:
         """An opaque parameter returns the live object unchanged — never coerced or copied."""
         live = {"converter": object()}
-        p = Parameter(name="strategy_converters", description="d", opaque=True)
+        p = Parameter(name="technique_converters", description="d", opaque=True)
         assert p.coerce_value(live) is live
 
     def test_opaque_param_does_not_deepcopy_none(self) -> None:
@@ -360,7 +360,7 @@ class TestValidate:
 
     def test_opaque_param_is_valid_without_param_type_or_default(self) -> None:
         """An opaque parameter needs neither a ``param_type`` nor a default to validate."""
-        Parameter(name="strategy_converters", description="d", opaque=True).validate()
+        Parameter(name="technique_converters", description="d", opaque=True).validate()
 
 
 class TestCoercionParity:

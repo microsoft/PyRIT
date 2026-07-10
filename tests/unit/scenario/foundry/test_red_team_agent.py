@@ -14,7 +14,11 @@ from pyrit.models import ComponentIdentifier, SeedAttackGroup, SeedObjective
 from pyrit.prompt_converter import Base64Converter
 from pyrit.prompt_target import PromptTarget
 from pyrit.scenario import AtomicAttack, DatasetAttackConfiguration
-from pyrit.scenario.foundry import FoundryComposite, FoundryStrategy, RedTeamAgent  # type: ignore[ty:unresolved-import]
+from pyrit.scenario.foundry import (  # type: ignore[ty:unresolved-import]
+    FoundryComposite,
+    FoundryTechnique,
+    RedTeamAgent,
+)
 from pyrit.score import FloatScaleThresholdScorer, TrueFalseScorer
 
 
@@ -111,10 +115,10 @@ FIXTURES = ["patch_central_database", "mock_runtime_env"]
 class TestFoundryInitialization:
     """Tests for RedTeamAgent initialization."""
 
-    async def test_init_with_single_strategy(
+    async def test_init_with_single_technique(
         self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups, mock_dataset_config
     ):
-        """Test initialization with a single attack strategy."""
+        """Test initialization with a single attack technique."""
         with patch.object(
             RedTeamAgent,
             "_resolve_seed_groups_by_dataset_async",
@@ -128,7 +132,7 @@ class TestFoundryInitialization:
             scenario.set_params_from_args(
                 args={
                     "objective_target": mock_objective_target,
-                    "scenario_strategies": [FoundryStrategy.Base64],
+                    "scenario_techniques": [FoundryTechnique.Base64],
                     "dataset_config": mock_dataset_config,
                 }
             )
@@ -136,14 +140,14 @@ class TestFoundryInitialization:
             assert scenario.atomic_attack_count > 0
             assert scenario.name == "RedTeamAgent"
 
-    async def test_init_with_multiple_strategies(
+    async def test_init_with_multiple_techniques(
         self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups, mock_dataset_config
     ):
-        """Test initialization with multiple attack strategies."""
-        strategies = [
-            FoundryStrategy.Base64,
-            FoundryStrategy.ROT13,
-            FoundryStrategy.Leetspeak,
+        """Test initialization with multiple attack techniques."""
+        techniques = [
+            FoundryTechnique.Base64,
+            FoundryTechnique.ROT13,
+            FoundryTechnique.Leetspeak,
         ]
 
         with patch.object(
@@ -159,12 +163,12 @@ class TestFoundryInitialization:
             scenario.set_params_from_args(
                 args={
                     "objective_target": mock_objective_target,
-                    "scenario_strategies": strategies,
+                    "scenario_techniques": techniques,
                     "dataset_config": mock_dataset_config,
                 }
             )
             await scenario.initialize_async()
-            assert scenario.atomic_attack_count >= len(strategies)
+            assert scenario.atomic_attack_count >= len(techniques)
 
     def test_init_with_custom_adversarial_target(
         self, mock_objective_target, mock_adversarial_target, mock_objective_scorer
@@ -258,13 +262,13 @@ class TestFoundryInitialization:
 
 
 @pytest.mark.usefixtures(*FIXTURES)
-class TestFoundryStrategyNormalization:
-    """Tests for attack strategy normalization."""
+class TestFoundryTechniqueNormalization:
+    """Tests for attack technique normalization."""
 
-    async def test_normalize_easy_strategies(
+    async def test_normalize_easy_techniques(
         self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups, mock_dataset_config
     ):
-        """Test that EASY strategy expands to easy attack strategies."""
+        """Test that EASY technique expands to easy attack techniques."""
         with patch.object(
             RedTeamAgent,
             "_resolve_seed_groups_by_dataset_async",
@@ -278,18 +282,18 @@ class TestFoundryStrategyNormalization:
             scenario.set_params_from_args(
                 args={
                     "objective_target": mock_objective_target,
-                    "scenario_strategies": [FoundryStrategy.EASY],
+                    "scenario_techniques": [FoundryTechnique.EASY],
                     "dataset_config": mock_dataset_config,
                 }
             )
             await scenario.initialize_async()
-            # EASY should expand to multiple attack strategies
+            # EASY should expand to multiple attack techniques
             assert scenario.atomic_attack_count > 1
 
-    async def test_normalize_moderate_strategies(
+    async def test_normalize_moderate_techniques(
         self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups, mock_dataset_config
     ):
-        """Test that MODERATE strategy expands to moderate attack strategies."""
+        """Test that MODERATE technique expands to moderate attack techniques."""
         with patch.object(
             RedTeamAgent,
             "_resolve_seed_groups_by_dataset_async",
@@ -303,25 +307,25 @@ class TestFoundryStrategyNormalization:
             scenario.set_params_from_args(
                 args={
                     "objective_target": mock_objective_target,
-                    "scenario_strategies": [FoundryStrategy.MODERATE],
+                    "scenario_techniques": [FoundryTechnique.MODERATE],
                     "dataset_config": mock_dataset_config,
                 }
             )
             await scenario.initialize_async()
-            # MODERATE should expand to moderate attack strategies (currently only 1: Tense)
+            # MODERATE should expand to moderate attack techniques (currently only 1: Tense)
             assert scenario.atomic_attack_count >= 1
 
-    async def test_normalize_difficult_strategies(
+    async def test_normalize_difficult_techniques(
         self, mock_objective_target, mock_float_threshold_scorer, mock_memory_seed_groups, mock_dataset_config
     ):
-        """Test that DIFFICULT strategy expands to difficult attack strategies."""
+        """Test that DIFFICULT technique expands to difficult attack techniques."""
         with patch.object(
             RedTeamAgent,
             "_resolve_seed_groups_by_dataset_async",
             new_callable=AsyncMock,
             return_value={"memory": mock_memory_seed_groups},
         ):
-            # DIFFICULT strategy includes TAP which requires FloatScaleThresholdScorer
+            # DIFFICULT technique includes TAP which requires FloatScaleThresholdScorer
             scenario = RedTeamAgent(
                 attack_scoring_config=AttackScoringConfig(objective_scorer=mock_float_threshold_scorer),
             )
@@ -329,12 +333,12 @@ class TestFoundryStrategyNormalization:
             scenario.set_params_from_args(
                 args={
                     "objective_target": mock_objective_target,
-                    "scenario_strategies": [FoundryStrategy.DIFFICULT],
+                    "scenario_techniques": [FoundryTechnique.DIFFICULT],
                     "dataset_config": mock_dataset_config,
                 }
             )
             await scenario.initialize_async()
-            # DIFFICULT should expand to multiple attack strategies
+            # DIFFICULT should expand to multiple attack techniques
             assert scenario.atomic_attack_count > 1
 
     async def test_normalize_mixed_difficulty_levels(
@@ -354,18 +358,18 @@ class TestFoundryStrategyNormalization:
             scenario.set_params_from_args(
                 args={
                     "objective_target": mock_objective_target,
-                    "scenario_strategies": [FoundryStrategy.EASY, FoundryStrategy.MODERATE],
+                    "scenario_techniques": [FoundryTechnique.EASY, FoundryTechnique.MODERATE],
                     "dataset_config": mock_dataset_config,
                 }
             )
             await scenario.initialize_async()
-            # Combined difficulty levels should expand to multiple strategies
+            # Combined difficulty levels should expand to multiple techniques
             assert scenario.atomic_attack_count > 5  # EASY has 20, MODERATE has 1, combined should have more
 
     async def test_normalize_with_specific_and_difficulty_levels(
         self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups, mock_dataset_config
     ):
-        """Test that specific strategies combined with difficulty levels work correctly."""
+        """Test that specific techniques combined with difficulty levels work correctly."""
         with patch.object(
             RedTeamAgent,
             "_resolve_seed_groups_by_dataset_async",
@@ -379,26 +383,26 @@ class TestFoundryStrategyNormalization:
             scenario.set_params_from_args(
                 args={
                     "objective_target": mock_objective_target,
-                    "scenario_strategies": [
-                        FoundryStrategy.EASY,
-                        FoundryStrategy.Base64,  # Specific strategy
+                    "scenario_techniques": [
+                        FoundryTechnique.EASY,
+                        FoundryTechnique.Base64,  # Specific technique
                     ],
                     "dataset_config": mock_dataset_config,
                 }
             )
             await scenario.initialize_async()
-            # EASY expands to 20 strategies, but Base64 might already be in EASY, so at least 20
+            # EASY expands to 20 techniques, but Base64 might already be in EASY, so at least 20
             assert scenario.atomic_attack_count >= 20
 
 
 @pytest.mark.usefixtures(*FIXTURES)
 class TestFoundryAttackCreation:
-    """Tests for attack creation from strategies."""
+    """Tests for attack creation from techniques."""
 
-    async def test_get_attack_from_single_turn_strategy(
+    async def test_get_attack_from_single_turn_technique(
         self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups, mock_dataset_config
     ):
-        """Test creating an attack from a single-turn strategy."""
+        """Test creating an attack from a single-turn technique."""
         with patch.object(
             RedTeamAgent,
             "_resolve_seed_groups_by_dataset_async",
@@ -412,22 +416,22 @@ class TestFoundryAttackCreation:
             scenario.set_params_from_args(
                 args={
                     "objective_target": mock_objective_target,
-                    "scenario_strategies": [FoundryStrategy.Base64],
+                    "scenario_techniques": [FoundryTechnique.Base64],
                     "dataset_config": mock_dataset_config,
                 }
             )
             await scenario.initialize_async()
 
-            # Get the composite strategy that was created during initialization
-            composite_strategy = scenario._scenario_composites[0]
-            atomic_attack = scenario._get_attack_from_strategy(
-                composite=composite_strategy, seed_groups=mock_memory_seed_groups
+            # Get the composite technique that was created during initialization
+            composite_technique = scenario._scenario_composites[0]
+            atomic_attack = scenario._get_attack_from_technique(
+                composite=composite_technique, seed_groups=mock_memory_seed_groups
             )
 
             assert isinstance(atomic_attack, AtomicAttack)
             assert atomic_attack.seed_groups == mock_memory_seed_groups
 
-    async def test_get_attack_from_multi_turn_strategy(
+    async def test_get_attack_from_multi_turn_technique(
         self,
         mock_objective_target,
         mock_adversarial_target,
@@ -435,7 +439,7 @@ class TestFoundryAttackCreation:
         mock_memory_seed_groups,
         mock_dataset_config,
     ):
-        """Test creating a multi-turn attack strategy."""
+        """Test creating a multi-turn attack technique."""
         with patch.object(
             RedTeamAgent,
             "_resolve_seed_groups_by_dataset_async",
@@ -450,16 +454,16 @@ class TestFoundryAttackCreation:
             scenario.set_params_from_args(
                 args={
                     "objective_target": mock_objective_target,
-                    "scenario_strategies": [FoundryStrategy.Crescendo],
+                    "scenario_techniques": [FoundryTechnique.Crescendo],
                     "dataset_config": mock_dataset_config,
                 }
             )
             await scenario.initialize_async()
 
-            # Get the composite strategy that was created during initialization
-            composite_strategy = scenario._scenario_composites[0]
-            atomic_attack = scenario._get_attack_from_strategy(
-                composite=composite_strategy, seed_groups=mock_memory_seed_groups
+            # Get the composite technique that was created during initialization
+            composite_technique = scenario._scenario_composites[0]
+            atomic_attack = scenario._get_attack_from_technique(
+                composite=composite_technique, seed_groups=mock_memory_seed_groups
             )
 
             assert isinstance(atomic_attack, AtomicAttack)
@@ -487,7 +491,7 @@ class TestFoundryGetAttack:
             scenario.set_params_from_args(
                 args={
                     "objective_target": mock_objective_target,
-                    "scenario_strategies": [FoundryStrategy.Base64],
+                    "scenario_techniques": [FoundryTechnique.Base64],
                     "dataset_config": mock_dataset_config,
                 }
             )
@@ -523,7 +527,7 @@ class TestFoundryGetAttack:
             scenario.set_params_from_args(
                 args={
                     "objective_target": mock_objective_target,
-                    "scenario_strategies": [FoundryStrategy.Crescendo],
+                    "scenario_techniques": [FoundryTechnique.Crescendo],
                     "dataset_config": mock_dataset_config,
                 }
             )
@@ -538,39 +542,39 @@ class TestFoundryGetAttack:
 
 
 @pytest.mark.usefixtures(*FIXTURES)
-class TestFoundryAllStrategies:
-    """Tests that all strategies can be instantiated."""
+class TestFoundryAllTechniques:
+    """Tests that all techniques can be instantiated."""
 
     @pytest.mark.parametrize(
-        "strategy",
+        "technique",
         [
-            FoundryStrategy.AnsiAttack,
-            FoundryStrategy.AsciiArt,
-            FoundryStrategy.AsciiSmuggler,
-            FoundryStrategy.Atbash,
-            FoundryStrategy.Base64,
-            FoundryStrategy.Binary,
-            FoundryStrategy.Caesar,
-            FoundryStrategy.CharacterSpace,
-            FoundryStrategy.CharSwap,
-            FoundryStrategy.Diacritic,
-            FoundryStrategy.Flip,
-            FoundryStrategy.Leetspeak,
-            FoundryStrategy.Morse,
-            FoundryStrategy.ROT13,
-            FoundryStrategy.SuffixAppend,
-            FoundryStrategy.StringJoin,
-            FoundryStrategy.Tense,
-            FoundryStrategy.UnicodeConfusable,
-            FoundryStrategy.UnicodeSubstitution,
-            FoundryStrategy.Url,
-            FoundryStrategy.Jailbreak,
+            FoundryTechnique.AnsiAttack,
+            FoundryTechnique.AsciiArt,
+            FoundryTechnique.AsciiSmuggler,
+            FoundryTechnique.Atbash,
+            FoundryTechnique.Base64,
+            FoundryTechnique.Binary,
+            FoundryTechnique.Caesar,
+            FoundryTechnique.CharacterSpace,
+            FoundryTechnique.CharSwap,
+            FoundryTechnique.Diacritic,
+            FoundryTechnique.Flip,
+            FoundryTechnique.Leetspeak,
+            FoundryTechnique.Morse,
+            FoundryTechnique.ROT13,
+            FoundryTechnique.SuffixAppend,
+            FoundryTechnique.StringJoin,
+            FoundryTechnique.Tense,
+            FoundryTechnique.UnicodeConfusable,
+            FoundryTechnique.UnicodeSubstitution,
+            FoundryTechnique.Url,
+            FoundryTechnique.Jailbreak,
         ],
     )
-    async def test_all_single_turn_strategies_create_attack_runs(
-        self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups, mock_dataset_config, strategy
+    async def test_all_single_turn_techniques_create_attack_runs(
+        self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups, mock_dataset_config, technique
     ):
-        """Test that all single-turn strategies can create attack runs."""
+        """Test that all single-turn techniques can create attack runs."""
         with patch.object(
             RedTeamAgent,
             "_resolve_seed_groups_by_dataset_async",
@@ -584,36 +588,36 @@ class TestFoundryAllStrategies:
             scenario.set_params_from_args(
                 args={
                     "objective_target": mock_objective_target,
-                    "scenario_strategies": [strategy],
+                    "scenario_techniques": [technique],
                     "dataset_config": mock_dataset_config,
                 }
             )
             await scenario.initialize_async()
 
-            # Get the composite strategy that was created during initialization
-            composite_strategy = scenario._scenario_composites[0]
-            atomic_attack = scenario._get_attack_from_strategy(
-                composite=composite_strategy, seed_groups=mock_memory_seed_groups
+            # Get the composite technique that was created during initialization
+            composite_technique = scenario._scenario_composites[0]
+            atomic_attack = scenario._get_attack_from_technique(
+                composite=composite_technique, seed_groups=mock_memory_seed_groups
             )
             assert isinstance(atomic_attack, AtomicAttack)
 
     @pytest.mark.parametrize(
-        "strategy",
+        "technique",
         [
-            FoundryStrategy.MultiTurn,
-            FoundryStrategy.Crescendo,
+            FoundryTechnique.MultiTurn,
+            FoundryTechnique.Crescendo,
         ],
     )
-    async def test_all_multi_turn_strategies_create_attack_runs(
+    async def test_all_multi_turn_techniques_create_attack_runs(
         self,
         mock_objective_target,
         mock_adversarial_target,
         mock_objective_scorer,
         mock_memory_seed_groups,
         mock_dataset_config,
-        strategy,
+        technique,
     ):
-        """Test that all multi-turn strategies can create attack runs."""
+        """Test that all multi-turn techniques can create attack runs."""
         with patch.object(
             RedTeamAgent,
             "_resolve_seed_groups_by_dataset_async",
@@ -628,16 +632,16 @@ class TestFoundryAllStrategies:
             scenario.set_params_from_args(
                 args={
                     "objective_target": mock_objective_target,
-                    "scenario_strategies": [strategy],
+                    "scenario_techniques": [technique],
                     "dataset_config": mock_dataset_config,
                 }
             )
             await scenario.initialize_async()
 
-            # Get the composite strategy that was created during initialization
-            composite_strategy = scenario._scenario_composites[0]
-            atomic_attack = scenario._get_attack_from_strategy(
-                composite=composite_strategy, seed_groups=mock_memory_seed_groups
+            # Get the composite technique that was created during initialization
+            composite_technique = scenario._scenario_composites[0]
+            atomic_attack = scenario._get_attack_from_technique(
+                composite=composite_technique, seed_groups=mock_memory_seed_groups
             )
             assert isinstance(atomic_attack, AtomicAttack)
 
@@ -650,7 +654,7 @@ class TestFoundryProperties:
         self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups, mock_dataset_config
     ):
         """Test that scenario composites are set after initialize_async."""
-        strategies = [FoundryStrategy.Base64, FoundryStrategy.ROT13]
+        techniques = [FoundryTechnique.Base64, FoundryTechnique.ROT13]
 
         with patch.object(
             RedTeamAgent,
@@ -668,7 +672,7 @@ class TestFoundryProperties:
             scenario.set_params_from_args(
                 args={
                     "objective_target": mock_objective_target,
-                    "scenario_strategies": strategies,
+                    "scenario_techniques": techniques,
                     "dataset_config": mock_dataset_config,
                     "include_baseline": False,
                 }
@@ -676,8 +680,8 @@ class TestFoundryProperties:
             await scenario.initialize_async()
 
             # After initialize_async, composites should be set
-            assert len(scenario._scenario_composites) == len(strategies)
-            assert scenario.atomic_attack_count == len(strategies)
+            assert len(scenario._scenario_composites) == len(techniques)
+            assert scenario.atomic_attack_count == len(techniques)
 
     def test_scenario_version_is_set(self, mock_objective_target, mock_objective_scorer):
         """Test that scenario version is properly set."""
@@ -687,14 +691,14 @@ class TestFoundryProperties:
 
         assert scenario.VERSION == 1
 
-    async def test_scenario_atomic_attack_count_matches_strategies(
+    async def test_scenario_atomic_attack_count_matches_techniques(
         self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups, mock_dataset_config
     ):
-        """Test that atomic attack count is reasonable for the number of strategies."""
-        strategies = [
-            FoundryStrategy.Base64,
-            FoundryStrategy.ROT13,
-            FoundryStrategy.Leetspeak,
+        """Test that atomic attack count is reasonable for the number of techniques."""
+        techniques = [
+            FoundryTechnique.Base64,
+            FoundryTechnique.ROT13,
+            FoundryTechnique.Leetspeak,
         ]
 
         with patch.object(
@@ -710,19 +714,19 @@ class TestFoundryProperties:
             scenario.set_params_from_args(
                 args={
                     "objective_target": mock_objective_target,
-                    "scenario_strategies": strategies,
+                    "scenario_techniques": techniques,
                     "dataset_config": mock_dataset_config,
                 }
             )
             await scenario.initialize_async()
-            # Should have at least as many runs as specific strategies provided
-            assert scenario.atomic_attack_count >= len(strategies)
+            # Should have at least as many runs as specific techniques provided
+            assert scenario.atomic_attack_count >= len(techniques)
 
     async def test_initialize_with_foundry_composite_directly(
         self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups, mock_dataset_config
     ):
         """FoundryComposite objects passed to initialize_async are used as-is."""
-        composite = FoundryComposite(attack=FoundryStrategy.Crescendo, converters=[FoundryStrategy.Base64])
+        composite = FoundryComposite(attack=FoundryTechnique.Crescendo, converters=[FoundryTechnique.Base64])
 
         with patch.object(
             RedTeamAgent,
@@ -736,7 +740,7 @@ class TestFoundryProperties:
             scenario.set_params_from_args(
                 args={
                     "objective_target": mock_objective_target,
-                    "scenario_strategies": [composite],
+                    "scenario_techniques": [composite],
                     "dataset_config": mock_dataset_config,
                     "include_baseline": False,
                 }
@@ -745,15 +749,15 @@ class TestFoundryProperties:
 
         assert len(scenario._scenario_composites) == 1
         result = scenario._scenario_composites[0]
-        assert result.attack == FoundryStrategy.Crescendo
-        assert result.converters == [FoundryStrategy.Base64]
-        assert result.name == "ComposedStrategy(crescendo, base64)"
+        assert result.attack == FoundryTechnique.Crescendo
+        assert result.converters == [FoundryTechnique.Base64]
+        assert result.name == "ComposedTechnique(crescendo, base64)"
 
-    async def test_initialize_with_mixed_composites_and_strategies(
+    async def test_initialize_with_mixed_composites_and_techniques(
         self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups, mock_dataset_config
     ):
-        """A mix of bare FoundryStrategy and FoundryComposite can be passed together."""
-        composite = FoundryComposite(attack=FoundryStrategy.Crescendo, converters=[FoundryStrategy.Base64])
+        """A mix of bare FoundryTechnique and FoundryComposite can be passed together."""
+        composite = FoundryComposite(attack=FoundryTechnique.Crescendo, converters=[FoundryTechnique.Base64])
 
         with patch.object(
             RedTeamAgent,
@@ -767,7 +771,7 @@ class TestFoundryProperties:
             scenario.set_params_from_args(
                 args={
                     "objective_target": mock_objective_target,
-                    "scenario_strategies": [composite, FoundryStrategy.ROT13],
+                    "scenario_techniques": [composite, FoundryTechnique.ROT13],
                     "dataset_config": mock_dataset_config,
                     "include_baseline": False,
                 }
@@ -775,16 +779,16 @@ class TestFoundryProperties:
             await scenario.initialize_async()
 
         assert len(scenario._scenario_composites) == 2
-        assert scenario._scenario_composites[0].attack == FoundryStrategy.Crescendo
+        assert scenario._scenario_composites[0].attack == FoundryTechnique.Crescendo
         assert scenario._scenario_composites[1].attack is None
-        assert scenario._scenario_composites[1].converters == [FoundryStrategy.ROT13]
+        assert scenario._scenario_composites[1].converters == [FoundryTechnique.ROT13]
 
 
 @pytest.mark.usefixtures(*FIXTURES)
 class TestRedTeamAgentBaselineUniformity:
-    """ADO 9012 regression: baseline shares objectives with strategies under max_dataset_size."""
+    """ADO 9012 regression: baseline shares objectives with techniques under max_dataset_size."""
 
-    async def test_one_resolution_call_baseline_matches_strategies(self, mock_objective_target, mock_objective_scorer):
+    async def test_one_resolution_call_baseline_matches_techniques(self, mock_objective_target, mock_objective_scorer):
         from pyrit.models import SeedAttackGroup, SeedObjective
 
         seed_groups = [SeedAttackGroup(seeds=[SeedObjective(value=f"obj{i}")]) for i in range(10)]
@@ -802,7 +806,7 @@ class TestRedTeamAgentBaselineUniformity:
             scenario.set_params_from_args(
                 args={
                     "objective_target": mock_objective_target,
-                    "scenario_strategies": [FoundryStrategy.Base64],
+                    "scenario_techniques": [FoundryTechnique.Base64],
                     "dataset_config": config,
                     "include_baseline": True,
                 }

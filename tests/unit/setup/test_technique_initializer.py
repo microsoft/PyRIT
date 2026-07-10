@@ -83,8 +83,8 @@ class TestCoreGroupCatalog:
     def test_factories_do_not_bake_in_group_tag(self):
         """The ``core`` group tag is injected by build_technique_factories, not baked in here."""
         for factory in core.get_technique_factories():
-            assert "core" not in factory.strategy_tags
-            assert "extra" not in factory.strategy_tags
+            assert "core" not in factory.technique_tags
+            assert "extra" not in factory.technique_tags
 
 
 class TestExtraGroupCatalog:
@@ -96,8 +96,8 @@ class TestExtraGroupCatalog:
 
     def test_factories_do_not_bake_in_group_tag(self):
         for factory in extra.get_technique_factories():
-            assert "extra" not in factory.strategy_tags
-            assert "core" not in factory.strategy_tags
+            assert "extra" not in factory.technique_tags
+            assert "core" not in factory.technique_tags
 
     def test_violent_durian_has_max_turns_three(self):
         factory = next(f for f in extra.get_technique_factories() if f.name == "violent_durian")
@@ -120,13 +120,13 @@ class TestBuildTechniqueFactories:
         factories = build_technique_factories(groups=["core"])
         assert {f.name for f in factories} == set(CORE_TECHNIQUE_NAMES)
         for factory in factories:
-            assert "core" in factory.strategy_tags
+            assert "core" in factory.technique_tags
 
     def test_extra_group_injects_extra_tag(self):
         factories = build_technique_factories(groups=["extra"])
         assert {f.name for f in factories} == set(EXTRA_TECHNIQUE_NAMES)
         for factory in factories:
-            assert "extra" in factory.strategy_tags
+            assert "extra" in factory.technique_tags
 
     def test_default_returns_all_groups(self):
         names = {f.name for f in build_technique_factories()}
@@ -193,8 +193,8 @@ class TestPersonaCrescendoFactories:
 
     def test_all_tagged_core_single_turn(self):
         for f in self._persona_factories():
-            assert "core" in f.strategy_tags
-            assert "single_turn" in f.strategy_tags
+            assert "core" in f.technique_tags
+            assert "single_turn" in f.technique_tags
 
     def test_seed_technique_num_turns_matches_canonical_default(self):
         """Persona variants share the canonical num_turns=3 of crescendo_simulated."""
@@ -265,7 +265,7 @@ class TestTechniqueInitializerRegistration:
         await init.initialize_async()
 
         factory = AttackTechniqueRegistry.get_registry_singleton().get_factories()["role_play"]
-        assert "core" in factory.strategy_tags
+        assert "core" in factory.technique_tags
 
     async def test_extra_tag_registers_extra_techniques(self, mock_adversarial_target):
         init = TechniqueInitializer()
@@ -348,9 +348,9 @@ class TestViolentDurianTechnique:
 
     def test_tagged_extra_not_core_or_default(self):
         factory = self._violent_durian_factory()
-        assert "core" not in factory.strategy_tags
-        assert "default" not in factory.strategy_tags
-        assert set(factory.strategy_tags) == {"multi_turn", "extra"}
+        assert "core" not in factory.technique_tags
+        assert "default" not in factory.technique_tags
+        assert set(factory.technique_tags) == {"multi_turn", "extra"}
 
     def test_uses_red_teaming_attack_with_adversarial(self):
         factory = self._violent_durian_factory()

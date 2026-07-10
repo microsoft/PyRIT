@@ -660,7 +660,7 @@ class TestHarmbenchMetadataInScenario:
         from pyrit.executor.attack.core.attack_config import AttackScoringConfig
         from pyrit.prompt_target import TextTarget
         from pyrit.scenario.scenarios.foundry.red_team_agent import (
-            FoundryStrategy,
+            FoundryTechnique,
             RedTeamAgent,
         )
         from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
@@ -691,7 +691,7 @@ class TestHarmbenchMetadataInScenario:
             args={
                 "objective_target": target,
                 "max_concurrency": 1,
-                "scenario_strategies": [FoundryStrategy.Base64],
+                "scenario_techniques": [FoundryTechnique.Base64],
                 "include_baseline": False,
             }
         )

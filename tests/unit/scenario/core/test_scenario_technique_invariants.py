@@ -2,10 +2,10 @@
 # Licensed under the MIT license.
 
 """
-Shared structural invariants for dynamically-generated ScenarioStrategy enums.
+Shared structural invariants for dynamically-generated ScenarioTechnique enums.
 
-These tests verify that the strategy machinery works correctly for every
-scenario that builds a strategy class via the technique registry. Adding a
+These tests verify that the technique machinery works correctly for every
+scenario that builds a technique class via the technique registry. Adding a
 new technique to the catalog should not require updating these tests.
 """
 
@@ -14,7 +14,7 @@ from unittest.mock import patch
 import pytest
 
 from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
-from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
+from pyrit.scenario.core.scenario_technique import ScenarioTechnique
 
 # ---------------------------------------------------------------------------
 # Synthetic many-shot examples — prevents reading the real JSON during tests
@@ -29,7 +29,7 @@ _MOCK_MANY_SHOT_EXAMPLES = [{"question": f"q{i}", "answer": f"a{i}"} for i in ra
 
 @pytest.fixture(autouse=True)
 def _reset_registries():
-    """Reset singletons, populate factories, and clear cached strategy classes between tests."""
+    """Reset singletons, populate factories, and clear cached technique classes between tests."""
     from unittest.mock import MagicMock
 
     from pyrit.prompt_target import PromptTarget
@@ -40,8 +40,8 @@ def _reset_registries():
 
     AttackTechniqueRegistry.reset_registry_singleton()
     TargetRegistry.reset_registry_singleton()
-    Cyber._cached_strategy_class = None
-    RapidResponse._cached_strategy_class = None
+    Cyber._cached_technique_class = None
+    RapidResponse._cached_technique_class = None
 
     adv_target = MagicMock(spec=PromptTarget)
     adv_target.capabilities.includes.return_value = True
@@ -50,8 +50,8 @@ def _reset_registries():
     yield
     AttackTechniqueRegistry.reset_registry_singleton()
     TargetRegistry.reset_registry_singleton()
-    Cyber._cached_strategy_class = None
-    RapidResponse._cached_strategy_class = None
+    Cyber._cached_technique_class = None
+    RapidResponse._cached_technique_class = None
 
 
 @pytest.fixture(autouse=True)
@@ -82,25 +82,25 @@ def _mock_runtime_env():
 
 
 # ---------------------------------------------------------------------------
-# Parametrize: one entry per scenario that uses a dynamic strategy class
+# Parametrize: one entry per scenario that uses a dynamic technique class
 # ---------------------------------------------------------------------------
 
 
-def _get_rapid_response_strategy():
-    from pyrit.scenario.scenarios.airt.rapid_response import _build_rapid_response_strategy
+def _get_rapid_response_technique():
+    from pyrit.scenario.scenarios.airt.rapid_response import _build_rapid_response_technique
 
-    return _build_rapid_response_strategy()
+    return _build_rapid_response_technique()
 
 
-def _get_cyber_strategy():
-    from pyrit.scenario.scenarios.airt.cyber import _build_cyber_strategy
+def _get_cyber_technique():
+    from pyrit.scenario.scenarios.airt.cyber import _build_cyber_technique
 
-    return _build_cyber_strategy()
+    return _build_cyber_technique()
 
 
 SCENARIO_STRATEGY_BUILDERS = [
-    pytest.param(_get_rapid_response_strategy, id="RapidResponse"),
-    pytest.param(_get_cyber_strategy, id="Cyber"),
+    pytest.param(_get_rapid_response_technique, id="RapidResponse"),
+    pytest.param(_get_cyber_technique, id="Cyber"),
 ]
 
 
@@ -109,84 +109,84 @@ SCENARIO_STRATEGY_BUILDERS = [
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("get_strategy", SCENARIO_STRATEGY_BUILDERS)
-def test_strategy_is_scenario_strategy_subclass(get_strategy):
-    """Generated class must be a ScenarioStrategy subclass."""
-    assert issubclass(get_strategy(), ScenarioStrategy)
+@pytest.mark.parametrize("get_technique", SCENARIO_STRATEGY_BUILDERS)
+def test_technique_is_scenario_technique_subclass(get_technique):
+    """Generated class must be a ScenarioTechnique subclass."""
+    assert issubclass(get_technique(), ScenarioTechnique)
 
 
-@pytest.mark.parametrize("get_strategy", SCENARIO_STRATEGY_BUILDERS)
-def test_has_at_least_one_technique(get_strategy):
+@pytest.mark.parametrize("get_technique", SCENARIO_STRATEGY_BUILDERS)
+def test_has_at_least_one_technique(get_technique):
     """Every scenario must have at least one non-aggregate technique."""
-    strat = get_strategy()
-    assert len(strat.get_all_strategies()) >= 1
+    strat = get_technique()
+    assert len(strat.get_all_techniques()) >= 1
 
 
-@pytest.mark.parametrize("get_strategy", SCENARIO_STRATEGY_BUILDERS)
-def test_has_all_aggregate(get_strategy):
+@pytest.mark.parametrize("get_technique", SCENARIO_STRATEGY_BUILDERS)
+def test_has_all_aggregate(get_technique):
     """Every scenario must include the ALL aggregate."""
-    strat = get_strategy()
+    strat = get_technique()
     assert "all" in strat.get_aggregate_tags()
     assert strat.ALL.value == "all"
 
 
-@pytest.mark.parametrize("get_strategy", SCENARIO_STRATEGY_BUILDERS)
-def test_member_count_is_techniques_plus_aggregates(get_strategy):
+@pytest.mark.parametrize("get_technique", SCENARIO_STRATEGY_BUILDERS)
+def test_member_count_is_techniques_plus_aggregates(get_technique):
     """Total enum members = techniques + aggregates."""
-    strat = get_strategy()
-    techniques = strat.get_all_strategies()
-    aggregates = strat.get_aggregate_strategies()
+    strat = get_technique()
+    techniques = strat.get_all_techniques()
+    aggregates = strat.get_aggregate_techniques()
     assert len(list(strat)) == len(techniques) + len(aggregates)
 
 
-@pytest.mark.parametrize("get_strategy", SCENARIO_STRATEGY_BUILDERS)
-def test_values_are_unique(get_strategy):
+@pytest.mark.parametrize("get_technique", SCENARIO_STRATEGY_BUILDERS)
+def test_values_are_unique(get_technique):
     """No two members share a value."""
-    strat = get_strategy()
+    strat = get_technique()
     values = [s.value for s in strat]
     assert len(values) == len(set(values))
 
 
-@pytest.mark.parametrize("get_strategy", SCENARIO_STRATEGY_BUILDERS)
-def test_invalid_value_raises(get_strategy):
+@pytest.mark.parametrize("get_technique", SCENARIO_STRATEGY_BUILDERS)
+def test_invalid_value_raises(get_technique):
     """Constructing with a bogus value raises ValueError."""
-    strat = get_strategy()
+    strat = get_technique()
     with pytest.raises(ValueError):
-        strat("nonexistent_strategy_xyzzy")
+        strat("nonexistent_technique_xyzzy")
 
 
-@pytest.mark.parametrize("get_strategy", SCENARIO_STRATEGY_BUILDERS)
-def test_all_expands_to_every_technique(get_strategy):
+@pytest.mark.parametrize("get_technique", SCENARIO_STRATEGY_BUILDERS)
+def test_all_expands_to_every_technique(get_technique):
     """ALL must expand to exactly the full set of non-aggregate techniques."""
-    strat = get_strategy()
+    strat = get_technique()
     expanded = strat.expand({strat.ALL})
-    assert set(expanded) == set(strat.get_all_strategies())
+    assert set(expanded) == set(strat.get_all_techniques())
 
 
-@pytest.mark.parametrize("get_strategy", SCENARIO_STRATEGY_BUILDERS)
-def test_each_aggregate_expands_to_nonempty_subset(get_strategy):
+@pytest.mark.parametrize("get_technique", SCENARIO_STRATEGY_BUILDERS)
+def test_each_aggregate_expands_to_nonempty_subset(get_technique):
     """Every aggregate tag expands to a non-empty subset of techniques."""
-    strat = get_strategy()
-    all_techniques = set(strat.get_all_strategies())
-    for aggregate in strat.get_aggregate_strategies():
+    strat = get_technique()
+    all_techniques = set(strat.get_all_techniques())
+    for aggregate in strat.get_aggregate_techniques():
         expanded = set(strat.expand({aggregate}))
         assert len(expanded) >= 1, f"Aggregate {aggregate.value!r} expanded to empty set"
         assert expanded <= all_techniques, f"Aggregate {aggregate.value!r} expanded outside technique set"
 
 
-@pytest.mark.parametrize("get_strategy", SCENARIO_STRATEGY_BUILDERS)
-def test_aggregates_are_disjoint_from_techniques(get_strategy):
+@pytest.mark.parametrize("get_technique", SCENARIO_STRATEGY_BUILDERS)
+def test_aggregates_are_disjoint_from_techniques(get_technique):
     """Aggregate members and technique members don't overlap."""
-    strat = get_strategy()
-    agg_values = {s.value for s in strat.get_aggregate_strategies()}
-    tech_values = {s.value for s in strat.get_all_strategies()}
+    strat = get_technique()
+    agg_values = {s.value for s in strat.get_aggregate_techniques()}
+    tech_values = {s.value for s in strat.get_all_techniques()}
     assert agg_values.isdisjoint(tech_values)
 
 
-@pytest.mark.parametrize("get_strategy", SCENARIO_STRATEGY_BUILDERS)
-def test_expanding_a_technique_returns_itself(get_strategy):
+@pytest.mark.parametrize("get_technique", SCENARIO_STRATEGY_BUILDERS)
+def test_expanding_a_technique_returns_itself(get_technique):
     """Expanding a single non-aggregate technique returns just that technique."""
-    strat = get_strategy()
-    for technique in strat.get_all_strategies():
+    strat = get_technique()
+    for technique in strat.get_all_techniques():
         expanded = strat.expand({technique})
         assert expanded == [technique]

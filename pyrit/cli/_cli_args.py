@@ -352,7 +352,7 @@ ARG_HELP = {
     "initialization_scripts": "Paths to custom Python initialization scripts to run before the scenario",
     "env_files": "Paths to environment files to load in order (e.g., .env.production .env.local). Later files "
     "override earlier ones.",
-    "scenario_strategies": "List of strategy names to run (e.g., base64 rot13). Append one or more "
+    "scenario_techniques": "List of technique names to run (e.g., base64 rot13). Append one or more "
     "registered converters to a technique with ':converter.<name>' (repeatable), e.g. "
     "role_play:converter.translation_spanish:converter.leetspeak. The converter is appended on top of "
     "the technique's built-in converters. Use --list-converters to see registered converter names",
@@ -443,8 +443,8 @@ class _ArgSpec:
     constant, not editing any parsing logic.
 
     Attributes:
-        flags: CLI flag strings that trigger this argument (e.g., ``["--strategies", "-s"]``).
-        result_key: Key name in the returned dict (e.g., ``"scenario_strategies"``).
+        flags: CLI flag strings that trigger this argument (e.g., ``["--techniques", "-s"]``).
+        result_key: Key name in the returned dict (e.g., ``"scenario_techniques"``).
         multi_value: If True, collect values until the next flag.
             If False, consume exactly one value.
         parser: Optional callable to transform each raw string value.
@@ -469,9 +469,9 @@ _INIT_SCRIPTS_ARG = _ArgSpec(
     multi_value=True,
 )
 
-_STRATEGIES_ARG = _ArgSpec(
-    flags=["--strategies", "-s"],
-    result_key="scenario_strategies",
+_TECHNIQUES_ARG = _ArgSpec(
+    flags=["--techniques", "-t"],
+    result_key="scenario_techniques",
     multi_value=True,
 )
 _MAX_CONCURRENCY_ARG = _ArgSpec(
@@ -517,7 +517,7 @@ _TARGET_ARG = _ArgSpec(
 
 _RUN_ARG_SPECS: list[_ArgSpec] = [
     _INITIALIZERS_ARG,
-    _STRATEGIES_ARG,
+    _TECHNIQUES_ARG,
     _MAX_CONCURRENCY_ARG,
     _MAX_RETRIES_ARG,
     _MEMORY_LABELS_ARG,

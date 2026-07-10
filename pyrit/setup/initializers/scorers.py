@@ -37,6 +37,7 @@ from pyrit.score import (
     SelfAskTrueFalseScorer,
     TrueFalseCompositeScorer,
     TrueFalseInverterScorer,
+    TrueFalseQuestion,
     TrueFalseQuestionPaths,
     TrueFalseScoreAggregator,
     TrueFalseScorer,
@@ -432,18 +433,18 @@ class ScorerInitializer(PyRITInitializer):
 
         self._try_register(
             name=self.TASK_ACHIEVED_GPT4O_TEMP9,
-            factory=lambda: SelfAskTrueFalseScorer(
+            factory=lambda: SelfAskTrueFalseScorer.from_question(
                 chat_target=self._require_dependency(gpt4o_temp9, name=GPT4O_TEMP9_TARGET),
-                true_false_question_path=TrueFalseQuestionPaths.TASK_ACHIEVED.value,
+                question=TrueFalseQuestion.from_yaml(TrueFalseQuestionPaths.TASK_ACHIEVED.value),
             ),
             required_targets=[gpt4o_temp9],
             tags=task_tag,
         )
         self._try_register(
             name=TASK_ACHIEVED_REFINED_GPT4O_TEMP9,
-            factory=lambda: SelfAskTrueFalseScorer(
+            factory=lambda: SelfAskTrueFalseScorer.from_question(
                 chat_target=self._require_dependency(gpt4o_temp9, name=GPT4O_TEMP9_TARGET),
-                true_false_question_path=TrueFalseQuestionPaths.TASK_ACHIEVED_REFINED.value,
+                question=TrueFalseQuestion.from_yaml(TrueFalseQuestionPaths.TASK_ACHIEVED_REFINED.value),
             ),
             required_targets=[gpt4o_temp9],
             tags=task_tag,
