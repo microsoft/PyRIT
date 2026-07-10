@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import json
 import pathlib
 import re
 from enum import Enum
@@ -22,11 +23,12 @@ class CodeAttackConverter(Converter):
     sequence embedded inside a partial code template. The model is asked to
     complete the code, which sidesteps natural-language safety training.
 
-    **Separator normalisation (python_stack and python_list only):** tokens
-    are split on ``[\\s\\-]+``, so hyphens and runs of whitespace are treated
-    as delimiters and do not survive the encode/decode cycle. Byte-identical
-    round-trips are only guaranteed for inputs whose words are separated by a
-    single space with no hyphens.
+    **Separator normalisation (python_stack only):** tokens are split on
+    ``[\\s\\-]+``, so hyphens and runs of whitespace are treated as delimiters
+    and do not survive the encode/decode cycle. Byte-identical round-trips are
+    only guaranteed for inputs whose words are separated by a single space with
+    no hyphens. ``python_list`` uses ``str.split()`` and preserves token
+    boundaries without consuming hyphens.
 
     CodeAttack [@ren2024codeattack].
     """
@@ -141,20 +143,20 @@ class CodeAttackConverter(Converter):
         if len(words) == 1:
             words = list(words[0])
         words = words[::-1]
-        return "\n".join(f'    my_stack.append("{word}")' for word in words)
+        return "\n".join(f"    my_stack.append({json.dumps(word)})" for word in words)
 
     def _encode_python_list(self, prompt: str) -> str:
         words = prompt.split()
-        return "\n".join(f'    my_list.append("{word}")' for word in words)
+        return "\n".join(f"    my_list.append({json.dumps(word)})" for word in words)
 
     def _encode_python_string(self, prompt: str) -> str:
-        return f'    my_string = "{prompt}"'
+        return f"    my_string = {json.dumps(prompt)}"
 
     def _encode_cpp(self, prompt: str) -> str:
-        return f'    std::string my_string = "{prompt}";'
+        return f"    std::string my_string = {json.dumps(prompt)};"
 
     def _encode_go(self, prompt: str) -> str:
-        return f'        myQueue := "{prompt}"'
+        return f"        myQueue := {json.dumps(prompt)}"
 
 
 # Maps each built-in Template to its encoding language.

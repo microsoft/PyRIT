@@ -215,6 +215,39 @@ async def test_special_characters_python_string():
     assert "hello & world <test>" in result.output_text
 
 
+async def test_embedded_double_quote_python_string():
+    converter = CodeAttackConverter(template=Template.PYTHON_STRING)
+    result = await converter.convert_async(prompt='say "hi"')
+    # Bare unescaped inner quotes produce malformed code: my_string = "say "hi""
+    assert 'my_string = "say "hi""' not in result.output_text
+    # json.dumps escapes: my_string = "say \"hi\""
+    assert '\\"hi\\"' in result.output_text
+
+
+async def test_embedded_double_quote_python_list():
+    converter = CodeAttackConverter(template=Template.PYTHON_LIST)
+    result = await converter.convert_async(prompt='say "hi" now')
+    assert '\\"hi\\"' in result.output_text
+
+
+async def test_embedded_double_quote_python_stack():
+    converter = CodeAttackConverter(template=Template.PYTHON_STACK)
+    result = await converter.convert_async(prompt='say "hi" now')
+    assert '\\"hi\\"' in result.output_text
+
+
+async def test_embedded_double_quote_cpp():
+    converter = CodeAttackConverter(template=Template.CPP)
+    result = await converter.convert_async(prompt='say "hi"')
+    assert '\\"hi\\"' in result.output_text
+
+
+async def test_embedded_double_quote_go():
+    converter = CodeAttackConverter(template=Template.GO)
+    result = await converter.convert_async(prompt='say "hi"')
+    assert '\\"hi\\"' in result.output_text
+
+
 async def test_long_prompt_all_words_present_python_list():
     prompt = " ".join([f"word{i}" for i in range(50)])
     converter = CodeAttackConverter(template=Template.PYTHON_LIST)
