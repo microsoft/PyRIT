@@ -184,7 +184,7 @@ parsing_function = get_http_target_regex_matching_callback_function(
 )
 http_prompt_target = HTTPTarget(http_request=http_req, callback_function=parsing_function)
 
-# Note the prompt needs to be formatted in a URL safe way by the prompt converter in this example, this should be done accordingly for your target as needed.
+# Note the prompt needs to be formatted in a URL safe way by the converter in this example, this should be done accordingly for your target as needed.
 converters = ConverterConfiguration.from_converters(converters=[UrlConverter()])
 converter_config = AttackConverterConfig(request_converters=converters)
 

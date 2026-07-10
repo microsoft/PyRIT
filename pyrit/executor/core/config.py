@@ -11,7 +11,7 @@ from pyrit.prompt_normalizer import (
 @dataclass
 class StrategyConverterConfig:
     """
-    Configuration for prompt converters used in strategies.
+    Configuration for converters used in strategies.
 
     This class defines the converter configurations that transform prompts
     during the strategy process, both for requests and responses.

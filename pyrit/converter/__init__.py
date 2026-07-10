@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 """
-Prompt converters for transforming prompts before sending them to targets in red teaming workflows.
+Converters for transforming prompts before sending them to targets in red teaming workflows.
 
 Converters are organized into categories: Text-to-Text (encoding, obfuscation, translation, variation),
 Audio (text-to-audio, audio-to-text, audio-to-audio), Image (text-to-image, image-to-image),

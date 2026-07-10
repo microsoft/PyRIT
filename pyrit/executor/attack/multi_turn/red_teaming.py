@@ -84,7 +84,7 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
     4. Using scoring feedback to guide subsequent prompt generation.
     5. Continuing until the objective is achieved or maximum turns are reached.
 
-    The strategy supports customization through system prompts, seed prompts, and prompt converters,
+    The strategy supports customization through system prompts, seed prompts, and converters,
     allowing for various attack techniques and scenarios.
     """
 

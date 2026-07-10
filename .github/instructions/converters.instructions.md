@@ -2,7 +2,7 @@
 applyTo: "pyrit/converter/**"
 ---
 
-# Prompt Converter Development Guidelines
+# Converter Development Guidelines
 
 **Responsibility**: A converter transforms a prompt into something else (rephrasing, encoding, translating to a Word document, overlaying text on an image, ...). Converters can be stacked and combined, and any converter may also be a NoOp.
 

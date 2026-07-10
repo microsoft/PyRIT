@@ -137,7 +137,7 @@ class AttackScoringConfig:
 @dataclass
 class AttackConverterConfig(StrategyConverterConfig):
     """
-    Configuration for prompt converters used in attacks.
+    Configuration for converters used in attacks.
 
     This class defines the converter configurations that transform prompts
     during the attack process, both for requests and responses.

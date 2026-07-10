@@ -93,7 +93,7 @@ class Converter(Identifiable):
 
     def __init__(self, *, converter_target: PromptTarget | None = None) -> None:
         """
-        Initialize the prompt converter.
+        Initialize the converter.
 
         Args:
             converter_target (PromptTarget | None): Target used by the converter, if any. When

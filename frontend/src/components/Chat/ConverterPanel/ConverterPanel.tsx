@@ -320,7 +320,7 @@ export default function ConverterPanel({ onClose, previewText = '', attachmentDa
         <div className={styles.headerTitle}>
           <Text weight="semibold" size={300}>Converters</Text>
           <Text size={200} className={styles.hintText}>
-            Select and preview prompt converters here in the next step.
+            Select and preview converters here in the next step.
           </Text>
         </div>
         <Button

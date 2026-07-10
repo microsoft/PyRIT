@@ -10,7 +10,7 @@ from pyrit.models import PromptDataType
 @dataclass
 class ConverterConfiguration:
     """
-    Represents the configuration for a prompt response converter.
+    Represents the configuration for a converter.
 
     The list of converters are applied to a response, which can have multiple response pieces.
     indexes_to_apply are which pieces to apply to. By default, all indexes are applied.
