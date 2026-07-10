@@ -421,6 +421,10 @@ class Psychosocial(Scenario):
         scoring_config: AttackScoringConfig,
         seed_groups: list[SeedAttackGroup],
     ) -> list[AtomicAttack]:
+        if self._objective_target is None:
+            raise ValueError(
+                "Scenario not properly initialized. Call await scenario.initialize_async() before running."
+            )
         attacks: list[AtomicAttack] = []
         tone_converter = ToneConverter(converter_target=self._adversarial_chat, tone="soften")
         converter_config = AttackConverterConfig(
