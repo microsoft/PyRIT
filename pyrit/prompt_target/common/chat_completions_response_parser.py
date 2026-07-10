@@ -13,6 +13,7 @@ shared across every target that speaks that format.
 import base64
 import json
 import logging
+from collections.abc import Mapping
 from typing import Any
 
 from pyrit.exceptions import (
@@ -276,11 +277,10 @@ def capture_token_usage(*, pieces: list[MessagePiece], response: Any) -> None:
     """
     Copy token-usage numbers from ``response.usage`` into the first piece's metadata.
 
-    Parses the provider usage through :class:`~pyrit.models.TokenUsage`, which reads both the
-    top-level counts and the nested ``prompt_tokens_details`` / ``completion_tokens_details``
-    breakdowns (so cached and reasoning tokens are captured, not just prompt/completion/total).
-    Only fields the provider actually reports are written; missing counts are omitted rather than
-    stored as a misleading zero. No-op when the response has no usage data or there are no pieces.
+    Parses the Chat Completions ``usage`` payload (see ``token_usage_from_chat_completion``) and
+    writes the resulting counts onto the first piece. Only fields the provider actually reports are
+    written; missing counts are omitted rather than stored as a misleading zero. No-op when the
+    response has no usage data or there are no pieces.
 
     Args:
         pieces (list[MessagePiece]): The constructed response pieces.
@@ -290,8 +290,111 @@ def capture_token_usage(*, pieces: list[MessagePiece], response: Any) -> None:
     if not usage or not pieces:
         return
 
-    token_usage = TokenUsage.from_provider_usage(usage)
+    token_usage = token_usage_from_chat_completion(usage)
     pieces[0].prompt_metadata.update(token_usage.to_metadata())
+
+
+def _read(source: Any, name: str) -> Any:
+    """
+    Read ``name`` from ``source``, which may be a mapping or an attribute object.
+
+    Args:
+        source (Any): The usage object (may be None).
+        name (str): The field name to read.
+
+    Returns:
+        Any: The field value, or None when absent.
+    """
+    if isinstance(source, Mapping):
+        return source.get(name)
+    return getattr(source, name, None)
+
+
+def _usage_field(source: Any, *names: str) -> int | None:
+    """
+    Return the first int-valued field among ``names`` on ``source``, else None.
+
+    ``source`` may be either a mapping (for example, a ``model_dump``'d usage payload) or an
+    attribute object (the OpenAI/LiteLLM SDK ``Usage`` type), so both access styles are supported.
+    Booleans are rejected even though ``bool`` is a subclass of ``int``.
+
+    Args:
+        source (Any): The usage object or nested details object (may be None).
+        names (str): Candidate field names, tried in order.
+
+    Returns:
+        int | None: The first integer value found, or None.
+    """
+    for name in names:
+        value = _read(source, name)
+        if isinstance(value, int) and not isinstance(value, bool):
+            return value
+    return None
+
+
+def token_usage_from_chat_completion(usage: Any) -> TokenUsage:
+    """
+    Build a ``TokenUsage`` from a Chat Completions ``usage`` payload (OpenAI or LiteLLM).
+
+    Reads the top-level ``prompt_tokens`` / ``completion_tokens`` / ``total_tokens`` counts and the
+    nested ``prompt_tokens_details`` / ``completion_tokens_details`` breakdowns, deriving
+    ``total_tokens`` when the provider omits it. Non-OpenAI providers routed through LiteLLM
+    (for example, Anthropic) surface prompt-cache tokens at the top level rather than inside the
+    details object, so ``cache_read_input_tokens`` / ``cache_creation_input_tokens`` are picked up
+    as well. Unmodeled detail counts (audio, predicted-output) ride along in ``extra``.
+
+    This parser is specific to the Chat Completions wire format. The Responses API reports usage
+    under different names (``input_tokens`` / ``output_tokens``); a target that speaks that format
+    should parse it in its own module rather than overloading this function.
+
+    Args:
+        usage (Any): The Chat Completions usage object (attribute object or mapping).
+
+    Returns:
+        TokenUsage: The parsed token usage.
+    """
+    input_tokens = _usage_field(usage, "prompt_tokens")
+    output_tokens = _usage_field(usage, "completion_tokens")
+    total_tokens = _usage_field(usage, "total_tokens")
+    if total_tokens is None and input_tokens is not None and output_tokens is not None:
+        total_tokens = input_tokens + output_tokens
+
+    prompt_details = _read(usage, "prompt_tokens_details")
+    completion_details = _read(usage, "completion_tokens_details")
+
+    cached_tokens = _usage_field(prompt_details, "cached_tokens")
+    if cached_tokens is None:
+        cached_tokens = _usage_field(usage, "cache_read_input_tokens")
+    reasoning_tokens = _usage_field(completion_details, "reasoning_tokens")
+
+    extra: dict[str, int] = {}
+    _add_extra(extra, "input_audio_tokens", _usage_field(prompt_details, "audio_tokens"))
+    _add_extra(extra, "cache_write_tokens", _usage_field(usage, "cache_creation_input_tokens"))
+    _add_extra(extra, "output_audio_tokens", _usage_field(completion_details, "audio_tokens"))
+    _add_extra(extra, "accepted_prediction_tokens", _usage_field(completion_details, "accepted_prediction_tokens"))
+    _add_extra(extra, "rejected_prediction_tokens", _usage_field(completion_details, "rejected_prediction_tokens"))
+
+    return TokenUsage(
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        total_tokens=total_tokens,
+        reasoning_tokens=reasoning_tokens,
+        cached_tokens=cached_tokens,
+        extra=extra,
+    )
+
+
+def _add_extra(target: dict[str, int], name: str, value: int | None) -> None:
+    """
+    Insert ``name``->``value`` into ``target`` only when ``value`` is not None.
+
+    Args:
+        target (dict[str, int]): The destination mapping.
+        name (str): The key to set.
+        value (int | None): The value to store, ignored when None.
+    """
+    if value is not None:
+        target[name] = value
 
 
 def is_content_filter_response(response: Any) -> bool:

@@ -192,7 +192,7 @@ async def build_multimodal_chat_messages_async(
     Args:
         conversation (MutableSequence[Message]): The conversation to convert.
         prefer_transcript_for_history (bool): Whether to drop historical user audio in favor of
-            its transcript (see :func:`should_skip_audio_piece`).
+            its transcript (see ``should_skip_audio_piece``).
 
     Returns:
         list[dict[str, Any]]: The list of constructed chat messages.

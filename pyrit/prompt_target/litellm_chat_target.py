@@ -109,8 +109,8 @@ class LiteLLMChatTarget(PromptTarget):
 
     LiteLLM speaks the OpenAI *Chat Completions* wire format, so this target shares its
     request-building and response-parsing logic with ``OpenAIChatTarget`` via the helpers in
-    :mod:`pyrit.prompt_target.common.chat_completions_message_builder` and
-    :mod:`pyrit.prompt_target.common.chat_completions_response_parser`.
+    ``pyrit.prompt_target.common.chat_completions_message_builder`` and
+    ``pyrit.prompt_target.common.chat_completions_response_parser``.
 
     Install the optional dependency::
 

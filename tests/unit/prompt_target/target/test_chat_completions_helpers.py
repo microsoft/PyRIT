@@ -5,6 +5,7 @@
 
 import base64
 import json
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -29,6 +30,7 @@ from pyrit.prompt_target.common.chat_completions_response_parser import (
     extract_partial_content,
     is_content_filter_response,
     save_audio_response_async,
+    token_usage_from_chat_completion,
     validate_chat_completion_response,
 )
 
@@ -178,6 +180,119 @@ def test_capture_token_usage_noop_without_usage():
     pieces = build_text_and_tool_pieces(response=resp, request=_request_piece())
     capture_token_usage(pieces=pieces, response=resp)
     assert "token_usage_total_tokens" not in pieces[0].prompt_metadata
+
+
+# ---------------------------------------------------------------------------
+# token_usage_from_chat_completion (Chat Completions usage parsing)
+# ---------------------------------------------------------------------------
+
+
+def _usage(**kwargs):
+    """Build an attribute-style stand-in for a provider usage object."""
+    return SimpleNamespace(**kwargs)
+
+
+def test_token_usage_maps_prompt_completion_and_total():
+    result = token_usage_from_chat_completion(_usage(prompt_tokens=10, completion_tokens=20, total_tokens=30))
+    assert result.input_tokens == 10
+    assert result.output_tokens == 20
+    assert result.total_tokens == 30
+    assert result.cached_tokens is None
+    assert result.reasoning_tokens is None
+    assert result.extra == {}
+
+
+def test_token_usage_derives_total_when_missing():
+    result = token_usage_from_chat_completion(_usage(prompt_tokens=4, completion_tokens=6))
+    assert result.total_tokens == 10
+
+
+def test_token_usage_reads_nested_details():
+    usage = _usage(
+        prompt_tokens=100,
+        completion_tokens=50,
+        total_tokens=150,
+        prompt_tokens_details=_usage(cached_tokens=40, audio_tokens=8),
+        completion_tokens_details=_usage(
+            reasoning_tokens=12, audio_tokens=3, accepted_prediction_tokens=2, rejected_prediction_tokens=1
+        ),
+    )
+    result = token_usage_from_chat_completion(usage)
+    assert result.cached_tokens == 40
+    assert result.reasoning_tokens == 12
+    assert result.extra == {
+        "input_audio_tokens": 8,
+        "output_audio_tokens": 3,
+        "accepted_prediction_tokens": 2,
+        "rejected_prediction_tokens": 1,
+    }
+
+
+def test_token_usage_accepts_mapping_payload():
+    usage = {
+        "prompt_tokens": 5,
+        "completion_tokens": 7,
+        "total_tokens": 12,
+        "prompt_tokens_details": {"cached_tokens": 2},
+        "completion_tokens_details": {"reasoning_tokens": 3},
+    }
+    result = token_usage_from_chat_completion(usage)
+    assert result.input_tokens == 5
+    assert result.output_tokens == 7
+    assert result.cached_tokens == 2
+    assert result.reasoning_tokens == 3
+
+
+def test_token_usage_reads_litellm_top_level_cache_fields():
+    usage = _usage(
+        prompt_tokens=100,
+        completion_tokens=20,
+        total_tokens=120,
+        cache_read_input_tokens=30,
+        cache_creation_input_tokens=15,
+    )
+    result = token_usage_from_chat_completion(usage)
+    assert result.cached_tokens == 30
+    assert result.extra == {"cache_write_tokens": 15}
+
+
+def test_token_usage_prefers_nested_cached_over_top_level():
+    usage = _usage(
+        prompt_tokens=100,
+        completion_tokens=20,
+        prompt_tokens_details=_usage(cached_tokens=40),
+        cache_read_input_tokens=30,
+    )
+    result = token_usage_from_chat_completion(usage)
+    assert result.cached_tokens == 40
+
+
+def test_token_usage_preserves_zero_cached_tokens():
+    usage = _usage(prompt_tokens=100, completion_tokens=20, prompt_tokens_details=_usage(cached_tokens=0))
+    result = token_usage_from_chat_completion(usage)
+    assert result.cached_tokens == 0
+
+
+def test_token_usage_ignores_non_int_and_bool():
+    result = token_usage_from_chat_completion(_usage(prompt_tokens=True, completion_tokens="5", total_tokens=None))
+    assert result.input_tokens is None
+    assert result.output_tokens is None
+    assert result.total_tokens is None
+
+
+def test_token_usage_handles_missing_details():
+    result = token_usage_from_chat_completion(_usage(prompt_tokens=1, completion_tokens=2, total_tokens=3))
+    assert result.cached_tokens is None
+    assert result.reasoning_tokens is None
+    assert result.extra == {}
+
+
+def test_token_usage_ignores_responses_api_names():
+    # The Responses API shape (input_tokens/output_tokens) is intentionally not parsed here.
+    result = token_usage_from_chat_completion(_usage(input_tokens=7, output_tokens=3, total_tokens=10))
+    assert result.input_tokens is None
+    assert result.output_tokens is None
+    assert result.total_tokens == 10
 
 
 def test_is_content_filter_response_true():
