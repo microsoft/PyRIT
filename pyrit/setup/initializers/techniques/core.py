@@ -15,14 +15,21 @@ scenario-relative and is declared per scenario (see
 ``default_technique_names``), not baked into the shared catalog.
 """
 
+from pyrit.common.path import EXECUTOR_SEED_PROMPT_PATH
 from pyrit.executor.attack import (
+    AttackConverterConfig,
     ContextComplianceAttack,
     ManyShotJailbreakAttack,
+    PrependedConversationConfig,
+    PromptSendingAttack,
     RedTeamingAttack,
     RolePlayAttack,
     RolePlayPaths,
     TreeOfAttacksWithPruningAttack,
 )
+from pyrit.models import SeedAttackTechniqueGroup, SeedPrompt
+from pyrit.prompt_converter import FlipConverter, TaskFramingConverter
+from pyrit.prompt_normalizer import PromptConverterConfiguration
 from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
 
 
@@ -84,5 +91,21 @@ def get_technique_factories() -> list[AttackTechniqueFactory]:
             name="context_compliance",
             attack_class=ContextComplianceAttack,
             technique_tags=["single_turn", "light"],
+        ),
+        AttackTechniqueFactory(
+            name="flip",
+            attack_class=PromptSendingAttack,
+            technique_tags=["single_turn", "light"],
+            attack_kwargs={
+                "attack_converter_config": AttackConverterConfig(
+                    request_converters=PromptConverterConfiguration.from_converters(
+                        converters=[FlipConverter(), TaskFramingConverter(strip_characters="'")]
+                    )
+                ),
+                "prepended_conversation_config": PrependedConversationConfig(apply_converters_to_roles=["user"]),
+            },
+            seed_technique=SeedAttackTechniqueGroup.from_system_prompt(
+                SeedPrompt.from_yaml_file(EXECUTOR_SEED_PROMPT_PATH / "flip_attack.yaml").value
+            ),
         ),
     ]

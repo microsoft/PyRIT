@@ -32,6 +32,7 @@ CORE_TECHNIQUE_NAMES: list[str] = [
     "crescendo_movie_director",
     "crescendo_history_lecture",
     "crescendo_journalist_interview",
+    "flip",
 ]
 
 EXTRA_TECHNIQUE_NAMES: list[str] = ["pair", "violent_durian"]
