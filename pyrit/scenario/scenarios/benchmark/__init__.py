@@ -5,22 +5,22 @@
 
 from typing import Any
 
-from pyrit.scenario.scenarios.benchmark.adversarial import AdversarialBenchmark, _build_benchmark_strategy
+from pyrit.scenario.scenarios.benchmark.adversarial import AdversarialBenchmark, _build_benchmark_technique
 
 
 def __getattr__(name: str) -> Any:
     """
-    Lazily resolve the dynamic BenchmarkStrategy class.
+    Lazily resolve the dynamic BenchmarkTechnique class.
 
     Returns:
-        Any: The resolved strategy class.
+        Any: The resolved technique class.
 
     Raises:
         AttributeError: If the attribute name is not recognized.
     """
-    if name == "AdversarialBenchmarkStrategy":
-        return _build_benchmark_strategy()
+    if name == "AdversarialBenchmarkTechnique":
+        return _build_benchmark_technique()
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
-__all__ = ["AdversarialBenchmark", "AdversarialBenchmarkStrategy"]
+__all__ = ["AdversarialBenchmark", "AdversarialBenchmarkTechnique"]

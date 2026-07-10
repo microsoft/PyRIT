@@ -4,8 +4,7 @@
 import logging
 import random
 
-from pyrit.identifiers import ComponentIdentifier
-from pyrit.models import PromptDataType
+from pyrit.models import ComponentIdentifier, PromptDataType
 from pyrit.prompt_converter.prompt_converter import ConverterResult, PromptConverter
 
 logger = logging.getLogger(__name__)
@@ -17,7 +16,7 @@ class RandomCapitalLettersConverter(PromptConverter):
     SUPPORTED_INPUT_TYPES = ("text",)
     SUPPORTED_OUTPUT_TYPES = ("text",)
 
-    def __init__(self, percentage: float = 100.0) -> None:
+    def __init__(self, *, percentage: float = 100.0) -> None:
         """
         Initialize the converter with the specified percentage of randomization.
 

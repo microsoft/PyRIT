@@ -8,7 +8,7 @@ from typing import Any, cast
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import SeedDataset, SeedPrompt
+from pyrit.models import Modality, SeedDataset, SeedPrompt, SeedUnion
 from pyrit.models.harm_category import HarmCategory
 
 logger = logging.getLogger(__name__)
@@ -33,6 +33,11 @@ class _ToxicChatDataset(_RemoteDatasetLoader):
 
     HF_DATASET_NAME: str = "lmsys/toxic-chat"
 
+    # Metadata
+    modalities: tuple[Modality, ...] = (Modality.TEXT,)
+    size: str = "huge"  # 5082 real user-chatbot conversations from Chatbot Arena
+    tags: frozenset[str] = frozenset({"default", "safety", "multiturn"})
+
     OPENAI_MODERATION_THRESHOLD: float = 0.8
 
     def __init__(
@@ -53,7 +58,7 @@ class _ToxicChatDataset(_RemoteDatasetLoader):
 
     @property
     def dataset_name(self) -> str:
-        """Return the dataset name."""
+        """The dataset name."""
         return "toxic_chat"
 
     def _extract_harm_categories(self, item: dict[str, Any]) -> list[str]:
@@ -96,7 +101,7 @@ class _ToxicChatDataset(_RemoteDatasetLoader):
         """
         logger.info(f"Loading ToxicChat dataset from {self.HF_DATASET_NAME}")
 
-        data = await self._fetch_from_huggingface(
+        data = await self._fetch_from_huggingface_async(
             dataset_name=self.HF_DATASET_NAME,
             config=self.config,
             split=self.split,
@@ -121,7 +126,6 @@ class _ToxicChatDataset(_RemoteDatasetLoader):
         source_url = f"https://huggingface.co/datasets/{self.HF_DATASET_NAME}"
         groups = ["UC San Diego"]
 
-        seed_prompts: list[SeedPrompt] = []
         # toxicity/jailbreaking flags plus OpenAI-moderation category names are not in the
         # generic alias table, so map them (and broaden the too-narrow "violence") here.
         toxic_chat_alias_overrides: dict[str, list[HarmCategory]] = cast(
@@ -139,6 +143,7 @@ class _ToxicChatDataset(_RemoteDatasetLoader):
                 "violence/graphic": [HarmCategory.VIOLENT_CONTENT],
             },
         )
+        seed_prompts: list[SeedUnion] = []
         for item in data:
             user_input = item["user_input"]
             raw_harm_categories = self._extract_harm_categories(item)

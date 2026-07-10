@@ -41,7 +41,7 @@ class TestForbiddenQuestionsDataset:
         loader = _ForbiddenQuestionsDataset()
         data = [{"question": f"Question for {native_label}", "content_policy_name": native_label}]
 
-        with patch.object(loader, "_fetch_from_huggingface", new=AsyncMock(return_value=data)):
+        with patch.object(loader, "_fetch_from_huggingface_async", new=AsyncMock(return_value=data)):
             dataset = await loader.fetch_dataset_async()
 
         assert isinstance(dataset, SeedDataset)

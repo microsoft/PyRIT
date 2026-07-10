@@ -7,7 +7,7 @@ from typing import cast
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import SeedDataset, SeedPrompt
+from pyrit.models import Modality, SeedDataset, SeedPrompt, SeedUnion
 from pyrit.models.harm_category import HarmCategory
 
 logger = logging.getLogger(__name__)
@@ -38,14 +38,11 @@ class _ORBenchBaseDataset(_RemoteDatasetLoader):
     MAPS_HARM_CATEGORIES: bool = False
     HARM_ALIAS_OVERRIDES: dict[str, list[HarmCategory]] = cast("dict[str, list[HarmCategory]]", {})
 
-    def __init__(self, *, split: str = "train") -> None:
-        """
-        Initialize the OR-Bench dataset loader.
+    should_register = False  # abstract base — subclasses register themselves
 
-        Args:
-            split: Dataset split to load. Defaults to "train".
-        """
-        self.split = split
+    # Metadata shared across all OR-Bench subclasses; subclasses override `size`.
+    modalities: tuple[Modality, ...] = (Modality.TEXT,)
+    tags: frozenset[str] = frozenset({"default", "safety", "refusal"})
 
     async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
@@ -59,10 +56,10 @@ class _ORBenchBaseDataset(_RemoteDatasetLoader):
         """
         logger.info(f"Loading OR-Bench dataset from {self.HF_DATASET_NAME} (config={self.CONFIG})")
 
-        data = await self._fetch_from_huggingface(
+        data = await self._fetch_from_huggingface_async(
             dataset_name=self.HF_DATASET_NAME,
             config=self.CONFIG,
-            split=self.split,
+            split="train",
             cache=cache,
         )
 
@@ -75,7 +72,7 @@ class _ORBenchBaseDataset(_RemoteDatasetLoader):
         source_url = f"https://huggingface.co/datasets/{self.HF_DATASET_NAME}"
         groups = ["UCLA", "UC Berkeley"]
 
-        seed_prompts = [
+        seed_prompts: list[SeedUnion] = [
             SeedPrompt(
                 value=item["prompt"],
                 data_type="text",
@@ -112,10 +109,12 @@ class _ORBench80KDataset(_ORBenchBaseDataset):
         "OR-Bench 80K contains ~80k over-refusal prompts categorized into 10 rejection "
         "categories. This is the main comprehensive benchmark for evaluating LLM over-refusal."
     )
+    size: str = "huge"  # 80359 over-refusal prompts
+    should_register = True
 
     @property
     def dataset_name(self) -> str:
-        """Return the dataset name."""
+        """The dataset name."""
         return "or_bench_80k"
 
 
@@ -132,10 +131,12 @@ class _ORBenchHardDataset(_ORBenchBaseDataset):
         "OR-Bench Hard-1K contains ~1k challenging safe prompts that commonly trigger "
         "over-refusal in language models. These prompts should be answerable without refusing."
     )
+    size: str = "large"  # 1319 challenging safe prompts
+    should_register = True
 
     @property
     def dataset_name(self) -> str:
-        """Return the dataset name."""
+        """The dataset name."""
         return "or_bench_hard"
 
 
@@ -165,8 +166,10 @@ class _ORBenchToxicDataset(_ORBenchBaseDataset):
         "OR-Bench Toxic contains toxic prompts that language models should correctly refuse. "
         "Used as a contrast set to evaluate refusal calibration."
     )
+    size: str = "large"  # 655 toxic prompts for refusal calibration
+    should_register = True
 
     @property
     def dataset_name(self) -> str:
-        """Return the dataset name."""
+        """The dataset name."""
         return "or_bench_toxic"

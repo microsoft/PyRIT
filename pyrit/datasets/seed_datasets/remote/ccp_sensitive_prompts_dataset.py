@@ -2,12 +2,18 @@
 # Licensed under the MIT license.
 
 import logging
+from typing import TYPE_CHECKING
+
+from typing_extensions import override
 
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import SeedDataset, SeedPrompt
+from pyrit.models import Modality, SeedDataset, SeedPrompt
 from pyrit.models.harm_category import HarmCategory, standardize_harm_categories
+
+if TYPE_CHECKING:
+    from pyrit.models.seeds.seed_group import SeedUnion
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +57,15 @@ class _CCPSensitivePromptsDataset(_RemoteDatasetLoader):
     Reference: [@promptfoo2025ccp]
     """
 
+    _AUTHORS = ["Ian Webster"]
+
+    _GROUPS = ["Promptfoo"]
+
+    # Metadata
+    modalities: tuple[Modality, ...] = (Modality.TEXT,)
+    size: str = "large"  # 1360 censorship-sensitive prompts (single-language Mandarin)
+    tags: frozenset[str] = frozenset({"safety", "multilingual"})
+
     def __init__(
         self,
         *,
@@ -65,10 +80,12 @@ class _CCPSensitivePromptsDataset(_RemoteDatasetLoader):
         self.source = source
 
     @property
+    @override
     def dataset_name(self) -> str:
-        """Return the dataset name."""
+        """The dataset name."""
         return "ccp_sensitive_prompts"
 
+    @override
     async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch CCP-sensitive prompts dataset and return as SeedDataset.
@@ -82,7 +99,7 @@ class _CCPSensitivePromptsDataset(_RemoteDatasetLoader):
         logger.info(f"Loading CCP-sensitive prompts dataset from {self.source}")
 
         # Load from HuggingFace
-        data = await self._fetch_from_huggingface(
+        data = await self._fetch_from_huggingface_async(
             dataset_name=self.source,
             split="train",
             cache=cache,
@@ -92,7 +109,7 @@ class _CCPSensitivePromptsDataset(_RemoteDatasetLoader):
         # Subjects that revisit controversial historical events map to
         # HISTORICAL_EVENTS_BIAS; the rest map to INFO_INTEGRITY. The dataset's own
         # subject label is preserved in metadata either way.
-        seed_prompts: list[SeedPrompt] = []
+        seed_prompts: list[SeedUnion] = []
         for row in data:
             subject = row.get("subject") or ""
             harm_categories = _harm_categories_for_subject(subject)
@@ -103,7 +120,8 @@ class _CCPSensitivePromptsDataset(_RemoteDatasetLoader):
                     dataset_name=self.dataset_name,
                     harm_categories=harm_categories,
                     description="Prompts covering topics sensitive to the CCP.",
-                    groups=["promptfoo"],
+                    authors=self._AUTHORS,
+                    groups=self._GROUPS,
                     source=f"https://huggingface.co/datasets/{self.source}",
                     metadata={
                         "subject": subject,

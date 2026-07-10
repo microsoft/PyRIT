@@ -24,16 +24,15 @@ from pyrit.exceptions.exception_classes import (
     PyritException,
     RateLimitException,
 )
-from pyrit.identifiers import ComponentIdentifier
 from pyrit.memory.memory_interface import MemoryInterface
-from pyrit.models import Message, MessagePiece
-from pyrit.models.json_response_config import _JsonResponseConfig
+from pyrit.models import Message, MessagePiece, flatten_to_message_pieces
 from pyrit.prompt_target import (
     OpenAIChatAudioConfig,
     OpenAIChatTarget,
     OpenAIResponseTarget,
     PromptTarget,
 )
+from pyrit.prompt_target.common.json_response_config import _JsonResponseConfig
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 
@@ -59,7 +58,7 @@ def create_mock_completion(content: str = "hi", finish_reason: str = "stop"):
 @pytest.fixture
 def sample_conversations() -> MutableSequence[MessagePiece]:
     conversations = get_sample_conversations()
-    return Message.flatten_to_message_pieces(conversations)
+    return flatten_to_message_pieces(conversations)
 
 
 @pytest.fixture
@@ -123,7 +122,7 @@ async def test_build_chat_messages_for_multi_modal(target: OpenAIChatTarget):
         )
     ]
     with patch(
-        "pyrit.common.data_url_converter.convert_local_image_to_data_url_async",
+        "pyrit.memory.storage.data_url_converter.convert_local_image_to_data_url_async",
         return_value="data:image/jpeg;base64,encoded_string",
     ):
         messages = await target._build_chat_messages_for_multi_modal_async(entries)
@@ -159,7 +158,7 @@ async def test_construct_request_body_includes_extra_body_params(
     request = Message(message_pieces=[dummy_text_message_piece])
 
     jrc = _JsonResponseConfig.from_metadata(metadata=None)
-    body = await target._construct_request_body(conversation=[request], json_config=jrc)
+    body = await target._construct_request_body_async(conversation=[request], json_config=jrc)
     assert body["key"] == "value"
 
 
@@ -167,7 +166,7 @@ async def test_construct_request_body_json_object(target: OpenAIChatTarget, dumm
     request = Message(message_pieces=[dummy_text_message_piece])
     jrc = _JsonResponseConfig.from_metadata(metadata={"response_format": "json"})
 
-    body = await target._construct_request_body(conversation=[request], json_config=jrc)
+    body = await target._construct_request_body_async(conversation=[request], json_config=jrc)
     assert body["response_format"] == {"type": "json_object"}
 
 
@@ -176,7 +175,7 @@ async def test_construct_request_body_json_schema(target: OpenAIChatTarget, dumm
     request = Message(message_pieces=[dummy_text_message_piece])
     jrc = _JsonResponseConfig.from_metadata(metadata={"response_format": "json", "json_schema": schema_obj})
 
-    body = await target._construct_request_body(conversation=[request], json_config=jrc)
+    body = await target._construct_request_body_async(conversation=[request], json_config=jrc)
     assert body["response_format"] == {
         "type": "json_schema",
         "json_schema": {"name": "CustomSchema", "schema": schema_obj, "strict": True},
@@ -197,7 +196,7 @@ async def test_construct_request_body_json_schema_optional_params(
         }
     )
 
-    body = await target._construct_request_body(conversation=[request], json_config=jrc)
+    body = await target._construct_request_body_async(conversation=[request], json_config=jrc)
     assert body["response_format"] == {
         "type": "json_schema",
         "json_schema": {"name": "MySchema", "schema": schema_obj, "strict": False},
@@ -210,7 +209,7 @@ async def test_construct_request_body_removes_empty_values(
     request = Message(message_pieces=[dummy_text_message_piece])
 
     jrc = _JsonResponseConfig.from_metadata(metadata=None)
-    body = await target._construct_request_body(conversation=[request], json_config=jrc)
+    body = await target._construct_request_body_async(conversation=[request], json_config=jrc)
     assert "max_completion_tokens" not in body
     assert "max_tokens" not in body
     assert "temperature" not in body
@@ -226,7 +225,7 @@ async def test_construct_request_body_serializes_text_message(
     request = Message(message_pieces=[dummy_text_message_piece])
     jrc = _JsonResponseConfig.from_metadata(metadata=None)
 
-    body = await target._construct_request_body(conversation=[request], json_config=jrc)
+    body = await target._construct_request_body_async(conversation=[request], json_config=jrc)
     assert body["messages"][0]["content"] == "dummy text", (
         "Text messages are serialized in a simple way that's more broadly supported"
     )
@@ -240,7 +239,7 @@ async def test_construct_request_body_serializes_complex_message(
     request = Message(message_pieces=[dummy_text_message_piece, image_piece])
     jrc = _JsonResponseConfig.from_metadata(metadata=None)
 
-    body = await target._construct_request_body(conversation=[request], json_config=jrc)
+    body = await target._construct_request_body_async(conversation=[request], json_config=jrc)
     messages = body["messages"][0]["content"]
     assert len(messages) == 2, "Complex messages are serialized as a list"
     assert messages[0]["type"] == "text", "Text messages are serialized properly when multi-modal"
@@ -267,7 +266,7 @@ async def test_send_prompt_async_empty_response_adds_to_memory(openai_response_j
         ),
     )
     mock_memory = MagicMock()
-    mock_memory.get_conversation.return_value = []
+    mock_memory.get_conversation_messages.return_value = []
     mock_memory.add_message_to_memory = AsyncMock()
 
     target._memory = mock_memory
@@ -284,8 +283,6 @@ async def test_send_prompt_async_empty_response_adds_to_memory(openai_response_j
                 converted_value="hello",
                 original_value_data_type="text",
                 converted_value_data_type="text",
-                prompt_target_identifier=ComponentIdentifier(class_name="target-identifier", class_module="test"),
-                attack_identifier=ComponentIdentifier(class_name="test", class_module="test"),
                 labels={"test": "test"},
             ),
             MessagePiece(
@@ -295,15 +292,13 @@ async def test_send_prompt_async_empty_response_adds_to_memory(openai_response_j
                 converted_value=tmp_file_name,
                 original_value_data_type="image_path",
                 converted_value_data_type="image_path",
-                prompt_target_identifier=ComponentIdentifier(class_name="target-identifier", class_module="test"),
-                attack_identifier=ComponentIdentifier(class_name="test", class_module="test"),
                 labels={"test": "test"},
             ),
         ]
     )
     # Make assistant response empty
     with patch(
-        "pyrit.common.data_url_converter.convert_local_image_to_data_url_async",
+        "pyrit.memory.storage.data_url_converter.convert_local_image_to_data_url_async",
         return_value="data:image/jpeg;base64,encoded_string",
     ):
         # Mock the OpenAI SDK client to return empty content
@@ -312,7 +307,7 @@ async def test_send_prompt_async_empty_response_adds_to_memory(openai_response_j
             return_value=mock_completion
         )
         target._memory = MagicMock(MemoryInterface)
-        target._memory.get_conversation.return_value = []
+        target._memory.get_conversation_messages.return_value = []
 
         with pytest.raises(EmptyResponseException):
             await target.send_prompt_async(message=message)
@@ -322,7 +317,7 @@ async def test_send_prompt_async_rate_limit_exception_adds_to_memory(
     target: OpenAIChatTarget,
 ):
     mock_memory = MagicMock()
-    mock_memory.get_conversation.return_value = []
+    mock_memory.get_conversation_messages.return_value = []
     mock_memory.add_message_to_memory = AsyncMock()
 
     target._memory = mock_memory
@@ -343,7 +338,7 @@ async def test_send_prompt_async_rate_limit_exception_adds_to_memory(
 
 async def test_send_prompt_async_bad_request_error_adds_to_memory(target: OpenAIChatTarget):
     mock_memory = MagicMock()
-    mock_memory.get_conversation.return_value = []
+    mock_memory.get_conversation_messages.return_value = []
     mock_memory.add_message_to_memory = AsyncMock()
 
     target._memory = mock_memory
@@ -359,7 +354,7 @@ async def test_send_prompt_async_bad_request_error_adds_to_memory(target: OpenAI
     target._async_client.chat.completions.create = AsyncMock(side_effect=side_effect)  # type: ignore[method-assign]
 
     # Non-content-filter BadRequestError should be re-raised
-    with pytest.raises(Exception):  # noqa: B017  # Will raise since handle_bad_request_exception re-raises non-content-filter errors
+    with pytest.raises(Exception):  # Will raise since handle_bad_request_exception re-raises non-content-filter errors
         await target.send_prompt_async(message=message)
 
 
@@ -394,8 +389,6 @@ async def test_send_prompt_async(openai_response_json: dict, patch_central_datab
                 converted_value="hello",
                 original_value_data_type="text",
                 converted_value_data_type="text",
-                prompt_target_identifier=ComponentIdentifier(class_name="target-identifier", class_module="test"),
-                attack_identifier=ComponentIdentifier(class_name="test", class_module="test"),
                 labels={"test": "test"},
             ),
             MessagePiece(
@@ -405,14 +398,12 @@ async def test_send_prompt_async(openai_response_json: dict, patch_central_datab
                 converted_value=tmp_file_name,
                 original_value_data_type="image_path",
                 converted_value_data_type="image_path",
-                prompt_target_identifier=ComponentIdentifier(class_name="target-identifier", class_module="test"),
-                attack_identifier=ComponentIdentifier(class_name="test", class_module="test"),
                 labels={"test": "test"},
             ),
         ]
     )
     with patch(
-        "pyrit.common.data_url_converter.convert_local_image_to_data_url_async",
+        "pyrit.memory.storage.data_url_converter.convert_local_image_to_data_url_async",
         return_value="data:image/jpeg;base64,encoded_string",
     ):
         # Mock the OpenAI SDK client to return a completion
@@ -459,8 +450,6 @@ async def test_send_prompt_async_empty_response_retries(openai_response_json: di
                 converted_value="hello",
                 original_value_data_type="text",
                 converted_value_data_type="text",
-                prompt_target_identifier=ComponentIdentifier(class_name="target-identifier", class_module="test"),
-                attack_identifier=ComponentIdentifier(class_name="test", class_module="test"),
                 labels={"test": "test"},
             ),
             MessagePiece(
@@ -470,15 +459,13 @@ async def test_send_prompt_async_empty_response_retries(openai_response_json: di
                 converted_value=tmp_file_name,
                 original_value_data_type="image_path",
                 converted_value_data_type="image_path",
-                prompt_target_identifier=ComponentIdentifier(class_name="target-identifier", class_module="test"),
-                attack_identifier=ComponentIdentifier(class_name="test", class_module="test"),
                 labels={"test": "test"},
             ),
         ]
     )
     # Make assistant response empty
     with patch(
-        "pyrit.common.data_url_converter.convert_local_image_to_data_url_async",
+        "pyrit.memory.storage.data_url_converter.convert_local_image_to_data_url_async",
         return_value="data:image/jpeg;base64,encoded_string",
     ):
         # Mock the OpenAI SDK client to return empty content
@@ -487,7 +474,7 @@ async def test_send_prompt_async_empty_response_retries(openai_response_json: di
             return_value=mock_completion
         )
         target._memory = MagicMock(MemoryInterface)
-        target._memory.get_conversation.return_value = []
+        target._memory.get_conversation_messages.return_value = []
 
         with pytest.raises(EmptyResponseException):
             await target.send_prompt_async(message=message)
@@ -520,7 +507,7 @@ async def test_send_prompt_async_bad_request_error(target: OpenAIChatTarget):
     target._async_client.chat.completions.create = AsyncMock(side_effect=side_effect)  # type: ignore[method-assign]
 
     # Non-content-filter BadRequestError should be re-raised
-    with pytest.raises(Exception):  # noqa: B017  # Will raise since handle_bad_request_exception re-raises non-content-filter errors
+    with pytest.raises(Exception):  # Will raise since handle_bad_request_exception re-raises non-content-filter errors
         await target.send_prompt_async(message=message)
 
 
@@ -632,7 +619,6 @@ def test_is_response_format_json_no_metadata(target: OpenAIChatTarget):
         converted_value="Hello, how are you?",
         conversation_id="conversation_1",
         sequence=0,
-        prompt_metadata=None,
     )
 
     result = target.is_response_format_json(message_piece)
@@ -642,13 +628,13 @@ def test_is_response_format_json_no_metadata(target: OpenAIChatTarget):
 
 async def test_send_prompt_async_content_filter_400(target: OpenAIChatTarget):
     mock_memory = MagicMock(spec=MemoryInterface)
-    mock_memory.get_conversation.return_value = []
+    mock_memory.get_conversation_messages.return_value = []
     mock_memory.add_message_to_memory = AsyncMock()
     target._memory = mock_memory
 
     with (
         patch.object(target, "_validate_request"),
-        patch.object(target, "_construct_request_body", new_callable=AsyncMock) as mock_construct,
+        patch.object(target, "_construct_request_body_async", new_callable=AsyncMock) as mock_construct,
     ):
         mock_construct.return_value = {"model": "gpt-4", "messages": [], "stream": False}
 
@@ -695,7 +681,7 @@ async def test_send_prompt_async_other_http_error(patch_central_database):
     )
     message = Message(message_pieces=[message_piece])
     target._memory = MagicMock()
-    target._memory.get_conversation.return_value = []
+    target._memory.get_conversation_messages.return_value = []
 
     # Create proper mock request and response for APIStatusError
     mock_request = httpx.Request("POST", "https://api.openai.com/v1/chat/completions")
@@ -725,8 +711,9 @@ def test_set_auth_with_entra_auth(patch_central_database):
     assert callable(target._api_key)
     # Since sync provider is wrapped, _api_key is now async
     import asyncio
+    import inspect
 
-    assert asyncio.iscoroutinefunction(target._api_key)
+    assert inspect.iscoroutinefunction(target._api_key)
     assert asyncio.run(target._api_key()) == "mock-entra-token"
 
 
@@ -740,6 +727,44 @@ def test_set_auth_with_api_key(patch_central_database):
 
     # Verify API key was stored correctly
     assert target._api_key == "test_api_key_456"
+
+
+def test_no_key_recognized_azure_endpoint_auto_mints_entra(patch_central_database):
+    """With no key and a recognized Azure OpenAI endpoint, the target auto-mints
+    an Entra token provider for that endpoint."""
+
+    async def _provider() -> str:
+        return "aoai-entra-token"
+
+    with (
+        patch.dict(os.environ, {}, clear=True),
+        patch(
+            "pyrit.prompt_target.openai.openai_target.get_azure_openai_auth",
+            return_value=_provider,
+        ) as mock_get_auth,
+    ):
+        target = OpenAIChatTarget(
+            model_name="gpt-4",
+            endpoint="https://test.openai.azure.com/",
+        )
+
+    mock_get_auth.assert_called_once_with("https://test.openai.azure.com/")
+    assert target._api_key is _provider
+
+
+def test_no_key_non_azure_endpoint_raises(patch_central_database):
+    """With no key and a non-Azure endpoint, the target refuses to mint a token."""
+    with patch.dict(os.environ, {}, clear=True):
+        with pytest.raises(ValueError, match="non-Azure endpoints"):
+            OpenAIChatTarget(model_name="gpt-4", endpoint="https://api.openai.com/")
+
+
+def test_no_key_substring_lookalike_endpoint_raises(patch_central_database):
+    """A hostname merely containing 'azure' (but not a recognized suffix) must not
+    trigger auto-Entra minting (loose->strict hardening)."""
+    with patch.dict(os.environ, {}, clear=True):
+        with pytest.raises(ValueError, match="non-Azure endpoints"):
+            OpenAIChatTarget(model_name="gpt-4", endpoint="https://evil-azure.example.com/")
 
 
 def test_url_validation_no_warning_for_custom_endpoint(caplog, patch_central_database):
@@ -1059,7 +1084,7 @@ async def test_construct_message_from_response(target: OpenAIChatTarget, dummy_t
     """Test _construct_message_from_response extracts content correctly."""
     mock_response = create_mock_completion(content="Hello from AI", finish_reason="stop")
 
-    result = await target._construct_message_from_response(mock_response, dummy_text_message_piece)
+    result = await target._construct_message_from_response_async(mock_response, dummy_text_message_piece)
 
     assert isinstance(result, Message)
     assert len(result.message_pieces) == 1
@@ -1238,7 +1263,7 @@ async def test_construct_request_body_with_audio_config(patch_central_database, 
     request = Message(message_pieces=[dummy_text_message_piece])
     jrc = _JsonResponseConfig.from_metadata(metadata=None)
 
-    body = await target._construct_request_body(conversation=[request], json_config=jrc)
+    body = await target._construct_request_body_async(conversation=[request], json_config=jrc)
 
     assert body.get("modalities") == ["text", "audio"]
     assert body.get("audio") == {"voice": "alloy", "format": "wav"}
@@ -1503,7 +1528,7 @@ async def test_save_audio_response_async_wav_format(patch_central_database):
     with patch("pyrit.prompt_target.openai.openai_chat_target.data_serializer_factory") as mock_factory:
         mock_serializer = MagicMock()
         mock_serializer.value = "/path/to/saved/audio.wav"
-        mock_serializer.save_data = AsyncMock()
+        mock_serializer.save_data_async = AsyncMock()
         mock_factory.return_value = mock_serializer
 
         result = await target._save_audio_response_async(audio_data_base64=audio_data_base64)
@@ -1516,8 +1541,8 @@ async def test_save_audio_response_async_wav_format(patch_central_database):
         )
 
         # Verify save_data was called (not save_formatted_audio for wav)
-        mock_serializer.save_data.assert_called_once_with(audio_bytes)
-        mock_serializer.save_formatted_audio.assert_not_called()
+        mock_serializer.save_data_async.assert_called_once_with(audio_bytes)
+        mock_serializer.save_formatted_audio_async.assert_not_called()
 
         assert result == "/path/to/saved/audio.wav"
 
@@ -1538,7 +1563,7 @@ async def test_save_audio_response_async_mp3_format(patch_central_database):
     with patch("pyrit.prompt_target.openai.openai_chat_target.data_serializer_factory") as mock_factory:
         mock_serializer = MagicMock()
         mock_serializer.value = "/path/to/saved/audio.mp3"
-        mock_serializer.save_data = AsyncMock()
+        mock_serializer.save_data_async = AsyncMock()
         mock_factory.return_value = mock_serializer
 
         result = await target._save_audio_response_async(audio_data_base64=audio_data_base64)
@@ -1551,7 +1576,7 @@ async def test_save_audio_response_async_mp3_format(patch_central_database):
         )
 
         # Verify save_data was called (not save_formatted_audio for mp3)
-        mock_serializer.save_data.assert_called_once_with(audio_bytes)
+        mock_serializer.save_data_async.assert_called_once_with(audio_bytes)
 
         assert result == "/path/to/saved/audio.mp3"
 
@@ -1573,7 +1598,7 @@ async def test_save_audio_response_async_pcm16_format(patch_central_database):
     with patch("pyrit.prompt_target.openai.openai_chat_target.data_serializer_factory") as mock_factory:
         mock_serializer = MagicMock()
         mock_serializer.value = "/path/to/saved/audio.wav"
-        mock_serializer.save_formatted_audio = AsyncMock()
+        mock_serializer.save_formatted_audio_async = AsyncMock()
         mock_factory.return_value = mock_serializer
 
         result = await target._save_audio_response_async(audio_data_base64=audio_data_base64)
@@ -1586,14 +1611,14 @@ async def test_save_audio_response_async_pcm16_format(patch_central_database):
         )
 
         # Verify save_formatted_audio was called with correct PCM16 parameters
-        mock_serializer.save_formatted_audio.assert_called_once_with(
+        mock_serializer.save_formatted_audio_async.assert_called_once_with(
             data=audio_bytes,
             num_channels=1,
             sample_width=2,
             sample_rate=24000,
         )
         # save_data should not be called for pcm16
-        mock_serializer.save_data.assert_not_called()
+        mock_serializer.save_data_async.assert_not_called()
 
         assert result == "/path/to/saved/audio.wav"
 
@@ -1670,7 +1695,7 @@ async def test_save_audio_response_async_flac_format(patch_central_database):
     with patch("pyrit.prompt_target.openai.openai_chat_target.data_serializer_factory") as mock_factory:
         mock_serializer = MagicMock()
         mock_serializer.value = "/path/to/saved/audio.flac"
-        mock_serializer.save_data = AsyncMock()
+        mock_serializer.save_data_async = AsyncMock()
         mock_factory.return_value = mock_serializer
 
         result = await target._save_audio_response_async(audio_data_base64=audio_data_base64)
@@ -1680,7 +1705,7 @@ async def test_save_audio_response_async_flac_format(patch_central_database):
             data_type="audio_path",
             extension=".flac",
         )
-        mock_serializer.save_data.assert_called_once_with(audio_bytes)
+        mock_serializer.save_data_async.assert_called_once_with(audio_bytes)
 
         assert result == "/path/to/saved/audio.flac"
 
@@ -1701,7 +1726,7 @@ async def test_save_audio_response_async_opus_format(patch_central_database):
     with patch("pyrit.prompt_target.openai.openai_chat_target.data_serializer_factory") as mock_factory:
         mock_serializer = MagicMock()
         mock_serializer.value = "/path/to/saved/audio.opus"
-        mock_serializer.save_data = AsyncMock()
+        mock_serializer.save_data_async = AsyncMock()
         mock_factory.return_value = mock_serializer
 
         result = await target._save_audio_response_async(audio_data_base64=audio_data_base64)
@@ -1711,7 +1736,7 @@ async def test_save_audio_response_async_opus_format(patch_central_database):
             data_type="audio_path",
             extension=".opus",
         )
-        mock_serializer.save_data.assert_called_once_with(audio_bytes)
+        mock_serializer.save_data_async.assert_called_once_with(audio_bytes)
 
         assert result == "/path/to/saved/audio.opus"
 
@@ -1731,7 +1756,7 @@ async def test_save_audio_response_async_no_config_defaults_to_wav(patch_central
     with patch("pyrit.prompt_target.openai.openai_chat_target.data_serializer_factory") as mock_factory:
         mock_serializer = MagicMock()
         mock_serializer.value = "/path/to/saved/audio.wav"
-        mock_serializer.save_data = AsyncMock()
+        mock_serializer.save_data_async = AsyncMock()
         mock_factory.return_value = mock_serializer
 
         result = await target._save_audio_response_async(audio_data_base64=audio_data_base64)
@@ -1742,7 +1767,7 @@ async def test_save_audio_response_async_no_config_defaults_to_wav(patch_central
             data_type="audio_path",
             extension=".wav",
         )
-        mock_serializer.save_data.assert_called_once_with(audio_bytes)
+        mock_serializer.save_data_async.assert_called_once_with(audio_bytes)
 
         assert result == "/path/to/saved/audio.wav"
 
@@ -1772,10 +1797,10 @@ async def test_construct_message_from_response_audio_transcript_has_metadata(
     with patch("pyrit.prompt_target.openai.openai_chat_target.data_serializer_factory") as mock_factory:
         mock_serializer = MagicMock()
         mock_serializer.value = "/path/to/audio.wav"
-        mock_serializer.save_data = AsyncMock()
+        mock_serializer.save_data_async = AsyncMock()
         mock_factory.return_value = mock_serializer
 
-        result = await target._construct_message_from_response(mock_response, dummy_text_message_piece)
+        result = await target._construct_message_from_response_async(mock_response, dummy_text_message_piece)
 
         # Should have 2 pieces: transcript (text) and audio file (audio_path)
         assert len(result.message_pieces) == 2
@@ -1800,7 +1825,7 @@ async def test_construct_message_from_response_text_content_no_transcript_metada
     """Test that regular text content does not have transcript metadata."""
     mock_response = create_mock_completion(content="Regular text response", finish_reason="stop")
 
-    result = await target._construct_message_from_response(mock_response, dummy_text_message_piece)
+    result = await target._construct_message_from_response_async(mock_response, dummy_text_message_piece)
 
     assert len(result.message_pieces) == 1
     text_piece = result.message_pieces[0]
@@ -1902,7 +1927,7 @@ async def test_construct_message_from_response_with_tool_calls(
     tool_call = create_mock_tool_call("call_abc123", "get_current_weather", '{"location": "Seattle, WA"}')
     mock_response = create_mock_completion_with_tool_calls([tool_call])
 
-    result = await target._construct_message_from_response(mock_response, dummy_text_message_piece)
+    result = await target._construct_message_from_response_async(mock_response, dummy_text_message_piece)
 
     assert isinstance(result, Message)
     assert len(result.message_pieces) == 1
@@ -1926,7 +1951,7 @@ async def test_construct_message_from_response_with_multiple_tool_calls(
     tool_call2 = create_mock_tool_call("call_2", "get_time", '{"timezone": "EST"}')
     mock_response = create_mock_completion_with_tool_calls([tool_call1, tool_call2])
 
-    result = await target._construct_message_from_response(mock_response, dummy_text_message_piece)
+    result = await target._construct_message_from_response_async(mock_response, dummy_text_message_piece)
 
     assert isinstance(result, Message)
     assert len(result.message_pieces) == 2
@@ -2010,7 +2035,7 @@ async def test_construct_message_from_response_captures_token_usage(
     mock_response.usage.total_tokens = 30
     mock_response.usage.cached_tokens = 5
 
-    result = await target._construct_message_from_response(mock_response, dummy_text_message_piece)
+    result = await target._construct_message_from_response_async(mock_response, dummy_text_message_piece)
 
     piece = result.message_pieces[0]
     assert piece.prompt_metadata["token_usage_model_name"] == "gpt-4o-2024-05-13"
@@ -2027,7 +2052,7 @@ async def test_construct_message_from_response_no_usage_no_metadata(
     mock_response = create_mock_completion(content="Hello")
     mock_response.usage = None
 
-    result = await target._construct_message_from_response(mock_response, dummy_text_message_piece)
+    result = await target._construct_message_from_response_async(mock_response, dummy_text_message_piece)
 
     piece = result.message_pieces[0]
     assert "token_usage_model_name" not in piece.prompt_metadata
@@ -2048,7 +2073,7 @@ async def test_construct_message_from_response_token_usage_defaults_on_missing_a
     # Remove model attribute to test default
     del mock_response.model
 
-    result = await target._construct_message_from_response(mock_response, dummy_text_message_piece)
+    result = await target._construct_message_from_response_async(mock_response, dummy_text_message_piece)
 
     piece = result.message_pieces[0]
     assert piece.prompt_metadata["token_usage_model_name"] == "unknown"

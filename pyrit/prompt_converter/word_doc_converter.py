@@ -7,26 +7,26 @@ import ast
 import hashlib
 from dataclasses import dataclass
 from io import BytesIO
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any
 
 from docx import Document
 
 from pyrit.common.logger import logger
-from pyrit.models import PromptDataType, SeedPrompt, data_serializer_factory
+from pyrit.memory import data_serializer_factory
 from pyrit.prompt_converter.prompt_converter import ConverterResult, PromptConverter
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from pyrit.identifiers import ComponentIdentifier
-    from pyrit.models.data_type_serializer import DataTypeSerializer
+    from pyrit.memory import DataTypeSerializer
+    from pyrit.models import ComponentIdentifier, PromptDataType, SeedPrompt
 
 
 @dataclass
 class _WordDocInjectionConfig:
     """Configuration for how to inject content into a Word document."""
 
-    existing_docx: Optional[Path]
+    existing_docx: Path | None
     placeholder: str
 
 
@@ -66,8 +66,8 @@ class WordDocConverter(PromptConverter):
     def __init__(
         self,
         *,
-        prompt_template: Optional[SeedPrompt] = None,
-        existing_docx: Optional[Path] = None,
+        prompt_template: SeedPrompt | None = None,
+        existing_docx: Path | None = None,
         placeholder: str = "{{INJECTION_PLACEHOLDER}}",
     ) -> None:
         """
@@ -112,7 +112,7 @@ class WordDocConverter(PromptConverter):
         Returns:
             ComponentIdentifier: The identifier with converter-specific parameters.
         """
-        template_hash: Optional[str] = None
+        template_hash: str | None = None
         if self._prompt_template:
             template_hash = hashlib.sha256(str(self._prompt_template.value).encode("utf-8")).hexdigest()[:16]
 
@@ -287,5 +287,5 @@ class WordDocConverter(PromptConverter):
             data_type="binary_path",
             extension=extension,
         )
-        await serializer.save_data(docx_bytes)
+        await serializer.save_data_async(docx_bytes)
         return serializer

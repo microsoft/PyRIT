@@ -29,7 +29,7 @@ def test_pyrit_shell_module_imports_within_budget() -> None:
     script = (
         "import time; "
         "t = time.perf_counter(); "
-        "from pyrit.cli import pyrit_shell; "  # noqa: F401
+        "from pyrit.cli import pyrit_shell; "
         "elapsed = time.perf_counter() - t; "
         "print(f'{elapsed:.2f}'); "
         f"raise SystemExit(0 if elapsed < {_MAX_IMPORT_SECONDS} else 1)"

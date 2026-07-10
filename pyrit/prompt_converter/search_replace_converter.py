@@ -4,8 +4,7 @@
 import random
 import re
 
-from pyrit.identifiers import ComponentIdentifier
-from pyrit.models import PromptDataType
+from pyrit.models import ComponentIdentifier, PromptDataType
 from pyrit.prompt_converter.prompt_converter import ConverterResult, PromptConverter
 
 
@@ -17,7 +16,7 @@ class SearchReplaceConverter(PromptConverter):
     SUPPORTED_INPUT_TYPES = ("text",)
     SUPPORTED_OUTPUT_TYPES = ("text",)
 
-    def __init__(self, pattern: str, replace: str | list[str], regex_flags: int = 0) -> None:
+    def __init__(self, *, pattern: str, replace: str | list[str], regex_flags: int = 0) -> None:
         """
         Initialize the converter with the specified regex pattern and replacement phrase(s).
 

@@ -13,10 +13,10 @@ from pyrit.executor.attack import (
     FlipAttack,
     SingleTurnAttackContext,
 )
-from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import (
     AttackOutcome,
     AttackResult,
+    ComponentIdentifier,
 )
 from pyrit.prompt_converter import FlipConverter
 from pyrit.prompt_normalizer import PromptConverterConfiguration, PromptNormalizer

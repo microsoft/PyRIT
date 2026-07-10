@@ -7,7 +7,7 @@ from typing import Literal, cast
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import SeedDataset, SeedObjective
+from pyrit.models import SeedDataset, SeedObjective, SeedUnion
 from pyrit.models.harm_category import HarmCategory
 
 logger = logging.getLogger(__name__)
@@ -69,7 +69,7 @@ class _CategoricalHarmfulQADataset(_RemoteDatasetLoader):
 
     @property
     def dataset_name(self) -> str:
-        """Return the dataset name."""
+        """The dataset name."""
         return "categorical_harmful_qa"
 
     async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
@@ -87,7 +87,7 @@ class _CategoricalHarmfulQADataset(_RemoteDatasetLoader):
         """
         logger.info(f"Loading CategoricalHarmfulQA dataset from {self.HF_DATASET_NAME} (language={self.language})")
 
-        data = await self._fetch_from_huggingface(
+        data = await self._fetch_from_huggingface_async(
             dataset_name=self.HF_DATASET_NAME,
             split=self.language,
             cache=cache,
@@ -157,7 +157,7 @@ class _CategoricalHarmfulQADataset(_RemoteDatasetLoader):
                 return self._standardize_harm_categories(subcategory, alias_overrides=child_abuse_subcategory_overrides)
             return self._standardize_harm_categories(category, alias_overrides=harm_category_alias_overrides)
 
-        seed_objectives = [
+        seed_objectives: list[SeedUnion] = [
             SeedObjective(
                 value=item["Question"],
                 name="CategoricalHarmfulQA",

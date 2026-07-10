@@ -2,13 +2,18 @@
 # Licensed under the MIT license.
 
 import logging
-from typing import Literal, cast
+from typing import TYPE_CHECKING, Literal, cast
+
+from typing_extensions import override
 
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import SeedDataset, SeedPrompt
+from pyrit.models import Modality, SeedDataset, SeedPrompt
 from pyrit.models.harm_category import HarmCategory
+
+if TYPE_CHECKING:
+    from pyrit.models.seeds.seed_group import SeedUnion
 
 logger = logging.getLogger(__name__)
 
@@ -21,8 +26,24 @@ class _MLCommonsAILuminateDataset(_RemoteDatasetLoader):
     hazard categories. It's a 10% subset of the full AILuminate training dataset.
 
     Reference: https://github.com/mlcommons/ailuminate
-    Paper: [@vidgen2024ailuminate]
+    Paper: [@ghosh2025ailuminate]
     """
+
+    _AUTHORS = [
+        "Shaona Ghosh",
+        "Heather Frase",
+        "Adina Williams",
+        "Sarah Luger",
+        "Paul Röttger",
+        "and others",
+    ]
+
+    _GROUPS = ["MLCommons AI Safety Working Group"]
+
+    # Metadata
+    modalities: tuple[Modality, ...] = (Modality.TEXT,)
+    size: str = "large"  # 1,200 hazard-category prompts
+    tags: frozenset[str] = frozenset({"default", "safety"})
 
     HAZARD_CATEGORIES_MAP = {
         "vcr": "Violent Crimes",
@@ -62,10 +83,12 @@ class _MLCommonsAILuminateDataset(_RemoteDatasetLoader):
         self.source_type: Literal["public_url", "file"] = source_type
 
     @property
+    @override
     def dataset_name(self) -> str:
-        """Return the dataset name."""
+        """The dataset name."""
         return "mlcommons_ailuminate"
 
+    @override
     async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch AILuminate dataset and return as SeedDataset.
@@ -123,7 +146,7 @@ class _MLCommonsAILuminateDataset(_RemoteDatasetLoader):
             },
         )
 
-        seed_prompts = [
+        seed_prompts: list[SeedUnion] = [
             SeedPrompt(
                 value=example["prompt_text"],
                 data_type="text",
@@ -140,6 +163,8 @@ class _MLCommonsAILuminateDataset(_RemoteDatasetLoader):
                     " prompts. This dataset is a 10% subset of the full AILuminate training dataset."
                 ),
                 source="https://github.com/mlcommons/ailuminate",
+                authors=self._AUTHORS,
+                groups=self._GROUPS,
             )
             for example in examples
         ]

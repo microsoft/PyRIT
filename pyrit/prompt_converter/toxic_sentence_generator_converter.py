@@ -7,7 +7,6 @@ to test AI safety mechanisms.
 
 import logging
 import pathlib
-from typing import Optional
 
 from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
 from pyrit.common.path import CONVERTER_SEED_PROMPT_PATH
@@ -35,7 +34,7 @@ class ToxicSentenceGeneratorConverter(LLMGenericTextConverter):
         self,
         *,
         converter_target: PromptTarget = REQUIRED_VALUE,  # type: ignore[ty:invalid-parameter-default]
-        prompt_template: Optional[SeedPrompt] = None,
+        prompt_template: SeedPrompt | None = None,
     ) -> None:
         """
         Initialize the converter with a specific target and template.

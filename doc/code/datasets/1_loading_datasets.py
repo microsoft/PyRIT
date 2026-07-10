@@ -18,6 +18,7 @@
 # The following command lists all built-in datasets available in PyRIT. Some datasets are stored locally, while others are fetched remotely from sources like HuggingFace.
 #
 # Many of these datasets come from published research, including
+# 0DIN [@odin2024],
 # Aegis [@ghosh2025aegis],
 # Agent Threat Rules [@atr2026],
 # ALERT [@tedeschi2024alert],
@@ -26,6 +27,7 @@
 # CategoricalHarmfulQA (CatQA) [@bhardwaj2024homer],
 # CoCoNot [@brahman2024coconot],
 # DarkBench [@darkbench2025],
+# DecodingTrust [@wang2023decodingtrust],
 # Do Anything Now [@shen2023donotanything],
 # Do-Not-Answer [@wang2023donotanswer],
 # EquityMedQA [@pfohl2024equitymedqa],
@@ -33,9 +35,12 @@
 # HarmBench [@mazeika2024harmbench],
 # HarmfulQA [@bhardwaj2023harmfulqa],
 # JailbreakBench [@chao2024jailbreakbench],
+# JailbreakV-28K [@luo2024jailbreakv],
 # LLM-LAT [@sheshadri2024lat],
 # MedSafetyBench [@han2024medsafetybench],
+# MM-SafetyBench [@liu2024mmsafetybench],
 # Moral Integrity Corpus [@ziems2022mic],
+# MOSSBench [@li2024mossbench],
 # Multilingual Alignment Prism [@aakanksha2024multilingual],
 # Multilingual Vulnerabilities [@tang2025multilingual],
 # OR-Bench [@cui2024orbench],
@@ -51,12 +56,18 @@
 # VLSU [@palaskar2025vlsu],
 # VLGuard [@zong2024vlguard],
 # XSTest [@rottger2023xstest],
-# AILuminate [@vidgen2024ailuminate],
+# AILuminate [@ghosh2025ailuminate],
 # Transphobia Awareness [@scheuerman2025transphobia],
 # Red Team Social Bias [@vantaylor2024socialbias],
 # and PromptIntel [@roccia2024promptintel].
 # Some datasets also originate from tools like garak [@derczynski2024garak]
 # and AdvBench [@zou2023gcg].
+# The garak family includes per-language package-hallucination registries
+# (`garak_pypi_packages`, `garak_npm_packages`, `garak_crates_packages`,
+# `garak_rubygems_packages`, `garak_dart_packages`, `garak_perl_packages`,
+# `garak_raku_packages`), system-prompt libraries (`garak_drh_system_prompts`,
+# `garak_tm_system_prompts`), and an audio jailbreak set
+# (`garak_audio_achilles_heel`).
 
 # %%
 from pyrit.datasets import SeedDatasetProvider

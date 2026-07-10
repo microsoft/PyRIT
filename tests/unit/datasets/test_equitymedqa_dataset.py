@@ -22,7 +22,7 @@ def mock_equitymedqa_data():
 async def test_fetch_dataset_single_subset(mock_equitymedqa_data):
     loader = _EquityMedQADataset(subset_name="cc_manual")
 
-    with patch.object(loader, "_fetch_from_huggingface", new=AsyncMock(return_value=mock_equitymedqa_data)):
+    with patch.object(loader, "_fetch_from_huggingface_async", new=AsyncMock(return_value=mock_equitymedqa_data)):
         dataset = await loader.fetch_dataset_async()
 
     assert isinstance(dataset, SeedDataset)
@@ -45,7 +45,7 @@ async def test_fetch_dataset_multiple_subsets():
     ]
 
     with patch.object(
-        loader, "_fetch_from_huggingface", new=AsyncMock(side_effect=[mock_cc_manual_data, mock_multimedqa_data])
+        loader, "_fetch_from_huggingface_async", new=AsyncMock(side_effect=[mock_cc_manual_data, mock_multimedqa_data])
     ):
         dataset = await loader.fetch_dataset_async()
 

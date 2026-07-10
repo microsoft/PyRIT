@@ -8,6 +8,7 @@ from typing import Any
 from pyrit.message_normalizer import (
     GenericSystemSquashNormalizer,
     HistorySquashNormalizer,
+    JsonSchemaNormalizer,
     MessageListNormalizer,
 )
 from pyrit.models import Message
@@ -28,6 +29,7 @@ logger = logging.getLogger(__name__)
 _NORMALIZER_REGISTRY: list[tuple[CapabilityName, MessageListNormalizer[Message]]] = [
     (CapabilityName.SYSTEM_PROMPT, GenericSystemSquashNormalizer()),
     (CapabilityName.MULTI_TURN, HistorySquashNormalizer()),
+    (CapabilityName.JSON_SCHEMA, JsonSchemaNormalizer()),
 ]
 
 # Derived constant — no manual maintenance required.
@@ -97,7 +99,13 @@ class ConversationNormalizationPipeline:
             if capabilities.includes(capability=capability):
                 continue
 
-            behavior = policy.get_behavior(capability=capability)
+            # ``behaviors`` is treated as a sparse mapping: a missing entry means
+            # RAISE (no adaptation; validation deferred to
+            # ``TargetConfiguration.ensure_can_handle``). This keeps the pipeline
+            # consistent with ``ensure_can_handle`` (which also tolerates missing
+            # entries) and forward-compatible — adding a new normalizable
+            # capability never retroactively breaks an existing custom policy.
+            behavior = policy.behaviors.get(capability, UnsupportedCapabilityBehavior.RAISE)
 
             # RAISE capabilities are skipped here — no normalizer is added.
             # Validation is deferred to TargetConfiguration.ensure_can_handle(),

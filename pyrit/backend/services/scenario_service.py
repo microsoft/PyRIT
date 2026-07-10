@@ -11,10 +11,9 @@ through the REST API.
 from functools import lru_cache
 
 from pyrit.backend.models.common import PaginationInfo
-from pyrit.backend.models.scenarios import (
-    ListRegisteredScenariosResponse,
+from pyrit.backend.models.scenarios import ListRegisteredScenariosResponse
+from pyrit.models.catalog.scenario import (
     RegisteredScenario,
-    ScenarioParameterSummary,
 )
 from pyrit.registry import ScenarioMetadata, ScenarioRegistry
 
@@ -33,22 +32,11 @@ def _metadata_to_registered_scenario(metadata: ScenarioMetadata) -> RegisteredSc
         scenario_name=metadata.registry_name,
         scenario_type=metadata.class_name,
         description=metadata.class_description,
-        default_strategy=metadata.default_strategy,
-        aggregate_strategies=list(metadata.aggregate_strategies),
-        all_strategies=list(metadata.all_strategies),
+        default_technique=metadata.default_technique,
+        aggregate_techniques=list(metadata.aggregate_techniques),
+        all_techniques=list(metadata.all_techniques),
         default_datasets=list(metadata.default_datasets),
-        max_dataset_size=metadata.max_dataset_size,
-        supported_parameters=[
-            ScenarioParameterSummary(
-                name=p.name,
-                description=p.description,
-                default=repr(p.default) if p.default is not None else None,
-                param_type=p.param_type,
-                choices=p.choices,
-                is_list=p.is_list,
-            )
-            for p in metadata.supported_parameters
-        ],
+        supported_parameters=list(metadata.supported_parameters),
     )
 
 
@@ -79,7 +67,7 @@ class ScenarioService:
         Returns:
             ScenarioListResponse with paginated scenario summaries.
         """
-        all_metadata = self._registry.list_metadata()
+        all_metadata = self._registry.get_all_registered_class_metadata()
         all_summaries = [_metadata_to_registered_scenario(m) for m in all_metadata]
 
         page, has_more = self._paginate(items=all_summaries, cursor=cursor, limit=limit)
@@ -87,7 +75,12 @@ class ScenarioService:
 
         return ListRegisteredScenariosResponse(
             items=page,
-            pagination=PaginationInfo(limit=limit, has_more=has_more, next_cursor=next_cursor, prev_cursor=cursor),
+            pagination=PaginationInfo(
+                limit=limit,
+                has_more=has_more,
+                next_cursor=next_cursor,
+                prev_cursor=cursor,
+            ),
         )
 
     async def get_scenario_async(self, *, scenario_name: str) -> RegisteredScenario | None:
@@ -100,10 +93,9 @@ class ScenarioService:
         Returns:
             ScenarioSummary if found, None otherwise.
         """
-        all_metadata = self._registry.list_metadata()
-        for metadata in all_metadata:
-            if metadata.registry_name == scenario_name:
-                return _metadata_to_registered_scenario(metadata)
+        metadata = self._registry.get_registered_class_metadata(scenario_name)
+        if metadata is not None:
+            return _metadata_to_registered_scenario(metadata)
         return None
 
     @staticmethod

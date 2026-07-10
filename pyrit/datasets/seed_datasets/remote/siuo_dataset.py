@@ -4,7 +4,9 @@
 import logging
 import uuid
 from enum import Enum
-from typing import Literal, Optional, cast
+from typing import TYPE_CHECKING, ClassVar, Literal, cast
+
+from typing_extensions import override
 
 from pyrit.datasets.seed_datasets.remote._image_cache import (
     fetch_and_cache_image_async,
@@ -12,8 +14,11 @@ from pyrit.datasets.seed_datasets.remote._image_cache import (
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import Seed, SeedDataset, SeedObjective, SeedPrompt
+from pyrit.models import SeedDataset, SeedObjective, SeedPrompt
 from pyrit.models.harm_category import HarmCategory
+
+if TYPE_CHECKING:
+    from pyrit.models.seeds.seed_group import SeedUnion
 
 logger = logging.getLogger(__name__)
 
@@ -30,30 +35,6 @@ class SIUOCategory(Enum):
     INFORMATION_MISINTERPRETATION = "information misinterpretation"
     RELIGION_BELIEFS = "religion beliefs"
     CONTROVERSIAL_TOPICS_POLITICS = "controversial topics, politics"
-
-
-_AUTHORS = [
-    "Siyin Wang",
-    "Xingsong Ye",
-    "Qinyuan Cheng",
-    "Junwen Duan",
-    "Shimin Li",
-    "Jinlan Fu",
-    "Xipeng Qiu",
-    "Xuanjing Huang",
-]
-
-_GROUPS = [
-    "Fudan University",
-    "National University of Singapore",
-    "Shanghai AI Laboratory",
-]
-
-_DESCRIPTION = (
-    "A multimodal example from the SIUO (Safe Inputs but Unsafe Output) benchmark. "
-    "Each example pairs an individually-safe image with an individually-safe text "
-    "question; the harm only emerges when the two are combined."
-)
 
 
 class _SIUODataset(_RemoteDatasetLoader):
@@ -84,6 +65,29 @@ class _SIUODataset(_RemoteDatasetLoader):
     Reference: [@wang2025siuo]
     Paper: https://arxiv.org/abs/2406.15279
     """
+
+    _DESCRIPTION: ClassVar[str] = (
+        "A multimodal example from the SIUO (Safe Inputs but Unsafe Output) benchmark. "
+        "Each example pairs an individually-safe image with an individually-safe text "
+        "question; the harm only emerges when the two are combined."
+    )
+
+    _AUTHORS: ClassVar[list[str]] = [
+        "Siyin Wang",
+        "Xingsong Ye",
+        "Qinyuan Cheng",
+        "Junwen Duan",
+        "Shimin Li",
+        "Jinlan Fu",
+        "Xipeng Qiu",
+        "Xuanjing Huang",
+    ]
+
+    _GROUPS: ClassVar[list[str]] = [
+        "Fudan University",
+        "National University of Singapore",
+        "Shanghai AI Laboratory",
+    ]
 
     HF_COMMIT_SHA: str = "024e80a01795376b9fed12f8073a12f2275f22ee"
     GEN_JSON_URL: str = f"https://huggingface.co/datasets/sinwang/SIUO/resolve/{HF_COMMIT_SHA}/siuo_gen.json"
@@ -127,7 +131,7 @@ class _SIUODataset(_RemoteDatasetLoader):
         *,
         source: str = GEN_JSON_URL,
         source_type: Literal["public_url", "file"] = "public_url",
-        categories: Optional[list[SIUOCategory]] = None,
+        categories: list[SIUOCategory] | None = None,
     ) -> None:
         """
         Initialize the SIUO dataset loader.
@@ -137,7 +141,7 @@ class _SIUODataset(_RemoteDatasetLoader):
                 HuggingFace mirror pinned to a commit SHA for reproducibility.
             source_type (Literal["public_url", "file"]): Whether source is a
                 public URL or a local file path. Defaults to 'public_url'.
-            categories (Optional[list[SIUOCategory]]): Optional filter; only rows
+            categories (list[SIUOCategory] | None): Optional filter; only rows
                 whose category matches one of these enum values are included.
                 If None, every category is included.
 
@@ -149,13 +153,17 @@ class _SIUODataset(_RemoteDatasetLoader):
         self.categories = categories
 
         if categories is not None:
+            if not categories:
+                raise ValueError("`categories` must be a non-empty list (pass None to include all categories)")
             self._validate_enums(categories, SIUOCategory, "SIUO category")
 
     @property
+    @override
     def dataset_name(self) -> str:
-        """Return the dataset name."""
+        """The dataset name."""
         return "siuo"
 
+    @override
     async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch the SIUO dataset and return it as a SeedDataset.
@@ -186,7 +194,7 @@ class _SIUODataset(_RemoteDatasetLoader):
             cache=cache,
         )
 
-        seeds: list[Seed] = []
+        seeds: list[SeedUnion] = []
         failed_image_count = 0
         kept_categories = {cat.value for cat in self.categories} if self.categories is not None else None
 
@@ -220,7 +228,7 @@ class _SIUODataset(_RemoteDatasetLoader):
         logger.info(f"Successfully loaded {len(seeds)} seeds from SIUO dataset")
         return SeedDataset(seeds=seeds, dataset_name=self.dataset_name)
 
-    async def _build_seed_group_async(self, *, example: dict[str, str]) -> list[Seed]:
+    async def _build_seed_group_async(self, *, example: dict[str, str]) -> list["SeedUnion"]:
         """
         Build a 3-piece (objective + text + image) seed group for a single SIUO row.
 
@@ -263,9 +271,9 @@ class _SIUODataset(_RemoteDatasetLoader):
             name=f"SIUO Objective - {question_id}",
             dataset_name=self.dataset_name,
             harm_categories=standardized_harm_categories,
-            description=_DESCRIPTION,
-            authors=_AUTHORS,
-            groups=_GROUPS,
+            description=self._DESCRIPTION,
+            authors=self._AUTHORS,
+            groups=self._GROUPS,
             source=self.PAPER_URL,
             prompt_group_id=group_id,
             metadata=metadata,
@@ -277,9 +285,9 @@ class _SIUODataset(_RemoteDatasetLoader):
             name=f"SIUO Text - {question_id}",
             dataset_name=self.dataset_name,
             harm_categories=standardized_harm_categories,
-            description=_DESCRIPTION,
-            authors=_AUTHORS,
-            groups=_GROUPS,
+            description=self._DESCRIPTION,
+            authors=self._AUTHORS,
+            groups=self._GROUPS,
             source=self.PAPER_URL,
             prompt_group_id=group_id,
             sequence=0,
@@ -292,9 +300,9 @@ class _SIUODataset(_RemoteDatasetLoader):
             name=f"SIUO Image - {question_id}",
             dataset_name=self.dataset_name,
             harm_categories=standardized_harm_categories,
-            description=_DESCRIPTION,
-            authors=_AUTHORS,
-            groups=_GROUPS,
+            description=self._DESCRIPTION,
+            authors=self._AUTHORS,
+            groups=self._GROUPS,
             source=self.PAPER_URL,
             prompt_group_id=group_id,
             sequence=0,

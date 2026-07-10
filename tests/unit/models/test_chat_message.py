@@ -6,11 +6,7 @@ import json
 import pytest
 from pydantic import ValidationError
 
-from pyrit.models.chat_message import (
-    ChatMessage,
-    ChatMessagesDataset,
-    ToolCall,
-)
+from pyrit.models import ChatMessage, ChatMessagesDataset, ToolCall
 
 
 def test_tool_call_init():
@@ -102,21 +98,6 @@ def test_chat_message_model_validate_json_roundtrip_with_tool_calls():
 def test_chat_message_accepts_all_valid_roles(role):
     msg = ChatMessage(role=role, content="test")
     assert msg.role == role
-
-
-def test_chat_message_to_json_is_deprecated_alias_for_model_dump_json():
-    msg = ChatMessage(role="user", content="test")
-    with pytest.warns(DeprecationWarning, match="ChatMessage.to_json"):
-        result = msg.to_json()
-    assert result == msg.model_dump_json()
-
-
-def test_chat_message_from_json_is_deprecated_alias_for_model_validate_json():
-    original = ChatMessage(role="system", content="you are helpful")
-    json_str = original.model_dump_json()
-    with pytest.warns(DeprecationWarning, match="ChatMessage.from_json"):
-        restored = ChatMessage.from_json(json_str)
-    assert restored == original
 
 
 def test_chat_messages_dataset_init():

@@ -6,11 +6,12 @@ import re
 from typing import Any
 
 import pandas as pd
+from typing_extensions import override
 
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import SeedDataset, SeedPrompt
+from pyrit.models import Modality, SeedDataset, SeedPrompt, SeedUnion
 from pyrit.models.harm_category import HarmCategory
 
 logger = logging.getLogger(__name__)
@@ -36,6 +37,11 @@ class _TransphobiaAwarenessDataset(_RemoteDatasetLoader):
     ACM Transactions on Computer-Human Interaction (2018).
     """
 
+    # Metadata
+    modalities: tuple[Modality, ...] = (Modality.TEXT,)
+    size: str = "medium"  # 300 Quora questions on transgender / non-binary topics
+    tags: frozenset[str] = frozenset({"default", "safety", "bias"})
+
     RATINGS_URL = "https://zenodo.org/records/15482694/files/Ratings.xlsx?download=1"
     QUESTION_RESPONSE_PAIRS_URL = "https://zenodo.org/records/15482694/files/Question_Response_Pairs.xlsx?download=1"
     QUORA_QUESTION_LIST_URL = "https://zenodo.org/records/15482694/files/Quora%20Question%20List.xlsx?download=1"
@@ -50,10 +56,12 @@ class _TransphobiaAwarenessDataset(_RemoteDatasetLoader):
         self.source = source
 
     @property
+    @override
     def dataset_name(self) -> str:
-        """Return the dataset name."""
+        """The dataset name."""
         return "transphobia_awareness"
 
+    @override
     async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch Transphobia-Awareness dataset and return as SeedDataset.
@@ -86,7 +94,7 @@ class _TransphobiaAwarenessDataset(_RemoteDatasetLoader):
             "Rate on a scale of 1-6, where 6 is the most transphobic"
         )
 
-        seed_prompts: list[SeedPrompt] = []
+        seed_prompts: list[SeedUnion] = []
 
         for _, row in ratings_df.iterrows():
             metadata: dict[str, Any] = {
@@ -133,6 +141,12 @@ class _TransphobiaAwarenessDataset(_RemoteDatasetLoader):
                     "Dipto Das",
                     "Michael Ann DeVito",
                     "Jed R. Brubaker",
+                ],
+                groups=[
+                    "Sony AI",
+                    "University of Colorado Boulder",
+                    "University of Toronto",
+                    "Northeastern University",
                 ],
             )
             seed_prompts.append(prompt)

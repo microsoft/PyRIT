@@ -33,16 +33,16 @@ await initialize_from_config_async()  # type: ignore
 # %% [markdown]
 # ## Simple Example
 #
-# This section goes into each of the three steps mentioned earlier. But first, the easiest way; this sets up reasonable defaults using `SimpleInitializer` and stores the results in memory.
+# This section goes into each of the three steps mentioned earlier. But first, the easiest way; this sets up reasonable defaults using `TargetInitializer` and `ScorerInitializer` and stores the results in memory.
 
 # %%
 # Set OPENAI_CHAT_ENDPOINT, OPENAI_CHAT_MODEL, and OPENAI_CHAT_KEY environment variables before running this code
 # E.g. you can put it in .env
 
 from pyrit.setup import initialize_pyrit_async
-from pyrit.setup.initializers import SimpleInitializer
+from pyrit.setup.initializers import ScorerInitializer, TargetInitializer
 
-await initialize_pyrit_async(memory_db_type="InMemory", initializers=[SimpleInitializer()])  # type: ignore
+await initialize_pyrit_async(memory_db_type="InMemory", initializers=[TargetInitializer(), ScorerInitializer()])  # type: ignore
 
 # Now you can run most of our notebooks! Just remove any os.getenv specific stuff since you may not have those different environment variables.
 
@@ -145,23 +145,22 @@ from pyrit.prompt_normalizer.prompt_converter_configuration import (
 )
 from pyrit.prompt_target import OpenAIChatTarget
 from pyrit.setup import initialize_pyrit_async
-from pyrit.setup.initializers import SimpleInitializer
+from pyrit.setup.initializers import ScorerInitializer, TargetInitializer
 
-# This is a way to include the SimpleInitializer class directly
-await initialize_pyrit_async(memory_db_type="InMemory", initializers=[SimpleInitializer()])  # type: ignore
+# This is a way to include the initializer classes directly
+await initialize_pyrit_async(memory_db_type="InMemory", initializers=[TargetInitializer(), ScorerInitializer()])  # type: ignore
 
-# Alternative approach - you can pass the path to the initializer class.
-# This is how you provide your own file not part of the repo that defines a PyRITInitializer class
-# This is equivalent to loading the class directly as above
+# Alternative approach - you can pass the path to a file that defines PyRITInitializer classes.
+# This is how you provide your own file not part of the repo. Here we point at the built-in
+# targets module, which defines TargetInitializer.
 await initialize_pyrit_async(
-    memory_db_type="InMemory", initialization_scripts=[f"{PYRIT_PATH}/setup/initializers/simple.py"]
+    memory_db_type="InMemory", initialization_scripts=[f"{PYRIT_PATH}/setup/initializers/targets.py"]
 )  # type: ignore
 
-# SimpleInitializer is a class that initializes sensible defaults for someone who only has OPENAI_CHAT_ENDPOINT, OPENAI_CHAT_MODEL, and OPENAI_CHAT_KEY configured
-# It is meant to only require these two env vars to be configured
-# It can easily be swapped for another PyRITInitializer, like AIRTInitializer which is better but requires more env configuration
+# TargetInitializer registers sensible default targets for someone who only has OPENAI_CHAT_ENDPOINT, OPENAI_CHAT_MODEL, and OPENAI_CHAT_KEY configured
+# It can easily be combined with other PyRITInitializers (like ScorerInitializer) for a fuller setup
 # get_info_async() is a class method that shows how this initializer configures defaults and what global variables it sets
-info = await SimpleInitializer.get_info_async()  # type: ignore
+info = await TargetInitializer.get_info_async()  # type: ignore
 for key, value in info.items():
     print(f"{key}: {value}")
 

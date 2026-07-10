@@ -61,7 +61,7 @@ def mock_pku_data():
 async def test_fetch_dataset_includes_all_prompts(mock_pku_data):
     loader = _PKUSafeRLHFDataset(include_safe_prompts=True)
 
-    with patch.object(loader, "_fetch_from_huggingface", new_callable=AsyncMock, return_value=mock_pku_data):
+    with patch.object(loader, "_fetch_from_huggingface_async", new_callable=AsyncMock, return_value=mock_pku_data):
         dataset = await loader.fetch_dataset_async()
 
     assert isinstance(dataset, SeedDataset)
@@ -79,7 +79,7 @@ async def test_fetch_dataset_includes_all_prompts(mock_pku_data):
 async def test_fetch_dataset_excludes_safe_prompts(mock_pku_data):
     loader = _PKUSafeRLHFDataset(include_safe_prompts=False)
 
-    with patch.object(loader, "_fetch_from_huggingface", new_callable=AsyncMock, return_value=mock_pku_data):
+    with patch.object(loader, "_fetch_from_huggingface_async", new_callable=AsyncMock, return_value=mock_pku_data):
         dataset = await loader.fetch_dataset_async()
 
     assert len(dataset.seeds) == 2
@@ -90,7 +90,7 @@ async def test_fetch_dataset_excludes_safe_prompts(mock_pku_data):
 async def test_fetch_dataset_filters_by_harm_category(mock_pku_data):
     loader = _PKUSafeRLHFDataset(include_safe_prompts=True, filter_harm_categories=["Cybercrime"])
 
-    with patch.object(loader, "_fetch_from_huggingface", new_callable=AsyncMock, return_value=mock_pku_data):
+    with patch.object(loader, "_fetch_from_huggingface_async", new_callable=AsyncMock, return_value=mock_pku_data):
         dataset = await loader.fetch_dataset_async()
 
     # Only the first item has Cybercrime=True; safe item has no harm categories so it's excluded
@@ -116,7 +116,7 @@ async def test_fetch_dataset_standardizes_all_native_harm_categories(native_labe
         }
     ]
 
-    with patch.object(loader, "_fetch_from_huggingface", new_callable=AsyncMock, return_value=data):
+    with patch.object(loader, "_fetch_from_huggingface_async", new_callable=AsyncMock, return_value=data):
         dataset = await loader.fetch_dataset_async()
 
     assert len(dataset.seeds) == 1

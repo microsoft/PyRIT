@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from pyrit.identifiers import ComponentIdentifier, Identifiable, build_seed_identifier
+from pyrit.models import AttackTechniqueIdentifier, ComponentIdentifier, Identifiable, SeedIdentifier
 
 if TYPE_CHECKING:
     from pyrit.executor.attack import AttackStrategy
@@ -20,9 +20,9 @@ if TYPE_CHECKING:
 
 class AttackTechnique(Identifiable):
     """
-    Bundles an attack strategy with an optional technique seed group.
+    Bundles an attack technique with an optional technique seed group.
 
-    An AttackTechnique encapsulates the full attack configuration — the strategy
+    An AttackTechnique encapsulates the full attack configuration — the technique
     (including its target, converters, and scorer) plus any reusable technique seeds
     (e.g. jailbreak templates). The objectives that define which weaknesses to probe
     live separately on the SeedAttackGroup / AtomicAttack.
@@ -40,7 +40,7 @@ class AttackTechnique(Identifiable):
 
     @property
     def attack(self) -> AttackStrategy[Any, Any]:
-        """The attack strategy."""
+        """The attack technique."""
         return self._attack
 
     @property
@@ -52,20 +52,21 @@ class AttackTechnique(Identifiable):
         """
         Build the behavioral identity for this attack technique.
 
-        The identifier always contains the attack strategy as ``children["attack"]``.
+        The identifier always contains the attack technique as ``children["attack"]``.
         When a seed technique is present, its seeds are added as
         ``children["technique_seeds"]``.
 
         Returns:
             ComponentIdentifier: The frozen identity snapshot.
         """
-        children: dict[str, Any] = {
-            "attack": self._attack.get_identifier(),
-        }
-
+        technique_seeds: list[SeedIdentifier] | None = None
         if self._seed_technique is not None:
-            technique_seed_ids = [build_seed_identifier(seed) for seed in self._seed_technique.seeds]
+            technique_seed_ids = [SeedIdentifier.from_seed(seed) for seed in self._seed_technique.seeds]
             if technique_seed_ids:
-                children["technique_seeds"] = technique_seed_ids
+                technique_seeds = list(technique_seed_ids)
 
-        return ComponentIdentifier.of(self, children=children)
+        return AttackTechniqueIdentifier.of(
+            self,
+            attack=self._attack.get_identifier(),
+            technique_seeds=technique_seeds,
+        )

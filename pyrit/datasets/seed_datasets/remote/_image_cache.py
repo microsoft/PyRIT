@@ -14,10 +14,10 @@ logic so individual loaders only need to construct the appropriate filename.
 import logging
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from pyrit.common.net_utility import make_request_and_raise_if_error_async
-from pyrit.models import data_serializer_factory
+from pyrit.memory import data_serializer_factory
 
 logger = logging.getLogger(__name__)
 
@@ -25,11 +25,11 @@ logger = logging.getLogger(__name__)
 async def fetch_and_cache_image_async(
     *,
     filename: str,
-    image_url: Optional[str] = None,
-    image_bytes: Optional[bytes] = None,
+    image_url: str | None = None,
+    image_bytes: bytes | None = None,
     log_prefix: str = "image-cache",
-    request_headers: Optional[Mapping[str, str]] = None,
-    request_timeout: Optional[float] = None,
+    request_headers: Mapping[str, str] | None = None,
+    request_timeout: float | None = None,
     follow_redirects: bool = False,
 ) -> str:
     """
@@ -71,7 +71,7 @@ async def fetch_and_cache_image_async(
         RuntimeError: If the serializer's underlying memory is not properly
             configured (``results_path`` or ``results_storage_io`` missing).
         Exception: Any error raised by the underlying HTTP fetch or by
-            ``serializer.save_data`` is propagated so callers can catch and
+            ``serializer.save_data_async`` is propagated so callers can catch and
             skip individual rows.
     """
     if image_bytes is None and not image_url:
@@ -97,7 +97,7 @@ async def fetch_and_cache_image_async(
     serializer.value = str(Path(results_path) / sub_directory / filename)
 
     try:
-        if await results_storage_io.path_exists(serializer.value):
+        if await results_storage_io.path_exists_async(serializer.value):
             return serializer.value
     except Exception as e:
         logger.warning(f"[{log_prefix}] Failed to check if cached image {filename} exists: {e}")
@@ -118,6 +118,6 @@ async def fetch_and_cache_image_async(
         )
         image_bytes = response.content
 
-    await serializer.save_data(data=image_bytes, output_filename=Path(filename).stem)
+    await serializer.save_data_async(data=image_bytes, output_filename=Path(filename).stem)
 
     return str(serializer.value)

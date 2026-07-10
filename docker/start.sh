@@ -80,7 +80,23 @@ elif [ "$PYRIT_MODE" = "gui" ]; then
         fi
     } >"$RUNTIME_CONFIG"
 
-    exec python -m pyrit.backend.pyrit_backend \
+    # Pick the launcher module. PR #1753 moved the launcher from
+    # ``pyrit.cli.pyrit_backend`` to ``pyrit.backend.pyrit_backend``. The PyPI
+    # docker_build CI job pins to whatever's currently published (0.13.0 at
+    # time of writing), which still uses the old path, so fall back to it when
+    # the new module isn't present. Once a release containing the new layout
+    # ships, this fallback is dead code and can be removed.
+    if python -c "import pyrit.backend.pyrit_backend" >/dev/null 2>&1; then
+        BACKEND_MODULE="pyrit.backend.pyrit_backend"
+    elif python -c "import pyrit.cli.pyrit_backend" >/dev/null 2>&1; then
+        echo "Using legacy pyrit.cli.pyrit_backend launcher (PyRIT <= 0.13.0)"
+        BACKEND_MODULE="pyrit.cli.pyrit_backend"
+    else
+        echo "ERROR: cannot find pyrit backend launcher module" >&2
+        exit 1
+    fi
+
+    exec python -m "$BACKEND_MODULE" \
         --host 0.0.0.0 \
         --port 8000 \
         --config-file "$RUNTIME_CONFIG"

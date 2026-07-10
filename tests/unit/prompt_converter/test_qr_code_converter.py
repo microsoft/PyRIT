@@ -51,7 +51,7 @@ async def test_qr_code_converter_invalid_prompt() -> None:
 
 async def test_qr_code_converter_convert_async(tmp_path) -> None:
     converter = QRCodeConverter()
-    with patch.object(converter._img_serializer, "get_data_filename") as mock_get_data_filename:
+    with patch.object(converter._img_serializer, "get_data_filename_async") as mock_get_data_filename:
         expected_filename = tmp_path / "sample_file.png"
         mock_get_data_filename.return_value = expected_filename
         qr = await converter.convert_async(prompt="Sample prompt", input_type="text")

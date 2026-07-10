@@ -11,7 +11,8 @@ from pypdf import PageObject, PdfReader
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
 
-from pyrit.models import DataTypeSerializer, SeedPrompt
+from pyrit.memory import DataTypeSerializer
+from pyrit.models import SeedPrompt
 from pyrit.prompt_converter import ConverterResult, PDFConverter
 
 
@@ -57,7 +58,7 @@ async def test_convert_async_no_template(pdf_converter_no_template):
     with (
         patch.object(pdf_converter_no_template, "_prepare_content", return_value=prompt) as mock_prepare,
         patch.object(pdf_converter_no_template, "_generate_pdf", return_value=mock_pdf_bytes) as mock_generate,
-        patch.object(pdf_converter_no_template, "_serialize_pdf") as mock_serialize,
+        patch.object(pdf_converter_no_template, "_serialize_pdf_async") as mock_serialize,
     ):
         serializer_mock = MagicMock()
         serializer_mock.value = "mock_url"
@@ -87,7 +88,7 @@ async def test_convert_async_with_template(pdf_converter_with_template):
             pdf_converter_with_template, "_prepare_content", return_value=expected_rendered_content
         ) as mock_prepare,
         patch.object(pdf_converter_with_template, "_generate_pdf", return_value=mock_pdf_bytes) as mock_generate,
-        patch.object(pdf_converter_with_template, "_serialize_pdf") as mock_serialize,
+        patch.object(pdf_converter_with_template, "_serialize_pdf_async") as mock_serialize,
     ):
         serializer_mock = MagicMock()
         serializer_mock.value = "mock_url"
@@ -131,7 +132,7 @@ async def test_convert_async_custom_font_and_size():
         result = await converter.convert_async(prompt=prompt)
         assert isinstance(result, ConverterResult)
         assert result.output_text == "mock_url"
-        serializer_mock.save_data.assert_called_once()
+        serializer_mock.save_data_async.assert_called_once()
 
 
 def test_input_supported(pdf_converter_no_template):
@@ -468,14 +469,14 @@ async def test_filename_extension_default(sqlite_instance):
 
 
 async def test_filename_extension_existing_pdf(sqlite_instance):
+    import shutil
     import tempfile
 
-    import requests
+    from pyrit.common.path import DATASETS_PATH
 
-    url = "https://raw.githubusercontent.com/microsoft/PyRIT/main/pyrit/datasets/prompt_converters/pdf_converters/fake_CV.pdf"
+    source_pdf = DATASETS_PATH / "prompt_converters" / "pdf_converters" / "fake_CV.pdf"
     with tempfile.NamedTemporaryFile(delete=False, suffix=".tmp") as tmp_file:
-        response = requests.get(url)
-        tmp_file.write(response.content)
+        shutil.copyfile(source_pdf, tmp_file.name)
 
     cv_pdf_path = Path(tmp_file.name)
 

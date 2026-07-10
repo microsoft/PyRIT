@@ -53,7 +53,9 @@ class TestCategoricalHarmfulQADataset:
     async def test_fetch_dataset_default_english(self, mock_catqa_data):
         loader = _CategoricalHarmfulQADataset()
 
-        with patch.object(loader, "_fetch_from_huggingface", new=AsyncMock(return_value=mock_catqa_data)) as mock_fetch:
+        with patch.object(
+            loader, "_fetch_from_huggingface_async", new=AsyncMock(return_value=mock_catqa_data)
+        ) as mock_fetch:
             dataset = await loader.fetch_dataset_async()
 
             assert isinstance(dataset, SeedDataset)
@@ -77,7 +79,9 @@ class TestCategoricalHarmfulQADataset:
     async def test_fetch_dataset_language_split(self, mock_catqa_data, language):
         loader = _CategoricalHarmfulQADataset(language=language)
 
-        with patch.object(loader, "_fetch_from_huggingface", new=AsyncMock(return_value=mock_catqa_data)) as mock_fetch:
+        with patch.object(
+            loader, "_fetch_from_huggingface_async", new=AsyncMock(return_value=mock_catqa_data)
+        ) as mock_fetch:
             dataset = await loader.fetch_dataset_async()
 
             assert mock_fetch.await_args.kwargs["split"] == language
@@ -93,7 +97,7 @@ class TestCategoricalHarmfulQADataset:
             },
         ]
 
-        with patch.object(loader, "_fetch_from_huggingface", new=AsyncMock(return_value=data)):
+        with patch.object(loader, "_fetch_from_huggingface_async", new=AsyncMock(return_value=data)):
             dataset = await loader.fetch_dataset_async()
 
             assert len(dataset.seeds) == 1
@@ -117,7 +121,7 @@ class TestCategoricalHarmfulQADataset:
             },
         ]
 
-        with patch.object(loader, "_fetch_from_huggingface", new=AsyncMock(return_value=data)):
+        with patch.object(loader, "_fetch_from_huggingface_async", new=AsyncMock(return_value=data)):
             dataset = await loader.fetch_dataset_async()
 
         assert len(dataset.seeds) == 1
@@ -137,7 +141,7 @@ class TestCategoricalHarmfulQADataset:
         loader = _CategoricalHarmfulQADataset()
         data = [{"Category": "Child Abuse", "Subcategory": subcategory, "Question": f"Question for {subcategory}"}]
 
-        with patch.object(loader, "_fetch_from_huggingface", new=AsyncMock(return_value=data)):
+        with patch.object(loader, "_fetch_from_huggingface_async", new=AsyncMock(return_value=data)):
             dataset = await loader.fetch_dataset_async()
 
         assert dataset.seeds[0].harm_categories == expected_categories
@@ -146,7 +150,7 @@ class TestCategoricalHarmfulQADataset:
         loader = _CategoricalHarmfulQADataset()
         data = [{"Category": "Child Abuse", "Subcategory": "Something new", "Question": "Q"}]
 
-        with patch.object(loader, "_fetch_from_huggingface", new=AsyncMock(return_value=data)):
+        with patch.object(loader, "_fetch_from_huggingface_async", new=AsyncMock(return_value=data)):
             dataset = await loader.fetch_dataset_async()
 
         assert dataset.seeds[0].harm_categories == ["GROOMING", "SEXUAL_CONTENT", "CHILD_LEAKAGE"]

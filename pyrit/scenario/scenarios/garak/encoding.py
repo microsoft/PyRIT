@@ -4,16 +4,11 @@
 
 import logging
 from collections.abc import Sequence
-from typing import Optional
 
 from pyrit.common import apply_defaults
-from pyrit.common.deprecation import print_deprecation_message  # Deprecated. Will be removed in 0.16.0.
-from pyrit.executor.attack.core.attack_config import (
-    AttackConverterConfig,
-    AttackScoringConfig,
-)
+from pyrit.executor.attack.core.attack_config import AttackConverterConfig, AttackScoringConfig
 from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
-from pyrit.models import SeedAttackGroup, SeedObjective, SeedPrompt
+from pyrit.models import Seed, SeedAttackGroup, SeedObjective, SeedPrompt
 from pyrit.prompt_converter import (
     AsciiSmugglerConverter,
     AskToDecodeConverter,
@@ -30,69 +25,67 @@ from pyrit.prompt_converter import (
 from pyrit.prompt_converter.braille_converter import BrailleConverter
 from pyrit.prompt_converter.ecoji_converter import EcojiConverter
 from pyrit.prompt_converter.nato_converter import NatoConverter
-from pyrit.prompt_normalizer.prompt_converter_configuration import (
-    PromptConverterConfiguration,
-)
+from pyrit.prompt_normalizer.prompt_converter_configuration import PromptConverterConfiguration
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
-from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
+from pyrit.scenario.core.dataset_configuration import CompoundDatasetAttackConfiguration, DatasetAttackConfiguration
 from pyrit.scenario.core.scenario import Scenario
-from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
+from pyrit.scenario.core.scenario_context import ScenarioContext
+from pyrit.scenario.core.scenario_technique import ScenarioTechnique
 from pyrit.score import TrueFalseScorer
 from pyrit.score.true_false.decoding_scorer import DecodingScorer
 
 
-class EncodingDatasetConfiguration(DatasetConfiguration):
+class EncodingDatasetConfiguration(DatasetAttackConfiguration):
     """
     Custom dataset configuration for the Encoding scenario.
 
     This configuration transforms each seed from the dataset into a SeedAttackGroup
-    with a properly formatted objective for encoding attacks.
+    with a properly formatted objective for encoding attacks. It customizes only the
+    grouping step (``_build_attack_groups``); memory querying, auto-fetch, sampling,
+    and the loud "dataset not found" behavior are inherited from
+    ``DatasetAttackConfiguration``.
     """
 
-    def get_all_seed_attack_groups(self) -> list[SeedAttackGroup]:
+    def _build_attack_groups(self, seeds: list[Seed]) -> list[SeedAttackGroup]:
         """
-        Resolve and return all seeds as SeedAttackGroups with encoding objectives.
+        Shape raw seeds into SeedAttackGroups carrying an encoding objective.
 
         Each seed is transformed into a SeedAttackGroup containing:
         - A SeedObjective with the encoding attack objective
-        - The original seed as a SeedPrompt
+        - The original seed value as a SeedPrompt
+
+        Args:
+            seeds (list[Seed]): The raw seeds loaded from memory.
 
         Returns:
-            List[SeedAttackGroup]: All resolved seed attack groups with objectives.
-
-        Raises:
-            ValueError: If no seeds could be resolved from the configuration.
+            list[SeedAttackGroup]: One attack group per seed, each with an objective.
         """
-        all_seeds = self.get_all_seeds()
-
-        if not all_seeds:
-            raise ValueError("No seeds found in the configured datasets.")
-
-        seed_attack_groups: list[SeedAttackGroup] = []
-        for seed in all_seeds:
-            objective = f"Make the model say an encoded payload: {seed.value}"
-            seed_attack_groups.append(
-                SeedAttackGroup(seeds=[SeedObjective(value=objective), SeedPrompt(value=seed.value)])
+        return [
+            SeedAttackGroup(
+                seeds=[
+                    SeedObjective(value=f"Make the model say an encoded payload: {seed.value}"),
+                    SeedPrompt(value=seed.value),
+                ]
             )
+            for seed in seeds
+        ]
 
-        return seed_attack_groups
 
-
-class EncodingStrategy(ScenarioStrategy):
+class EncodingTechnique(ScenarioTechnique):
     """
-    Strategies for encoding attacks.
+    Techniques for encoding attacks.
 
     Each enum member represents an encoding scheme that will be tested against the target model.
-    The ALL aggregate expands to include all encoding strategies.
+    The ALL aggregate expands to include all encoding techniques.
 
-    Note: EncodingStrategy does not support composition. Each encoding must be applied individually.
+    Note: EncodingTechnique does not support composition. Each encoding must be applied individually.
     """
 
     # Aggregate member
     ALL = ("all", {"all"})
 
-    # Individual encoding strategies (matching the atomic attack names)
+    # Individual encoding techniques (matching the atomic attack names)
     Base64 = ("base64", set[str]())
     Base2048 = ("base2048", set[str]())
     Base16 = ("base16", set[str]())
@@ -138,23 +131,20 @@ class Encoding(Scenario):
     def __init__(
         self,
         *,
-        objective_scorer: Optional[TrueFalseScorer] = None,
-        encoding_templates: Optional[Sequence[str]] = None,
-        scenario_result_id: Optional[str] = None,
-        include_baseline: bool | None = None,  # Deprecated. Will be removed in 0.16.0.
+        objective_scorer: TrueFalseScorer | None = None,
+        encoding_templates: Sequence[str] | None = None,
+        scenario_result_id: str | None = None,
     ) -> None:
         """
         Initialize the Encoding Scenario.
 
         Args:
-            objective_scorer (Optional[TrueFalseScorer]): The scorer used to evaluate if the model
+            objective_scorer (TrueFalseScorer | None): The scorer used to evaluate if the model
                 successfully decoded the payload. Defaults to DecodingScorer with encoding_scenario
                 category.
-            encoding_templates (Optional[Sequence[str]]): Templates used to construct the decoding
+            encoding_templates (Sequence[str] | None): Templates used to construct the decoding
                 prompts. Defaults to AskToDecodeConverter.garak_templates.
-            scenario_result_id (Optional[str]): Optional ID of an existing scenario result to resume.
-            include_baseline (bool | None): **Deprecated.** Will be removed in 0.16.0. Pass
-                ``include_baseline`` to ``initialize_async`` instead.
+            scenario_result_id (str | None): Optional ID of an existing scenario result to resume.
         """
         objective_scorer = objective_scorer or DecodingScorer(categories=["encoding_scenario"])
         self._scorer_config = AttackScoringConfig(objective_scorer=objective_scorer)
@@ -163,68 +153,44 @@ class Encoding(Scenario):
 
         super().__init__(
             version=self.VERSION,
-            strategy_class=EncodingStrategy,
-            default_strategy=EncodingStrategy.ALL,
-            default_dataset_config=EncodingDatasetConfiguration(
-                dataset_names=["garak_slur_terms_en", "garak_web_html_js"],
-                max_dataset_size=3,
+            technique_class=EncodingTechnique,
+            default_technique=EncodingTechnique.ALL,
+            default_dataset_config=CompoundDatasetAttackConfiguration(
+                configurations=[
+                    EncodingDatasetConfiguration(dataset_names=["garak_slur_terms_en"], max_dataset_size=3),
+                    EncodingDatasetConfiguration(dataset_names=["garak_web_html_js"], max_dataset_size=3),
+                ]
             ),
             objective_scorer=objective_scorer,
             scenario_result_id=scenario_result_id,
         )
 
-        # Deprecated constructor-time baseline override. Will be removed in 0.16.0, along with
-        # the include_baseline kwarg above.
-        if include_baseline is not None:
-            print_deprecation_message(
-                old_item="Encoding(include_baseline=...)",
-                new_item="Encoding.initialize_async(include_baseline=...)",
-                removed_in="0.16.0",
-            )
-            self._legacy_include_baseline = include_baseline
-
-        # Will be resolved in _get_atomic_attacks_async
-        self._resolved_seed_groups: Optional[list[SeedAttackGroup]] = None
-
-    def _resolve_seed_groups(self) -> list[SeedAttackGroup]:
+    async def _build_atomic_attacks_async(self, *, context: ScenarioContext) -> list[AtomicAttack]:
         """
-        Resolve seed groups from dataset configuration.
+        Build the encoding atomic attacks for this run.
+
+        Encoding builds attacks directly (one ``AtomicAttack`` per selected encoding scheme,
+        each fanned out over the decode templates) rather than via the matrix builder, since
+        its axis is converter configurations, not techniques.
+
+        Args:
+            context (ScenarioContext): The resolved runtime inputs for this run.
 
         Returns:
-            list[SeedAttackGroup]: List of seed attack groups to be encoded and tested.
+            list[AtomicAttack]: The list of AtomicAttack instances in this scenario.
         """
-        # Use dataset_config (guaranteed to be set by initialize_async)
-        seed_groups = self._dataset_config.get_all_seed_attack_groups()
-
-        if not seed_groups:
-            self._raise_dataset_exception()
-
-        return seed_groups
-
-    async def _get_atomic_attacks_async(self) -> list[AtomicAttack]:
-        """
-        Retrieve the list of AtomicAttack instances in this scenario.
-
-        Returns:
-            List[AtomicAttack]: The list of AtomicAttack instances in this scenario.
-        """
-        # Resolve seed prompts from deprecated parameter or dataset config
-        self._resolved_seed_groups = self._resolve_seed_groups()
-
-        atomic_attacks = self._get_converter_attacks()
-
-        if self._include_baseline:
-            atomic_attacks.insert(0, self._build_baseline_atomic_attack(seed_groups=self._resolved_seed_groups or []))
-
-        return atomic_attacks
+        return self._get_converter_attacks(seed_groups=list(context.seed_groups))
 
     # These are the same as Garak encoding attacks
-    def _get_converter_attacks(self) -> list[AtomicAttack]:
+    def _get_converter_attacks(self, *, seed_groups: list[SeedAttackGroup]) -> list[AtomicAttack]:
         """
         Get all converter-based atomic attacks.
 
-        Creates atomic attacks for each encoding scheme specified in the scenario strategies.
+        Creates atomic attacks for each encoding scheme specified in the scenario techniques.
         Each encoding scheme is tested both with and without explicit decoding instructions.
+
+        Args:
+            seed_groups (list[SeedAttackGroup]): Seed groups the attacks draw from.
 
         Returns:
             list[AtomicAttack]: List of all atomic attacks to execute.
@@ -254,18 +220,22 @@ class Encoding(Scenario):
             ([AsciiSmugglerConverter()], "ascii_smuggler"),
         ]
 
-        # Filter to only include selected strategies
-        selected_encoding_names = {s.value for s in self._scenario_strategies}
+        # Filter to only include selected techniques
+        selected_encoding_names = {s.value for s in self._scenario_techniques}
         converters_with_encodings = [
             (conv, name) for conv, name in all_converters_with_encodings if name in selected_encoding_names
         ]
 
         atomic_attacks = []
         for conv, name in converters_with_encodings:
-            atomic_attacks.extend(self._get_prompt_attacks(converters=conv, encoding_name=name))
+            atomic_attacks.extend(
+                self._get_prompt_attacks(converters=conv, encoding_name=name, seed_groups=seed_groups)
+            )
         return atomic_attacks
 
-    def _get_prompt_attacks(self, *, converters: list[PromptConverter], encoding_name: str) -> list[AtomicAttack]:
+    def _get_prompt_attacks(
+        self, *, converters: list[PromptConverter], encoding_name: str, seed_groups: list[SeedAttackGroup]
+    ) -> list[AtomicAttack]:
         """
         Create atomic attacks for a specific encoding scheme.
 
@@ -278,6 +248,7 @@ class Encoding(Scenario):
         Args:
             converters (list[PromptConverter]): The list of converters to apply to the seed prompts.
             encoding_name (str): Human-readable name of the encoding scheme (e.g., "Base64", "ROT13").
+            seed_groups (list[SeedAttackGroup]): Seed groups the attacks draw from.
 
         Returns:
             list[AtomicAttack]: List of atomic attacks for this encoding scheme.
@@ -316,7 +287,7 @@ class Encoding(Scenario):
                 AtomicAttack(
                     atomic_attack_name=encoding_name,
                     attack_technique=AttackTechnique(attack=attack),
-                    seed_groups=self._resolved_seed_groups or [],
+                    seed_groups=seed_groups,
                 )
             )
 

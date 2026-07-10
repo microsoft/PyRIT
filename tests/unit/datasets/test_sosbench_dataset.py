@@ -34,7 +34,7 @@ class TestSOSBenchDataset:
         loader = _SOSBenchDataset()
         data = [{"goal": f"Goal for {subject}", "original_term": "term", "subject": subject}]
 
-        with patch.object(loader, "_fetch_from_huggingface", new=AsyncMock(return_value=data)):
+        with patch.object(loader, "_fetch_from_huggingface_async", new=AsyncMock(return_value=data)):
             dataset = await loader.fetch_dataset_async()
 
         assert isinstance(dataset, SeedDataset)
@@ -47,7 +47,7 @@ class TestSOSBenchDataset:
         loader = _SOSBenchDataset()
         data = [{"goal": "Goal without subject", "original_term": "term", "subject": None}]
 
-        with patch.object(loader, "_fetch_from_huggingface", new=AsyncMock(return_value=data)):
+        with patch.object(loader, "_fetch_from_huggingface_async", new=AsyncMock(return_value=data)):
             dataset = await loader.fetch_dataset_async()
 
         assert dataset.seeds[0].harm_categories == []

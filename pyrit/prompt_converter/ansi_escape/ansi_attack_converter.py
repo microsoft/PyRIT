@@ -33,6 +33,7 @@ class AnsiAttackConverter(PromptConverter):
 
     def __init__(
         self,
+        *,
         include_raw: bool = True,
         include_escaped: bool = True,
         include_tasks: bool = True,

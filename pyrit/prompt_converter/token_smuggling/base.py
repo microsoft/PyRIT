@@ -5,7 +5,7 @@ import abc
 import logging
 from typing import Literal
 
-from pyrit.identifiers import ComponentIdentifier
+from pyrit.models import ComponentIdentifier
 from pyrit.models.literals import PromptDataType
 from pyrit.prompt_converter.prompt_converter import ConverterResult, PromptConverter
 
@@ -23,7 +23,7 @@ class SmugglerConverter(PromptConverter, abc.ABC):
     SUPPORTED_INPUT_TYPES = ("text",)
     SUPPORTED_OUTPUT_TYPES = ("text",)
 
-    def __init__(self, action: Literal["encode", "decode"] = "encode") -> None:
+    def __init__(self, *, action: Literal["encode", "decode"] = "encode") -> None:
         """
         Initialize the converter with options for encoding/decoding.
 
@@ -108,7 +108,7 @@ class SmugglerConverter(PromptConverter, abc.ABC):
             message (str): The message to encode.
 
         Returns:
-            Tuple[str, str]: A tuple containing a summary and the encoded message.
+            tuple[str, str]: A tuple containing a summary and the encoded message.
         """
         raise NotImplementedError
 

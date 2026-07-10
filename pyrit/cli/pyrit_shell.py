@@ -15,10 +15,12 @@ import cmd
 import concurrent.futures
 import contextlib
 import logging
+import os
+import shlex
 import sys
 import threading
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from pyrit.cli import _banner as banner
 
@@ -26,6 +28,38 @@ if TYPE_CHECKING:
     from collections.abc import Coroutine
 
 _T = TypeVar("_T")
+
+
+def _split_initializer_paths(arg: str) -> list[str]:
+    """
+    Split a command-line argument string into individual file paths.
+
+    Supports quoting paths that contain spaces. On Windows, backslashes are treated
+    as literal path separators (not escape characters) so that unquoted paths such as
+    ``C:\\Users\\me\\init.py`` are preserved; surrounding quotes are stripped from each
+    token. On POSIX systems, standard ``shlex`` parsing is used.
+
+    Args:
+        arg: The raw argument string passed to the ``add-initializer`` command.
+
+    Returns:
+        The list of individual file path strings parsed from ``arg``.
+
+    Raises:
+        ValueError: If the argument contains unbalanced quotes.
+    """
+    if os.name == "nt":
+        lexer = shlex.shlex(arg, posix=False)
+        lexer.whitespace_split = True
+        tokens = list(lexer)
+        return [_strip_surrounding_quotes(token) for token in tokens]
+    return shlex.split(arg)
+
+
+def _strip_surrounding_quotes(token: str) -> str:
+    if len(token) >= 2 and token[0] == token[-1] and token[0] in ("'", '"'):
+        return token[1:-1]
+    return token
 
 
 class PyRITShell(cmd.Cmd):
@@ -36,6 +70,7 @@ class PyRITShell(cmd.Cmd):
         list-scenarios             - List all available scenarios
         list-initializers          - List all available initializers
         list-targets               - List all available targets
+        list-converters            - List all registered converter instances
         run <scenario> [opts]      - Run a scenario with optional parameters
         scenario-history [N]       - List the last N (default 10) scenario runs
         print-scenario [id]        - Print detailed results for a scenario run
@@ -47,8 +82,6 @@ class PyRITShell(cmd.Cmd):
     """
 
     prompt = "pyrit> "
-
-    _TERMINAL_STATUSES = {"COMPLETED", "FAILED", "CANCELLED"}
 
     def __init__(
         self,
@@ -140,7 +173,16 @@ class PyRITShell(cmd.Cmd):
         if self._api_client is not None:
             return True
 
-        base_url = self._base_url or self._resolve_base_url()
+        if self._base_url:
+            base_url = self._base_url
+        else:
+            from pyrit.cli._config_reader import ConfigError
+
+            try:
+                base_url = self._resolve_base_url()
+            except ConfigError as exc:
+                print(f"Error: {exc}")
+                return False
 
         # Check health
         from pyrit.cli._server_launcher import ServerLauncher
@@ -173,7 +215,7 @@ class PyRITShell(cmd.Cmd):
         self._start_server = False  # only auto-start once
         return True
 
-    def cmdloop(self, intro: Optional[str] = None) -> None:
+    def cmdloop(self, intro: str | None = None) -> None:
         """Override cmdloop to play animated banner before starting the REPL."""
         if intro is None:
             prev_disable = logging.root.manager.disable
@@ -199,8 +241,8 @@ class PyRITShell(cmd.Cmd):
         from pyrit.cli import _output
 
         try:
-            resp = self._run_async(self._api_client.list_scenarios_async())
-            _output.print_scenario_list(items=resp.get("items", []))
+            scenarios = self._run_async(self._api_client.list_scenarios_async())
+            _output.print_scenario_list(items=scenarios)
         except Exception as e:
             print(f"Error listing scenarios: {e}")
 
@@ -214,8 +256,8 @@ class PyRITShell(cmd.Cmd):
         from pyrit.cli import _output
 
         try:
-            resp = self._run_async(self._api_client.list_initializers_async())
-            _output.print_initializer_list(items=resp.get("items", []))
+            initializers = self._run_async(self._api_client.list_initializers_async())
+            _output.print_initializer_list(items=initializers)
         except Exception as e:
             print(f"Error listing initializers: {e}")
 
@@ -229,10 +271,25 @@ class PyRITShell(cmd.Cmd):
         from pyrit.cli import _output
 
         try:
-            resp = self._run_async(self._api_client.list_targets_async())
-            _output.print_target_list(items=resp.get("items", []))
+            targets = self._run_async(self._api_client.list_targets_async())
+            _output.print_target_list(items=targets)
         except Exception as e:
             print(f"Error listing targets: {e}")
+
+    def do_list_converters(self, arg: str) -> None:
+        """List all registered converter instances."""
+        if arg.strip():
+            print(f"Error: list-converters does not accept arguments, got: {arg.strip()}")
+            return
+        if not self._ensure_client():
+            return
+        from pyrit.cli import _output
+
+        try:
+            resp = self._run_async(self._api_client.list_converters_async())
+            _output.print_converter_list(items=resp.get("items", []))
+        except Exception as e:
+            print(f"Error listing converters: {e}")
 
     def do_add_initializer(self, arg: str) -> None:
         """
@@ -249,7 +306,13 @@ class PyRITShell(cmd.Cmd):
 
         from pyrit.cli.api_client import ServerNotAvailableError
 
-        for script_path_str in arg.split():
+        try:
+            script_path_strings = _split_initializer_paths(arg)
+        except ValueError as exc:
+            print(f"Error parsing initializer paths: {exc}")
+            return
+
+        for script_path_str in script_path_strings:
             script_path = Path(script_path_str).resolve()
             if not script_path.exists():
                 print(f"Error: File not found: {script_path}")
@@ -281,7 +344,11 @@ class PyRITShell(cmd.Cmd):
         Options:
             --target <name>                 Target name (required)
             --initializers <name> ...       Initializer names (supports name:key=val syntax)
-            --strategies, -s <s1> <s2> ...  Strategy names
+            --techniques, -t <t1> <t2> ...  Technique names. Append registered
+                                            converters to a technique with
+                                            ':converter.<name>' (repeatable), e.g.
+                                            role_play:converter.translation_spanish.
+                                            Use list-converters to see names.
             --max-concurrency <N>           Maximum concurrent operations
             --max-retries <N>               Maximum retry attempts
             --memory-labels <JSON>          JSON string of labels
@@ -302,12 +369,19 @@ class PyRITShell(cmd.Cmd):
             print("Usage: run <scenario_name> --target <name> [options]")
             return
 
-        from pyrit.cli._cli_args import build_parameters_from_api, extract_scenario_args, parse_run_arguments
+        from pyrit.cli._cli_args import (
+            build_parameters_from_api,
+            collapse_dataset_filters,
+            extract_scenario_args,
+            parse_run_arguments,
+        )
         from pyrit.cli._output import (
             print_scenario_result_async,
             print_scenario_run_progress,
             print_scenario_run_summary,
         )
+        from pyrit.models import ScenarioRunState
+        from pyrit.models.catalog import RunScenarioRequest
 
         # Fetch scenario metadata so the parser recognizes scenario-declared flags.
         scenario_name_token = line.split(maxsplit=1)[0]
@@ -319,7 +393,7 @@ class PyRITShell(cmd.Cmd):
         if scenario_meta is None:
             print(f"Error: Scenario '{scenario_name_token}' not found on server.")
             return
-        declared_params = build_parameters_from_api(api_params=scenario_meta.get("supported_parameters") or [])
+        declared_params = build_parameters_from_api(api_params=scenario_meta.supported_parameters)
 
         # Parse arguments
         try:
@@ -330,8 +404,8 @@ class PyRITShell(cmd.Cmd):
 
         scenario_name = args["scenario_name"]
 
-        # Build request
-        request: dict[str, Any] = {
+        # Build typed request
+        request_kwargs: dict[str, Any] = {
             "scenario_name": scenario_name,
             "target_name": args.get("target") or "",
         }
@@ -349,29 +423,33 @@ class PyRITShell(cmd.Cmd):
                     init_names.append(name)
                     if entry.get("args"):
                         init_args[name] = entry["args"]
-            request["initializers"] = init_names
+            request_kwargs["initializers"] = init_names
             if init_args:
-                request["initializer_args"] = init_args
+                request_kwargs["initializer_args"] = init_args
 
-        if args.get("scenario_strategies"):
-            request["strategies"] = args["scenario_strategies"]
+        if args.get("scenario_techniques"):
+            request_kwargs["techniques"] = args["scenario_techniques"]
         if args.get("max_concurrency") is not None:
-            request["max_concurrency"] = args["max_concurrency"]
+            request_kwargs["max_concurrency"] = args["max_concurrency"]
         if args.get("max_retries") is not None:
-            request["max_retries"] = args["max_retries"]
+            request_kwargs["max_retries"] = args["max_retries"]
         if args.get("dataset_names"):
-            request["dataset_names"] = args["dataset_names"]
+            request_kwargs["dataset_names"] = args["dataset_names"]
         if args.get("max_dataset_size") is not None:
-            request["max_dataset_size"] = args["max_dataset_size"]
+            request_kwargs["max_dataset_size"] = args["max_dataset_size"]
+        if args.get("dataset_filters"):
+            request_kwargs["dataset_filters"] = collapse_dataset_filters(args["dataset_filters"])
         if args.get("memory_labels"):
-            request["labels"] = args["memory_labels"]
+            request_kwargs["labels"] = args["memory_labels"]
 
         scenario_params = extract_scenario_args(parsed=args)
         if scenario_params:
-            request["scenario_params"] = scenario_params
+            request_kwargs["scenario_params"] = scenario_params
+
+        request = RunScenarioRequest(**request_kwargs)
 
         # Start run
-        total_strategies = len(request.get("strategies") or [])
+        total_techniques = len(request.techniques or [])
         print(f"\nRunning scenario: {scenario_name}")
         sys.stdout.flush()
 
@@ -381,7 +459,7 @@ class PyRITShell(cmd.Cmd):
             print(f"Error starting scenario: {exc}")
             return
 
-        scenario_result_id = run.get("scenario_result_id", "")
+        scenario_result_id = run.scenario_result_id
 
         # Poll for completion
         import time
@@ -389,9 +467,12 @@ class PyRITShell(cmd.Cmd):
         try:
             while True:
                 run = self._run_async(self._api_client.get_scenario_run_async(scenario_result_id=scenario_result_id))
-                status = run.get("status", "UNKNOWN")
-                print_scenario_run_progress(run=run, total_strategies=total_strategies)
-                if status in self._TERMINAL_STATUSES:
+                print_scenario_run_progress(run=run, total_techniques=total_techniques)
+                if run.status in {
+                    ScenarioRunState.COMPLETED,
+                    ScenarioRunState.FAILED,
+                    ScenarioRunState.CANCELLED,
+                }:
                     break
                 time.sleep(0.5)
         except KeyboardInterrupt:
@@ -405,13 +486,20 @@ class PyRITShell(cmd.Cmd):
             return
 
         # Print results
-        if run.get("status") == "COMPLETED":
+        if run.status == ScenarioRunState.COMPLETED:
             try:
                 detail = self._run_async(
                     self._api_client.get_scenario_run_results_async(scenario_result_id=scenario_result_id)
                 )
-                self._run_async(print_scenario_result_async(result_dict=detail))
-            except Exception:
+                self._run_async(print_scenario_result_async(result=detail))
+            except Exception as exc:
+                from pyrit.cli.pyrit_scan import _print_cli_exception
+
+                print(
+                    "\nERROR: The scenario completed, but its detailed results could not be "
+                    "retrieved or parsed from the server."
+                )
+                _print_cli_exception(exc=exc)
                 print_scenario_run_summary(run=run)
         else:
             print_scenario_run_summary(run=run)
@@ -443,8 +531,8 @@ class PyRITShell(cmd.Cmd):
         from pyrit.cli._output import print_scenario_runs_list
 
         try:
-            resp = self._run_async(self._api_client.list_scenario_runs_async(limit=limit))
-            print_scenario_runs_list(runs=resp.get("items", []))
+            runs = self._run_async(self._api_client.list_scenario_runs_async(limit=limit))
+            print_scenario_runs_list(runs=runs)
         except Exception as e:
             print(f"Error: {e}")
 
@@ -467,7 +555,7 @@ class PyRITShell(cmd.Cmd):
 
         try:
             detail = self._run_async(self._api_client.get_scenario_run_results_async(scenario_result_id=arg))
-            self._run_async(print_scenario_result_async(result_dict=detail))
+            self._run_async(print_scenario_result_async(result=detail))
         except Exception as e:
             print(f"Error: {e}")
 
@@ -572,7 +660,7 @@ class PyRITShell(cmd.Cmd):
         """Clear the screen."""
         import os
 
-        os.system("cls" if os.name == "nt" else "clear")
+        os.system("cls" if os.name == "nt" else "clear")  # type: ignore[ty:deprecated]
 
     # Shortcuts and aliases
     do_quit = do_exit
@@ -656,9 +744,13 @@ def main() -> int:
     logging.basicConfig(level=getattr(logging, args.log_level))
 
     # Surface a deprecation if the layered config has blocks the CLI ignores.
-    from pyrit.cli._config_reader import warn_on_client_ignored_blocks
+    from pyrit.cli._config_reader import ConfigError, warn_on_client_ignored_blocks
 
-    warn_on_client_ignored_blocks(config_file=args.config_file)
+    try:
+        warn_on_client_ignored_blocks(config_file=args.config_file)
+    except ConfigError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
 
     # Play banner immediately
     prev_disable = logging.root.manager.disable

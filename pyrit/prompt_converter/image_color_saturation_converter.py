@@ -6,7 +6,7 @@ from typing import Literal
 
 from PIL import Image, ImageEnhance
 
-from pyrit.identifiers import ComponentIdentifier
+from pyrit.models import ComponentIdentifier
 from pyrit.prompt_converter.base_image_to_image_converter import BaseImageToImageConverter
 
 logger = logging.getLogger(__name__)

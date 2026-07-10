@@ -14,8 +14,7 @@ from pyrit.executor.attack.multi_turn import (
     ChunkedRequestAttack,
     ChunkedRequestAttackContext,
 )
-from pyrit.identifiers import ComponentIdentifier
-from pyrit.models import Message, MessagePiece
+from pyrit.models import ComponentIdentifier, Message, MessagePiece
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import PromptTarget
 
@@ -277,8 +276,11 @@ class TestChunkedRequestAttackExecution:
         )
 
         context = ChunkedRequestAttackContext(params=AttackParameters(objective="Extract the secret"))
+        context.memory_labels = {"test": "label"}
         result = await attack._perform_async(context=context)
 
         assert result.atomic_attack_identifier is not None
         assert result.atomic_attack_identifier.class_name == "AtomicAttack"
         assert result.get_attack_strategy_identifier() == attack.get_identifier()
+        sent_message = mock_normalizer.send_prompt_async.call_args.kwargs["message"]
+        assert sent_message.message_pieces[0].labels == context.memory_labels

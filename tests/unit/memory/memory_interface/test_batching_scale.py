@@ -11,10 +11,11 @@ import hashlib
 import uuid
 from unittest.mock import patch
 
-from pyrit.identifiers import ComponentIdentifier
+from unit.mocks import make_scenario_result
+
 from pyrit.memory import MemoryInterface
 from pyrit.memory.memory_models import PromptMemoryEntry
-from pyrit.models import AttackResult, MessagePiece, ScenarioIdentifier, ScenarioResult, Score
+from pyrit.models import AttackResult, ComponentIdentifier, MessagePiece, ScenarioResult, Score
 
 # Use the class attribute for the batch limit in tests
 _MAX_BIND_VARS = MemoryInterface._MAX_BIND_VARS
@@ -37,7 +38,6 @@ def _create_message_piece(
         converted_value_sha256=sha256,
         sequence=0,
         conversation_id=conversation_id or str(uuid.uuid4()),
-        attack_identifier=ComponentIdentifier.from_dict({"id": str(uuid.uuid4())}),
     )
 
 
@@ -50,7 +50,7 @@ def _create_score(message_piece_id: str) -> Score:
         score_category=["test"],
         score_rationale="test rationale",
         score_metadata={},
-        scorer_class_identifier=ComponentIdentifier.from_dict({"__type__": "TestScorer"}),
+        scorer_class_identifier=ComponentIdentifier.model_validate({"__type__": "TestScorer"}),
         message_piece_id=message_piece_id,
     )
 
@@ -60,13 +60,10 @@ def _create_scenario_result(
     attack_results: dict[str, list[AttackResult]] | None = None,
 ) -> ScenarioResult:
     """Create a sample scenario result for testing."""
-    return ScenarioResult(
-        scenario_identifier=ScenarioIdentifier(
-            name=name,
-            description="test",
-            scenario_version=1,
-            init_data={},
-        ),
+    return make_scenario_result(
+        scenario_name=name,
+        scenario_description="test",
+        scenario_version=1,
         objective_target_identifier=ComponentIdentifier(class_name="TestTarget", class_module="test"),
         attack_results=attack_results or {},
         objective_scorer_identifier=ComponentIdentifier(class_name="TestScorer", class_module="test"),
@@ -222,7 +219,7 @@ class TestBatchingScale:
 
         # Should return only user pieces (intersection of both filters)
         assert len(results) == num_pieces
-        assert all(r.get_role_for_storage() == "user" for r in results)
+        assert all(r.role == "user" for r in results)
 
         # Query with role filter and a subset of IDs
         subset_ids = user_ids[:10]

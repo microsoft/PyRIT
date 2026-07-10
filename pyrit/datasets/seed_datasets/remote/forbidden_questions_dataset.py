@@ -4,10 +4,12 @@
 import logging
 from typing import cast
 
+from typing_extensions import override
+
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import SeedDataset, SeedPrompt
+from pyrit.models import Modality, SeedDataset, SeedPrompt, SeedUnion
 from pyrit.models.harm_category import HarmCategory
 
 logger = logging.getLogger(__name__)
@@ -27,27 +29,31 @@ class _ForbiddenQuestionsDataset(_RemoteDatasetLoader):
     Website: https://jailbreak-llms.xinyueshen.me/
     """
 
+    # Metadata
+    modalities: tuple[Modality, ...] = (Modality.TEXT,)
+    size: str = "medium"  # 390 questions (13 scenarios x 30 questions)
+    tags: frozenset[str] = frozenset({"default", "safety", "jailbreak"})
+
     def __init__(
         self,
         *,
         source: str = "TrustAIRLab/forbidden_question_set",
-        split: str = "default",
     ) -> None:
         """
         Initialize the Forbidden Questions dataset loader.
 
         Args:
             source: HuggingFace dataset identifier. Defaults to "TrustAIRLab/forbidden_question_set".
-            split: Dataset split to load. Defaults to "default".
         """
         self.source = source
-        self.split = split
 
     @property
+    @override
     def dataset_name(self) -> str:
-        """Return the dataset name."""
+        """The dataset name."""
         return "forbidden_questions"
 
+    @override
     async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch Forbidden Questions dataset and return as SeedDataset.
@@ -61,14 +67,15 @@ class _ForbiddenQuestionsDataset(_RemoteDatasetLoader):
         logger.info(f"Loading Forbidden Questions dataset from {self.source}")
 
         # Load from HuggingFace
-        data = await self._fetch_from_huggingface(
+        data = await self._fetch_from_huggingface_async(
             dataset_name=self.source,
-            config=self.split,
+            config="default",
             split="train",
             cache=cache,
         )
 
         authors = ["Xinyue Shen", "Zeyuan Chen", "Michael Backes", "Yun Shen", "Yang Zhang"]
+        groups = ["CISPA Helmholtz Center for Information Security", "NetApp"]
         description = """This is the Forbidden Question Set dataset proposed in the ACM CCS 2024 paper
 "Do Anything Now": Characterizing and Evaluating In-The-Wild Jailbreak Prompts on Large Language Models.
 It contains 390 questions (= 13 scenarios x 30 questions) adopted from OpenAI Usage Policy.
@@ -98,12 +105,13 @@ Financial Advice, Health Consultation, and Government Decision."""
             },
         )
 
-        seed_prompts = [
+        seed_prompts: list[SeedUnion] = [
             SeedPrompt(
                 value=item["question"],
                 data_type="text",
                 dataset_name=self.dataset_name,
                 authors=authors,
+                groups=groups,
                 harm_categories=self._standardize_harm_categories(
                     item.get("content_policy_name"),
                     alias_overrides=alias_overrides,

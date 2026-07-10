@@ -10,7 +10,6 @@ and memory_labels consistently according to the established contracts.
 
 import uuid
 from contextlib import suppress
-from typing import Optional
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -24,10 +23,10 @@ from pyrit.executor.attack import (
     TreeOfAttacksWithPruningAttack,
 )
 from pyrit.executor.attack.multi_turn.tree_of_attacks import TAPAttackScoringConfig
-from pyrit.identifiers import ComponentIdentifier
 from pyrit.memory import CentralMemory
 from pyrit.models import (
     ChatMessageRole,
+    ComponentIdentifier,
     Message,
     MessagePiece,
     PromptDataType,
@@ -145,6 +144,8 @@ def mock_chat_target() -> MagicMock:
     target.send_prompt_async = AsyncMock()
     target.set_system_prompt = MagicMock()
     target.get_identifier.return_value = _mock_target_id("MockChatTarget")
+    target.configuration.capabilities.input_modalities = frozenset({frozenset({"text"})})
+    target.configuration.capabilities.output_modalities = frozenset({frozenset({"text"})})
     return target
 
 
@@ -154,6 +155,8 @@ def mock_non_chat_target() -> MagicMock:
     target = MagicMock(spec=PromptTarget)
     target.send_prompt_async = AsyncMock()
     target.get_identifier.return_value = _mock_target_id("MockTarget")
+    target.configuration.capabilities.input_modalities = frozenset({frozenset({"text"})})
+    target.configuration.capabilities.output_modalities = frozenset({frozenset({"text"})})
     return target
 
 
@@ -164,6 +167,8 @@ def mock_adversarial_chat() -> MagicMock:
     target.send_prompt_async = AsyncMock()
     target.set_system_prompt = MagicMock()
     target.get_identifier.return_value = _mock_target_id("MockAdversarialChat")
+    target.configuration.capabilities.input_modalities = frozenset({frozenset({"text"})})
+    target.configuration.capabilities.output_modalities = frozenset({frozenset({"text"})})
     return target
 
 
@@ -621,7 +626,7 @@ class TestPrependedConversationInMemory:
         conversation_id = call_args.kwargs.get("conversation_id")
 
         memory = CentralMemory.get_memory_instance()
-        conversation = list(memory.get_conversation(conversation_id=conversation_id))
+        conversation = list(memory.get_conversation_messages(conversation_id=conversation_id))
 
         # Should have exactly the prepended messages in memory (mock normalizer doesn't add responses)
         assert len(conversation) == 2, f"Expected exactly 2 prepended messages, got {len(conversation)}"
@@ -654,7 +659,7 @@ class TestPrependedConversationInMemory:
         )
 
         memory = CentralMemory.get_memory_instance()
-        conversation = list(memory.get_conversation(conversation_id=result.conversation_id))
+        conversation = list(memory.get_conversation_messages(conversation_id=result.conversation_id))
 
         # Should have exactly the prepended messages in memory (mock normalizer doesn't add responses)
         assert len(conversation) == 2, f"Expected exactly 2 prepended messages, got {len(conversation)}"
@@ -689,7 +694,7 @@ class TestPrependedConversationInMemory:
         )
 
         memory = CentralMemory.get_memory_instance()
-        conversation = list(memory.get_conversation(conversation_id=result.conversation_id))
+        conversation = list(memory.get_conversation_messages(conversation_id=result.conversation_id))
 
         # Should have exactly the prepended messages in memory (mock normalizer doesn't add responses)
         assert len(conversation) == 2, f"Expected exactly 2 prepended messages, got {len(conversation)}"
@@ -753,8 +758,13 @@ class TestPrependedConversationInMemory:
             next_message=multimodal_text_message,  # Required when prepended_conversation is provided
         )
 
+        # TAP prunes all branches with these mocks, so result.conversation_id is empty. The prepended
+        # messages were duplicated into the single node conversation; resolve that id from memory.
+        assert not result.conversation_id
         memory = CentralMemory.get_memory_instance()
-        conversation = list(memory.get_conversation(conversation_id=result.conversation_id))
+        node_conversation_ids = {piece.conversation_id for piece in memory.get_message_pieces()}
+        assert len(node_conversation_ids) == 1, f"Expected one conversation in memory, got {node_conversation_ids}"
+        conversation = list(memory.get_conversation_messages(conversation_id=node_conversation_ids.pop()))
 
         # Should have exactly the prepended messages in memory (mock normalizer doesn't add responses)
         assert len(conversation) == 2, f"Expected exactly 2 prepended messages, got {len(conversation)}"
@@ -872,9 +882,10 @@ class TestMemoryLabelsPropagation:
         )
 
         call_args = mock_normalizer.send_prompt_async.call_args
-        passed_labels = call_args.kwargs.get("labels")
+        sent_message = call_args.kwargs["message"]
+        passed_labels = sent_message.message_pieces[0].labels
 
-        assert passed_labels is not None, "Labels should be passed to send_prompt_async"
+        assert passed_labels, "Labels should be stamped on the sent message pieces"
         assert passed_labels["test_key"] == "test_value"
 
 
@@ -896,7 +907,7 @@ def _get_adversarial_chat_text_values(*, adversarial_chat_conversation_id: str) 
         List of text values from all text pieces in the adversarial conversation.
     """
     memory = CentralMemory.get_memory_instance()
-    conversation = list(memory.get_conversation(conversation_id=adversarial_chat_conversation_id))
+    conversation = list(memory.get_conversation_messages(conversation_id=adversarial_chat_conversation_id))
 
     text_values = []
     for msg in conversation:
@@ -911,7 +922,7 @@ def _assert_prepended_text_in_adversarial_context(
     *,
     prepended_conversation: list[Message],
     adversarial_chat_conversation_id: str,
-    adversarial_chat_mock: Optional[MagicMock] = None,
+    adversarial_chat_mock: MagicMock | None = None,
 ) -> None:
     """
     Assert that text content from prepended conversation appears in adversarial chat context.
@@ -1020,16 +1031,19 @@ class TestAdversarialChatContextInjection:
             adversarial_chat_mock=mock_adversarial_chat,
         )
 
-    async def test_tap_injects_prepended_into_adversarial_context(
+    async def test_tap_persists_prepended_conversation_in_memory(
         self,
         tap_attack: TreeOfAttacksWithPruningAttack,
-        mock_adversarial_chat: MagicMock,
         prepended_conversation_text: list[Message],
         multimodal_text_message: Message,
         sqlite_instance,
     ) -> None:
-        """Test that TreeOfAttacksWithPruningAttack injects prepended conversation into adversarial context."""
-        # TAP may fail due to JSON parsing, but set_system_prompt should be called before the error
+        """TAP persists the prepended conversation into the node conversation in memory.
+
+        With these mocks TAP prunes every branch before the adversarial chat's system prompt is
+        set, so the prepended text is only observable in the node conversation written to memory
+        (not in the adversarial context). Verify the prepended text is preserved there.
+        """
         with suppress(Exception):
             await tap_attack.execute_async(
                 objective="Test objective",
@@ -1037,9 +1051,21 @@ class TestAdversarialChatContextInjection:
                 next_message=multimodal_text_message,
             )
 
-        # Verify prepended text appears in adversarial context (checks mock's set_system_prompt calls)
-        _assert_prepended_text_in_adversarial_context(
-            prepended_conversation=prepended_conversation_text,
-            adversarial_chat_conversation_id="",  # Empty - will fall back to mock check
-            adversarial_chat_mock=mock_adversarial_chat,
+        memory = CentralMemory.get_memory_instance()
+        node_conversation_ids = {piece.conversation_id for piece in memory.get_message_pieces()}
+        assert len(node_conversation_ids) == 1, f"Expected one conversation in memory, got {node_conversation_ids}"
+        conversation = list(memory.get_conversation_messages(conversation_id=node_conversation_ids.pop()))
+
+        node_text = " ".join(
+            piece.original_value
+            for msg in conversation
+            for piece in msg.message_pieces
+            if piece.original_value_data_type == "text"
         )
+        for msg in prepended_conversation_text:
+            for piece in msg.message_pieces:
+                if piece.original_value_data_type == "text":
+                    assert piece.original_value in node_text, (
+                        f"Prepended text '{piece.original_value}' not found in node conversation. "
+                        f"Available text: {node_text}"
+                    )

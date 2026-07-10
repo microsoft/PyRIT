@@ -7,7 +7,6 @@ import pytest
 from unit.mocks import MockPromptTarget
 
 from pyrit.exceptions.exception_classes import InvalidJsonException
-from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import Message, MessagePiece
 from pyrit.prompt_converter import VariationConverter
 
@@ -45,8 +44,6 @@ async def test_variation_converter_send_prompt_async_bad_json_exception_retries(
                     converted_value=converted_value,
                     original_value_data_type="text",
                     converted_value_data_type="text",
-                    prompt_target_identifier=ComponentIdentifier(class_name="target-identifier", class_module="test"),
-                    attack_identifier=ComponentIdentifier(class_name="test", class_module="test"),
                     labels={"test": "test"},
                 )
             ]
@@ -73,7 +70,6 @@ async def test_variation_converter_extracts_first_element_from_json_list(sqlite_
                 conversation_id="test-id",
                 original_value='["first variation", "second variation"]',
                 original_value_data_type="text",
-                prompt_target_identifier=ComponentIdentifier(class_name="test", class_module="test"),
                 sequence=1,
             )
         ]
@@ -94,7 +90,6 @@ async def test_variation_converter_preserves_original_and_converted_values(sqlit
                 conversation_id="test-id",
                 original_value='["variation"]',
                 original_value_data_type="text",
-                prompt_target_identifier=ComponentIdentifier(class_name="test", class_module="test"),
                 sequence=1,
             )
         ]
@@ -115,30 +110,3 @@ def test_variation_converter_input_supported(sqlite_instance):
     converter = VariationConverter(converter_target=prompt_target)
     assert converter.input_supported("audio_path") is False
     assert converter.input_supported("text") is True
-
-
-async def test_send_variation_prompt_async_emits_deprecation_warning_and_delegates(sqlite_instance):
-    """``send_variation_prompt_async`` is a deprecated shim that warns and delegates to the retry helper."""
-    prompt_target = MockPromptTarget()
-    prompt_variation = VariationConverter(converter_target=prompt_target)
-
-    request = Message(
-        message_pieces=[
-            MessagePiece(
-                role="user",
-                conversation_id="conv-1",
-                original_value="test input",
-                original_value_data_type="text",
-                prompt_target_identifier=ComponentIdentifier(class_name="test", class_module="test"),
-            )
-        ]
-    )
-
-    with patch.object(
-        prompt_variation, "_send_with_retries_async", new=AsyncMock(return_value="shim response")
-    ) as mock_send:
-        with pytest.warns(DeprecationWarning, match="send_variation_prompt_async"):
-            result = await prompt_variation.send_variation_prompt_async(request)
-
-    assert result == "shim response"
-    mock_send.assert_awaited_once_with(request)

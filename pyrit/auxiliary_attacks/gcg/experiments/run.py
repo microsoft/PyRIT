@@ -1,10 +1,10 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-"""Thin CLI wrapper around :meth:`GCGGenerator.execute_async` for AzureML jobs.
+"""Thin CLI wrapper around ``GCGGenerator.execute_async`` for AzureML jobs.
 
-The notebook (or any user) builds a :class:`GCGConfig` (strategy) and a
-:class:`GCGDataConfig` (data) locally, serializes both with their respective
+The notebook (or any user) builds a ``GCGConfig`` (strategy) and a
+``GCGDataConfig`` (data) locally, serializes both with their respective
 ``to_json_file`` methods, ships them to Azure ML as job inputs, and the job's
 command line is::
 
@@ -14,7 +14,7 @@ command line is::
         --output-dir ${{outputs.results}}
 
 This file deserializes both configs inside the job, loads goals/targets from
-the configured CSV, and runs the attack via a fresh :class:`GCGGenerator`.
+the configured CSV, and runs the attack via a fresh ``GCGGenerator``.
 """
 
 import argparse

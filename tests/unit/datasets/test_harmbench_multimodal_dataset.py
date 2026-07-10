@@ -180,6 +180,12 @@ def test_init_rejects_raw_string_matching_enum_value_for_categories():
         _HarmBenchMultimodalDataset(categories=["illegal"])
 
 
+def test_init_with_empty_categories_raises():
+    """Test that an empty categories list raises ValueError at construction."""
+    with pytest.raises(ValueError, match="`categories` must be a non-empty list"):
+        _HarmBenchMultimodalDataset(categories=[])
+
+
 async def test_fetch_and_save_image_raises_when_memory_not_configured():
     """Test that _fetch_and_save_image_async raises RuntimeError when serializer memory is not configured."""
     from unittest.mock import MagicMock
@@ -208,7 +214,7 @@ async def test_fetch_and_save_image_returns_cached_path():
     mock_memory = MagicMock()
     mock_memory.results_path = "/results"
     mock_storage_io = AsyncMock()
-    mock_storage_io.path_exists = AsyncMock(return_value=True)
+    mock_storage_io.path_exists_async = AsyncMock(return_value=True)
     mock_memory.results_storage_io = mock_storage_io
     mock_serializer._memory = mock_memory
     mock_serializer.data_sub_directory = "/images"

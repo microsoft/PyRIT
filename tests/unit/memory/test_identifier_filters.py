@@ -3,9 +3,9 @@
 
 import pytest
 
-from pyrit.identifiers.identifier_filters import IdentifierFilter, IdentifierType
 from pyrit.memory import MemoryInterface
 from pyrit.memory.memory_models import AttackResultEntry
+from pyrit.models import IdentifierFilter, IdentifierType
 
 
 @pytest.mark.parametrize(

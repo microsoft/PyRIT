@@ -9,14 +9,14 @@ from collections.abc import MutableSequence
 import pytest
 from unit.mocks import get_sample_conversations
 
-from pyrit.models import Message, MessagePiece
+from pyrit.models import Message, MessagePiece, flatten_to_message_pieces
 from pyrit.prompt_target import TextTarget
 
 
 @pytest.fixture
 def sample_entries() -> MutableSequence[MessagePiece]:
     conversations = get_sample_conversations()
-    return Message.flatten_to_message_pieces(conversations)
+    return flatten_to_message_pieces(conversations)
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -93,4 +93,4 @@ async def test_send_prompt_async_appends_newline(sample_entries: MutableSequence
 async def test_cleanup_target_does_nothing():
     target = TextTarget(text_stream=io.StringIO())
     # Should not raise
-    await target.cleanup_target()
+    await target.cleanup_target_async()

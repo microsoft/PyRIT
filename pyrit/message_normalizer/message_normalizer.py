@@ -2,7 +2,9 @@
 # Licensed under the MIT license.
 
 import abc
-from typing import Any, Generic, Literal, Protocol, TypeVar
+from typing import Any, Generic, Literal, TypeVar
+
+from pydantic import BaseModel
 
 from pyrit.models import Message
 
@@ -16,15 +18,7 @@ How to handle system messages in models with varying support:
 """
 
 
-class DictConvertible(Protocol):
-    """Protocol for objects that can be converted to a dictionary."""
-
-    def to_dict(self) -> dict[str, Any]:
-        """Convert the object to a dictionary representation."""
-        ...
-
-
-T = TypeVar("T", bound=DictConvertible)
+T = TypeVar("T", bound=BaseModel)
 
 
 class MessageListNormalizer(abc.ABC, Generic[T]):
@@ -32,7 +26,6 @@ class MessageListNormalizer(abc.ABC, Generic[T]):
     Abstract base class for normalizers that return a list of items.
 
     Subclasses specify the type T (e.g., Message, ChatMessage) that the list contains.
-    T must implement the DictConvertible protocol (have a to_dict() method).
     """
 
     @abc.abstractmethod
@@ -51,7 +44,8 @@ class MessageListNormalizer(abc.ABC, Generic[T]):
         """
         Normalize the list of messages into a list of dictionaries.
 
-        This method uses normalize_async and calls to_dict() on each item.
+        This method uses normalize_async and serializes each item with
+        ``model_dump(exclude_none=True)``.
 
         Args:
             messages: The list of Message objects to normalize.
@@ -60,7 +54,7 @@ class MessageListNormalizer(abc.ABC, Generic[T]):
             A list of dictionaries representing the normalized messages.
         """
         normalized = await self.normalize_async(messages)
-        return [item.to_dict() for item in normalized]
+        return [item.model_dump(exclude_none=True) for item in normalized]
 
 
 class MessageStringNormalizer(abc.ABC):
@@ -83,7 +77,9 @@ class MessageStringNormalizer(abc.ABC):
         """
 
 
-async def apply_system_message_behavior(messages: list[Message], behavior: SystemMessageBehavior) -> list[Message]:
+async def apply_system_message_behavior_async(
+    messages: list[Message], behavior: SystemMessageBehavior
+) -> list[Message]:
     """
     Apply a system message behavior to a list of messages.
 

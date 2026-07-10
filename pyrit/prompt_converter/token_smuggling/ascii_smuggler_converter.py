@@ -4,7 +4,7 @@
 import logging
 from typing import Literal
 
-from pyrit.identifiers import ComponentIdentifier
+from pyrit.models import ComponentIdentifier
 from pyrit.prompt_converter.token_smuggling.base import SmugglerConverter
 
 logger = logging.getLogger(__name__)
@@ -22,7 +22,7 @@ class AsciiSmugglerConverter(SmugglerConverter):
     [@embracethered2024unicode]
     """
 
-    def __init__(self, action: Literal["encode", "decode"] = "encode", unicode_tags: bool = False) -> None:
+    def __init__(self, *, action: Literal["encode", "decode"] = "encode", unicode_tags: bool = False) -> None:
         """
         Initialize the converter with options for encoding/decoding.
 
@@ -58,7 +58,7 @@ class AsciiSmugglerConverter(SmugglerConverter):
             message (str): The message to encode.
 
         Returns:
-            Tuple[str, str]: A tuple with a summary of code points and the encoded message.
+            tuple[str, str]: A tuple with a summary of code points and the encoded message.
         """
         encoded = ""
         code_points = ""

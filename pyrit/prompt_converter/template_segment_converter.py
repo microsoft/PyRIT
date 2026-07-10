@@ -5,11 +5,9 @@ import hashlib
 import logging
 import pathlib
 import random
-from typing import Optional
 
 from pyrit.common.path import CONVERTER_SEED_PROMPT_PATH
-from pyrit.identifiers import ComponentIdentifier
-from pyrit.models import PromptDataType, SeedPrompt
+from pyrit.models import ComponentIdentifier, PromptDataType, SeedPrompt
 from pyrit.prompt_converter.prompt_converter import ConverterResult, PromptConverter
 
 logger = logging.getLogger(__name__)
@@ -29,7 +27,7 @@ class TemplateSegmentConverter(PromptConverter):
     def __init__(
         self,
         *,
-        prompt_template: Optional[SeedPrompt] = None,
+        prompt_template: SeedPrompt | None = None,
     ) -> None:
         """
         Initialize the converter with the specified target and prompt template.

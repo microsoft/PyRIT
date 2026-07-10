@@ -43,7 +43,9 @@ def mock_social_bias_data():
 async def test_fetch_dataset_parses_single_and_multi_turn_and_skips_invalid_rows(mock_social_bias_data):
     loader = _RedTeamSocialBiasDataset()
 
-    with patch.object(loader, "_fetch_from_huggingface", new_callable=AsyncMock, return_value=mock_social_bias_data):
+    with patch.object(
+        loader, "_fetch_from_huggingface_async", new_callable=AsyncMock, return_value=mock_social_bias_data
+    ):
         dataset = await loader.fetch_dataset_async()
 
     assert isinstance(dataset, SeedDataset)
@@ -57,7 +59,9 @@ async def test_fetch_dataset_parses_single_and_multi_turn_and_skips_invalid_rows
 async def test_fetch_dataset_multi_turn_linked(mock_social_bias_data):
     loader = _RedTeamSocialBiasDataset()
 
-    with patch.object(loader, "_fetch_from_huggingface", new_callable=AsyncMock, return_value=mock_social_bias_data):
+    with patch.object(
+        loader, "_fetch_from_huggingface_async", new_callable=AsyncMock, return_value=mock_social_bias_data
+    ):
         dataset = await loader.fetch_dataset_async()
 
     # Multi-turn prompts should share a prompt_group_id

@@ -1,10 +1,12 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+from typing_extensions import override
+
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import SeedDataset, SeedPrompt
+from pyrit.models import Modality, SeedDataset, SeedPrompt, SeedUnion
 
 
 class _DarkBenchDataset(_RemoteDatasetLoader):
@@ -23,12 +25,16 @@ class _DarkBenchDataset(_RemoteDatasetLoader):
         - https://openreview.net/forum?id=odjMSBSWRt
     """
 
+    # Metadata
+    modalities: tuple[Modality, ...] = (Modality.TEXT,)
+    size: str = "large"  # 660 prompts across 6 dark-pattern categories
+    tags: frozenset[str] = frozenset({"default", "safety"})
+
     def __init__(
         self,
         *,
         dataset_name: str = "apart/darkbench",
         config: str = "default",
-        split: str = "train",
     ) -> None:
         """
         Initialize the DarkBench dataset loader.
@@ -36,17 +42,17 @@ class _DarkBenchDataset(_RemoteDatasetLoader):
         Args:
             dataset_name: HuggingFace dataset identifier. Defaults to "apart/darkbench".
             config: Dataset configuration. Defaults to "default".
-            split: Dataset split to load. Defaults to "train".
         """
         self.hf_dataset_name = dataset_name
         self.config = config
-        self.split = split
 
     @property
+    @override
     def dataset_name(self) -> str:
-        """Return the dataset name."""
+        """The dataset name."""
         return "dark_bench"
 
+    @override
     async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch DarkBench dataset from HuggingFace and return as SeedDataset.
@@ -62,10 +68,10 @@ class _DarkBenchDataset(_RemoteDatasetLoader):
             Exception: If the dataset cannot be loaded.
         """
         # Fetch from HuggingFace
-        data = await self._fetch_from_huggingface(
+        data = await self._fetch_from_huggingface_async(
             dataset_name=self.hf_dataset_name,
             config=self.config,
-            split=self.split,
+            split="train",
             cache=cache,
             data_files="darkbench.tsv",
         )
@@ -86,8 +92,9 @@ class _DarkBenchDataset(_RemoteDatasetLoader):
             "Jinsuk Park",
             "Mateusz Maria Jurewicz",
         ]
+        groups = ["Apart Research", "METR"]
 
-        seed_prompts: list[SeedPrompt] = []
+        seed_prompts: list[SeedUnion] = []
         for item in data:
             # DarkBench's dark-pattern types (Brand bias, Sycophancy, Sneaking, ...)
             # are not a harm taxonomy, so harm categories are left empty while the
@@ -104,6 +111,7 @@ class _DarkBenchDataset(_RemoteDatasetLoader):
                     description=description,
                     source="https://huggingface.co/datasets/apart/darkbench",
                     authors=authors,
+                    groups=groups,
                     metadata={
                         "deceptive_pattern": deceptive_pattern,
                     },

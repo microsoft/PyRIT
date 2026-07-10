@@ -1,5 +1,6 @@
 import { Badge, Text, Tooltip } from '@fluentui/react-components'
 import type { TargetInstance } from '../../types'
+import { targetEndpoint, targetModelName, targetType, targetUnderlyingModelName } from '../../utils/targetIdentity'
 import { useTargetBadgeStyles } from './TargetBadge.styles'
 
 interface TargetBadgeProps {
@@ -33,19 +34,41 @@ function formatParams(params?: Record<string, unknown> | null): string {
 
 export default function TargetBadge({ target }: TargetBadgeProps) {
   const styles = useTargetBadgeStyles()
-  const displayName = target.model_name
-    ? `${target.target_type} (${target.model_name})`
-    : target.target_type
+  const innerTargets = target.inner_targets ?? []
+  const isRoundRobin = innerTargets.length > 0
+
+  const targetTypeName = targetType(target)
+  const modelName = targetModelName(target)
+  const underlyingModelName = targetUnderlyingModelName(target)
+  const endpoint = targetEndpoint(target)
+
+  // For RoundRobinTarget, prefer underlying_model_name because inner targets share
+  // the same underlying model but may have different deployment names (model_name).
+  // For regular targets, use model_name as before.
+  const badgeModel = isRoundRobin
+    ? (underlyingModelName ?? modelName)
+    : modelName
+  const displayName = isRoundRobin
+    ? badgeModel
+      ? `${targetTypeName} (${badgeModel} ×${innerTargets.length})`
+      : `${targetTypeName} (×${innerTargets.length})`
+    : modelName
+      ? `${targetTypeName} (${modelName})`
+      : targetTypeName
+
   const showUnderlying =
-    target.underlying_model_name &&
-    target.model_name &&
-    target.underlying_model_name !== target.model_name
+    underlyingModelName &&
+    modelName &&
+    underlyingModelName !== modelName
   const supportedCaps = target.capabilities
     ? CAPABILITY_LABELS.filter(c => target.capabilities?.[c.key]).map(c => c.label)
     : []
   const inputModalities = target.capabilities?.supported_input_modalities ?? []
   const outputModalities = target.capabilities?.supported_output_modalities ?? []
   const params = formatParams(target.target_specific_params)
+
+  // Extract weights from params so we can show them next to each inner target
+  const weights = target.target_specific_params?.weights as number[] | undefined
 
   const tooltipContent = (
     <div className={styles.tooltipBody}>
@@ -54,14 +77,14 @@ export default function TargetBadge({ target }: TargetBadgeProps) {
         <Text size={200}>{displayName}</Text>
         {showUnderlying && (
           <Text size={200} italic>
-            Underlying model: {target.underlying_model_name}
+            Underlying model: {underlyingModelName}
           </Text>
         )}
       </div>
-      {target.endpoint && (
+      {endpoint && (
         <div className={styles.tooltipSection}>
           <span className={styles.sectionLabel}>Endpoint</span>
-          <Text className={styles.endpointText}>{target.endpoint}</Text>
+          <Text className={styles.endpointText}>{endpoint}</Text>
         </div>
       )}
       {(inputModalities.length > 0 || outputModalities.length > 0) && (
@@ -89,6 +112,28 @@ export default function TargetBadge({ target }: TargetBadgeProps) {
               <Text size={200} italic>None</Text>
             )}
           </div>
+        </div>
+      )}
+      {/* Inner targets section — only shown for composite targets like RoundRobinTarget */}
+      {isRoundRobin && (
+        <div className={styles.tooltipSection}>
+          <span className={styles.sectionLabel}>Inner Targets ({innerTargets.length})</span>
+          {innerTargets.map((inner, idx) => (
+            <div key={inner.target_registry_name} className={styles.innerTargetItem}>
+              <Text size={200} weight="semibold">
+                #{idx + 1}{weights?.[idx] != null ? ` (weight: ${weights[idx]})` : ''}
+              </Text>
+              <Text size={200}>
+                {targetType(inner)}
+                {targetModelName(inner) ? ` — ${targetModelName(inner)}` : ''}
+              </Text>
+              {targetEndpoint(inner) && (
+                <Text className={styles.endpointText} size={200}>
+                  {targetEndpoint(inner)}
+                </Text>
+              )}
+            </div>
+          ))}
         </div>
       )}
       {params && (

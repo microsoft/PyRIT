@@ -14,6 +14,9 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.responses import Response
+from starlette.types import Scope
 
 import pyrit
 from pyrit.backend.middleware import RequestIdMiddleware, SecurityHeadersMiddleware, register_error_handlers
@@ -22,6 +25,7 @@ from pyrit.backend.routes import (
     attacks,
     auth,
     converters,
+    datasets,
     health,
     initializers,
     labels,
@@ -117,6 +121,7 @@ app.add_middleware(
 app.include_router(attacks.router, prefix="/api", tags=["attacks"])
 app.include_router(targets.router, prefix="/api", tags=["targets"])
 app.include_router(converters.router, prefix="/api", tags=["converters"])
+app.include_router(datasets.router, prefix="/api", tags=["datasets"])
 app.include_router(scenarios.router, prefix="/api", tags=["scenarios"])
 app.include_router(initializers.router, prefix="/api", tags=["initializers"])
 app.include_router(labels.router, prefix="/api", tags=["labels"])
@@ -124,6 +129,22 @@ app.include_router(health.router, prefix="/api", tags=["health"])
 app.include_router(auth.router, prefix="/api", tags=["auth"])
 app.include_router(media.router, prefix="/api", tags=["media"])
 app.include_router(version.router, tags=["version"])
+
+
+class SPAStaticFiles(StaticFiles):
+    """Serve index.html for unmatched non-API paths so client-side routes survive a refresh."""
+
+    async def get_response(self, path: str, scope: Scope) -> Response:  # pyrit-async-suffix-exempt
+        """Return the static file for ``path``, falling back to index.html for unmatched non-API paths."""
+        try:
+            return await super().get_response(path, scope)
+        except StarletteHTTPException as exc:
+            # ``path`` arrives OS-normalized (backslashes on Windows), so compare
+            # against a forward-slash form to reliably detect the /api namespace.
+            normalized = path.replace(os.sep, "/")
+            if exc.status_code == 404 and not (normalized == "api" or normalized.startswith("api/")):
+                return await super().get_response("index.html", scope)
+            raise
 
 
 def setup_frontend() -> None:
@@ -136,7 +157,7 @@ def setup_frontend() -> None:
     elif frontend_path.exists():
         # Production mode: serve bundled frontend
         print(f"✅ Serving frontend from {frontend_path}")
-        app.mount("/", StaticFiles(directory=str(frontend_path), html=True), name="frontend")
+        app.mount("/", SPAStaticFiles(directory=str(frontend_path), html=True), name="frontend")
     else:
         # Production mode but no frontend found - warn but don't exit
         # This allows API-only usage

@@ -2,7 +2,6 @@
 # Licensed under the MIT license.
 
 from dataclasses import dataclass
-from typing import Optional
 
 from pyrit.models import PromptDataType
 from pyrit.prompt_converter import PromptConverter
@@ -19,8 +18,8 @@ class PromptConverterConfiguration:
     """
 
     converters: list[PromptConverter]
-    indexes_to_apply: Optional[list[int]] = None
-    prompt_data_types_to_apply: Optional[list[PromptDataType]] = None
+    indexes_to_apply: list[int] | None = None
+    prompt_data_types_to_apply: list[PromptDataType] | None = None
 
     @classmethod
     def from_converters(cls, *, converters: list[PromptConverter]) -> list["PromptConverterConfiguration"]:
@@ -32,7 +31,7 @@ class PromptConverterConfiguration:
             converters: List of PromptConverters
 
         Returns:
-            List[PromptConverterConfiguration]: List of configurations, one per converter
+            list[PromptConverterConfiguration]: List of configurations, one per converter
         """
         if not converters:
             return []

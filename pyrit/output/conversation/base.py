@@ -27,7 +27,7 @@ class ConversationPrinterBase(PrinterBase):
             list[Score]: The scores associated with the given piece IDs.
         """
 
-    async def _display_image_async(self, piece: MessagePiece) -> None:  # noqa: B027
+    async def _display_image_async(self, piece: MessagePiece) -> None:
         """
         Display an image from a message piece. No-op by default.
 

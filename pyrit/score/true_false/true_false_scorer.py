@@ -1,11 +1,12 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from typing import TYPE_CHECKING, Optional
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
 
 from pyrit.models import Message, Score
 from pyrit.score.scorer import Scorer
-from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.true_false.true_false_score_aggregator import (
     TrueFalseAggregatorFunc,
     TrueFalseScoreAggregator,
@@ -15,6 +16,7 @@ if TYPE_CHECKING:
     from pyrit.prompt_target import PromptTarget
     from pyrit.score.scorer_evaluation.scorer_evaluator import ScorerEvalDatasetFiles
     from pyrit.score.scorer_evaluation.scorer_metrics import ObjectiveScorerMetrics
+    from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 
 
 class TrueFalseScorer(Scorer):
@@ -40,14 +42,14 @@ class TrueFalseScorer(Scorer):
     """
 
     # Default evaluation configuration - evaluates against all objective CSVs
-    evaluation_file_mapping: Optional["ScorerEvalDatasetFiles"] = None
+    evaluation_file_mapping: ScorerEvalDatasetFiles | None = None
 
     def __init__(
         self,
         *,
         validator: ScorerPromptValidator,
         score_aggregator: TrueFalseAggregatorFunc = TrueFalseScoreAggregator.OR,
-        chat_target: Optional["PromptTarget"] = None,
+        chat_target: PromptTarget | None = None,
     ) -> None:
         """
         Initialize the TrueFalseScorer.
@@ -56,7 +58,7 @@ class TrueFalseScorer(Scorer):
             validator (ScorerPromptValidator): Custom validator.
             score_aggregator (TrueFalseAggregatorFunc): The aggregator function to use.
                 Defaults to TrueFalseScoreAggregator.OR.
-            chat_target (Optional[PromptTarget]): Optional chat target used by the scorer,
+            chat_target (PromptTarget | None): Optional chat target used by the scorer,
                 forwarded to the base class for validation against ``TARGET_REQUIREMENTS``.
         """
         self._score_aggregator = score_aggregator
@@ -91,7 +93,7 @@ class TrueFalseScorer(Scorer):
         if scores[0].score_value.lower() not in ["true", "false"]:
             raise ValueError("TrueFalseScorer score value must be True or False.")
 
-    def get_scorer_metrics(self) -> Optional["ObjectiveScorerMetrics"]:
+    def get_scorer_metrics(self) -> ObjectiveScorerMetrics | None:
         """
         Get evaluation metrics for this scorer from the configured evaluation result file.
 
@@ -117,7 +119,7 @@ class TrueFalseScorer(Scorer):
 
         return find_objective_metrics_by_eval_hash(eval_hash=eval_hash, file_path=result_file)
 
-    async def _score_async(self, message: Message, *, objective: Optional[str] = None) -> list[Score]:
+    async def _score_async(self, message: Message, *, objective: str | None = None) -> list[Score]:
         """
         Score the given request response asynchronously.
 
@@ -128,7 +130,7 @@ class TrueFalseScorer(Scorer):
 
         Args:
             message (Message): The message to score.
-            objective (Optional[str]): The objective to evaluate against. Defaults to None.
+            objective (str | None): The objective to evaluate against. Defaults to None.
 
         Returns:
             list[Score]: A list containing a single aggregated true/false Score, or an empty
@@ -158,7 +160,7 @@ class TrueFalseScorer(Scorer):
             )
         ]
 
-    def _build_fallback_score(self, *, message: Message, objective: Optional[str]) -> list[Score]:
+    def _build_fallback_score(self, *, message: Message, objective: str | None) -> list[Score]:
         """
         Build a single-element list containing a ``false`` score when no pieces could be scored.
 
@@ -167,7 +169,7 @@ class TrueFalseScorer(Scorer):
 
         Args:
             message (Message): The message whose first piece is inspected for status.
-            objective (Optional[str]): The objective associated with this scoring call.
+            objective (str | None): The objective associated with this scoring call.
 
         Returns:
             list[Score]: A single-element list containing a ``false`` ``true_false`` score

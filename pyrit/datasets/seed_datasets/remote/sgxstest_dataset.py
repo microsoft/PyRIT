@@ -8,7 +8,7 @@ from enum import Enum
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import SeedDataset, SeedObjective
+from pyrit.models import Modality, SeedDataset, SeedObjective, SeedUnion
 
 logger = logging.getLogger(__name__)
 
@@ -66,15 +66,14 @@ class _SGXSTestDataset(_RemoteDatasetLoader):
         "safe contexts",
         "safe targets",
     ]
-    modalities: list[str] = ["text"]
-    size: str = "medium"  # 200 prompts
-    tags: set[str] = {"default", "safety", "multilingual_culture"}
+    modalities: tuple[Modality, ...] = (Modality.TEXT,)
+    size: str = "small"  # 100 prompts
+    tags: set[str] = {"safety", "multilingual"}
 
     def __init__(
         self,
         *,
         label: SGXSTestLabel = SGXSTestLabel.UNSAFE,
-        split: str = "train",
         token: str | None = None,
     ) -> None:
         """
@@ -84,8 +83,6 @@ class _SGXSTestDataset(_RemoteDatasetLoader):
             label: Which subset of prompts to load. Defaults to ``SGXSTestLabel.UNSAFE``
                 (the truly-harmful prompts). Use ``SGXSTestLabel.SAFE`` for the
                 over-refusal targets or ``SGXSTestLabel.ALL`` for the full 200-prompt set.
-            split: Dataset split to load. Defaults to "train" (the only split currently
-                published by the upstream dataset).
             token: Hugging Face authentication token. If not provided, reads from
                 the HUGGINGFACE_TOKEN env var.
 
@@ -95,12 +92,11 @@ class _SGXSTestDataset(_RemoteDatasetLoader):
         self._validate_enum(value=label, enum_cls=SGXSTestLabel, label="label")
 
         self.label = label
-        self.split = split
         self.token = token if token is not None else os.environ.get("HUGGINGFACE_TOKEN")
 
     @property
     def dataset_name(self) -> str:
-        """Return the dataset name."""
+        """The dataset name."""
         return "sgxstest"
 
     async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
@@ -120,9 +116,9 @@ class _SGXSTestDataset(_RemoteDatasetLoader):
         """
         logger.info(f"Loading SGXSTest dataset from {self.HF_DATASET_NAME} (label={self.label.value})")
 
-        data = await self._fetch_from_huggingface(
+        data = await self._fetch_from_huggingface_async(
             dataset_name=self.HF_DATASET_NAME,
-            split=self.split,
+            split="train",
             cache=cache,
             token=self.token,
         )
@@ -149,7 +145,7 @@ class _SGXSTestDataset(_RemoteDatasetLoader):
         source_url = f"https://huggingface.co/datasets/{self.HF_DATASET_NAME}"
         groups = ["Walled AI", "DeCLaRe Lab, Singapore University of Technology and Design"]
 
-        seed_objectives = [
+        seed_objectives: list[SeedUnion] = [
             SeedObjective(
                 value=item["prompt"],
                 dataset_name=self.dataset_name,

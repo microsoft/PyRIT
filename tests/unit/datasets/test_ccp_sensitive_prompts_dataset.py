@@ -31,7 +31,7 @@ def test_dataset_name() -> None:
 async def test_fetch_dataset_maps_subjects(mock_ccp_data: list[dict]) -> None:
     loader = _CCPSensitivePromptsDataset()
 
-    with patch.object(loader, "_fetch_from_huggingface", new=AsyncMock(return_value=mock_ccp_data)):
+    with patch.object(loader, "_fetch_from_huggingface_async", new=AsyncMock(return_value=mock_ccp_data)):
         dataset = await loader.fetch_dataset_async()
 
     assert isinstance(dataset, SeedDataset)

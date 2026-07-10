@@ -4,10 +4,12 @@
 import logging
 from typing import Literal
 
+from typing_extensions import override
+
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import SeedDataset, SeedPrompt
+from pyrit.models import Modality, SeedDataset, SeedPrompt
 from pyrit.models.harm_category import HarmCategory
 
 logger = logging.getLogger(__name__)
@@ -23,6 +25,15 @@ class _MedSafetyBenchDataset(_RemoteDatasetLoader):
     Reference: https://github.com/AI4LIFE-GROUP/med-safety-bench
     Paper: [@han2024medsafetybench]
     """
+
+    _AUTHORS = ["Tessa Han", "Aounon Kumar", "Chirag Agarwal", "Himabindu Lakkaraju"]
+
+    _GROUPS = ["Harvard University", "University of Virginia"]
+
+    # Metadata
+    modalities: tuple[Modality, ...] = (Modality.TEXT,)
+    size: str = "huge"  # 76174 medical-safety prompts (combined train+test+generated)
+    tags: frozenset[str] = frozenset({"safety", "medical"})
 
     def __init__(
         self,
@@ -70,10 +81,12 @@ class _MedSafetyBenchDataset(_RemoteDatasetLoader):
             )
 
     @property
+    @override
     def dataset_name(self) -> str:
-        """Return the dataset name."""
+        """The dataset name."""
         return "medsafetybench"
 
+    @override
     async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch MedSafetyBench dataset and return as SeedDataset.
@@ -135,6 +148,8 @@ class _MedSafetyBenchDataset(_RemoteDatasetLoader):
                             f"category {category}, type {file_type}."
                         ),
                         source=source,
+                        authors=self._AUTHORS,
+                        groups=self._GROUPS,
                         metadata={
                             "medsafety_category": category,
                             "model_type": model_type,

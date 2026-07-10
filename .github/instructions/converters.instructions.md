@@ -4,6 +4,10 @@ applyTo: "pyrit/prompt_converter/**"
 
 # Prompt Converter Development Guidelines
 
+**Responsibility**: A converter transforms a prompt into something else (rephrasing, encoding, translating to a Word document, overlaying text on an image, ...). Converters can be stacked and combined, and any converter may also be a NoOp.
+
+**Does not own** (see [framework.md](../../doc/code/framework.md)): conversation state or attack decisions. A converter transforms input into output (and may call a target to do so); it must not branch on results, score, persist to memory itself, or decide when it runs — the attack/technique configures the stack. Flag such bleed in review.
+
 ## Base Class Contract
 
 All converters MUST inherit from `PromptConverter` and implement:
@@ -58,9 +62,8 @@ Exclude: retry counts, logging config, timeouts.
 ## Standard Imports
 
 ```python
-from pyrit.models import PromptDataType
-from pyrit.prompt_converter.prompt_converter import ConverterResult, PromptConverter
-from pyrit.identifiers import ComponentIdentifier
+from pyrit.models import ComponentIdentifier, PromptDataType
+from pyrit.prompt_converter import ConverterResult, PromptConverter
 ```
 
 For LLM-based converters, also import:
@@ -79,6 +82,28 @@ class MyConverter(PromptConverter):
     @apply_defaults
     def __init__(self, *, target: PromptTarget, template: str = "default") -> None:
         ...
+```
+
+### Keyword-only ``__init__`` is enforced
+
+Every ``PromptConverter`` subclass MUST make all ``__init__`` parameters
+keyword-only (i.e., place ``*`` as the first parameter after ``self``).
+``PromptConverter.__init_subclass__`` validates this at class-definition
+time via ``enforce_keyword_only_init`` and raises ``TypeError`` on
+violations.
+
+The check is satisfied by either of:
+
+```python
+def __init__(self, *, foo: str, bar: int = 0) -> None: ...
+
+def __init__(self, *args: str, foo: str = "") -> None: ...  # *args after self
+```
+
+It rejects:
+
+```python
+def __init__(self, foo: str, bar: int = 0) -> None: ...    # missing *
 ```
 
 ## Exports and External Updates

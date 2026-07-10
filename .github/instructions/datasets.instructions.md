@@ -4,8 +4,17 @@ applyTo: "pyrit/datasets/seed_datasets/**"
 
 # Seed Dataset Loader Guidelines
 
+**Responsibility**: Seed dataset loaders (`SeedDatasetProvider` subclasses) are the single place to manage the prompts/objectives for a source. They load seeds into `CentralMemory`; components then retrieve seeds from memory — components never read from a loader directly.
+
+**Does not own** (see [framework.md](../../doc/code/framework.md)): a loader defines and holds seeds; it must not select or combine which seeds an attack uses (that's a scenario/attack technique) or render/parameterize prompts at send time (converters/normalizers). Flag such bleed in review.
+
 These rules apply when adding or modifying loaders under `pyrit/datasets/seed_datasets/`.
 Style rules from `style-guide.instructions.md` (async `_async` suffix, keyword-only args, type hints, enums-over-Literals) still apply and are not repeated here.
+
+The keyword-only `__init__` rule is **enforced at class-definition time** by
+`SeedDatasetProvider.__init_subclass__` calling `enforce_keyword_only_init` (see
+`pyrit/common/brick_contract.py`). Loaders with positional `__init__` params raise
+`TypeError` at import time.
 
 ## Use SeedObjective for behavior/goal rows; SeedPrompt for literal messages
 
@@ -57,7 +66,7 @@ Each `SeedPrompt` / `SeedObjective` must carry:
 
 ## Set class-level dataset metadata when known
 
-`_parse_metadata` on `_RemoteDatasetLoader` reads class attributes matching `SeedDatasetMetadata` fields. Declare what you can know statically as class-level constants so dataset discovery/filtering works:
+`_parse_metadata_async` on `_RemoteDatasetLoader` reads class attributes matching `SeedDatasetMetadata` fields. Declare what you can know statically as class-level constants so dataset discovery/filtering works:
 
 ```python
 class _MyDataset(_RemoteDatasetLoader):

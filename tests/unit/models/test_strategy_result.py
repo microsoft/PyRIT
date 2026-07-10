@@ -1,12 +1,11 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from dataclasses import dataclass
+import pytest
 
-from pyrit.models.strategy_result import StrategyResult
+from pyrit.models import StrategyResult
 
 
-@dataclass
 class ConcreteResult(StrategyResult):
     value: str = ""
     count: int = 0
@@ -33,3 +32,8 @@ def test_strategy_result_duplicate_preserves_type():
     original = ConcreteResult(value="test", count=1)
     copy = original.duplicate()
     assert type(copy) is ConcreteResult
+
+
+def test_strategy_result_forbids_extra_fields():
+    with pytest.raises(ValueError):
+        ConcreteResult(value="hello", count=1, unexpected="boom")

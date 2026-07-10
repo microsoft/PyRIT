@@ -4,15 +4,14 @@
 import base64
 import hashlib
 import logging
-import warnings
 from io import BytesIO
 from typing import cast
 
 from PIL import Image, ImageFont
 from PIL.ImageFont import FreeTypeFont
 
-from pyrit.identifiers import ComponentIdentifier
-from pyrit.models import PromptDataType, data_serializer_factory
+from pyrit.memory import data_serializer_factory
+from pyrit.models import ComponentIdentifier, PromptDataType
 from pyrit.prompt_converter.base_image_text_converter import _BaseImageTextConverter
 from pyrit.prompt_converter.prompt_converter import ConverterResult
 
@@ -32,8 +31,8 @@ class AddTextImageConverter(_BaseImageTextConverter):
 
     def __init__(
         self,
-        *args: str,
-        text_to_add: str = "",
+        *,
+        text_to_add: str,
         font_name: str = "helvetica.ttf",
         color: tuple[int, int, int] = (0, 0, 0),
         font_size: int = 15,
@@ -44,8 +43,6 @@ class AddTextImageConverter(_BaseImageTextConverter):
         Initialize the converter with the text and text properties.
 
         Args:
-            *args: Deprecated positional argument for text_to_add. Use text_to_add=... instead.
-                Will be removed in version 0.15.0.
             text_to_add (str): Text to add to an image.
             font_name (str): Path of font to use. Must be a TrueType font (.ttf). Defaults to "helvetica.ttf".
             color (tuple): Color to print text in, using RGB values. Defaults to (0, 0, 0).
@@ -54,23 +51,8 @@ class AddTextImageConverter(_BaseImageTextConverter):
             y_pos (int): Y coordinate to place text in (0 is upper most). Defaults to 10.
 
         Raises:
-            TypeError: If more than one positional argument is passed, or if text_to_add
-                is passed as both positional and keyword argument.
             ValueError: If ``text_to_add`` is empty, or if ``font_name`` does not end with ".ttf".
         """
-        if args:
-            if len(args) > 1:
-                raise TypeError(f"AddTextImageConverter takes at most 1 positional argument, got {len(args)}")
-            if text_to_add:
-                raise TypeError("Cannot pass text_to_add as both positional and keyword argument")
-            warnings.warn(
-                "Passing 'text_to_add' as a positional argument is deprecated. "
-                "Use text_to_add=... as a keyword argument. "
-                "It will be keyword-only starting in version 0.15.0.",
-                FutureWarning,
-                stacklevel=2,
-            )
-            text_to_add = args[0]
         if text_to_add.strip() == "":
             raise ValueError("Please provide valid text_to_add value")
         if not font_name.endswith(".ttf"):
@@ -156,7 +138,7 @@ class AddTextImageConverter(_BaseImageTextConverter):
         img_serializer = data_serializer_factory(category="prompt-memory-entries", value=prompt, data_type="image_path")
 
         # Open the image
-        original_img_bytes = await img_serializer.read_data()
+        original_img_bytes = await img_serializer.read_data_async()
         original_img = Image.open(BytesIO(original_img_bytes))
 
         # Add text to the image
@@ -168,5 +150,5 @@ class AddTextImageConverter(_BaseImageTextConverter):
         updated_img.save(image_bytes, format=image_type)
         image_str = base64.b64encode(image_bytes.getvalue()).decode("utf-8")
         # Save image as generated UUID filename
-        await img_serializer.save_b64_image(data=image_str)
+        await img_serializer.save_b64_image_async(data=image_str)
         return ConverterResult(output_text=str(img_serializer.value), output_type="image_path")

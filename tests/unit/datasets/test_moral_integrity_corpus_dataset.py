@@ -32,7 +32,7 @@ class TestMICDataset:
             {"Q": "Can murder be justified?", "moral": "care|liberty"},
         ]
         mock_fetch = AsyncMock(return_value=self._split_payload(rows))
-        with patch.object(_MICDataset, "_fetch_zip_from_url", mock_fetch):
+        with patch.object(_MICDataset, "_fetch_zip_from_url_async", mock_fetch):
             result = await _MICDataset().fetch_dataset_async()
 
         # 3 unique Q strings; dedup across the three identical splits.
@@ -56,7 +56,7 @@ class TestMICDataset:
             {"Q": "Different question?", "moral": "care"},
         ]
         mock_fetch = AsyncMock(return_value=self._split_payload(rows))
-        with patch.object(_MICDataset, "_fetch_zip_from_url", mock_fetch):
+        with patch.object(_MICDataset, "_fetch_zip_from_url_async", mock_fetch):
             result = await _MICDataset().fetch_dataset_async()
         assert len(result.seeds) == 2
 
@@ -68,7 +68,7 @@ class TestMICDataset:
             {"Q": "   ", "moral": "loyalty"},
         ]
         mock_fetch = AsyncMock(return_value=self._split_payload(rows))
-        with patch.object(_MICDataset, "_fetch_zip_from_url", mock_fetch):
+        with patch.object(_MICDataset, "_fetch_zip_from_url_async", mock_fetch):
             result = await _MICDataset().fetch_dataset_async()
         assert len(result.seeds) == 1
 
@@ -76,7 +76,7 @@ class TestMICDataset:
         """An archive that yields no usable rows raises ValueError."""
         rows = [{"Q": "", "moral": "care"}]
         mock_fetch = AsyncMock(return_value=self._split_payload(rows))
-        with patch.object(_MICDataset, "_fetch_zip_from_url", mock_fetch):
+        with patch.object(_MICDataset, "_fetch_zip_from_url_async", mock_fetch):
             with pytest.raises(ValueError, match="empty"):
                 await _MICDataset().fetch_dataset_async()
 
@@ -84,7 +84,7 @@ class TestMICDataset:
         """Non-string `moral` values (e.g. NaN floats from JSON) yield empty categories."""
         rows = [{"Q": "Valid question?", "moral": float("nan")}]
         mock_fetch = AsyncMock(return_value=self._split_payload(rows))
-        with patch.object(_MICDataset, "_fetch_zip_from_url", mock_fetch):
+        with patch.object(_MICDataset, "_fetch_zip_from_url_async", mock_fetch):
             result = await _MICDataset().fetch_dataset_async()
         assert len(result.seeds) == 1
         assert result.seeds[0].harm_categories == []
@@ -97,7 +97,7 @@ class TestMICDataset:
             {"Q": "Real question?", "moral": "loyalty"},
         ]
         mock_fetch = AsyncMock(return_value=self._split_payload(rows))
-        with patch.object(_MICDataset, "_fetch_zip_from_url", mock_fetch):
+        with patch.object(_MICDataset, "_fetch_zip_from_url_async", mock_fetch):
             result = await _MICDataset().fetch_dataset_async()
         assert len(result.seeds) == 1
 
@@ -105,7 +105,7 @@ class TestMICDataset:
         """`cache` is forwarded to the helper."""
         rows = [{"Q": "anything?", "moral": "care"}]
         mock_fetch = AsyncMock(return_value=self._split_payload(rows))
-        with patch.object(_MICDataset, "_fetch_zip_from_url", mock_fetch):
+        with patch.object(_MICDataset, "_fetch_zip_from_url_async", mock_fetch):
             await _MICDataset().fetch_dataset_async(cache=False)
         kwargs = mock_fetch.call_args.kwargs
         assert kwargs["cache"] is False

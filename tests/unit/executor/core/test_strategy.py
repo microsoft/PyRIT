@@ -11,7 +11,7 @@ from pyrit.exceptions import (
     execution_context,
 )
 from pyrit.executor.core.strategy import Strategy, StrategyContext
-from pyrit.identifiers import ComponentIdentifier
+from pyrit.models import ComponentIdentifier
 
 
 @dataclass

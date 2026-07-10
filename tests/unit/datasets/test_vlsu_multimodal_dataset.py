@@ -47,6 +47,11 @@ class TestVLSUMultimodalDataset:
         with pytest.raises(ValueError, match="Expected VLSUCategory"):
             _VLSUMultimodalDataset(categories=["C1: Slurs, Hate Speech, Hate Symbols"])
 
+    def test_init_with_empty_categories_raises(self):
+        """Test that an empty categories list raises ValueError."""
+        with pytest.raises(ValueError, match="`categories` must be a non-empty list"):
+            _VLSUMultimodalDataset(categories=[])
+
     def test_init_with_unsafe_grades(self):
         """Test initialization with custom unsafe grades."""
         dataset = _VLSUMultimodalDataset(unsafe_grades=["unsafe"])
@@ -456,7 +461,7 @@ async def test_fetch_and_save_image_returns_cached_path():
     mock_memory = MagicMock()
     mock_memory.results_path = "/results"
     mock_storage_io = AsyncMock()
-    mock_storage_io.path_exists = AsyncMock(return_value=True)
+    mock_storage_io.path_exists_async = AsyncMock(return_value=True)
     mock_memory.results_storage_io = mock_storage_io
     mock_serializer._memory = mock_memory
     mock_serializer.data_sub_directory = "/images"

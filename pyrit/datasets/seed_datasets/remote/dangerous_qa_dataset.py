@@ -7,7 +7,7 @@ from typing import Literal, cast
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import SeedDataset, SeedPrompt
+from pyrit.models import SeedDataset, SeedPrompt, SeedUnion
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +64,7 @@ class _DangerousQADataset(_RemoteDatasetLoader):
 
     @property
     def dataset_name(self) -> str:
-        """Return the dataset name."""
+        """The dataset name."""
         return "dangerous_qa"
 
     async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
@@ -117,7 +117,7 @@ class _DangerousQADataset(_RemoteDatasetLoader):
             "Red-Eval)."
         )
 
-        seed_prompts = [
+        seed_prompts: list[SeedUnion] = [
             SeedPrompt(
                 value=question,
                 data_type="text",

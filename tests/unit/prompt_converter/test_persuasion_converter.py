@@ -7,7 +7,6 @@ import pytest
 from unit.mocks import MockPromptTarget
 
 from pyrit.exceptions.exception_classes import InvalidJsonException
-from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import Message, MessagePiece
 from pyrit.prompt_converter import PersuasionConverter
 
@@ -73,8 +72,6 @@ async def test_persuasion_converter_send_prompt_async_bad_json_exception_retries
                     converted_value=converted_value,
                     original_value_data_type="text",
                     converted_value_data_type="text",
-                    prompt_target_identifier=ComponentIdentifier(class_name="target-identifier", class_module="test"),
-                    attack_identifier=ComponentIdentifier(class_name="test", class_module="test"),
                     labels={"test": "test"},
                 )
             ]
@@ -102,7 +99,6 @@ async def test_persuasion_converter_extracts_mutated_text(sqlite_instance):
                 conversation_id="test-id",
                 original_value='{"mutated_text": "rephrased prompt"}',
                 original_value_data_type="text",
-                prompt_target_identifier=ComponentIdentifier(class_name="test", class_module="test"),
                 sequence=1,
             )
         ]
@@ -124,7 +120,6 @@ async def test_persuasion_converter_missing_mutated_text_raises_invalid_json(sql
                 conversation_id="test-id",
                 original_value='{"other_key": "value"}',
                 original_value_data_type="text",
-                prompt_target_identifier=ComponentIdentifier(class_name="test", class_module="test"),
                 sequence=1,
             )
         ]
@@ -149,32 +144,3 @@ def test_persuasion_converter_identifier_includes_technique(sqlite_instance):
     prompt_persuasion = PersuasionConverter(converter_target=prompt_target, persuasion_technique="logical_appeal")
     identifier = prompt_persuasion.get_identifier()
     assert identifier.params["persuasion_technique"] == "logical_appeal"
-
-
-async def test_send_persuasion_prompt_async_emits_deprecation_warning_and_delegates(sqlite_instance):
-    """``send_persuasion_prompt_async`` is a deprecated shim that warns and delegates to the retry helper."""
-    prompt_target = MockPromptTarget()
-    prompt_persuasion = PersuasionConverter(
-        converter_target=prompt_target, persuasion_technique="authority_endorsement"
-    )
-
-    request = Message(
-        message_pieces=[
-            MessagePiece(
-                role="user",
-                conversation_id="conv-1",
-                original_value="test input",
-                original_value_data_type="text",
-                prompt_target_identifier=ComponentIdentifier(class_name="test", class_module="test"),
-            )
-        ]
-    )
-
-    with patch.object(
-        prompt_persuasion, "_send_with_retries_async", new=AsyncMock(return_value="shim response")
-    ) as mock_send:
-        with pytest.warns(DeprecationWarning, match="send_persuasion_prompt_async"):
-            result = await prompt_persuasion.send_persuasion_prompt_async(request)
-
-    assert result == "shim response"
-    mock_send.assert_awaited_once_with(request)

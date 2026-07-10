@@ -1,16 +1,17 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+from __future__ import annotations
+
 import abc
 import asyncio
 import inspect
 import re
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, ClassVar, Optional, Union, get_args
+from typing import TYPE_CHECKING, Any, ClassVar, get_args
 
 from pyrit import prompt_converter
-from pyrit.identifiers import ComponentIdentifier, Identifiable
-from pyrit.models import PromptDataType
+from pyrit.models import ComponentIdentifier, ConverterIdentifier, Identifiable, PromptDataType
 from pyrit.prompt_target.common.target_requirements import TargetRequirements
 
 if TYPE_CHECKING:
@@ -57,20 +58,26 @@ class PromptConverter(Identifiable):
     #: ``super().__init__(converter_target=...)`` so the base class can validate it.
     TARGET_REQUIREMENTS: ClassVar[TargetRequirements] = TargetRequirements()
 
-    _identifier: Optional[ComponentIdentifier] = None
+    _identifier: ComponentIdentifier | None = None
 
     def __init_subclass__(cls, **kwargs: object) -> None:
         """
-        Validate that concrete subclasses define required class attributes.
+        Validate that concrete subclasses define required class attributes
+        and follow the keyword-only ``__init__`` contract.
 
         Args:
             **kwargs: Additional keyword arguments passed to the superclass.
 
         Raises:
             TypeError: If a concrete subclass does not define non-empty SUPPORTED_INPUT_TYPES
-                or SUPPORTED_OUTPUT_TYPES.
+                or SUPPORTED_OUTPUT_TYPES, or if its ``__init__`` accepts
+                positional parameters after ``self``.
         """
         super().__init_subclass__(**kwargs)
+        # Local import to avoid a circular dependency at package init time.
+        from pyrit.common.brick_contract import enforce_keyword_only_init
+
+        enforce_keyword_only_init(cls, base_name="PromptConverter")
         # Only validate concrete (non-abstract) classes
         if not inspect.isabstract(cls):
             if not cls.SUPPORTED_INPUT_TYPES:
@@ -84,12 +91,12 @@ class PromptConverter(Identifiable):
                     f"Declare the output modalities this converter produces."
                 )
 
-    def __init__(self, *, converter_target: Optional["PromptTarget"] = None) -> None:
+    def __init__(self, *, converter_target: PromptTarget | None = None) -> None:
         """
         Initialize the prompt converter.
 
         Args:
-            converter_target (Optional[PromptTarget]): Target used by the converter, if any. When
+            converter_target (PromptTarget | None): Target used by the converter, if any. When
                 provided, it is validated against ``TARGET_REQUIREMENTS``.
         """
         super().__init__()
@@ -168,7 +175,7 @@ class PromptConverter(Identifiable):
         if prompt.count(start_token) != prompt.count(end_token):
             raise ValueError("Uneven number of start tokens and end tokens.")
 
-        tasks = [self._replace_text_match(match) for match in matches]
+        tasks = [self._replace_text_match_async(match) for match in matches]
         converted_parts = await asyncio.gather(*tasks)
 
         for original, converted in zip(matches, converted_parts, strict=False):
@@ -176,7 +183,7 @@ class PromptConverter(Identifiable):
 
         return ConverterResult(output_text=prompt, output_type="text")
 
-    async def _replace_text_match(self, match: str) -> ConverterResult:
+    async def _replace_text_match_async(self, match: str) -> ConverterResult:
         return await self.convert_async(prompt=match, input_type="text")
 
     def _build_identifier(self) -> ComponentIdentifier:
@@ -196,41 +203,46 @@ class PromptConverter(Identifiable):
     def _create_identifier(
         self,
         *,
-        params: Optional[dict[str, Any]] = None,
-        children: Optional[dict[str, Union[ComponentIdentifier, list[ComponentIdentifier]]]] = None,
+        params: dict[str, Any] | None = None,
+        converter_target: ComponentIdentifier | None = None,
+        sub_converter: ComponentIdentifier | None = None,
     ) -> ComponentIdentifier:
         """
         Construct and return the converter identifier.
 
-        Builds a ComponentIdentifier with the base converter parameters
-        (supported_input_types, supported_output_types) and merges in any
-        additional params or children provided by subclasses.
+        Builds a ``ConverterIdentifier`` with the base converter params
+        (supported_input_types, supported_output_types) and the converter's promoted
+        child slots. The child slots are exposed as explicit named parameters
+        (mirroring ``ConverterIdentifier``'s promoted fields) so they cannot drift
+        into untyped ``children`` dicts.
 
         Subclasses should call this method in their _build_identifier() implementation
         to set the identifier with their specific parameters.
 
         Args:
-            params (Optional[Dict[str, Any]]): Additional behavioral parameters from
+            params (dict[str, Any] | None): Additional behavioral parameters from
                 the subclass (e.g., font, encoding_func). Merged into the base params.
-            children (Optional[Dict[str, Union[ComponentIdentifier, List[ComponentIdentifier]]]]):
-                Named child component identifiers (e.g., sub-converters, converter targets).
+            converter_target (ComponentIdentifier | None): The target an LLM-backed
+                converter calls, promoted to ``ConverterIdentifier.converter_target``.
+            sub_converter (ComponentIdentifier | None): A nested converter a
+                composite wraps, promoted to ``ConverterIdentifier.sub_converter``.
 
         Returns:
             ComponentIdentifier: The identifier for this converter.
         """
-        all_params: dict[str, Any] = {
-            "supported_input_types": self.SUPPORTED_INPUT_TYPES,
-            "supported_output_types": self.SUPPORTED_OUTPUT_TYPES,
-        }
-        if params:
-            all_params.update(params)
-
-        return ComponentIdentifier.of(self, params=all_params, children=children)
+        return ConverterIdentifier.of(
+            self,
+            params=params,
+            supported_input_types=self.SUPPORTED_INPUT_TYPES,
+            supported_output_types=self.SUPPORTED_OUTPUT_TYPES,
+            converter_target=converter_target,
+            sub_converter=sub_converter,
+        )
 
     @property
     def supported_input_types(self) -> list[PromptDataType]:
         """
-        Returns a list of supported input types for the converter.
+        A list of supported input types for the converter.
 
         Returns:
             list[PromptDataType]: A list of supported input types.
@@ -240,7 +252,7 @@ class PromptConverter(Identifiable):
     @property
     def supported_output_types(self) -> list[PromptDataType]:
         """
-        Returns a list of supported output types for the converter.
+        A list of supported output types for the converter.
 
         Returns:
             list[PromptDataType]: A list of supported output types.

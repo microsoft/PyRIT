@@ -18,6 +18,8 @@ from pyrit.prompt_converter.add_image_text_converter import AddImageTextConverte
 from pyrit.prompt_converter.add_image_to_video_converter import AddImageVideoConverter
 from pyrit.prompt_converter.add_text_image_converter import AddTextImageConverter
 from pyrit.prompt_converter.ansi_escape.ansi_attack_converter import AnsiAttackConverter
+from pyrit.prompt_converter.arabic_presentation_form_converter import ArabicPresentationFormConverter
+from pyrit.prompt_converter.arabizi_converter import ArabiziConverter
 from pyrit.prompt_converter.ascii_art_converter import AsciiArtConverter
 from pyrit.prompt_converter.ask_to_decode_converter import AskToDecodeConverter
 from pyrit.prompt_converter.atbash_converter import AtbashConverter
@@ -25,6 +27,7 @@ from pyrit.prompt_converter.azure_speech_audio_to_text_converter import AzureSpe
 from pyrit.prompt_converter.azure_speech_text_to_audio_converter import AzureSpeechTextToAudioConverter
 from pyrit.prompt_converter.base64_converter import Base64Converter
 from pyrit.prompt_converter.base2048_converter import Base2048Converter
+from pyrit.prompt_converter.bidi_converter import BidiConverter
 from pyrit.prompt_converter.bin_ascii_converter import BinAsciiConverter
 from pyrit.prompt_converter.binary_converter import BinaryConverter
 from pyrit.prompt_converter.braille_converter import BrailleConverter
@@ -33,6 +36,7 @@ from pyrit.prompt_converter.character_space_converter import CharacterSpaceConve
 from pyrit.prompt_converter.charswap_attack_converter import CharSwapConverter
 from pyrit.prompt_converter.codechameleon_converter import CodeChameleonConverter
 from pyrit.prompt_converter.colloquial_wordswap_converter import ColloquialWordswapConverter
+from pyrit.prompt_converter.decomposition_converter import DecompositionConverter
 from pyrit.prompt_converter.denylist_converter import DenylistConverter
 from pyrit.prompt_converter.diacritic_converter import DiacriticConverter
 from pyrit.prompt_converter.ecoji_converter import EcojiConverter
@@ -58,6 +62,7 @@ from pyrit.prompt_converter.negation_trap_converter import NegationTrapConverter
 from pyrit.prompt_converter.noise_converter import NoiseConverter
 from pyrit.prompt_converter.pdf_converter import PDFConverter
 from pyrit.prompt_converter.persuasion_converter import PersuasionConverter
+from pyrit.prompt_converter.policy_puppetry_converter import PolicyPuppetryConverter, PolicyPuppetryTemplate
 from pyrit.prompt_converter.prompt_converter import ConverterResult, PromptConverter, get_converter_modalities
 from pyrit.prompt_converter.qr_code_converter import QRCodeConverter
 from pyrit.prompt_converter.random_capital_letters_converter import RandomCapitalLettersConverter
@@ -70,6 +75,7 @@ from pyrit.prompt_converter.selective_text_converter import SelectiveTextConvert
 from pyrit.prompt_converter.string_join_converter import StringJoinConverter
 from pyrit.prompt_converter.suffix_append_converter import SuffixAppendConverter
 from pyrit.prompt_converter.superscript_converter import SuperscriptConverter
+from pyrit.prompt_converter.tatweel_converter import TatweelConverter
 from pyrit.prompt_converter.template_segment_converter import TemplateSegmentConverter
 from pyrit.prompt_converter.tense_converter import TenseConverter
 from pyrit.prompt_converter.text_selection_strategy import (
@@ -143,6 +149,8 @@ __all__ = [
     "AddTextImageConverter",
     "AllWordsSelectionStrategy",
     "AnsiAttackConverter",
+    "ArabicPresentationFormConverter",
+    "ArabiziConverter",
     "AsciiArtConverter",
     "AsciiSmugglerConverter",
     "AskToDecodeConverter",
@@ -156,6 +164,7 @@ __all__ = [
     "AzureSpeechTextToAudioConverter",
     "Base2048Converter",
     "Base64Converter",
+    "BidiConverter",
     "BinAsciiConverter",
     "BinaryConverter",
     "BrailleConverter",
@@ -165,6 +174,7 @@ __all__ = [
     "CodeChameleonConverter",
     "ColloquialWordswapConverter",
     "ConverterResult",
+    "DecompositionConverter",
     "DenylistConverter",
     "DiacriticConverter",
     "EcojiConverter",
@@ -192,6 +202,8 @@ __all__ = [
     "NoiseConverter",
     "PDFConverter",
     "PersuasionConverter",
+    "PolicyPuppetryConverter",
+    "PolicyPuppetryTemplate",
     "PositionSelectionStrategy",
     "PromptConverter",
     "ProportionSelectionStrategy",
@@ -209,6 +221,7 @@ __all__ = [
     "StringJoinConverter",
     "SuffixAppendConverter",
     "SuperscriptConverter",
+    "TatweelConverter",
     "TemplateSegmentConverter",
     "TenseConverter",
     "TextJailbreakConverter",

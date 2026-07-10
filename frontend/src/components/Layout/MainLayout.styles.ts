@@ -32,6 +32,9 @@ export const useMainLayoutStyles = makeStyles({
     color: tokens.colorNeutralForeground3,
     marginLeft: tokens.spacingHorizontalXS,
   },
+  spacer: {
+    flex: 1,
+  },
   contentArea: {
     display: 'flex',
     flex: 1,

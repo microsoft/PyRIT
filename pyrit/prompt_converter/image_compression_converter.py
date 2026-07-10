@@ -4,14 +4,14 @@
 import base64
 import logging
 from io import BytesIO
-from typing import Any, Literal, Optional
+from typing import Any, Literal
 from urllib.parse import urlparse
 
 import aiohttp
 from PIL import Image
 
-from pyrit.identifiers import ComponentIdentifier
-from pyrit.models import PromptDataType, data_serializer_factory
+from pyrit.memory import data_serializer_factory
+from pyrit.models import ComponentIdentifier, PromptDataType
 from pyrit.prompt_converter.prompt_converter import ConverterResult, PromptConverter
 
 logger = logging.getLogger(__name__)
@@ -50,13 +50,13 @@ class ImageCompressionConverter(PromptConverter):
     def __init__(
         self,
         *,
-        output_format: Optional[Literal["JPEG", "PNG", "WEBP"]] = None,
-        quality: Optional[int] = None,
-        optimize: Optional[bool] = None,
-        progressive: Optional[bool] = None,
-        compress_level: Optional[int] = None,
-        lossless: Optional[bool] = None,
-        method: Optional[int] = None,
+        output_format: Literal["JPEG", "PNG", "WEBP"] | None = None,
+        quality: int | None = None,
+        optimize: bool | None = None,
+        progressive: bool | None = None,
+        compress_level: int | None = None,
+        lossless: bool | None = None,
+        method: int | None = None,
         background_color: tuple[int, int, int] = (0, 0, 0),
         min_compression_threshold: int = 1024,
         fallback_to_original: bool = True,
@@ -218,7 +218,7 @@ class ImageCompressionConverter(PromptConverter):
         image.save(compressed_bytes, output_format, **save_kwargs)
         return compressed_bytes, output_format
 
-    async def _handle_original_image_fallback(
+    async def _handle_original_image_fallback_async(
         self,
         prompt: str,
         input_type: PromptDataType,
@@ -242,11 +242,11 @@ class ImageCompressionConverter(PromptConverter):
         if input_type == "url":
             # We need to save the downloaded content locally and return the local path
             img_serializer.file_extension = original_format.lower()
-            await img_serializer.save_data(original_img_bytes)
+            await img_serializer.save_data_async(original_img_bytes)
             return ConverterResult(output_text=str(img_serializer.value), output_type="image_path")
         return ConverterResult(output_text=prompt, output_type="image_path")
 
-    async def _read_image_from_url(self, url: str) -> bytes:
+    async def _read_image_from_url_async(self, url: str) -> bytes:
         """
         Download data from URL and returns the content as bytes.
 
@@ -289,7 +289,9 @@ class ImageCompressionConverter(PromptConverter):
 
         # Read the image data into memory as bytes for processing
         original_img_bytes = (
-            await self._read_image_from_url(prompt) if input_type == "url" else await img_serializer.read_data()
+            await self._read_image_from_url_async(prompt)
+            if input_type == "url"
+            else await img_serializer.read_data_async()
         )
         original_img = Image.open(BytesIO(original_img_bytes))
 
@@ -299,7 +301,7 @@ class ImageCompressionConverter(PromptConverter):
         # This is to avoid unnecessary processing and potential quality loss for images that are already small
         if not self._should_compress(original_size):
             logger.warning(f"Image too small ({original_size} bytes), skipping compression")
-            return await self._handle_original_image_fallback(
+            return await self._handle_original_image_fallback_async(
                 prompt, input_type, img_serializer, original_img_bytes, original_format
             )
 
@@ -312,7 +314,7 @@ class ImageCompressionConverter(PromptConverter):
         # Sometimes compression can actually increase file size so we check if we should fallback to the original
         if self._fallback_to_original and compressed_size >= original_size:
             logger.warning(f"Compression increased file size ({original_size} → {compressed_size}), using original")
-            return await self._handle_original_image_fallback(
+            return await self._handle_original_image_fallback_async(
                 prompt, input_type, img_serializer, original_img_bytes, original_format
             )
 
@@ -323,7 +325,7 @@ class ImageCompressionConverter(PromptConverter):
 
         # Convert compressed bytes to base64 for storage via the serializer
         image_str = base64.b64encode(compressed_bytes_value)
-        await img_serializer.save_b64_image(data=image_str.decode())
+        await img_serializer.save_b64_image_async(data=image_str.decode())
 
         compression_ratio = (1 - compressed_size / original_size) * 100 if original_size > 0 else 0
         logger.info(f"Image compressed: {original_size} → {compressed_size} ({compression_ratio:.1f}% reduction)")

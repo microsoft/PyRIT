@@ -259,7 +259,8 @@ class TestExecuteAttackAsync:
             nonlocal concurrent_count, max_concurrent
             concurrent_count += 1
             max_concurrent = max(max_concurrent, concurrent_count)
-            await asyncio.sleep(0.05)
+            # Yield so other tasks bounded by the semaphore can also enter.
+            await asyncio.sleep(0)
             concurrent_count -= 1
             return create_attack_result(context.params.objective)
 
@@ -282,7 +283,8 @@ class TestExecuteAttackAsync:
         async def mock_execute(*, context):
             objective = context.params.objective
             execution_order.append(f"start_{objective}")
-            await asyncio.sleep(0.01)
+            # Yield once so another task could interleave if max_concurrency > 1.
+            await asyncio.sleep(0)
             execution_order.append(f"end_{objective}")
             return create_attack_result(objective)
 
@@ -455,9 +457,9 @@ class TestAttributionPropagation:
         async def out_of_order(context):
             attr = context._attribution
             assert attr is not None
-            # Reverse-delay tasks so completion order is inverse of input order.
-            i = int(context.params.objective.split("-")[1])
-            await asyncio.sleep(0.005 * (10 - i))
+            # Yield so all tasks run concurrently under the high-concurrency executor;
+            # the assertion verifies attribution is per-task regardless of order.
+            await asyncio.sleep(0)
             seen[context.params.objective] = attr
             return create_attack_result(context.params.objective)
 

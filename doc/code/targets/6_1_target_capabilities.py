@@ -55,7 +55,7 @@ print("output_modalities:          ", sorted(sorted(m) for m in caps.output_moda
 #
 # Each target class declares a `_DEFAULT_CONFIGURATION` class attribute. For well-known underlying models,
 # `get_default_configuration(underlying_model=...)` returns a richer profile from
-# `TargetCapabilities.get_known_capabilities` — for example, `gpt-5` gains `supports_json_schema=True`
+# `get_known_capabilities` — for example, `gpt-5` gains `supports_json_schema=True`
 # and other models pick up the right modality combinations automatically. Unknown models fall back to
 # the class default.
 
@@ -88,7 +88,7 @@ for flag in (
 #
 # Components that need particular capabilities declare them as a `TargetRequirements` and validate at
 # construction time. PyRIT ships a `CHAT_TARGET_REQUIREMENTS` constant for the common case of needing
-# multi-turn + editable history — the replacement for the deprecated `PromptChatTarget` type check.
+# multi-turn + editable history — the replacement for the former `PromptChatTarget` type check.
 #
 # `TargetRequirements.validate` collects every missing capability and raises a single `ValueError` so
 # callers see all violations at once.
@@ -304,7 +304,7 @@ from pyrit.prompt_target import discover_target_capabilities_async
 def _ok_response():
     return [
         Message(
-            [
+            message_pieces=[
                 MessagePiece(
                     role="assistant",
                     original_value="ok",

@@ -4,14 +4,13 @@
 import asyncio
 import json
 import logging
-import os
 import warnings
 from pathlib import Path
 from typing import Any, cast
 
 from transformers import (
-    AutoModelForCausalLM,
-    AutoTokenizer,
+    AutoModelForCausalLM,  # type: ignore[ty:possibly-missing-import]
+    AutoTokenizer,  # type: ignore[ty:possibly-missing-import]
     BatchEncoding,
     PretrainedConfig,
 )
@@ -19,8 +18,7 @@ from transformers import (
 from pyrit.common import default_values
 from pyrit.common.download_hf_model import download_specific_files_async
 from pyrit.exceptions import EmptyResponseException, pyrit_target_retry
-from pyrit.identifiers import ComponentIdentifier
-from pyrit.models import Message, construct_response_from_request
+from pyrit.models import ComponentIdentifier, Message, construct_response_from_request
 from pyrit.prompt_target.common.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
@@ -47,6 +45,11 @@ class HuggingFaceChatTarget(PromptTarget):
     _cached_model: Any = None
     _cached_tokenizer: Any = None
     _cached_model_id: str | None = None
+
+    # Instance attributes populated lazily by ``load_model_and_tokenizer_async``. Typed as
+    # ``Any`` because the concrete model class comes from ``transformers`` factory methods
+    # whose return types ty cannot statically resolve.
+    model: Any
 
     # Class-level flag to enable or disable cache
     _cache_enabled = True
@@ -144,7 +147,7 @@ class HuggingFaceChatTarget(PromptTarget):
             self.huggingface_token = None
 
         try:
-            import torch
+            import torch  # type: ignore[ty:unresolved-import]
         except ModuleNotFoundError as e:
             raise RuntimeError("Could not import torch. You may need to install it via 'pip install pyrit[all]'") from e
 
@@ -173,7 +176,7 @@ class HuggingFaceChatTarget(PromptTarget):
         if self.use_cuda and not torch.cuda.is_available():
             raise RuntimeError("CUDA requested but not available.")
 
-        self.load_model_and_tokenizer_task = asyncio.create_task(self.load_model_and_tokenizer())
+        self.load_model_and_tokenizer_task = asyncio.create_task(self.load_model_and_tokenizer_async())
 
     def _build_identifier(self) -> ComponentIdentifier:
         """
@@ -228,7 +231,7 @@ class HuggingFaceChatTarget(PromptTarget):
             logger.error(f"Invalid HuggingFace model ID {self.model_id}: {e}")
             return False
 
-    async def load_model_and_tokenizer(self) -> None:
+    async def load_model_and_tokenizer_async(self) -> None:
         """
         Load the model and tokenizer, download if necessary.
 
@@ -265,12 +268,12 @@ class HuggingFaceChatTarget(PromptTarget):
                 self._load_from_path(self.model_path, **optional_model_kwargs)
             else:
                 # Define the default Hugging Face cache directory
-                cache_dir = os.path.join(
-                    os.path.expanduser("~"),
-                    ".cache",
-                    "huggingface",
-                    "hub",
-                    f"models--{(self.model_id or '').replace('/', '--')}",
+                cache_dir = (
+                    Path.home()
+                    / ".cache"
+                    / "huggingface"
+                    / "hub"
+                    / f"models--{(self.model_id or '').replace('/', '--')}"
                 )
 
                 if self.necessary_files is None:
@@ -279,8 +282,8 @@ class HuggingFaceChatTarget(PromptTarget):
                     await download_specific_files_async(
                         self.model_id or "",
                         None,
-                        self.huggingface_token,  # type: ignore[ty:invalid-argument-type]
-                        Path(cache_dir),
+                        self.huggingface_token,
+                        cache_dir,
                     )
                 else:
                     # Download only the necessary files
@@ -288,7 +291,7 @@ class HuggingFaceChatTarget(PromptTarget):
                     await download_specific_files_async(
                         self.model_id or "",
                         self.necessary_files,
-                        self.huggingface_token,  # type: ignore[ty:invalid-argument-type]
+                        self.huggingface_token,
                         Path(cache_dir),
                     )
 
@@ -305,7 +308,7 @@ class HuggingFaceChatTarget(PromptTarget):
                 )
 
             # Move the model to the correct device
-            self.model = self.model.to(self.device)
+            self.model = cast("Any", self.model).to(self.device)
 
             # Debug prints to check types
             logger.info(f"Model loaded: {type(self.model)}")
@@ -375,7 +378,7 @@ class HuggingFaceChatTarget(PromptTarget):
 
             assistant_response = cast(
                 "str",
-                self.tokenizer.decode(generated_tokens, skip_special_tokens=self.skip_special_tokens),
+                self.tokenizer.decode(generated_tokens, skip_special_tokens=self.skip_special_tokens),  # type: ignore[ty:unresolved-attribute]
             ).strip()
 
             if not assistant_response:
@@ -473,7 +476,7 @@ class HuggingFaceChatTarget(PromptTarget):
             the same process may interfere with determinism.
         """
         if self._random_seed is not None:
-            import torch
+            import torch  # type: ignore[ty:unresolved-import]
 
             torch.manual_seed(self._random_seed)
             if self.use_cuda:

@@ -38,10 +38,12 @@ import json
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import Any, Optional, overload
+from functools import partial
+from typing import Any, overload
 
 import numpy as np
 import torch.multiprocessing as mp
+from pydantic import Field
 
 import pyrit.auxiliary_attacks.gcg.attack.gcg.gcg_attack as attack_lib
 from pyrit.auxiliary_attacks.gcg.attack.base.attack_manager import (
@@ -62,7 +64,7 @@ from pyrit.executor.promptgen.core.prompt_generator_strategy import (
     PromptGeneratorStrategyContext,
     PromptGeneratorStrategyResult,
 )
-from pyrit.identifiers import ComponentIdentifier, Identifiable
+from pyrit.models import ComponentIdentifier, Identifiable
 
 logger = logging.getLogger(__name__)
 
@@ -92,11 +94,10 @@ class GCGContext(PromptGeneratorStrategyContext):
 
     workers: list[Any] = field(default_factory=list)
     test_workers: list[Any] = field(default_factory=list)
-    attack: Optional[Any] = None
-    logfile_path: Optional[str] = None
+    attack: Any | None = None
+    logfile_path: str | None = None
 
 
-@dataclass
 class GCGResult(PromptGeneratorStrategyResult):
     """Result of one GCGGenerator run.
 
@@ -117,10 +118,10 @@ class GCGResult(PromptGeneratorStrategyResult):
     final_suffix: str = ""
     final_loss: float = float("nan")
     step_count: int = 0
-    loss_history: list[float] = field(default_factory=list)
-    control_history: list[str] = field(default_factory=list)
-    log_path: Optional[str] = None
-    memory_labels: dict[str, str] = field(default_factory=dict)
+    loss_history: list[float] = Field(default_factory=list)
+    control_history: list[str] = Field(default_factory=list)
+    log_path: str | None = None
+    memory_labels: dict[str, str] = Field(default_factory=dict)
 
 
 class GCGGenerator(
@@ -138,11 +139,11 @@ class GCGGenerator(
         self,
         *,
         models: list[GCGModelConfig],
-        algorithm: Optional[GCGAlgorithmConfig] = None,
-        strategy: Optional[GCGStrategyConfig] = None,
-        output: Optional[GCGOutputConfig] = None,
-        test_models: Optional[list[GCGModelConfig]] = None,
-        hf_token: Optional[str] = None,
+        algorithm: GCGAlgorithmConfig | None = None,
+        strategy: GCGStrategyConfig | None = None,
+        output: GCGOutputConfig | None = None,
+        test_models: list[GCGModelConfig] | None = None,
+        hf_token: str | None = None,
     ) -> None:
         """
         Initialize the GCG generator.
@@ -212,6 +213,18 @@ class GCGGenerator(
                 "topk": self._algorithm.topk,
                 "target_weight": self._algorithm.target_weight,
                 "control_weight": self._algorithm.control_weight,
+                "sampling_impl": (
+                    type(self._algorithm.sampling).__name__ if self._algorithm.sampling is not None else "default"
+                ),
+                "loss_impl": type(self._algorithm.loss).__name__ if self._algorithm.loss is not None else "default",
+                "candidate_filter_impl": (
+                    type(self._algorithm.candidate_filter).__name__
+                    if self._algorithm.candidate_filter is not None
+                    else "default"
+                ),
+                "suffix_init_impl": (
+                    type(self._algorithm.suffix_init).__name__ if self._algorithm.suffix_init is not None else "default"
+                ),
                 "transfer": self._strategy.transfer,
                 "progressive_goals": self._strategy.progressive_goals,
                 "progressive_models": self._strategy.progressive_models,
@@ -257,7 +270,12 @@ class GCGGenerator(
         managers = {
             "AP": attack_lib.GCGAttackPrompt,
             "PM": attack_lib.GCGPromptManager,
-            "MPA": attack_lib.GCGMultiPromptAttack,
+            "MPA": partial(
+                attack_lib.GCGMultiPromptAttack,
+                sampling=self._algorithm.sampling,
+                loss=self._algorithm.loss,
+                candidate_filter=self._algorithm.candidate_filter,
+            ),
         }
         context.attack = self._create_attack(
             params=params,
@@ -307,9 +325,9 @@ class GCGGenerator(
         *,
         goals: list[str],
         targets: list[str],
-        test_goals: Optional[list[str]] = None,
-        test_targets: Optional[list[str]] = None,
-        memory_labels: Optional[dict[str, str]] = None,
+        test_goals: list[str] | None = None,
+        test_targets: list[str] | None = None,
+        memory_labels: dict[str, str] | None = None,
         **kwargs: Any,
     ) -> GCGResult: ...
 
@@ -400,6 +418,7 @@ class GCGGenerator(
         logfile_path: str,
     ) -> Any:
         """Build the right attack object based on the strategy flags."""
+        control_init = self._resolve_control_init(workers=workers)
         if self._strategy.transfer:
             return ProgressiveMultiPromptAttack(
                 train_goals,
@@ -407,7 +426,7 @@ class GCGGenerator(
                 workers,
                 progressive_models=self._strategy.progressive_models,
                 progressive_goals=self._strategy.progressive_goals,
-                control_init=self._algorithm.control_init,
+                control_init=control_init,
                 logfile=logfile_path,
                 managers=managers,
                 test_goals=test_goals,
@@ -421,7 +440,7 @@ class GCGGenerator(
             train_goals,
             train_targets,
             workers,
-            control_init=self._algorithm.control_init,
+            control_init=control_init,
             logfile=logfile_path,
             managers=managers,
             test_goals=test_goals,
@@ -431,6 +450,18 @@ class GCGGenerator(
             mpa_batch_size=self._algorithm.batch_size,
             mpa_n_steps=self._algorithm.n_steps,
         )
+
+    def _resolve_control_init(self, *, workers: list[Any]) -> str:
+        """Resolve the initial suffix string for a run.
+
+        Uses the configured ``suffix_init`` extension when provided; otherwise
+        falls back to the legacy literal ``control_init`` value.
+        """
+        if self._algorithm.suffix_init is None:
+            return self._algorithm.control_init
+        if not workers:
+            raise ValueError("Cannot resolve suffix_init without at least one worker tokenizer.")
+        return self._algorithm.suffix_init.make_initial_suffix(tokenizer=workers[0].tokenizer)
 
     @staticmethod
     def _read_result(*, logfile_path: str, memory_labels: dict[str, str]) -> GCGResult:

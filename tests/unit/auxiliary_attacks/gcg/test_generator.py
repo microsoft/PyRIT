@@ -6,8 +6,9 @@
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING
-from unittest.mock import MagicMock, patch
+from functools import partial
+from typing import TYPE_CHECKING, Any
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -61,7 +62,7 @@ class TestGCGGeneratorInit:
         """Regression: __init__ used to call torch.multiprocessing.set_start_method,
         which crashed under coverage runs when an earlier test had already pinned a
         non-spawn context. Worker spawn config now happens in _setup_async."""
-        import torch.multiprocessing as mp
+        import torch.multiprocessing as mp  # type: ignore[ty:unresolved-import]
 
         with patch.object(mp, "set_start_method") as mock_set:
             GCGGenerator(models=[GCGModelConfig(name=_LLAMA_2)])
@@ -72,7 +73,7 @@ class TestEnsureSpawnStartMethod:
     """Tests for the lazily-applied spawn-method guard used before workers are spawned."""
 
     def test_sets_spawn_when_unset(self) -> None:
-        import torch.multiprocessing as mp
+        import torch.multiprocessing as mp  # type: ignore[ty:unresolved-import]
 
         gen = GCGGenerator(models=[GCGModelConfig(name=_LLAMA_2)])
         with (
@@ -84,7 +85,7 @@ class TestEnsureSpawnStartMethod:
         mock_set.assert_called_once_with("spawn")
 
     def test_noop_when_already_spawn(self) -> None:
-        import torch.multiprocessing as mp
+        import torch.multiprocessing as mp  # type: ignore[ty:unresolved-import]
 
         gen = GCGGenerator(models=[GCGModelConfig(name=_LLAMA_2)])
         with (
@@ -98,7 +99,7 @@ class TestEnsureSpawnStartMethod:
         """Used to raise 'context has already been set' — now we warn and continue."""
         import logging
 
-        import torch.multiprocessing as mp
+        import torch.multiprocessing as mp  # type: ignore[ty:unresolved-import]
 
         gen = GCGGenerator(models=[GCGModelConfig(name=_LLAMA_2)])
         with (
@@ -238,55 +239,135 @@ class TestApplyTargetAugmentation:
         assert num_changed > 0
 
 
-class TestCreateAttackWiring:
-    """Construct real attack classes via _create_attack to catch kwarg mismatches."""
+class TestExtensionWiring:
+    def test_create_attack_uses_suffix_initializer_when_configured(self) -> None:
+        class _SuffixInitStub:
+            def __init__(self) -> None:
+                self.calls: list[object] = []
 
-    def test_transfer_false_returns_individual(self, tmp_path: Path) -> None:
-        from pyrit.auxiliary_attacks.gcg.attack.base.attack_manager import IndividualPromptAttack
+            def make_initial_suffix(self, *, tokenizer: object) -> str:
+                self.calls.append(tokenizer)
+                return "initialized suffix"
 
-        gen = _make_generator(output_dir=tmp_path, n_steps=5, batch_size=64, control_init="! ! !")
-        worker = _make_mock_worker_with_real_tokenizer()
-        context = GCGContext(goals=["g"], targets=["t"])
-        params = gen._to_attack_params(context=context)
-
-        attack = gen._create_attack(
-            params=params,
-            managers=_real_managers(),
-            train_goals=["g"],
-            train_targets=["t"],
-            test_goals=[],
-            test_targets=[],
-            workers=[worker],
-            test_workers=[],
-            logfile_path=str(tmp_path / "log.json"),
-        )
-        assert isinstance(attack, IndividualPromptAttack)
-
-    def test_transfer_true_returns_progressive(self, tmp_path: Path) -> None:
-        from pyrit.auxiliary_attacks.gcg.attack.base.attack_manager import ProgressiveMultiPromptAttack
-
+        suffix_init = _SuffixInitStub()
         gen = GCGGenerator(
             models=[GCGModelConfig(name=_LLAMA_2)],
-            algorithm=GCGAlgorithmConfig(n_steps=5, batch_size=64, control_init="! ! !"),
-            strategy=GCGStrategyConfig(transfer=True, progressive_goals=True, progressive_models=True),
+            algorithm=GCGAlgorithmConfig(suffix_init=suffix_init),
+        )
+        worker = MagicMock()
+        worker.tokenizer = MagicMock()
+
+        with patch.object(generator_mod, "IndividualPromptAttack") as mock_individual:
+            gen._create_attack(
+                params=MagicMock(),
+                managers={"MPA": MagicMock()},
+                train_goals=["g"],
+                train_targets=["t"],
+                test_goals=[],
+                test_targets=[],
+                workers=[worker],
+                test_workers=[],
+                logfile_path="out.json",
+            )
+
+        assert suffix_init.calls == [worker.tokenizer]
+        assert mock_individual.call_args.kwargs["control_init"] == "initialized suffix"
+
+    def test_resolve_control_init_returns_default_when_suffix_init_not_configured(self) -> None:
+        gen = GCGGenerator(
+            models=[GCGModelConfig(name=_LLAMA_2)],
+            algorithm=GCGAlgorithmConfig(control_init="seed control"),
+        )
+
+        assert gen._resolve_control_init(workers=[]) == "seed control"
+
+    def test_resolve_control_init_raises_when_suffix_init_requires_workers(self) -> None:
+        """Test _resolve_control_init raises ValueError when suffix_init configured but no workers."""
+
+        class _SuffixInitStub:
+            def make_initial_suffix(self, *, tokenizer: object) -> str:
+                return "initialized suffix"
+
+        suffix_init = _SuffixInitStub()
+        gen = GCGGenerator(
+            models=[GCGModelConfig(name=_LLAMA_2)],
+            algorithm=GCGAlgorithmConfig(suffix_init=suffix_init),
+        )
+
+        with pytest.raises(ValueError, match="Cannot resolve suffix_init without at least one worker"):
+            gen._resolve_control_init(workers=[])
+
+    async def test_perform_async_binds_algorithm_extensions_into_mpa_factory(self, tmp_path: Path) -> None:
+        class _SamplingStub:
+            def sample_candidates(
+                self,
+                *,
+                gradient: Any,
+                control_tokens: Any,
+                batch_size: int,
+                top_k: int,
+                temperature: float,
+                allow_non_ascii: bool,
+                non_ascii_tokens: Any,
+            ) -> Any:
+                return control_tokens
+
+        class _LossStub:
+            def compute_loss(
+                self,
+                *,
+                logits: Any,
+                token_ids: Any,
+                target_slice: slice,
+                control_slice: slice,
+            ) -> Any:
+                return logits
+
+        class _FilterStub:
+            def filter_candidates(
+                self,
+                *,
+                candidate_tokens: Any,
+                tokenizer: Any,
+                current_control: str,
+            ) -> list[str]:
+                return [current_control]
+
+        sampling = _SamplingStub()
+        loss = _LossStub()
+        candidate_filter = _FilterStub()
+        gen = GCGGenerator(
+            models=[GCGModelConfig(name=_LLAMA_2)],
+            algorithm=GCGAlgorithmConfig(
+                sampling=sampling,
+                loss=loss,
+                candidate_filter=candidate_filter,
+            ),
             output=GCGOutputConfig(result_prefix=str(tmp_path / "gcg")),
         )
-        worker = _make_mock_worker_with_real_tokenizer()
-        context = GCGContext(goals=["g"], targets=["t"])
-        params = gen._to_attack_params(context=context)
-
-        attack = gen._create_attack(
-            params=params,
-            managers=_real_managers(),
-            train_goals=["g"],
-            train_targets=["t"],
-            test_goals=[],
-            test_targets=[],
-            workers=[worker],
+        context = GCGContext(
+            goals=["g"],
+            targets=["t"],
+            workers=[MagicMock()],
             test_workers=[],
-            logfile_path=str(tmp_path / "log.json"),
         )
-        assert isinstance(attack, ProgressiveMultiPromptAttack)
+        fake_attack = MagicMock()
+
+        with (
+            patch.object(gen, "_create_attack", return_value=fake_attack) as mock_create_attack,
+            patch.object(gen, "_build_logfile_path", return_value=str(tmp_path / "result.json")),
+            patch.object(gen, "_read_result", return_value=GCGResult(final_suffix="x")),
+            patch("pyrit.auxiliary_attacks.gcg.generator.asyncio.to_thread", new=AsyncMock(return_value=None)),
+        ):
+            await gen._perform_async(context=context)
+
+        managers = mock_create_attack.call_args.kwargs["managers"]
+        mpa_factory = managers["MPA"]
+        assert isinstance(mpa_factory, partial)
+        assert mpa_factory.func is generator_mod.attack_lib.GCGMultiPromptAttack
+        assert mpa_factory.keywords["sampling"] is sampling
+        assert mpa_factory.keywords["loss"] is loss
+        assert mpa_factory.keywords["candidate_filter"] is candidate_filter
 
 
 class TestReadResult:
@@ -323,34 +404,3 @@ class TestReadResult:
         result = GCGGenerator._read_result(logfile_path=str(log_path), memory_labels={})
         assert result.final_suffix == ""
         assert math.isnan(result.final_loss)
-
-
-def _make_mock_worker_with_real_tokenizer() -> MagicMock:
-    """Worker mock backed by a real GPT-2 tokenizer (the smallest workable for chat templates)."""
-    from transformers import AutoTokenizer
-
-    tokenizer = AutoTokenizer.from_pretrained("gpt2")
-    tokenizer.pad_token = tokenizer.eos_token
-    tokenizer.chat_template = (
-        "{%- for m in messages -%}"
-        "{%- if m['role'] == 'user' -%}"
-        "[INST] {{ m['content'] }} [/INST] "
-        "{%- elif m['role'] == 'assistant' -%}"
-        "{{ m['content'] }}"
-        "{%- endif -%}"
-        "{%- endfor -%}"
-    )
-    worker = MagicMock()
-    worker.model.name_or_path = "test-model"
-    worker.tokenizer = tokenizer
-    return worker
-
-
-def _real_managers() -> dict:
-    from pyrit.auxiliary_attacks.gcg.attack.gcg.gcg_attack import (
-        GCGAttackPrompt,
-        GCGMultiPromptAttack,
-        GCGPromptManager,
-    )
-
-    return {"AP": GCGAttackPrompt, "PM": GCGPromptManager, "MPA": GCGMultiPromptAttack}

@@ -4,7 +4,8 @@ import userEvent from "@testing-library/user-event";
 import { FluentProvider, webLightTheme } from "@fluentui/react-components";
 import ChatInputArea from "./ChatInputArea";
 import type { ChatInputAreaHandle } from "./ChatInputArea";
-import type { TargetCapabilitiesInfo } from "../../types";
+import { makeTarget } from "@/test-utils/targetFixtures";
+import type { TargetCapabilities } from "../../types";
 
 // Wrapper component for Fluent UI context
 const TestWrapper: React.FC<{ children: React.ReactNode }> = ({ children }) => (
@@ -12,8 +13,8 @@ const TestWrapper: React.FC<{ children: React.ReactNode }> = ({ children }) => (
 );
 
 const buildCapabilities = (
-  overrides: Partial<TargetCapabilitiesInfo> = {}
-): TargetCapabilitiesInfo => ({
+  overrides: Partial<TargetCapabilities> = {}
+): TargetCapabilities => ({
   supports_multi_turn: true,
   supports_multi_message_pieces: false,
   supports_json_schema: false,
@@ -295,7 +296,7 @@ describe("ChatInputArea", () => {
       <TestWrapper>
         <ChatInputArea
           {...defaultProps}
-          activeTarget={{ target_registry_name: "t", target_type: "T", endpoint: "e", model_name: "m" }}
+          activeTarget={makeTarget({ target_registry_name: "t", target_type: "T", endpoint: "e", model_name: "m" })}
         />
       </TestWrapper>
     );
@@ -395,11 +396,11 @@ describe("ChatInputArea", () => {
       <TestWrapper>
         <ChatInputArea
           {...defaultProps}
-          activeTarget={{
+          activeTarget={makeTarget({
             target_registry_name: "test",
             target_type: "TextTarget",
             capabilities: buildCapabilities({ supports_multi_turn: false }),
-          }}
+          })}
         />
       </TestWrapper>
     );
@@ -416,11 +417,11 @@ describe("ChatInputArea", () => {
       <TestWrapper>
         <ChatInputArea
           {...defaultProps}
-          activeTarget={{
+          activeTarget={makeTarget({
             target_registry_name: "test",
             target_type: "OpenAIChatTarget",
             capabilities: buildCapabilities({ supports_multi_turn: true }),
-          }}
+          })}
         />
       </TestWrapper>
     );
@@ -495,6 +496,37 @@ describe("ChatInputArea", () => {
 
     // Send button should be enabled since there's an attachment
     expect(screen.getByRole("button", { name: /send message/i })).toBeEnabled();
+  });
+
+  it("should render attachment chip without size label when size is undefined", async () => {
+    // Regression guard for the media-chip bug: when an attachment forwarded
+    // via "Copy to input box in a new conversation" has no known size (e.g.
+    // its url is a /api/media?path=... reference), the chip must not print a
+    // bogus "(... B)" derived from the URL string length.
+    const ref = React.createRef<ChatInputAreaHandle>();
+
+    render(
+      <TestWrapper>
+        <ChatInputArea ref={ref} {...defaultProps} />
+      </TestWrapper>
+    );
+
+    React.act(() => {
+      ref.current?.addAttachment({
+        type: "image",
+        name: "forwarded.png",
+        url: "/api/media?path=%2Fdbdata%2Fprompt-memory-entries%2Fimages%2Fimg.png",
+        mimeType: "image/png",
+        // no size
+      });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText(/forwarded\.png/)).toBeInTheDocument();
+    });
+
+    // No "(NNN B)" / "(N.N KB)" / "(N.N MB)" label should be rendered.
+    expect(screen.queryByText(/\(\s*\d+(?:\.\d+)?\s*[KM]?B\s*\)/)).toBeNull();
   });
 
   it("should show single-turn banner when singleTurnLimitReached is true", () => {
@@ -573,7 +605,7 @@ describe("ChatInputArea", () => {
       <TestWrapper>
         <ChatInputArea
           {...defaultProps}
-          activeTarget={{ target_registry_name: "t", target_type: "T", endpoint: "e", model_name: "m" }}
+          activeTarget={makeTarget({ target_registry_name: "t", target_type: "T", endpoint: "e", model_name: "m" })}
           mediaConversions={[{ pieceType: "image", convertedValue: "/tmp/converted.png", convertedDataType: "image_path" }]}
         />
       </TestWrapper>
@@ -601,7 +633,7 @@ describe("ChatInputArea", () => {
       <TestWrapper>
         <ChatInputArea
           {...defaultProps}
-          activeTarget={{ target_registry_name: "t", target_type: "T", endpoint: "e", model_name: "m" }}
+          activeTarget={makeTarget({ target_registry_name: "t", target_type: "T", endpoint: "e", model_name: "m" })}
           mediaConversions={[{ pieceType: "image", convertedValue: "/tmp/converted.png", convertedDataType: "image_path" }]}
           onClearMediaConversion={onClearMediaConversion}
         />
@@ -629,7 +661,7 @@ describe("ChatInputArea", () => {
       <TestWrapper>
         <ChatInputArea
           {...defaultProps}
-          activeTarget={{ target_registry_name: "t", target_type: "T", endpoint: "e", model_name: "m" }}
+          activeTarget={makeTarget({ target_registry_name: "t", target_type: "T", endpoint: "e", model_name: "m" })}
           convertedValue="aGVsbG8="
           originalValue="hello"
           onConvertedValueChange={onConvertedValueChange}
@@ -663,7 +695,7 @@ describe("ChatInputArea", () => {
         <ChatInputArea
           {...defaultProps}
           onSend={onSend}
-          activeTarget={{ target_registry_name: "t", target_type: "T", endpoint: "e", model_name: "m" }}
+          activeTarget={makeTarget({ target_registry_name: "t", target_type: "T", endpoint: "e", model_name: "m" })}
           convertedValue="convertedHello"
           originalValue="hello"
           onClearConversion={onClearConversion}
@@ -684,7 +716,7 @@ describe("ChatInputArea", () => {
       <TestWrapper>
         <ChatInputArea
           {...defaultProps}
-          activeTarget={{ target_registry_name: "t", target_type: "T", endpoint: "e", model_name: "m" }}
+          activeTarget={makeTarget({ target_registry_name: "t", target_type: "T", endpoint: "e", model_name: "m" })}
           convertedFileChip={{
             name: "result.pdf",
             url: "/api/media?path=%2Ftmp%2Fresult.pdf",
@@ -710,7 +742,7 @@ describe("ChatInputArea", () => {
       <TestWrapper>
         <ChatInputArea
           {...defaultProps}
-          activeTarget={{ target_registry_name: "t", target_type: "T", endpoint: "e", model_name: "m" }}
+          activeTarget={makeTarget({ target_registry_name: "t", target_type: "T", endpoint: "e", model_name: "m" })}
           convertedFileChip={{
             name: "result.pdf",
             url: "/api/media?path=%2Ftmp%2Fresult.pdf",
@@ -730,7 +762,7 @@ describe("ChatInputArea", () => {
       <TestWrapper>
         <ChatInputArea
           {...defaultProps}
-          activeTarget={{ target_registry_name: "t", target_type: "T", endpoint: "e", model_name: "m" }}
+          activeTarget={makeTarget({ target_registry_name: "t", target_type: "T", endpoint: "e", model_name: "m" })}
           convertedFileChip={{
             name: "result.png",
             url: "/api/media?path=%2Ftmp%2Fresult.png",
@@ -754,7 +786,7 @@ describe("ChatInputArea", () => {
       <TestWrapper>
         <ChatInputArea
           {...defaultProps}
-          activeTarget={{ target_registry_name: "t", target_type: "T", endpoint: "e", model_name: "m" }}
+          activeTarget={makeTarget({ target_registry_name: "t", target_type: "T", endpoint: "e", model_name: "m" })}
           convertedFileChip={{
             name: "speech.wav",
             url: "/api/media?path=%2Ftmp%2Fspeech.wav",
@@ -777,7 +809,7 @@ describe("ChatInputArea", () => {
       <TestWrapper>
         <ChatInputArea
           {...defaultProps}
-          activeTarget={{ target_registry_name: "t", target_type: "T", endpoint: "e", model_name: "m" }}
+          activeTarget={makeTarget({ target_registry_name: "t", target_type: "T", endpoint: "e", model_name: "m" })}
           convertedFileChip={{
             name: "clip.mp4",
             url: "/api/media?path=%2Ftmp%2Fclip.mp4",
@@ -798,7 +830,7 @@ describe("ChatInputArea", () => {
       <TestWrapper>
         <ChatInputArea
           {...defaultProps}
-          activeTarget={{ target_registry_name: "t", target_type: "T", endpoint: "e", model_name: "m" }}
+          activeTarget={makeTarget({ target_registry_name: "t", target_type: "T", endpoint: "e", model_name: "m" })}
           convertedFileChip={{
             name: "result.pdf",
             url: "/api/media?path=%2Ftmp%2Fresult.pdf",
@@ -824,11 +856,11 @@ describe("ChatInputArea", () => {
       <TestWrapper>
         <ChatInputArea
           {...defaultProps}
-          activeTarget={{
+          activeTarget={makeTarget({
             target_registry_name: "t",
             target_type: "TextTarget",
             capabilities: buildCapabilities({ supported_input_modalities: ["text"] }),
-          }}
+          })}
         />
       </TestWrapper>
     );
@@ -850,11 +882,11 @@ describe("ChatInputArea", () => {
       <TestWrapper>
         <ChatInputArea
           {...defaultProps}
-          activeTarget={{
+          activeTarget={makeTarget({
             target_registry_name: "t",
             target_type: "OpenAIChatTarget",
             capabilities: buildCapabilities({ supported_input_modalities: ["text", "image_path"] }),
-          }}
+          })}
         />
       </TestWrapper>
     );
@@ -895,11 +927,11 @@ describe("ChatInputArea", () => {
       <TestWrapper>
         <ChatInputArea
           {...defaultProps}
-          activeTarget={{
+          activeTarget={makeTarget({
             target_registry_name: "t",
             target_type: "OpenAIChatTarget",
             capabilities: buildCapabilities({ supported_input_modalities: ["text", "image_path"] }),
-          }}
+          })}
         />
       </TestWrapper>
     );
@@ -921,11 +953,11 @@ describe("ChatInputArea", () => {
       <TestWrapper>
         <ChatInputArea
           {...defaultProps}
-          activeTarget={{
+          activeTarget={makeTarget({
             target_registry_name: "t",
             target_type: "TextTarget",
             capabilities: buildCapabilities({ supported_input_modalities: ["text"] }),
-          }}
+          })}
         />
       </TestWrapper>
     );
@@ -952,11 +984,11 @@ describe("ChatInputArea", () => {
         <ChatInputArea
           {...defaultProps}
           onSend={onSend}
-          activeTarget={{
+          activeTarget={makeTarget({
             target_registry_name: "t",
             target_type: "TextTarget",
             capabilities: buildCapabilities({ supported_input_modalities: ["text"] }),
-          }}
+          })}
         />
       </TestWrapper>
     );
@@ -980,11 +1012,11 @@ describe("ChatInputArea", () => {
       <TestWrapper>
         <ChatInputArea
           {...defaultProps}
-          activeTarget={{
+          activeTarget={makeTarget({
             target_registry_name: "t",
             target_type: "TextTarget",
             capabilities: buildCapabilities({ supported_input_modalities: ["text"] }),
-          }}
+          })}
         />
       </TestWrapper>
     );
@@ -1006,11 +1038,11 @@ describe("ChatInputArea", () => {
       <TestWrapper>
         <ChatInputArea
           {...defaultProps}
-          activeTarget={{
+          activeTarget={makeTarget({
             target_registry_name: "t",
             target_type: "TextTarget",
             capabilities: buildCapabilities({ supported_input_modalities: ["text"] }),
-          }}
+          })}
           converterOutputDataTypes={["image_path"]}
         />
       </TestWrapper>
@@ -1029,11 +1061,11 @@ describe("ChatInputArea", () => {
       <TestWrapper>
         <ChatInputArea
           {...defaultProps}
-          activeTarget={{
+          activeTarget={makeTarget({
             target_registry_name: "t",
             target_type: "OpenAIChatTarget",
             capabilities: buildCapabilities({ supported_input_modalities: ["text", "image_path"] }),
-          }}
+          })}
           converterOutputDataTypes={["image_path"]}
         />
       </TestWrapper>
@@ -1049,11 +1081,11 @@ describe("ChatInputArea", () => {
       <TestWrapper>
         <ChatInputArea
           {...defaultProps}
-          activeTarget={{
+          activeTarget={makeTarget({
             target_registry_name: "t",
             target_type: "TextTarget",
             capabilities: buildCapabilities({ supported_input_modalities: ["text"] }),
-          }}
+          })}
           converterOutputDataTypes={["audio_path"]}
         />
       </TestWrapper>

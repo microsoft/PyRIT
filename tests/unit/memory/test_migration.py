@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import ast
 import os
 import tempfile
 import uuid
@@ -15,7 +16,39 @@ from sqlalchemy import create_engine, inspect, text
 
 from pyrit.memory.alembic.versions import ab8f2c1a9d07_pre_alembic_release_schema
 from pyrit.memory.alembic.versions.ab8f2c1a9d07_pre_alembic_release_schema import _CustomUUID
-from pyrit.memory.migration import check_schema_migrations, generate_schema_migration, run_schema_migrations
+from pyrit.memory.migration import (
+    ALEMBIC_OUTPUT_PREFIX,
+    _PrefixedTextStream,
+    check_schema_migrations,
+    generate_schema_migration,
+    run_schema_migrations,
+)
+
+
+def test_prefixed_text_stream_prefixes_each_line():
+    """_PrefixedTextStream prepends the prefix to the start of each line, across separate writes."""
+    import io
+
+    buffer = io.StringIO()
+    stream = _PrefixedTextStream(stream=buffer, prefix="[tag] ")
+
+    # Alembic writes the message and the trailing newline as separate calls.
+    assert stream.write("first line") == len("first line")
+    assert stream.write("\n") == 1
+    stream.write("second\nthird\n")
+
+    assert buffer.getvalue() == "[tag] first line\n[tag] second\n[tag] third\n"
+
+
+def test_prefixed_text_stream_delegates_attributes():
+    """_PrefixedTextStream delegates unknown attributes (e.g. encoding) to the wrapped stream."""
+    import io
+
+    buffer = io.StringIO()
+    stream = _PrefixedTextStream(stream=buffer, prefix="[tag] ")
+
+    assert stream.getvalue() == ""
+    stream.flush()  # delegated, should not raise
 
 
 def test_alembic_env_raises_when_no_connection():
@@ -220,9 +253,10 @@ def _seed_pre_migration_scenario(connection, *, scenario_id, manifest_json):
         text(
             'INSERT INTO "ScenarioResultEntries" '
             "(id, scenario_name, scenario_description, scenario_version, pyrit_version, "
-            "objective_target_identifier, scenario_run_state, attack_results_json, "
+            "objective_target_identifier, scenario_init_data, scenario_run_state, attack_results_json, "
             "number_tries, completion_time, timestamp) "
-            "VALUES (:id, :name, '', 1, '0.14.0.dev0', '{}', 'COMPLETED', :manifest, 0, '2026-05-18', '2026-05-18')"
+            "VALUES (:id, :name, '', 1, '0.14.0.dev0', '{}', '{}', 'COMPLETED', :manifest, 0, "
+            "'2026-05-18', '2026-05-18')"
         ),
         {"id": scenario_id, "name": "Backfill Test", "manifest": manifest_json},
     )
@@ -236,6 +270,23 @@ def _seed_pre_migration_attack_result(connection, *, attack_id, conversation_id)
             "(id, conversation_id, objective, attack_identifier, objective_sha256, executed_turns, "
             "execution_time_ms, outcome, timestamp) "
             "VALUES (:id, :conv, 'obj', '{}', 'sha', 1, 0, 'success', '2026-05-18')"
+        ),
+        {"id": attack_id, "conv": conversation_id},
+    )
+
+
+def _seed_post_drop_attack_result(connection, *, attack_id, conversation_id):
+    """Insert an AttackResultEntry row at the Conversations pre-migration revision.
+
+    By this revision the deprecated ``AttackResultEntries.attack_identifier`` column
+    has already been dropped, so it is omitted from the insert.
+    """
+    connection.execute(
+        text(
+            'INSERT INTO "AttackResultEntries" '
+            "(id, conversation_id, objective, objective_sha256, executed_turns, "
+            "execution_time_ms, outcome, timestamp) "
+            "VALUES (:id, :conv, 'obj', 'sha', 1, 0, 'success', '2026-05-18')"
         ),
         {"id": attack_id, "conv": conversation_id},
     )
@@ -369,9 +420,9 @@ def test_backfill_is_idempotent_and_does_not_clobber_existing_linkage():
                     text(
                         'INSERT INTO "ScenarioResultEntries" '
                         "(id, scenario_name, scenario_description, scenario_version, pyrit_version, "
-                        "objective_target_identifier, scenario_run_state, attack_results_json, "
+                        "objective_target_identifier, scenario_init_data, scenario_run_state, attack_results_json, "
                         "number_tries, completion_time, timestamp) "
-                        "VALUES (:id, 'Other', '', 1, '0.14.0.dev0', '{}', 'COMPLETED', :manifest, 0, "
+                        "VALUES (:id, 'Other', '', 1, '0.14.0.dev0', '{}', '{}', 'COMPLETED', :manifest, 0, "
                         "'2026-05-18', '2026-05-18')"
                     ),
                     {"id": str(uuid.uuid4()), "manifest": json.dumps({"x": ["conv-shared"]})},
@@ -519,3 +570,326 @@ def test_generate_schema_migration_with_diffs_creates_revision():
                 mock_revision.assert_called_once()
         finally:
             engine.dispose()
+
+
+def test_check_schema_migrations_silent_suppresses_output(capsys):
+    """check_schema_migrations with silent=True must not print the Alembic message."""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        db_path = os.path.join(temp_dir, "check-silent-test.db")
+        engine = create_engine(f"sqlite:///{db_path}")
+        try:
+            run_schema_migrations(engine=engine, silent=True)
+            capsys.readouterr()  # discard any output from setup
+
+            check_schema_migrations(engine=engine, silent=True)
+
+            captured = capsys.readouterr()
+            assert captured.out == ""
+        finally:
+            engine.dispose()
+
+
+def test_check_schema_migrations_not_silent_prints_output(capsys):
+    """check_schema_migrations without silent prints the Alembic message tagged as Alembic output."""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        db_path = os.path.join(temp_dir, "check-loud-test.db")
+        engine = create_engine(f"sqlite:///{db_path}")
+        try:
+            run_schema_migrations(engine=engine, silent=True)
+            capsys.readouterr()  # discard any output from setup
+
+            check_schema_migrations(engine=engine, silent=False)
+
+            captured = capsys.readouterr()
+            assert f"{ALEMBIC_OUTPUT_PREFIX}No new upgrade operations detected." in captured.out
+        finally:
+            engine.dispose()
+
+
+def test_memory_interface_check_schema_migration_calls_check():
+    """_check_schema_migration on MemoryInterface calls check_schema_migrations without running upgrade."""
+    from unittest.mock import MagicMock, patch
+
+    from pyrit.memory.memory_interface import MemoryInterface
+
+    obj = MagicMock(spec=MemoryInterface)
+    obj.engine = MagicMock()
+
+    with patch("pyrit.memory.migration.check_schema_migrations") as mock_check:
+        MemoryInterface._check_schema_migration(obj, silent=True)
+        mock_check.assert_called_once_with(engine=obj.engine, silent=True)
+
+
+def test_memory_interface_check_schema_migration_raises_on_mismatch():
+    """_check_schema_migration raises AutogenerateDiffsDetected when schema mismatches (pure primitive)."""
+    from unittest.mock import MagicMock, patch
+
+    from alembic.util.exc import AutogenerateDiffsDetected
+
+    from pyrit.memory.memory_interface import MemoryInterface
+
+    obj = MagicMock(spec=MemoryInterface)
+    obj.engine = MagicMock()
+
+    with patch(
+        "pyrit.memory.migration.check_schema_migrations",
+        side_effect=AutogenerateDiffsDetected(
+            "diffs detected",
+            revision_context=MagicMock(),
+            diffs=[],
+        ),
+    ):
+        with pytest.raises(AutogenerateDiffsDetected):
+            MemoryInterface._check_schema_migration(obj, silent=True)
+
+
+def test_memory_interface_check_schema_migration_raises_without_engine():
+    """_check_schema_migration raises RuntimeError when engine is None."""
+    from unittest.mock import MagicMock
+
+    from pyrit.memory.memory_interface import MemoryInterface
+
+    obj = MagicMock(spec=MemoryInterface)
+    obj.engine = None
+
+    with pytest.raises(RuntimeError, match="Engine must be initialized"):
+        MemoryInterface._check_schema_migration(obj, silent=False)
+
+
+def test_memory_migrations_head_command(capsys):
+    """The 'head' subcommand of memory_migrations.py prints the current Alembic head revision."""
+    import sys
+
+    # Import the module's main function
+    sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "build_scripts"))
+    from memory_migrations import _cmd_head
+
+    _cmd_head()
+    captured = capsys.readouterr()
+    revision = captured.out.strip()
+    # Should be a non-empty hex-ish string
+    assert len(revision) > 0
+    assert all(c in "0123456789abcdef" for c in revision)
+
+
+# =============================================================================
+# Backfill tests for the Conversations table migration (b2f4c6a8d1e3)
+# =============================================================================
+
+
+_CONVERSATIONS_REV = "b2f4c6a8d1e3"
+_CONVERSATIONS_PREV_REV = "f1a2b3c4d5e6"
+
+_TARGET_A = '{"name": "target-a"}'
+_TARGET_B = '{"name": "target-b"}'
+
+
+def _seed_pre_conversations_prompt_piece(connection, *, piece_id, conversation_id, sequence, target_identifier):
+    """Insert a PromptMemoryEntry row at the pre-Conversations revision."""
+    connection.execute(
+        text(
+            'INSERT INTO "PromptMemoryEntries" '
+            "(id, role, conversation_id, sequence, timestamp, labels, prompt_metadata, "
+            "prompt_target_identifier, attack_identifier, original_value_data_type, "
+            "original_value, converted_value_data_type, original_prompt_id) "
+            "VALUES (:id, 'user', :conv, :seq, '2026-05-20', '{}', '{}', "
+            ":target, '{}', 'text', 'hello', 'text', :id)"
+        ),
+        {"id": piece_id, "conv": conversation_id, "seq": sequence, "target": target_identifier},
+    )
+
+
+def test_conversations_migration_script_metadata():
+    """The Conversations migration declares the expected revision chain."""
+    from pyrit.memory.alembic.versions import b2f4c6a8d1e3_add_conversations_table as mig
+
+    assert mig.revision == _CONVERSATIONS_REV
+    assert mig.down_revision == _CONVERSATIONS_PREV_REV
+    assert mig.branch_labels is None
+    assert mig.depends_on is None
+
+
+def test_conversations_backfill_populates_targets_and_handles_conflicts(caplog):
+    """Upgrading to the Conversations revision backfills one row per conversation_id:
+    the target comes from PromptMemoryEntries (first non-null wins on conflict),
+    attack-only conversations get a null placeholder, and the per-row identifier
+    columns are dropped."""
+    import logging
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        db_path = os.path.join(temp_dir, "conversations-backfill.db")
+        engine = create_engine(f"sqlite:///{db_path}")
+        try:
+            with engine.begin() as connection:
+                config = _config_for(connection)
+                command.upgrade(config, _CONVERSATIONS_PREV_REV)
+
+                # A conversation whose two pieces share one target.
+                _seed_pre_conversations_prompt_piece(
+                    connection,
+                    piece_id=str(uuid.uuid4()),
+                    conversation_id="conv-keep",
+                    sequence=0,
+                    target_identifier=_TARGET_A,
+                )
+                _seed_pre_conversations_prompt_piece(
+                    connection,
+                    piece_id=str(uuid.uuid4()),
+                    conversation_id="conv-keep",
+                    sequence=1,
+                    target_identifier=_TARGET_A,
+                )
+                # A conversation with two distinct non-null targets -> first wins + warning.
+                _seed_pre_conversations_prompt_piece(
+                    connection,
+                    piece_id=str(uuid.uuid4()),
+                    conversation_id="conv-conflict",
+                    sequence=0,
+                    target_identifier=_TARGET_A,
+                )
+                _seed_pre_conversations_prompt_piece(
+                    connection,
+                    piece_id=str(uuid.uuid4()),
+                    conversation_id="conv-conflict",
+                    sequence=1,
+                    target_identifier=_TARGET_B,
+                )
+                # A conversation referenced only by an AttackResultEntry (no prompt rows).
+                _seed_post_drop_attack_result(
+                    connection, attack_id=str(uuid.uuid4()), conversation_id="conv-attack-only"
+                )
+
+                with caplog.at_level(logging.WARNING):
+                    command.upgrade(config, _CONVERSATIONS_REV)
+
+                rows = connection.execute(
+                    text('SELECT conversation_id, target_identifier FROM "Conversations" ORDER BY conversation_id')
+                ).fetchall()
+                prompt_cols = {c["name"] for c in inspect(connection).get_columns("PromptMemoryEntries")}
+
+            targets_by_conv = {r[0]: r[1] for r in rows}
+
+            assert set(targets_by_conv) == {"conv-keep", "conv-conflict", "conv-attack-only"}
+            assert targets_by_conv["conv-keep"] == _TARGET_A
+            assert targets_by_conv["conv-conflict"] == _TARGET_A  # first non-null wins
+            assert targets_by_conv["conv-attack-only"] is None  # placeholder for attack-only conversation
+
+            # The conflicting targets produced a warning.
+            assert any("multiple distinct" in r.message for r in caplog.records)
+
+            # The per-row identifier columns are gone.
+            assert "prompt_target_identifier" not in prompt_cols
+            assert "attack_identifier" not in prompt_cols
+        finally:
+            engine.dispose()
+
+
+def test_conversations_migration_downgrade_restores_columns():
+    """Downgrading drops the Conversations table and re-adds the per-row identifier columns."""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        db_path = os.path.join(temp_dir, "conversations-downgrade.db")
+        engine = create_engine(f"sqlite:///{db_path}")
+        try:
+            with engine.begin() as connection:
+                config = _config_for(connection)
+                command.upgrade(config, _CONVERSATIONS_REV)
+
+                assert "Conversations" in set(inspect(connection).get_table_names())
+                cols_up = {c["name"] for c in inspect(connection).get_columns("PromptMemoryEntries")}
+                assert "prompt_target_identifier" not in cols_up
+
+                command.downgrade(config, _CONVERSATIONS_PREV_REV)
+
+                assert "Conversations" not in set(inspect(connection).get_table_names())
+                cols_down = {c["name"] for c in inspect(connection).get_columns("PromptMemoryEntries")}
+                assert "prompt_target_identifier" in cols_down
+                assert "attack_identifier" in cols_down
+        finally:
+            engine.dispose()
+
+
+_STRING_TYPES_REQUIRING_LENGTH = {"String", "VARCHAR", "NVARCHAR", "Unicode"}
+
+
+def _is_truthy_primary_key(*, call: ast.Call) -> bool:
+    for keyword in call.keywords:
+        if keyword.arg == "primary_key" and isinstance(keyword.value, ast.Constant) and keyword.value.value is True:
+            return True
+    return False
+
+
+def _is_unbounded_string_type(*, node: ast.AST) -> bool:
+    if not isinstance(node, ast.Call):
+        return False
+
+    func_name = None
+    if isinstance(node.func, ast.Attribute):
+        func_name = node.func.attr
+    elif isinstance(node.func, ast.Name):
+        func_name = node.func.id
+
+    if func_name not in _STRING_TYPES_REQUIRING_LENGTH:
+        return False
+
+    if node.args:
+        return False
+
+    for keyword in node.keywords:
+        if keyword.arg == "length":
+            return isinstance(keyword.value, ast.Constant) and keyword.value.value is None
+
+    return True
+
+
+def _find_unbounded_string_pk_columns(*, migration_path: Path) -> list[str]:
+    tree = ast.parse(migration_path.read_text(encoding="utf-8"), filename=str(migration_path))
+    violations: list[str] = []
+
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+
+        func_name = None
+        if isinstance(node.func, ast.Attribute):
+            func_name = node.func.attr
+        elif isinstance(node.func, ast.Name):
+            func_name = node.func.id
+
+        if func_name != "Column" or not _is_truthy_primary_key(call=node):
+            continue
+
+        column_name = "<unknown>"
+        if node.args and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str):
+            column_name = node.args[0].value
+
+        type_node = node.args[1] if len(node.args) >= 2 else None
+        if type_node is None:
+            for keyword in node.keywords:
+                if keyword.arg in {"type_", "type"}:
+                    type_node = keyword.value
+                    break
+
+        if type_node is not None and _is_unbounded_string_type(node=type_node):
+            violations.append(f"{migration_path.name}:{node.lineno} column={column_name}")
+
+    return violations
+
+
+def test_migrations_do_not_use_unbounded_string_primary_keys() -> None:
+    """
+    Guard against MSSQL-incompatible primary keys.
+
+    ``sa.String()`` without length can map to ``VARCHAR(MAX)/NVARCHAR(MAX)``,
+    which SQL Server rejects for key/index columns.
+    """
+    versions_dir = Path(__file__).resolve().parent.parent.parent.parent / "pyrit" / "memory" / "alembic" / "versions"
+
+    violations: list[str] = []
+    for migration_path in sorted(versions_dir.glob("*.py")):
+        if migration_path.name == "__init__.py":
+            continue
+        violations.extend(_find_unbounded_string_pk_columns(migration_path=migration_path))
+
+    assert not violations, "Found unbounded string primary keys in migrations (SQL Server incompatible):\n" + "\n".join(
+        violations
+    )

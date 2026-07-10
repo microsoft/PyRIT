@@ -175,7 +175,7 @@ class TestChatMessageNormalizerNormalizeAsync:
 
     async def test_unsupported_data_type_raises(self):
         """Test that unsupported data type raises ValueError at MessagePiece creation."""
-        with pytest.raises(ValueError, match="is not a valid data type"):
+        with pytest.raises(ValueError, match="Input should be"):
             MessagePiece(
                 role="user",
                 original_value="some data",

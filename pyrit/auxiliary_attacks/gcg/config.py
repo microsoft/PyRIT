@@ -25,6 +25,13 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from pyrit.auxiliary_attacks.gcg.extension_protocols import (
+        CandidateFilter,
+        LossFunction,
+        SamplingStrategy,
+        SuffixInitializer,
+    )
+
 _DEFAULT_CONTROL_INIT: str = "! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! !"
 
 
@@ -71,7 +78,7 @@ class GCGDataConfig:
     Used as a typed bundle for AML transport (a job ships its data config as
     a separate JSON file alongside the strategy ``GCGConfig``). Library
     callers loading goals/targets from a CSV can construct one and pass it to
-    :func:`pyrit.auxiliary_attacks.gcg.data.load_goals_and_targets`.
+    ``pyrit.auxiliary_attacks.gcg.data.load_goals_and_targets``.
 
     Attributes:
         train_data (str): URL or filesystem path to the training-data CSV. Empty
@@ -100,7 +107,7 @@ class GCGDataConfig:
 
     @classmethod
     def from_json(cls, payload: str) -> GCGDataConfig:
-        """Deserialize a config previously produced by :meth:`to_json`."""
+        """Deserialize a config previously produced by ``to_json``."""
         try:
             data = json.loads(payload)
         except json.JSONDecodeError as e:
@@ -131,8 +138,8 @@ class GCGAlgorithmConfig:
             Defaults to 512.
         topk (int): Top-k gradient positions considered for substitution.
             Defaults to 256.
-        temp (int): Sampling temperature placeholder; the current sampling
-            implementation samples uniformly from the top-k. Defaults to 1.
+        temp (float): Sampling temperature placeholder; the current sampling
+            implementation samples uniformly from the top-k. Defaults to 1.0.
         target_weight (float): Weight on the target-string cross-entropy loss.
             Defaults to 1.0.
         control_weight (float): Weight on the control-string cross-entropy loss.
@@ -147,13 +154,25 @@ class GCGAlgorithmConfig:
         random_seed (int): Seed for ``torch``/``numpy``/``random``. Defaults to 42.
         control_init (str): Initial suffix string the optimization starts from.
             Defaults to twenty space-separated ``!`` tokens.
+        sampling (SamplingStrategy | None): Optional strategy object that
+            samples candidate suffix token sequences from the aggregated
+            gradient. ``None`` uses the built-in default implementation.
+        loss (LossFunction | None): Optional loss object used to score each
+            candidate suffix. ``None`` uses the built-in weighted
+            cross-entropy default that preserves legacy behavior.
+        candidate_filter (CandidateFilter | None): Optional candidate-filter
+            object that decodes/prunes sampled candidate token sequences.
+            ``None`` uses the built-in length-preserving filter.
+        suffix_init (SuffixInitializer | None): Optional initializer object
+            that produces the initial suffix string at attack construction
+            time. ``None`` uses ``control_init`` verbatim.
     """
 
     n_steps: int = 500
     test_steps: int = 50
     batch_size: int = 512
     topk: int = 256
-    temp: int = 1
+    temp: float = 1.0
     target_weight: float = 1.0
     control_weight: float = 0.0
     learning_rate: float = 0.01
@@ -161,6 +180,10 @@ class GCGAlgorithmConfig:
     filter_cand: bool = True
     random_seed: int = 42
     control_init: str = _DEFAULT_CONTROL_INIT
+    sampling: SamplingStrategy | None = None
+    loss: LossFunction | None = None
+    candidate_filter: CandidateFilter | None = None
+    suffix_init: SuffixInitializer | None = None
 
     def __post_init__(self) -> None:
         if self.n_steps <= 0:
@@ -183,6 +206,27 @@ class GCGAlgorithmConfig:
             )
         if not self.control_init:
             raise ValueError("GCGAlgorithmConfig.control_init must be a non-empty string.")
+        self._validate_extensions()
+
+    def _validate_extensions(self) -> None:
+        from pyrit.auxiliary_attacks.gcg.extension_protocols import (
+            CandidateFilter,
+            LossFunction,
+            SamplingStrategy,
+            SuffixInitializer,
+        )
+
+        checks = (
+            ("sampling", self.sampling, SamplingStrategy),
+            ("loss", self.loss, LossFunction),
+            ("candidate_filter", self.candidate_filter, CandidateFilter),
+            ("suffix_init", self.suffix_init, SuffixInitializer),
+        )
+        for field_name, value, protocol in checks:
+            if value is not None and not isinstance(value, protocol):
+                raise ValueError(
+                    f"GCGAlgorithmConfig.{field_name} must satisfy {protocol.__name__}, got {type(value)!r}."
+                )
 
 
 @dataclass
@@ -240,10 +284,10 @@ class GCGOutputConfig:
 class GCGConfig:
     """Top-level strategy configuration for one GCG attack run.
 
-    Bundles everything :class:`pyrit.auxiliary_attacks.gcg.GCGGenerator`'s
+    Bundles everything ``pyrit.auxiliary_attacks.gcg.GCGGenerator``'s
     constructor needs. Per-execution data (goals, targets) is **not** here —
     those flow through ``GCGGenerator.execute_async``, and for AML transport
-    they ride alongside this object as a separate :class:`GCGDataConfig` JSON.
+    they ride alongside this object as a separate ``GCGDataConfig`` JSON.
 
     Attributes:
         models (list[GCGModelConfig]): Training models the attack optimizes
@@ -287,11 +331,11 @@ class GCGConfig:
 
     @classmethod
     def from_json(cls, payload: str) -> GCGConfig:
-        """Deserialize a config previously produced by :meth:`to_json`.
+        """Deserialize a config previously produced by ``to_json``.
 
         Args:
             payload (str): JSON document matching the shape produced by
-                :meth:`to_json`.
+                ``to_json``.
 
         Returns:
             GCGConfig: A new ``GCGConfig`` reconstructed from ``payload``.
@@ -308,7 +352,7 @@ class GCGConfig:
 
     @classmethod
     def from_json_file(cls, path: str | Path) -> GCGConfig:
-        """Load a config from a JSON file produced by :meth:`to_json_file`.
+        """Load a config from a JSON file produced by ``to_json_file``.
 
         Args:
             path (str | Path): Filesystem path to a JSON config file.

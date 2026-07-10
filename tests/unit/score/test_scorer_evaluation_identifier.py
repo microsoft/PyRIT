@@ -9,16 +9,20 @@ Covers ``ScorerEvaluationIdentifier`` ClassVar values and eval-hash delegation.
 
 import pytest
 
-from pyrit.identifiers import ComponentIdentifier, Identifiable, compute_eval_hash
-from pyrit.identifiers.evaluation_identifier import ScorerEvaluationIdentifier
+from pyrit.models import ComponentIdentifier, Identifiable, ScorerEvaluationIdentifier, compute_eval_hash
 
 
 class TestScorerEvaluationIdentifierConstants:
     """Tests for the ClassVar constants on ScorerEvaluationIdentifier."""
 
     def test_child_eval_rules_keys(self):
-        """Test that CHILD_EVAL_RULES contains the expected scorer target names."""
-        assert set(ScorerEvaluationIdentifier.CHILD_EVAL_RULES.keys()) == {"prompt_target"}
+        """Test that CHILD_EVAL_RULES contains the expected scorer target names.
+
+        ``prompt_target`` carries the scorer's inner target projection. ``targets``
+        is the global wrapper-passthrough rule derived from
+        ``TargetIdentifier.targets`` (it only fires on nested multi-targets).
+        """
+        assert set(ScorerEvaluationIdentifier.CHILD_EVAL_RULES.keys()) == {"prompt_target", "targets"}
 
     def test_prompt_target_rule(self):
         """Test that prompt_target has the expected included params and fallbacks."""

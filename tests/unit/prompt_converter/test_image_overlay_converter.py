@@ -215,13 +215,13 @@ async def test_convert_async_default_settings():
 
     with patch("pyrit.prompt_converter.image_overlay_converter.data_serializer_factory") as mock_factory:
         mock_base_serializer = AsyncMock()
-        mock_base_serializer.read_data.return_value = base_bytes
+        mock_base_serializer.read_data_async.return_value = base_bytes
 
         mock_overlay_serializer = AsyncMock()
-        mock_overlay_serializer.read_data.return_value = overlay_bytes
+        mock_overlay_serializer.read_data_async.return_value = overlay_bytes
 
         mock_output_serializer = AsyncMock()
-        mock_output_serializer.save_b64_image = AsyncMock()
+        mock_output_serializer.save_b64_image_async = AsyncMock()
         mock_output_serializer.value = "result_image.png"
 
         mock_factory.side_effect = [mock_base_serializer, mock_overlay_serializer, mock_output_serializer]
@@ -230,12 +230,12 @@ async def test_convert_async_default_settings():
 
         assert result.output_text == "result_image.png"
         assert result.output_type == "image_path"
-        mock_base_serializer.read_data.assert_called_once()
-        mock_overlay_serializer.read_data.assert_called_once()
-        mock_output_serializer.save_b64_image.assert_called_once()
+        mock_base_serializer.read_data_async.assert_called_once()
+        mock_overlay_serializer.read_data_async.assert_called_once()
+        mock_output_serializer.save_b64_image_async.assert_called_once()
 
         # Verify the saved image is valid base64-encoded image data
-        saved_data = mock_output_serializer.save_b64_image.call_args.kwargs["data"]
+        saved_data = mock_output_serializer.save_b64_image_async.call_args.kwargs["data"]
         decoded = base64.b64decode(saved_data)
         img = Image.open(BytesIO(decoded))
         assert img.size == (200, 200)
@@ -253,13 +253,13 @@ async def test_convert_async_with_position_and_resize():
 
     with patch("pyrit.prompt_converter.image_overlay_converter.data_serializer_factory") as mock_factory:
         mock_base_serializer = AsyncMock()
-        mock_base_serializer.read_data.return_value = base_bytes
+        mock_base_serializer.read_data_async.return_value = base_bytes
 
         mock_overlay_serializer = AsyncMock()
-        mock_overlay_serializer.read_data.return_value = overlay_bytes
+        mock_overlay_serializer.read_data_async.return_value = overlay_bytes
 
         mock_output_serializer = AsyncMock()
-        mock_output_serializer.save_b64_image = AsyncMock()
+        mock_output_serializer.save_b64_image_async = AsyncMock()
         mock_output_serializer.value = "result.png"
 
         mock_factory.side_effect = [mock_base_serializer, mock_overlay_serializer, mock_output_serializer]
@@ -270,7 +270,7 @@ async def test_convert_async_with_position_and_resize():
         assert result.output_type == "image_path"
 
         # Verify the composited image
-        saved_data = mock_output_serializer.save_b64_image.call_args.kwargs["data"]
+        saved_data = mock_output_serializer.save_b64_image_async.call_args.kwargs["data"]
         decoded = base64.b64decode(saved_data)
         img = Image.open(BytesIO(decoded))
         assert img.size == (300, 300)
@@ -283,13 +283,13 @@ async def test_convert_async_serializer_factory_called_correctly():
 
     with patch("pyrit.prompt_converter.image_overlay_converter.data_serializer_factory") as mock_factory:
         mock_base_serializer = AsyncMock()
-        mock_base_serializer.read_data.return_value = base_bytes
+        mock_base_serializer.read_data_async.return_value = base_bytes
 
         mock_overlay_serializer = AsyncMock()
-        mock_overlay_serializer.read_data.return_value = overlay_bytes
+        mock_overlay_serializer.read_data_async.return_value = overlay_bytes
 
         mock_output_serializer = AsyncMock()
-        mock_output_serializer.save_b64_image = AsyncMock()
+        mock_output_serializer.save_b64_image_async = AsyncMock()
         mock_output_serializer.value = "out.png"
 
         mock_factory.side_effect = [mock_base_serializer, mock_overlay_serializer, mock_output_serializer]
@@ -320,13 +320,13 @@ async def test_convert_async_jpeg_base_normalizes_extension_to_jpg():
 
     with patch("pyrit.prompt_converter.image_overlay_converter.data_serializer_factory") as mock_factory:
         mock_base_serializer = AsyncMock()
-        mock_base_serializer.read_data.return_value = base_bytes
+        mock_base_serializer.read_data_async.return_value = base_bytes
 
         mock_overlay_serializer = AsyncMock()
-        mock_overlay_serializer.read_data.return_value = overlay_bytes
+        mock_overlay_serializer.read_data_async.return_value = overlay_bytes
 
         mock_output_serializer = AsyncMock()
-        mock_output_serializer.save_b64_image = AsyncMock()
+        mock_output_serializer.save_b64_image_async = AsyncMock()
         mock_output_serializer.value = "out.jpg"
 
         mock_factory.side_effect = [mock_base_serializer, mock_overlay_serializer, mock_output_serializer]

@@ -9,10 +9,10 @@ from pyrit.executor.benchmark.fairness_bias import (
     FairnessBiasBenchmark,
     FairnessBiasBenchmarkContext,
 )
-from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import (
     AttackOutcome,
     AttackResult,
+    ComponentIdentifier,
     Message,
     MessagePiece,
 )
@@ -21,7 +21,7 @@ from pyrit.prompt_target import PromptTarget
 
 def is_spacy_installed():
     try:
-        import spacy  # noqa: F401
+        import spacy  # type: ignore[ty:unresolved-import]  # noqa: F401
 
         return True
     except Exception:
@@ -256,7 +256,7 @@ class TestFairnessBiasBenchmark:
 
             with patch("pyrit.executor.benchmark.fairness_bias.CentralMemory") as mock_memory_class:
                 mock_memory_instance = MagicMock()
-                mock_memory_instance.get_conversation.return_value = mock_conversation_pieces
+                mock_memory_instance.get_conversation_messages.return_value = mock_conversation_pieces
                 mock_memory_class.get_memory_instance.return_value = mock_memory_instance
 
                 benchmark = FairnessBiasBenchmark(objective_target=mock_prompt_target)
@@ -387,7 +387,7 @@ class TestFairnessBiasBenchmarkExecuteAsync:
 
             with patch("pyrit.executor.benchmark.fairness_bias.CentralMemory") as mock_memory_class:
                 mock_memory_instance = MagicMock()
-                mock_memory_instance.get_conversation.return_value = mock_conversation_pieces
+                mock_memory_instance.get_conversation_messages.return_value = mock_conversation_pieces
                 mock_memory_class.get_memory_instance.return_value = mock_memory_instance
 
                 benchmark = FairnessBiasBenchmark(objective_target=mock_prompt_target)
@@ -416,7 +416,7 @@ class TestFairnessBiasBenchmarkExecuteAsync:
 
             with patch("pyrit.executor.benchmark.fairness_bias.CentralMemory") as mock_memory_class:
                 mock_memory_instance = MagicMock()
-                mock_memory_instance.get_conversation.return_value = mock_conversation_pieces
+                mock_memory_instance.get_conversation_messages.return_value = mock_conversation_pieces
                 mock_memory_class.get_memory_instance.return_value = mock_memory_instance
 
                 benchmark = FairnessBiasBenchmark(objective_target=mock_prompt_target)
@@ -454,7 +454,7 @@ class TestFairnessBiasBenchmarkExecuteAsync:
 
             with patch("pyrit.executor.benchmark.fairness_bias.CentralMemory") as mock_memory_class:
                 mock_memory_instance = MagicMock()
-                mock_memory_instance.get_conversation.return_value = mock_conversation_pieces
+                mock_memory_instance.get_conversation_messages.return_value = mock_conversation_pieces
                 mock_memory_class.get_memory_instance.return_value = mock_memory_instance
 
                 benchmark = FairnessBiasBenchmark(objective_target=mock_prompt_target)
@@ -508,7 +508,7 @@ class TestFairnessBiasBenchmarkIntegration:
 
             with patch("pyrit.executor.benchmark.fairness_bias.CentralMemory") as mock_memory_class:
                 mock_memory_instance = MagicMock()
-                mock_memory_instance.get_conversation.return_value = mock_conversation_pieces
+                mock_memory_instance.get_conversation_messages.return_value = mock_conversation_pieces
                 mock_memory_class.get_memory_instance.return_value = mock_memory_instance
 
                 benchmark = FairnessBiasBenchmark(objective_target=mock_prompt_target)
@@ -550,7 +550,7 @@ class TestFairnessBiasBenchmarkIntegration:
 
             with patch("pyrit.executor.benchmark.fairness_bias.CentralMemory") as mock_memory_class:
                 mock_memory_instance = MagicMock()
-                mock_memory_instance.get_conversation.return_value = mock_conversation_pieces
+                mock_memory_instance.get_conversation_messages.return_value = mock_conversation_pieces
                 mock_memory_class.get_memory_instance.return_value = mock_memory_instance
 
                 benchmark = FairnessBiasBenchmark(objective_target=mock_prompt_target)

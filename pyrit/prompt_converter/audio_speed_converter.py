@@ -9,7 +9,8 @@ import numpy as np
 from scipy.interpolate import interp1d
 from scipy.io import wavfile
 
-from pyrit.models import PromptDataType, data_serializer_factory
+from pyrit.memory import data_serializer_factory
+from pyrit.models import PromptDataType
 from pyrit.prompt_converter.prompt_converter import ConverterResult, PromptConverter
 
 logger = logging.getLogger(__name__)
@@ -116,7 +117,7 @@ class AudioSpeedConverter(PromptConverter):
             audio_serializer = data_serializer_factory(
                 category="prompt-memory-entries", data_type="audio_path", extension=self._output_format, value=prompt
             )
-            audio_bytes = await audio_serializer.read_data()
+            audio_bytes = await audio_serializer.read_data_async()
 
             sample_rate, data = wavfile.read(io.BytesIO(audio_bytes))
             resampled_data = self._resample_audio(data)
@@ -124,7 +125,7 @@ class AudioSpeedConverter(PromptConverter):
             output_bytes_io = io.BytesIO()
             wavfile.write(output_bytes_io, sample_rate, resampled_data)
 
-            await audio_serializer.save_data(data=output_bytes_io.getvalue())
+            await audio_serializer.save_data_async(data=output_bytes_io.getvalue())
             audio_serializer_file = str(audio_serializer.value)
             logger.info(
                 "Audio speed changed by factor %.2f for [%s], and the audio was saved to [%s]",

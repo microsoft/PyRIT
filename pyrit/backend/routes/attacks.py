@@ -10,7 +10,7 @@ This is the attack-centric API design.
 
 import logging
 from collections.abc import Sequence
-from typing import Literal, Optional
+from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Query, status
 
@@ -39,7 +39,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/attacks", tags=["attacks"])
 
 
-def _parse_labels(label_params: Optional[list[str]]) -> Optional[dict[str, str | Sequence[str]]]:
+def _parse_labels(label_params: list[str] | None) -> dict[str, str | Sequence[str]] | None:
     """
     Parse 'key:value' label query params into a dict grouping values by key.
 
@@ -68,14 +68,14 @@ def _parse_labels(label_params: Optional[list[str]]) -> Optional[dict[str, str |
     "",
     response_model=AttackListResponse,
 )
-async def list_attacks(
-    attack_types: Optional[list[str]] = Query(
+async def list_attacks(  # pyrit-async-suffix-exempt
+    attack_types: list[str] | None = Query(
         None,
         description="Filter by attack type names. May be specified multiple times to OR-match "
         "across types (e.g. ?attack_types=A&attack_types=B). Case-insensitive. "
         "Omit to return all attacks regardless of type.",
     ),
-    converter_types: Optional[list[str]] = Query(
+    converter_types: list[str] | None = Query(
         None,
         description="Filter by converter type names. May be specified multiple times; "
         "combination semantics are controlled by converter_types_match "
@@ -88,24 +88,24 @@ async def list_attacks(
         description="How to combine multiple converter_types: 'any' (attack has at least one) "
         "or 'all' (attack has every one). Defaults to 'all'.",
     ),
-    has_converters: Optional[bool] = Query(
+    has_converters: bool | None = Query(
         None,
         description="Filter by converter presence. true = attacks with at least one converter; "
         "false = attacks with no converters. Omit for no filter.",
     ),
-    outcome: Optional[Literal["undetermined", "success", "failure", "error"]] = Query(
+    outcome: Literal["undetermined", "success", "failure", "error"] | None = Query(
         None, description="Filter by outcome"
     ),
-    label: Optional[list[str]] = Query(
+    label: list[str] | None = Query(
         None,
         description="Filter by labels (format: key:value). May be specified multiple times; "
         "OR-matched within a key, AND-matched across keys "
         "(e.g. ?label=op:red&label=op:blue matches op=red OR op=blue).",
     ),
-    min_turns: Optional[int] = Query(None, ge=0, description="Filter by minimum executed turns"),
-    max_turns: Optional[int] = Query(None, ge=0, description="Filter by maximum executed turns"),
+    min_turns: int | None = Query(None, ge=0, description="Filter by minimum executed turns"),
+    max_turns: int | None = Query(None, ge=0, description="Filter by maximum executed turns"),
     limit: int = Query(20, ge=1, le=100, description="Maximum items per page"),
-    cursor: Optional[str] = Query(
+    cursor: str | None = Query(
         None,
         description="Pagination cursor: the attack_result_id of the last item from the previous page. "
         "Omit to start from the beginning. The response includes next_cursor for the next page.",
@@ -147,7 +147,7 @@ async def list_attacks(
     "/attack-options",
     response_model=AttackOptionsResponse,
 )
-async def get_attack_options() -> AttackOptionsResponse:
+async def get_attack_options() -> AttackOptionsResponse:  # pyrit-async-suffix-exempt
     """
     Get unique attack type names used across all attacks.
 
@@ -166,7 +166,7 @@ async def get_attack_options() -> AttackOptionsResponse:
     "/converter-options",
     response_model=ConverterOptionsResponse,
 )
-async def get_converter_options() -> ConverterOptionsResponse:
+async def get_converter_options() -> ConverterOptionsResponse:  # pyrit-async-suffix-exempt
     """
     Get unique converter type names used across all attacks.
 
@@ -191,7 +191,7 @@ async def get_converter_options() -> ConverterOptionsResponse:
         422: {"model": ProblemDetail, "description": "Validation error"},
     },
 )
-async def create_attack(request: CreateAttackRequest) -> CreateAttackResponse:
+async def create_attack(request: CreateAttackRequest) -> CreateAttackResponse:  # pyrit-async-suffix-exempt
     """
     Create a new attack.
 
@@ -219,7 +219,7 @@ async def create_attack(request: CreateAttackRequest) -> CreateAttackResponse:
         404: {"model": ProblemDetail, "description": "Attack not found"},
     },
 )
-async def get_attack(attack_result_id: str) -> AttackSummary:
+async def get_attack(attack_result_id: str) -> AttackSummary:  # pyrit-async-suffix-exempt
     """
     Get attack details.
 
@@ -247,7 +247,7 @@ async def get_attack(attack_result_id: str) -> AttackSummary:
         404: {"model": ProblemDetail, "description": "Attack not found"},
     },
 )
-async def update_attack(
+async def update_attack(  # pyrit-async-suffix-exempt
     attack_result_id: str,
     request: UpdateAttackRequest,
 ) -> AttackSummary:
@@ -279,7 +279,7 @@ async def update_attack(
         404: {"model": ProblemDetail, "description": "Attack or conversation not found"},
     },
 )
-async def get_conversation_messages(
+async def get_conversation_messages(  # pyrit-async-suffix-exempt
     attack_result_id: str,
     conversation_id: str = Query(..., description="The conversation_id whose messages to return"),
 ) -> ConversationMessagesResponse:
@@ -320,7 +320,7 @@ async def get_conversation_messages(
         404: {"model": ProblemDetail, "description": "Attack not found"},
     },
 )
-async def get_conversations(attack_result_id: str) -> AttackConversationsResponse:
+async def get_conversations(attack_result_id: str) -> AttackConversationsResponse:  # pyrit-async-suffix-exempt
     """
     Get all conversations belonging to an attack.
 
@@ -351,7 +351,7 @@ async def get_conversations(attack_result_id: str) -> AttackConversationsRespons
         400: {"model": ProblemDetail, "description": "Invalid request"},
     },
 )
-async def create_related_conversation(
+async def create_related_conversation(  # pyrit-async-suffix-exempt
     attack_result_id: str,
     request: CreateConversationRequest,
 ) -> CreateConversationResponse:
@@ -394,7 +394,7 @@ async def create_related_conversation(
         400: {"model": ProblemDetail, "description": "Invalid conversation"},
     },
 )
-async def update_main_conversation(
+async def update_main_conversation(  # pyrit-async-suffix-exempt
     attack_result_id: str,
     request: UpdateMainConversationRequest,
 ) -> UpdateMainConversationResponse:
@@ -437,7 +437,7 @@ async def update_main_conversation(
         400: {"model": ProblemDetail, "description": "Message send failed"},
     },
 )
-async def add_message(
+async def add_message(  # pyrit-async-suffix-exempt
     attack_result_id: str,
     request: AddMessageRequest,
 ) -> AddMessageResponse:

@@ -11,7 +11,8 @@ against a simulated (compliant) target before executing the actual attack.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Optional, Union
+import uuid
+from typing import TYPE_CHECKING
 
 from pyrit.executor.attack.core.attack_config import (
     AttackAdversarialConfig,
@@ -39,11 +40,11 @@ async def generate_simulated_conversation_async(
     objective_scorer: TrueFalseScorer,
     num_turns: int = 3,
     starting_sequence: int = 0,
-    adversarial_chat_system_prompt_path: Union[str, Path],
-    simulated_target_system_prompt_path: Optional[Union[str, Path]] = None,
-    next_message_system_prompt_path: Optional[Union[str, Path]] = None,
-    attack_converter_config: Optional[AttackConverterConfig] = None,
-    memory_labels: Optional[dict[str, str]] = None,
+    adversarial_chat_system_prompt_path: str | Path,
+    simulated_target_system_prompt_path: str | Path | None = None,
+    next_message_system_prompt_path: str | Path | None = None,
+    attack_converter_config: AttackConverterConfig | None = None,
+    memory_labels: dict[str, str] | None = None,
 ) -> list[SeedPrompt]:
     """
     Generate a simulated conversation between an adversarial chat and a target.
@@ -101,10 +102,14 @@ async def generate_simulated_conversation_async(
         simulated_target_system_prompt_path=simulated_target_system_prompt_path,
     )
 
-    # Create adversarial config for the simulation
+    # Create adversarial config for the simulation. Load the optional system prompt path into a
+    # SeedPrompt so we use the inline ``system_prompt`` field (``system_prompt_path`` is deprecated).
+    adversarial_system_prompt = (
+        SeedPrompt.from_yaml_file(adversarial_chat_system_prompt_path) if adversarial_chat_system_prompt_path else None
+    )
     adversarial_config = AttackAdversarialConfig(
         target=adversarial_chat,
-        system_prompt_path=adversarial_chat_system_prompt_path,
+        system_prompt=adversarial_system_prompt,
     )
 
     # Create scoring config
@@ -139,7 +144,7 @@ async def generate_simulated_conversation_async(
 
     # Extract the conversation from memory and filter for prepended_conversation use
     memory = CentralMemory.get_memory_instance()
-    raw_messages = list(memory.get_conversation(conversation_id=result.conversation_id))
+    raw_messages = list(memory.get_conversation_messages(conversation_id=result.conversation_id))
 
     # Filter out system messages - keep the actual conversation
     # System prompts are set separately on each target during attack execution
@@ -171,7 +176,7 @@ async def _generate_next_message_async(
     objective: str,
     conversation_messages: list[Message],
     adversarial_chat: PromptTarget,
-    next_message_system_prompt_path: Union[str, Path],
+    next_message_system_prompt_path: str | Path,
 ) -> Message:
     """
     Generate a single next message using the adversarial chat LLM.
@@ -207,17 +212,23 @@ async def _generate_next_message_async(
         conversation_context=conversation_context,
     )
 
-    # Use the adversarial chat to generate the next message
-    # Create a simple user message asking for generation
+    # Use the adversarial chat to generate the next message.
+    # Scope the system prompt and the generated message to their own fresh
+    # conversation. Message.from_prompt leaves conversation_id unset (None);
+    # passing that to set_system_prompt would make get_conversation_messages
+    # skip its conversation filter and return every piece in memory, which
+    # raises once memory holds more than one conversation.
+    conversation_id = str(uuid.uuid4())
     request_message = Message.from_prompt(
         role="user",
         prompt="Generate the next user message based on the instructions above.",
     )
+    request_message.message_pieces[0].conversation_id = conversation_id
 
     # Set the system prompt on the target
     adversarial_chat.set_system_prompt(
         system_prompt=system_prompt,
-        conversation_id=request_message.conversation_id,
+        conversation_id=conversation_id,
     )
 
     responses: list[Message] = await adversarial_chat.send_prompt_async(message=request_message)
@@ -228,6 +239,6 @@ async def _generate_next_message_async(
     # Change the role from assistant to user since this is a user message to be sent to the target
     response = responses[0]
     for piece in response.message_pieces:
-        piece._role = "user"
+        piece.role = "user"
 
     return response

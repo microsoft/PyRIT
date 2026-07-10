@@ -72,4 +72,10 @@ export const useTargetTableStyles = makeStyles({
   helpHeader: {
     cursor: 'help',
   },
+  /** Sub-row for inner targets of a RoundRobinTarget — visually indented with a
+   *  lighter background so it's clear these are children, not standalone targets. */
+  innerTargetRow: {
+    backgroundColor: tokens.colorNeutralBackground2,
+    opacity: 0.85,
+  },
 })

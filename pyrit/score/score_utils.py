@@ -1,7 +1,6 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from typing import Optional, Union
 
 from pyrit.common.utils import combine_dict
 from pyrit.models import Score
@@ -11,7 +10,7 @@ from pyrit.models import Score
 ORIGINAL_FLOAT_VALUE_KEY = "original_float_value"
 
 
-def combine_metadata_and_categories(scores: list[Score]) -> tuple[dict[str, Union[str, int, float]], list[str]]:
+def combine_metadata_and_categories(scores: list[Score]) -> tuple[dict[str, str | int | float], list[str]]:
     """
     Combine metadata and categories from multiple scores with deduplication.
 
@@ -21,7 +20,7 @@ def combine_metadata_and_categories(scores: list[Score]) -> tuple[dict[str, Unio
     Returns:
         Tuple of (metadata dict, sorted category list with empty strings filtered).
     """
-    metadata: dict[str, Union[str, int, float]] = {}
+    metadata: dict[str, str | int | float] = {}
     category_set: set[str] = set()
 
     for s in scores:
@@ -47,7 +46,7 @@ def format_score_for_rationale(score: Score) -> str:
     return f"   - {class_type} {score.score_value}: {score.score_rationale or ''}"
 
 
-def normalize_score_to_float(score: Optional[Score]) -> float:
+def normalize_score_to_float(score: Score | None) -> float:
     """
     Normalize any score to a float value between 0.0 and 1.0.
 

@@ -22,8 +22,8 @@ from pyrit.backend.models.attacks import (
     AttackSummary,
     ConversationMessagesResponse,
     CreateAttackResponse,
-    Message,
-    MessagePiece,
+    MessagePieceView,
+    MessageView,
 )
 from pyrit.backend.models.common import PaginationInfo
 from pyrit.backend.models.converters import (
@@ -35,11 +35,27 @@ from pyrit.backend.models.converters import (
     PreviewStep,
 )
 from pyrit.backend.models.targets import (
-    TargetCapabilitiesInfo,
-    TargetInstance,
+    TargetCatalogResponse,
     TargetListResponse,
 )
 from pyrit.backend.routes.labels import get_label_options
+from pyrit.models import ConverterIdentifier, MessagePiece, TargetCapabilities, TargetIdentifier
+from pyrit.models.catalog.target import TargetInstance
+
+
+def _make_message_view(*, role: str = "user", value: str = "hello", sequence: int = 1) -> MessageView:
+    """Build a ``MessageView`` from a single text piece for route tests."""
+    piece = MessagePiece(
+        role=role,
+        original_value=value,
+        converted_value=value,
+        original_value_data_type="text",
+        converted_value_data_type="text",
+        conversation_id="attack-1",
+        sequence=sequence,
+    )
+    piece_view = MessagePieceView.from_domain(piece)
+    return MessageView.model_construct(message_pieces=[piece_view])
 
 
 @pytest.fixture
@@ -210,8 +226,7 @@ class TestAttackRoutes:
                 return_value=AttackSummary(
                     attack_result_id="ar-attack-1",
                     conversation_id="attack-1",
-                    attack_type="TestAttack",
-                    outcome=None,
+                    objective="test objective",
                     last_message_preview=None,
                     message_count=0,
                     created_at=now,
@@ -247,7 +262,7 @@ class TestAttackRoutes:
                 return_value=AttackSummary(
                     attack_result_id="ar-attack-1",
                     conversation_id="attack-1",
-                    attack_type="TestAttack",
+                    objective="test objective",
                     outcome="success",
                     last_message_preview=None,
                     message_count=0,
@@ -273,8 +288,7 @@ class TestAttackRoutes:
         attack_summary = AttackSummary(
             attack_result_id="ar-attack-1",
             conversation_id="attack-1",
-            attack_type="TestAttack",
-            outcome=None,
+            objective="test objective",
             last_message_preview=None,
             message_count=2,
             created_at=now,
@@ -284,28 +298,8 @@ class TestAttackRoutes:
         attack_messages = ConversationMessagesResponse(
             conversation_id="attack-1",
             messages=[
-                Message(
-                    turn_number=1,
-                    role="user",
-                    pieces=[
-                        MessagePiece(
-                            piece_id="piece-1",
-                            converted_value="Hello",
-                        )
-                    ],
-                    created_at=now,
-                ),
-                Message(
-                    turn_number=2,
-                    role="assistant",
-                    pieces=[
-                        MessagePiece(
-                            piece_id="piece-2",
-                            converted_value="Hi there!",
-                        )
-                    ],
-                    created_at=now,
-                ),
+                _make_message_view(role="user", value="Hello", sequence=1),
+                _make_message_view(role="assistant", value="Hi there!", sequence=2),
             ],
         )
 
@@ -400,20 +394,13 @@ class TestAttackRoutes:
 
     def test_get_conversation_messages_success(self, client: TestClient) -> None:
         """Test getting attack messages."""
-        now = datetime.now(timezone.utc)
-
         with patch("pyrit.backend.routes.attacks.get_attack_service") as mock_get_service:
             mock_service = MagicMock()
             mock_service.get_conversation_messages_async = AsyncMock(
                 return_value=ConversationMessagesResponse(
                     conversation_id="attack-1",
                     messages=[
-                        Message(
-                            turn_number=1,
-                            role="user",
-                            pieces=[MessagePiece(piece_id="p1", converted_value="Hello")],
-                            created_at=now,
-                        )
+                        _make_message_view(role="user", value="Hello", sequence=1),
                     ],
                 )
             )
@@ -462,8 +449,7 @@ class TestAttackRoutes:
                         AttackSummary(
                             attack_result_id="ar-attack-1",
                             conversation_id="attack-1",
-                            attack_type="TestAttack",
-                            outcome=None,
+                            objective="test objective",
                             last_message_preview=None,
                             message_count=0,
                             labels={"env": "prod"},
@@ -663,7 +649,7 @@ class TestAttackRoutes:
 
             response = client.get("/api/attacks?converter_types_match=garbage")
 
-            assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+            assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
     def test_get_conversations_success(self, client: TestClient) -> None:
         """Test getting attack conversations returns service response."""
@@ -810,6 +796,29 @@ class TestTargetRoutes:
             assert data["items"] == []
             assert data["pagination"]["has_more"] is False
 
+    def test_list_target_catalog(self, client: TestClient) -> None:
+        """Test listing available target types from the target catalog."""
+        with patch("pyrit.backend.routes.targets.get_target_service") as mock_get_service:
+            mock_service = MagicMock()
+            mock_service.list_target_catalog_async = AsyncMock(
+                return_value=TargetCatalogResponse(
+                    items=[
+                        {
+                            "target_type": "OpenAIChatTarget",
+                            "supported_auth_modes": ["api_key", "identity"],
+                        }
+                    ]
+                )
+            )
+            mock_get_service.return_value = mock_service
+
+            response = client.get("/api/targets/catalog")
+
+            assert response.status_code == status.HTTP_200_OK
+            data = response.json()
+            assert data["items"][0]["target_type"] == "OpenAIChatTarget"
+            assert data["items"][0]["supported_auth_modes"] == ["api_key", "identity"]
+
     def test_create_target_success(self, client: TestClient) -> None:
         """Test successful target creation."""
         with patch("pyrit.backend.routes.targets.get_target_service") as mock_get_service:
@@ -817,8 +826,8 @@ class TestTargetRoutes:
             mock_service.create_target_async = AsyncMock(
                 return_value=TargetInstance(
                     target_registry_name="target-1",
-                    target_type="TextTarget",
-                    capabilities=TargetCapabilitiesInfo(),
+                    identifier=TargetIdentifier(class_name="TextTarget"),
+                    capabilities=TargetCapabilities(),
                 )
             )
             mock_get_service.return_value = mock_service
@@ -867,8 +876,8 @@ class TestTargetRoutes:
             mock_service.get_target_async = AsyncMock(
                 return_value=TargetInstance(
                     target_registry_name="target-1",
-                    target_type="TextTarget",
-                    capabilities=TargetCapabilitiesInfo(),
+                    identifier=TargetIdentifier(class_name="TextTarget"),
+                    capabilities=TargetCapabilities(),
                 )
             )
             mock_get_service.return_value = mock_service
@@ -899,11 +908,13 @@ class TestTargetRoutes:
                     items=[
                         TargetInstance(
                             target_registry_name="azure_responses",
-                            target_type="OpenAIResponseTarget",
-                            endpoint="https://api.openai.com",
-                            model_name="o3",
-                            temperature=1.0,
-                            capabilities=TargetCapabilitiesInfo(supports_multi_turn=True),
+                            identifier=TargetIdentifier(
+                                class_name="OpenAIResponseTarget",
+                                endpoint="https://api.openai.com",
+                                model_name="o3",
+                                temperature=1.0,
+                            ),
+                            capabilities=TargetCapabilities(supports_multi_turn=True),
                             target_specific_params={
                                 "reasoning_effort": "high",
                                 "reasoning_summary": "auto",
@@ -932,11 +943,13 @@ class TestTargetRoutes:
             mock_service.get_target_async = AsyncMock(
                 return_value=TargetInstance(
                     target_registry_name="azure_chat",
-                    target_type="OpenAIChatTarget",
-                    endpoint="https://api.openai.com",
-                    model_name="gpt-4",
-                    temperature=0.7,
-                    capabilities=TargetCapabilitiesInfo(supports_multi_turn=True),
+                    identifier=TargetIdentifier(
+                        class_name="OpenAIChatTarget",
+                        endpoint="https://api.openai.com",
+                        model_name="gpt-4",
+                        temperature=0.7,
+                    ),
+                    capabilities=TargetCapabilities(supports_multi_turn=True),
                     target_specific_params={
                         "frequency_penalty": 0.5,
                         "presence_penalty": 0.3,
@@ -1056,8 +1069,10 @@ class TestConverterRoutes:
             mock_service.get_converter_async = AsyncMock(
                 return_value=ConverterInstance(
                     converter_id="conv-1",
-                    converter_type="Base64Converter",
-                    display_name=None,
+                    identifier=ConverterIdentifier(
+                        class_name="Base64Converter",
+                        class_module="pyrit.prompt_converter.base64_converter",
+                    ),
                 )
             )
             mock_get_service.return_value = mock_service

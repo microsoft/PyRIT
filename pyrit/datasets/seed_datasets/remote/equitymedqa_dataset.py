@@ -3,13 +3,18 @@
 
 import logging
 from collections.abc import Sequence
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
+
+from typing_extensions import override
 
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import SeedDataset, SeedPrompt
+from pyrit.models import Modality, SeedDataset, SeedPrompt
 from pyrit.models.harm_category import HarmCategory
+
+if TYPE_CHECKING:
+    from pyrit.models.seeds.seed_group import SeedUnion
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +29,53 @@ class _EquityMedQADataset(_RemoteDatasetLoader):
 
     Reference: [@pfohl2024equitymedqa]
     """
+
+    _AUTHORS = [
+        "Stephen R. Pfohl",
+        "Heather Cole-Lewis",
+        "Rory Sayres",
+        "Darlene Neal",
+        "Mercy Asiedu",
+        "Awa Dieng",
+        "Nenad Tomasev",
+        "Qazi Mamunur Rashid",
+        "Shekoofeh Azizi",
+        "Negar Rostamzadeh",
+        "Liam G. McCoy",
+        "Leo Anthony Celi",
+        "Yun Liu",
+        "Mike Schaekermann",
+        "Alanna Walton",
+        "Alicia Parrish",
+        "Chirag Nagpal",
+        "Preeti Singh",
+        "Akeiylah Dewitt",
+        "Philip Mansfield",
+        "Sushant Prakash",
+        "Katherine Heller",
+        "Alan Karthikesalingam",
+        "Christopher Semturs",
+        "Joelle Barral",
+        "Greg Corrado",
+        "Yossi Matias",
+        "Jamila Smith-Loud",
+        "Ivor Horn",
+        "Karan Singhal",
+    ]
+
+    _GROUPS = [
+        "Google Research",
+        "Google DeepMind",
+        "University of Alberta",
+        "Massachusetts Institute of Technology",
+        "Beth Israel Deaconess Medical Center",
+        "Harvard T.H. Chan School of Public Health",
+    ]
+
+    # Metadata
+    modalities: tuple[Modality, ...] = (Modality.TEXT,)
+    size: str = "huge"  # 5565 prompts across 11 medical-bias subsets
+    tags: frozenset[str] = frozenset({"safety", "bias", "medical"})
 
     DATA_SUBSETS: list[str] = [
         "cc_llm",
@@ -109,10 +161,12 @@ class _EquityMedQADataset(_RemoteDatasetLoader):
             raise ValueError(f"Invalid subset name(s): {invalid_subsets}. Available options are: {self.DATA_SUBSETS}.")
 
     @property
+    @override
     def dataset_name(self) -> str:
-        """Return the dataset name."""
+        """The dataset name."""
         return "equitymedqa"
 
+    @override
     async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch EquityMedQA dataset and return as SeedDataset.
@@ -128,7 +182,7 @@ class _EquityMedQADataset(_RemoteDatasetLoader):
         prompts: list[str] = []
 
         for subset in self.targets:
-            prompts.extend(await self._get_sub_dataset(subset, cache=cache))
+            prompts.extend(await self._get_sub_dataset_async(subset, cache=cache))
 
         # Remove duplicates across all subsets
         unique_prompts = list(set(prompts))
@@ -137,7 +191,7 @@ class _EquityMedQADataset(_RemoteDatasetLoader):
             alias_overrides={"health_bias": HarmCategory.REPRESENTATIONAL},
         )
 
-        seed_prompts = [
+        seed_prompts: list[SeedUnion] = [
             SeedPrompt(
                 value=prompt,
                 data_type="text",
@@ -145,6 +199,8 @@ class _EquityMedQADataset(_RemoteDatasetLoader):
                 description="This dataset contains prompts used to assess medical biases in AI systems",
                 harm_categories=standardized_harm_categories,
                 source=f"https://huggingface.co/datasets/{self.source}",
+                authors=self._AUTHORS,
+                groups=self._GROUPS,
             )
             for prompt in unique_prompts
         ]
@@ -153,7 +209,7 @@ class _EquityMedQADataset(_RemoteDatasetLoader):
 
         return SeedDataset(seeds=seed_prompts, dataset_name=self.dataset_name)
 
-    async def _get_sub_dataset(self, subset_name: str, *, cache: bool = True) -> list[str]:
+    async def _get_sub_dataset_async(self, subset_name: str, *, cache: bool = True) -> list[str]:
         """
         Fetch a specific subset of the EquityMedQA dataset.
 
@@ -164,7 +220,7 @@ class _EquityMedQADataset(_RemoteDatasetLoader):
         Returns:
             List of unique prompts from the specified subset.
         """
-        data = await self._fetch_from_huggingface(
+        data = await self._fetch_from_huggingface_async(
             dataset_name=self.source,
             config=subset_name,
             split="train",
