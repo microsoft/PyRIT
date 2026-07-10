@@ -286,6 +286,10 @@ def get_converter_modalities() -> list[tuple[str, list[PromptDataType], list[Pro
         if not isinstance(converter_class, type) or not issubclass(converter_class, PromptConverter):
             continue
 
+        # Skip abstract base classes (they cannot be instantiated or used directly)
+        if getattr(converter_class, "__abstractmethods__", None):
+            continue
+
         # Read the class attributes
         input_modalities = list(converter_class.SUPPORTED_INPUT_TYPES)
         output_modalities = list(converter_class.SUPPORTED_OUTPUT_TYPES)

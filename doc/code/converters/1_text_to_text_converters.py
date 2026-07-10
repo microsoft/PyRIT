@@ -46,7 +46,9 @@ from pyrit.prompt_converter import (
     BinAsciiConverter,
     BrailleConverter,
     CaesarConverter,
+    DigitBijectionConverter,
     EcojiConverter,
+    LetterBijectionConverter,
     MorseConverter,
     NatoConverter,
     NegationTrapConverter,
@@ -68,6 +70,8 @@ print("NATO:", await NatoConverter().convert_async(prompt=prompt))  # type: igno
 print("Caesar:", await CaesarConverter(caesar_offset=3).convert_async(prompt=prompt))  # type: ignore
 print("Atbash:", await AtbashConverter().convert_async(prompt=prompt))  # type: ignore
 print("Braille:", await BrailleConverter().convert_async(prompt=prompt))  # type: ignore
+print("Bijection (letter):", await LetterBijectionConverter(seed=42).convert_async(prompt=prompt))  # type: ignore
+print("Bijection (digit):", await DigitBijectionConverter(seed=42).convert_async(prompt=prompt))  # type: ignore
 print("ASCII Art:", await AsciiArtConverter().convert_async(prompt=prompt))  # type: ignore
 print("Ecoji:", await EcojiConverter().convert_async(prompt=prompt))  # type: ignore
 

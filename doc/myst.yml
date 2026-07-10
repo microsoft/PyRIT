@@ -101,6 +101,7 @@ project:
         - file: code/executor/0_executor.md
           children:
             - file: code/executor/1_single_turn.ipynb
+            - file: code/executor/bijection_attack.ipynb
             - file: code/executor/2_multi_turn.ipynb
             - file: code/executor/3_attack_configuration.ipynb
             - file: code/executor/4_compound.ipynb
