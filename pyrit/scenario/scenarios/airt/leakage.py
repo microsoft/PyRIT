@@ -9,9 +9,9 @@ from typing import TYPE_CHECKING
 
 from pyrit.common import apply_defaults
 from pyrit.common.path import DATASETS_PATH, SCORER_SEED_PROMPT_PATH
+from pyrit.converter import AddImageTextConverter, FirstLetterConverter
 from pyrit.executor.attack import AttackConverterConfig, PromptSendingAttack
-from pyrit.prompt_converter import AddImageTextConverter, FirstLetterConverter
-from pyrit.prompt_normalizer import PromptConverterConfiguration
+from pyrit.prompt_normalizer import ConverterConfiguration
 from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
 from pyrit.registry.tag_query import TagQuery
 from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
@@ -43,7 +43,7 @@ LEAKAGE_FACTORIES: list[AttackTechniqueFactory] = [
         strategy_tags=["single_turn", "default"],
         attack_kwargs={
             "attack_converter_config": AttackConverterConfig(
-                request_converters=PromptConverterConfiguration.from_converters(converters=[FirstLetterConverter()])
+                request_converters=ConverterConfiguration.from_converters(converters=[FirstLetterConverter()])
             ),
         },
     ),
@@ -53,7 +53,7 @@ LEAKAGE_FACTORIES: list[AttackTechniqueFactory] = [
         strategy_tags=["single_turn", "default"],
         attack_kwargs={
             "attack_converter_config": AttackConverterConfig(
-                request_converters=PromptConverterConfiguration.from_converters(
+                request_converters=ConverterConfiguration.from_converters(
                     converters=[AddImageTextConverter(img_to_add=_BLANK_IMAGE_PATH)]
                 )
             ),

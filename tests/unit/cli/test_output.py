@@ -328,7 +328,7 @@ def test_print_converter_list_full(capsys):
         },
         {
             "converter_id": "pipeline_1",
-            "converter_type": "PromptConverterPipeline",
+            "converter_type": "ConverterPipeline",
             "sub_converter_ids": ["base64", "rot13"],
         },
     ]

@@ -1,5 +1,5 @@
 ---
-applyTo: "pyrit/prompt_converter/**"
+applyTo: "pyrit/converter/**"
 ---
 
 # Prompt Converter Development Guidelines
@@ -10,10 +10,10 @@ applyTo: "pyrit/prompt_converter/**"
 
 ## Base Class Contract
 
-All converters MUST inherit from `PromptConverter` and implement:
+All converters MUST inherit from `Converter` and implement:
 
 ```python
-class MyConverter(PromptConverter):
+class MyConverter(Converter):
     SUPPORTED_INPUT_TYPES = ("text",)    # Required — non-empty tuple of PromptDataType values
     SUPPORTED_OUTPUT_TYPES = ("text",)   # Required — non-empty tuple of PromptDataType values
 
@@ -63,7 +63,7 @@ Exclude: retry counts, logging config, timeouts.
 
 ```python
 from pyrit.models import ComponentIdentifier, PromptDataType
-from pyrit.prompt_converter import ConverterResult, PromptConverter
+from pyrit.converter import ConverterResult, Converter
 ```
 
 For LLM-based converters, also import:
@@ -78,7 +78,7 @@ Use keyword-only arguments. Use `@apply_defaults` if the converter accepts targe
 ```python
 from pyrit.common.apply_defaults import apply_defaults
 
-class MyConverter(PromptConverter):
+class MyConverter(Converter):
     @apply_defaults
     def __init__(self, *, target: PromptTarget, template: str = "default") -> None:
         ...
@@ -86,9 +86,9 @@ class MyConverter(PromptConverter):
 
 ### Keyword-only ``__init__`` is enforced
 
-Every ``PromptConverter`` subclass MUST make all ``__init__`` parameters
+Every ``Converter`` subclass MUST make all ``__init__`` parameters
 keyword-only (i.e., place ``*`` as the first parameter after ``self``).
-``PromptConverter.__init_subclass__`` validates this at class-definition
+``Converter.__init_subclass__`` validates this at class-definition
 time via ``enforce_keyword_only_init`` and raises ``TypeError`` on
 violations.
 
@@ -108,5 +108,5 @@ def __init__(self, foo: str, bar: int = 0) -> None: ...    # missing *
 
 ## Exports and External Updates
 
-- New converters MUST be added to `pyrit/prompt_converter/__init__.py` — both the import and the `__all__` list.
+- New converters MUST be added to `pyrit/converter/__init__.py` — both the import and the `__all__` list.
 - The modality table with new/updated converters `doc/code/converters/0_converters.ipynb` and the associated .py pct file must also be updated.

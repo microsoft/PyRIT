@@ -31,7 +31,7 @@
 # %%
 import os
 
-from pyrit.prompt_converter import AzureSpeechTextToAudioConverter
+from pyrit.converter import AzureSpeechTextToAudioConverter
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 
 await initialize_pyrit_async(memory_db_type=IN_MEMORY)  # type: ignore
@@ -55,7 +55,7 @@ import logging
 import pathlib
 
 from pyrit.common.path import DB_DATA_PATH
-from pyrit.prompt_converter import AzureSpeechAudioToTextConverter
+from pyrit.converter import AzureSpeechAudioToTextConverter
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -84,7 +84,7 @@ print(transcript)
 # - **`AudioWhiteNoiseConverter`** — Mixes white noise into the signal
 
 # %%
-from pyrit.prompt_converter import (
+from pyrit.converter import (
     AudioEchoConverter,
     AudioFrequencyConverter,
     AudioSpeedConverter,

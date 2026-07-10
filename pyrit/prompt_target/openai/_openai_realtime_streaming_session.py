@@ -30,7 +30,7 @@ except ImportError:  # pragma: no cover - openai is a hard dependency for this m
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
-    from pyrit.prompt_normalizer import PromptConverterConfiguration, PromptNormalizer
+    from pyrit.prompt_normalizer import ConverterConfiguration, PromptNormalizer
     from pyrit.prompt_target.common.realtime_audio import CommittedEvent
 
     # Keep this type-only: openai_realtime_target imports this module at runtime, so a
@@ -122,8 +122,8 @@ class _OpenAIRealtimeStreamingSession:
         audio_chunks: AsyncIterator[bytes],
         prompt_normalizer: PromptNormalizer,
         conversation_id: str | None = None,
-        request_converter_configurations: list[PromptConverterConfiguration] | None = None,
-        response_converter_configurations: list[PromptConverterConfiguration] | None = None,
+        request_converter_configurations: list[ConverterConfiguration] | None = None,
+        response_converter_configurations: list[ConverterConfiguration] | None = None,
         prepended_conversation: list[Message] | None = None,
         server_vad: bool | ServerVadConfig = True,
         persist_prepended_conversation: bool = True,

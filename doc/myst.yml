@@ -197,7 +197,7 @@ project:
         - file: api/pyrit_message_normalizer.md
         - file: api/pyrit_models.md
         - file: api/pyrit_output.md
-        - file: api/pyrit_prompt_converter.md
+        - file: api/pyrit_converter.md
         - file: api/pyrit_prompt_normalizer.md
         - file: api/pyrit_prompt_target.md
         - file: api/pyrit_registry.md

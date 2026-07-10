@@ -8,6 +8,7 @@ from typing import Any
 
 from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
 from pyrit.common.path import EXECUTOR_SEED_PROMPT_PATH
+from pyrit.converter import LLMGenericTextConverter
 from pyrit.executor.attack.core.attack_config import AttackAdversarialConfig, AttackConverterConfig, AttackScoringConfig
 from pyrit.executor.attack.core.attack_parameters import AttackParameters
 from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
@@ -18,8 +19,7 @@ from pyrit.models import (
     Message,
     SeedDataset,
 )
-from pyrit.prompt_converter import LLMGenericTextConverter
-from pyrit.prompt_normalizer import PromptConverterConfiguration, PromptNormalizer
+from pyrit.prompt_normalizer import ConverterConfiguration, PromptNormalizer
 from pyrit.prompt_target import PromptTarget
 
 logger = logging.getLogger(__name__)
@@ -113,7 +113,7 @@ class RolePlayAttack(PromptSendingAttack):
         self._parse_role_play_definition(role_play_definition)
 
         # Create the rephrase converter configuration
-        self._rephrase_converter = PromptConverterConfiguration.from_converters(
+        self._rephrase_converter = ConverterConfiguration.from_converters(
             converters=[
                 LLMGenericTextConverter(
                     converter_target=self._adversarial_chat,

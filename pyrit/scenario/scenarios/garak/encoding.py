@@ -6,26 +6,26 @@ import logging
 from collections.abc import Sequence
 
 from pyrit.common import apply_defaults
-from pyrit.executor.attack.core.attack_config import AttackConverterConfig, AttackScoringConfig
-from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
-from pyrit.models import Seed, SeedAttackGroup, SeedObjective, SeedPrompt
-from pyrit.prompt_converter import (
+from pyrit.converter import (
     AsciiSmugglerConverter,
     AskToDecodeConverter,
     AtbashConverter,
     Base64Converter,
     Base2048Converter,
     BinAsciiConverter,
+    Converter,
     LeetspeakConverter,
     MorseConverter,
-    PromptConverter,
     ROT13Converter,
     ZalgoConverter,
 )
-from pyrit.prompt_converter.braille_converter import BrailleConverter
-from pyrit.prompt_converter.ecoji_converter import EcojiConverter
-from pyrit.prompt_converter.nato_converter import NatoConverter
-from pyrit.prompt_normalizer.prompt_converter_configuration import PromptConverterConfiguration
+from pyrit.converter.braille_converter import BrailleConverter
+from pyrit.converter.ecoji_converter import EcojiConverter
+from pyrit.converter.nato_converter import NatoConverter
+from pyrit.executor.attack.core.attack_config import AttackConverterConfig, AttackScoringConfig
+from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
+from pyrit.models import Seed, SeedAttackGroup, SeedObjective, SeedPrompt
+from pyrit.prompt_normalizer.converter_configuration import ConverterConfiguration
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.dataset_configuration import CompoundDatasetAttackConfiguration, DatasetAttackConfiguration
@@ -196,7 +196,7 @@ class Encoding(Scenario):
             list[AtomicAttack]: List of all atomic attacks to execute.
         """
         # Map of all available converters with their encoding names
-        all_converters_with_encodings: list[tuple[list[PromptConverter], str]] = [
+        all_converters_with_encodings: list[tuple[list[Converter], str]] = [
             ([Base64Converter()], "base64"),
             ([Base64Converter(encoding_func="urlsafe_b64encode")], "base64"),
             ([Base64Converter(encoding_func="standard_b64encode")], "base64"),
@@ -234,7 +234,7 @@ class Encoding(Scenario):
         return atomic_attacks
 
     def _get_prompt_attacks(
-        self, *, converters: list[PromptConverter], encoding_name: str, seed_groups: list[SeedAttackGroup]
+        self, *, converters: list[Converter], encoding_name: str, seed_groups: list[SeedAttackGroup]
     ) -> list[AtomicAttack]:
         """
         Create atomic attacks for a specific encoding scheme.
@@ -246,7 +246,7 @@ class Encoding(Scenario):
         4. Score whether the model decoded and repeated the harmful content
 
         Args:
-            converters (list[PromptConverter]): The list of converters to apply to the seed prompts.
+            converters (list[Converter]): The list of converters to apply to the seed prompts.
             encoding_name (str): Human-readable name of the encoding scheme (e.g., "Base64", "ROT13").
             seed_groups (list[SeedAttackGroup]): Seed groups the attacks draw from.
 
@@ -257,18 +257,14 @@ class Encoding(Scenario):
             ValueError: If scenario is not properly initialized.
         """
         converter_configs = [
-            AttackConverterConfig(
-                request_converters=PromptConverterConfiguration.from_converters(converters=converters)
-            )
+            AttackConverterConfig(request_converters=ConverterConfiguration.from_converters(converters=converters))
         ]
 
         for decode_type in self._encoding_templates:
             converters_ = converters[:] + [AskToDecodeConverter(template=decode_type, encoding_name=encoding_name)]
 
             converter_configs.append(
-                AttackConverterConfig(
-                    request_converters=PromptConverterConfiguration.from_converters(converters=converters_)
-                )
+                AttackConverterConfig(request_converters=ConverterConfiguration.from_converters(converters=converters_))
             )
 
         atomic_attacks = []

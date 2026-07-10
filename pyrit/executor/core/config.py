@@ -4,7 +4,7 @@
 from dataclasses import dataclass, field
 
 from pyrit.prompt_normalizer import (
-    PromptConverterConfiguration,
+    ConverterConfiguration,
 )
 
 
@@ -18,7 +18,7 @@ class StrategyConverterConfig:
     """
 
     # List of converter configurations to apply to target requests/prompts
-    request_converters: list[PromptConverterConfiguration] = field(default_factory=list)
+    request_converters: list[ConverterConfiguration] = field(default_factory=list)
 
     # List of converter configurations to apply to target responses
-    response_converters: list[PromptConverterConfiguration] = field(default_factory=list)
+    response_converters: list[ConverterConfiguration] = field(default_factory=list)

@@ -373,7 +373,7 @@ class TestRapidResponseAttackGeneration:
         self, mock_objective_target, mock_objective_scorer
     ):
         """``strategy_converters`` passed to ``initialize_async`` reach ``factory.create`` for the keyed technique."""
-        from pyrit.prompt_converter import Base64Converter
+        from pyrit.converter import Base64Converter
 
         strat = _strategy_class()
         role_play = strat("role_play")

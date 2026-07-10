@@ -35,14 +35,14 @@
 import pathlib
 
 from pyrit.common.path import CONVERTER_SEED_PROMPT_PATH
+from pyrit.converter import PDFConverter
 from pyrit.executor.attack import (
     AttackConverterConfig,
     PromptSendingAttack,
 )
 from pyrit.models import SeedPrompt
 from pyrit.output import output_attack_async
-from pyrit.prompt_converter import PDFConverter
-from pyrit.prompt_normalizer import PromptConverterConfiguration
+from pyrit.prompt_normalizer import ConverterConfiguration
 from pyrit.prompt_target import TextTarget
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 
@@ -68,7 +68,7 @@ prompt_template = SeedPrompt.from_yaml_file(template_path)
 prompt_target = TextTarget()
 
 # Initialize the PDFConverter
-pdf_converter = PromptConverterConfiguration.from_converters(
+pdf_converter = ConverterConfiguration.from_converters(
     converters=[
         PDFConverter(
             prompt_template=prompt_template,
@@ -106,7 +106,7 @@ await output_attack_async(result)
 prompt = "This is a simple test string for PDF generation. No templates here!"
 
 # Initialize the PDFConverter without a template
-pdf_converter = PromptConverterConfiguration.from_converters(
+pdf_converter = ConverterConfiguration.from_converters(
     converters=[
         PDFConverter(
             prompt_template=None,  # No template provided
@@ -143,9 +143,7 @@ from pathlib import Path
 import requests
 
 # Download a sample PDF
-url = (
-    "https://raw.githubusercontent.com/microsoft/PyRIT/main/pyrit/datasets/prompt_converters/pdf_converters/fake_CV.pdf"
-)
+url = "https://raw.githubusercontent.com/microsoft/PyRIT/main/pyrit/datasets/converters/pdf_converters/fake_CV.pdf"
 
 with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
     response = requests.get(url)
@@ -176,7 +174,7 @@ injection_items = [
 ]
 
 # Initialize the PDFConverter with the existing PDF and injection items
-pdf_converter = PromptConverterConfiguration.from_converters(
+pdf_converter = ConverterConfiguration.from_converters(
     converters=[
         PDFConverter(
             prompt_template=None,
@@ -220,9 +218,9 @@ await output_attack_async(result)
 # This mode converts plain text strings directly into `.docx` files.
 
 # %%
-from pyrit.prompt_converter import WordDocConverter
+from pyrit.converter import WordDocConverter
 
-word_doc_converter = PromptConverterConfiguration.from_converters(converters=[WordDocConverter()])
+word_doc_converter = ConverterConfiguration.from_converters(converters=[WordDocConverter()])
 
 converter_config = AttackConverterConfig(
     request_converters=word_doc_converter,
@@ -255,7 +253,7 @@ with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp_file:
     doc.save(tmp_file.name)
     template_docx_path = Path(tmp_file.name)
 
-word_doc_converter = PromptConverterConfiguration.from_converters(
+word_doc_converter = ConverterConfiguration.from_converters(
     converters=[
         WordDocConverter(
             existing_docx=template_docx_path,

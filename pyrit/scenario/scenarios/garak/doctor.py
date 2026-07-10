@@ -7,9 +7,9 @@ import logging
 from typing import TYPE_CHECKING, ClassVar
 
 from pyrit.common import apply_defaults
+from pyrit.converter import LeetspeakConverter, PolicyPuppetryConverter, PolicyPuppetryTemplate
 from pyrit.executor.attack import AttackConverterConfig, PromptSendingAttack
-from pyrit.prompt_converter import LeetspeakConverter, PolicyPuppetryConverter, PolicyPuppetryTemplate
-from pyrit.prompt_normalizer import PromptConverterConfiguration
+from pyrit.prompt_normalizer import ConverterConfiguration
 from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
 from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
 from pyrit.scenario.core.matrix_atomic_attack_builder import MatrixAtomicAttackBuilder
@@ -61,7 +61,7 @@ DOCTOR_FACTORIES: list[AttackTechniqueFactory] = [
         strategy_tags=["default"],
         attack_kwargs={
             "attack_converter_config": AttackConverterConfig(
-                request_converters=PromptConverterConfiguration.from_converters(
+                request_converters=ConverterConfiguration.from_converters(
                     converters=[
                         PolicyPuppetryConverter(prompt_template=PolicyPuppetryTemplate.DR_HOUSE.to_seed_prompt())
                     ]
@@ -75,7 +75,7 @@ DOCTOR_FACTORIES: list[AttackTechniqueFactory] = [
         strategy_tags=["default"],
         attack_kwargs={
             "attack_converter_config": AttackConverterConfig(
-                request_converters=PromptConverterConfiguration.from_converters(
+                request_converters=ConverterConfiguration.from_converters(
                     converters=[
                         PolicyPuppetryConverter(prompt_template=PolicyPuppetryTemplate.DR_HOUSE.to_seed_prompt()),
                         LeetspeakConverter(),

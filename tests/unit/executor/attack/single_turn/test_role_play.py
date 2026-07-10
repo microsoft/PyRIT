@@ -10,6 +10,7 @@ import pytest
 import yaml
 from unit.mocks import get_mock_scorer_identifier, get_mock_target_identifier
 
+from pyrit.converter import Base64Converter, StringJoinConverter
 from pyrit.executor.attack import (
     AttackAdversarialConfig,
     AttackConverterConfig,
@@ -23,8 +24,7 @@ from pyrit.models import (
     AttackResult,
     Score,
 )
-from pyrit.prompt_converter import Base64Converter, StringJoinConverter
-from pyrit.prompt_normalizer import PromptConverterConfiguration
+from pyrit.prompt_normalizer import ConverterConfiguration
 from pyrit.prompt_target import PromptTarget
 from pyrit.score import Scorer, TrueFalseScorer
 
@@ -168,8 +168,8 @@ class TestRolePlayAttackInitialization:
         self, mock_objective_target, mock_adversarial_chat_target, role_play_definition_file, mock_scorer
     ):
         """Test RolePlayAttack initialization with custom parameters"""
-        request_converters = [PromptConverterConfiguration(converters=[Base64Converter()])]
-        response_converters = [PromptConverterConfiguration(converters=[StringJoinConverter()])]
+        request_converters = [ConverterConfiguration(converters=[Base64Converter()])]
+        response_converters = [ConverterConfiguration(converters=[StringJoinConverter()])]
 
         attack = RolePlayAttack(
             objective_target=mock_objective_target,

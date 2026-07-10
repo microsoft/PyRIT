@@ -42,7 +42,7 @@ from pyrit.scenario.core.scenario_target_defaults import get_default_adversarial
 
 if TYPE_CHECKING:
     from pyrit.executor.attack import AttackStrategy
-    from pyrit.prompt_normalizer import PromptConverterConfiguration
+    from pyrit.prompt_normalizer import ConverterConfiguration
     from pyrit.prompt_target import PromptTarget
 
 logger = logging.getLogger(__name__)
@@ -375,7 +375,7 @@ class AttackTechniqueFactory(Identifiable):
         adversarial_system_prompt: str | SeedPrompt | None = None,
         adversarial_seed_prompt: SeedPrompt | str | None = None,
         attack_converter_config_override: AttackConverterConfig | None = None,
-        extra_request_converters: list[PromptConverterConfiguration] | None = None,
+        extra_request_converters: list[ConverterConfiguration] | None = None,
     ) -> AttackTechnique:
         """
         Create a fresh AttackTechnique bound to the given target.

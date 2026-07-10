@@ -12,11 +12,11 @@ import pytest
 import requests
 
 from pyrit.common.path import CONVERTER_SEED_PROMPT_PATH, HOME_PATH
+from pyrit.converter import PDFConverter
 from pyrit.exceptions import PyritException
 from pyrit.executor.core import StrategyConverterConfig
 from pyrit.executor.workflow import XPIATestWorkflow
-from pyrit.prompt_converter import PDFConverter
-from pyrit.prompt_normalizer import PromptConverterConfiguration
+from pyrit.prompt_normalizer import ConverterConfiguration
 from pyrit.prompt_target import HTTPXAPITarget, OpenAIChatTarget
 from pyrit.score import SelfAskTrueFalseScorer, TrueFalseQuestion
 from pyrit.setup import SQLITE, initialize_pyrit_async
@@ -204,7 +204,7 @@ async def test_ai_recruiter_workflow():
     # "attack_content" and "processing_prompt" are unused by the server because it only expects 'file' in /upload
     # and does not parse additional fields. The PDF is manipulated via existing_pdf + injection_items.
     converter_config = StrategyConverterConfig(
-        request_converters=PromptConverterConfiguration.from_converters(converters=[pdf_converter]),
+        request_converters=ConverterConfiguration.from_converters(converters=[pdf_converter]),
     )
 
     xpia = XPIATestWorkflow(
