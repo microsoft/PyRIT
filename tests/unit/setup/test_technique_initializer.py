@@ -304,7 +304,7 @@ class TestRolePlayYamls:
 
     @pytest.mark.parametrize("technique_name", ROLE_PLAY_TECHNIQUE_NAMES)
     def test_yaml_loads_with_required_parameters(self, technique_name):
-        path = Path(EXECUTOR_SEED_PROMPT_PATH) / "red_teaming" / f"{technique_name}.yaml"
+        path = Path(EXECUTOR_SEED_PROMPT_PATH) / "red_teaming" / "role_play" / f"{technique_name}.yaml"
         sp = SeedPrompt.from_yaml_with_required_parameters(
             template_path=path,
             required_parameters=["objective", "max_turns"],
@@ -313,7 +313,7 @@ class TestRolePlayYamls:
 
     @pytest.mark.parametrize("technique_name", ROLE_PLAY_TECHNIQUE_NAMES)
     def test_yaml_renders_with_objective_and_max_turns(self, technique_name):
-        path = Path(EXECUTOR_SEED_PROMPT_PATH) / "red_teaming" / f"{technique_name}.yaml"
+        path = Path(EXECUTOR_SEED_PROMPT_PATH) / "red_teaming" / "role_play" / f"{technique_name}.yaml"
         sp = SeedPrompt.from_yaml_with_required_parameters(
             template_path=path,
             required_parameters=["objective", "max_turns"],
@@ -325,7 +325,7 @@ class TestRolePlayYamls:
     @pytest.mark.parametrize("technique_name", ROLE_PLAY_TECHNIQUE_NAMES)
     def test_yaml_has_no_em_or_en_dashes(self, technique_name):
         """Author convention: persona YAMLs avoid em-dashes and en-dashes."""
-        path = Path(EXECUTOR_SEED_PROMPT_PATH) / "red_teaming" / f"{technique_name}.yaml"
+        path = Path(EXECUTOR_SEED_PROMPT_PATH) / "red_teaming" / "role_play" / f"{technique_name}.yaml"
         text = path.read_text(encoding="utf-8")
         # Literal em-dash and en-dash characters used as needles for absence assertions on the YAMLs
         assert "–" not in text, f"{technique_name}.yaml contains an en-dash"

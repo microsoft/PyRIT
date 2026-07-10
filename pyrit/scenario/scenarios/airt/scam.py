@@ -191,6 +191,9 @@ class Scam(Scenario):
             # objective is delivered to the target.
             role_play_technique = AttackTechniqueFactory.with_simulated_conversation(
                 name="role_play_persuasion_written",
+                adversarial_chat_system_prompt_path=EXECUTOR_RED_TEAM_PATH
+                / "role_play"
+                / "role_play_persuasion_written.yaml",
                 num_turns=2,
             ).create(
                 objective_target=self._objective_target,

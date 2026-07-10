@@ -15,6 +15,9 @@ scenario-relative and is declared per scenario (see
 ``default_technique_names``), not baked into the shared catalog.
 """
 
+from pathlib import Path
+
+from pyrit.common.path import EXECUTOR_SEED_PROMPT_PATH
 from pyrit.executor.attack import (
     ContextComplianceAttack,
     ManyShotJailbreakAttack,
@@ -27,6 +30,15 @@ from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
 # play is a "light" framing technique, so a short buildup plus a direct final
 # message is enough to establish the fiction and deliver the objective.
 ROLE_PLAY_SIMULATED_NUM_TURNS = 2
+
+# Role-play persona YAMLs live in a dedicated ``role_play`` subfolder rather than
+# directly under ``red_teaming``, so the adversarial-chat system prompt path is
+# passed explicitly instead of relying on the ``red_teaming/{name}.yaml`` default.
+_ROLE_PLAY_YAML_DIR = Path(EXECUTOR_SEED_PROMPT_PATH) / "red_teaming" / "role_play"
+
+
+def _role_play_yaml(name: str) -> Path:
+    return _ROLE_PLAY_YAML_DIR / f"{name}.yaml"
 
 
 def get_technique_factories() -> list[AttackTechniqueFactory]:
@@ -48,26 +60,31 @@ def get_technique_factories() -> list[AttackTechniqueFactory]:
     return [
         AttackTechniqueFactory.with_simulated_conversation(
             name="role_play_movie_script",
+            adversarial_chat_system_prompt_path=_role_play_yaml("role_play_movie_script"),
             technique_tags=["single_turn", "light"],
             num_turns=ROLE_PLAY_SIMULATED_NUM_TURNS,
         ),
         AttackTechniqueFactory.with_simulated_conversation(
             name="role_play_video_game",
+            adversarial_chat_system_prompt_path=_role_play_yaml("role_play_video_game"),
             technique_tags=["single_turn", "light"],
             num_turns=ROLE_PLAY_SIMULATED_NUM_TURNS,
         ),
         AttackTechniqueFactory.with_simulated_conversation(
             name="role_play_trivia_game",
+            adversarial_chat_system_prompt_path=_role_play_yaml("role_play_trivia_game"),
             technique_tags=["single_turn", "light"],
             num_turns=ROLE_PLAY_SIMULATED_NUM_TURNS,
         ),
         AttackTechniqueFactory.with_simulated_conversation(
             name="role_play_persuasion",
+            adversarial_chat_system_prompt_path=_role_play_yaml("role_play_persuasion"),
             technique_tags=["single_turn", "light"],
             num_turns=ROLE_PLAY_SIMULATED_NUM_TURNS,
         ),
         AttackTechniqueFactory.with_simulated_conversation(
             name="role_play_persuasion_written",
+            adversarial_chat_system_prompt_path=_role_play_yaml("role_play_persuasion_written"),
             technique_tags=["single_turn", "light"],
             num_turns=ROLE_PLAY_SIMULATED_NUM_TURNS,
         ),

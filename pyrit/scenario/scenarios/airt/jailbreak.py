@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from pyrit.common import apply_defaults
+from pyrit.common.path import EXECUTOR_RED_TEAM_PATH
 from pyrit.datasets import TextJailBreak
 from pyrit.executor.attack.core.attack_config import AttackConverterConfig, AttackScoringConfig
 from pyrit.executor.attack.single_turn.many_shot_jailbreak import ManyShotJailbreakAttack
@@ -221,6 +222,9 @@ class Jailbreak(Scenario):
                 adversarial_target = self._get_or_create_adversarial_target()
                 role_play_technique = AttackTechniqueFactory.with_simulated_conversation(
                     name="role_play_persuasion",
+                    adversarial_chat_system_prompt_path=EXECUTOR_RED_TEAM_PATH
+                    / "role_play"
+                    / "role_play_persuasion.yaml",
                     num_turns=2,
                 ).create(
                     objective_target=self._objective_target,
