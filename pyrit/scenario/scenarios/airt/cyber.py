@@ -23,12 +23,13 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Techniques Cyber selects from the shared catalog. ``DEFAULT`` is wired to ``any_of("core")``
-# (see _build_cyber_technique), so adding a technique here that carries the ``core`` tag pulls it
-# into DEFAULT, while a technique lacking ``core`` (e.g. an ``extra``-group technique) would stay
-# in ALL but be silently dropped from DEFAULT. Either case breaks the current DEFAULT == ALL
-# invariant (guarded by test_default_matches_all); revisit the aggregate wiring if that happens.
+# Techniques Cyber selects from the shared catalog. Cyber declares its own DEFAULT by naming
+# these techniques (see _build_cyber_technique), rather than relying on a catalog-wide ``default``
+# tag. Adding a technique here that is not also in ``_CYBER_DEFAULT_TECHNIQUE_NAMES`` would keep
+# it in ALL but out of DEFAULT, breaking the current DEFAULT == ALL invariant guarded by
+# test_default_matches_all; keep the two sets in sync if this list grows.
 _CYBER_TECHNIQUE_NAMES = {"red_teaming"}
+_CYBER_DEFAULT_TECHNIQUE_NAMES = {"red_teaming"}
 
 
 @cache
@@ -58,13 +59,12 @@ def _build_cyber_technique() -> type[ScenarioTechnique]:
         class_name="CyberTechnique",
         factories=cyber_factories,
         aggregate_tags={
-            # Cyber curates a single technique (red_teaming) at the scenario level. That
-            # technique carries the canonical ``core`` tag but not the catalog-wide
-            # ``default`` tag, so DEFAULT matches ``core`` here to select it (rather than
-            # tagging red_teaming ``default`` globally, which would alter other scenarios).
-            "default": TagQuery.any_of("core"),
             "multi_turn": TagQuery.any_of("multi_turn"),
         },
+        # Cyber curates a single technique (red_teaming) at the scenario level. It declares that
+        # as its DEFAULT by name rather than tagging red_teaming ``default`` globally, which would
+        # alter other scenarios.
+        default_technique_names=_CYBER_DEFAULT_TECHNIQUE_NAMES,
     )
 
 

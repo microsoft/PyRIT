@@ -4,61 +4,38 @@
 from __future__ import annotations
 
 import logging
+from functools import cache
 from typing import TYPE_CHECKING, ClassVar
 
 from pyrit.common import apply_defaults
 from pyrit.executor.attack import AttackConverterConfig, PromptSendingAttack
 from pyrit.prompt_converter import LeetspeakConverter, PolicyPuppetryConverter, PolicyPuppetryTemplate
 from pyrit.prompt_normalizer import PromptConverterConfiguration
+from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
 from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
 from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
 from pyrit.scenario.core.matrix_atomic_attack_builder import MatrixAtomicAttackBuilder
 from pyrit.scenario.core.scenario import BaselineAttackPolicy, Scenario
-from pyrit.scenario.core.scenario_technique import ScenarioTechnique
 
 if TYPE_CHECKING:
     from pyrit.scenario.core.atomic_attack import AtomicAttack
     from pyrit.scenario.core.scenario_context import ScenarioContext
+    from pyrit.scenario.core.scenario_technique import ScenarioTechnique
     from pyrit.score import TrueFalseScorer
 
 logger = logging.getLogger(__name__)
 
 
-class DoctorTechnique(ScenarioTechnique):
-    """
-    Techniques for the Doctor scenario.
-
-    Each technique applies a Policy Puppetry prompt-injection template to the
-    objective. ``PolicyPuppetry`` wraps the objective in the universal Dr House
-    TV-script template; ``PolicyPuppetryLeet`` additionally leetspeak-encodes the
-    templated prompt.
-    """
-
-    # Aggregate members
-    ALL = ("all", {"all"})
-    DEFAULT = ("default", {"default"})
-
-    # Concrete techniques (values match the technique factory names). Both are tagged
-    # "default", so DEFAULT and ALL coincide today; ALL exists so a future non-default
-    # technique would diverge from DEFAULT without another default-technique change.
-    PolicyPuppetry = ("policy_puppetry", {"default"})
-    PolicyPuppetryLeet = ("policy_puppetry_leet", {"default"})
-
-    @classmethod
-    def get_aggregate_tags(cls) -> set[str]:
-        """Return the aggregate tags for the Doctor scenario."""
-        return super().get_aggregate_tags() | {"default"}
-
-
 # Doctor-specific technique factories. Kept local to this scenario (referenced from
-# _build_atomic_attacks_async) so they don't pollute the global registry.
+# _build_atomic_attacks_async) so they don't pollute the global registry — the Policy
+# Puppetry templates are pinned to this probe rather than being general-purpose.
 # The Dr House template is pinned (matching Garak's "Bypass" probe) so the
 # scenario stays deterministic rather than using the converter's random default.
 DOCTOR_FACTORIES: list[AttackTechniqueFactory] = [
     AttackTechniqueFactory(
         name="policy_puppetry",
         attack_class=PromptSendingAttack,
-        technique_tags=["default"],
+        technique_tags=["single_turn"],
         attack_kwargs={
             "attack_converter_config": AttackConverterConfig(
                 request_converters=PromptConverterConfiguration.from_converters(
@@ -72,7 +49,7 @@ DOCTOR_FACTORIES: list[AttackTechniqueFactory] = [
     AttackTechniqueFactory(
         name="policy_puppetry_leet",
         attack_class=PromptSendingAttack,
-        technique_tags=["default"],
+        technique_tags=["single_turn"],
         attack_kwargs={
             "attack_converter_config": AttackConverterConfig(
                 request_converters=PromptConverterConfiguration.from_converters(
@@ -85,6 +62,29 @@ DOCTOR_FACTORIES: list[AttackTechniqueFactory] = [
         },
     ),
 ]
+
+
+# Doctor's technique enum is generated from DOCTOR_FACTORIES via the shared factory
+# generator (like the registry-driven scenarios) rather than hand-written. Both
+# techniques are the scenario default, so DEFAULT and ALL coincide today; ALL exists
+# so a future non-default technique would diverge from DEFAULT without another change.
+# Built lazily and cached (like the other dynamically-generated scenarios) so every
+# Doctor instance shares one enum class; the public ``DoctorTechnique`` symbol is
+# resolved from here via the garak package ``__getattr__``.
+@cache
+def _build_doctor_technique() -> type[ScenarioTechnique]:
+    """
+    Generate the Doctor technique enum from ``DOCTOR_FACTORIES``.
+
+    Returns:
+        type[ScenarioTechnique]: The dynamically generated technique enum class.
+    """
+    return AttackTechniqueRegistry.build_technique_class_from_factories(  # type: ignore[return-value, ty:invalid-return-type]
+        class_name="DoctorTechnique",
+        factories=DOCTOR_FACTORIES,
+        aggregate_tags={},
+        default_technique_names={"policy_puppetry", "policy_puppetry_leet"},
+    )
 
 
 class Doctor(Scenario):
@@ -133,10 +133,12 @@ class Doctor(Scenario):
         if not objective_scorer:
             objective_scorer = self._get_default_objective_scorer()
 
+        technique_class = _build_doctor_technique()
+
         super().__init__(
             version=self.VERSION,
-            technique_class=DoctorTechnique,
-            default_technique=DoctorTechnique.DEFAULT,
+            technique_class=technique_class,
+            default_technique=technique_class("default"),
             default_dataset_config=DatasetAttackConfiguration(dataset_names=["garak_doctor"]),
             objective_scorer=objective_scorer,
             scenario_result_id=scenario_result_id,

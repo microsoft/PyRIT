@@ -72,10 +72,10 @@ def _build_text_adaptive_technique() -> type[ScenarioTechnique]:
         class_name="TextAdaptiveTechnique",
         factories=factories,
         aggregate_tags={
-            "default": TagQuery.any_of("default"),
             "single_turn": TagQuery.any_of("single_turn"),
             "multi_turn": TagQuery.any_of("multi_turn"),
         },
+        default_technique_names={"role_play", "many_shot"},
     )
 
 

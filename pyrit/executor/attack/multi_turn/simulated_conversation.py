@@ -11,6 +11,7 @@ against a simulated (compliant) target before executing the actual attack.
 from __future__ import annotations
 
 import logging
+import uuid
 from typing import TYPE_CHECKING
 
 from pyrit.executor.attack.core.attack_config import (
@@ -211,17 +212,23 @@ async def _generate_next_message_async(
         conversation_context=conversation_context,
     )
 
-    # Use the adversarial chat to generate the next message
-    # Create a simple user message asking for generation
+    # Use the adversarial chat to generate the next message.
+    # Scope the system prompt and the generated message to their own fresh
+    # conversation. Message.from_prompt leaves conversation_id unset (None);
+    # passing that to set_system_prompt would make get_conversation_messages
+    # skip its conversation filter and return every piece in memory, which
+    # raises once memory holds more than one conversation.
+    conversation_id = str(uuid.uuid4())
     request_message = Message.from_prompt(
         role="user",
         prompt="Generate the next user message based on the instructions above.",
     )
+    request_message.message_pieces[0].conversation_id = conversation_id
 
     # Set the system prompt on the target
     adversarial_chat.set_system_prompt(
         system_prompt=system_prompt,
-        conversation_id=request_message.conversation_id,
+        conversation_id=conversation_id,
     )
 
     responses: list[Message] = await adversarial_chat.send_prompt_async(message=request_message)

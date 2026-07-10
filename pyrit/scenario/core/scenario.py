@@ -612,7 +612,13 @@ class Scenario(ABC):
         # into a ScenarioContext, and hand it to the subclass extension point. Baseline is
         # emitted centrally (from context.seed_groups) so overrides never re-resolve seeds
         # or hand-roll baseline emission.
-        seed_groups_by_dataset = await self._resolve_seed_groups_by_dataset_async()
+        #
+        # On resume, resolve the full, deterministic dataset (no max_dataset_size sampling):
+        # the originally-sampled subset was snapshotted into the ScenarioResult metadata and is
+        # replayed by _apply_persisted_objectives. Re-drawing a fresh random.sample here would
+        # diverge from the persisted hashes and abort resume whenever max_dataset_size is set.
+        is_resume = self._scenario_result_id is not None
+        seed_groups_by_dataset = await self._resolve_seed_groups_by_dataset_async(apply_sampling=not is_resume)
         context = self._build_scenario_context(seed_groups_by_dataset=seed_groups_by_dataset)
         self._atomic_attacks = await self._build_atomic_attacks_async(context=context)
 
@@ -699,12 +705,12 @@ class Scenario(ABC):
         On resume, replay the originally-sampled objective subset.
 
         When the first run used ``max_dataset_size``, the chosen subset was
-        recorded in ``ScenarioResult.metadata["objective_hashes"]``.
-        Restrict each atomic attack's freshly-resolved seed_groups to that set
-        so a fresh ``random.sample`` draw on resume can't silently shift which
-        objectives the scenario operates on. If any persisted hash is no longer
-        present in the dataset, refuse to resume — running a smaller subset
-        than the user committed to would silently produce different results.
+        recorded in ``ScenarioResult.metadata["objective_hashes"]``. Resume resolves
+        the **full, deterministic** dataset (sampling is bypassed on the resume branch of
+        ``initialize_async``), so restricting each atomic attack's seed_groups to the
+        persisted set here reconstructs exactly the objectives the first run committed to.
+        If any persisted hash is no longer present in the dataset, refuse to resume — that
+        now signals the dataset itself genuinely changed, not a random resample drift.
 
         Args:
             stored_result (ScenarioResult): The scenario result loaded from memory.
@@ -929,7 +935,9 @@ class Scenario(ABC):
 
         return remaining_attacks
 
-    async def _resolve_seed_groups_by_dataset_async(self) -> dict[str, list[SeedAttackGroup]]:
+    async def _resolve_seed_groups_by_dataset_async(
+        self, *, apply_sampling: bool = True
+    ) -> dict[str, list[SeedAttackGroup]]:
         """
         Resolve the seed groups this scenario attacks, keyed by originating dataset.
 
@@ -941,10 +949,17 @@ class Scenario(ABC):
         Override to inject seeds from an alternate source (e.g. deprecated ``objectives``)
         or to filter the resolved groups before attacks are built.
 
+        Args:
+            apply_sampling (bool): When True (default), apply ``max_dataset_size`` sampling.
+                On resume the base passes False so the full, deterministic dataset is resolved
+                and the persisted objective subset is reconstructed exactly (see
+                ``_apply_persisted_objectives``) rather than intersected against a fresh,
+                divergent ``random.sample`` draw.
+
         Returns:
             dict[str, list[SeedAttackGroup]]: Seed groups keyed by dataset name.
         """
-        return await self._dataset_config.get_attack_groups_by_dataset_async()
+        return await self._dataset_config.get_attack_groups_by_dataset_async(apply_sampling=apply_sampling)
 
     def _build_scenario_context(self, *, seed_groups_by_dataset: dict[str, list[SeedAttackGroup]]) -> ScenarioContext:
         """

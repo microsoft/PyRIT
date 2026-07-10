@@ -498,7 +498,9 @@ class WebInjection(Scenario):
             return self._xss_scoring_config
         return self._exfil_scoring_config
 
-    async def _resolve_seed_groups_by_dataset_async(self) -> dict[str, list[SeedAttackGroup]]:
+    async def _resolve_seed_groups_by_dataset_async(
+        self, *, apply_sampling: bool = True
+    ) -> dict[str, list[SeedAttackGroup]]:
         """
         Generate the injection prompts and wrap them into seed groups, keyed by technique.
 
@@ -506,6 +508,11 @@ class WebInjection(Scenario):
         ``DatasetAttackConfiguration``): each technique renders its own objective and prompt
         set from the raw garak datasets. Resolving them here means the base owns the single
         seed sample used for both the atomic attacks and the central baseline.
+
+        Args:
+            apply_sampling (bool): Accepted for base-class compatibility but unused — the
+                synthesized seeds are already deterministic (``random.Random(self._random_seed)``),
+                so resume reproduces the same set without a ``max_dataset_size`` sampling path.
 
         Returns:
             dict[str, list[SeedAttackGroup]]: Seed groups keyed by technique value.

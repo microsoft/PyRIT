@@ -178,44 +178,91 @@ class AttackTechniqueRegistry(Registry["AttackTechniqueFactory", AttackTechnique
         class_name: str,
         factories: list[AttackTechniqueFactory],
         aggregate_tags: dict[str, TagQuery],
+        available: TagQuery | None = None,
+        default: TagQuery | None = None,
+        default_technique_names: set[str] | None = None,
     ) -> type:
         """
         Build a ``ScenarioTechnique`` enum subclass dynamically from technique factories.
 
         Creates an enum class with:
         - An ``ALL`` aggregate member (always included).
+        - A ``DEFAULT`` aggregate member when a default selection is provided.
         - Additional aggregate members from ``aggregate_tags`` keys.
-        - One technique member per factory, with tags from the factory.
+        - One technique member per *available* factory, with tags from the factory.
 
-        Each aggregate maps to a ``TagQuery`` that determines which
-        technique factories belong to it.
+        The three selection roles are all expressed the same way — as tag queries
+        over ``factories`` — and relate as strict subsets:
+
+        - **available** (the pool): ``available`` filters ``factories`` to the
+            techniques this scenario exposes. When ``None`` the whole ``factories``
+            list is the pool (back-compatible).
+        - **aggregates**: named ``TagQuery`` presets (e.g. ``single_turn``); each is
+            evaluated only over the pool, so every aggregate is a subset of available.
+        - **default**: what runs when the caller selects nothing. Given as a
+            ``TagQuery`` (``default``) and/or explicit ``default_technique_names``;
+            both are intersected with the pool, so ``DEFAULT`` is always a subset of
+            available.
+
+        ``default`` is deliberately **not** an intrinsic technique tag: what runs by
+        default differs per scenario. A scenario selects its default set via a query
+        or by name so the same technique can be default for one scenario and not
+        another, without a catalog-wide tag.
 
         Args:
             class_name (str): Name for the generated enum class.
-            factories (list[AttackTechniqueFactory]): Technique factories to include
-                as enum members.
+            factories (list[AttackTechniqueFactory]): Candidate technique factories.
+                Filtered by ``available`` to form the pool of enum members.
             aggregate_tags (dict[str, TagQuery]): Maps aggregate member names to a
-                ``TagQuery`` that selects which techniques belong to the aggregate.
-                An ``ALL`` aggregate (expanding to all techniques) is always added.
+                ``TagQuery`` that selects which pool techniques belong to the aggregate.
+                An ``ALL`` aggregate (expanding to all pool techniques) is always added.
+            available (TagQuery | None): Query selecting which of ``factories`` are
+                available for this scenario (the pool). ``None`` means all of them.
+            default (TagQuery | None): Query selecting the pool techniques that form
+                the ``DEFAULT`` aggregate. Combined (union) with
+                ``default_technique_names``.
+            default_technique_names (set[str] | None): Names of pool techniques that
+                form this scenario's ``DEFAULT`` aggregate. Combined (union) with
+                ``default``. Names not present in the pool are ignored, so a scenario
+                can list its intended default set even when some of those techniques
+                are filtered out of its pool. When the combined default selection is
+                empty, no ``DEFAULT`` aggregate is generated.
 
         Returns:
             type: A ``ScenarioTechnique`` subclass with the generated members.
         """
         from pyrit.scenario import ScenarioTechnique
 
+        # available (the pool): filter the candidate factories by the availability query.
+        pool = available.filter(factories) if available is not None else list(factories)
+
+        # default: resolve from an explicit name set and/or a query over the pool. The
+        # DEFAULT aggregate exists whenever a default was requested; its membership is
+        # limited to the pool below (only pool factories are iterated), so DEFAULT is
+        # always a subset of available.
+        default_names: set[str] = set(default_technique_names or set())
+        if default is not None:
+            default_names |= {f.name for f in pool if default.matches(set(f.technique_tags))}
+
         all_aggregate_tag_names = {"all"} | set(aggregate_tags.keys())
+        if default_names:
+            all_aggregate_tag_names.add("default")
 
         members: dict[str, tuple[str, set[str]]] = {}
 
         # Aggregate members first (ALL is always present)
         members["ALL"] = ("all", {"all"})
+        if default_names:
+            members["DEFAULT"] = ("default", {"default"})
         for agg_name in aggregate_tags:
             members[agg_name.upper()] = (agg_name, {agg_name})
 
-        # Technique members from factories — assign aggregate tags based on TagQuery matching
-        for factory in factories:
+        # Technique members from the pool — assign aggregate tags based on TagQuery matching
+        for factory in pool:
             factory_tags = set(factory.technique_tags)
             matched_agg_tags = {agg_name for agg_name, query in aggregate_tags.items() if query.matches(factory_tags)}
+            if factory.name in default_names:
+                matched_agg_tags.add("default")
             members[factory.name] = (factory.name, factory_tags | matched_agg_tags)
 
         # Build the enum class dynamically

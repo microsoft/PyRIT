@@ -235,7 +235,9 @@ class Psychosocial(Scenario):
         # Store deprecated objectives for later resolution in _resolve_seed_groups_by_dataset_async
         self._deprecated_objectives = objectives
 
-    async def _resolve_seed_groups_by_dataset_async(self) -> dict[str, list[SeedAttackGroup]]:
+    async def _resolve_seed_groups_by_dataset_async(
+        self, *, apply_sampling: bool = True
+    ) -> dict[str, list[SeedAttackGroup]]:
         """
         Resolve seed groups from deprecated objectives or dataset configuration.
 
@@ -243,6 +245,12 @@ class Psychosocial(Scenario):
         ``imminent_crisis``); the default ``ALL`` technique keeps the broad ``psychosocial``
         category. The base ``Scenario`` flattens the result into ``context.seed_groups`` and
         reuses it for the technique attacks and the baseline.
+
+        Args:
+            apply_sampling (bool): When True (default), apply ``max_dataset_size`` sampling.
+                On resume the base passes False so the full, deterministic dataset is resolved
+                and the persisted objective subset is reconstructed exactly. Inline deprecated
+                objectives are never sampled.
 
         Returns:
             dict[str, list[SeedAttackGroup]]: Seed groups keyed by dataset (or a synthetic
@@ -267,7 +275,7 @@ class Psychosocial(Scenario):
         harm_category_filter = self._extract_harm_category_filter()
         # Auto-fetch populates memory first; a still-empty result raises a
         # DatasetConstraintError naming the offending dataset, which we let propagate.
-        seed_groups = list(await self._dataset_config.get_seed_attack_groups_async())
+        seed_groups = list(await self._dataset_config.get_seed_attack_groups_async(apply_sampling=apply_sampling))
 
         if harm_category_filter:
             seed_groups = self._filter_by_harm_category(

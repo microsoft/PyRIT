@@ -200,5 +200,5 @@ class TestDoctorTechniqueTags:
         assert "default" in DoctorTechnique.get_aggregate_tags()
 
     def test_concrete_technique_values(self):
-        assert DoctorTechnique.PolicyPuppetry.value == "policy_puppetry"
-        assert DoctorTechnique.PolicyPuppetryLeet.value == "policy_puppetry_leet"
+        assert DoctorTechnique("policy_puppetry").value == "policy_puppetry"
+        assert DoctorTechnique("policy_puppetry_leet").value == "policy_puppetry_leet"

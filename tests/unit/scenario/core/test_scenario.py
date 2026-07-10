@@ -169,7 +169,7 @@ class ConcreteScenario(Scenario):
         super().__init__(**kwargs)
         self._atomic_attacks_to_return = atomic_attacks_to_return or []
 
-    async def _resolve_seed_groups_by_dataset_async(self):
+    async def _resolve_seed_groups_by_dataset_async(self, *, apply_sampling: bool = True):
         return {}
 
     async def _build_atomic_attacks_async(self, *, context):
@@ -782,8 +782,8 @@ class ConcreteScenarioWithTrueFalseScorer(Scenario):
         super().__init__(**kwargs)
         self._atomic_attacks_to_return = atomic_attacks_to_return or []
 
-    async def _resolve_seed_groups_by_dataset_async(self):
-        return await self._dataset_config.get_attack_groups_by_dataset_async()
+    async def _resolve_seed_groups_by_dataset_async(self, *, apply_sampling: bool = True):
+        return await self._dataset_config.get_attack_groups_by_dataset_async(apply_sampling=apply_sampling)
 
     async def _build_atomic_attacks_async(self, *, context):
         return list(self._atomic_attacks_to_return)
@@ -1045,6 +1045,125 @@ class TestScenarioBaselineUniformObjectives:
         assert technique.atomic_attack_name == "technique"
         assert set(baseline.objectives) == set(technique.objectives)
         assert len(baseline.objectives) == 3
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestScenarioResumeDeterministicUnderMaxDatasetSize:
+    """Phase H regression: resume must reconstruct the persisted objective subset.
+
+    ``max_dataset_size`` applies an unseeded ``random.sample`` on every seed
+    resolution. Before the fix, resume re-sampled and intersected the persisted
+    objective hashes against a *fresh* (divergent) draw, so resume aborted with
+    "persisted objective hash(es) are no longer present in the dataset" whenever
+    ``max_dataset_size`` was smaller than the dataset. The fix bypasses sampling on
+    the resume branch: the full deterministic dataset is resolved and the persisted
+    hashes drive selection, reconstructing exactly the first run's objectives.
+    """
+
+    class _StrategyScenario(ConcreteScenarioWithTrueFalseScorer):
+        async def _build_atomic_attacks_async(self, *, context):
+            from pyrit.scenario.core.attack_technique import AttackTechnique
+
+            return [
+                AtomicAttack(
+                    atomic_attack_name="strategy",
+                    attack_technique=AttackTechnique(attack=MagicMock()),
+                    seed_groups=list(context.seed_groups),
+                )
+            ]
+
+    def _make_config(self):
+        from pyrit.models import SeedGroup, SeedObjective
+
+        seed_groups = [SeedGroup(seeds=[SeedObjective(value=f"obj{i}")]) for i in range(10)]
+        return DatasetAttackConfiguration(seed_groups=seed_groups, max_dataset_size=3)
+
+    async def test_resume_reconstructs_persisted_subset_without_resampling(self, mock_objective_target):
+        config = self._make_config()
+
+        def _sample_first_k(population, k):
+            return list(population)[:k]
+
+        # First run: deterministic "first 3" sample persists obj0/obj1/obj2.
+        with patch(
+            "pyrit.scenario.core.dataset_configuration.random.sample",
+            side_effect=_sample_first_k,
+        ):
+            scenario = self._StrategyScenario(name="Phase H resume", version=1)
+            scenario.set_params_from_args(
+                args={
+                    "objective_target": mock_objective_target,
+                    "scenario_strategies": None,
+                    "dataset_config": config,
+                }
+            )
+            await scenario.initialize_async()
+
+        original_id = scenario._scenario_result_id
+        assert original_id is not None
+        _, first_strategy = scenario._atomic_attacks
+        persisted_objectives = set(first_strategy.objectives)
+        assert persisted_objectives == {"obj0", "obj1", "obj2"}
+
+        # Resume: a *divergent* sample (last 3) would have broken the pre-fix intersection.
+        # With the fix, resume never samples, so this side_effect must go uncalled.
+        def _sample_last_k(population, k):
+            return list(population)[-k:]
+
+        with patch(
+            "pyrit.scenario.core.dataset_configuration.random.sample",
+            side_effect=_sample_last_k,
+        ) as resume_sample_mock:
+            resumed = self._StrategyScenario(
+                name="Phase H resume",
+                version=1,
+                scenario_result_id=original_id,
+            )
+            resumed.set_params_from_args(
+                args={
+                    "objective_target": mock_objective_target,
+                    "scenario_strategies": None,
+                    "dataset_config": self._make_config(),
+                }
+            )
+            # Must not raise "persisted objective hash(es) are no longer present in the dataset".
+            await resumed.initialize_async()
+
+        # Sampling is bypassed on resume — the full dataset is resolved deterministically.
+        assert resume_sample_mock.call_count == 0
+        assert resumed._scenario_result_id == original_id
+
+        baseline, strategy = resumed._atomic_attacks
+        assert baseline.atomic_attack_name == "baseline"
+        assert strategy.atomic_attack_name == "strategy"
+        # Exactly the originally-persisted subset, not the divergent "last 3" draw.
+        assert set(strategy.objectives) == persisted_objectives
+        assert set(baseline.objectives) == persisted_objectives
+
+    async def test_fresh_run_still_samples(self, mock_objective_target):
+        """The resume bypass must not disable sampling for a normal (non-resume) run."""
+        config = self._make_config()
+
+        def _sample_first_k(population, k):
+            return list(population)[:k]
+
+        with patch(
+            "pyrit.scenario.core.dataset_configuration.random.sample",
+            side_effect=_sample_first_k,
+        ) as sample_mock:
+            scenario = self._StrategyScenario(name="Phase H fresh", version=1)
+            scenario.set_params_from_args(
+                args={
+                    "objective_target": mock_objective_target,
+                    "scenario_strategies": None,
+                    "dataset_config": config,
+                }
+            )
+            await scenario.initialize_async()
+
+        assert sample_mock.call_count == 1
+        _, strategy = scenario._atomic_attacks
+        assert len(strategy.objectives) == 3
 
 
 @pytest.mark.usefixtures("patch_central_database")
