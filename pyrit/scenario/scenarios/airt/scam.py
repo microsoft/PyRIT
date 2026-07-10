@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from pyrit.common import apply_defaults
-from pyrit.common.path import EXECUTOR_RED_TEAM_PATH, SCORER_SEED_PROMPT_PATH
+from pyrit.common.path import EXECUTOR_RED_TEAM_PATH, EXECUTOR_SIMULATED_TARGET_PATH, SCORER_SEED_PROMPT_PATH
 from pyrit.executor.attack import ContextComplianceAttack, RedTeamingAttack
 from pyrit.executor.attack.core.attack_config import AttackAdversarialConfig, AttackScoringConfig
 from pyrit.models import Parameter, SeedAttackGroup, SeedPrompt
@@ -194,6 +194,7 @@ class Scam(Scenario):
                 adversarial_chat_system_prompt_path=EXECUTOR_RED_TEAM_PATH
                 / "role_play"
                 / "role_play_persuasion_written.yaml",
+                next_message_system_prompt_path=EXECUTOR_SIMULATED_TARGET_PATH / "role_play_next_message.yaml",
                 num_turns=2,
             ).create(
                 objective_target=self._objective_target,

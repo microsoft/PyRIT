@@ -9,7 +9,7 @@ from typing import Any, TypeVar
 import yaml
 
 from pyrit.common import apply_defaults
-from pyrit.common.path import DATASETS_PATH, EXECUTOR_RED_TEAM_PATH
+from pyrit.common.path import DATASETS_PATH, EXECUTOR_RED_TEAM_PATH, EXECUTOR_SIMULATED_TARGET_PATH
 from pyrit.executor.attack import (
     AttackAdversarialConfig,
     AttackConverterConfig,
@@ -442,6 +442,7 @@ class Psychosocial(Scenario):
         role_play_technique = AttackTechniqueFactory.with_simulated_conversation(
             name="role_play_movie_script",
             adversarial_chat_system_prompt_path=EXECUTOR_RED_TEAM_PATH / "role_play" / "role_play_movie_script.yaml",
+            next_message_system_prompt_path=EXECUTOR_SIMULATED_TARGET_PATH / "role_play_next_message.yaml",
             num_turns=2,
         ).create(
             objective_target=self._objective_target,

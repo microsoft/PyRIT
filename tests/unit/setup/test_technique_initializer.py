@@ -298,6 +298,14 @@ class TestRolePlayFactories:
             assert sim is not None
             assert sim.adversarial_chat_system_prompt_path.exists()
 
+    def test_all_use_role_play_next_message_prompt(self):
+        for f in self._role_play_factories():
+            sim = f.seed_technique.simulated_conversation_config
+            assert sim is not None
+            assert sim.next_message_system_prompt_path is not None
+            assert sim.next_message_system_prompt_path.name == "role_play_next_message.yaml"
+            assert sim.next_message_system_prompt_path.exists()
+
 
 class TestRolePlayYamls:
     """Tests for the role-play persona YAML files."""
