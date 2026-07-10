@@ -38,7 +38,7 @@
 #
 # Pass multiple `--adversarial-targets` values to compare across models in a single run.
 #
-# **Available strategies:** `light` (default — a quick snapshot using the cheaper techniques),
+# **Available techniques:** `light` (default — a quick snapshot using the cheaper techniques),
 # `single_turn`, `multi_turn`, plus one member per adversarial-capable source technique
 # (e.g. `red_teaming`, `tap`, `crescendo_simulated`). The `light` aggregate excludes `tap` and
 # `crescendo_simulated`, which can take hours.

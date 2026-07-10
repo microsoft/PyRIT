@@ -690,6 +690,75 @@ class TestGenerateSimulatedConversationAsync:
                 # Verify set_system_prompt was called on adversarial_chat
                 mock_adversarial_chat.set_system_prompt.assert_called()
 
+    async def test_next_message_scopes_system_prompt_to_generated_message_conversation(
+        self,
+        mock_adversarial_chat: MagicMock,
+        mock_objective_scorer: MagicMock,
+        adversarial_system_prompt_path: Path,
+        sample_conversation: list[Message],
+    ):
+        """Regression: the next-message system prompt must be scoped to a concrete conversation id.
+
+        ``Message.from_prompt`` leaves ``conversation_id`` unset (None). Passing that to
+        ``set_system_prompt`` makes ``get_conversation_messages`` skip its conversation filter and
+        return every piece in memory, which raises once memory holds more than one conversation.
+        The generated request message and the system prompt must share the same non-empty id.
+        """
+        from pyrit.models.seeds import NextMessageSystemPromptPaths
+
+        next_message_response = Message(
+            message_pieces=[
+                MessagePiece(
+                    role="assistant",
+                    original_value="Generated message",
+                    original_value_data_type="text",
+                    conversation_id=str(uuid.uuid4()),
+                )
+            ]
+        )
+
+        with patch("pyrit.executor.attack.multi_turn.simulated_conversation.RedTeamingAttack") as mock_attack_class:
+            mock_attack = MagicMock()
+            mock_attack.get_identifier.return_value = ComponentIdentifier(
+                class_name="RedTeamingAttack", class_module="pyrit.executor.attack"
+            )
+            mock_attack.execute_async = AsyncMock(
+                return_value=AttackResult(
+                    atomic_attack_identifier=ComponentIdentifier(
+                        class_name="RedTeamingAttack", class_module="pyrit.executor.attack"
+                    ),
+                    conversation_id=str(uuid.uuid4()),
+                    objective="Test objective",
+                    outcome=AttackOutcome.SUCCESS,
+                    executed_turns=3,
+                )
+            )
+            mock_attack_class.return_value = mock_attack
+
+            with patch("pyrit.executor.attack.multi_turn.simulated_conversation.CentralMemory") as mock_memory_class:
+                mock_memory = MagicMock()
+                mock_memory.get_conversation_messages.return_value = iter(sample_conversation)
+                mock_memory_class.get_memory_instance.return_value = mock_memory
+
+                mock_adversarial_chat.send_prompt_async = AsyncMock(return_value=[next_message_response])
+
+                await generate_simulated_conversation_async(
+                    objective="Test objective",
+                    adversarial_chat=mock_adversarial_chat,
+                    objective_scorer=mock_objective_scorer,
+                    adversarial_chat_system_prompt_path=adversarial_system_prompt_path,
+                    num_turns=3,
+                    next_message_system_prompt_path=NextMessageSystemPromptPaths.DIRECT.value,
+                )
+
+                system_prompt_conversation_id = mock_adversarial_chat.set_system_prompt.call_args.kwargs[
+                    "conversation_id"
+                ]
+                assert system_prompt_conversation_id
+
+                sent_message = mock_adversarial_chat.send_prompt_async.call_args.kwargs["message"]
+                assert sent_message.conversation_id == system_prompt_conversation_id
+
     async def test_starting_sequence_sets_first_sequence_number(
         self,
         mock_adversarial_chat: MagicMock,

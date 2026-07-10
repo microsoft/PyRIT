@@ -38,7 +38,7 @@
 # - a **`SeedAttackTechniqueGroup`** (`seed_technique`) of general-technique seeds, which can carry a
 #   **system prompt**, a **prepended_conversation**, a **simulated_conversation**
 #   (`SeedSimulatedConversation`), and a **next_message**;
-# - the selection metadata that lets a scenario pick it: its `name` and `strategy_tags`.
+# - the selection metadata that lets a scenario pick it: its `name` and `technique_tags`.
 #
 # The objective is *not* part of the technique — it stays separate and is supplied by the dataset at
 # run time. You rarely build a technique by hand; instead you register a **factory** and let scenarios
@@ -79,7 +79,7 @@ rows = [
         "Technique": name,
         "Attack (executor)": f.attack_class.__name__,
         "Adversarial?": "yes" if f.uses_adversarial else "no",
-        "Tags": ", ".join(f.strategy_tags),
+        "Tags": ", ".join(f.technique_tags),
     }
     for name, f in factories.items()
 ]
@@ -92,7 +92,7 @@ print(pd.DataFrame(rows).to_string(index=False))
 # ## How techniques are selected
 #
 # Scenarios don't reference factories directly. Instead, a scenario's
-# [`ScenarioStrategy`](../../../pyrit/scenario/core/scenario_strategy.py) enum is built *from* the
+# [`ScenarioTechnique`](../../../pyrit/scenario/core/scenario_technique.py) enum is built *from* the
 # registered factories: every technique becomes an enum member, and the factory's tags become
 # selectable aggregates. That gives you three ways to choose what runs:
 #
@@ -102,15 +102,15 @@ print(pd.DataFrame(rows).to_string(index=False))
 # - **Composite** — pair a technique with converters (see
 #   [Common Scenario Parameters](./1_common_scenario_parameters.ipynb)).
 #
-# On the command line this is the `--strategy` flag of
-# [`pyrit_scan`](../../scanner/1_pyrit_scan.ipynb); programmatically it's the `scenario_strategies`
-# argument to `initialize_async`. The grouping is what lets `--strategy single_turn` or
-# `--strategy light` fan out to a whole family of techniques without naming each one.
+# On the command line this is the `--technique` flag of
+# [`pyrit_scan`](../../scanner/1_pyrit_scan.ipynb); programmatically it's the `scenario_techniques`
+# argument to `initialize_async`. The grouping is what lets `--technique single_turn` or
+# `--technique light` fan out to a whole family of techniques without naming each one.
 #
 # ```mermaid
 # flowchart LR
 #     I["TechniqueInitializer"] -->|registers factories| R["AttackTechniqueRegistry"]
-#     R -->|builds enum + tags| S["ScenarioStrategy"]
+#     R -->|builds enum + tags| S["ScenarioTechnique"]
 #     S -->|name / tag / composite| Sc["Scenario"]
 #     R -->|create with target + scorer| T["AttackTechnique<br/>(attack + seeds)"]
 #     Sc --> T
@@ -140,7 +140,7 @@ print(pd.DataFrame(rows).to_string(index=False))
 #         AttackTechniqueFactory(
 #             name="my_role_play",
 #             attack_class=RolePlayAttack,
-#             strategy_tags=["single_turn", "custom"],
+#             technique_tags=["single_turn", "custom"],
 #             attack_kwargs={"role_play_definition_path": RolePlayPaths.MOVIE_SCRIPT.value},
 #         )
 #     ]
@@ -149,4 +149,4 @@ print(pd.DataFrame(rows).to_string(index=False))
 #
 # Wrap registration in a `PyRITInitializer` (as `TechniqueInitializer` does) when you want it
 # to run as part of standard setup. Any scenario built afterwards will see `my_role_play` as a
-# selectable strategy.
+# selectable technique.

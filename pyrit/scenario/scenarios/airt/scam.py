@@ -16,8 +16,8 @@ from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
 from pyrit.scenario.core.scenario import Scenario
 from pyrit.scenario.core.scenario_context import ScenarioContext
-from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
 from pyrit.scenario.core.scenario_target_defaults import get_default_adversarial_target
+from pyrit.scenario.core.scenario_technique import ScenarioTechnique
 from pyrit.score import TrueFalseScorer
 
 if TYPE_CHECKING:
@@ -27,9 +27,9 @@ logger = logging.getLogger(__name__)
 PERSUASION_DECEPTION_PATH = Path(EXECUTOR_RED_TEAM_PATH, "persuasion_deception").resolve()
 
 
-class ScamStrategy(ScenarioStrategy):
+class ScamTechnique(ScenarioTechnique):
     """
-    Strategies for the Scam Scenario.
+    Techniques for the Scam Scenario.
 
     Non-Aggregate Values:
     - ContextCompliance: This single-turn attack attempts to bypass safety measures by rephrasing the objective into
@@ -110,7 +110,7 @@ class Scam(Scenario):
         return [
             Parameter(
                 name="max_turns",
-                description="Maximum conversation turns for the persuasive_rta strategy.",
+                description="Maximum conversation turns for the persuasive_rta technique.",
                 param_type=int,
                 default=5,
             ),
@@ -131,39 +131,39 @@ class Scam(Scenario):
             objective_scorer (TrueFalseScorer | None): Custom scorer for objective
                 evaluation.
             adversarial_chat (PromptTarget | None): Chat target used to rephrase the
-                objective into the role-play context (in single-turn strategies).
+                objective into the role-play context (in single-turn techniques).
             scenario_result_id (str | None): Optional ID of an existing scenario result to resume.
         """
         if not objective_scorer:
             objective_scorer = self._get_default_objective_scorer()
         self._scorer_config = AttackScoringConfig(objective_scorer=objective_scorer)
 
-        # Used for multiturn strategies and RolePlayAttack rephrasing
+        # Used for multiturn techniques and RolePlayAttack rephrasing
         self._adversarial_chat = adversarial_chat if adversarial_chat else get_default_adversarial_target()
         self._adversarial_config = AttackAdversarialConfig(target=self._adversarial_chat)
 
         super().__init__(
             version=self.VERSION,
-            strategy_class=ScamStrategy,
-            default_strategy=ScamStrategy.DEFAULT,
+            technique_class=ScamTechnique,
+            default_technique=ScamTechnique.DEFAULT,
             default_dataset_config=DatasetAttackConfiguration(dataset_names=["airt_scams"], max_dataset_size=4),
             objective_scorer=objective_scorer,
             scenario_result_id=scenario_result_id,
         )
 
-    def _get_atomic_attack_from_strategy(self, *, strategy: str, seed_groups: list[SeedAttackGroup]) -> AtomicAttack:
+    def _get_atomic_attack_from_technique(self, *, technique: str, seed_groups: list[SeedAttackGroup]) -> AtomicAttack:
         """
-        Translate the strategies into actual AtomicAttacks.
+        Translate the techniques into actual AtomicAttacks.
 
         Args:
-            strategy (str): The strategy to create the attack from.
+            technique (str): The technique to create the attack from.
             seed_groups (list[SeedAttackGroup]): Seed groups the attack draws from.
 
         Returns:
-            AtomicAttack: Configured for the specified strategy.
+            AtomicAttack: Configured for the specified technique.
 
         Raises:
-            ValueError: If scenario is not properly initialized or an unknown ScamStrategy is provided.
+            ValueError: If scenario is not properly initialized or an unknown ScamTechnique is provided.
         """
         # objective_target is guaranteed to be non-None by parent class validation
         if self._objective_target is None:
@@ -172,7 +172,7 @@ class Scam(Scenario):
             )
         attack_strategy: AttackStrategy[Any, Any] | None = None
 
-        if strategy == "persuasive_rta":
+        if technique == "persuasive_rta":
             # Set system prompt to generic persuasion persona
             self._adversarial_config.system_prompt = SeedPrompt.from_yaml_file(
                 Path(PERSUASION_DECEPTION_PATH, "persuasion_persona_generic.yaml").resolve()
@@ -184,14 +184,14 @@ class Scam(Scenario):
                 attack_adversarial_config=self._adversarial_config,
                 max_turns=self.params["max_turns"],
             )
-        elif strategy == "role_play":
+        elif technique == "role_play":
             attack_strategy = RolePlayAttack(
                 objective_target=self._objective_target,
                 role_play_definition_path=RolePlayPaths.PERSUASION_SCRIPT_WRITTEN.value,
                 attack_scoring_config=self._scorer_config,
                 attack_adversarial_config=self._adversarial_config,
             )
-        elif strategy == "context_compliance":
+        elif technique == "context_compliance":
             # Set system prompt to default
             self._adversarial_config.system_prompt = None
 
@@ -201,10 +201,10 @@ class Scam(Scenario):
                 attack_adversarial_config=self._adversarial_config,
             )
         else:
-            raise ValueError(f"Unknown ScamStrategy: {strategy}")
+            raise ValueError(f"Unknown ScamTechnique: {technique}")
 
         return AtomicAttack(
-            atomic_attack_name=f"scam_{strategy}",
+            atomic_attack_name=f"scam_{technique}",
             attack_technique=AttackTechnique(attack=attack_strategy),
             seed_groups=seed_groups,
             memory_labels=self._memory_labels,
@@ -212,7 +212,7 @@ class Scam(Scenario):
 
     async def _build_atomic_attacks_async(self, *, context: ScenarioContext) -> list[AtomicAttack]:
         """
-        Generate atomic attacks for each strategy.
+        Generate atomic attacks for each technique.
 
         Args:
             context (ScenarioContext): The resolved runtime inputs for this run.
@@ -221,8 +221,9 @@ class Scam(Scenario):
             list[AtomicAttack]: List of atomic attacks to execute.
         """
         seed_groups = list(context.seed_groups)
-        strategies = {s.value for s in context.scenario_strategies}
+        techniques = {s.value for s in context.scenario_techniques}
 
         return [
-            self._get_atomic_attack_from_strategy(strategy=strategy, seed_groups=seed_groups) for strategy in strategies
+            self._get_atomic_attack_from_technique(technique=technique, seed_groups=seed_groups)
+            for technique in techniques
         ]

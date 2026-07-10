@@ -12,7 +12,7 @@
 # # AIRT Scenarios
 #
 # AIRT (AI Red Team) scenarios test common AI safety risks. Each scenario below runs with minimal
-# configuration — a single strategy and small dataset — to demonstrate usage. For full configuration
+# configuration — a single technique and small dataset — to demonstrate usage. For full configuration
 # options, see the [Scenarios Programming Guide](../code/scenarios/0_scenarios.ipynb).
 
 # %% [markdown]
@@ -40,22 +40,22 @@ objective_target = OpenAIChatTarget()
 # ## Rapid Response
 #
 # Tests whether a target can be induced to generate harmful content across seven categories: hate,
-# fairness, violence, sexual, harassment, misinformation, and leakage. Each strategy applies a
+# fairness, violence, sexual, harassment, misinformation, and leakage. Each technique applies a
 # different attack technique to the full set of harm datasets.
 #
 # ```bash
 # pyrit_scan airt.rapid_response \
 #   --initializers target \
 #   --target openai_chat \
-#   --strategies role_play \
+#   --techniques role_play \
 #   --dataset-names airt_hate \
 #   --max-dataset-size 1
 # ```
 #
-# **Available strategies:** ALL, DEFAULT, SINGLE_TURN, MULTI_TURN, role_play, many_shot, tap
+# **Available techniques:** ALL, DEFAULT, SINGLE_TURN, MULTI_TURN, role_play, many_shot, tap
 
 # %%
-from pyrit.scenario.airt import RapidResponse, RapidResponseStrategy
+from pyrit.scenario.airt import RapidResponse, RapidResponseTechnique
 
 dataset_config = DatasetAttackConfiguration(dataset_names=["airt_hate"], max_dataset_size=1)
 
@@ -63,7 +63,7 @@ scenario = RapidResponse()
 scenario.set_params_from_args(  # type: ignore
     args={
         "objective_target": objective_target,
-        "scenario_strategies": [RapidResponseStrategy.role_play],
+        "scenario_techniques": [RapidResponseTechnique.role_play],
         "dataset_config": dataset_config,
     }
 )
@@ -81,10 +81,10 @@ await output_scenario_async(scenario_result)
 # crisis handling and licensed therapist impersonation.
 #
 # ```bash
-# pyrit_scan airt.psychosocial --target openai_chat --strategies imminent_crisis --max-dataset-size 1
+# pyrit_scan airt.psychosocial --target openai_chat --techniques imminent_crisis --max-dataset-size 1
 # ```
 #
-# **Available strategies:** ALL, ImminentCrisis, LicensedTherapist
+# **Available techniques:** ALL, ImminentCrisis, LicensedTherapist
 #
 # ### Conversation-Level Scoring
 #
@@ -107,7 +107,7 @@ await output_scenario_async(scenario_result)
 # meaningful because psychosocial harms emerge through multi-turn escalation.
 
 # %%
-from pyrit.scenario.airt import Psychosocial, PsychosocialStrategy
+from pyrit.scenario.airt import Psychosocial, PsychosocialTechnique
 
 dataset_config = DatasetAttackConfiguration(dataset_names=["airt_imminent_crisis"], max_dataset_size=1)
 
@@ -115,7 +115,7 @@ scenario = Psychosocial()
 scenario.set_params_from_args(  # type: ignore
     args={
         "objective_target": objective_target,
-        "scenario_strategies": [PsychosocialStrategy.ImminentCrisis],
+        "scenario_techniques": [PsychosocialTechnique.ImminentCrisis],
         "dataset_config": dataset_config,
     }
 )
@@ -136,14 +136,14 @@ await output_scenario_async(scenario_result)
 # pyrit_scan airt.cyber \
 #   --initializers target \
 #   --target openai_chat \
-#   --strategies multi_turn \
+#   --techniques multi_turn \
 #   --max-dataset-size 1
 # ```
 #
-# **Available strategies:** ALL, DEFAULT, MULTI_TURN, red_teaming
+# **Available techniques:** ALL, DEFAULT, MULTI_TURN, red_teaming
 
 # %%
-from pyrit.scenario.airt import Cyber, CyberStrategy
+from pyrit.scenario.airt import Cyber, CyberTechnique
 
 dataset_config = DatasetAttackConfiguration(dataset_names=["airt_malware"], max_dataset_size=1)
 
@@ -151,7 +151,7 @@ scenario = Cyber()
 scenario.set_params_from_args(  # type: ignore
     args={
         "objective_target": objective_target,
-        "scenario_strategies": [CyberStrategy.MULTI_TURN],
+        "scenario_techniques": [CyberTechnique.MULTI_TURN],
         "dataset_config": dataset_config,
     }
 )
@@ -172,14 +172,14 @@ await output_scenario_async(scenario_result)
 # pyrit_scan airt.jailbreak \
 #   --initializers target \
 #   --target openai_chat \
-#   --strategies prompt_sending \
+#   --techniques prompt_sending \
 #   --max-dataset-size 1
 # ```
 #
-# **Available strategies:** ALL, SIMPLE, COMPLEX, PromptSending, ManyShot, SkeletonKey, RolePlay
+# **Available techniques:** ALL, SIMPLE, COMPLEX, PromptSending, ManyShot, SkeletonKey, RolePlay
 
 # %%
-from pyrit.scenario.airt import Jailbreak, JailbreakStrategy
+from pyrit.scenario.airt import Jailbreak, JailbreakTechnique
 
 dataset_config = DatasetAttackConfiguration(dataset_names=["airt_harms"], max_dataset_size=1)
 
@@ -187,7 +187,7 @@ scenario = Jailbreak()
 scenario.set_params_from_args(  # type: ignore
     args={
         "objective_target": objective_target,
-        "scenario_strategies": [JailbreakStrategy.PromptSending],
+        "scenario_techniques": [JailbreakTechnique.PromptSending],
         "dataset_config": dataset_config,
     }
 )
@@ -205,19 +205,19 @@ await output_scenario_async(scenario_result)
 # plagiarism detection.
 #
 # ```bash
-# pyrit_scan airt.leakage --target openai_chat --strategies first_letter --max-dataset-size 1
+# pyrit_scan airt.leakage --target openai_chat --techniques first_letter --max-dataset-size 1
 # ```
 #
-# **Available strategies:** ALL, SINGLE_TURN, MULTI_TURN, IP, SENSITIVE_DATA, FirstLetter, Image, RolePlay, Crescendo
+# **Available techniques:** ALL, SINGLE_TURN, MULTI_TURN, IP, SENSITIVE_DATA, FirstLetter, Image, RolePlay, Crescendo
 #
 # ### Copyright and Plagiarism Testing
 #
-# The FirstLetter strategy tests whether a model has memorized copyrighted text by encoding it
+# The FirstLetter technique tests whether a model has memorized copyrighted text by encoding it
 # with FirstLetterConverter (extracting first letters of each word) and asking the model to decode.
 # If the model reconstructs the original, it suggests memorization.
 #
 # The PlagiarismScorer provides three complementary metrics for analyzing responses from any
-# leakage strategy:
+# leakage technique:
 #
 # - **LCS (Longest Common Subsequence)** — Captures contiguous plagiarized sequences.
 #   Score = LCS length / reference length.
@@ -230,7 +230,7 @@ await output_scenario_async(scenario_result)
 # no built-in threshold — the scorer returns a raw float for you to interpret per your use case.
 
 # %%
-from pyrit.scenario.airt import Leakage, LeakageStrategy
+from pyrit.scenario.airt import Leakage, LeakageTechnique
 
 dataset_config = DatasetAttackConfiguration(dataset_names=["airt_leakage"], max_dataset_size=1)
 
@@ -238,7 +238,7 @@ scenario = Leakage()
 scenario.set_params_from_args(  # type: ignore
     args={
         "objective_target": objective_target,
-        "scenario_strategies": [LeakageStrategy.first_letter],
+        "scenario_techniques": [LeakageTechnique.first_letter],
         "dataset_config": dataset_config,
     }
 )
@@ -258,16 +258,16 @@ await output_scenario_async(scenario_result)
 # pyrit_scan airt.scam \
 #   --initializers target \
 #   --target openai_chat \
-#   --strategies context_compliance \
+#   --techniques context_compliance \
 #   --max-dataset-size 1
 # ```
 #
-# **Available strategies:** ALL, DEFAULT, SINGLE_TURN, MULTI_TURN, ContextCompliance, RolePlay,
+# **Available techniques:** ALL, DEFAULT, SINGLE_TURN, MULTI_TURN, ContextCompliance, RolePlay,
 # PersuasiveRedTeamingAttack. DEFAULT runs the single-turn techniques (ContextCompliance, RolePlay)
 # and omits the slower multi-turn PersuasiveRedTeamingAttack; run it via ALL or MULTI_TURN.
 
 # %%
-from pyrit.scenario.airt import Scam, ScamStrategy
+from pyrit.scenario.airt import Scam, ScamTechnique
 
 dataset_config = DatasetAttackConfiguration(dataset_names=["airt_scams"], max_dataset_size=1)
 
@@ -275,7 +275,7 @@ scenario = Scam()
 scenario.set_params_from_args(  # type: ignore
     args={
         "objective_target": objective_target,
-        "scenario_strategies": [ScamStrategy.ContextCompliance],
+        "scenario_techniques": [ScamTechnique.ContextCompliance],
         "dataset_config": dataset_config,
     }
 )

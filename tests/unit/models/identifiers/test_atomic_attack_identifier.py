@@ -330,7 +330,7 @@ class TestAtomicAttackEvaluationIdentifier:
         wrapper = ComponentIdentifier(
             class_name="RoundRobinTarget",
             class_module="m",
-            params={"strategy": "round_robin"},
+            params={"technique": "round_robin"},
             children={"targets": [inner]},
         )
         a_bare = _make_attack(children={"adversarial_chat": bare})

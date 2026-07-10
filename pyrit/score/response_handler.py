@@ -13,9 +13,71 @@ from pyrit.models import UnvalidatedScore
 
 if TYPE_CHECKING:
     import uuid
-    from collections.abc import Sequence
+    from collections.abc import Callable, Sequence
+    from typing import Any
 
     from pyrit.models import ComponentIdentifier, JsonSchemaDefinition
+
+
+def _build_unvalidated_score(
+    *,
+    parsed_response: dict[str, Any],
+    score_value_output_key: str,
+    rationale_output_key: str,
+    description_output_key: str,
+    metadata_output_key: str,
+    category_output_key: str,
+    scorer_identifier: ComponentIdentifier,
+    scored_prompt_id: str | uuid.UUID,
+    category: Sequence[str] | str | None,
+    objective: str | None,
+) -> UnvalidatedScore:
+    category_response = parsed_response.get(category_output_key)
+
+    if category_response and category:
+        raise ValueError("Category is present in the response and an argument")
+
+    # Validate and normalize category to a list of strings
+    cat_val = category_response if category_response is not None else category
+    normalized_category: list[str] | None
+    if cat_val is None:
+        normalized_category = None
+    elif isinstance(cat_val, str):
+        normalized_category = [cat_val]
+    elif isinstance(cat_val, list):
+        if not all(isinstance(x, str) for x in cat_val):
+            raise ValueError("'category' must be a string or a list of strings")
+        normalized_category = cat_val  # type: ignore[ty:invalid-assignment]
+    else:
+        # Category must be either a string or a list of strings
+        raise ValueError("'category' must be a string or a list of strings")
+
+    # Normalize metadata to a dictionary with string keys and string/int/float values
+    raw_md = parsed_response.get(metadata_output_key)
+    normalized_md: dict[str, str | int | float] | None
+    if raw_md is None:
+        normalized_md = None
+    elif isinstance(raw_md, dict):
+        # Coerce keys to str and filter to str/int/float values only
+        normalized_md = {str(k): v for k, v in raw_md.items() if isinstance(v, (str, int, float))}
+        # If dictionary becomes empty after filtering, keep as empty dict
+    elif isinstance(raw_md, (str, int, float)):
+        # Wrap primitive metadata into a namespaced field
+        normalized_md = {"metadata": raw_md}
+    else:
+        # Unrecognized metadata shape; drop to avoid downstream errors
+        normalized_md = None
+
+    return UnvalidatedScore(
+        raw_score_value=str(parsed_response[score_value_output_key]),
+        score_value_description=parsed_response.get(description_output_key, ""),
+        score_category=normalized_category,
+        score_rationale=parsed_response[rationale_output_key],
+        scorer_class_identifier=scorer_identifier,
+        score_metadata=normalized_md,
+        message_piece_id=scored_prompt_id,
+        objective=objective,
+    )
 
 
 class ResponseHandler(abc.ABC):
@@ -28,6 +90,17 @@ class ResponseHandler(abc.ABC):
     LLM round-trip, build the system prompt, or decide how the resulting score branches. Different
     handlers implement different wire formats (e.g. JSON today).
     """
+
+    @property
+    def response_format(self) -> str | None:
+        """
+        The ``response_format`` hint forwarded onto the scoring request, or ``None`` for none.
+
+        Round-trip helpers copy this onto the request metadata. Handlers that require a specific
+        wire format (e.g. JSON) override it; the default imposes nothing so targets that emit
+        plain text are not forced into a format they cannot honor.
+        """
+        return None
 
     @property
     def response_schema(self) -> JsonSchemaDefinition | None:
@@ -120,6 +193,11 @@ class JsonSchemaResponseHandler(ResponseHandler):
         """The configured JSON schema to forward to the scoring target, if any."""
         return self._response_schema
 
+    @property
+    def response_format(self) -> str | None:
+        """The ``"json"`` response format, since this handler parses JSON responses."""
+        return "json"
+
     def parse(
         self,
         *,
@@ -155,50 +233,16 @@ class JsonSchemaResponseHandler(ResponseHandler):
         response_json = remove_markdown_json(response_text)
         try:
             parsed_response = json.loads(response_json)
-            category_response = parsed_response.get(self._category_output_key)
-
-            if category_response and category:
-                raise ValueError("Category is present in the response and an argument")
-
-            # Validate and normalize category to a list of strings
-            cat_val = category_response if category_response is not None else category
-            normalized_category: list[str] | None
-            if cat_val is None:
-                normalized_category = None
-            elif isinstance(cat_val, str):
-                normalized_category = [cat_val]
-            elif isinstance(cat_val, list):
-                if not all(isinstance(x, str) for x in cat_val):
-                    raise ValueError("'category' must be a string or a list of strings")
-                normalized_category = cat_val  # type: ignore[ty:invalid-assignment]
-            else:
-                # JSON must yield either a string or a list of strings
-                raise ValueError("'category' must be a string or a list of strings")
-
-            # Normalize metadata to a dictionary with string keys and string/int/float values
-            raw_md = parsed_response.get(self._metadata_output_key)
-            normalized_md: dict[str, str | int | float] | None
-            if raw_md is None:
-                normalized_md = None
-            elif isinstance(raw_md, dict):
-                # Coerce keys to str and filter to str/int/float values only
-                normalized_md = {str(k): v for k, v in raw_md.items() if isinstance(v, (str, int, float))}
-                # If dictionary becomes empty after filtering, keep as empty dict
-            elif isinstance(raw_md, (str, int, float)):
-                # Wrap primitive metadata into a namespaced field
-                normalized_md = {"metadata": raw_md}
-            else:
-                # Unrecognized metadata shape; drop to avoid downstream errors
-                normalized_md = None
-
-            score = UnvalidatedScore(
-                raw_score_value=str(parsed_response[self._score_value_output_key]),
-                score_value_description=parsed_response.get(self._description_output_key),
-                score_category=normalized_category,
-                score_rationale=parsed_response[self._rationale_output_key],
-                scorer_class_identifier=scorer_identifier,
-                score_metadata=normalized_md,
-                message_piece_id=scored_prompt_id,
+            score = _build_unvalidated_score(
+                parsed_response=parsed_response,
+                score_value_output_key=self._score_value_output_key,
+                rationale_output_key=self._rationale_output_key,
+                description_output_key=self._description_output_key,
+                metadata_output_key=self._metadata_output_key,
+                category_output_key=self._category_output_key,
+                scorer_identifier=scorer_identifier,
+                scored_prompt_id=scored_prompt_id,
+                category=category,
                 objective=objective,
             )
 
@@ -219,3 +263,100 @@ class JsonSchemaResponseHandler(ResponseHandler):
                 ) from None
 
         return score
+
+
+class CallableResponseHandler(ResponseHandler):
+    """
+    ResponseHandler that delegates parsing to a user-supplied callable.
+
+    The escape hatch for scoring targets whose raw output is not PyRIT's default JSON scoring
+    shape (for example a safety classifier that emits ``safe`` or ``unsafe\\nS1,S2``). The
+    supplied ``parser`` maps the raw target text to a score dictionary
+    (``score_value``/``rationale`` plus optional ``description``/``category``/``metadata``); this
+    handler then assembles the ``UnvalidatedScore``. A missing required key raises
+    ``InvalidJsonException`` so the standard JSON retry still applies. It intentionally imposes no
+    ``response_format`` on the request so classifier targets remain free to return plain text.
+    """
+
+    def __init__(
+        self,
+        *,
+        parser: Callable[[str], dict[str, Any]],
+        score_value_output_key: str = "score_value",
+        rationale_output_key: str = "rationale",
+        description_output_key: str = "description",
+        metadata_output_key: str = "metadata",
+        category_output_key: str = "category",
+    ) -> None:
+        """
+        Initialize the handler with the parser callable and the keys to read from its output.
+
+        Args:
+            parser (Callable[[str], dict[str, Any]]): Maps the raw target text to a score
+                dictionary. It may raise ``InvalidJsonException`` to trigger a retry.
+            score_value_output_key (str): Key holding the score value. Defaults to "score_value".
+            rationale_output_key (str): Key holding the rationale. Defaults to "rationale".
+            description_output_key (str): Key holding the description. Defaults to "description".
+            metadata_output_key (str): Key holding the metadata. Defaults to "metadata".
+            category_output_key (str): Key holding the category. Defaults to "category".
+        """
+        self._parser = parser
+        self._score_value_output_key = score_value_output_key
+        self._rationale_output_key = rationale_output_key
+        self._description_output_key = description_output_key
+        self._metadata_output_key = metadata_output_key
+        self._category_output_key = category_output_key
+
+    def parse(
+        self,
+        *,
+        response_text: str,
+        scorer_identifier: ComponentIdentifier,
+        scored_prompt_id: str | uuid.UUID,
+        category: Sequence[str] | str | None = None,
+        objective: str | None = None,
+    ) -> UnvalidatedScore:
+        """
+        Parse raw target output into an ``UnvalidatedScore`` via the wrapped callable.
+
+        Args:
+            response_text (str): The raw text returned by the scoring target.
+            scorer_identifier (ComponentIdentifier): Identifier of the scorer that produced the
+                request, stored on the resulting score.
+            scored_prompt_id (str | uuid.UUID): The ID of the message piece being scored.
+            category (Sequence[str] | str | None): The category of the score. May instead be parsed
+                from the response; supplying both is an error. Defaults to None.
+            objective (str | None): The objective associated with the score, used for
+                contextualizing the result. Defaults to None.
+
+        Returns:
+            UnvalidatedScore: The parsed score, whose ``raw_score_value`` still needs to be
+                normalized and validated by the caller.
+
+        Raises:
+            ValueError: If a category is present in both the response and the argument.
+            InvalidJsonException: If the parser raises it, fails, or its output is missing a
+                required key.
+        """
+        try:
+            parsed_response = self._parser(response_text)
+        except InvalidJsonException:
+            raise
+        except Exception as ex:
+            raise InvalidJsonException(message=f"Response parser failed on: {response_text}") from ex
+
+        try:
+            return _build_unvalidated_score(
+                parsed_response=parsed_response,
+                score_value_output_key=self._score_value_output_key,
+                rationale_output_key=self._rationale_output_key,
+                description_output_key=self._description_output_key,
+                metadata_output_key=self._metadata_output_key,
+                category_output_key=self._category_output_key,
+                scorer_identifier=scorer_identifier,
+                scored_prompt_id=scored_prompt_id,
+                category=category,
+                objective=objective,
+            )
+        except KeyError:
+            raise InvalidJsonException(message=f"Response missing required key: {parsed_response}") from None

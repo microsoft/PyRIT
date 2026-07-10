@@ -55,15 +55,15 @@ class TestScenarioResult:
         )
         assert result.id == explicit_id
 
-    def test_get_strategies_used(self):
+    def test_get_techniques_used(self):
         result = make_scenario_result(
             scenario_name="TestScenario",
             objective_target_identifier=ComponentIdentifier.model_validate({}),
             attack_results={"crescendo": [], "flip": []},
             objective_scorer_identifier=ComponentIdentifier.model_validate({}),
         )
-        strategies = result.get_strategies_used()
-        assert sorted(strategies) == ["crescendo", "flip"]
+        techniques = result.get_techniques_used()
+        assert sorted(techniques) == ["crescendo", "flip"]
 
     def test_get_objectives_all(self):
         ar1 = _make_attack_result(objective="obj1")

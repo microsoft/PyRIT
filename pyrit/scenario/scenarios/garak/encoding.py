@@ -31,7 +31,7 @@ from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.dataset_configuration import CompoundDatasetAttackConfiguration, DatasetAttackConfiguration
 from pyrit.scenario.core.scenario import Scenario
 from pyrit.scenario.core.scenario_context import ScenarioContext
-from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
+from pyrit.scenario.core.scenario_technique import ScenarioTechnique
 from pyrit.score import TrueFalseScorer
 from pyrit.score.true_false.decoding_scorer import DecodingScorer
 
@@ -72,20 +72,20 @@ class EncodingDatasetConfiguration(DatasetAttackConfiguration):
         ]
 
 
-class EncodingStrategy(ScenarioStrategy):
+class EncodingTechnique(ScenarioTechnique):
     """
-    Strategies for encoding attacks.
+    Techniques for encoding attacks.
 
     Each enum member represents an encoding scheme that will be tested against the target model.
-    The ALL aggregate expands to include all encoding strategies.
+    The ALL aggregate expands to include all encoding techniques.
 
-    Note: EncodingStrategy does not support composition. Each encoding must be applied individually.
+    Note: EncodingTechnique does not support composition. Each encoding must be applied individually.
     """
 
     # Aggregate member
     ALL = ("all", {"all"})
 
-    # Individual encoding strategies (matching the atomic attack names)
+    # Individual encoding techniques (matching the atomic attack names)
     Base64 = ("base64", set[str]())
     Base2048 = ("base2048", set[str]())
     Base16 = ("base16", set[str]())
@@ -153,8 +153,8 @@ class Encoding(Scenario):
 
         super().__init__(
             version=self.VERSION,
-            strategy_class=EncodingStrategy,
-            default_strategy=EncodingStrategy.ALL,
+            technique_class=EncodingTechnique,
+            default_technique=EncodingTechnique.ALL,
             default_dataset_config=CompoundDatasetAttackConfiguration(
                 configurations=[
                     EncodingDatasetConfiguration(dataset_names=["garak_slur_terms_en"], max_dataset_size=3),
@@ -186,7 +186,7 @@ class Encoding(Scenario):
         """
         Get all converter-based atomic attacks.
 
-        Creates atomic attacks for each encoding scheme specified in the scenario strategies.
+        Creates atomic attacks for each encoding scheme specified in the scenario techniques.
         Each encoding scheme is tested both with and without explicit decoding instructions.
 
         Args:
@@ -220,8 +220,8 @@ class Encoding(Scenario):
             ([AsciiSmugglerConverter()], "ascii_smuggler"),
         ]
 
-        # Filter to only include selected strategies
-        selected_encoding_names = {s.value for s in self._scenario_strategies}
+        # Filter to only include selected techniques
+        selected_encoding_names = {s.value for s in self._scenario_techniques}
         converters_with_encodings = [
             (conv, name) for conv, name in all_converters_with_encodings if name in selected_encoding_names
         ]

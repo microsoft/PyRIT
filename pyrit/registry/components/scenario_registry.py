@@ -38,14 +38,14 @@ class ScenarioMetadata(RegistryMetadata):
     Use get_class() to get the actual class.
     """
 
-    # The default strategy name (e.g., "single_turn")
-    default_strategy: str = field(kw_only=True)
+    # The default technique name (e.g., "single_turn")
+    default_technique: str = field(kw_only=True)
 
-    # All available strategy names for this scenario.
-    all_strategies: tuple[str, ...] = field(kw_only=True)
+    # All available technique names for this scenario.
+    all_techniques: tuple[str, ...] = field(kw_only=True)
 
-    # Aggregate strategies that combine multiple attack approaches.
-    aggregate_strategies: tuple[str, ...] = field(kw_only=True)
+    # Aggregate techniques that combine multiple attack approaches.
+    aggregate_techniques: tuple[str, ...] = field(kw_only=True)
 
     # Default dataset names used by this scenario.
     default_datasets: tuple[str, ...] = field(kw_only=True)
@@ -113,7 +113,7 @@ class ScenarioRegistry(ParamBagRegistry["Scenario", ScenarioMetadata]):
         """
         Build metadata for a Scenario class.
 
-        Instantiates the scenario with no arguments and reads the strategy/dataset
+        Instantiates the scenario with no arguments and reads the technique/dataset
         configuration off the instance. Every registered scenario MUST be no-arg
         instantiable (defer required-input validation to ``initialize_async`` or
         ``_build_atomic_attacks_async``); otherwise this raises ``TypeError``.
@@ -138,15 +138,15 @@ class ScenarioRegistry(ParamBagRegistry["Scenario", ScenarioMetadata]):
             raise TypeError(
                 f"Scenario {cls.__module__}.{cls.__name__} (registered as "
                 f"{name!r}) must be instantiable with no arguments so the registry can introspect "
-                f"its strategies and default dataset config. Make all constructor parameters "
+                f"its techniques and default dataset config. Make all constructor parameters "
                 f"optional (defaulting to None) and defer required-input validation to "
                 f"initialize_async() or _build_atomic_attacks_async(). Original error: {exc}"
             ) from exc
 
-        strategy_class = instance._strategy_class
-        default_strategy_value = instance._default_strategy.value
-        all_strategies = tuple(s.value for s in strategy_class.get_all_strategies())
-        aggregate_strategies = tuple(s.value for s in strategy_class.get_aggregate_strategies())
+        technique_class = instance._technique_class
+        default_technique_value = instance._default_technique.value
+        all_techniques = tuple(s.value for s in technique_class.get_all_techniques())
+        aggregate_techniques = tuple(s.value for s in technique_class.get_aggregate_techniques())
         default_datasets = tuple(instance._default_dataset_config.dataset_names)
 
         return ScenarioMetadata(
@@ -154,9 +154,9 @@ class ScenarioRegistry(ParamBagRegistry["Scenario", ScenarioMetadata]):
             class_module=cls.__module__,
             class_description=description,
             registry_name=name,
-            default_strategy=default_strategy_value,
-            all_strategies=all_strategies,
-            aggregate_strategies=aggregate_strategies,
+            default_technique=default_technique_value,
+            all_techniques=all_techniques,
+            aggregate_techniques=aggregate_techniques,
             default_datasets=default_datasets,
             supported_parameters=supported_parameters,
         )
@@ -179,7 +179,7 @@ class ScenarioRegistry(ParamBagRegistry["Scenario", ScenarioMetadata]):
            ``scenario_result_id`` when resuming an existing run),
         2. **set parameters** — the scenario-specific declared parameters
            (``scenario_params``) and the common run-resolved parameters
-           (``initialize_kwargs`` — ``objective_target``, ``scenario_strategies``,
+           (``initialize_kwargs`` — ``objective_target``, ``scenario_techniques``,
            ``dataset_config``, ``max_concurrency``, ``max_retries``,
            ``memory_labels``, ``include_baseline``) are merged into a single
            ``Scenario.set_params_from_args`` call, so every value flows through the

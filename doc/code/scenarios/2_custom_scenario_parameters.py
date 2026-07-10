@@ -17,7 +17,7 @@
 # config into `self.params`.
 #
 # This is different from [Common Scenario Parameters](./1_common_scenario_parameters.ipynb),
-# which covers the framework-level configuration surface (datasets, strategies,
+# which covers the framework-level configuration surface (datasets, techniques,
 # scorers, baseline). This guide is about parameters that scenario authors add
 # on their own classes.
 #
@@ -36,7 +36,7 @@
 #     return [
 #         Parameter(
 #             name="max_turns",
-#             description="Maximum conversation turns for the persuasive_rta strategy.",
+#             description="Maximum conversation turns for the persuasive_rta technique.",
 #             param_type=int,
 #             default=5,
 #         ),
@@ -110,7 +110,7 @@ for p in example_declarations:
 # deep-copied on each run, so changes in one scenario instance don't leak
 # into another.
 #
-# Here's how Scam reads the parameter, in `_get_atomic_attack_from_strategy`:
+# Here's how Scam reads the parameter, in `_get_atomic_attack_from_technique`:
 #
 # ```python
 # attack_strategy = RedTeamingAttack(
@@ -187,7 +187,7 @@ for p in example_declarations:
 # ## Discovering parameters via --list-scenarios
 #
 # `--list-scenarios` prints declared parameters alongside each scenario's
-# other metadata (description, strategies, datasets). The same formatter the
+# other metadata (description, techniques, datasets). The same formatter the
 # CLI uses is callable programmatically:
 
 # %%
@@ -236,6 +236,6 @@ print_scenario_list(items=[s.model_dump() for s in response.items if s.scenario_
 
 # %% [markdown]
 # `Scam.max_turns` was previously hardcoded to `5` in
-# `_get_atomic_attack_from_strategy`. Replacing it with a `Parameter` of
+# `_get_atomic_attack_from_technique`. Replacing it with a `Parameter` of
 # `default=5` keeps the original behavior (no new flag is required to run
 # Scam as before) while making the value overridable for users who need it.

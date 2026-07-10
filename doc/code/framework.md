@@ -172,15 +172,19 @@ If you are contributing to PyRIT, that work will most likely land in one of the 
 
 ## [Attack Techniques](./scenarios/0_attack_techniques)
 
-**Responsibility**: An attack technique packages an executor, converters, datasets, and strategies into a single attack. The goal is that any attack (something trying to achieve an objective) can be defined as an attack technique.
+**Responsibility**: An attack technique packages an executor, converters, datasets, and strategies into a single named attack. The goal is that any attack (something trying to achieve an objective) can be defined as an attack technique.
 
+- Techniques are self-describing `AttackTechniqueFactory` instances (a `name`, `attack_class`, `attack_kwargs`, and `technique_tags`). They read like configuration even though they are code, so adding one — or bringing your own — is easy. The canonical catalog lives under `pyrit/setup/initializers/techniques/`: `core.py` (a small, curated standard set, auto-loaded on a bare `initialize_pyrit_async`), `extra.py` (the broader collection, opt-in), and per-source modules like `airt.py` (owned by a source/scenario but reusable, tagged with their owner and kept out of the default pool).
+- `core` stays deliberately small so a default run doesn't print 200 techniques or take forever; the wider catalog lives in `extra` and is selected on demand. Users pick subsets by passing initializer tags (e.g. `core`, `extra`, `all`) or writing their own initializer, so different runs — including from the CLI — can register different technique sets without changing the catalog.
+- A technique tied to one scenario is fine; if it's pinned and non-reusable it can stay local to that scenario, but if another scenario could reuse it, promote it to a catalog module and tag it.
+- Tags describe a technique (behavioral tags like `single_turn`/`multi_turn`, owner tags like `airt`); they don't decide what a scenario runs. There is deliberately **no global `default` tag** — a default is scenario-relative, declared per scenario via `build_technique_class_from_factories` (`available` selects the pool, aggregates are named presets, `default` / `default_technique_names` set what runs when nothing is chosen).
 - **Does not own**: the conversation algorithm itself. Branching, turn management, and scoring decisions live in the executor it wraps — a technique only selects and configures existing components, and shouldn't implement new sending, scoring, or branching logic.
 
 **Framework Plans**:
 
-- Managing these better, so scenarios can more easily select or build the attack techniques to use
+- Growing `extra` toward hundreds of techniques while keeping `core` small and curated, and making it easier to select technique subsets (via tags, initializers, or the CLI) without slow, noisy default runs.
 
-**Contributing (difficulty easy)**: Simply add the attack technique to one of the initializers.
+**Contributing (difficulty easy)**: Add an `AttackTechniqueFactory` to `extra.py` (the default home for new general-purpose techniques), or to a source-owned module (like `airt.py`) if it belongs to a specific scenario but could be reused. `core` is reserved for the curated standard set. Tag it with its behavioral tags; don't tag it `default`.
 
 ## [Executors and Attacks](./executor/0_executor)
 

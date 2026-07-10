@@ -27,11 +27,11 @@ def _mock_id(name: str) -> ComponentIdentifier:
     return ComponentIdentifier(class_name=name, class_module="test")
 
 
-def _strategy_class():
-    """Get the dynamically-generated CyberStrategy class."""
-    from pyrit.scenario.scenarios.airt.cyber import _build_cyber_strategy
+def _technique_class():
+    """Get the dynamically-generated CyberTechnique class."""
+    from pyrit.scenario.scenarios.airt.cyber import _build_cyber_technique
 
-    return _build_cyber_strategy()
+    return _build_cyber_technique()
 
 
 # ---------------------------------------------------------------------------
@@ -62,7 +62,7 @@ def mock_objective_scorer():
 
 @pytest.fixture(autouse=True)
 def reset_technique_registry():
-    """Reset registries, populate scenario factories, and clear cached strategy class.
+    """Reset registries, populate scenario factories, and clear cached technique class.
 
     Registers a mock adversarial target under ``adversarial_chat`` in
     ``TargetRegistry`` so ``build_technique_factories`` can resolve
@@ -70,11 +70,11 @@ def reset_technique_registry():
     central memory).
     """
     from pyrit.registry import TargetRegistry
-    from pyrit.scenario.scenarios.airt.cyber import _build_cyber_strategy
+    from pyrit.scenario.scenarios.airt.cyber import _build_cyber_technique
 
     AttackTechniqueRegistry.reset_registry_singleton()
     TargetRegistry.reset_registry_singleton()
-    _build_cyber_strategy.cache_clear()
+    _build_cyber_technique.cache_clear()
 
     adv_target = MagicMock(spec=PromptTarget)
     adv_target.capabilities.includes.return_value = True
@@ -86,7 +86,7 @@ def reset_technique_registry():
     yield
     AttackTechniqueRegistry.reset_registry_singleton()
     TargetRegistry.reset_registry_singleton()
-    _build_cyber_strategy.cache_clear()
+    _build_cyber_technique.cache_clear()
 
 
 @pytest.fixture
@@ -129,13 +129,13 @@ class TestCyberBasic:
     def test_version_is_2(self):
         assert Cyber.VERSION == 2
 
-    def test_get_strategy_class(self):
-        strat = _strategy_class()
-        assert Cyber()._strategy_class is strat
+    def test_get_technique_class(self):
+        strat = _technique_class()
+        assert Cyber()._technique_class is strat
 
-    def test_get_default_strategy_returns_default(self):
-        strat = _strategy_class()
-        assert Cyber()._default_strategy == strat.DEFAULT
+    def test_get_default_technique_returns_default(self):
+        strat = _technique_class()
+        assert Cyber()._default_technique == strat.DEFAULT
 
     def test_default_aggregate_expands_to_red_teaming(self):
         """DEFAULT must be non-empty and select the single curated technique.
@@ -144,7 +144,7 @@ class TestCyberBasic:
         (e.g. the catalog ``default`` tag), which would silently make DEFAULT empty and
         collapse the default run to baseline-only.
         """
-        strat = _strategy_class()
+        strat = _technique_class()
         assert "default" in strat.get_aggregate_tags()
         default_members = strat.expand({strat.DEFAULT})
         assert default_members == [strat("red_teaming")]
@@ -156,7 +156,7 @@ class TestCyberBasic:
         equality (not just subset) guards against a future technique landing in ALL but being
         silently excluded from DEFAULT (or vice versa) once the aggregate wiring changes.
         """
-        strat = _strategy_class()
+        strat = _technique_class()
         assert set(strat.expand({strat.DEFAULT})) == set(strat.expand({strat.ALL}))
 
     def test_default_dataset_config_has_malware_dataset(self):
@@ -190,7 +190,7 @@ class TestCyberBasic:
         new_callable=AsyncMock,
         return_value={"malware": _make_seed_groups("malware")},
     )
-    async def test_initialization_defaults_to_default_strategy(
+    async def test_initialization_defaults_to_default_technique(
         self,
         _mock_groups,
         mock_objective_target,
@@ -201,8 +201,8 @@ class TestCyberBasic:
         await scenario.initialize_async()
         # DEFAULT expands to red_teaming (the only registered Cyber technique); a
         # PromptSendingAttack baseline is added separately via the baseline
-        # policy, not as a strategy.
-        assert len(scenario._scenario_strategies) == 1
+        # policy, not as a technique.
+        assert len(scenario._scenario_techniques) == 1
 
     async def test_initialize_raises_when_no_datasets(self, mock_objective_target, mock_objective_scorer):
         """Dataset resolution fails from empty memory."""
@@ -270,14 +270,14 @@ class TestCyberBasic:
 
 @pytest.mark.usefixtures(*FIXTURES)
 class TestCyberAttackGeneration:
-    """Tests for _get_atomic_attacks_async with various strategies."""
+    """Tests for _get_atomic_attacks_async with various techniques."""
 
     async def _init_and_get_attacks(
         self,
         *,
         mock_objective_target,
         mock_objective_scorer,
-        strategies=None,
+        techniques=None,
         seed_groups: dict[str, list[SeedAttackGroup]] | None = None,
     ):
         """Helper: initialize scenario and return atomic attacks."""
@@ -290,31 +290,31 @@ class TestCyberAttackGeneration:
         ):
             scenario = Cyber(objective_scorer=mock_objective_scorer)
             init_kwargs = {"objective_target": mock_objective_target, "include_baseline": False}
-            if strategies:
-                init_kwargs["scenario_strategies"] = strategies
+            if techniques:
+                init_kwargs["scenario_techniques"] = techniques
             scenario.set_params_from_args(args=init_kwargs)
             await scenario.initialize_async()
             return scenario._atomic_attacks
 
-    async def test_all_strategy_produces_red_teaming(self, mock_objective_target, mock_objective_scorer):
+    async def test_all_technique_produces_red_teaming(self, mock_objective_target, mock_objective_scorer):
         attacks = await self._init_and_get_attacks(
             mock_objective_target=mock_objective_target,
             mock_objective_scorer=mock_objective_scorer,
-            strategies=[_strategy_class().ALL],
+            techniques=[_technique_class().ALL],
         )
         technique_classes = {type(a.attack_technique.attack) for a in attacks}
         assert technique_classes == {RedTeamingAttack}
 
-    async def test_multi_turn_strategy_produces_red_teaming(self, mock_objective_target, mock_objective_scorer):
+    async def test_multi_turn_technique_produces_red_teaming(self, mock_objective_target, mock_objective_scorer):
         attacks = await self._init_and_get_attacks(
             mock_objective_target=mock_objective_target,
             mock_objective_scorer=mock_objective_scorer,
-            strategies=[_strategy_class().MULTI_TURN],
+            techniques=[_technique_class().MULTI_TURN],
         )
         technique_classes = {type(a.attack_technique.attack) for a in attacks}
         assert technique_classes == {RedTeamingAttack}
 
-    async def test_default_strategy_produces_red_teaming(self, mock_objective_target, mock_objective_scorer):
+    async def test_default_technique_produces_red_teaming(self, mock_objective_target, mock_objective_scorer):
         """Default (DEFAULT) should produce RedTeaming. PromptSendingAttack baseline is
         prepended automatically by BaselineAttackPolicy.Enabled when
         include_baseline=True (the helper here uses include_baseline=False)."""
@@ -329,7 +329,7 @@ class TestCyberAttackGeneration:
         attacks = await self._init_and_get_attacks(
             mock_objective_target=mock_objective_target,
             mock_objective_scorer=mock_objective_scorer,
-            strategies=[_strategy_class()("red_teaming")],
+            techniques=[_technique_class()("red_teaming")],
         )
         assert len(attacks) > 0
         for a in attacks:
@@ -349,7 +349,7 @@ class TestCyberAttackGeneration:
         attacks = await self._init_and_get_attacks(
             mock_objective_target=mock_objective_target,
             mock_objective_scorer=mock_objective_scorer,
-            strategies=[_strategy_class()("red_teaming")],
+            techniques=[_technique_class()("red_teaming")],
         )
         for a in attacks:
             assert len(a.objectives) > 0
@@ -367,12 +367,12 @@ class TestCyberAttackGeneration:
 
 @pytest.mark.usefixtures(*FIXTURES)
 class TestCyberDynamicExport:
-    """Tests for CyberStrategy lazy resolution from __init__.py."""
+    """Tests for CyberTechnique lazy resolution from __init__.py."""
 
-    def test_cyber_strategy_resolves_from_module(self):
-        from pyrit.scenario.scenarios.airt import CyberStrategy
+    def test_cyber_technique_resolves_from_module(self):
+        from pyrit.scenario.scenarios.airt import CyberTechnique
 
-        assert CyberStrategy is _strategy_class()
+        assert CyberTechnique is _technique_class()
 
 
 # ===========================================================================

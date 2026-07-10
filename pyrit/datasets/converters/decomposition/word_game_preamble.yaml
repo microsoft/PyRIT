@@ -12,6 +12,10 @@ authors:
   - Tianyi Zhou
   - Cho-Jui Hsieh
 source: https://arxiv.org/abs/2402.16914
+groups:
+  - University of California, Los Angeles
+  - Pennsylvania State University
+  - University of Maryland College Park
 parameters:
   - mapping
 data_type: text

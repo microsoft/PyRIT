@@ -33,9 +33,9 @@ def _make_scenario(**overrides) -> RegisteredScenario:
         "scenario_name": "s1",
         "scenario_type": "X",
         "description": "",
-        "default_strategy": "",
-        "aggregate_strategies": [],
-        "all_strategies": [],
+        "default_technique": "",
+        "aggregate_techniques": [],
+        "all_techniques": [],
         "default_datasets": [],
         "supported_parameters": [],
     }
@@ -89,7 +89,7 @@ def _make_run(**overrides) -> ScenarioRunSummary:
         "updated_at": now,
         "error": None,
         "error_type": None,
-        "strategies_used": [],
+        "techniques_used": [],
         "total_attacks": 0,
         "completed_attacks": 0,
         "objective_achieved_rate": 0,
@@ -169,9 +169,9 @@ def test_print_scenario_list_full(capsys):
             scenario_name="airt.scam",
             scenario_type="ScamScenario",
             description="A test scenario.",
-            aggregate_strategies=["single_turn"],
-            all_strategies=["s1", "s2", "s3"],
-            default_strategy="s1",
+            aggregate_techniques=["single_turn"],
+            all_techniques=["s1", "s2", "s3"],
+            default_technique="s1",
             default_datasets=["d1", "d2"],
             supported_parameters=[
                 Parameter(
@@ -193,10 +193,10 @@ def test_print_scenario_list_full(capsys):
     assert "airt.scam" in captured.out
     assert "ScamScenario" in captured.out
     assert "A test scenario." in captured.out
-    assert "Aggregate Strategies" in captured.out
+    assert "Aggregate Techniques" in captured.out
     assert "single_turn" in captured.out
-    assert "Available Strategies (3)" in captured.out
-    assert "Default Strategy: s1" in captured.out
+    assert "Available Techniques (3)" in captured.out
+    assert "Default Technique: s1" in captured.out
     assert "Default Datasets (2)" in captured.out
     assert "Supported Parameters" in captured.out
     assert "max_turns" in captured.out
@@ -375,11 +375,11 @@ def test_print_scenario_run_progress_with_known_totals(capsys):
         total_attacks=10,
         completed_attacks=5,
         objective_achieved_rate=30,
-        strategies_used=["s1", "s2"],
+        techniques_used=["s1", "s2"],
     )
-    _output.print_scenario_run_progress(run=run, total_strategies=4)
+    _output.print_scenario_run_progress(run=run, total_techniques=4)
     captured = capsys.readouterr()
-    assert "strategies: 2/4" in captured.out
+    assert "techniques: 2/4" in captured.out
     assert "5/10" in captured.out
     assert "IN_PROGRESS" in captured.out
     assert "30%" in captured.out
@@ -391,25 +391,25 @@ def test_print_scenario_run_progress_no_total_attacks(capsys):
         total_attacks=0,
         completed_attacks=0,
         objective_achieved_rate=0,
-        strategies_used=[],
+        techniques_used=[],
     )
-    _output.print_scenario_run_progress(run=run, total_strategies=0)
+    _output.print_scenario_run_progress(run=run, total_techniques=0)
     captured = capsys.readouterr()
     assert "attacks: 0" in captured.out
     assert "CREATED" in captured.out
 
 
-def test_print_scenario_run_progress_strategies_done_only(capsys):
+def test_print_scenario_run_progress_techniques_done_only(capsys):
     run = _make_run(
         status=ScenarioRunState.IN_PROGRESS,
         total_attacks=0,
         completed_attacks=0,
         objective_achieved_rate=0,
-        strategies_used=["s1"],
+        techniques_used=["s1"],
     )
-    _output.print_scenario_run_progress(run=run, total_strategies=0)
+    _output.print_scenario_run_progress(run=run, total_techniques=0)
     captured = capsys.readouterr()
-    assert "strategies: 1" in captured.out
+    assert "techniques: 1" in captured.out
 
 
 # ---------------------------------------------------------------------------
@@ -425,7 +425,7 @@ def test_print_scenario_run_summary_completed(capsys):
         total_attacks=5,
         completed_attacks=5,
         objective_achieved_rate=40,
-        strategies_used=["s1", "s2"],
+        techniques_used=["s1", "s2"],
     )
     _output.print_scenario_run_summary(run=run)
     captured = capsys.readouterr()

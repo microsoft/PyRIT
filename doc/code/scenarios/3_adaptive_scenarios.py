@@ -80,15 +80,15 @@ await printer.write_async(result)  # type: ignore
 #   `EpsilonGreedyTechniqueSelector(epsilon=..., random_seed=...)`
 #   to tune the selection algorithm. Defaults to an epsilon-greedy selector with
 #   `epsilon=0.2`.
-# - **`scenario_strategies`** (a run param) — restricts which techniques the
-#   selector can pick from. Use `TextAdaptive.get_strategy_class()` to access the enum.
+# - **`scenario_techniques`** (a run param) — restricts which techniques the
+#   selector can pick from. Use `TextAdaptive.get_technique_class()` to access the enum.
 #
 # The cell below exercises all of them at once.
 
 # %%
 from pyrit.scenario.scenarios.adaptive import EpsilonGreedyTechniqueSelector
 
-strategy_class = TextAdaptive.get_strategy_class()
+technique_class = TextAdaptive.get_technique_class()
 
 configured_scenario = TextAdaptive(
     selector=EpsilonGreedyTechniqueSelector(
@@ -100,7 +100,7 @@ configured_scenario.set_params_from_args(  # type: ignore
     args={
         "max_attempts_per_objective": 5,
         "objective_target": objective_target,
-        "scenario_strategies": [strategy_class("single_turn")],
+        "scenario_techniques": [technique_class("single_turn")],
         "dataset_config": DatasetAttackConfiguration(
             dataset_names=["airt_hate", "airt_violence"],
             max_dataset_size=4,
@@ -130,7 +130,7 @@ resumed_scenario.set_params_from_args(  # type: ignore
     args={
         "max_attempts_per_objective": 5,
         "objective_target": objective_target,
-        "scenario_strategies": [strategy_class("single_turn")],
+        "scenario_techniques": [technique_class("single_turn")],
         "dataset_config": DatasetAttackConfiguration(
             dataset_names=["airt_hate", "airt_violence"],
             max_dataset_size=4,
@@ -151,7 +151,7 @@ await printer.write_async(resumed_result)  # type: ignore
 # scenario-side lookup tables needed.
 #
 # Walk the children via the envelope's `child_attack_result_ids` (joined
-# against the flat results list), then read each child's attack strategy
+# against the flat results list), then read each child's attack technique
 # identifier with `child.get_attack_strategy_identifier()`. The returned
 # `ComponentIdentifier` exposes `class_name` (e.g. `"CrescendoAttack"`) for a
 # human-readable label, and `unique_name` (e.g. `"CrescendoAttack::a1b2c3d4"`)
@@ -180,7 +180,7 @@ results_by_id = {r.attack_result_id: r for results in display_groups.values() fo
 
 
 def _technique_label(result) -> str:
-    """Display name for the attack strategy that produced ``result``."""
+    """Display name for the attack technique that produced ``result``."""
     attack_id = result.get_attack_strategy_identifier()
     return attack_id.class_name if attack_id else "<unknown>"
 
@@ -241,10 +241,10 @@ for technique, n in total_picks.most_common():
 # # Basic run with defaults
 # pyrit_scan --scenario TextAdaptive --target openai_chat
 #
-# # Tune max attempts and restrict strategies
+# # Tune max attempts and restrict techniques
 # pyrit_scan --scenario TextAdaptive --target openai_chat \
 #     --params max_attempts_per_objective=5 \
-#     --strategies single_turn
+#     --techniques single_turn
 #
 # # Use specific datasets and limit size
 # pyrit_scan --scenario TextAdaptive --target openai_chat \

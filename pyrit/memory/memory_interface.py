@@ -958,7 +958,14 @@ class MemoryInterface(abc.ABC):
 
         Returns:
             MutableSequence[Message]: A list of chat memory entries with the specified conversation ID.
+
+        Raises:
+            ValueError: If conversation_id is empty or None. A falsy id would cause the underlying
+                get_message_pieces filter to be skipped, silently returning pieces from every
+                conversation in memory.
         """
+        if not conversation_id:
+            raise ValueError("get_conversation_messages requires a non-empty conversation_id")
         message_pieces = self.get_message_pieces(conversation_id=conversation_id)
         return group_conversation_message_pieces_by_sequence(message_pieces=message_pieces)
 

@@ -24,7 +24,11 @@ from pyrit.score.float_scale.plagiarism_scorer import PlagiarismMetric, Plagiari
 from pyrit.score.float_scale.self_ask_general_float_scale_scorer import SelfAskGeneralFloatScaleScorer
 from pyrit.score.float_scale.self_ask_likert_scorer import LikertScaleEvalFiles, LikertScalePaths, SelfAskLikertScorer
 from pyrit.score.float_scale.self_ask_scale_scorer import SelfAskScaleScorer
-from pyrit.score.response_handler import JsonSchemaResponseHandler, ResponseHandler
+from pyrit.score.response_handler import (
+    CallableResponseHandler,
+    JsonSchemaResponseHandler,
+    ResponseHandler,
+)
 from pyrit.score.scorer import Scorer
 from pyrit.score.scorer_evaluation.metrics_type import MetricsType, RegistryUpdateBehavior
 from pyrit.score.scorer_evaluation.scorer_metrics import (
@@ -70,6 +74,7 @@ from pyrit.score.true_false.self_ask_true_false_scorer import (
     SelfAskTrueFalseScorer,
     TrueFalseQuestion,
     TrueFalseQuestionPaths,
+    render_true_false_system_prompt,
 )
 from pyrit.score.true_false.substring_scorer import SubStringScorer
 from pyrit.score.true_false.true_false_composite_scorer import TrueFalseCompositeScorer
@@ -129,6 +134,7 @@ __all__ = [
     "AudioTrueFalseScorer",
     "AzureContentFilterScorer",
     "BatchScorer",
+    "CallableResponseHandler",
     "ContentClassifierPaths",
     "ConversationScorer",
     "CredentialLeakScorer",
@@ -166,6 +172,7 @@ __all__ = [
     "QuestionAnswerScorer",
     "RegexScorer",
     "RegistryUpdateBehavior",
+    "render_true_false_system_prompt",
     "ResponseHandler",
     "Scorer",
     "ScorerEvalDatasetFiles",

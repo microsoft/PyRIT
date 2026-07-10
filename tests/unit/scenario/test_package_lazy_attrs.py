@@ -10,23 +10,23 @@ import pytest
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry import TargetRegistry
 from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
-from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
-from pyrit.scenario.scenarios.airt.cyber import _build_cyber_strategy
-from pyrit.scenario.scenarios.airt.leakage import _build_leakage_strategy
-from pyrit.scenario.scenarios.airt.rapid_response import _build_rapid_response_strategy
-from pyrit.scenario.scenarios.benchmark.adversarial import _build_benchmark_strategy
+from pyrit.scenario.core.scenario_technique import ScenarioTechnique
+from pyrit.scenario.scenarios.airt.cyber import _build_cyber_technique
+from pyrit.scenario.scenarios.airt.leakage import _build_leakage_technique
+from pyrit.scenario.scenarios.airt.rapid_response import _build_rapid_response_technique
+from pyrit.scenario.scenarios.benchmark.adversarial import _build_benchmark_technique
 from pyrit.setup.initializers.techniques import build_technique_factories
 
 
 @pytest.fixture(autouse=True)
 def populate_registries():
-    """Populate the technique + target registries so lazy strategy builders succeed."""
+    """Populate the technique + target registries so lazy technique builders succeed."""
     AttackTechniqueRegistry.reset_registry_singleton()
     TargetRegistry.reset_registry_singleton()
-    _build_cyber_strategy.cache_clear()
-    _build_leakage_strategy.cache_clear()
-    _build_rapid_response_strategy.cache_clear()
-    _build_benchmark_strategy.cache_clear()
+    _build_cyber_technique.cache_clear()
+    _build_leakage_technique.cache_clear()
+    _build_rapid_response_technique.cache_clear()
+    _build_benchmark_technique.cache_clear()
 
     adv_target = MagicMock(spec=PromptTarget)
     adv_target.capabilities.includes.return_value = True
@@ -36,32 +36,32 @@ def populate_registries():
     yield
     AttackTechniqueRegistry.reset_registry_singleton()
     TargetRegistry.reset_registry_singleton()
-    _build_cyber_strategy.cache_clear()
-    _build_leakage_strategy.cache_clear()
-    _build_rapid_response_strategy.cache_clear()
-    _build_benchmark_strategy.cache_clear()
+    _build_cyber_technique.cache_clear()
+    _build_leakage_technique.cache_clear()
+    _build_rapid_response_technique.cache_clear()
+    _build_benchmark_technique.cache_clear()
 
 
 class TestAirtPackageLazyAttrs:
-    """The ``airt`` package exposes dynamic strategy enums via ``__getattr__``."""
+    """The ``airt`` package exposes dynamic technique enums via ``__getattr__``."""
 
-    def test_rapid_response_strategy_is_lazy_built(self) -> None:
+    def test_rapid_response_technique_is_lazy_built(self) -> None:
         import pyrit.scenario.scenarios.airt as airt
 
-        cls = airt.RapidResponseStrategy  # type: ignore[attr-defined]
-        assert issubclass(cls, ScenarioStrategy)
+        cls = airt.RapidResponseTechnique  # type: ignore[attr-defined]
+        assert issubclass(cls, ScenarioTechnique)
 
-    def test_leakage_strategy_is_lazy_built(self) -> None:
+    def test_leakage_technique_is_lazy_built(self) -> None:
         import pyrit.scenario.scenarios.airt as airt
 
-        cls = airt.LeakageStrategy  # type: ignore[attr-defined]
-        assert issubclass(cls, ScenarioStrategy)
+        cls = airt.LeakageTechnique  # type: ignore[attr-defined]
+        assert issubclass(cls, ScenarioTechnique)
 
-    def test_cyber_strategy_is_lazy_built(self) -> None:
+    def test_cyber_technique_is_lazy_built(self) -> None:
         import pyrit.scenario.scenarios.airt as airt
 
-        cls = airt.CyberStrategy  # type: ignore[attr-defined]
-        assert issubclass(cls, ScenarioStrategy)
+        cls = airt.CyberTechnique  # type: ignore[attr-defined]
+        assert issubclass(cls, ScenarioTechnique)
 
     def test_unknown_attribute_raises(self) -> None:
         import pyrit.scenario.scenarios.airt as airt
@@ -71,13 +71,13 @@ class TestAirtPackageLazyAttrs:
 
 
 class TestBenchmarkPackageLazyAttrs:
-    """The ``benchmark`` package exposes the dynamic BenchmarkStrategy via ``__getattr__``."""
+    """The ``benchmark`` package exposes the dynamic BenchmarkTechnique via ``__getattr__``."""
 
-    def test_adversarial_benchmark_strategy_is_lazy_built(self) -> None:
+    def test_adversarial_benchmark_technique_is_lazy_built(self) -> None:
         import pyrit.scenario.scenarios.benchmark as benchmark
 
-        cls = benchmark.AdversarialBenchmarkStrategy  # type: ignore[attr-defined]
-        assert issubclass(cls, ScenarioStrategy)
+        cls = benchmark.AdversarialBenchmarkTechnique  # type: ignore[attr-defined]
+        assert issubclass(cls, ScenarioTechnique)
 
     def test_unknown_attribute_raises(self) -> None:
         import pyrit.scenario.scenarios.benchmark as benchmark

@@ -622,7 +622,7 @@ class DatasetAttackConfiguration(DatasetConfiguration):
         )
         return groups_by_dataset, resolved
 
-    async def get_seed_attack_groups_async(self) -> list[SeedAttackGroup]:
+    async def get_seed_attack_groups_async(self, *, apply_sampling: bool = True) -> list[SeedAttackGroup]:
         """
         Resolve the configured dataset into a flat ``list[SeedAttackGroup]``.
 
@@ -630,8 +630,15 @@ class DatasetAttackConfiguration(DatasetConfiguration):
         validates the full resolved seed set, then samples ``max_dataset_size`` globally
         over all built groups.
 
+        Args:
+            apply_sampling (bool): When True (default), apply ``max_dataset_size`` sampling.
+                Pass False to resolve the full, deterministic dataset with no ``random.sample``
+                draw -- used on resume so the persisted objective subset can be reconstructed
+                exactly rather than intersected against a fresh (divergent) sample.
+
         Returns:
-            list[SeedAttackGroup]: The validated, sampled attack groups.
+            list[SeedAttackGroup]: The validated attack groups (sampled when ``apply_sampling``
+                is True, otherwise the full resolved set).
 
         Raises:
             DatasetConstraintError: If a configured dataset yields no seeds, the resolved
@@ -640,13 +647,16 @@ class DatasetAttackConfiguration(DatasetConfiguration):
         groups_by_dataset, resolved = await self._build_groups_by_dataset_async()
         self.validate(resolved)
         groups = [group for groups in groups_by_dataset.values() for group in groups]
-        groups = self._apply_max_dataset_size(groups)
+        if apply_sampling:
+            groups = self._apply_max_dataset_size(groups)
         if not groups:
             names = ", ".join(self._dataset_names) if self._dataset_names else "<inline>"
             raise DatasetConstraintError(f"Resolved attack-group dataset is empty (datasets: {names}).")
         return groups
 
-    async def get_attack_groups_by_dataset_async(self) -> dict[str, list[SeedAttackGroup]]:
+    async def get_attack_groups_by_dataset_async(
+        self, *, apply_sampling: bool = True
+    ) -> dict[str, list[SeedAttackGroup]]:
         """
         Resolve attack groups keyed by dataset name, globally sampled.
 
@@ -656,8 +666,15 @@ class DatasetAttackConfiguration(DatasetConfiguration):
         keyed by their originating dataset. For an independent budget per dataset, compose
         ``CompoundDatasetAttackConfiguration.per_dataset(...)`` instead.
 
+        Args:
+            apply_sampling (bool): When True (default), apply ``max_dataset_size`` sampling.
+                Pass False to resolve the full, deterministic dataset with no ``random.sample``
+                draw -- used on resume so the persisted objective subset can be reconstructed
+                exactly rather than intersected against a fresh (divergent) sample.
+
         Returns:
-            dict[str, list[SeedAttackGroup]]: Dataset name -> sampled attack groups.
+            dict[str, list[SeedAttackGroup]]: Dataset name -> attack groups (sampled when
+                ``apply_sampling`` is True, otherwise the full resolved set).
 
         Raises:
             DatasetConstraintError: If a configured dataset yields no seeds, the resolved
@@ -665,7 +682,8 @@ class DatasetAttackConfiguration(DatasetConfiguration):
         """
         groups_by_dataset, resolved = await self._build_groups_by_dataset_async()
         self.validate(resolved)
-        result = {name: groups for name, groups in self._sample_groups_by_dataset(groups_by_dataset).items() if groups}
+        sampled = self._sample_groups_by_dataset(groups_by_dataset) if apply_sampling else groups_by_dataset
+        result = {name: groups for name, groups in sampled.items() if groups}
         if not result:
             names = ", ".join(self._dataset_names) if self._dataset_names else "<inline>"
             raise DatasetConstraintError(f"Resolved attack-group dataset is empty (datasets: {names}).")
@@ -819,28 +837,41 @@ class CompoundDatasetAttackConfiguration(DatasetAttackConfiguration):
         for child in self._configurations:
             child.update_filters(filters=filters)
 
-    async def get_seed_attack_groups_async(self) -> list[SeedAttackGroup]:
+    async def get_seed_attack_groups_async(self, *, apply_sampling: bool = True) -> list[SeedAttackGroup]:
         """
         Concatenate every child's flat result, then validate and apply the global cap.
 
         Each child validates and samples itself; the combined result is validated against this
         compound's validators and capped by an optional compound ``max_dataset_size``.
 
+        Args:
+            apply_sampling (bool): When True (default), sample both each child and the combined
+                result under ``max_dataset_size``. Pass False to resolve the full, deterministic
+                dataset with no sampling at any level -- used on resume (propagated to children).
+
         Returns:
-            list[SeedAttackGroup]: The combined, validated, capped attack groups.
+            list[SeedAttackGroup]: The combined, validated attack groups (capped when
+                ``apply_sampling`` is True).
 
         Raises:
             DatasetConstraintError: If a child yields nothing, or the combined result fails validation.
         """
         groups: list[SeedAttackGroup] = []
         for child in self._configurations:
-            groups.extend(await child.get_seed_attack_groups_async())
+            groups.extend(await child.get_seed_attack_groups_async(apply_sampling=apply_sampling))
         self.validate(self._resolved_from_groups(groups))
-        return self._apply_max_dataset_size(groups)
+        return self._apply_max_dataset_size(groups) if apply_sampling else groups
 
-    async def get_attack_groups_by_dataset_async(self) -> dict[str, list[SeedAttackGroup]]:
+    async def get_attack_groups_by_dataset_async(
+        self, *, apply_sampling: bool = True
+    ) -> dict[str, list[SeedAttackGroup]]:
         """
         Merge each child's by-dataset result, validate, then apply the global cap across the union.
+
+        Args:
+            apply_sampling (bool): When True (default), sample both each child and the merged
+                union under ``max_dataset_size``. Pass False to resolve the full, deterministic
+                dataset with no sampling at any level -- used on resume (propagated to children).
 
         Returns:
             dict[str, list[SeedAttackGroup]]: Combined groups keyed by dataset name.
@@ -850,10 +881,11 @@ class CompoundDatasetAttackConfiguration(DatasetAttackConfiguration):
         """
         merged: dict[str, list[SeedAttackGroup]] = {}
         for child in self._configurations:
-            for name, groups in (await child.get_attack_groups_by_dataset_async()).items():
+            child_groups = await child.get_attack_groups_by_dataset_async(apply_sampling=apply_sampling)
+            for name, groups in child_groups.items():
                 merged.setdefault(name, []).extend(groups)
         self.validate(self._resolved_from_groups([group for groups in merged.values() for group in groups]))
-        return self._sample_groups_by_dataset(merged)
+        return self._sample_groups_by_dataset(merged) if apply_sampling else merged
 
     def _resolved_from_groups(self, groups: list[SeedAttackGroup]) -> ResolvedDataset:
         """

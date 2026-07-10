@@ -6,9 +6,12 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from pyrit.common.path import SCORER_SEED_PROMPT_PATH
-from pyrit.common.utils import verify_and_resolve_path
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
-from pyrit.score.true_false.self_ask_true_false_scorer import SelfAskTrueFalseScorer
+from pyrit.score.true_false.self_ask_true_false_scorer import (
+    SelfAskTrueFalseScorer,
+    TrueFalseQuestion,
+    render_true_false_system_prompt,
+)
 from pyrit.score.true_false.true_false_score_aggregator import (
     TrueFalseAggregatorFunc,
     TrueFalseScoreAggregator,
@@ -58,11 +61,13 @@ class SelfAskQuestionAnswerScorer(SelfAskTrueFalseScorer):
         if not true_false_question_path:
             true_false_question_path = SCORER_SEED_PROMPT_PATH / "true_false_question" / "question_answering.yaml"
 
-        true_false_question_path = verify_and_resolve_path(true_false_question_path)
+        question = TrueFalseQuestion.from_yaml(true_false_question_path)
+        system_prompt = render_true_false_system_prompt(question=question)
 
         super().__init__(
             chat_target=chat_target,
-            true_false_question_path=true_false_question_path,
+            system_prompt=system_prompt,
+            score_category=[question.category],
             validator=validator,
             score_aggregator=score_aggregator,
         )

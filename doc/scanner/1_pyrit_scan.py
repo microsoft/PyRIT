@@ -11,7 +11,7 @@
 # %% [markdown]
 # # PyRIT Scan
 #
-# `pyrit_scan` is the primary command-line tool for running automated security assessments and red teaming attacks against AI systems. It leverages [scenarios](../code/scenarios/0_scenarios.ipynb) to define attack strategies and supports flexible [configuration](../code/setup/1_configuration.ipynb) for targeting different AI endpoints.
+# `pyrit_scan` is the primary command-line tool for running automated security assessments and red teaming attacks against AI systems. It leverages [scenarios](../code/scenarios/0_scenarios.ipynb) to define attack techniques and supports flexible [configuration](../code/setup/1_configuration.ipynb) for targeting different AI endpoints.
 #
 # For configuration setup, see [Configuration](../getting_started/configuration.md).
 #
@@ -72,12 +72,12 @@
 #
 # 1. A Scenario. Many are defined in `pyrit.scenario.scenarios`. But you can also define your own in initialization_scripts.
 # 2. Initializers (which can be supplied via `--initializers` or `--initialization-scripts` or `initializers` section of config file (see [here](../getting_started/pyrit_conf.md))). Scenarios often don't need many arguments, but they can be configured in different ways. And at the very least, most need an `objective_target` (the thing you're running a scan against) which you can configure by using the `--target` flag if your initializer registers targets (e.g. `target` initializer)
-# 3. Scenario Strategies (optional). These are supplied by the `--scenario-strategies` flag and tell the scenario what to test, but they are always optional. Also note you can obtain these by running `--list-scenarios`
+# 3. Scenario Techniques (optional). These are supplied by the `--techniques` flag and tell the scenario what to test, but they are always optional. Also note you can obtain these by running `--list-scenarios`
 #
 # Basic usage will look something like:
 #
 # ```shell
-# pyrit_scan <scenario> --target <target_name> --initializers <initializer1> <initializer2> --scenario-strategies <strategy1> <strategy2>
+# pyrit_scan <scenario> --target <target_name> --initializers <initializer1> <initializer2> --techniques <technique1> <technique2>
 # ```
 #
 # You can also override scenario parameters directly from the CLI:
@@ -89,19 +89,19 @@
 # Or concretely:
 #
 # ```shell
-# !pyrit_scan foundry.red_team_agent --target openai_chat --initializers target --scenario-strategies base64
+# !pyrit_scan foundry.red_team_agent --target openai_chat --initializers target --techniques base64
 # ```
 #
 # Example with a basic configuration that runs the Foundry scenario against the objective target defined in the `target` initializer.
 
 # %%
-# !pyrit_scan foundry.red_team_agent --target openai_chat --initializers target --strategies base64
+# !pyrit_scan foundry.red_team_agent --target openai_chat --initializers target --techniques base64
 
 # %% [markdown]
-# Or with all options and multiple strategies:
+# Or with all options and multiple techniques:
 #
 # ```shell
-# pyrit_scan foundry.red_team_agent --target openai_chat --initializers target --strategies easy crescendo
+# pyrit_scan foundry.red_team_agent --target openai_chat --initializers target --techniques easy crescendo
 # ```
 #
 # You can also override scenario execution parameters:
@@ -128,10 +128,10 @@
 # %% [markdown]
 # #### Attaching Converters to a Technique
 #
-# Strategies (techniques) can have a registered converter instance appended to them with the
+# Techniques (techniques) can have a registered converter instance appended to them with the
 # `<technique>:converter.<name>` syntax. The converter is added to the request side of every attack
 # the technique produces, on top of any converters the technique already bakes in. This also works on
-# aggregate strategies (the converter is applied to every technique the aggregate expands to).
+# aggregate techniques (the converter is applied to every technique the aggregate expands to).
 #
 # First discover the registered converter instances with `--list-converters` (converters are
 # registered by initializers, so pass the same `--initializers`/`--initialization-scripts` you use to run):
@@ -140,14 +140,14 @@
 # pyrit_scan --list-converters --initializers my_converters
 # ```
 #
-# Then reference a converter by name in `--strategies`:
+# Then reference a converter by name in `--techniques`:
 #
 # ```shell
 # # Add the registered "translation_spanish" converter to role_play only
-# pyrit_scan airt.rapid_response --target openai_chat --initializers load_default_datasets target my_converters --strategies role_play:converter.translation_spanish
+# pyrit_scan airt.rapid_response --target openai_chat --initializers load_default_datasets target my_converters --techniques role_play:converter.translation_spanish
 #
-# # Chain multiple converters (applied in order) and combine with plain strategies
-# pyrit_scan airt.rapid_response --target openai_chat --initializers load_default_datasets target my_converters --strategies role_play:converter.translation_spanish:converter.base64 many_shot
+# # Chain multiple converters (applied in order) and combine with plain techniques
+# pyrit_scan airt.rapid_response --target openai_chat --initializers load_default_datasets target my_converters --techniques role_play:converter.translation_spanish:converter.base64 many_shot
 # ```
 
 # %% [markdown]
@@ -161,17 +161,17 @@
 
 from pyrit.common import apply_defaults
 from pyrit.prompt_target.openai.openai_chat_target import OpenAIChatTarget
-from pyrit.scenario import DatasetAttackConfiguration, Scenario, ScenarioStrategy
+from pyrit.scenario import DatasetAttackConfiguration, Scenario, ScenarioTechnique
 from pyrit.score import SelfAskRefusalScorer, TrueFalseInverterScorer
 from pyrit.setup import initialize_pyrit_async
 
 
-class MyCustomStrategy(ScenarioStrategy):
-    """Strategies for my custom scenario."""
+class MyCustomTechnique(ScenarioTechnique):
+    """Techniques for my custom scenario."""
 
     ALL = ("all", {"all"})
-    Strategy1 = ("strategy1", set[str]())
-    Strategy2 = ("strategy2", set[str]())
+    Technique1 = ("technique1", set[str]())
+    Technique2 = ("technique2", set[str]())
 
 
 class MyCustomScenario(Scenario):
@@ -184,8 +184,8 @@ class MyCustomScenario(Scenario):
             name="My Custom Scenario",
             version=1,
             objective_scorer=TrueFalseInverterScorer(scorer=SelfAskRefusalScorer(chat_target=OpenAIChatTarget())),
-            strategy_class=MyCustomStrategy,
-            default_strategy=MyCustomStrategy.ALL,
+            technique_class=MyCustomTechnique,
+            default_technique=MyCustomTechnique.ALL,
             default_dataset_config=DatasetAttackConfiguration(dataset_names=["harmbench"]),
             scenario_result_id=scenario_result_id,
         )
@@ -195,7 +195,7 @@ class MyCustomScenario(Scenario):
         # The single abstract extension point every scenario implements.
         # Read runtime inputs from `context`; return the list of AtomicAttack to run.
         # Matrix-shaped scenarios can delegate to build_matrix_atomic_attacks(context=...).
-        # Example: create attacks for each strategy composite
+        # Example: create attacks for each technique composite
         return []
 
 
