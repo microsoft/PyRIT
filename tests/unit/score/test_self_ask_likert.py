@@ -628,3 +628,40 @@ def test_likert_scale_single_unique_value_rejected(tmp_path: Path):
 
         with pytest.raises(ValueError, match="at least two distinct score values"):
             SelfAskLikertScorer.from_likert_scale(chat_target=chat_target, custom_likert_path=yaml_file)
+
+
+def test_likert_init_no_chat_target_raises():
+    with pytest.raises(ValueError, match="A chat_target must be provided"):
+        SelfAskLikertScorer(chat_target=None)
+
+
+def test_likert_init_no_system_prompt_raises():
+    chat_target = MagicMock()
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+    with pytest.raises(ValueError, match="system_prompt must be provided"):
+        SelfAskLikertScorer(chat_target=chat_target)
+
+
+def test_likert_init_system_prompt_str_and_invalid_type(patch_central_database):
+    chat_target = MagicMock()
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+
+    scorer = SelfAskLikertScorer(chat_target=chat_target, system_prompt="verbatim rubric")
+    assert scorer._system_prompt == "verbatim rubric"
+
+    with pytest.raises(TypeError, match="system_prompt must be a SeedPrompt, str, or None"):
+        SelfAskLikertScorer(chat_target=chat_target, system_prompt=123)
+
+
+def test_likert_scale_description_to_string_rejects_malformed_entries(patch_central_database):
+    chat_target = MagicMock()
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+    scorer = SelfAskLikertScorer.from_likert_scale(chat_target=chat_target, likert_scale=LikertScalePaths.CYBER_SCALE)
+    path = Path("scale.yaml")
+
+    with pytest.raises(ValueError, match="no scale_descriptions entries"):
+        scorer._likert_scale_description_to_string([], path)
+    with pytest.raises(ValueError, match="must be a dict"):
+        scorer._likert_scale_description_to_string([123], path)
+    with pytest.raises(ValueError, match="missing required key 'description'"):
+        scorer._likert_scale_description_to_string([{"score_value": 1}], path)

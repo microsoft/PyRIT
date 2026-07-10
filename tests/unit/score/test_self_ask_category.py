@@ -15,6 +15,7 @@ from pyrit.score import (
     ContentClassifierPaths,
     SelfAskCategoryScorer,
 )
+from pyrit.score.true_false.self_ask_category_scorer import _content_classifier_to_string
 
 
 @pytest.fixture
@@ -246,3 +247,33 @@ async def test_blocked_response_returns_false_without_invoking_llm(patch_central
     assert scores[0].score_type == "true_false"
     assert scores[0].score_value == "false"
     assert "blocked" in scores[0].score_rationale.lower()
+
+
+def test_category_init_no_chat_target_raises():
+    with pytest.raises(ValueError, match="A chat_target must be provided"):
+        SelfAskCategoryScorer(chat_target=None)
+
+
+def test_category_init_no_system_prompt_raises():
+    chat_target = MagicMock()
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+    with pytest.raises(ValueError, match="system_prompt must be provided"):
+        SelfAskCategoryScorer(chat_target=chat_target)
+
+
+def test_category_init_system_prompt_str_and_invalid_type(patch_central_database):
+    chat_target = MagicMock()
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+
+    scorer = SelfAskCategoryScorer(chat_target=chat_target, system_prompt="verbatim")
+    assert scorer._system_prompt == "verbatim"
+
+    with pytest.raises(TypeError, match="system_prompt must be a SeedPrompt or str"):
+        SelfAskCategoryScorer(chat_target=chat_target, system_prompt=123)
+
+
+def test_content_classifier_to_string_validation():
+    with pytest.raises(ValueError, match="No categories provided"):
+        _content_classifier_to_string([], "no_harm")
+    with pytest.raises(ValueError, match="not found in classifier categories"):
+        _content_classifier_to_string([{"name": "harm", "description": "d"}], "missing_false_category")

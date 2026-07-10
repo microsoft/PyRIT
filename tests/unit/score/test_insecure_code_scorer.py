@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from pyrit.exceptions.exception_classes import InvalidJsonException
-from pyrit.models import ComponentIdentifier, MessagePiece, Score, UnvalidatedScore
+from pyrit.models import ComponentIdentifier, MessagePiece, Score, SeedPrompt, UnvalidatedScore
 from pyrit.prompt_target import PromptTarget
 from pyrit.score import InsecureCodeScorer
 
@@ -98,3 +98,20 @@ async def test_score_async_unsupported_data_type_returns_zero(mock_chat_target, 
     assert len(scores) == 1
     assert scores[0].score_type == "float_scale"
     assert scores[0].get_value() == 0.0
+
+
+def test_insecure_code_scorer_no_chat_target_raises():
+    with pytest.raises(ValueError, match="A chat_target must be provided"):
+        InsecureCodeScorer(chat_target=None)
+
+
+def test_insecure_code_scorer_system_prompt_variants(mock_chat_target):
+    seed = SeedPrompt(value="seed rubric", data_type="text")
+    scorer_seed = InsecureCodeScorer(chat_target=mock_chat_target, system_prompt=seed)
+    assert scorer_seed._system_prompt == "seed rubric"
+
+    scorer_str = InsecureCodeScorer(chat_target=mock_chat_target, system_prompt="verbatim rubric")
+    assert scorer_str._system_prompt == "verbatim rubric"
+
+    with pytest.raises(TypeError, match="system_prompt must be a SeedPrompt, str, or None"):
+        InsecureCodeScorer(chat_target=mock_chat_target, system_prompt=123)

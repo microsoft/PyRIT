@@ -235,3 +235,8 @@ def test_get_scorer_metrics_returns_none_when_eval_hash_is_none(patch_central_da
     with _patch.object(scorer, "get_identifier", return_value=mock_identifier):
         result = scorer.get_scorer_metrics()
     assert result is None
+
+
+def test_general_float_scale_no_chat_target_raises():
+    with pytest.raises(ValueError, match="A chat_target must be provided"):
+        SelfAskGeneralFloatScaleScorer(chat_target=None, system_prompt_format_string="prompt")

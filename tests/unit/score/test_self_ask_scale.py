@@ -128,6 +128,11 @@ def test_scale_scorer_invalid_scale_file_contents():
             "maximum_value": 1,
             "category": "test",
         },
+        {
+            "minimum_value": 1,
+            "maximum_value": "Blah",
+            "category": "test",
+        },
     ],
 )
 def test_validate_scale_arguments_missing_args_raises_value_error(scale_args, scale_scorer: SelfAskScaleScorer) -> None:
@@ -270,3 +275,29 @@ async def test_scale_scorer_non_text_sends_prepended_text(patch_central_database
     assert call_kwargs.kwargs["prepended_text"] == "objective: Generate a cat\nresponse:"
     assert call_kwargs.kwargs["data_type"] == "image_path"
     assert call_kwargs.kwargs["value"] == "/path/to/image.png"
+
+
+def test_scale_init_no_chat_target_raises():
+    with pytest.raises(ValueError, match="A chat_target must be provided"):
+        SelfAskScaleScorer(chat_target=None)
+
+
+def test_scale_init_default_system_prompt(patch_central_database):
+    chat_target = MagicMock()
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+    scorer = SelfAskScaleScorer(chat_target=chat_target)
+    assert scorer._system_prompt
+    assert scorer._minimum_value < scorer._maximum_value
+
+
+def test_scale_init_system_prompt_str_and_invalid_type(patch_central_database):
+    chat_target = MagicMock()
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+
+    scorer = SelfAskScaleScorer(
+        chat_target=chat_target, system_prompt="verbatim", min_value=1, max_value=7, score_category="c"
+    )
+    assert scorer._system_prompt == "verbatim"
+
+    with pytest.raises(TypeError, match="system_prompt must be a SeedPrompt, str, or None"):
+        SelfAskScaleScorer(chat_target=chat_target, system_prompt=123)

@@ -408,3 +408,33 @@ class TestRefusalScorerPromptFormatString:
         _, kwargs = chat_target.send_prompt_async.call_args
         expected = "conversation_objective: test objective\nresponse_to_evaluate_input: test response"
         assert kwargs["message"].message_pieces[0].original_value == expected
+
+
+def test_refusal_init_no_chat_target_raises():
+    with pytest.raises(ValueError, match="A chat_target must be provided"):
+        SelfAskRefusalScorer(chat_target=None)
+
+
+def test_refusal_score_category_normalized_from_str(patch_central_database):
+    chat_target = MagicMock()
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+    scorer = SelfAskRefusalScorer(chat_target=chat_target, score_category="custom_refusal")
+    assert scorer._score_category == ["custom_refusal"]
+
+
+def test_refusal_score_category_normalized_from_sequence(patch_central_database):
+    chat_target = MagicMock()
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+    scorer = SelfAskRefusalScorer(chat_target=chat_target, score_category=["a", "b"])
+    assert scorer._score_category == ["a", "b"]
+
+
+def test_refusal_init_system_prompt_str_and_invalid_type(patch_central_database):
+    chat_target = MagicMock()
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+
+    scorer = SelfAskRefusalScorer(chat_target=chat_target, system_prompt="verbatim")
+    assert scorer._system_prompt == "verbatim"
+
+    with pytest.raises(TypeError, match="system_prompt must be a SeedPrompt, str, or None"):
+        SelfAskRefusalScorer(chat_target=chat_target, system_prompt=123)
