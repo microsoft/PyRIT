@@ -14,8 +14,8 @@ from pyrit.models import (
     AtomicAttackIdentifier,
     AttackOutcome,
     AttackResult,
+    AttackSeedGroup,
     ComponentIdentifier,
-    SeedAttackGroup,
     SeedGroup,
     SeedObjective,
     SeedPrompt,
@@ -36,19 +36,19 @@ def mock_attack():
 def sample_seed_groups():
     """Create sample seed groups with objectives for testing."""
     return [
-        SeedAttackGroup(
+        AttackSeedGroup(
             seeds=[
                 SeedObjective(value="objective1"),
                 SeedPrompt(value="prompt1"),
             ]
         ),
-        SeedAttackGroup(
+        AttackSeedGroup(
             seeds=[
                 SeedObjective(value="objective2"),
                 SeedPrompt(value="prompt2"),
             ]
         ),
-        SeedAttackGroup(
+        AttackSeedGroup(
             seeds=[
                 SeedObjective(value="objective3"),
                 SeedPrompt(value="prompt3"),
@@ -61,7 +61,7 @@ def sample_seed_groups():
 def sample_seed_groups_without_objectives():
     """Create sample seed groups without objectives for testing.
 
-    Note: SeedAttackGroup now validates exactly one objective at construction,
+    Note: AttackSeedGroup now validates exactly one objective at construction,
     so we use SeedGroup here which doesn't have that requirement.
     """
     return [
@@ -179,14 +179,14 @@ class TestAtomicAttackInitialization:
             )
 
     def test_init_fails_with_seed_group_missing_objective(self, mock_attack):
-        """Test that SeedAttackGroup without objective cannot be created.
+        """Test that AttackSeedGroup without objective cannot be created.
 
-        SeedAttackGroup now validates exactly one objective at construction time,
+        AttackSeedGroup now validates exactly one objective at construction time,
         so we can't even create one without an objective.
         """
-        # SeedAttackGroup now validates exactly one objective at construction
+        # AttackSeedGroup now validates exactly one objective at construction
         with pytest.raises(ValueError, match="must have exactly one objective"):
-            SeedAttackGroup(seeds=[SeedPrompt(value="prompt1")])
+            AttackSeedGroup(seeds=[SeedPrompt(value="prompt1")])
 
     def test_objectives_property_returns_values_from_seed_groups(self, mock_attack, sample_seed_groups):
         """Test that the objectives property returns values from seed groups."""
@@ -454,7 +454,7 @@ class TestAtomicAttackIntegration:
     async def test_atomic_attack_with_single_seed_group(self, mock_attack):
         """Test atomic attack with a single seed group."""
         single_seed_group = [
-            SeedAttackGroup(
+            AttackSeedGroup(
                 seeds=[
                     SeedObjective(value="single_objective"),
                     SeedPrompt(value="single_prompt"),
@@ -488,7 +488,7 @@ class TestAtomicAttackIntegration:
     async def test_atomic_attack_with_many_seed_groups(self, mock_attack):
         """Test atomic attack with many seed groups."""
         many_seed_groups = [
-            SeedAttackGroup(
+            AttackSeedGroup(
                 seeds=[
                     SeedObjective(value=f"objective_{i}"),
                     SeedPrompt(value=f"prompt_{i}"),
@@ -591,7 +591,7 @@ class TestAtomicAttackWithMessages:
     def seed_groups_with_messages(self):
         """Create seed groups with multi-turn message sequences for testing."""
         return [
-            SeedAttackGroup(
+            AttackSeedGroup(
                 seeds=[
                     SeedObjective(value="multi_turn_objective_1"),
                     SeedPrompt(value="First message", data_type="text", sequence=0, role="user"),
@@ -599,7 +599,7 @@ class TestAtomicAttackWithMessages:
                     SeedPrompt(value="Third message", data_type="text", sequence=2, role="user"),
                 ]
             ),
-            SeedAttackGroup(
+            AttackSeedGroup(
                 seeds=[
                     SeedObjective(value="multi_turn_objective_2"),
                     SeedPrompt(value="Message A", data_type="text", sequence=0, role="user"),
@@ -613,9 +613,9 @@ class TestAtomicAttackWithMessages:
         """Create seed groups where some have messages and some don't."""
         return [
             # No messages (just objective)
-            SeedAttackGroup(seeds=[SeedObjective(value="simple_objective")]),
+            AttackSeedGroup(seeds=[SeedObjective(value="simple_objective")]),
             # With messages - roles required for multi-sequence
-            SeedAttackGroup(
+            AttackSeedGroup(
                 seeds=[
                     SeedObjective(value="objective_with_messages"),
                     SeedPrompt(value="Message 1", data_type="text", sequence=0, role="user"),
@@ -719,7 +719,7 @@ class TestEnrichAtomicAttackIdentifiers:
     async def test_enrichment_populates_atomic_attack_identifier(self, mock_attack):
         """Test that run_async enriches results with atomic_attack_identifier."""
         seed_groups = [
-            SeedAttackGroup(
+            AttackSeedGroup(
                 seeds=[
                     SeedObjective(value="obj1"),
                     SeedPrompt(value="technique1", is_general_technique=True),
@@ -753,7 +753,7 @@ class TestEnrichAtomicAttackIdentifiers:
         """Test that enrichment works even when result has no prior atomic_attack_identifier,
         since AttackTechnique.get_identifier() is self-contained."""
         seed_groups = [
-            SeedAttackGroup(seeds=[SeedObjective(value="obj1"), SeedPrompt(value="p1")]),
+            AttackSeedGroup(seeds=[SeedObjective(value="obj1"), SeedPrompt(value="p1")]),
         ]
         attack_result = AttackResult(
             conversation_id="conv-1",
@@ -779,7 +779,7 @@ class TestEnrichAtomicAttackIdentifiers:
     async def test_enrichment_skips_out_of_range_index(self, mock_attack):
         """Test that enrichment is skipped when input_indices has an out-of-range value."""
         seed_groups = [
-            SeedAttackGroup(seeds=[SeedObjective(value="obj1"), SeedPrompt(value="p1")]),
+            AttackSeedGroup(seeds=[SeedObjective(value="obj1"), SeedPrompt(value="p1")]),
         ]
         attack_id = ComponentIdentifier(class_name="MockAttack", class_module="test.mock")
         attack_result = AttackResult(
@@ -813,7 +813,7 @@ class TestEnrichAtomicAttackIdentifiers:
     async def test_enrichment_includes_all_seeds(self, mock_attack):
         """Test that all seeds (general and non-general) appear in the enriched identifier."""
         seed_groups = [
-            SeedAttackGroup(
+            AttackSeedGroup(
                 seeds=[
                     SeedObjective(value="obj1"),
                     SeedPrompt(value="technique", is_general_technique=True, value_sha256="tech_hash"),
@@ -850,13 +850,13 @@ class TestEnrichAtomicAttackIdentifiers:
     async def test_enrichment_maps_multiple_results_to_correct_seed_groups(self, mock_attack):
         """Test that multiple results are correctly mapped to their corresponding seed groups."""
         seed_groups = [
-            SeedAttackGroup(
+            AttackSeedGroup(
                 seeds=[
                     SeedObjective(value="obj1"),
                     SeedPrompt(value="tech_a", is_general_technique=True, value_sha256="hash_a"),
                 ]
             ),
-            SeedAttackGroup(
+            AttackSeedGroup(
                 seeds=[
                     SeedObjective(value="obj2"),
                     SeedPrompt(value="tech_b", is_general_technique=True, value_sha256="hash_b"),
@@ -902,7 +902,7 @@ class TestEnrichAtomicAttackIdentifiers:
     async def test_enrichment_persists_to_db(self, mock_attack):
         """Test that enrichment persists the updated atomic_attack_identifier to the database."""
         seed_groups = [
-            SeedAttackGroup(
+            AttackSeedGroup(
                 seeds=[
                     SeedObjective(value="obj1"),
                     SeedPrompt(value="technique1", is_general_technique=True),
@@ -943,7 +943,7 @@ class TestEnrichAtomicAttackIdentifiers:
     async def test_enrichment_skips_db_update_when_no_attack_result_id(self, mock_attack):
         """Test that enrichment does not attempt a DB update when attack_result_id is empty."""
         seed_groups = [
-            SeedAttackGroup(
+            AttackSeedGroup(
                 seeds=[
                     SeedObjective(value="obj1"),
                     SeedPrompt(value="technique1", is_general_technique=True),
@@ -1077,8 +1077,8 @@ class TestAtomicAttackDuplicateObjectiveValidation:
 
     def test_constructing_with_duplicate_objective_raises(self, mock_attack):
         duplicate_groups = [
-            SeedAttackGroup(seeds=[SeedObjective(value="same-objective")]),
-            SeedAttackGroup(seeds=[SeedObjective(value="same-objective")]),
+            AttackSeedGroup(seeds=[SeedObjective(value="same-objective")]),
+            AttackSeedGroup(seeds=[SeedObjective(value="same-objective")]),
         ]
         with pytest.raises(ValueError, match="duplicate objective hash"):
             AtomicAttack(
@@ -1177,7 +1177,7 @@ class TestAtomicAttackTechniqueEvalHash:
         )
         a2 = AtomicAttack(
             attack_technique=AttackTechnique(attack=mock_attack),
-            seed_groups=[SeedAttackGroup(seeds=[SeedObjective(value="different-objective")])],
+            seed_groups=[AttackSeedGroup(seeds=[SeedObjective(value="different-objective")])],
             atomic_attack_name="same",
         )
         assert a1.technique_eval_hash == a2.technique_eval_hash

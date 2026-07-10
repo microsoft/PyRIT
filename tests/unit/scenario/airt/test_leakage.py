@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from pyrit.common.path import DATASETS_PATH
-from pyrit.models import ComponentIdentifier, SeedAttackGroup, SeedDataset, SeedObjective
+from pyrit.models import AttackSeedGroup, ComponentIdentifier, SeedDataset, SeedObjective
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry import TargetRegistry
 from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
@@ -47,7 +47,7 @@ def mock_memory_seeds():
 @pytest.fixture
 def mock_dataset_config(mock_memory_seeds):
     """Create a mock dataset config that returns the seed groups."""
-    seed_groups = [SeedAttackGroup(seeds=[seed]) for seed in mock_memory_seeds]
+    seed_groups = [AttackSeedGroup(seeds=[seed]) for seed in mock_memory_seeds]
     mock_config = MagicMock(spec=DatasetAttackConfiguration)
     mock_config.get_attack_groups_by_dataset_async = AsyncMock(return_value={"airt_leakage": seed_groups})
     mock_config.dataset_names = ["airt_leakage"]

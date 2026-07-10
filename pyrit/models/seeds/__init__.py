@@ -9,15 +9,15 @@ This module provides the core seed types used throughout PyRIT:
 - SeedPrompt: Seed with role and sequence for conversations
 - SeedObjective: Seed representing an attack objective
 - SeedGroup: Base container for grouping seeds
-- SeedAttackGroup: Attack-specific seed group with objectives and prepended conversations
-- SeedAttackTechniqueGroup: Technique-specific seed group where all seeds must be general strategies
+- AttackSeedGroup: Attack-specific seed group with objectives and prepended conversations
+- AttackTechniqueSeedGroup: Technique-specific seed group where all seeds must be general strategies
 - SeedSimulatedConversation: Configuration for generating simulated conversations
 - SeedDataset: Container for managing collections of seeds
 """
 
+from pyrit.models.seeds.attack_seed_group import AttackSeedGroup
+from pyrit.models.seeds.attack_technique_seed_group import AttackTechniqueSeedGroup
 from pyrit.models.seeds.seed import Seed
-from pyrit.models.seeds.seed_attack_group import SeedAttackGroup
-from pyrit.models.seeds.seed_attack_technique_group import SeedAttackTechniqueGroup
 from pyrit.models.seeds.seed_dataset import SeedDataset
 from pyrit.models.seeds.seed_group import SeedGroup, SeedUnion
 from pyrit.models.seeds.seed_grouping import group_seeds_into_attack_groups
@@ -41,8 +41,8 @@ __all__ = [
     "group_seeds_into_attack_groups",
     "NextMessageSystemPromptPaths",
     "Seed",
-    "SeedAttackGroup",
-    "SeedAttackTechniqueGroup",
+    "AttackSeedGroup",
+    "AttackTechniqueSeedGroup",
     "SeedDataset",
     "SeedGroup",
     "SeedObjective",
