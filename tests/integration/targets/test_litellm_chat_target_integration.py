@@ -12,9 +12,9 @@ They verify:
 - Tool calling via the ``extra_body_parameters`` passthrough
 - Multimodal image input (vision)
 - Multimodal audio input/output
-- Token-usage metadata capture (parsed back through :class:`~pyrit.models.TokenUsage`)
+- Token-usage metadata capture (parsed back through ``TokenUsage``)
 
-The chat/vision model defaults to ``gpt-5`` and the audio model to ``gpt-audio``; both can be
+The chat/vision model defaults to ``gpt-5.4`` and the audio model to ``gpt-audio``; both can be
 overridden with the ``PLATFORM_OPENAI_CHAT_MODEL`` / ``PLATFORM_OPENAI_AUDIO_MODEL`` env vars to
 match whatever deployment names the target endpoint exposes.
 """
@@ -52,7 +52,7 @@ def platform_litellm_args():
     if not endpoint or not api_key:
         pytest.skip("PLATFORM_OPENAI_CHAT_ENDPOINT and PLATFORM_OPENAI_CHAT_KEY must be set")
 
-    model = os.environ.get("PLATFORM_OPENAI_CHAT_MODEL", "gpt-5")
+    model = os.environ.get("PLATFORM_OPENAI_CHAT_MODEL", "gpt-5.4")
     return {
         "model_name": f"openai/{model}",
         "endpoint": endpoint,

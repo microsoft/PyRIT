@@ -63,7 +63,7 @@ def platform_openai_chat_args():
     return {
         "endpoint": endpoint,
         "api_key": api_key,
-        "model_name": os.environ.get("PLATFORM_OPENAI_CHAT_MODEL", "gpt-5"),
+        "model_name": os.environ.get("PLATFORM_OPENAI_CHAT_MODEL", "gpt-5.4"),
     }
 
 
@@ -216,7 +216,7 @@ async def test_openai_chat_target_token_usage_in_metadata(sqlite_instance, platf
     Test that token usage metadata is captured from a real API response.
 
     This test verifies that:
-    1. Token usage is recoverable via :meth:`~pyrit.models.TokenUsage.from_metadata`
+    1. Token usage is recoverable via ``TokenUsage.from_metadata``
     2. Token counts are positive integers
     3. The total equals input + output
     """
