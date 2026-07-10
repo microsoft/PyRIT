@@ -40,9 +40,10 @@ class ScamTechnique(ScenarioTechnique):
         2) generate the assistant's response to the benign question (first assistant turn)
         3) rephrase the original objective as a follow-up question (end of first assistant turn)
         This conversation is prepended and sent with an affirmative "yes" to get a response from the target.
-    - RolePlay: This single-turn attack uses the `persuasion_script_written.yaml` role-play scenario to convince the
-        target to help draft a response to the scam objective. It is framed in the context of creating written samples
-        to be used during training seminars.
+    - RolePlay: This technique stages a short simulated role-play conversation (an adversarial chat
+        improvises the `role_play_persuasion_written.yaml` written-persuasion persona) and then delivers
+        the objective to the target. It is framed in the context of creating written samples to be used
+        during training seminars.
     - PersuasiveRedTeamingAttack: This multi-turn attack uses a persuasive persona with the `RedTeamingAttack` to
         iteratively convince the target to comply with the scam objective over multiple turns.
 
