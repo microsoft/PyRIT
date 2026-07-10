@@ -4,9 +4,10 @@
 import json
 import logging
 import uuid
+from abc import abstractmethod
 from collections.abc import Sequence
 from datetime import datetime, timezone
-from typing import Any, Literal
+from typing import Any, Generic, Literal, TypeVar
 
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import (
@@ -29,6 +30,7 @@ from sqlalchemy.orm import (
     relationship,
 )
 from sqlalchemy.types import Uuid
+from typing_extensions import Self
 
 import pyrit
 from pyrit.common.utils import to_sha256
@@ -56,6 +58,7 @@ from pyrit.models import (
     SeedPrompt,
     SeedSimulatedConversation,
     SeedType,
+    TargetIdentifier,
 )
 
 logger = logging.getLogger(__name__)
@@ -353,6 +356,185 @@ class PromptMemoryEntry(Base):
         return f"{self.role}: {self.converted_value}"
 
 
+TDomain = TypeVar("TDomain")
+
+
+class DomainBackedEntry(Base, Generic[TDomain]):
+    """
+    Mixin marking a DB entry as the persistence representation of a domain model.
+
+    Every ``*Entry`` in this module mirrors a domain model (``PromptMemoryEntry`` and
+    ``MessagePiece``, ``ScoreEntry`` and ``Score``, ``TargetIdentifierEntry`` and
+    ``TargetIdentifier``, and so on). ``from_domain_model`` is the single, uniform seam
+    that converts a domain model into an unsaved row, so the domain-to-DB direction has
+    one well-known name across every entry that adopts this base.
+    """
+
+    __abstract__ = True
+
+    @classmethod
+    @abstractmethod
+    def from_domain_model(cls, domain_model: TDomain) -> Self:
+        """
+        Build an unsaved entry row from its domain model.
+
+        Args:
+            domain_model (TDomain): The domain model this entry persists.
+
+        Returns:
+            Self: A new, unsaved row.
+        """
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        """
+        Reject concrete subclasses that do not implement ``from_domain_model``.
+
+        The SQLAlchemy declarative ``Base`` is not an ``ABCMeta``, so a bare
+        ``@abstractmethod`` would not stop a concrete entry from omitting the converter.
+        This fires at class-definition time so a dev who forgets is told immediately.
+        SQLAlchemy abstract/intermediate mapped classes (``__abstract__ = True``) are
+        skipped so they can leave the method abstract for their concrete subclasses.
+
+        Raises:
+            TypeError: If a concrete (non-``__abstract__``) subclass leaves
+                ``from_domain_model`` abstract.
+        """
+        super().__init_subclass__(**kwargs)
+        if cls.__dict__.get("__abstract__", False):
+            return
+        method = getattr(cls, "from_domain_model", None)
+        if method is None or getattr(method, "__isabstractmethod__", False):
+            raise TypeError(
+                f"{cls.__name__} inherits DomainBackedEntry but does not implement "
+                "from_domain_model(...); every concrete entry must define how its "
+                "domain model is converted into a row."
+            )
+
+
+T = TypeVar("T", bound=ComponentIdentifier)
+
+
+class ComponentIdentifierEntry(DomainBackedEntry[T]):
+    """
+    Abstract base for tables that persist a ``ComponentIdentifier`` projection.
+
+    Mirrors the identifier class hierarchy: concrete identifier tables inherit the
+    shared, always-populated columns the way ``TargetIdentifier`` inherits
+    ``ComponentIdentifier``. The content ``hash`` is the natural, dedupable primary
+    key, and ``identifier_json`` holds the full flat dump for lossless
+    reconstruction (children stay inline). Rows are immutable — the same content
+    always maps to the same hash, so a given identifier reused across rows is
+    stored once.
+
+    Subclasses declare their promoted query columns and implement the
+    ``DomainBackedEntry.from_domain_model`` seam to map their strongly-typed identifier
+    projection onto the shared columns plus those promoted columns. The shared columns
+    are built once, here, so subclasses never repeat that logic.
+    """
+
+    __abstract__ = True
+
+    #: Content-addressed identity — the same value as ``ComponentIdentifier.hash``.
+    #: SHA256 hex digest is 64 chars; bounded for SQL Server key/index compatibility.
+    hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    class_name: Mapped[str] = mapped_column(String, nullable=False)
+    class_module: Mapped[str] = mapped_column(String, nullable=False)
+    #: Full flat ``model_dump()`` of the identifier. Source of truth on reload.
+    identifier_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    #: Version that first wrote this content-addressed row. Nullable for backwards
+    #: compatibility with existing databases.
+    pyrit_version: Mapped[str | None] = mapped_column(String, nullable=True)
+
+
+class TargetIdentifierEntry(ComponentIdentifierEntry[TargetIdentifier]):
+    """
+    Content-addressed store of ``TargetIdentifier`` projections, deduped by hash.
+
+    Populated as a side effect of registering a conversation (see
+    ``MemoryInterface._persist_target_identifier``). ``ConversationEntry`` references a
+    row here via ``target_identifier_hash``. The promoted scalar columns (``endpoint`` /
+    ``model_name`` / ``underlying_model_name`` / ``temperature`` / ``top_p`` /
+    ``max_requests_per_minute`` / ``supported_auth_modes``) are surfaced for querying;
+    ``identifier_json`` remains the source of truth on reload. Inner targets of a
+    multi-target are linked via ``TargetIdentifierChildren`` (and also live inline in
+    ``identifier_json``).
+    """
+
+    __tablename__ = "TargetIdentifiers"
+    __table_args__ = {"extend_existing": True}
+
+    endpoint: Mapped[str | None] = mapped_column(String, nullable=True)
+    model_name: Mapped[str | None] = mapped_column(String, nullable=True)
+    underlying_model_name: Mapped[str | None] = mapped_column(String, nullable=True)
+    temperature: Mapped[float | None] = mapped_column(Float, nullable=True)
+    top_p: Mapped[float | None] = mapped_column(Float, nullable=True)
+    max_requests_per_minute: Mapped[int | None] = mapped_column(INTEGER, nullable=True)
+    supported_auth_modes: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+
+    @classmethod
+    def from_domain_model(cls, domain_model: TargetIdentifier) -> Self:
+        """
+        Build a row from a ``TargetIdentifier``.
+
+        Maps the shared columns plus the promoted scalar query columns; the full flat
+        dump (including any inner ``targets``) is stored in ``identifier_json``. Inner
+        target edges are written separately by
+        ``MemoryInterface._persist_target_identifier``.
+
+        Args:
+            domain_model (TargetIdentifier): The target identifier to persist.
+
+        Returns:
+            Self: A new, unsaved row keyed by the identifier's content hash.
+        """
+        return cls(
+            hash=domain_model.hash,
+            class_name=domain_model.class_name,
+            class_module=domain_model.class_module,
+            identifier_json=domain_model.model_dump(),
+            pyrit_version=domain_model.pyrit_version,
+            endpoint=domain_model.endpoint,
+            model_name=domain_model.model_name,
+            underlying_model_name=domain_model.underlying_model_name,
+            temperature=domain_model.temperature,
+            top_p=domain_model.top_p,
+            max_requests_per_minute=domain_model.max_requests_per_minute,
+            supported_auth_modes=domain_model.supported_auth_modes,
+        )
+
+
+class TargetIdentifierChildEntry(Base):
+    """
+    Ordered edge rows linking a multi-target ``TargetIdentifierEntry`` to its inner
+    target identifiers.
+
+    A multi-target (e.g. ``RoundRobinTarget``) owns a ``targets`` list; each inner
+    target is itself a content-addressed ``TargetIdentifiers`` row, and one edge row
+    here maps ``parent_hash -> child_hash`` at a given ``position`` (the child's index
+    in the parent's ``targets`` list). Both endpoints are hashes into
+    ``TargetIdentifiers``, so an inner target shared across parents dedupes to a single
+    row and is merely referenced here. This is a query index over target composition;
+    ``TargetIdentifierEntry.identifier_json`` remains the source of truth for
+    reconstruction (inner targets are stored inline there too).
+
+    Materialized by ``MemoryInterface._persist_target_identifier`` while persisting a
+    target and its children; it is never built from a single domain model, so it is a
+    plain ``Base`` row rather than a ``DomainBackedEntry``.
+    """
+
+    __tablename__ = "TargetIdentifierChildren"
+    __table_args__ = {"extend_existing": True}
+
+    parent_hash: Mapped[str] = mapped_column(
+        String(64), ForeignKey(f"{TargetIdentifierEntry.__tablename__}.hash"), primary_key=True
+    )
+    #: Zero-based index of the child within the parent's ``targets`` list.
+    position: Mapped[int] = mapped_column(INTEGER, primary_key=True)
+    child_hash: Mapped[str] = mapped_column(
+        String(64), ForeignKey(f"{TargetIdentifierEntry.__tablename__}.hash"), nullable=False
+    )
+
+
 class ConversationEntry(Base):
     """
     Conversation-scoped metadata, persisted once per ``conversation_id``.
@@ -362,6 +544,10 @@ class ConversationEntry(Base):
     row. The target is captured once when the conversation's pieces are written and
     read back via ``MemoryInterface._get_conversation`` (it is not stamped
     onto individual pieces).
+
+    The target is dual-written: the full identifier stays in the ``target_identifier``
+    JSON column (still the read source), and ``target_identifier_hash`` references the
+    deduped ``TargetIdentifierEntry`` row keyed by the identifier's content hash.
     """
 
     __tablename__ = "Conversations"
@@ -369,6 +555,11 @@ class ConversationEntry(Base):
 
     conversation_id = mapped_column(String(36), primary_key=True, nullable=False)
     target_identifier: Mapped[dict[str, str] | None] = mapped_column(JSON, nullable=True)
+    #: Foreign key to the content-addressed ``TargetIdentifiers`` row. Nullable:
+    #: a conversation may be registered without a known target.
+    target_identifier_hash: Mapped[str | None] = mapped_column(
+        String(64), ForeignKey(f"{TargetIdentifierEntry.__tablename__}.hash"), nullable=True
+    )
 
     # Version of PyRIT used when this entry was created. Nullable for backwards
     # compatibility with existing databases.
@@ -383,6 +574,7 @@ class ConversationEntry(Base):
         """
         self.conversation_id = conversation.conversation_id
         self.target_identifier = conversation.target_identifier.model_dump() if conversation.target_identifier else None
+        self.target_identifier_hash = conversation.target_identifier.hash if conversation.target_identifier else None
         self.pyrit_version = pyrit.__version__
 
     def get_conversation(self) -> Conversation:

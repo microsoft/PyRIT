@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal, TypeVar
 
 from sqlalchemy import MetaData, and_, not_, or_, select
 from sqlalchemy.engine.base import Engine
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm.attributes import InstrumentedAttribute
 
 if TYPE_CHECKING:
@@ -29,6 +29,8 @@ from pyrit.memory.memory_models import (
     ScenarioResultEntry,
     ScoreEntry,
     SeedEntry,
+    TargetIdentifierChildEntry,
+    TargetIdentifierEntry,
 )
 from pyrit.memory.storage import (
     DataTypeSerializer,
@@ -50,6 +52,7 @@ from pyrit.models import (
     SeedDataset,
     SeedGroup,
     SeedType,
+    TargetIdentifier,
     group_conversation_message_pieces_by_sequence,
     sort_message_pieces,
 )
@@ -459,6 +462,13 @@ class MemoryInterface(abc.ABC):
             try:
                 existing = session.get(ConversationEntry, conversation.conversation_id)
                 if existing is None:
+                    if conversation.target_identifier is not None:
+                        self._persist_target_identifier(
+                            session=session,
+                            target_identifier=TargetIdentifier.from_component_identifier(
+                                conversation.target_identifier
+                            ),
+                        )
                     session.add(entry)
                 elif (
                     entry.target_identifier is not None
@@ -475,6 +485,54 @@ class MemoryInterface(abc.ABC):
                 session.rollback()
                 logger.exception(f"Error registering conversation {conversation.conversation_id}: {e}")
                 raise
+
+    @staticmethod
+    def _persist_target_identifier(*, session: Any, target_identifier: TargetIdentifier) -> None:
+        """
+        Persist ``target_identifier`` and its inner targets as content-addressed rows.
+
+        Mirrors the conversation-registration contract ("ensure dependencies exist
+        first"): every inner target in ``target_identifier.targets`` is persisted
+        recursively before this identifier's own row, so the ``TargetIdentifierChildren``
+        edges (which foreign-key both endpoints into ``TargetIdentifiers``) resolve.
+        Identifier rows are immutable and keyed by their content hash, so this is an
+        idempotent insert-if-absent: an identical target -- or a shared inner target --
+        reused across many conversations maps to a single row. Runs inside the caller's
+        session so every row is flushed before the FK-bearing ``ConversationEntry`` is
+        added.
+
+        If the row already exists it was fully persisted before (children and edges
+        included, since rows are immutable), so this returns early. Otherwise the row and
+        its child edges are inserted inside a savepoint: a concurrent writer that inserts
+        the same hash first surfaces as an ``IntegrityError`` that rolls back only this
+        insert (not the surrounding write) and is then treated as a no-op -- the row
+        exists either way.
+
+        Args:
+            session (Any): The active SQLAlchemy session (the caller's transaction).
+            target_identifier (TargetIdentifier): The target identifier to persist.
+        """
+        if session.get(TargetIdentifierEntry, target_identifier.hash) is not None:
+            return
+        # Children first, so the parent's edge foreign keys resolve on flush.
+        for inner_target in target_identifier.targets:
+            MemoryInterface._persist_target_identifier(session=session, target_identifier=inner_target)
+        try:
+            with session.begin_nested():
+                session.add(TargetIdentifierEntry.from_domain_model(target_identifier))
+                for position, inner_target in enumerate(target_identifier.targets):
+                    session.add(
+                        TargetIdentifierChildEntry(
+                            parent_hash=target_identifier.hash,
+                            position=position,
+                            child_hash=inner_target.hash,
+                        )
+                    )
+                session.flush()
+        except IntegrityError:
+            # A racing writer inserted the same content-addressed row; immutable
+            # rows make this a safe no-op.
+            pass
 
     @abc.abstractmethod
     def _add_embeddings_to_memory(self, *, embedding_data: Sequence[EmbeddingDataEntry]) -> None:
