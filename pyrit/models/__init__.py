@@ -56,6 +56,7 @@ from pyrit.models.seeds import (
 # These are re-exported from the seeds submodule
 from pyrit.models.storage_io import AzureBlobStorageIO, DiskStorageIO, StorageIO
 from pyrit.models.strategy_result import StrategyResult, StrategyResultT
+from pyrit.models.token_usage import TokenUsage
 
 __all__ = [
     "ALLOWED_CHAT_MESSAGE_ROLES",
@@ -114,6 +115,7 @@ __all__ = [
     "StrategyResult",
     "StrategyResultT",
     "TextDataTypeSerializer",
+    "TokenUsage",
     "UnvalidatedScore",
     "VideoPathDataTypeSerializer",
     "RetryEvent",

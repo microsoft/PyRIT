@@ -16,7 +16,7 @@ import uuid
 import pytest
 
 from pyrit.common.path import HOME_PATH
-from pyrit.models import MessagePiece
+from pyrit.models import MessagePiece, TokenUsage
 from pyrit.prompt_target import OpenAIChatAudioConfig, OpenAIChatTarget, TargetCapabilities, TargetConfiguration
 
 # Path to sample audio file for testing
@@ -41,7 +41,7 @@ def platform_openai_audio_args():
     return {
         "endpoint": endpoint,
         "api_key": api_key,
-        "model_name": "gpt-audio",
+        "model_name": os.environ.get("PLATFORM_OPENAI_AUDIO_MODEL", "gpt-audio"),
     }
 
 
@@ -63,7 +63,7 @@ def platform_openai_chat_args():
     return {
         "endpoint": endpoint,
         "api_key": api_key,
-        "model_name": "gpt-4o",
+        "model_name": os.environ.get("PLATFORM_OPENAI_CHAT_MODEL", "gpt-5"),
     }
 
 
@@ -216,9 +216,9 @@ async def test_openai_chat_target_token_usage_in_metadata(sqlite_instance, platf
     Test that token usage metadata is captured from a real API response.
 
     This test verifies that:
-    1. Token usage keys are present in prompt_metadata of the response
-    2. Token counts are non-negative integers
-    3. Model name is a non-empty string
+    1. Token usage is recoverable via :meth:`~pyrit.models.TokenUsage.from_metadata`
+    2. Token counts are positive integers
+    3. The total equals input + output
     """
     target = OpenAIChatTarget(**platform_openai_chat_args)
 
@@ -236,20 +236,10 @@ async def test_openai_chat_target_token_usage_in_metadata(sqlite_instance, platf
     assert len(result) >= 1
 
     first_piece = result[0].message_pieces[0]
-    metadata = first_piece.prompt_metadata
+    usage = TokenUsage.from_metadata(first_piece.prompt_metadata)
 
-    # Verify token usage keys are present
-    assert "token_usage_model_name" in metadata, "Response should contain token_usage_model_name in metadata"
-    assert "token_usage_prompt_tokens" in metadata, "Response should contain token_usage_prompt_tokens in metadata"
-    assert "token_usage_completion_tokens" in metadata
-    assert "token_usage_total_tokens" in metadata
-
-    # Verify values are reasonable
-    assert isinstance(metadata["token_usage_model_name"], str)
-    assert len(metadata["token_usage_model_name"]) > 0
-    assert metadata["token_usage_prompt_tokens"] > 0
-    assert metadata["token_usage_completion_tokens"] > 0
-    assert metadata["token_usage_total_tokens"] > 0
-    assert metadata["token_usage_total_tokens"] == (
-        metadata["token_usage_prompt_tokens"] + metadata["token_usage_completion_tokens"]
-    )
+    assert usage is not None, "Response should contain token-usage metadata"
+    assert usage.input_tokens is not None and usage.input_tokens > 0
+    assert usage.output_tokens is not None and usage.output_tokens > 0
+    assert usage.total_tokens is not None and usage.total_tokens > 0
+    assert usage.total_tokens == usage.input_tokens + usage.output_tokens
