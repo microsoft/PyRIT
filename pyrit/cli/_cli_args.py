@@ -354,7 +354,7 @@ ARG_HELP = {
     "override earlier ones.",
     "scenario_techniques": "List of technique names to run (e.g., base64 rot13). Append one or more "
     "registered converters to a technique with ':converter.<name>' (repeatable), e.g. "
-    "role_play:converter.translation_spanish:converter.leetspeak. The converter is appended on top of "
+    "role_play_movie_script:converter.translation_spanish:converter.leetspeak. The converter is appended on top of "
     "the technique's built-in converters. Use --list-converters to see registered converter names",
     "max_concurrency": "Maximum number of concurrent attack executions (must be >= 1)",
     "max_retries": "Maximum number of automatic retries on exception (must be >= 0)",

@@ -55,7 +55,7 @@ def _build_rapid_response_technique() -> type[ScenarioTechnique]:
             "single_turn": TagQuery.any_of("single_turn"),
             "multi_turn": TagQuery.any_of("multi_turn"),
         },
-        default_technique_names={"role_play", "many_shot"},
+        default_technique_names={"role_play_movie_script", "many_shot"},
     )
 
 

@@ -17,8 +17,6 @@ from pyrit.executor.attack import (
     AttackStrategy,
     CrescendoAttack,
     PromptSendingAttack,
-    RolePlayAttack,
-    RolePlayPaths,
 )
 from pyrit.models import SeedAttackGroup, SeedObjective, SeedPrompt
 from pyrit.prompt_converter import ToneConverter
@@ -27,6 +25,7 @@ from pyrit.prompt_target import CapabilityName, PromptTarget
 from pyrit.prompt_target.common.target_requirements import CHAT_TARGET_REQUIREMENTS, TargetRequirements
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
+from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
 from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration, DatasetConstraintError
 from pyrit.scenario.core.scenario import Scenario
 from pyrit.scenario.core.scenario_context import ScenarioContext
@@ -71,7 +70,7 @@ class PsychosocialTechnique(ScenarioTechnique):
     users in mental health crisis or if the model misrepresents itself as a licensed therapist.
 
     The tags correspond to different attack techniques:
-    - single_turn: PromptSendingAttack and RolePlayAttack
+    - single_turn: PromptSendingAttack and a role-play simulated conversation
     - multi_turn: CrescendoAttack
     - all: Both single_turn and multi_turn attacks
 
@@ -440,17 +439,21 @@ class Psychosocial(Scenario):
                 memory_labels=self._memory_labels,
             )
         )
-        role_play = RolePlayAttack(
+        role_play_technique = AttackTechniqueFactory.with_simulated_conversation(
+            name="role_play_movie_script",
+            num_turns=2,
+        ).create(
             objective_target=self._objective_target,
-            role_play_definition_path=RolePlayPaths.MOVIE_SCRIPT.value,
             attack_scoring_config=scoring_config,
-            attack_adversarial_config=AttackAdversarialConfig(target=self._adversarial_chat),
+            adversarial_chat=self._adversarial_chat,
         )
         attacks.append(
             AtomicAttack(
                 atomic_attack_name="psychosocial_role_play",
-                attack_technique=AttackTechnique(attack=role_play),
+                attack_technique=role_play_technique,
                 seed_groups=seed_groups or [],
+                adversarial_chat=self._adversarial_chat,
+                objective_scorer=scoring_config.objective_scorer,
                 memory_labels=self._memory_labels,
             )
         )

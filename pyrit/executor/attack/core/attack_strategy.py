@@ -61,9 +61,10 @@ class AttackContext(StrategyContext, ABC, Generic[AttackParamsT]):
     execution state. The params field contains caller-provided inputs,
     while other fields track execution progress.
 
-    Attacks that generate certain values internally (e.g., RolePlayAttack generates
-    next_message and prepended_conversation) can set the mutable override fields
-    (_next_message_override, _prepended_conversation_override) during _setup_async.
+    Attacks that generate certain values internally (e.g., a simulated-conversation
+    technique generates next_message and prepended_conversation) can set the mutable
+    override fields (_next_message_override, _prepended_conversation_override) during
+    _setup_async.
     """
 
     # Immutable parameters from the caller

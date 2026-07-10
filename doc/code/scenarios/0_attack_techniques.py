@@ -5,7 +5,7 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.18.1
+#       jupytext_version: 1.19.4
 # ---
 
 # %% [markdown]
@@ -14,7 +14,7 @@
 # An **attack technique** is *anything that, once configured, generally helps an attack achieve its
 # objective* — a role-play framing, a many-shot priming set, a particular jailbreak template, a
 # crescendo escalation. A technique is always **specific to an attack**: it is the *how* of one
-# configured [attack](../executor/0_executor.md) (the algorithm — e.g. `RolePlayAttack`,
+# configured [attack](../executor/0_executor.md) (the algorithm — e.g. `PromptSendingAttack`,
 # `TreeOfAttacksWithPruningAttack`), bundled with the seeds and configuration that make it a reusable
 # recipe and packaged so a scenario can pick it by name. The objective — the *what* you are probing
 # for — stays separate and is supplied by the dataset.
@@ -96,7 +96,7 @@ print(pd.DataFrame(rows).to_string(index=False))
 # registered factories: every technique becomes an enum member, and the factory's tags become
 # selectable aggregates. That gives you three ways to choose what runs:
 #
-# - **By name** — pick a single technique (e.g. `role_play`).
+# - **By name** — pick a single technique (e.g. `role_play_movie_script`).
 # - **By aggregate tag** — pick a group that expands to every matching technique. `ALL` is always
 #   present; tags like `single_turn`, `multi_turn`, `default`, and `light` come from the factories.
 # - **Composite** — pair a technique with converters (see
@@ -131,22 +131,21 @@ print(pd.DataFrame(rows).to_string(index=False))
 # To add a technique, register a factory. The simplest form names an attack class and tags it:
 #
 # ```python
-# from pyrit.executor.attack import RolePlayAttack, RolePlayPaths
+# from pyrit.executor.attack import PromptSendingAttack
 # from pyrit.registry import AttackTechniqueRegistry
 # from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
 #
 # AttackTechniqueRegistry.get_registry_singleton().register_from_factories(
 #     [
 #         AttackTechniqueFactory(
-#             name="my_role_play",
-#             attack_class=RolePlayAttack,
+#             name="my_prompt_sending",
+#             attack_class=PromptSendingAttack,
 #             technique_tags=["single_turn", "custom"],
-#             attack_kwargs={"role_play_definition_path": RolePlayPaths.MOVIE_SCRIPT.value},
 #         )
 #     ]
 # )
 # ```
 #
 # Wrap registration in a `PyRITInitializer` (as `TechniqueInitializer` does) when you want it
-# to run as part of standard setup. Any scenario built afterwards will see `my_role_play` as a
+# to run as part of standard setup. Any scenario built afterwards will see `my_prompt_sending` as a
 # selectable technique.

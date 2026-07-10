@@ -19,11 +19,14 @@ from pyrit.executor.attack import (
     ContextComplianceAttack,
     ManyShotJailbreakAttack,
     RedTeamingAttack,
-    RolePlayAttack,
-    RolePlayPaths,
     TreeOfAttacksWithPruningAttack,
 )
 from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
+
+# Number of simulated conversation turns used by the role-play techniques. Role
+# play is a "light" framing technique, so a short buildup plus a direct final
+# message is enough to establish the fiction and deliver the objective.
+ROLE_PLAY_SIMULATED_NUM_TURNS = 2
 
 
 def get_technique_factories() -> list[AttackTechniqueFactory]:
@@ -43,11 +46,30 @@ def get_technique_factories() -> list[AttackTechniqueFactory]:
         list[AttackTechniqueFactory]: The core scenario techniques.
     """
     return [
-        AttackTechniqueFactory(
-            name="role_play",
-            attack_class=RolePlayAttack,
+        AttackTechniqueFactory.with_simulated_conversation(
+            name="role_play_movie_script",
             technique_tags=["single_turn", "light"],
-            attack_kwargs={"role_play_definition_path": RolePlayPaths.MOVIE_SCRIPT.value},
+            num_turns=ROLE_PLAY_SIMULATED_NUM_TURNS,
+        ),
+        AttackTechniqueFactory.with_simulated_conversation(
+            name="role_play_video_game",
+            technique_tags=["single_turn", "light"],
+            num_turns=ROLE_PLAY_SIMULATED_NUM_TURNS,
+        ),
+        AttackTechniqueFactory.with_simulated_conversation(
+            name="role_play_trivia_game",
+            technique_tags=["single_turn", "light"],
+            num_turns=ROLE_PLAY_SIMULATED_NUM_TURNS,
+        ),
+        AttackTechniqueFactory.with_simulated_conversation(
+            name="role_play_persuasion",
+            technique_tags=["single_turn", "light"],
+            num_turns=ROLE_PLAY_SIMULATED_NUM_TURNS,
+        ),
+        AttackTechniqueFactory.with_simulated_conversation(
+            name="role_play_persuasion_written",
+            technique_tags=["single_turn", "light"],
+            num_turns=ROLE_PLAY_SIMULATED_NUM_TURNS,
         ),
         AttackTechniqueFactory(
             name="many_shot",
