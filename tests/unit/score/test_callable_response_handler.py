@@ -37,6 +37,19 @@ def test_callable_response_handler_parses_dict_from_callable():
     assert score.score_metadata == {"metadata": "S1"}
 
 
+def test_callable_response_handler_accepts_tuple_category_argument():
+    handler = CallableResponseHandler(parser=lambda _text: {"score_value": "True", "rationale": "parsed"})
+
+    score = handler.parse(
+        response_text="unsafe",
+        scorer_identifier=get_mock_target_identifier("Scorer"),
+        scored_prompt_id="pid",
+        category=("security", "privacy"),
+    )
+
+    assert score.score_category == ["security", "privacy"]
+
+
 def test_callable_response_handler_missing_required_key_raises_invalid_json():
     # score_value is required; its absence must raise InvalidJsonException so the retry applies.
     handler = CallableResponseHandler(parser=lambda _text: {"rationale": "r"})

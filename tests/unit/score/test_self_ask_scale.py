@@ -10,9 +10,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from unit.mocks import get_mock_target_identifier
 
-from pyrit.models import ComponentIdentifier, Message, MessagePiece, UnvalidatedScore
-from pyrit.score import ContentClassifierPaths, SelfAskScaleScorer
-from pyrit.score.float_scale.self_ask_scale_scorer import _validate_scale_arguments
+from pyrit.models import ComponentIdentifier, Message, MessagePiece, SeedPrompt, UnvalidatedScore
+from pyrit.score import ContentClassifierPaths, Scale, SelfAskScaleScorer
 
 tree_scale_path = SelfAskScaleScorer.ScalePaths.TREE_OF_ATTACKS_SCALE.value
 task_scale_path = SelfAskScaleScorer.ScalePaths.TASK_ACHIEVED_SCALE.value
@@ -43,15 +42,14 @@ def scorer_scale_response() -> Message:
 def scale_scorer(patch_central_database) -> SelfAskScaleScorer:
     chat_target = MagicMock()
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
-    return SelfAskScaleScorer.from_scale_arguments(
+    return SelfAskScaleScorer.from_scale(
         chat_target=chat_target,
-        scale_arguments_path=SelfAskScaleScorer.ScalePaths.TREE_OF_ATTACKS_SCALE.value,
-        system_prompt_path=SelfAskScaleScorer.SystemPaths.GENERAL_SYSTEM_PROMPT.value,
+        scale=Scale.from_yaml(SelfAskScaleScorer.ScalePaths.TREE_OF_ATTACKS_SCALE.value),
     )
 
 
 @pytest.mark.parametrize(
-    "scale_arguments_path, system_prompt_path",
+    "scale_path, system_prompt_path",
     [
         (None, None),
         (tree_scale_path, general_system_prompt_path),
@@ -63,18 +61,18 @@ def scale_scorer(patch_central_database) -> SelfAskScaleScorer:
 )
 async def test_scale_scorer_set_system_prompt(
     scorer_scale_response: Message,
-    scale_arguments_path: Path,
-    system_prompt_path: Path,
+    scale_path: Path | None,
+    system_prompt_path: Path | None,
     patch_central_database,
 ):
     chat_target = MagicMock()
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     chat_target.send_prompt_async = AsyncMock(return_value=[scorer_scale_response])
 
-    scorer = SelfAskScaleScorer.from_scale_arguments(
+    scorer = SelfAskScaleScorer.from_scale(
         chat_target=chat_target,
-        scale_arguments_path=scale_arguments_path,
-        system_prompt_path=system_prompt_path,
+        scale=Scale.from_yaml(scale_path) if scale_path else None,
+        system_prompt_template=SeedPrompt.from_yaml_file(system_prompt_path) if system_prompt_path else None,
     )
 
     await scorer.score_text_async(text="string", objective="task")
@@ -84,20 +82,16 @@ async def test_scale_scorer_set_system_prompt(
     # assert that the scale score was loaded into system prompt
 
     assert scorer._system_prompt
-    assert str(scorer._minimum_value) in scorer._system_prompt
-    assert str(scorer._maximum_value) in scorer._system_prompt
+    assert str(scorer._scale.minimum_value) in scorer._system_prompt
+    assert str(scorer._scale.maximum_value) in scorer._system_prompt
 
 
 def test_scale_scorer_invalid_scale_file_contents():
     chat_target = MagicMock()
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     # When using a YAML with wrong keys the Scale constructor will raise an exception.
-    with pytest.raises(ValueError, match="Missing key in scale_args:"):
-        SelfAskScaleScorer.from_scale_arguments(
-            chat_target=chat_target,
-            scale_arguments_path=ContentClassifierPaths.HARMFUL_CONTENT_CLASSIFIER.value,
-            system_prompt_path=SelfAskScaleScorer.SystemPaths.GENERAL_SYSTEM_PROMPT.value,
-        )
+    with pytest.raises(ValueError):
+        Scale.from_yaml(ContentClassifierPaths.HARMFUL_CONTENT_CLASSIFIER.value)
 
 
 @pytest.mark.parametrize(
@@ -139,7 +133,7 @@ def test_scale_scorer_invalid_scale_file_contents():
 )
 def test_validate_scale_arguments_missing_args_raises_value_error(scale_args: dict[str, Any]) -> None:
     with pytest.raises(ValueError):
-        _validate_scale_arguments(scale_args)
+        Scale.model_validate(scale_args)
 
 
 async def test_scale_scorer_score(scorer_scale_response: Message, patch_central_database):
@@ -148,10 +142,9 @@ async def test_scale_scorer_score(scorer_scale_response: Message, patch_central_
 
     chat_target.send_prompt_async = AsyncMock(return_value=[scorer_scale_response])
 
-    scorer = SelfAskScaleScorer.from_scale_arguments(
+    scorer = SelfAskScaleScorer.from_scale(
         chat_target=chat_target,
-        scale_arguments_path=SelfAskScaleScorer.ScalePaths.TREE_OF_ATTACKS_SCALE.value,
-        system_prompt_path=SelfAskScaleScorer.SystemPaths.GENERAL_SYSTEM_PROMPT.value,
+        scale=Scale.from_yaml(SelfAskScaleScorer.ScalePaths.TREE_OF_ATTACKS_SCALE.value),
     )
 
     score = await scorer.score_text_async(text="example text", objective="task")
@@ -180,14 +173,13 @@ async def test_scale_scorer_score_custom_scale(scorer_scale_response: Message, p
 
     chat_target.send_prompt_async = AsyncMock(return_value=[scorer_scale_response])
 
-    scorer = SelfAskScaleScorer.from_scale_arguments(
-        chat_target=chat_target,
-        scale_arguments_path=SelfAskScaleScorer.ScalePaths.TREE_OF_ATTACKS_SCALE.value,
-        system_prompt_path=SelfAskScaleScorer.SystemPaths.GENERAL_SYSTEM_PROMPT.value,
+    scale = Scale.from_yaml(SelfAskScaleScorer.ScalePaths.TREE_OF_ATTACKS_SCALE.value).model_copy(
+        update={"minimum_value": 1, "maximum_value": 100}
     )
-
-    scorer._minimum_value = 1
-    scorer._maximum_value = 100
+    scorer = SelfAskScaleScorer.from_scale(
+        chat_target=chat_target,
+        scale=scale,
+    )
 
     score = await scorer.score_text_async(text="example text", objective="task")
 
@@ -208,10 +200,9 @@ async def test_scale_scorer_score_calls_send_chat(patch_central_database):
     chat_target = MagicMock()
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
 
-    scorer = SelfAskScaleScorer.from_scale_arguments(
+    scorer = SelfAskScaleScorer.from_scale(
         chat_target=chat_target,
-        scale_arguments_path=SelfAskScaleScorer.ScalePaths.TREE_OF_ATTACKS_SCALE.value,
-        system_prompt_path=SelfAskScaleScorer.SystemPaths.GENERAL_SYSTEM_PROMPT.value,
+        scale=Scale.from_yaml(SelfAskScaleScorer.ScalePaths.TREE_OF_ATTACKS_SCALE.value),
     )
 
     score = UnvalidatedScore(
@@ -236,7 +227,6 @@ async def test_scale_scorer_score_calls_send_chat(patch_central_database):
     assert mock_run.call_count == 1
 
 
-@pytest.mark.asyncio
 async def test_scale_scorer_non_text_sends_prepended_text(patch_central_database):
     """Test that non-text content (e.g., image_path) uses prepended text for objective context."""
     from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
@@ -244,10 +234,9 @@ async def test_scale_scorer_non_text_sends_prepended_text(patch_central_database
     chat_target = MagicMock()
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
 
-    scorer = SelfAskScaleScorer.from_scale_arguments(
+    scorer = SelfAskScaleScorer.from_scale(
         chat_target=chat_target,
-        scale_arguments_path=SelfAskScaleScorer.ScalePaths.TASK_ACHIEVED_SCALE.value,
-        system_prompt_path=SelfAskScaleScorer.SystemPaths.GENERAL_SYSTEM_PROMPT.value,
+        scale=Scale.from_yaml(SelfAskScaleScorer.ScalePaths.TASK_ACHIEVED_SCALE.value),
         validator=ScorerPromptValidator(supported_data_types=["image_path"], is_objective_required=True),
     )
 
@@ -281,25 +270,39 @@ async def test_scale_scorer_non_text_sends_prepended_text(patch_central_database
 
 def test_scale_init_no_chat_target_raises():
     with pytest.raises(ValueError, match="A chat_target must be provided"):
-        SelfAskScaleScorer(chat_target=None)
+        SelfAskScaleScorer(
+            chat_target=None,
+            system_prompt="rubric",
+            scale=Scale(minimum_value=0, maximum_value=1, category="test"),
+        )
 
 
-def test_scale_init_default_system_prompt(patch_central_database):
+def test_scale_factory_default_system_prompt(patch_central_database):
     chat_target = MagicMock()
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
-    scorer = SelfAskScaleScorer(chat_target=chat_target)
+    scorer = SelfAskScaleScorer.from_scale(chat_target=chat_target)
     assert scorer._system_prompt
-    assert scorer._minimum_value < scorer._maximum_value
+    assert scorer._scale.minimum_value < scorer._scale.maximum_value
+
+
+def test_scale_factory_renders_minimal_inline_scale(patch_central_database):
+    chat_target = MagicMock()
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+    scale = Scale(minimum_value=0, maximum_value=10, category="custom")
+
+    scorer = SelfAskScaleScorer.from_scale(chat_target=chat_target, scale=scale)
+
+    assert "scale from 0 to 10" in scorer._system_prompt
+    assert "{{" not in scorer._system_prompt
 
 
 def test_scale_init_system_prompt_str_and_invalid_type(patch_central_database):
     chat_target = MagicMock()
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
 
-    scorer = SelfAskScaleScorer(
-        chat_target=chat_target, system_prompt="verbatim", min_value=1, max_value=7, score_category="c"
-    )
+    scale = Scale(minimum_value=1, maximum_value=7, category="c")
+    scorer = SelfAskScaleScorer(chat_target=chat_target, system_prompt="verbatim", scale=scale)
     assert scorer._system_prompt == "verbatim"
 
-    with pytest.raises(TypeError, match="system_prompt must be a SeedPrompt, str, or None"):
-        SelfAskScaleScorer(chat_target=chat_target, system_prompt=123)
+    with pytest.raises(TypeError, match="system_prompt must be a SeedPrompt or str"):
+        SelfAskScaleScorer(chat_target=chat_target, system_prompt=123, scale=scale)

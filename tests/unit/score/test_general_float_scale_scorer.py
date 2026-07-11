@@ -8,9 +8,12 @@ import pytest
 from unit.mocks import get_mock_target_identifier
 
 from pyrit.models import Message, MessagePiece
+from pyrit.score import NumericScale
 from pyrit.score.float_scale.self_ask_general_float_scale_scorer import (
     SelfAskGeneralFloatScaleScorer,
 )
+
+DEFAULT_SCALE = NumericScale(minimum_value=0, maximum_value=100, category="test_category")
 
 
 @pytest.fixture
@@ -37,7 +40,7 @@ async def test_general_float_scorer_score_async(patch_central_database, general_
     scorer = SelfAskGeneralFloatScaleScorer(
         chat_target=chat_target,
         system_prompt_format_string="This is a system prompt.",
-        category="test_category",
+        scale=DEFAULT_SCALE,
     )
     assert scorer
 
@@ -61,7 +64,7 @@ async def test_general_float_scorer_score_async_with_prompt_f_string(
         chat_target=chat_target,
         system_prompt_format_string="This is a system prompt.",
         prompt_format_string="Rate this: {prompt}",
-        category="test_category",
+        scale=DEFAULT_SCALE,
     )
 
     score = await scorer.score_text_async(text="this is a test prompt", objective="test objective")
@@ -95,7 +98,7 @@ async def test_general_float_scorer_forwards_response_json_schema(
     scorer = SelfAskGeneralFloatScaleScorer(
         chat_target=chat_target,
         system_prompt_format_string="This is a system prompt.",
-        category="test_category",
+        scale=DEFAULT_SCALE,
         response_json_schema=schema,
     )
 
@@ -117,7 +120,7 @@ async def test_general_float_scorer_omits_schema_when_not_provided(
     scorer = SelfAskGeneralFloatScaleScorer(
         chat_target=chat_target,
         system_prompt_format_string="This is a system prompt.",
-        category="test_category",
+        scale=DEFAULT_SCALE,
     )
 
     await scorer.score_text_async(text="test prompt", objective="test objective")
@@ -151,12 +154,10 @@ async def test_general_float_scorer_score_async_handles_custom_keys(patch_centra
         chat_target=chat_target,
         system_prompt_format_string="This is a system prompt.",
         prompt_format_string="This is a prompt format string.",
-        category="test_category",
+        scale=DEFAULT_SCALE,
         score_value_output_key="score_custom",
         rationale_output_key="rationale_custom",
         description_output_key="description_custom",
-        min_value=0,
-        max_value=100,
     )
     score = await scorer.score_text_async(text="this is a test prompt", objective="test objective")
     assert len(score) == 1
@@ -185,9 +186,7 @@ async def test_general_float_scorer_score_async_min_max_scale(patch_central_data
     scorer = SelfAskGeneralFloatScaleScorer(
         chat_target=chat_target,
         system_prompt_format_string="Prompt.",
-        category="cat",
-        min_value=0,
-        max_value=10,
+        scale=NumericScale(minimum_value=0, maximum_value=10, category="cat"),
     )
     score = await scorer.score_text_async(text="prompt", objective="obj")
     assert len(score) == 1
@@ -198,15 +197,8 @@ async def test_general_float_scorer_score_async_min_max_scale(patch_central_data
 
 
 def test_general_float_scorer_init_invalid_min_max():
-    chat_target = MagicMock()
-    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     with pytest.raises(ValueError):
-        SelfAskGeneralFloatScaleScorer(
-            chat_target=chat_target,
-            system_prompt_format_string="Prompt.",
-            min_value=10,
-            max_value=5,
-        )
+        NumericScale(minimum_value=10, maximum_value=5, category="test")
 
 
 def test_get_scorer_metrics_returns_none_when_eval_hash_is_none(patch_central_database):
@@ -221,7 +213,7 @@ def test_get_scorer_metrics_returns_none_when_eval_hash_is_none(patch_central_da
     scorer = SelfAskGeneralFloatScaleScorer(
         chat_target=chat_target,
         system_prompt_format_string="Prompt.",
-        category="test_category",
+        scale=DEFAULT_SCALE,
     )
     # Set evaluation_file_mapping with harm_category so the early return before eval_hash is bypassed
     scorer.evaluation_file_mapping = ScorerEvalDatasetFiles(
@@ -239,4 +231,8 @@ def test_get_scorer_metrics_returns_none_when_eval_hash_is_none(patch_central_da
 
 def test_general_float_scale_no_chat_target_raises():
     with pytest.raises(ValueError, match="A chat_target must be provided"):
-        SelfAskGeneralFloatScaleScorer(chat_target=None, system_prompt_format_string="prompt")
+        SelfAskGeneralFloatScaleScorer(
+            chat_target=None,
+            system_prompt_format_string="prompt",
+            scale=DEFAULT_SCALE,
+        )

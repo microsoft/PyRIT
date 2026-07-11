@@ -23,6 +23,8 @@ from pyrit.score.float_scale.insecure_code_scorer import (
     InsecureCodeScorer,
     render_insecure_code_system_prompt,
 )
+from pyrit.score.float_scale.likert_scale import LikertScale, LikertScaleEntry
+from pyrit.score.float_scale.numeric_scale import NumericScale, Scale
 from pyrit.score.float_scale.plagiarism_scorer import PlagiarismMetric, PlagiarismScorer
 from pyrit.score.float_scale.self_ask_general_float_scale_scorer import SelfAskGeneralFloatScaleScorer
 from pyrit.score.float_scale.self_ask_likert_scorer import (
@@ -33,7 +35,6 @@ from pyrit.score.float_scale.self_ask_likert_scorer import (
 )
 from pyrit.score.float_scale.self_ask_scale_scorer import (
     SelfAskScaleScorer,
-    load_scale_arguments,
     render_scale_system_prompt,
 )
 from pyrit.score.response_handler import (
@@ -79,6 +80,8 @@ from pyrit.score.true_false.regex.static_prompt_injection_scorer import StaticPr
 from pyrit.score.true_false.regex.xss_output_scorer import XSSOutputScorer
 from pyrit.score.true_false.regex.xxe_output_scorer import XXEOutputScorer
 from pyrit.score.true_false.self_ask_category_scorer import (
+    ContentClassifier,
+    ContentClassifierCategory,
     ContentClassifierPaths,
     SelfAskCategoryScorer,
     render_category_system_prompt,
@@ -151,6 +154,8 @@ __all__ = [
     "AzureContentFilterScorer",
     "BatchScorer",
     "CallableResponseHandler",
+    "ContentClassifier",
+    "ContentClassifierCategory",
     "ContentClassifierPaths",
     "ConversationScorer",
     "CredentialLeakScorer",
@@ -172,12 +177,14 @@ __all__ = [
     "JsonSchemaResponseHandler",
     "LDAPInjectionOutputScorer",
     "LikertScaleEvalFiles",
+    "LikertScale",
+    "LikertScaleEntry",
     "LikertScalePaths",
-    "load_scale_arguments",
     "MarkdownInjectionScorer",
     "MethKeywordScorer",
     "MetricsType",
     "NerveAgentKeywordScorer",
+    "NumericScale",
     "ObjectiveHumanLabeledEntry",
     "ObjectiveScorerEvaluator",
     "ObjectiveScorerMetrics",
@@ -205,6 +212,7 @@ __all__ = [
     "get_scorer_info",
     "find_objective_metrics_by_eval_hash",
     "ScorerPromptValidator",
+    "Scale",
     "SelfAskCategoryScorer",
     "SelfAskGeneralFloatScaleScorer",
     "SelfAskGeneralTrueFalseScorer",

@@ -577,7 +577,7 @@ class FuzzerGenerator(
             FuzzerGenerator: A configured FuzzerGenerator instance with default scoring.
         """
         # Create default scorer using the provided scoring target
-        scale_scorer = SelfAskScaleScorer(chat_target=scoring_target)
+        scale_scorer = SelfAskScaleScorer.from_scale(chat_target=scoring_target)
 
         objective_scorer = FloatScaleThresholdScorer(
             scorer=scale_scorer,

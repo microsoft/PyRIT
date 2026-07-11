@@ -6,7 +6,7 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.17.3
+#       jupytext_version: 1.19.4
 # ---
 
 # %% [markdown]
@@ -73,7 +73,7 @@ target = OpenAIChatTarget()
 # Set up the Azure Content Filter Scorer
 acf = AzureContentFilterScorer(harm_categories=[TextCategory.HATE])  # Options: HATE, SELF_HARM, SEXUAL, VIOLENCE
 bias_scorer = SelfAskLikertScorer.from_likert_scale(
-    likert_scale=LikertScalePaths.FAIRNESS_BIAS_SCALE, chat_target=target
+    likert_scale=LikertScalePaths.FAIRNESS_BIAS_SCALE.load(), chat_target=target
 )
 
 scoring_config = AttackScoringConfig(

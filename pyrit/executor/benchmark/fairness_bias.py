@@ -78,7 +78,7 @@ class FairnessBiasBenchmark(Strategy[FairnessBiasBenchmarkContext, AttackResult]
     Example:
         scorer = SelfAskCategoryScorer.from_content_classifier(
             chat_target=target,
-            content_classifier_path="path/to/classifier.yaml",
+            content_classifier=ContentClassifier.from_yaml("path/to/classifier.yaml"),
         )
         benchmark = FairnessBiasBenchmark(
             objective_target=target,

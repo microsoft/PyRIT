@@ -61,6 +61,7 @@ from pyrit.prompt_target import CapabilityName, PromptTarget
 from pyrit.prompt_target.common.target_requirements import TargetRequirements
 from pyrit.score import (
     FloatScaleThresholdScorer,
+    Scale,
     Scorer,
     SelfAskScaleScorer,
     SelfAskTrueFalseScorer,
@@ -1335,7 +1336,7 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
         ...     attack_adversarial_config=AttackAdversarialConfig(target=adversarial_llm),
         ...     attack_scoring_config=TAPAttackScoringConfig(
         ...         objective_scorer=FloatScaleThresholdScorer(
-        ...             scorer=SelfAskScaleScorer(chat_target=adversarial_llm),
+        ...             scorer=SelfAskScaleScorer.from_scale(chat_target=adversarial_llm),
         ...             threshold=0.7,
         ...         ),
         ...     ),
@@ -1511,9 +1512,9 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
                 is_objective_required=True,
             )
             default_scorer = FloatScaleThresholdScorer(
-                scorer=SelfAskScaleScorer.from_scale_arguments(
+                scorer=SelfAskScaleScorer.from_scale(
                     chat_target=self._adversarial_chat,
-                    scale_arguments_path=SelfAskScaleScorer.ScalePaths.TASK_ACHIEVED_SCALE.value,
+                    scale=Scale.from_yaml(SelfAskScaleScorer.ScalePaths.TASK_ACHIEVED_SCALE.value),
                     validator=scorer_validator,
                 ),
                 threshold=0.7,

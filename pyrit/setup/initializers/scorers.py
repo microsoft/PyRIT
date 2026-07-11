@@ -321,7 +321,7 @@ class ScorerInitializer(PyRITInitializer):
         self._try_register(
             name=SCALE_GPT4O_TEMP9_THRESHOLD_09,
             factory=lambda: FloatScaleThresholdScorer(
-                scorer=SelfAskScaleScorer(
+                scorer=SelfAskScaleScorer.from_scale(
                     chat_target=self._require_dependency(gpt4o_temp9, name=GPT4O_TEMP9_TARGET),
                 ),
                 threshold=0.9,
@@ -417,7 +417,7 @@ class ScorerInitializer(PyRITInitializer):
                     name=scorer_name,
                     factory=lambda s=scale: SelfAskLikertScorer.from_likert_scale(
                         chat_target=self._require_dependency(gpt4o, name=GPT4O_TARGET),
-                        likert_scale=s,
+                        likert_scale=s.load(),
                     ),
                     required_targets=[gpt4o],
                     tags=likert_tag,

@@ -19,6 +19,7 @@ if TYPE_CHECKING:
         Score,
     )
     from pyrit.prompt_target import PromptTarget
+    from pyrit.score.float_scale.numeric_scale import NumericScale
 
 
 class SelfAskGeneralFloatScaleScorer(FloatScaleScorer):
@@ -40,11 +41,9 @@ class SelfAskGeneralFloatScaleScorer(FloatScaleScorer):
         self,
         *,
         system_prompt_format_string: str,
+        scale: NumericScale,
         chat_target: PromptTarget | None = None,
         prompt_format_string: str | None = None,
-        category: str | None = None,
-        min_value: int = 0,
-        max_value: int = 100,
         response_handler: ResponseHandler | None = None,
         validator: ScorerPromptValidator | None = None,
         score_value_output_key: str = "score_value",
@@ -62,17 +61,15 @@ class SelfAskGeneralFloatScaleScorer(FloatScaleScorer):
         - rationale: a short explanation
 
         Optionally it can include description, metadata, and category. If category is not provided
-        in the response, the provided `category` argument will be applied.
+        in the response, the category from ``scale`` will be applied.
 
         Args:
             system_prompt_format_string (str): System prompt template with placeholders for
                 objective, prompt, and message_piece.
+            scale (NumericScale): The required native score range and optional category.
             chat_target (PromptTarget | None): The chat target used to score. Must satisfy
                 CHAT_TARGET_REQUIREMENTS.
             prompt_format_string (str | None): User prompt template with the same placeholders.
-            category (str | None): Category for the score.
-            min_value (int): Minimum of the model's native scale. Defaults to 0.
-            max_value (int): Maximum of the model's native scale. Defaults to 100.
             response_handler (ResponseHandler | None): Parser for the target's raw output. Defaults
                 to a ``JsonSchemaResponseHandler`` built from the ``*_output_key`` arguments.
             validator (ScorerPromptValidator | None): Custom validator. If omitted, a default
@@ -88,7 +85,7 @@ class SelfAskGeneralFloatScaleScorer(FloatScaleScorer):
 
         Raises:
             ValueError: If ``chat_target`` is not provided, if system_prompt_format_string is not
-                provided or empty, or if min_value is greater than max_value.
+                provided or empty.
         """
         if chat_target is None:
             raise ValueError("A chat_target must be provided.")
@@ -99,13 +96,7 @@ class SelfAskGeneralFloatScaleScorer(FloatScaleScorer):
             raise ValueError("system_prompt_format_string must be provided and non-empty.")
         self._system_prompt_format_string = system_prompt_format_string
         self._prompt_format_string = prompt_format_string
-
-        if min_value > max_value:
-            raise ValueError("min_value must be less than or equal to max_value")
-
-        self._score_category = category
-        self._min_value = min_value
-        self._max_value = max_value
+        self._scale = scale
         # A caller-supplied handler owns its own response contract; otherwise the default JSON
         # handler carries the schema and enforces the numeric score contract for the round-trip.
         self._response_handler = response_handler or JsonSchemaResponseHandler(
@@ -129,8 +120,7 @@ class SelfAskGeneralFloatScaleScorer(FloatScaleScorer):
             params={
                 "system_prompt_template": self._system_prompt_format_string,
                 "user_prompt_template": self._prompt_format_string,
-                "min_value": self._min_value,
-                "max_value": self._max_value,
+                "scale": self._scale.model_dump(),
                 "response_json_schema": self._response_handler.response_schema,
             },
             prompt_target=self._prompt_target.get_identifier(),
@@ -172,13 +162,17 @@ class SelfAskGeneralFloatScaleScorer(FloatScaleScorer):
             data_type=message_piece.converted_value_data_type,
             scored_prompt_id=message_piece.id,
             scorer_identifier=self.get_identifier(),
-            category=self._score_category,
+            category=self._scale.category,
             objective=objective,
         )
 
         score = unvalidated.to_score(
             score_value=str(
-                self.scale_value_float(float(unvalidated.raw_score_value), self._min_value, self._max_value)
+                self.scale_value_float(
+                    float(unvalidated.raw_score_value),
+                    self._scale.minimum_value,
+                    self._scale.maximum_value,
+                )
             ),
             score_type="float_scale",
         )

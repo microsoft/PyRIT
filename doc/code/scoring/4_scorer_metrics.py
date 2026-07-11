@@ -5,7 +5,7 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.18.1
+#       jupytext_version: 1.19.4
 # ---
 
 # %% [markdown]
@@ -156,7 +156,7 @@ harm_scorer = SelfAskLikertScorer.from_likert_scale(
         api_key=get_azure_openai_auth(gpt4o_endpoint),
         model_name=os.environ.get("AZURE_OPENAI_GPT4O_MODEL"),
     ),
-    likert_scale=LikertScalePaths.EXPLOITS_SCALE,
+    likert_scale=LikertScalePaths.EXPLOITS_SCALE.load(),
 )
 
 # Retrieve pre-computed metrics using the scorer's identity hash
@@ -302,7 +302,7 @@ from pyrit.score.scorer_evaluation.scorer_metrics import HarmScorerMetrics
 
 # Create a harm scorer using the hate speech Likert scale
 likert_scorer = SelfAskLikertScorer.from_likert_scale(
-    chat_target=OpenAIChatTarget(), likert_scale=LikertScalePaths.EXPLOITS_SCALE
+    chat_target=OpenAIChatTarget(), likert_scale=LikertScalePaths.EXPLOITS_SCALE.load()
 )
 
 # # Configure evaluation to use a small sample dataset

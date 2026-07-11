@@ -72,8 +72,8 @@ class SelfAskQuestionAnswerScorer(SelfAskTrueFalseScorer):
         super().__init__(
             chat_target=chat_target,
             system_prompt=system_prompt,
+            question=question,
             response_handler=response_handler,
-            score_category=[question.category],
             validator=validator,
             score_aggregator=score_aggregator,
         )
