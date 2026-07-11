@@ -13,6 +13,7 @@ from pyrit.exceptions.exception_classes import InvalidJsonException
 from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import Message, MessagePiece
 from pyrit.score import LikertScalePaths, SelfAskLikertScorer
+from pyrit.score.float_scale.self_ask_likert_scorer import _likert_scale_description_to_string
 
 
 @pytest.fixture
@@ -653,15 +654,12 @@ def test_likert_init_system_prompt_str_and_invalid_type(patch_central_database):
         SelfAskLikertScorer(chat_target=chat_target, system_prompt=123)
 
 
-def test_likert_scale_description_to_string_rejects_malformed_entries(patch_central_database):
-    chat_target = MagicMock()
-    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
-    scorer = SelfAskLikertScorer.from_likert_scale(chat_target=chat_target, likert_scale=LikertScalePaths.CYBER_SCALE)
+def test_likert_scale_description_to_string_rejects_malformed_entries():
     path = Path("scale.yaml")
 
     with pytest.raises(ValueError, match="no scale_descriptions entries"):
-        scorer._likert_scale_description_to_string([], path)
+        _likert_scale_description_to_string(descriptions=[], likert_scale_path=path)
     with pytest.raises(ValueError, match="must be a dict"):
-        scorer._likert_scale_description_to_string([123], path)
+        _likert_scale_description_to_string(descriptions=[123], likert_scale_path=path)
     with pytest.raises(ValueError, match="missing required key 'description'"):
-        scorer._likert_scale_description_to_string([{"score_value": 1}], path)
+        _likert_scale_description_to_string(descriptions=[{"score_value": 1}], likert_scale_path=path)

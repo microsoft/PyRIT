@@ -325,6 +325,3 @@ class SelfAskScaleScorer(FloatScaleScorer):
         )
 
         return [score]
-
-    def _validate_scale_arguments_set(self, scale_args: dict[str, Any]) -> None:
-        _validate_scale_arguments(scale_args)

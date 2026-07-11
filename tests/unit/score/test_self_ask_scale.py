@@ -4,6 +4,7 @@
 import uuid
 from pathlib import Path
 from textwrap import dedent
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -11,6 +12,7 @@ from unit.mocks import get_mock_target_identifier
 
 from pyrit.models import ComponentIdentifier, Message, MessagePiece, UnvalidatedScore
 from pyrit.score import ContentClassifierPaths, SelfAskScaleScorer
+from pyrit.score.float_scale.self_ask_scale_scorer import _validate_scale_arguments
 
 tree_scale_path = SelfAskScaleScorer.ScalePaths.TREE_OF_ATTACKS_SCALE.value
 task_scale_path = SelfAskScaleScorer.ScalePaths.TASK_ACHIEVED_SCALE.value
@@ -135,9 +137,9 @@ def test_scale_scorer_invalid_scale_file_contents():
         },
     ],
 )
-def test_validate_scale_arguments_missing_args_raises_value_error(scale_args, scale_scorer: SelfAskScaleScorer) -> None:
+def test_validate_scale_arguments_missing_args_raises_value_error(scale_args: dict[str, Any]) -> None:
     with pytest.raises(ValueError):
-        scale_scorer._validate_scale_arguments_set(scale_args)
+        _validate_scale_arguments(scale_args)
 
 
 async def test_scale_scorer_score(scorer_scale_response: Message, patch_central_database):

@@ -486,22 +486,6 @@ class SelfAskLikertScorer(FloatScaleScorer):
             prompt_target=self._prompt_target.get_identifier(),
         )
 
-    def _likert_scale_description_to_string(self, descriptions: list[dict[str, str]], likert_scale_path: Path) -> str:
-        """
-        Convert the Likert scales to a string representation to be put in a system prompt.
-
-        Args:
-            descriptions (list[dict[str, str]]): The Likert scale entries to convert.
-            likert_scale_path (Path): Path to the source YAML file (used in error messages).
-
-        Returns:
-            str: The string representation of the Likert scale.
-
-        Raises:
-            ValueError: If the Likert scale YAML file is improperly formatted.
-        """
-        return _likert_scale_description_to_string(descriptions, likert_scale_path)
-
     @staticmethod
     def _validate_custom_system_prompt_path(custom_system_prompt_path: Path) -> None:
         """
