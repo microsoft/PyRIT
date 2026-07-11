@@ -68,7 +68,9 @@ class MockUnsupportedScorer(Scorer):
     def validate_return_scores(self, scores: list[Score]):
         pass
 
-    def _build_fallback_score(self, *, message: Message, objective: str | None) -> list[Score]:
+    def _build_fallback_score(
+        self, *, message: Message, objective: str | None, scorer_response_blocked: bool = False
+    ) -> list[Score]:
         return [
             Score(
                 score_value="false",

@@ -49,7 +49,9 @@ class FloatScaleScorer(Scorer):
         """
         super().__init__(validator=validator, chat_target=chat_target)
 
-    def _build_fallback_score(self, *, message: Message, objective: str | None) -> list[Score]:
+    def _build_fallback_score(
+        self, *, message: Message, objective: str | None, scorer_response_blocked: bool = False
+    ) -> list[Score]:
         """
         Build a single-element list containing a neutral ``0.0`` score when no pieces could be scored.
 
@@ -59,6 +61,8 @@ class FloatScaleScorer(Scorer):
         Args:
             message (Message): The message whose first piece is inspected for status.
             objective (str | None): The objective associated with this scoring call.
+            scorer_response_blocked (bool): When True, the scorer's own LLM response was
+                blocked by content filtering; reflected in the rationale.
 
         Returns:
             list[Score]: A single-element list containing a ``0.0`` ``float_scale`` score
@@ -72,7 +76,13 @@ class FloatScaleScorer(Scorer):
         if piece_id is None:
             raise ValueError("Cannot create score: message piece has no id or original_prompt_id")
 
-        if first_piece.is_blocked():
+        if scorer_response_blocked:
+            rationale = (
+                "The scorer's own LLM response was blocked by content filtering "
+                "(raise_if_scorer_blocks is False); returning 0.0."
+            )
+            description = "Scorer response blocked; returning 0.0."
+        elif first_piece.is_blocked():
             rationale = (
                 "The request was blocked by the target "
                 "(score_blocked_content is False or no partial content available); returning 0.0."
