@@ -130,15 +130,14 @@ async def processing_callback() -> str:
 
 import logging
 
-from pyrit.executor.core import StrategyConverterConfig
-from pyrit.executor.workflow import XPIAWorkflow
-
 # %% [markdown]
 #
 # Finally, we can put all the pieces together:
 # %%
-from pyrit.prompt_converter import TextJailbreakConverter
-from pyrit.prompt_normalizer import PromptConverterConfiguration
+from pyrit.converter import TextJailbreakConverter
+from pyrit.executor.core import StrategyConverterConfig
+from pyrit.executor.workflow import XPIAWorkflow
+from pyrit.prompt_normalizer import ConverterConfiguration
 from pyrit.prompt_target import AzureBlobStorageTarget
 from pyrit.prompt_target.azure_blob_storage_target import SupportedContentType
 from pyrit.score import SubStringScorer
@@ -153,7 +152,7 @@ jailbreak_converter = TextJailbreakConverter(
     jailbreak_template=jailbreak_template,
 )
 converter_configuration = StrategyConverterConfig(
-    request_converters=PromptConverterConfiguration.from_converters(
+    request_converters=ConverterConfiguration.from_converters(
         converters=[jailbreak_converter],
     )
 )
@@ -193,11 +192,11 @@ print(f"Response from processing callback: {processing_response}")
 import pathlib
 
 from pyrit.common.path import CONVERTER_SEED_PROMPT_PATH
+from pyrit.converter import PDFConverter
 from pyrit.executor.core import StrategyConverterConfig
 from pyrit.executor.workflow import XPIATestWorkflow
 from pyrit.models import SeedGroup, SeedPrompt
-from pyrit.prompt_converter import PDFConverter
-from pyrit.prompt_normalizer import PromptConverterConfiguration
+from pyrit.prompt_normalizer import ConverterConfiguration
 from pyrit.prompt_target import HTTPXAPITarget
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 
@@ -264,7 +263,7 @@ http_api_processing_target = HTTPXAPITarget(
 # "processing_prompt" is unused by the server because it only expects 'file' in /upload
 # and does not parse additional fields. The PDF is manipulated via existing_pdf + injection_items.
 
-converters = PromptConverterConfiguration.from_converters(converters=[pdf_converter])
+converters = ConverterConfiguration.from_converters(converters=[pdf_converter])
 converter_config = StrategyConverterConfig(request_converters=converters)
 workflow = XPIATestWorkflow(
     attack_setup_target=upload_target,

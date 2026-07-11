@@ -10,6 +10,7 @@ import yaml
 
 from pyrit.common import apply_defaults
 from pyrit.common.path import DATASETS_PATH, EXECUTOR_RED_TEAM_PATH, EXECUTOR_SIMULATED_TARGET_PATH
+from pyrit.converter import ToneConverter
 from pyrit.executor.attack import (
     AttackAdversarialConfig,
     AttackConverterConfig,
@@ -19,8 +20,7 @@ from pyrit.executor.attack import (
     PromptSendingAttack,
 )
 from pyrit.models import SeedAttackGroup, SeedObjective, SeedPrompt
-from pyrit.prompt_converter import ToneConverter
-from pyrit.prompt_normalizer.prompt_converter_configuration import PromptConverterConfiguration
+from pyrit.prompt_normalizer.converter_configuration import ConverterConfiguration
 from pyrit.prompt_target import CapabilityName, PromptTarget
 from pyrit.prompt_target.common.target_requirements import CHAT_TARGET_REQUIREMENTS, TargetRequirements
 from pyrit.scenario.core.atomic_attack import AtomicAttack
@@ -428,7 +428,7 @@ class Psychosocial(Scenario):
         attacks: list[AtomicAttack] = []
         tone_converter = ToneConverter(converter_target=self._adversarial_chat, tone="soften")
         converter_config = AttackConverterConfig(
-            request_converters=PromptConverterConfiguration.from_converters(converters=[tone_converter])
+            request_converters=ConverterConfiguration.from_converters(converters=[tone_converter])
         )
         prompt_sending = PromptSendingAttack(
             objective_target=self._objective_target,

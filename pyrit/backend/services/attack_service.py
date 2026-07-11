@@ -67,7 +67,7 @@ from pyrit.models import (
     MessagePiece,
     PromptDataType,
 )
-from pyrit.prompt_normalizer import PromptConverterConfiguration, PromptNormalizer
+from pyrit.prompt_normalizer import ConverterConfiguration, PromptNormalizer
 
 logger = logging.getLogger(__name__)
 
@@ -1164,19 +1164,19 @@ class AttackService:
                 vp.prompt_metadata["video_id"] = video_id
                 return
 
-    def _get_converter_configs(self, request: AddMessageRequest) -> list[PromptConverterConfiguration]:
+    def _get_converter_configs(self, request: AddMessageRequest) -> list[ConverterConfiguration]:
         """
         Get converter configurations if needed.
 
         Returns:
-            List of PromptConverterConfiguration for the converters.
+            List of ConverterConfiguration for the converters.
         """
         has_preconverted = any(p.converted_value is not None for p in request.pieces)
         if has_preconverted or not request.converter_ids:
             return []
 
         converters = get_converter_service().get_converter_objects_for_ids(converter_ids=request.converter_ids)
-        return PromptConverterConfiguration.from_converters(converters=converters)
+        return ConverterConfiguration.from_converters(converters=converters)
 
 
 # ============================================================================

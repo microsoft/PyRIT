@@ -25,14 +25,14 @@ from typing import TYPE_CHECKING, cast
 from pyrit.executor.attack import AttackScoringConfig
 from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
 from pyrit.models import SeedAttackGroup
-from pyrit.prompt_normalizer import PromptConverterConfiguration
+from pyrit.prompt_normalizer import ConverterConfiguration
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
 
-    from pyrit.prompt_converter import PromptConverter
+    from pyrit.converter import Converter
     from pyrit.prompt_target import PromptTarget
     from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
     from pyrit.scenario.core.scenario_context import ScenarioContext
@@ -163,7 +163,7 @@ def build_matrix_atomic_attacks(
     context: ScenarioContext,
     objective_scorer: Scorer,
     display_group_fn: Callable[[MatrixCombo], str] | None = None,
-    technique_converters: dict[str, list[PromptConverter]] | None = None,
+    technique_converters: dict[str, list[Converter]] | None = None,
     extra_factories: dict[str, AttackTechniqueFactory] | None = None,
 ) -> list[AtomicAttack]:
     """
@@ -183,7 +183,7 @@ def build_matrix_atomic_attacks(
         objective_scorer (Scorer): The scorer applied to each produced atomic attack.
         display_group_fn (Callable[[MatrixCombo], str] | None): Builds each ``display_group``.
             Defaults to grouping by technique name.
-        technique_converters (dict[str, list[PromptConverter]] | None): Optional mapping from
+        technique_converters (dict[str, list[Converter]] | None): Optional mapping from
             technique name to converters appended after that technique's converters. Pass a
             scenario's ``self._technique_converters`` so per-technique converter overrides are
             preserved.
@@ -263,7 +263,7 @@ class MatrixAtomicAttackBuilder:
         adversarial_targets: Sequence[tuple[str, PromptTarget]] | None = None,
         name_fn: Callable[[MatrixCombo], str] | None = None,
         display_group_fn: Callable[[MatrixCombo], str] | None = None,
-        technique_converters: dict[str, list[PromptConverter]] | None = None,
+        technique_converters: dict[str, list[Converter]] | None = None,
         include_baseline: bool = False,
     ) -> list[AtomicAttack]:
         """
@@ -290,7 +290,7 @@ class MatrixAtomicAttackBuilder:
                 when an adversarial-target axis is active).
             display_group_fn (Callable[[MatrixCombo], str] | None): Builds each
                 ``display_group``. Defaults to grouping by technique name.
-            technique_converters (dict[str, list[PromptConverter]] | None): Optional mapping
+            technique_converters (dict[str, list[Converter]] | None): Optional mapping
                 from technique name to request converters appended on top of that technique's
                 built-in converters (via ``factory.create(extra_request_converters=...)``).
                 Techniques absent from the mapping are built unchanged.
@@ -314,7 +314,7 @@ class MatrixAtomicAttackBuilder:
         for technique_name, factory in technique_factories.items():
             extra_converters = technique_converters.get(technique_name)
             extra_request_converters = (
-                PromptConverterConfiguration.from_converters(converters=extra_converters) if extra_converters else None
+                ConverterConfiguration.from_converters(converters=extra_converters) if extra_converters else None
             )
             for target_name, target_instance in target_axis:
                 for dataset_name, seed_groups in dataset_groups.items():

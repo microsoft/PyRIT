@@ -26,7 +26,7 @@ from pyrit.models import (
     MessagePiece,
     construct_response_from_request,
 )
-from pyrit.prompt_normalizer import NormalizerRequest, PromptConverterConfiguration
+from pyrit.prompt_normalizer import ConverterConfiguration, NormalizerRequest
 from pyrit.prompt_target import PromptTarget
 from pyrit.prompt_target.batch_helper import batch_task_async
 
@@ -69,8 +69,8 @@ class PromptNormalizer:
         message: Message,
         target: PromptTarget,
         conversation_id: str | None = None,
-        request_converter_configurations: list[PromptConverterConfiguration] | None = None,
-        response_converter_configurations: list[PromptConverterConfiguration] | None = None,
+        request_converter_configurations: list[ConverterConfiguration] | None = None,
+        response_converter_configurations: list[ConverterConfiguration] | None = None,
     ) -> Message:
         """
         Send a single request to a target.
@@ -79,9 +79,9 @@ class PromptNormalizer:
             message (Message): The message to be sent.
             target (PromptTarget): The target to which the prompt is sent.
             conversation_id (str, optional): The ID of the conversation. Defaults to None.
-            request_converter_configurations (list[PromptConverterConfiguration], optional): Configurations for
+            request_converter_configurations (list[ConverterConfiguration], optional): Configurations for
                 converting the request. Defaults to an empty list.
-            response_converter_configurations (list[PromptConverterConfiguration], optional): Configurations for
+            response_converter_configurations (list[ConverterConfiguration], optional): Configurations for
                 converting the response. Defaults to an empty list.
 
         Returns:
@@ -230,14 +230,14 @@ class PromptNormalizer:
 
     async def convert_values_async(
         self,
-        converter_configurations: list[PromptConverterConfiguration],
+        converter_configurations: list[ConverterConfiguration],
         message: Message,
     ) -> None:
         """
         Apply converter configurations to message pieces.
 
         Args:
-            converter_configurations (list[PromptConverterConfiguration]): List of configurations specifying
+            converter_configurations (list[ConverterConfiguration]): List of configurations specifying
                 which converters to apply and to which message pieces.
             message (Message): The message containing pieces to be converted.
 
@@ -294,7 +294,7 @@ class PromptNormalizer:
         self,
         *,
         raw_pcm: bytes,
-        converter_configurations: list[PromptConverterConfiguration],
+        converter_configurations: list[ConverterConfiguration],
         sample_rate_hz: int,
         num_channels: int,
         sample_width_bytes: int,
@@ -310,7 +310,7 @@ class PromptNormalizer:
 
         Args:
             raw_pcm (bytes): Raw PCM audio samples (no WAV header).
-            converter_configurations (list[PromptConverterConfiguration]):
+            converter_configurations (list[ConverterConfiguration]):
                 Converters to apply. If empty, ``raw_pcm`` is returned unchanged
                 and no temp file is written.
             sample_rate_hz (int): Sample rate of the PCM in Hz.
@@ -386,7 +386,7 @@ class PromptNormalizer:
         self,
         conversation_id: str,
         should_convert: bool = True,
-        converter_configurations: list[PromptConverterConfiguration] | None = None,
+        converter_configurations: list[ConverterConfiguration] | None = None,
         prepended_conversation: list[Message] | None = None,
         target_identifier: ComponentIdentifier | None = None,
     ) -> list[Message] | None:
@@ -396,7 +396,7 @@ class PromptNormalizer:
         Args:
             conversation_id (str): The conversation ID to use for the message pieces
             should_convert (bool): Whether to convert the prepended conversation
-            converter_configurations (list[PromptConverterConfiguration] | None): Configurations for converting the
+            converter_configurations (list[ConverterConfiguration] | None): Configurations for converting the
                 request
             prepended_conversation (list[Message] | None): The conversation to prepend
             target_identifier (ComponentIdentifier | None): The target the conversation is held

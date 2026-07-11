@@ -14,6 +14,7 @@ from pyrit.memory import CentralMemory
 from pyrit.models import ComponentIdentifier, Message, MessagePiece, Score
 from pyrit.prompt_target import PromptTarget
 from pyrit.score import (
+    FloatScaleScorer,
     Scorer,
     ScorerPromptValidator,
     TrueFalseScorer,
@@ -143,7 +144,9 @@ class MockFloatScorer(Scorer):
         for score in scores:
             assert 0 <= float(score.score_value) <= 1
 
-    def _build_fallback_score(self, *, message: Message, objective: str | None) -> list[Score]:
+    def _build_fallback_score(
+        self, *, message: Message, objective: str | None, scorer_response_blocked: bool = False
+    ) -> list[Score]:
         return [
             Score(
                 score_value="0.0",
@@ -1548,6 +1551,246 @@ async def test_score_value_with_llm_skips_reasoning_piece(good_json):
 
     assert result.raw_score_value == "1"
     assert result.score_rationale == "Valid response"
+
+
+async def test_score_value_with_llm_raises_when_scorer_response_blocked():
+    """When the scorer's own LLM response is blocked, the transport raises ScorerLLMResponseBlockedException."""
+    from pyrit.exceptions import ScorerLLMResponseBlockedException
+
+    chat_target = MagicMock(PromptTarget)
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+
+    blocked_piece = MessagePiece(
+        role="assistant",
+        original_value="",
+        original_value_data_type="error",
+        converted_value="",
+        converted_value_data_type="error",
+        conversation_id="test-convo",
+        response_error="blocked",
+    )
+    blocked_response = Message(message_pieces=[blocked_piece])
+    chat_target.send_prompt_async = AsyncMock(return_value=[blocked_response])
+
+    scorer = MockScorer()
+
+    with pytest.raises(ScorerLLMResponseBlockedException, match="blocked by content filtering"):
+        await scorer._score_value_with_llm_async(
+            prompt_target=chat_target,
+            system_prompt="system_prompt",
+            message_value="message_value",
+            message_data_type="text",
+            scored_prompt_id="test-prompt-id",
+            category="category",
+            objective="task",
+        )
+
+    # A blocked response is a terminal condition, not a transient JSON error: it must not retry.
+    assert chat_target.send_prompt_async.call_count == 1
+
+
+async def test_score_value_with_llm_raises_empty_response_when_no_text_piece():
+    """A no-text response that wasn't content-filtered raises EmptyResponseException, not blocked."""
+    from pyrit.exceptions import EmptyResponseException
+
+    chat_target = MagicMock(PromptTarget)
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+
+    # An error piece that is NOT flagged as blocked (e.g. a flaky/empty response) and no text piece.
+    non_text_piece = MessagePiece(
+        role="assistant",
+        original_value="",
+        original_value_data_type="error",
+        converted_value="",
+        converted_value_data_type="error",
+        conversation_id="test-convo",
+        response_error="unknown",
+    )
+    chat_target.send_prompt_async = AsyncMock(return_value=[Message(message_pieces=[non_text_piece])])
+
+    scorer = MockScorer()
+
+    with pytest.raises(EmptyResponseException, match="no text to parse"):
+        await scorer._score_value_with_llm_async(
+            prompt_target=chat_target,
+            system_prompt="system_prompt",
+            message_value="message_value",
+            message_data_type="text",
+            scored_prompt_id="test-prompt-id",
+            category="category",
+            objective="task",
+        )
+
+    # No parseable text is terminal here, not a transient JSON error: it must not retry.
+    assert chat_target.send_prompt_async.call_count == 1
+
+
+# ── Axis B: the scorer's own LLM response is blocked (raise_if_scorer_blocks) ─────────────
+
+
+class _ForwarderTrueFalseScorer(TrueFalseScorer):
+    """TrueFalseScorer whose piece scoring goes through the base ``_score_value_with_llm_async`` forwarder."""
+
+    def __init__(self, *, chat_target: PromptTarget) -> None:
+        super().__init__(validator=DummyValidator())
+        self._prompt_target = chat_target
+        self._system_prompt = "system"
+
+    def _build_identifier(self) -> ComponentIdentifier:
+        return self._create_identifier()
+
+    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
+        unvalidated = await self._score_value_with_llm_async(
+            prompt_target=self._prompt_target,
+            system_prompt=self._system_prompt,
+            message_value=message_piece.converted_value,
+            message_data_type="text",
+            scored_prompt_id=message_piece.id,
+            objective=objective,
+        )
+        return [unvalidated.to_score(score_value=unvalidated.raw_score_value, score_type="true_false")]
+
+
+class _DirectTransportTrueFalseScorer(TrueFalseScorer):
+    """TrueFalseScorer that calls ``_run_llm_scoring_async`` directly, like SelfAskTrueFalseScorer."""
+
+    def __init__(self, *, chat_target: PromptTarget) -> None:
+        from pyrit.score import JsonSchemaResponseHandler
+
+        super().__init__(validator=DummyValidator())
+        self._prompt_target = chat_target
+        self._system_prompt = "system"
+        self._response_handler = JsonSchemaResponseHandler()
+
+    def _build_identifier(self) -> ComponentIdentifier:
+        return self._create_identifier()
+
+    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
+        from pyrit.score.llm_scoring import _run_llm_scoring_async
+
+        unvalidated = await _run_llm_scoring_async(
+            chat_target=self._prompt_target,
+            system_prompt=self._system_prompt,
+            response_handler=self._response_handler,
+            value=message_piece.converted_value,
+            data_type="text",
+            scored_prompt_id=message_piece.id,
+            scorer_identifier=self.get_identifier(),
+            objective=objective,
+        )
+        return [unvalidated.to_score(score_value=unvalidated.raw_score_value, score_type="true_false")]
+
+
+class _ForwarderFloatScaleScorer(FloatScaleScorer):
+    """FloatScaleScorer whose piece scoring goes through the base ``_score_value_with_llm_async`` forwarder."""
+
+    def __init__(self, *, chat_target: PromptTarget) -> None:
+        super().__init__(validator=DummyValidator())
+        self._prompt_target = chat_target
+        self._system_prompt = "system"
+
+    def _build_identifier(self) -> ComponentIdentifier:
+        return self._create_identifier()
+
+    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
+        unvalidated = await self._score_value_with_llm_async(
+            prompt_target=self._prompt_target,
+            system_prompt=self._system_prompt,
+            message_value=message_piece.converted_value,
+            message_data_type="text",
+            scored_prompt_id=message_piece.id,
+            objective=objective,
+            numeric_value=True,
+        )
+        return [unvalidated.to_score(score_value=unvalidated.raw_score_value, score_type="float_scale")]
+
+
+def _make_scorer_blocking_target() -> MagicMock:
+    """A chat target mock whose response is fully blocked by content filtering."""
+    chat_target = MagicMock(PromptTarget)
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+    chat_target.set_system_prompt = MagicMock()
+    blocked_piece = MessagePiece(
+        role="assistant",
+        original_value="",
+        original_value_data_type="error",
+        converted_value="",
+        converted_value_data_type="error",
+        conversation_id="scorer-convo",
+        response_error="blocked",
+    )
+    chat_target.send_prompt_async = AsyncMock(return_value=[Message(message_pieces=[blocked_piece])])
+    return chat_target
+
+
+def _make_normal_input_message() -> Message:
+    """A normal (non-blocked) message to be scored."""
+    return Message(
+        message_pieces=[
+            MessagePiece(
+                role="assistant",
+                original_value="some response to score",
+                converted_value="some response to score",
+                original_value_data_type="text",
+                converted_value_data_type="text",
+                conversation_id="input-convo",
+            )
+        ]
+    )
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestScorerResponseBlocked:
+    """Axis B: behavior when the scorer's own LLM response is content-filtered."""
+
+    async def test_raises_by_default(self):
+        from pyrit.exceptions import ScorerLLMResponseBlockedException
+
+        scorer = _ForwarderTrueFalseScorer(chat_target=_make_scorer_blocking_target())
+
+        with pytest.raises(ScorerLLMResponseBlockedException, match="blocked by content filtering"):
+            await scorer.score_async(_make_normal_input_message())
+
+    async def test_returns_false_when_flag_disabled(self):
+        target = _make_scorer_blocking_target()
+        scorer = _ForwarderTrueFalseScorer(chat_target=target)
+        scorer.raise_if_scorer_blocks = False
+
+        scores = await scorer.score_async(_make_normal_input_message())
+
+        assert len(scores) == 1
+        assert scores[0].score_value == "false"
+        assert "blocked by content filtering" in scores[0].score_rationale
+        # Blocked is terminal: no retry storm.
+        assert target.send_prompt_async.call_count == 1
+
+    async def test_returns_zero_for_float_scale_when_flag_disabled(self):
+        scorer = _ForwarderFloatScaleScorer(chat_target=_make_scorer_blocking_target())
+        scorer.raise_if_scorer_blocks = False
+
+        scores = await scorer.score_async(_make_normal_input_message())
+
+        assert len(scores) == 1
+        assert scores[0].score_value == "0.0"
+        assert "blocked by content filtering" in scores[0].score_rationale
+
+    async def test_direct_transport_caller_raises_by_default(self):
+        from pyrit.exceptions import ScorerLLMResponseBlockedException
+
+        scorer = _DirectTransportTrueFalseScorer(chat_target=_make_scorer_blocking_target())
+
+        with pytest.raises(ScorerLLMResponseBlockedException, match="blocked by content filtering"):
+            await scorer.score_async(_make_normal_input_message())
+
+    async def test_direct_transport_caller_returns_false_when_flag_disabled(self):
+        scorer = _DirectTransportTrueFalseScorer(chat_target=_make_scorer_blocking_target())
+        scorer.raise_if_scorer_blocks = False
+
+        scores = await scorer.score_async(_make_normal_input_message())
+
+        assert len(scores) == 1
+        assert scores[0].score_value == "false"
+        assert "blocked by content filtering" in scores[0].score_rationale
 
 
 # ── Helpers for score_blocked_content tests ──────────────────────────────────

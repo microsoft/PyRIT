@@ -6,14 +6,14 @@ from typing import Any
 
 from pyrit.common import apply_defaults
 from pyrit.common.path import EXECUTOR_RED_TEAM_PATH, EXECUTOR_SIMULATED_TARGET_PATH
+from pyrit.converter import TextJailbreakConverter
 from pyrit.datasets import TextJailBreak
 from pyrit.executor.attack.core.attack_config import AttackConverterConfig, AttackScoringConfig
 from pyrit.executor.attack.single_turn.many_shot_jailbreak import ManyShotJailbreakAttack
 from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
 from pyrit.executor.attack.single_turn.skeleton_key import SkeletonKeyAttack
 from pyrit.models import SeedAttackGroup
-from pyrit.prompt_converter import TextJailbreakConverter
-from pyrit.prompt_normalizer import PromptConverterConfiguration
+from pyrit.prompt_normalizer import ConverterConfiguration
 from pyrit.prompt_target.common.prompt_target import PromptTarget
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
@@ -195,7 +195,7 @@ class Jailbreak(Scenario):
 
         # Create converter configuration
         converter_config = AttackConverterConfig(
-            request_converters=PromptConverterConfiguration.from_converters(converters=[jailbreak_converter])
+            request_converters=ConverterConfiguration.from_converters(converters=[jailbreak_converter])
         )
 
         attack: ManyShotJailbreakAttack | PromptSendingAttack | SkeletonKeyAttack | None = None
@@ -231,9 +231,7 @@ class Jailbreak(Scenario):
                     objective_target=self._objective_target,
                     attack_scoring_config=AttackScoringConfig(objective_scorer=self._objective_scorer),
                     adversarial_chat=adversarial_target,
-                    extra_request_converters=PromptConverterConfiguration.from_converters(
-                        converters=[jailbreak_converter]
-                    ),
+                    extra_request_converters=ConverterConfiguration.from_converters(converters=[jailbreak_converter]),
                 )
                 return AtomicAttack(
                     atomic_attack_name=f"jailbreak_{template_name}",

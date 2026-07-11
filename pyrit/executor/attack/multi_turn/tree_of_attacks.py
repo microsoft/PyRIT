@@ -56,7 +56,7 @@ from pyrit.models import (
     Score,
     SeedPrompt,
 )
-from pyrit.prompt_normalizer import PromptConverterConfiguration, PromptNormalizer
+from pyrit.prompt_normalizer import ConverterConfiguration, PromptNormalizer
 from pyrit.prompt_target import CapabilityName, PromptTarget
 from pyrit.prompt_target.common.target_requirements import TargetRequirements
 from pyrit.score import (
@@ -293,8 +293,8 @@ class _TreeOfAttacksNode:
         desired_response_prefix: str,
         objective_scorer: Scorer,
         on_topic_scorer: Scorer | None,
-        request_converters: list[PromptConverterConfiguration],
-        response_converters: list[PromptConverterConfiguration],
+        request_converters: list[ConverterConfiguration],
+        response_converters: list[ConverterConfiguration],
         auxiliary_scorers: list[Scorer] | None,
         attack_id: ComponentIdentifier,
         attack_strategy_name: str,
@@ -316,8 +316,8 @@ class _TreeOfAttacksNode:
             desired_response_prefix (str): The prefix for the desired response.
             objective_scorer (Scorer): The scorer for evaluating the objective target's response.
             on_topic_scorer (Scorer | None): Optional scorer to check if the prompt is on-topic.
-            request_converters (list[PromptConverterConfiguration]): Converters for request normalization
-            response_converters (list[PromptConverterConfiguration]): Converters for response normalization
+            request_converters (list[ConverterConfiguration]): Converters for request normalization
+            response_converters (list[ConverterConfiguration]): Converters for response normalization
             auxiliary_scorers (list[Scorer] | None): Additional scorers for the response
             attack_id (ComponentIdentifier): Unique identifier for the attack.
             attack_strategy_name (str): Name of the attack strategy for execution context.

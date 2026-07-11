@@ -462,11 +462,11 @@ class TestCrescendoAttackInitialization:
         mock_adversarial_chat: MagicMock,
     ):
         """Test initialization with converter configuration."""
-        from pyrit.prompt_converter import Base64Converter
-        from pyrit.prompt_normalizer import PromptConverterConfiguration
+        from pyrit.converter import Base64Converter
+        from pyrit.prompt_normalizer import ConverterConfiguration
 
         converter_config = AttackConverterConfig(
-            request_converters=[PromptConverterConfiguration(converters=[Base64Converter()])], response_converters=[]
+            request_converters=[ConverterConfiguration(converters=[Base64Converter()])], response_converters=[]
         )
 
         attack = CrescendoTestHelper.create_attack(
