@@ -48,7 +48,8 @@
 # ## Where techniques come from: initializers
 #
 # The technique catalog lives under
-# [`pyrit/setup/initializers/techniques/`](../../../pyrit/setup/initializers/techniques). Techniques
+# [`pyrit/setup/initializers/techniques/`](../../../pyrit/setup/initializers/techniques/technique_initializer.py).
+# Techniques
 # are grouped into small **group modules**, each of which exposes a `get_technique_factories()`
 # function returning a list of
 # [`AttackTechniqueFactory`](../../../pyrit/scenario/core/attack_technique_factory.py) instances:
@@ -228,7 +229,8 @@ for result in results.completed_results:
 # selectable technique.
 #
 # To ship a technique as part of the standard catalog, add it to one of the group modules under
-# [`pyrit/setup/initializers/techniques/`](../../../pyrit/setup/initializers/techniques) instead of
+# [`pyrit/setup/initializers/techniques/`](../../../pyrit/setup/initializers/techniques/technique_initializer.py)
+# instead of
 # registering it ad hoc: put general-purpose techniques in `core.py`, opt-in ones in `extra.py`, and
 # scenario-owned ones in `airt.py`. Each module's `get_technique_factories()` is picked up by
 # `TechniqueInitializer`, which injects the group name as a tag so your technique is selectable both by
