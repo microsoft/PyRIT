@@ -10,16 +10,20 @@ and memory_labels consistently according to the established contracts.
 
 import uuid
 from contextlib import suppress
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from pyrit.common.path import EXECUTOR_SEED_PROMPT_PATH
 from pyrit.executor.attack import (
     AttackAdversarialConfig,
     AttackScoringConfig,
     CrescendoAttack,
     PromptSendingAttack,
     RedTeamingAttack,
+    RTASystemPromptPaths,
+    TAPSystemPromptPaths,
     TreeOfAttacksWithPruningAttack,
 )
 from pyrit.executor.attack.multi_turn.tree_of_attacks import TAPAttackScoringConfig
@@ -31,7 +35,9 @@ from pyrit.models import (
     MessagePiece,
     PromptDataType,
     Score,
+    SeedPrompt,
 )
+from pyrit.models.json_schema_definition import get_common_json_schema
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import PromptTarget
 from pyrit.score import FloatScaleThresholdScorer, TrueFalseScorer
@@ -654,6 +660,52 @@ class TestAdversarialReplyParsedConsistentlyAcrossAttacks:
             objective_target=mock_chat_target,
             objective_response=sample_response,
         )
+
+
+# =============================================================================
+# Test Class: adversarial system prompts declare the canonical schema
+# =============================================================================
+
+
+# Adversarial system prompts routed through ``_AdversarialConversationManager`` but not exposed via a
+# ``*SystemPromptPaths`` enum: the SimulatedConversation crescendo personas (each drives an inner
+# ``RedTeamingAttack`` whose adversarial system prompt is the YAML) and the scam-scenario persuasion
+# persona (set as ``AttackAdversarialConfig.system_prompt``).
+_NON_ENUM_ADVERSARIAL_SYSTEM_PROMPTS = [
+    EXECUTOR_SEED_PROMPT_PATH / "red_teaming" / "crescendo_simulated.yaml",
+    EXECUTOR_SEED_PROMPT_PATH / "red_teaming" / "crescendo_movie_director.yaml",
+    EXECUTOR_SEED_PROMPT_PATH / "red_teaming" / "crescendo_history_lecture.yaml",
+    EXECUTOR_SEED_PROMPT_PATH / "red_teaming" / "crescendo_journalist_interview.yaml",
+    EXECUTOR_SEED_PROMPT_PATH / "red_teaming" / "persuasion_deception" / "persuasion_persona_generic.yaml",
+]
+
+_ADVERSARIAL_SYSTEM_PROMPT_PATHS = (
+    [p.value for p in RTASystemPromptPaths]
+    + [p.value for p in TAPSystemPromptPaths]
+    + _NON_ENUM_ADVERSARIAL_SYSTEM_PROMPTS
+)
+
+
+@pytest.mark.parametrize(
+    "prompt_path",
+    _ADVERSARIAL_SYSTEM_PROMPT_PATHS,
+    ids=lambda p: f"{Path(p).parent.name}/{Path(p).name}",
+)
+def test_adversarial_system_prompt_declares_canonical_schema(prompt_path: Path) -> None:
+    """Every adversarial system prompt routed through ``_AdversarialConversationManager`` must declare the
+    canonical ``adversarial_chat`` response schema in its YAML, and its prose must describe the
+    ``next_message`` field, so the schema and the prompt text stay a matched pair.
+
+    The manager force-applies the ``adversarial_chat`` schema whenever a prompt declares none. A prompt
+    whose prose still asks for raw output (a bare image request, a ``<|done|>`` sentinel, "output ONLY the
+    user message") then silently mismatches the forced JSON contract: capable targets comply anyway, but
+    targets that honor structured outputs strictly raise ``InvalidJsonException``. Declaring the schema in
+    the YAML makes the contract explicit and guards against new adversarial prompts regressing into that
+    schema-less straggler class.
+    """
+    seed = SeedPrompt.from_yaml_file(prompt_path)
+    assert seed.response_json_schema == get_common_json_schema("adversarial_chat")
+    assert "next_message" in seed.value, "adversarial prompt prose must describe the next_message JSON field"
 
 
 # =============================================================================
