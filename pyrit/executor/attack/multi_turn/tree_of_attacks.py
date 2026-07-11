@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import asyncio
 import enum
-import json
 import logging
 import uuid
 from dataclasses import dataclass, field
@@ -21,14 +20,13 @@ from pyrit.exceptions import (
     InvalidJsonException,
     execution_context,
     get_retry_max_num_attempts,
-    pyrit_json_retry,
-    remove_markdown_json,
 )
 from pyrit.executor.attack.component import (
     ConversationManager,
     PrependedConversationConfig,
     get_prepended_turn_count,
 )
+from pyrit.executor.attack.component.adversarial_conversation_manager import _AdversarialConversationManager
 from pyrit.executor.attack.component.conversation_manager import (
     build_conversation_context_string_async,
 )
@@ -37,13 +35,11 @@ from pyrit.executor.attack.core.attack_config import (
     AttackAdversarialConfig,
     AttackConverterConfig,
     AttackScoringConfig,
-    resolve_adversarial_system_prompt,
 )
 from pyrit.executor.attack.core.attack_strategy import AttackStrategy
 from pyrit.executor.attack.multi_turn import MultiTurnAttackContext
 from pyrit.memory import CentralMemory
 from pyrit.models import (
-    JSON_SCHEMA_METADATA_KEY,
     AtomicAttackIdentifier,
     AttackOutcome,
     AttackResult,
@@ -530,7 +526,7 @@ class _TreeOfAttacksNode:
         prompt = await self._generate_red_teaming_prompt_async(objective=objective)
         self.last_prompt_sent = prompt
         logger.debug(f"Node {self.node_id}: Generated adversarial prompt")
-        return cast("str", prompt)
+        return prompt
 
     async def _send_prompt_to_target_async(self, prompt: str) -> Message:
         """
@@ -605,10 +601,10 @@ class _TreeOfAttacksNode:
         initial prompt directly. It supports multimodal messages. The initial prompt
         is cleared after use to ensure subsequent turns use normal generation.
 
-        If the initial prompt contains ``MessagePiece.adversarial_placeholder``
-        pieces (e.g. seed media combined with a placeholder for adversarial-generated
-        text), the adversarial chat is invoked to produce the text and the router
-        substitutes it into the placeholder slots before sending.
+        Both the bypass case (a concrete caller seed) and the placeholder case (seed media plus a
+        slot for adversarial-generated text) are delegated to the ``_AdversarialConversationManager``,
+        which owns the decision of whether to invoke the adversarial chat and returns a ready-to-send
+        objective message. The node never branches on ``is_adversarial_placeholder`` itself.
 
         Returns:
             Message: The response from the objective target.
@@ -628,25 +624,24 @@ class _TreeOfAttacksNode:
         if not self._objective_target.configuration.includes(capability=CapabilityName.MULTI_TURN):
             self.objective_target_conversation_id = str(uuid.uuid4())
 
-        # If the initial prompt contains adversarial-placeholder pieces, generate the
-        # adversarial text first and fill the slots; otherwise use the initial prompt as-is.
+        assert self._objective is not None
         initial_prompt = self._initial_prompt
         self._initial_prompt = None  # Clear for future turns
 
-        has_placeholder = any(piece.is_adversarial_placeholder() for piece in initial_prompt.message_pieces)
-        if has_placeholder:
-            assert self._objective is not None
-            adversarial_text = await self._generate_red_teaming_prompt_async(
-                objective=self._objective,
-                seed_message=initial_prompt,
-            )
-            message = self._modality_router.fill_adversarial_placeholders(
-                message=initial_prompt,
-                adversarial_text=adversarial_text,
-            )
-        else:
-            # Duplicate to ensure fresh IDs (avoids conflicts if message was already in memory)
-            message = initial_prompt.duplicate()
+        # Delegate the bypass-vs-placeholder decision to the manager instead of branching here: a
+        # seed with no adversarial placeholder is duplicated and sent as-is, while a seed carrying
+        # placeholders has its slots filled with freshly generated adversarial text (seed media
+        # forwarded to the objective target). We hand the manager TAP's first-turn prompt text, which
+        # also sets the adversarial system prompt; the manager uses that text only on the placeholder
+        # path and ignores it when bypassing.
+        adversarial_prompt_text = await self._generate_first_turn_prompt_async(self._objective)
+        turn = await self._build_adversarial_manager().get_next_message_async(
+            turn_index=0,
+            seed_message=initial_prompt,
+            last_response=None,
+            adversarial_prompt_text=adversarial_prompt_text,
+        )
+        message = turn.objective_message
 
         # Store the prompt text for reference
         self.last_prompt_sent = message.get_value()
@@ -887,12 +882,38 @@ class _TreeOfAttacksNode:
 
         return duplicate_node
 
-    @pyrit_json_retry
+    def _build_adversarial_manager(self) -> _AdversarialConversationManager:
+        """
+        Build the adversarial-conversation manager that owns this node's adversarial chat.
+
+        Each node drives its own adversarial conversation (``adversarial_chat_conversation_id``), so
+        the manager is bound to that id plus this node's objective and labels. TAP is an override-mode
+        consumer: it hands the manager fully-built adversarial prompt text and consumes the parsed
+        ``next_message`` via ``generate_adversarial_reply_async`` (TAP runs an on-topic scorer on the
+        prompt and may re-prompt before it builds the objective-target message itself), and delegates
+        system-prompt setup to ``set_adversarial_system_prompt``. Centralizing this keeps schema
+        resolution, metadata, media routing, and JSON-retry identical to every other adversarial-chat
+        attack instead of hand-rolled per node.
+
+        Returns:
+            _AdversarialConversationManager: A manager bound to this node's adversarial conversation.
+        """
+        return _AdversarialConversationManager(
+            adversarial_target=self._adversarial_chat,
+            adversarial_system_prompt=self._adversarial_chat_system_seed_prompt,
+            prompt_normalizer=self._prompt_normalizer,
+            conversation_id=self.adversarial_chat_conversation_id,
+            objective=self._objective,
+            objective_target_conversation_id=self.objective_target_conversation_id,
+            attack_strategy_name=self._attack_strategy_name,
+            memory_labels=self._memory_labels,
+            modality_router=self._modality_router,
+        )
+
     async def _generate_red_teaming_prompt_async(
         self,
         *,
         objective: str,
-        seed_message: Message | None = None,
     ) -> str:
         """
         Generate an adversarial prompt using the red teaming chat.
@@ -913,8 +934,6 @@ class _TreeOfAttacksNode:
         Args:
             objective (str): The attack objective describing what the attacker wants to achieve.
                 This guides both the system prompt configuration and prompt generation.
-            seed_message (Message | None): Optional first-turn seed message whose
-                media pieces should be forwarded to the adversarial chat.
 
         Returns:
             str: The generated adversarial prompt text extracted from the JSON response.
@@ -929,10 +948,7 @@ class _TreeOfAttacksNode:
             - Sets self.off_topic to True if prompt is still off-topic after all retries
         """
         # Generate initial prompt
-        prompt: str = await self._generate_single_red_teaming_prompt_async(
-            objective=objective,
-            seed_message=seed_message,
-        )
+        prompt: str = await self._generate_single_red_teaming_prompt_async(objective=objective)
 
         # If no on-topic scorer, return the prompt as-is
         if not self._on_topic_scorer:
@@ -960,12 +976,8 @@ class _TreeOfAttacksNode:
                 objective=objective,
             )
 
-            # Send feedback to adversarial chat and get new prompt
-            adversarial_response = await self._send_to_adversarial_chat_async(
-                prompt_text=feedback_prompt,
-                seed_message=seed_message,
-            )
-            prompt = self._parse_red_teaming_response(adversarial_response)
+            # Send feedback to adversarial chat and get the new parsed prompt
+            prompt = await self._send_to_adversarial_chat_async(prompt_text=feedback_prompt)
 
         # Final check after all retries
         final_score = (await self._on_topic_scorer.score_text_async(text=prompt))[0]
@@ -975,12 +987,10 @@ class _TreeOfAttacksNode:
 
         return prompt
 
-    @pyrit_json_retry
     async def _generate_single_red_teaming_prompt_async(
         self,
         *,
         objective: str,
-        seed_message: Message | None = None,
     ) -> str:
         """
         Generate a single adversarial prompt from the red teaming chat.
@@ -991,8 +1001,6 @@ class _TreeOfAttacksNode:
 
         Args:
             objective (str): The attack objective.
-            seed_message (Message | None): Optional first-turn seed message whose
-                media pieces should be forwarded to the adversarial chat.
 
         Returns:
             str: The generated adversarial prompt text.
@@ -1003,14 +1011,8 @@ class _TreeOfAttacksNode:
         else:
             prompt_text = await self._generate_subsequent_turn_prompt_async(objective)
 
-        # Send to adversarial chat and get JSON response
-        adversarial_response = await self._send_to_adversarial_chat_async(
-            prompt_text=prompt_text,
-            seed_message=seed_message,
-        )
-
-        # Parse and return the prompt from the response
-        return self._parse_red_teaming_response(adversarial_response)
+        # Send to adversarial chat and return the parsed next attack prompt.
+        return await self._send_to_adversarial_chat_async(prompt_text=prompt_text)
 
     def _generate_off_topic_feedback_prompt(
         self, *, original_prompt: str, off_topic_rationale: str, objective: str
@@ -1075,17 +1077,14 @@ class _TreeOfAttacksNode:
             str: The rendered seed prompt text that will be sent to the adversarial chat
                 to generate the first attack prompt.
         """
-        # Initialize system prompt for adversarial chat
-        # Include conversation_context if we have prepended conversation history
-        system_prompt = self._adversarial_chat_system_seed_prompt.render_template_value(
-            objective=objective,
+        # Initialize the adversarial chat's system prompt via the manager. It renders the system
+        # prompt with the objective (plus TAP's desired_prefix and any prepended conversation_context)
+        # and sets it on this node's adversarial conversation. Owning setup in the manager keeps
+        # schema resolution and the system-prompt contract identical across every adversarial-chat
+        # attack rather than hand-rolled here.
+        self._build_adversarial_manager().set_adversarial_system_prompt(
             desired_prefix=self._desired_response_prefix,
             conversation_context=self._conversation_context,
-        )
-
-        self._adversarial_chat.set_system_prompt(
-            system_prompt=system_prompt,
-            conversation_id=self.adversarial_chat_conversation_id,
         )
 
         logger.debug(f"Node {self.node_id}: Using initial seed prompt for first turn")
@@ -1174,113 +1173,38 @@ class _TreeOfAttacksNode:
         self,
         *,
         prompt_text: str,
-        seed_message: Message | None = None,
     ) -> str:
         """
-        Send a prompt to the adversarial chat and get the response.
+        Send a prompt to the adversarial chat and return the parsed ``next_message``.
 
-        This method handles the low-level communication with the adversarial chat target.
-        It configures the request to expect a JSON response format, packages the prompt
-        appropriately, and manages the conversation context. The adversarial chat is expected
-        to return structured JSON containing the generated attack prompt and related metadata.
-
-        The method uses the prompt normalizer to ensure consistent communication patterns
-        and maintains the conversation history in the adversarial chat thread, separate from
-        the objective target conversation.
-
-        Args:
-            prompt_text (str): The text to send to the adversarial chat. This could be either
-                the initial seed prompt or a template-generated prompt containing conversation
-                history and scores.
-            seed_message (Message | None): Optional first-turn seed message whose
-                media pieces should be forwarded to the adversarial chat.
-
-        Returns:
-            str: The raw response from the adversarial chat, expected to be JSON formatted.
-                This response should contain at least a "next_message" field with the generated
-                attack prompt.
-        """
-        prompt_metadata: dict[str, Any] = {"response_format": "json"}
-        # Forward the shared adversarial-chat JSON schema when present so schema-aware
-        # targets can natively constrain the response shape; non-enforcing targets
-        # ignore it and rely on the prompt's formatting instructions.
-        response_json_schema = self._adversarial_chat_system_seed_prompt.response_json_schema
-        if response_json_schema is not None:
-            prompt_metadata[JSON_SCHEMA_METADATA_KEY] = response_json_schema
-        # Configure for JSON response. Router decides whether to also forward
-        # prior objective media when the adversarial accepts it.
-        message = self._modality_router.build_adversarial_input_message(
-            text=prompt_text,
-            last_response=self.last_response,
-            seed_message=seed_message,
-            prompt_metadata=prompt_metadata,
-        )
-
-        # Send and get response
-        with execution_context(
-            component_role=ComponentRole.ADVERSARIAL_CHAT,
-            attack_strategy_name=self._attack_strategy_name,
-            component_identifier=self._adversarial_chat.get_identifier(),
-            objective_target_conversation_id=self.objective_target_conversation_id,
-            objective=self._objective,
-        ):
-            if self._memory_labels:
-                for piece in message.message_pieces:
-                    piece.labels = self._memory_labels
-            response = await self._prompt_normalizer.send_prompt_async(
-                message=message,
-                conversation_id=self.adversarial_chat_conversation_id,
-                target=self._adversarial_chat,
-            )
-
-        return response.get_value()
-
-    def _parse_red_teaming_response(self, red_teaming_response: str) -> str:
-        """
-        Extract the prompt field from JSON response.
-
-        This method parses the structured response from the adversarial chat to extract
-        the generated attack prompt. The adversarial chat is expected to return JSON with
-        at least a "next_message" field containing the attack text. The method handles common
-        formatting issues like markdown wrappers that LLMs sometimes add around JSON.
-
-        The parsing is strict - the response must be valid JSON and must contain the
-        required "next_message" field. This ensures the TAP algorithm receives well-formed
-        prompts for attacking the objective target.
+        Delegates to the shared ``_AdversarialConversationManager``, which builds the outgoing
+        message (forwarding prior/seed media when the adversarial target accepts it), tags the send
+        with the adversarial-chat execution context, sends on this node's adversarial conversation,
+        and validates the reply against the shared ``adversarial_chat`` schema — normalizing
+        camelCase, stripping markdown, enforcing the required keys, and retrying on invalid JSON — so
+        TAP/PAIR stay identical to every other adversarial-chat executor instead of hand-rolling the
+        send and parse. TAP consumes only ``next_message`` (the attack text bound for the objective
+        target) and builds the objective message itself so it can first score the prompt for
+        on-topic-ness.
 
         Args:
-            red_teaming_response (str): The raw response from the red teaming chat, expected
-                to be JSON formatted (possibly wrapped in markdown). Should contain at
-                least {"next_message": "attack text"}.
+            prompt_text (str): The text to send to the adversarial chat. This could be a first-turn
+                seed prompt, a template-generated prompt containing conversation history and scores,
+                or an off-topic-retry feedback prompt.
 
         Returns:
-            str: The prompt extracted from the JSON response. This is the actual attack
-                text that will be sent to the objective target.
+            str: The ``next_message`` extracted from the adversarial chat's validated reply — the
+                actual attack text to send to the objective target.
 
         Raises:
-            InvalidJsonException: If the response is not valid JSON after removing markdown
-                formatting, or if the parsed JSON does not contain a "next_message" field.
+            ValueError: If no response is received from the adversarial chat.
+            InvalidJsonException: If the reply cannot be parsed against the adversarial_chat schema.
         """
-        # Remove markdown formatting if present
-        red_teaming_response = remove_markdown_json(red_teaming_response)
-
-        try:
-            red_teaming_response_dict = json.loads(red_teaming_response)
-        except json.JSONDecodeError:
-            logger.error(f"The response from the red teaming chat is not in JSON format: {red_teaming_response}")
-            raise InvalidJsonException(
-                message="The response from the red teaming chat is not in JSON format."
-            ) from None
-
-        try:
-            return cast("str", red_teaming_response_dict["next_message"])
-        except KeyError:
-            logger.error(
-                f"The response from the red teaming chat does not contain next_message: {red_teaming_response}"
-            )
-            raise InvalidJsonException(
-                message="The response from the red teaming chat does not contain a next_message."
-            ) from None
+        reply = await self._build_adversarial_manager().generate_adversarial_reply_async(
+            prompt_text=prompt_text,
+            last_response=self.last_response,
+        )
+        return reply.next_message
 
     def __str__(self) -> str:
         """
@@ -1479,12 +1403,16 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
 
         # Load system prompts. The adversarial system prompt may be supplied inline (string or
         # SeedPrompt) via the config, or fall back to the configured/default YAML path.
-        self._adversarial_chat_system_seed_prompt = resolve_adversarial_system_prompt(
+        # The manager owns adversarial-prompt resolution. TAP is override mode: it builds each
+        # adversarial prompt itself and passes the text explicitly, so only the system prompt is
+        # resolved here (no first / next-message templates).
+        self._resolved_adversarial = _AdversarialConversationManager.resolve_config(
             config=attack_adversarial_config,
             default_system_prompt_path=TreeOfAttacksWithPruningAttack.DEFAULT_ADVERSARIAL_SYSTEM_PROMPT_PATH,
-            required_parameters=["desired_prefix"],
-            error_message="Adversarial seed prompt must have a desired_prefix",
+            system_prompt_required_parameters=["desired_prefix"],
+            system_prompt_error_message="Adversarial seed prompt must have a desired_prefix",
         )
+        self._adversarial_chat_system_seed_prompt = self._resolved_adversarial.system_prompt
         self._load_adversarial_prompts()
 
         # Initialize converter configuration
@@ -1593,7 +1521,7 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
         return AttackAdversarialConfig(
             target=adversarial_chat,
             system_prompt=self._adversarial_chat_system_seed_prompt,
-            seed_prompt=None,
+            first_message=None,
         )
 
     def _validate_context(self, *, context: TAPAttackContext) -> None:

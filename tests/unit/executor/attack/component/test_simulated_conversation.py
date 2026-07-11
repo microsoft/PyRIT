@@ -1,14 +1,17 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import json
 import uuid
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from pyrit.exceptions import InvalidJsonException
 from pyrit.executor.attack import AttackConverterConfig, RTASystemPromptPaths
 from pyrit.executor.attack.multi_turn.simulated_conversation import (
+    _generate_next_message_async,
     generate_simulated_conversation_async,
 )
 from pyrit.models import (
@@ -22,6 +25,7 @@ from pyrit.models import (
     SeedPrompt,
     SimulatedTargetSystemPromptPaths,
 )
+from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import PromptTarget
 from pyrit.score import TrueFalseScorer
 
@@ -572,16 +576,17 @@ class TestGenerateSimulatedConversationAsync:
 
         conversation_id = str(uuid.uuid4())
 
-        # Create the expected response from the adversarial chat for generating next message
-        next_message_response = Message(
-            message_pieces=[
-                MessagePiece(
-                    role="assistant",  # LLM responds as assistant, we convert to user
-                    original_value="Generated next user message",
-                    original_value_data_type="text",
-                    conversation_id=str(uuid.uuid4()),
-                )
-            ]
+        # The DIRECT template declares the canonical adversarial_chat schema, so the adversarial
+        # chat returns JSON and the manager parses ``next_message`` out of it.
+        next_message_reply = Message.from_prompt(
+            role="assistant",
+            prompt=json.dumps(
+                {
+                    "next_message": "Generated next user message",
+                    "rationale": "advance the objective",
+                    "last_response_summary": "prior turn",
+                }
+            ),
         )
 
         with patch("pyrit.executor.attack.multi_turn.simulated_conversation.RedTeamingAttack") as mock_attack_class:
@@ -602,13 +607,20 @@ class TestGenerateSimulatedConversationAsync:
             )
             mock_attack_class.return_value = mock_attack
 
-            with patch("pyrit.executor.attack.multi_turn.simulated_conversation.CentralMemory") as mock_memory_class:
+            with (
+                patch("pyrit.executor.attack.multi_turn.simulated_conversation.CentralMemory") as mock_memory_class,
+                patch(
+                    "pyrit.executor.attack.multi_turn.simulated_conversation.PromptNormalizer"
+                ) as mock_normalizer_class,
+            ):
                 mock_memory = MagicMock()
                 mock_memory.get_conversation_messages.return_value = iter(sample_conversation)
                 mock_memory_class.get_memory_instance.return_value = mock_memory
 
-                # Configure adversarial_chat to return next message response
-                mock_adversarial_chat.send_prompt_async = AsyncMock(return_value=[next_message_response])
+                # The manager sends the adversarial turn through this normalizer.
+                mock_normalizer = MagicMock(spec=PromptNormalizer)
+                mock_normalizer.send_prompt_async = AsyncMock(return_value=next_message_reply)
+                mock_normalizer_class.return_value = mock_normalizer
 
                 result = await generate_simulated_conversation_async(
                     objective="Test objective",
@@ -619,14 +631,14 @@ class TestGenerateSimulatedConversationAsync:
                     next_message_system_prompt_path=NextMessageSystemPromptPaths.DIRECT.value,
                 )
 
-                # Verify adversarial_chat was called to generate the next message
-                mock_adversarial_chat.send_prompt_async.assert_called_once()
+                # The manager sent exactly one adversarial turn to generate the next message.
+                mock_normalizer.send_prompt_async.assert_called_once()
 
                 # Verify the result includes the generated next message
                 # sample_conversation has 2 messages, plus 1 generated next message = 3
                 assert len(result) == 3
 
-                # Verify the last message is the generated one with role="user"
+                # Verify the last message is the parsed next_message with role="user"
                 assert result[-1].value == "Generated next user message"
                 assert result[-1].role == "user"
 
@@ -642,15 +654,15 @@ class TestGenerateSimulatedConversationAsync:
 
         conversation_id = str(uuid.uuid4())
 
-        next_message_response = Message(
-            message_pieces=[
-                MessagePiece(
-                    role="assistant",
-                    original_value="Generated message",
-                    original_value_data_type="text",
-                    conversation_id=str(uuid.uuid4()),
-                )
-            ]
+        next_message_reply = Message.from_prompt(
+            role="assistant",
+            prompt=json.dumps(
+                {
+                    "next_message": "Generated message",
+                    "rationale": "advance",
+                    "last_response_summary": "prior turn",
+                }
+            ),
         )
 
         with patch("pyrit.executor.attack.multi_turn.simulated_conversation.RedTeamingAttack") as mock_attack_class:
@@ -671,12 +683,19 @@ class TestGenerateSimulatedConversationAsync:
             )
             mock_attack_class.return_value = mock_attack
 
-            with patch("pyrit.executor.attack.multi_turn.simulated_conversation.CentralMemory") as mock_memory_class:
+            with (
+                patch("pyrit.executor.attack.multi_turn.simulated_conversation.CentralMemory") as mock_memory_class,
+                patch(
+                    "pyrit.executor.attack.multi_turn.simulated_conversation.PromptNormalizer"
+                ) as mock_normalizer_class,
+            ):
                 mock_memory = MagicMock()
                 mock_memory.get_conversation_messages.return_value = iter(sample_conversation)
                 mock_memory_class.get_memory_instance.return_value = mock_memory
 
-                mock_adversarial_chat.send_prompt_async = AsyncMock(return_value=[next_message_response])
+                mock_normalizer = MagicMock(spec=PromptNormalizer)
+                mock_normalizer.send_prompt_async = AsyncMock(return_value=next_message_reply)
+                mock_normalizer_class.return_value = mock_normalizer
 
                 await generate_simulated_conversation_async(
                     objective="Test objective",
@@ -687,7 +706,7 @@ class TestGenerateSimulatedConversationAsync:
                     next_message_system_prompt_path=NextMessageSystemPromptPaths.DIRECT.value,
                 )
 
-                # Verify set_system_prompt was called on adversarial_chat
+                # The manager renders and sets the adversarial system prompt before sending.
                 mock_adversarial_chat.set_system_prompt.assert_called()
 
     async def test_next_message_scopes_system_prompt_to_generated_message_conversation(
@@ -702,19 +721,20 @@ class TestGenerateSimulatedConversationAsync:
         ``Message.from_prompt`` leaves ``conversation_id`` unset (None). Passing that to
         ``set_system_prompt`` makes ``get_conversation_messages`` skip its conversation filter and
         return every piece in memory, which raises once memory holds more than one conversation.
-        The generated request message and the system prompt must share the same non-empty id.
+        The ``_AdversarialConversationManager`` now owns this scoping, so the system prompt and the
+        adversarial send it drives must share the same non-empty conversation id.
         """
         from pyrit.models.seeds import NextMessageSystemPromptPaths
 
-        next_message_response = Message(
-            message_pieces=[
-                MessagePiece(
-                    role="assistant",
-                    original_value="Generated message",
-                    original_value_data_type="text",
-                    conversation_id=str(uuid.uuid4()),
-                )
-            ]
+        next_message_reply = Message.from_prompt(
+            role="assistant",
+            prompt=json.dumps(
+                {
+                    "next_message": "Generated message",
+                    "rationale": "advance",
+                    "last_response_summary": "prior turn",
+                }
+            ),
         )
 
         with patch("pyrit.executor.attack.multi_turn.simulated_conversation.RedTeamingAttack") as mock_attack_class:
@@ -735,12 +755,19 @@ class TestGenerateSimulatedConversationAsync:
             )
             mock_attack_class.return_value = mock_attack
 
-            with patch("pyrit.executor.attack.multi_turn.simulated_conversation.CentralMemory") as mock_memory_class:
+            with (
+                patch("pyrit.executor.attack.multi_turn.simulated_conversation.CentralMemory") as mock_memory_class,
+                patch(
+                    "pyrit.executor.attack.multi_turn.simulated_conversation.PromptNormalizer"
+                ) as mock_normalizer_class,
+            ):
                 mock_memory = MagicMock()
                 mock_memory.get_conversation_messages.return_value = iter(sample_conversation)
                 mock_memory_class.get_memory_instance.return_value = mock_memory
 
-                mock_adversarial_chat.send_prompt_async = AsyncMock(return_value=[next_message_response])
+                mock_normalizer = MagicMock(spec=PromptNormalizer)
+                mock_normalizer.send_prompt_async = AsyncMock(return_value=next_message_reply)
+                mock_normalizer_class.return_value = mock_normalizer
 
                 await generate_simulated_conversation_async(
                     objective="Test objective",
@@ -756,8 +783,10 @@ class TestGenerateSimulatedConversationAsync:
                 ]
                 assert system_prompt_conversation_id
 
-                sent_message = mock_adversarial_chat.send_prompt_async.call_args.kwargs["message"]
-                assert sent_message.conversation_id == system_prompt_conversation_id
+                # The manager sends the next-message turn on the same concrete conversation id it
+                # scoped the system prompt to (via the normalizer, not the target directly).
+                send_conversation_id = mock_normalizer.send_prompt_async.call_args.kwargs["conversation_id"]
+                assert send_conversation_id == system_prompt_conversation_id
 
     async def test_starting_sequence_sets_first_sequence_number(
         self,
@@ -804,3 +833,91 @@ class TestGenerateSimulatedConversationAsync:
                 # Verify the first prompt starts at sequence 5
                 assert result[0].sequence == 5
                 assert result[1].sequence == 6
+
+
+class TestGenerateNextMessageAsync:
+    """Tests for _generate_next_message_async, which folds schema resolution, the send, and JSON
+    parse/retry onto the shared _AdversarialConversationManager (there is no raw-text path)."""
+
+    @staticmethod
+    def _mock_normalizer(reply: Message | None) -> MagicMock:
+        normalizer = MagicMock(spec=PromptNormalizer)
+        normalizer.send_prompt_async = AsyncMock(return_value=reply)
+        return normalizer
+
+    async def test_parses_next_message_from_json_reply(self, mock_adversarial_chat: MagicMock):
+        """The DIRECT template declares the canonical schema, so ``next_message`` is parsed out of the
+        JSON reply and returned as a fresh user message."""
+        reply = Message.from_prompt(
+            role="assistant",
+            prompt=json.dumps(
+                {
+                    "next_message": "parsed user message",
+                    "rationale": "advance",
+                    "last_response_summary": "prior",
+                }
+            ),
+        )
+        normalizer = self._mock_normalizer(reply)
+
+        with patch(
+            "pyrit.executor.attack.multi_turn.simulated_conversation.ConversationContextNormalizer"
+        ) as mock_normalizer_cls:
+            mock_normalizer_cls.return_value.normalize_string_async = AsyncMock(return_value="ctx")
+
+            result = await _generate_next_message_async(
+                objective="obj",
+                conversation_messages=[],
+                adversarial_chat=mock_adversarial_chat,
+                next_message_system_prompt_path=NextMessageSystemPromptPaths.DIRECT.value,
+                prompt_normalizer=normalizer,
+            )
+
+        assert result.get_value() == "parsed user message"
+        assert result.message_pieces[0].role == "user"
+        # The manager renders and sets the adversarial system prompt before sending.
+        mock_adversarial_chat.set_system_prompt.assert_called_once()
+        # The canonical schema is always resolved and forwarded so schema-aware targets constrain output.
+        sent_message = normalizer.send_prompt_async.call_args.kwargs["message"]
+        assert sent_message.message_pieces[0].prompt_metadata.get("response_format") == "json"
+
+    async def test_invalid_json_reply_raises_after_retry(self, mock_adversarial_chat: MagicMock):
+        """A malformed reply is retried by the manager's ``pyrit_json_retry`` and then surfaces
+        InvalidJsonException. This is a regression guard: the removed raw-text path used to swallow
+        bad JSON by flipping it straight to the user, so a schema mismatch now fails loudly."""
+        normalizer = self._mock_normalizer(Message.from_prompt(role="assistant", prompt="not valid json"))
+
+        with patch(
+            "pyrit.executor.attack.multi_turn.simulated_conversation.ConversationContextNormalizer"
+        ) as mock_normalizer_cls:
+            mock_normalizer_cls.return_value.normalize_string_async = AsyncMock(return_value="ctx")
+
+            with pytest.raises(InvalidJsonException):
+                await _generate_next_message_async(
+                    objective="obj",
+                    conversation_messages=[],
+                    adversarial_chat=mock_adversarial_chat,
+                    next_message_system_prompt_path=NextMessageSystemPromptPaths.DIRECT.value,
+                    prompt_normalizer=normalizer,
+                )
+
+        # The manager re-sent the turn rather than giving up on the first bad reply.
+        assert normalizer.send_prompt_async.await_count > 1
+
+    async def test_raises_when_no_response(self, mock_adversarial_chat: MagicMock):
+        """A missing adversarial response surfaces a clear ValueError from the manager."""
+        normalizer = self._mock_normalizer(None)
+
+        with patch(
+            "pyrit.executor.attack.multi_turn.simulated_conversation.ConversationContextNormalizer"
+        ) as mock_normalizer_cls:
+            mock_normalizer_cls.return_value.normalize_string_async = AsyncMock(return_value="ctx")
+
+            with pytest.raises(ValueError, match="No response received"):
+                await _generate_next_message_async(
+                    objective="obj",
+                    conversation_messages=[],
+                    adversarial_chat=mock_adversarial_chat,
+                    next_message_system_prompt_path=NextMessageSystemPromptPaths.DIRECT.value,
+                    prompt_normalizer=normalizer,
+                )

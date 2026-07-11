@@ -3,9 +3,7 @@
 
 from __future__ import annotations
 
-import json
 import logging
-import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -14,21 +12,18 @@ from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
 from pyrit.common.path import EXECUTOR_SEED_PROMPT_PATH
 from pyrit.exceptions import (
     ComponentRole,
-    InvalidJsonException,
     execution_context,
-    pyrit_json_retry,
-    remove_markdown_json,
 )
 from pyrit.executor.attack.component import (
     ConversationManager,
     PrependedConversationConfig,
 )
+from pyrit.executor.attack.component.adversarial_conversation_manager import _AdversarialConversationManager
 from pyrit.executor.attack.component.modality_router import _ModalityFeedbackRouter
 from pyrit.executor.attack.core import (
     AttackAdversarialConfig,
     AttackConverterConfig,
     AttackScoringConfig,
-    resolve_adversarial_system_prompt,
 )
 from pyrit.executor.attack.multi_turn.multi_turn_attack_strategy import (
     ConversationSession,
@@ -38,7 +33,6 @@ from pyrit.executor.attack.multi_turn.multi_turn_attack_strategy import (
 from pyrit.memory.central_memory import CentralMemory
 from pyrit.message_normalizer import ConversationContextNormalizer
 from pyrit.models import (
-    JSON_SCHEMA_METADATA_KEY,
     AtomicAttackIdentifier,
     AttackOutcome,
     AttackResult,
@@ -46,7 +40,6 @@ from pyrit.models import (
     ConversationType,
     Message,
     Score,
-    SeedPrompt,
 )
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import CapabilityName, TargetRequirements
@@ -231,12 +224,16 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
             objective_target=objective_target,
         )
 
-        self._adversarial_chat_system_prompt_template = resolve_adversarial_system_prompt(
+        # The manager owns adversarial-prompt resolution. Crescendo is override mode: it builds each
+        # adversarial prompt itself and passes the text explicitly, so only the system prompt is
+        # resolved here (no first / next-message templates).
+        self._resolved_adversarial = _AdversarialConversationManager.resolve_config(
             config=attack_adversarial_config,
             default_system_prompt_path=CrescendoAttack.DEFAULT_ADVERSARIAL_CHAT_SYSTEM_PROMPT_TEMPLATE_PATH,
-            required_parameters=["objective", "max_turns"],
-            error_message="Crescendo system prompt must have 'objective' and 'max_turns' parameters",
+            system_prompt_required_parameters=["objective", "max_turns"],
+            system_prompt_error_message="Crescendo system prompt must have 'objective' and 'max_turns' parameters",
         )
+        self._adversarial_chat_system_prompt_template = self._resolved_adversarial.system_prompt
 
         # Initialize utilities
         self._prompt_normalizer = prompt_normalizer or PromptNormalizer()
@@ -286,7 +283,7 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
         return AttackAdversarialConfig(
             target=adversarial_chat,
             system_prompt=self._adversarial_chat_system_prompt_template,
-            seed_prompt=None,
+            first_message=None,
         )
 
     def _validate_context(self, *, context: CrescendoAttackContext) -> None:
@@ -350,20 +347,11 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
             normalizer = ConversationContextNormalizer()
             adversarial_chat_context = await normalizer.normalize_string_async(context.prepended_conversation)
 
-        # Set the system prompt for adversarial chat using context
-        system_prompt = self._adversarial_chat_system_prompt_template.render_template_value(
-            objective=context.objective,
-            max_turns=self._max_turns,
+        # Set the system prompt for adversarial chat via the manager, injecting Crescendo's
+        # prepended-conversation context as an extra render value.
+        self._build_adversarial_manager(context=context).set_adversarial_system_prompt(
             conversation_context=adversarial_chat_context,
         )
-
-        self._adversarial_chat.set_system_prompt(
-            system_prompt=system_prompt,
-            conversation_id=context.session.adversarial_chat_conversation_id,
-        )
-
-        # Initialize backtrack count in context
-        context.backtrack_count = 0
 
         # Initialize backtrack count in context
         context.backtrack_count = 0
@@ -465,38 +453,34 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
         """
         # Nothing to be done here, no-op
 
-    @pyrit_json_retry
-    async def _get_attack_prompt_async(
-        self,
-        *,
-        context: CrescendoAttackContext,
-        refused_text: str,
-        seed_message: Message | None = None,
-    ) -> str:
+    def _build_adversarial_manager(self, *, context: CrescendoAttackContext) -> _AdversarialConversationManager:
         """
-        Generate the next attack prompt using the adversarial chat.
+        Build the adversarial-conversation manager that owns Crescendo's adversarial-chat turn.
+
+        Crescendo supplies its own per-turn prompt text (override mode), so the manager is created
+        without first/next message templates. It owns the rest of the adversarial contract: schema
+        resolution, the send/parse/retry cycle, the caller-seed bypass, forwarding seed/prior media,
+        filling adversarial placeholders, and building the objective-target message. The adversarial
+        conversation id is stable across backtracks, so a fresh manager can be built each turn.
 
         Args:
             context (CrescendoAttackContext): The attack context.
-            refused_text (str): Text that was refused by the target (if any).
-            seed_message (Message | None): Optional first-turn seed message
-                whose media pieces should be forwarded to the adversarial chat.
 
         Returns:
-            str: The generated attack prompt.
+            _AdversarialConversationManager: A manager bound to this attack's adversarial conversation.
         """
-        # Build the prompt to send to adversarial chat
-        prompt_text = self._build_adversarial_prompt(context=context, refused_text=refused_text)
-
-        # Send prompt to adversarial chat and get response
-        response_text = await self._send_prompt_to_adversarial_chat_async(
-            prompt_text=prompt_text,
-            context=context,
-            seed_message=seed_message,
+        return _AdversarialConversationManager(
+            adversarial_target=self._adversarial_chat,
+            adversarial_system_prompt=self._adversarial_chat_system_prompt_template,
+            max_turns=self._max_turns,
+            prompt_normalizer=self._prompt_normalizer,
+            conversation_id=context.session.adversarial_chat_conversation_id,
+            objective=context.objective,
+            objective_target_conversation_id=context.session.conversation_id,
+            attack_strategy_name=self.__class__.__name__,
+            memory_labels=context.memory_labels,
+            modality_router=self._modality_router,
         )
-
-        # Parse and validate the response
-        return self._parse_adversarial_response(response_text)
 
     def _build_adversarial_prompt(
         self,
@@ -548,122 +532,6 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
                 )
 
         return " ".join(prompt_parts)
-
-    async def _send_prompt_to_adversarial_chat_async(
-        self,
-        *,
-        prompt_text: str,
-        context: CrescendoAttackContext,
-        seed_message: Message | None = None,
-    ) -> str:
-        """
-        Send a prompt to the adversarial chat and get the response.
-
-        Args:
-            prompt_text (str): The prompt text to send.
-            context (CrescendoAttackContext): The attack context.
-            seed_message (Message | None): Optional first-turn seed message
-                whose media pieces should be forwarded to the adversarial chat.
-
-        Returns:
-            str: The response text from the adversarial chat.
-
-        Raises:
-            ValueError: If no response is received from the adversarial chat.
-        """
-        # Set JSON format in metadata
-        prompt_metadata: dict[str, Any] = {"response_format": "json"}
-        # Forward the shared adversarial-chat JSON schema when present so schema-aware
-        # targets can natively constrain the response shape; non-enforcing targets
-        # ignore it and rely on the prompt's formatting instructions.
-        response_json_schema = self._adversarial_chat_system_prompt_template.response_json_schema
-        if response_json_schema is not None:
-            prompt_metadata[JSON_SCHEMA_METADATA_KEY] = response_json_schema
-        message = self._modality_router.build_adversarial_input_message(
-            text=prompt_text,
-            last_response=context.last_response,
-            seed_message=seed_message,
-            prompt_metadata=prompt_metadata,
-        )
-        if context.memory_labels:
-            for piece in message.message_pieces:
-                piece.labels = context.memory_labels
-
-        with execution_context(
-            component_role=ComponentRole.ADVERSARIAL_CHAT,
-            attack_strategy_name=self.__class__.__name__,
-            component_identifier=self._adversarial_chat.get_identifier(),
-            objective_target_conversation_id=context.session.conversation_id,
-            objective=context.objective,
-        ):
-            response = await self._prompt_normalizer.send_prompt_async(
-                message=message,
-                conversation_id=context.session.adversarial_chat_conversation_id,
-                target=self._adversarial_chat,
-            )
-
-        if not response:
-            raise ValueError("No response received from adversarial chat")
-
-        response_text = response.get_value()
-        return remove_markdown_json(response_text)
-
-    def _parse_adversarial_response(self, response_text: str) -> str:
-        """
-        Parse and validate the JSON response from the adversarial chat.
-
-        Keys are normalized from camelCase to snake_case before validation, so
-        backends that drift to ``nextMessage`` still parse correctly
-        without burning retries on a casing mismatch.
-
-        Args:
-            response_text (str): The response text to parse.
-
-        Returns:
-            str: The generated question from the response.
-
-        Raises:
-            InvalidJsonException: If the response is not valid JSON or missing required keys.
-        """
-        expected_keys = {"next_message", "rationale", "last_response_summary"}
-
-        try:
-            parsed_output = json.loads(response_text)
-
-            normalized_output = {self._camel_to_snake(key): value for key, value in parsed_output.items()}
-
-            missing_keys = expected_keys - set(normalized_output.keys())
-            if missing_keys:
-                raise InvalidJsonException(
-                    message=f"Missing required keys {missing_keys} in JSON response: {response_text}"
-                )
-
-            extra_keys = set(normalized_output.keys()) - expected_keys
-            if extra_keys:
-                raise InvalidJsonException(
-                    message=f"Unexpected keys {extra_keys} found in JSON response: {response_text}"
-                )
-
-            return str(normalized_output["next_message"])
-
-        except json.JSONDecodeError as e:
-            raise InvalidJsonException(message=f"Invalid JSON encountered: {response_text}") from e
-
-    @staticmethod
-    def _camel_to_snake(name: str) -> str:
-        """
-        Convert a ``camelCase`` or ``PascalCase`` identifier to ``snake_case``.
-
-        Existing snake_case identifiers are returned unchanged.
-
-        Args:
-            name (str): The identifier to convert.
-
-        Returns:
-            str: The snake_case form of ``name``.
-        """
-        intermediate = re.sub(r"(.)([A-Z][a-z]+)", r"\1_\2", name)
-        return re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", intermediate).lower()
 
     async def _send_prompt_to_objective_target_async(
         self,
@@ -802,37 +670,21 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
         self._logger.debug(f"Backtracked conversation from {conversation_id} to {new_conversation_id}")
         return new_conversation_id
 
-    def _set_adversarial_chat_system_prompt_template(self, *, system_prompt_template_path: Path | str) -> None:
-        """
-        Set the system prompt template for the adversarial chat.
-
-        Args:
-            system_prompt_template_path (Path | str): Path to the system prompt template.
-
-        Raises:
-            ValueError: If the template doesn't contain required parameters.
-        """
-        sp = SeedPrompt.from_yaml_file(system_prompt_template_path)
-
-        if sp.parameters is None or not all(param in sp.parameters for param in ["objective", "max_turns"]):
-            raise ValueError(f"Crescendo system prompt must have 'objective' and 'max_turns' parameters: '{sp}'")
-
-        self._adversarial_chat_system_prompt_template = sp
-
     async def _generate_next_prompt_async(self, context: CrescendoAttackContext) -> Message:
         """
         Generate the next prompt to be sent to the target during the Crescendo attack.
 
-        Three branches:
+        Crescendo builds its own bespoke adversarial prompt text (turn count, refusal/score feedback)
+        and hands it to the adversarial-conversation manager in override mode. The manager owns the
+        rest of the contract:
 
-        1. ``next_message`` is set with no adversarial placeholder pieces — the message is sent
-           to the objective target as-is, bypassing the adversarial chat entirely (pre-existing
-           first-turn override).
-        2. ``next_message`` is set with adversarial-placeholder pieces — the adversarial chat
-           generates text which the router then substitutes into the placeholder slots, allowing
-           a caller to supply seed media (e.g. an image to edit) alongside adversarial text.
-        3. ``next_message`` is unset — the adversarial chat generates text, and the router
-           builds the objective request including prior media when the target accepts it.
+        1. ``next_message`` set with no adversarial placeholder — sent to the objective target as-is,
+           bypassing the adversarial chat (pre-existing first-turn override).
+        2. ``next_message`` set with adversarial-placeholder pieces — the adversarial chat generates
+           text that the router substitutes into the placeholder slots, letting a caller supply seed
+           media (e.g. an image to edit) alongside adversarial text.
+        3. ``next_message`` unset — the adversarial chat generates text and the router builds the
+           objective request including prior media when the target accepts it.
 
         Args:
             context (CrescendoAttackContext): The attack context containing the current state and configuration.
@@ -840,35 +692,21 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
         Returns:
             Message: The generated message to be sent to the target.
         """
-        next_message = context.next_message
-        if next_message is not None:
-            context.next_message = None  # Clear for future turns
-            has_placeholder = any(piece.is_adversarial_placeholder() for piece in next_message.message_pieces)
-            if not has_placeholder:
-                self._logger.debug("Using custom message, bypassing adversarial chat")
-                # Duplicate to ensure fresh IDs (avoids conflicts if message was already in memory)
-                return next_message.duplicate()
+        seed_message = context.next_message
+        context.next_message = None  # Clear for future turns
 
-        # Generate prompt using adversarial chat
-        self._logger.debug("Generating new attack prompt using adversarial chat")
-        prompt_text = await self._get_attack_prompt_async(
+        adversarial_prompt_text = self._build_adversarial_prompt(
             context=context,
             refused_text=context.refused_text or "",
-            seed_message=next_message,
         )
 
-        if next_message is not None:
-            # Placeholder branch: substitute adversarial text into the seed message.
-            return self._modality_router.fill_adversarial_placeholders(
-                message=next_message,
-                adversarial_text=prompt_text,
-            )
-
-        return self._modality_router.build_objective_input_message(
-            text=prompt_text,
-            last_response=context.last_response,
+        turn = await self._build_adversarial_manager(context=context).get_next_message_async(
             turn_index=context.executed_turns,
+            seed_message=seed_message,
+            last_response=context.last_response,
+            adversarial_prompt_text=adversarial_prompt_text,
         )
+        return turn.objective_message
 
     async def _perform_backtrack_if_refused_async(
         self,

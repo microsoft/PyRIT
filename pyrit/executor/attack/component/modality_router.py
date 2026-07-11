@@ -182,6 +182,28 @@ class _ModalityFeedbackRouter:
             prompt_metadata=prompt_metadata,
         )
 
+    def response_media_is_forwardable_to_adversarial(self, *, last_response: Message | None) -> bool:
+        """
+        Whether any media piece of ``last_response`` would be forwarded to the adversarial chat.
+
+        Used to distinguish a genuine media drop (media the adversarial cannot consume) from the
+        legitimate multimodal case where the router does forward the media to a capable adversarial
+        chat.
+
+        Args:
+            last_response: The most recent objective-target response, or None.
+
+        Returns:
+            True iff at least one media piece of ``last_response`` matches a ``{text, <data_type>}``
+            input combo advertised by the adversarial target.
+        """
+        return bool(
+            self._select_forwardable_media_pieces(
+                message=last_response,
+                allowed_media_types=self._adversarial_media_types_with_text,
+            )
+        )
+
     # ------------------------------------------------------------------ #
     # Objective-direction Message construction
     # ------------------------------------------------------------------ #
