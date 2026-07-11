@@ -46,43 +46,52 @@ def get_technique_factories() -> list[AttackTechniqueFactory]:
         AttackTechniqueFactory(
             name="role_play",
             attack_class=RolePlayAttack,
+            description="Frames the objective as a fictional movie script the target treats as creative writing.",
             technique_tags=["single_turn", "light"],
             attack_kwargs={"role_play_definition_path": RolePlayPaths.MOVIE_SCRIPT.value},
         ),
         AttackTechniqueFactory(
             name="many_shot",
             attack_class=ManyShotJailbreakAttack,
+            description="Primes the target with many fake example exchanges that model compliance before the ask.",
             technique_tags=["multi_turn", "light"],
         ),
         AttackTechniqueFactory(
             name="tap",
             attack_class=TreeOfAttacksWithPruningAttack,
+            description="Explores a tree of adversarial prompts, pruning weak branches to refine the attack.",
             technique_tags=["multi_turn"],
         ),
         AttackTechniqueFactory.with_simulated_conversation(
             name="crescendo_simulated",
+            description="Escalates gradually over a simulated conversation toward the objective.",
             technique_tags=["single_turn"],
         ),
         AttackTechniqueFactory.with_simulated_conversation(
             name="crescendo_movie_director",
+            description="Crescendo escalation cast as a movie-director persona coaxing the target scene by scene.",
             technique_tags=["single_turn"],
         ),
         AttackTechniqueFactory.with_simulated_conversation(
             name="crescendo_history_lecture",
+            description="Crescendo escalation framed as an academic history lecture to normalize the objective.",
             technique_tags=["single_turn"],
         ),
         AttackTechniqueFactory.with_simulated_conversation(
             name="crescendo_journalist_interview",
+            description="Crescendo escalation staged as a journalist interview drawing the target out.",
             technique_tags=["single_turn"],
         ),
         AttackTechniqueFactory(
             name="red_teaming",
             attack_class=RedTeamingAttack,
+            description="Uses an adversarial chat model to converse with the target and adapt toward the objective.",
             technique_tags=["multi_turn", "light"],
         ),
         AttackTechniqueFactory(
             name="context_compliance",
             attack_class=ContextComplianceAttack,
+            description="Injects a fabricated prior exchange so the target continues as if it already agreed.",
             technique_tags=["single_turn", "light"],
         ),
     ]

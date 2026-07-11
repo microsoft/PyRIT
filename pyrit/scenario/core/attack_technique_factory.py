@@ -74,6 +74,7 @@ class AttackTechniqueFactory(Identifiable):
         *,
         name: str,
         attack_class: type[AttackStrategy[Any, Any]],
+        description: str | None = None,
         technique_tags: list[str] | None = None,
         attack_kwargs: dict[str, Any] | None = None,
         adversarial_chat: PromptTarget | None = None,
@@ -90,6 +91,9 @@ class AttackTechniqueFactory(Identifiable):
             name: Registry name for this technique. This is used as the
                 scenario technique name.
             attack_class: The AttackStrategy subclass to instantiate.
+            description: Short human-readable summary of what the technique does.
+                Purely descriptive metadata — it does not affect the technique's
+                behavioral identity.
             technique_tags: Tags controlling which ``ScenarioTechnique``
                 aggregates include this technique (e.g. ``"single_turn"``,
                 ``"multi_turn"``, ``"default"``).
@@ -129,6 +133,7 @@ class AttackTechniqueFactory(Identifiable):
         """
         self._name = name
         self._attack_class = attack_class
+        self._description = description
         self._technique_tags = list(technique_tags) if technique_tags else []
         self._attack_kwargs = dict(attack_kwargs) if attack_kwargs else {}
         self._adversarial_chat = adversarial_chat
@@ -151,6 +156,7 @@ class AttackTechniqueFactory(Identifiable):
         *,
         name: str,
         attack_class: type[AttackStrategy[Any, Any]] | None = None,
+        description: str | None = None,
         adversarial_chat_system_prompt_path: str | Path | None = None,
         next_message_system_prompt_path: str | Path | None = None,
         num_turns: int = 3,
@@ -173,6 +179,8 @@ class AttackTechniqueFactory(Identifiable):
                 ``EXECUTOR_SEED_PROMPT_PATH/red_teaming/{name}.yaml``.
             attack_class: The AttackStrategy subclass to instantiate. Defaults to
                 ``PromptSendingAttack``.
+            description: Short human-readable summary of what the technique does.
+                Forwarded to the factory constructor as descriptive metadata.
             adversarial_chat_system_prompt_path: Path to the YAML file containing
                 the adversarial chat system prompt for the simulated conversation.
                 Defaults to ``EXECUTOR_SEED_PROMPT_PATH/red_teaming/{name}.yaml``.
@@ -224,6 +232,7 @@ class AttackTechniqueFactory(Identifiable):
         return cls(
             name=name,
             attack_class=attack_class,
+            description=description,
             technique_tags=technique_tags,
             attack_kwargs=attack_kwargs,
             adversarial_chat=adversarial_chat,
@@ -319,6 +328,11 @@ class AttackTechniqueFactory(Identifiable):
     def name(self) -> str:
         """The registry name for this technique."""
         return self._name
+
+    @property
+    def description(self) -> str | None:
+        """Short human-readable summary of what the technique does, or None."""
+        return self._description
 
     @property
     def technique_tags(self) -> list[str]:
