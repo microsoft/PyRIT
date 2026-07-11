@@ -1071,7 +1071,7 @@ class TestConverterRoutes:
                     converter_id="conv-1",
                     identifier=ConverterIdentifier(
                         class_name="Base64Converter",
-                        class_module="pyrit.prompt_converter.base64_converter",
+                        class_module="pyrit.converter.base64_converter",
                     ),
                 )
             )

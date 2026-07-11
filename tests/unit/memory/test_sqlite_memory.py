@@ -16,12 +16,12 @@ from sqlalchemy.dialects.sqlite import CHAR, JSON
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.sql.sqltypes import NullType
 
+from pyrit.converter.base64_converter import Base64Converter
 from pyrit.memory.alembic.versions.ab8f2c1a9d07_pre_alembic_release_schema import INITIAL_METADATA
 from pyrit.memory.memory_models import EmbeddingDataEntry, PromptMemoryEntry
 from pyrit.memory.migration import run_schema_migrations
 from pyrit.memory.storage.serializers import set_message_piece_sha256_async
 from pyrit.models import Conversation, MessagePiece, flatten_to_message_pieces
-from pyrit.prompt_converter.base64_converter import Base64Converter
 from pyrit.prompt_target.text_target import TextTarget
 from unit.mocks import get_sample_conversation_entries
 

@@ -164,7 +164,7 @@ class Registry(ABC, Generic[T, MetadataT]):
     ``_discover()`` instead of supplying the two hooks.
 
     Type Parameters:
-        T: The type of classes being registered (e.g. ``PromptConverter``).
+        T: The type of classes being registered (e.g. ``Converter``).
         MetadataT: The metadata dataclass type (e.g. ``ConverterMetadata``).
     """
 

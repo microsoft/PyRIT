@@ -39,7 +39,7 @@ def _converter_identifier() -> ComponentIdentifier:
     """A representative converter ComponentIdentifier."""
     return ComponentIdentifier(
         class_name="Base64Converter",
-        class_module="pyrit.prompt_converter.base64_converter",
+        class_module="pyrit.converter.base64_converter",
         params={
             "supported_input_types": ["text"],
             "supported_output_types": ["text"],
@@ -191,12 +191,12 @@ class TestConverterIdentifier:
         )
         sub_converter_child = ComponentIdentifier(
             class_name="Base64Converter",
-            class_module="pyrit.prompt_converter.base64_converter",
+            class_module="pyrit.converter.base64_converter",
             params={"supported_input_types": ["text"]},
         )
         ci = ComponentIdentifier(
             class_name="LLMGenericTextConverter",
-            class_module="pyrit.prompt_converter.llm_generic_text_converter",
+            class_module="pyrit.converter.llm_generic_text_converter",
             params={},
             children={
                 "converter_target": target_child,

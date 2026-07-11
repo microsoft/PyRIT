@@ -564,7 +564,7 @@ class FuzzerGenerator(
             objective_target (PromptTarget): The target to send the prompts to.
             template_converters (list[FuzzerConverter]): The converters to apply on the selected jailbreak template.
             scoring_target (PromptTarget): The chat target to use for scoring responses.
-            converter_config (StrategyConverterConfig | None): Configuration for prompt converters.
+            converter_config (StrategyConverterConfig | None): Configuration for converters.
             prompt_normalizer (PromptNormalizer | None): The prompt normalizer to use.
             frequency_weight (float): Constant that balances between high reward and selection frequency.
             reward_penalty (float): Penalty that diminishes reward as path length increases.
@@ -626,7 +626,7 @@ class FuzzerGenerator(
             objective_target (PromptTarget): The target to send the prompts to.
             template_converters (list[FuzzerConverter]): The converters to apply on the selected jailbreak template.
                 In each iteration, one converter is chosen at random.
-            converter_config (StrategyConverterConfig | None): Configuration for prompt converters.
+            converter_config (StrategyConverterConfig | None): Configuration for converters.
                 Defaults to None.
             scorer (Scorer | None): Configuration for scoring responses. Defaults to None.
             scoring_success_threshold (float): The score threshold to consider a jailbreak successful.

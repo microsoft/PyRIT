@@ -167,7 +167,7 @@ paths stay fast.
 
 ### Lazy `__init__.py` Exports (PEP 562)
 
-Public API packages (`pyrit.prompt_target`, `pyrit.prompt_converter`, `pyrit.score`)
+Public API packages (`pyrit.prompt_target`, `pyrit.converter`, `pyrit.score`)
 use `__getattr__`-based lazy loading so heavy symbols can be imported from the
 package without paying the cost at package load time. See
 `pyrit/prompt_target/__init__.py` for the canonical example. Rules:
@@ -578,7 +578,7 @@ def process_large_dataset(self, *, file_path: Path) -> list[Result]:
 - If so, add it to the `_LAZY_IMPORTS` dict in that `__init__.py` instead of as an
   eager top-level import (see the Import Placement section for the pattern)
 - This is especially important for `pyrit/common/__init__.py`, `pyrit/prompt_target/__init__.py`,
-  `pyrit/prompt_converter/__init__.py`, and `pyrit/score/__init__.py` which are all on the
+  `pyrit/converter/__init__.py`, and `pyrit/score/__init__.py` which are all on the
   import path for CLI startup
 
 ## Final Checklist

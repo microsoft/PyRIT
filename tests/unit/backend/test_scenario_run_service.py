@@ -16,9 +16,9 @@ from pyrit.backend.services.scenario_run_service import (
     _DEFAULT_MAX_CONCURRENT_RUNS,
     ScenarioRunService,
 )
+from pyrit.converter import Converter
 from pyrit.models import AttackOutcome, ScenarioRunState
 from pyrit.models.catalog.scenario import RunScenarioRequest
-from pyrit.prompt_converter import PromptConverter
 from pyrit.scenario.core import DatasetAttackConfiguration, DatasetConfiguration
 from pyrit.scenario.core.scenario_technique import ScenarioTechnique
 
@@ -872,7 +872,7 @@ class TestResolveTechniquesAndConverters:
         assert converters == {}
 
     def test_single_converter_appended(self, mock_memory) -> None:
-        conv = MagicMock(spec=PromptConverter)
+        conv = MagicMock(spec=Converter)
         service = ScenarioRunService()
         with _patch_converter_registry({"translation_spanish": conv}):
             enums, converters = service._resolve_techniques_and_converters(
@@ -884,7 +884,7 @@ class TestResolveTechniquesAndConverters:
         assert converters == {"role_play": [conv]}
 
     def test_aggregate_token_applies_converter_to_all_concrete(self, mock_memory) -> None:
-        conv = MagicMock(spec=PromptConverter)
+        conv = MagicMock(spec=Converter)
         service = ScenarioRunService()
         with _patch_converter_registry({"c1": conv}):
             enums, converters = service._resolve_techniques_and_converters(
@@ -894,8 +894,8 @@ class TestResolveTechniquesAndConverters:
         assert converters == {"role_play": [conv], "single_turn": [conv]}
 
     def test_multiple_converters_preserve_order(self, mock_memory) -> None:
-        c1 = MagicMock(spec=PromptConverter)
-        c2 = MagicMock(spec=PromptConverter)
+        c1 = MagicMock(spec=Converter)
+        c2 = MagicMock(spec=Converter)
         service = ScenarioRunService()
         with _patch_converter_registry({"c1": c1, "c2": c2}):
             _, converters = service._resolve_techniques_and_converters(
@@ -906,8 +906,8 @@ class TestResolveTechniquesAndConverters:
         assert converters == {"role_play": [c1, c2]}
 
     def test_overlapping_tokens_append_in_order(self, mock_memory) -> None:
-        c1 = MagicMock(spec=PromptConverter)
-        c2 = MagicMock(spec=PromptConverter)
+        c1 = MagicMock(spec=Converter)
+        c2 = MagicMock(spec=Converter)
         service = ScenarioRunService()
         with _patch_converter_registry({"c1": c1, "c2": c2}):
             _, converters = service._resolve_techniques_and_converters(
@@ -921,7 +921,7 @@ class TestResolveTechniquesAndConverters:
 
     def test_unknown_converter_raises(self, mock_memory) -> None:
         service = ScenarioRunService()
-        with _patch_converter_registry({"known": MagicMock(spec=PromptConverter)}):
+        with _patch_converter_registry({"known": MagicMock(spec=Converter)}):
             with pytest.raises(ValueError, match="not a registered converter"):
                 service._resolve_techniques_and_converters(
                     tokens=["role_play:converter.missing"],
@@ -951,7 +951,7 @@ class TestResolveTechniquesAndConverters:
 
     async def test_start_run_forwards_technique_converters(self, mock_all_registries) -> None:
         """A converter token is resolved and forwarded through the registry as ``technique_converters``."""
-        conv = MagicMock(spec=PromptConverter)
+        conv = MagicMock(spec=Converter)
         scenario_instance = mock_all_registries["scenario_instance"]
         scenario_instance._technique_class = _StubTechnique
 

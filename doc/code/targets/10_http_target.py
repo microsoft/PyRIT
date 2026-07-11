@@ -18,6 +18,7 @@
 import os
 
 from pyrit.auth import get_azure_token_provider
+from pyrit.converter import JsonStringConverter
 from pyrit.executor.attack import (
     AttackAdversarialConfig,
     AttackConverterConfig,
@@ -26,8 +27,7 @@ from pyrit.executor.attack import (
     RedTeamingAttack,
 )
 from pyrit.output import output_attack_async
-from pyrit.prompt_converter import JsonStringConverter
-from pyrit.prompt_normalizer import PromptConverterConfiguration
+from pyrit.prompt_normalizer import ConverterConfiguration
 from pyrit.prompt_target import (
     HTTPTarget,
     OpenAIChatTarget,
@@ -74,7 +74,7 @@ parsing_function = get_http_target_json_response_callback_function(key="choices[
 # httpx AsyncClient parameters can be passed as kwargs to HTTPTarget, for example the timeout below
 http_prompt_target = HTTPTarget(http_request=raw_http_request, callback_function=parsing_function, timeout=20.0)
 
-converters = PromptConverterConfiguration.from_converters(converters=[JsonStringConverter()])
+converters = ConverterConfiguration.from_converters(converters=[JsonStringConverter()])
 
 # Note, a converter is used to format the prompt to be JSON safe by properly escaping special characters
 converter_config = AttackConverterConfig(request_converters=converters)
@@ -115,7 +115,7 @@ http_prompt_target = HTTPTarget(
 )
 
 converter_config = AttackConverterConfig(
-    request_converters=PromptConverterConfiguration.from_converters(converters=[JsonStringConverter()])
+    request_converters=ConverterConfiguration.from_converters(converters=[JsonStringConverter()])
 )
 
 # Note, like above, a converter is used to format the prompt to be JSON safe by properly escaping special characters
@@ -174,7 +174,7 @@ q={PROMPT}s&qs=ds
 # ### Using Regex Parsing (this searches for a path using a regex pattern)
 
 # %%
-from pyrit.prompt_converter import UrlConverter
+from pyrit.converter import UrlConverter
 
 # Add the prompt you want to send to the URL
 prompt = "pirate raccoons celebrating Canadian Thanksgiving together"
@@ -184,8 +184,8 @@ parsing_function = get_http_target_regex_matching_callback_function(
 )
 http_prompt_target = HTTPTarget(http_request=http_req, callback_function=parsing_function)
 
-# Note the prompt needs to be formatted in a URL safe way by the prompt converter in this example, this should be done accordingly for your target as needed.
-converters = PromptConverterConfiguration.from_converters(converters=[UrlConverter()])
+# Note the prompt needs to be formatted in a URL safe way by the converter in this example, this should be done accordingly for your target as needed.
+converters = ConverterConfiguration.from_converters(converters=[UrlConverter()])
 converter_config = AttackConverterConfig(request_converters=converters)
 
 attack = PromptSendingAttack(

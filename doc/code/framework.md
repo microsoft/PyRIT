@@ -310,7 +310,7 @@ The below talks about responsibilities of most modules in the PyRIT library
 
 **Responsibility**: Reshape prompts and conversations so components and targets can interoperate. There are two distinct modules:
 
-- **`prompt_normalizer`** applies converters and dispatches individual prompts to a `PromptTarget` (handling batching and memory persistence). `NormalizerRequest` and `PromptConverterConfiguration` describe what to send and which converters to apply.
+- **`prompt_normalizer`** applies converters and dispatches individual prompts to a `PromptTarget` (handling batching and memory persistence). `NormalizerRequest` and `ConverterConfiguration` describe what to send and which converters to apply.
 - **`message_normalizer`** reshapes multi-message conversation payloads into the structure a given model expects — for example, handling system-message behavior (keep / squash / ignore), history squashing, and tokenizer chat templates.
 
 ## [Output](./output/0_output)

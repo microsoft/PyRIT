@@ -63,8 +63,8 @@ from pyrit.score import (
 )
 
 if TYPE_CHECKING:
+    from pyrit.converter import Converter
     from pyrit.models import ComponentIdentifier
-    from pyrit.prompt_converter import PromptConverter
 
 logger = logging.getLogger(__name__)
 
@@ -224,7 +224,7 @@ class Scenario(ABC):
         self._scenario_techniques: list[ScenarioTechnique] = []
 
         # Maps concrete technique name → extra request converters to append for that technique.
-        self._technique_converters: dict[str, list[PromptConverter]] = {}
+        self._technique_converters: dict[str, list[Converter]] = {}
 
         # Maps atomic_attack_name → display_group for user-facing aggregation
         self._display_group_map: dict[str, str] = {}

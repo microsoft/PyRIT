@@ -115,7 +115,7 @@ class AnecdoctorGenerator(
             processing_model (PromptTarget | None): The model used for knowledge graph extraction.
                 If provided, the generator will extract a knowledge graph from the examples before generation.
                 If None, the generator will use few-shot examples directly.
-            converter_config (StrategyConverterConfig | None): Configuration for prompt converters.
+            converter_config (StrategyConverterConfig | None): Configuration for converters.
             prompt_normalizer (PromptNormalizer | None): Normalizer for handling prompts.
         """
         # Initialize base class
