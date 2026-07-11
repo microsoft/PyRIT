@@ -35,7 +35,7 @@ class PromptTarget(Identifiable):
 
     _memory: MemoryInterface
 
-    # A list of PromptConverters that are supported by the prompt target.
+    # A list of Converters that are supported by the prompt target.
     # An empty list implies that the prompt target supports all converters.
     supported_converters: list[Any]
 

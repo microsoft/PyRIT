@@ -200,7 +200,7 @@ class TestPAIRAdversarialIdentity:
         assert config is not None
         assert config.target is adversarial_config.target
         assert config.system_prompt is attack._adversarial_chat_system_seed_prompt
-        assert config.seed_prompt is None
+        assert config.first_message is None
 
     def test_identifier_includes_adversarial_chat_child(self, objective_target, adversarial_config):
         attack = PAIRAttack(

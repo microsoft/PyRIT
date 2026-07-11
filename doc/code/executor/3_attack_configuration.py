@@ -149,12 +149,12 @@ await output_attack_async(result)
 # plain object you hand to the attack constructor.
 
 # %%
+from pyrit.converter import Base64Converter
 from pyrit.executor.attack import AttackConverterConfig
-from pyrit.prompt_converter import Base64Converter
-from pyrit.prompt_normalizer import PromptConverterConfiguration
+from pyrit.prompt_normalizer import ConverterConfiguration
 
 converter_config = AttackConverterConfig(
-    request_converters=PromptConverterConfiguration.from_converters(converters=[Base64Converter()]),
+    request_converters=ConverterConfiguration.from_converters(converters=[Base64Converter()]),
 )
 
 attack_with_converters = PromptSendingAttack(

@@ -8,6 +8,7 @@ from typing import Any
 
 from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
 from pyrit.common.path import EXECUTOR_SEED_PROMPT_PATH
+from pyrit.converter import LLMGenericTextConverter
 from pyrit.executor.attack.core.attack_config import AttackAdversarialConfig, AttackConverterConfig, AttackScoringConfig
 from pyrit.executor.attack.core.attack_parameters import AttackParameters
 from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
@@ -18,8 +19,7 @@ from pyrit.models import (
     Message,
     SeedDataset,
 )
-from pyrit.prompt_converter import LLMGenericTextConverter
-from pyrit.prompt_normalizer import PromptConverterConfiguration, PromptNormalizer
+from pyrit.prompt_normalizer import ConverterConfiguration, PromptNormalizer
 from pyrit.prompt_target import PromptTarget
 
 logger = logging.getLogger(__name__)
@@ -82,7 +82,7 @@ class RolePlayAttack(PromptSendingAttack):
                 including the adversarial chat target used to rephrase objectives into role-play scenarios.
             role_play_definition_path (pathlib.Path): Path to the YAML file containing role-play
                 definitions (rephrase instructions, user start turn, assistant start turn).
-            attack_converter_config (AttackConverterConfig | None): Configuration for prompt converters.
+            attack_converter_config (AttackConverterConfig | None): Configuration for converters.
             attack_scoring_config (AttackScoringConfig | None): Configuration for scoring components.
             prompt_normalizer (PromptNormalizer | None): Normalizer for handling prompts.
             max_attempts_on_failure (int): Maximum number of attempts to retry the attack
@@ -113,7 +113,7 @@ class RolePlayAttack(PromptSendingAttack):
         self._parse_role_play_definition(role_play_definition)
 
         # Create the rephrase converter configuration
-        self._rephrase_converter = PromptConverterConfiguration.from_converters(
+        self._rephrase_converter = ConverterConfiguration.from_converters(
             converters=[
                 LLMGenericTextConverter(
                     converter_target=self._adversarial_chat,
@@ -133,7 +133,7 @@ class RolePlayAttack(PromptSendingAttack):
         adversarial_chat = getattr(self, "_adversarial_chat", None)
         if adversarial_chat is None:
             return None
-        return AttackAdversarialConfig(target=adversarial_chat, seed_prompt=None)
+        return AttackAdversarialConfig(target=adversarial_chat, first_message=None)
 
     async def _setup_async(self, *, context: SingleTurnAttackContext[Any]) -> None:
         """

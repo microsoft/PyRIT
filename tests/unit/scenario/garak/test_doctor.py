@@ -7,9 +7,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from pyrit.converter import LeetspeakConverter, PolicyPuppetryConverter
 from pyrit.executor.attack import PromptSendingAttack
 from pyrit.models import ComponentIdentifier, SeedGroup, SeedObjective
-from pyrit.prompt_converter import LeetspeakConverter, PolicyPuppetryConverter
 from pyrit.prompt_target import PromptTarget
 from pyrit.scenario import DatasetAttackConfiguration
 from pyrit.scenario.core.scenario import BaselineAttackPolicy

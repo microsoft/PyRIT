@@ -15,11 +15,7 @@ from inspect import signature
 from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from pyrit.common import apply_defaults
-from pyrit.datasets import TextJailBreak
-from pyrit.executor.attack import CrescendoAttack, PromptSendingAttack, RedTeamingAttack, TreeOfAttacksWithPruningAttack
-from pyrit.executor.attack.core.attack_config import AttackAdversarialConfig, AttackConverterConfig, AttackScoringConfig
-from pyrit.models import SeedAttackGroup
-from pyrit.prompt_converter import (
+from pyrit.converter import (
     AnsiAttackConverter,
     AsciiArtConverter,
     AtbashConverter,
@@ -27,11 +23,11 @@ from pyrit.prompt_converter import (
     CaesarConverter,
     CharacterSpaceConverter,
     CharSwapConverter,
+    Converter,
     DiacriticConverter,
     FlipConverter,
     LeetspeakConverter,
     MorseConverter,
-    PromptConverter,
     ROT13Converter,
     StringJoinConverter,
     SuffixAppendConverter,
@@ -41,9 +37,13 @@ from pyrit.prompt_converter import (
     UnicodeSubstitutionConverter,
     UrlConverter,
 )
-from pyrit.prompt_converter.binary_converter import BinaryConverter
-from pyrit.prompt_converter.token_smuggling.ascii_smuggler_converter import AsciiSmugglerConverter
-from pyrit.prompt_normalizer.prompt_converter_configuration import PromptConverterConfiguration
+from pyrit.converter.binary_converter import BinaryConverter
+from pyrit.converter.token_smuggling.ascii_smuggler_converter import AsciiSmugglerConverter
+from pyrit.datasets import TextJailBreak
+from pyrit.executor.attack import CrescendoAttack, PromptSendingAttack, RedTeamingAttack, TreeOfAttacksWithPruningAttack
+from pyrit.executor.attack.core.attack_config import AttackAdversarialConfig, AttackConverterConfig, AttackScoringConfig
+from pyrit.models import SeedAttackGroup
+from pyrit.prompt_normalizer.converter_configuration import ConverterConfiguration
 from pyrit.prompt_target import PromptTarget
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
@@ -385,7 +385,7 @@ class RedTeamAgent(Scenario):
             elif composite.attack == FoundryTechnique.Tap:
                 attack_type = TreeOfAttacksWithPruningAttack
 
-        converters: list[PromptConverter] = []
+        converters: list[Converter] = []
         for technique in composite.converters:
             if technique == FoundryTechnique.AnsiAttack:
                 converters.append(AnsiAttackConverter())
@@ -448,7 +448,7 @@ class RedTeamAgent(Scenario):
         self,
         *,
         attack_type: type[AttackStrategyT],
-        converters: list[PromptConverter],
+        converters: list[Converter],
         attack_kwargs: dict[str, Any] | None = None,
     ) -> AttackStrategyT:
         """
@@ -468,7 +468,7 @@ class RedTeamAgent(Scenario):
         Args:
             attack_type (type[AttackStrategyT]): The attack strategy class to instantiate.
                 Must accept objective_target and attack_converter_config parameters.
-            converters (list[PromptConverter]): List of converters to apply as request converters.
+            converters (list[Converter]): List of converters to apply as request converters.
             attack_kwargs (dict[str, Any] | None): Additional attack-specific keyword arguments
                 to pass to the attack constructor (e.g., tree_width for TreeOfAttacksWithPruningAttack).
 
@@ -479,7 +479,7 @@ class RedTeamAgent(Scenario):
             ValueError: If the attack requires an adversarial target but self._adversarial_chat is None.
         """
         attack_converter_config = AttackConverterConfig(
-            request_converters=PromptConverterConfiguration.from_converters(converters=converters)
+            request_converters=ConverterConfiguration.from_converters(converters=converters)
         )
 
         # Build kwargs with required parameters

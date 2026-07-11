@@ -31,7 +31,7 @@ from pyrit.prompt_target.openai.openai_target import OpenAITarget
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
-    from pyrit.prompt_normalizer import PromptConverterConfiguration, PromptNormalizer
+    from pyrit.prompt_normalizer import ConverterConfiguration, PromptNormalizer
 
 logger = logging.getLogger(__name__)
 
@@ -124,8 +124,8 @@ class RealtimeTarget(OpenAITarget):
         audio_chunks: "AsyncIterator[bytes]",
         prompt_normalizer: "PromptNormalizer",
         conversation_id: str | None = None,
-        request_converter_configurations: "list[PromptConverterConfiguration] | None" = None,
-        response_converter_configurations: "list[PromptConverterConfiguration] | None" = None,
+        request_converter_configurations: "list[ConverterConfiguration] | None" = None,
+        response_converter_configurations: "list[ConverterConfiguration] | None" = None,
         prepended_conversation: list[Message] | None = None,
         server_vad: bool | ServerVadConfig = True,
         persist_prepended_conversation: bool = True,

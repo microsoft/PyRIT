@@ -29,8 +29,8 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from pyrit.executor.attack.core import AttackContext
-    from pyrit.prompt_normalizer.prompt_converter_configuration import (
-        PromptConverterConfiguration,
+    from pyrit.prompt_normalizer.converter_configuration import (
+        ConverterConfiguration,
     )
 
 logger = logging.getLogger(__name__)
@@ -265,7 +265,7 @@ class ConversationManager:
         context: AttackContext[Any],
         target: PromptTarget,
         conversation_id: str,
-        request_converters: list[PromptConverterConfiguration] | None = None,
+        request_converters: list[ConverterConfiguration] | None = None,
         prepended_conversation_config: PrependedConversationConfig | None = None,
         max_turns: int | None = None,
         memory_labels: dict[str, str] | None = None,
@@ -402,7 +402,7 @@ class ConversationManager:
         *,
         prepended_conversation: list[Message],
         conversation_id: str,
-        request_converters: list[PromptConverterConfiguration] | None = None,
+        request_converters: list[ConverterConfiguration] | None = None,
         prepended_conversation_config: PrependedConversationConfig | None = None,
         max_turns: int | None = None,
         target_identifier: ComponentIdentifier | None = None,
@@ -489,7 +489,7 @@ class ConversationManager:
         context: AttackContext[Any],
         prepended_conversation: list[Message],
         conversation_id: str,
-        request_converters: list[PromptConverterConfiguration] | None,
+        request_converters: list[ConverterConfiguration] | None,
         prepended_conversation_config: PrependedConversationConfig | None,
         max_turns: int | None,
         target_identifier: ComponentIdentifier | None = None,
@@ -565,7 +565,7 @@ class ConversationManager:
         self,
         *,
         message: Message,
-        request_converters: list[PromptConverterConfiguration],
+        request_converters: list[ConverterConfiguration],
         apply_to_roles: list[ChatMessageRole] | None,
     ) -> None:
         """

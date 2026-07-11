@@ -1543,11 +1543,11 @@ def test_get_message_pieces_by_target_identifier_filter(sqlite_instance: MemoryI
 def test_get_message_pieces_by_converter_identifier_filter_with_array_element_path(sqlite_instance: MemoryInterface):
     converter_a = ComponentIdentifier(
         class_name="Base64Converter",
-        class_module="pyrit.prompt_converter",
+        class_module="pyrit.converter",
     )
     converter_b = ComponentIdentifier(
         class_name="ROT13Converter",
-        class_module="pyrit.prompt_converter",
+        class_module="pyrit.converter",
     )
 
     entries = [

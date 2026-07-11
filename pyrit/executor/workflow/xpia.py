@@ -137,7 +137,7 @@ class XPIAWorkflow(WorkflowStrategy[XPIAContext, XPIAResult], Identifiable):
     2. The processing_callback is executed to trigger the target's processing
     3. The response is optionally scored to determine success
 
-    The workflow supports customization through prompt converters and scorers,
+    The workflow supports customization through converters and scorers,
     allowing for various attack techniques and evaluation methods.
     """
 

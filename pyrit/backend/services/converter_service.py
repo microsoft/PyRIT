@@ -120,7 +120,7 @@ class ConverterService:
         Get the actual converter object.
 
         Returns:
-            The PromptConverter object if found, None otherwise.
+            The Converter object if found, None otherwise.
         """
         return self._registry.instances.get(converter_id)
 

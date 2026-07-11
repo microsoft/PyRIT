@@ -890,7 +890,7 @@ class TestContextComplianceAttackAdversarialIdentity:
         config = attack.get_attack_adversarial_config()
         assert config is not None
         assert config.target is mock_adversarial_chat
-        assert config.seed_prompt is None
+        assert config.first_message is None
 
     def test_get_attack_adversarial_config_returns_none_without_target(
         self, mock_objective_target, mock_attack_adversarial_config

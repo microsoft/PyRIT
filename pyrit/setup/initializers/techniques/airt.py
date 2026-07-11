@@ -17,9 +17,9 @@ technique pool.
 """
 
 from pyrit.common.path import DATASETS_PATH
+from pyrit.converter import AddImageTextConverter, FirstLetterConverter
 from pyrit.executor.attack import AttackConverterConfig, PromptSendingAttack
-from pyrit.prompt_converter import AddImageTextConverter, FirstLetterConverter
-from pyrit.prompt_normalizer import PromptConverterConfiguration
+from pyrit.prompt_normalizer import ConverterConfiguration
 from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
 
 _BLANK_IMAGE_PATH = str(DATASETS_PATH / "seed_datasets" / "local" / "examples" / "blank_canvas.png")
@@ -43,7 +43,7 @@ def get_technique_factories() -> list[AttackTechniqueFactory]:
             technique_tags=["single_turn", "airt", "leakage"],
             attack_kwargs={
                 "attack_converter_config": AttackConverterConfig(
-                    request_converters=PromptConverterConfiguration.from_converters(converters=[FirstLetterConverter()])
+                    request_converters=ConverterConfiguration.from_converters(converters=[FirstLetterConverter()])
                 ),
             },
         ),
@@ -53,7 +53,7 @@ def get_technique_factories() -> list[AttackTechniqueFactory]:
             technique_tags=["single_turn", "airt", "leakage"],
             attack_kwargs={
                 "attack_converter_config": AttackConverterConfig(
-                    request_converters=PromptConverterConfiguration.from_converters(
+                    request_converters=ConverterConfiguration.from_converters(
                         converters=[AddImageTextConverter(img_to_add=_BLANK_IMAGE_PATH)]
                     )
                 ),
