@@ -5,6 +5,7 @@
 Tests for the shared registry constructor-argument resolution primitive.
 """
 
+from enum import Enum
 from typing import Literal
 
 import pytest
@@ -56,6 +57,18 @@ class _SimpleOnly:
         self.ratio = ratio
         self.flag = flag
         self.mode = mode
+
+
+class _Speed(Enum):
+    FAST = "fast"
+    SLOW = "slow"
+
+
+class _EnumOnly:
+    """Helper whose constructor takes an enum parameter."""
+
+    def __init__(self, *, speed: _Speed) -> None:
+        self.speed = speed
 
 
 class _Plain:
@@ -152,6 +165,10 @@ class TestResolveConstructorArgs:
     def test_literal_invalid_raises(self) -> None:
         with pytest.raises(ValueError, match="mode"):
             _resolve(_SimpleOnly, {"mode": "z"})
+
+    def test_enum_string_coerces_to_member(self) -> None:
+        resolved = _resolve(_EnumOnly, {"speed": "fast"})
+        assert resolved == {"speed": _Speed.FAST}
 
     def test_unknown_param_raises(self) -> None:
         with pytest.raises(ValueError, match="Unknown parameter 'nope'"):
