@@ -110,7 +110,15 @@ class StrategyEventHandler(ABC, Generic[StrategyContextT, StrategyResultT]):
         """
 
 
-class StrategyLogAdapter(logging.LoggerAdapter):
+# ``logging.LoggerAdapter`` only became subscriptable at runtime on Python 3.11, but PyRIT
+# supports 3.10. Parameterize it for type checkers only and use the bare class at runtime.
+if TYPE_CHECKING:
+    _LoggerAdapter = logging.LoggerAdapter[logging.Logger]
+else:
+    _LoggerAdapter = logging.LoggerAdapter
+
+
+class StrategyLogAdapter(_LoggerAdapter):
     """
     Custom logger adapter that adds strategy information to log messages.
     """

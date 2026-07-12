@@ -199,7 +199,7 @@ class TestBuildAtomicAttackIdentifier:
             attack_identifier=_make_attack(),
             seed_group=_FakeSeedGroup(seeds=[seed]),
         )
-        restored = ComponentIdentifier.from_dict(original.to_dict())
+        restored = ComponentIdentifier.model_validate(original.model_dump())
         assert restored.hash == original.hash
 
 
@@ -228,7 +228,19 @@ class TestAtomicAttackEvaluationIdentifier:
     def test_scorer_only_keys_absent(self):
         """Scorer-specific keys should not appear in attack rules."""
         assert "prompt_target" not in AtomicAttackEvaluationIdentifier.CHILD_EVAL_RULES
-        assert "converter_target" not in AtomicAttackEvaluationIdentifier.CHILD_EVAL_RULES
+
+    def test_converter_target_restricted_to_behavioral_params(self):
+        """A converter's LLM target is projected to behavioral params for the eval hash.
+
+        Derived from ``ConverterIdentifier.converter_target`` referencing
+        ``TargetIdentifier``, whose operational params (endpoint, model_name,
+        max_requests_per_minute) are excluded.
+        """
+        rule = AtomicAttackEvaluationIdentifier.CHILD_EVAL_RULES["converter_target"]
+        assert rule.included_params == frozenset({"underlying_model_name", "temperature", "top_p"})
+        assert rule.param_fallbacks == {"underlying_model_name": "model_name"}
+        assert rule.inner_child_name == "targets"
+        assert not rule.exclude
 
     def test_objective_scorer_excluded(self):
         rule = AtomicAttackEvaluationIdentifier.CHILD_EVAL_RULES["objective_scorer"]
@@ -318,7 +330,7 @@ class TestAtomicAttackEvaluationIdentifier:
         wrapper = ComponentIdentifier(
             class_name="RoundRobinTarget",
             class_module="m",
-            params={"strategy": "round_robin"},
+            params={"technique": "round_robin"},
             children={"targets": [inner]},
         )
         a_bare = _make_attack(children={"adversarial_chat": bare})
@@ -359,8 +371,8 @@ class TestAtomicAttackEvaluationIdentifier:
     # -- Converters (non-target, fully included) ---------------------------
 
     def test_different_request_converters_different_hash(self):
-        conv1 = ComponentIdentifier(class_name="Base64Converter", class_module="pyrit.prompt_converter")
-        conv2 = ComponentIdentifier(class_name="ROT13Converter", class_module="pyrit.prompt_converter")
+        conv1 = ComponentIdentifier(class_name="Base64Converter", class_module="pyrit.converter")
+        conv2 = ComponentIdentifier(class_name="ROT13Converter", class_module="pyrit.converter")
         a1 = _make_attack(children={"request_converters": [conv1]})
         a2 = _make_attack(children={"request_converters": [conv2]})
         c1 = AtomicAttackIdentifier.build(attack_identifier=a1)
@@ -368,7 +380,7 @@ class TestAtomicAttackEvaluationIdentifier:
         assert AtomicAttackEvaluationIdentifier(c1).eval_hash != AtomicAttackEvaluationIdentifier(c2).eval_hash
 
     def test_same_request_converters_same_hash(self):
-        conv = ComponentIdentifier(class_name="Base64Converter", class_module="pyrit.prompt_converter")
+        conv = ComponentIdentifier(class_name="Base64Converter", class_module="pyrit.converter")
         a1 = _make_attack(children={"request_converters": [conv]})
         a2 = _make_attack(children={"request_converters": [conv]})
         c1 = AtomicAttackIdentifier.build(attack_identifier=a1)
@@ -376,8 +388,8 @@ class TestAtomicAttackEvaluationIdentifier:
         assert AtomicAttackEvaluationIdentifier(c1).eval_hash == AtomicAttackEvaluationIdentifier(c2).eval_hash
 
     def test_response_converters_contribute(self):
-        conv1 = ComponentIdentifier(class_name="Base64Converter", class_module="pyrit.prompt_converter")
-        conv2 = ComponentIdentifier(class_name="ROT13Converter", class_module="pyrit.prompt_converter")
+        conv1 = ComponentIdentifier(class_name="Base64Converter", class_module="pyrit.converter")
+        conv2 = ComponentIdentifier(class_name="ROT13Converter", class_module="pyrit.converter")
         a1 = _make_attack(children={"response_converters": [conv1]})
         a2 = _make_attack(children={"response_converters": [conv2]})
         c1 = AtomicAttackIdentifier.build(attack_identifier=a1)
@@ -388,7 +400,7 @@ class TestAtomicAttackEvaluationIdentifier:
         """Converters fully contribute even when objective_target operational params are stripped."""
         t1 = _make_target(params={"model_name": "gpt-4o", "endpoint": "https://a.com"})
         t2 = _make_target(params={"model_name": "gpt-4o", "endpoint": "https://b.com"})
-        conv = ComponentIdentifier(class_name="Base64Converter", class_module="pyrit.prompt_converter")
+        conv = ComponentIdentifier(class_name="Base64Converter", class_module="pyrit.converter")
         a1 = _make_attack(children={"objective_target": t1, "request_converters": [conv]})
         a2 = _make_attack(children={"objective_target": t2, "request_converters": [conv]})
         c1 = AtomicAttackIdentifier.build(attack_identifier=a1)
@@ -476,7 +488,7 @@ class TestAtomicAttackEvaluationIdentifier:
         scorer = ComponentIdentifier(
             class_name="TrueFalseScorer", class_module="pyrit.score", params={"threshold": 0.8}
         )
-        converter = ComponentIdentifier(class_name="Base64Converter", class_module="pyrit.prompt_converter")
+        converter = ComponentIdentifier(class_name="Base64Converter", class_module="pyrit.converter")
         seed = SeedPrompt(value="technique", value_sha256="abc", is_general_technique=True)
 
         attack_id = _make_attack(

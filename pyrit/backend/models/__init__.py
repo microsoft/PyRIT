@@ -7,6 +7,7 @@ Backend models package.
 Pydantic models for API requests and responses.
 """
 
+from pyrit.backend.models._media import DEFAULT_MEDIA_EXTENSIONS
 from pyrit.backend.models.attacks import (
     AddMessageRequest,
     AddMessageResponse,
@@ -47,25 +48,26 @@ from pyrit.backend.models.converters import (
     CreateConverterResponse,
     PreviewStep,
 )
+from pyrit.backend.models.datasets import (
+    DatasetInfo,
+    DatasetListResponse,
+)
 from pyrit.backend.models.initializers import (
-    InitializerParameterSummary,
     ListRegisteredInitializersResponse,
-    RegisteredInitializer,
     RegisterInitializerRequest,
 )
 from pyrit.backend.models.scenarios import (
     ListRegisteredScenariosResponse,
-    RegisteredScenario,
-    ScenarioParameterSummary,
+    ScenarioRunListResponse,
 )
 from pyrit.backend.models.targets import (
     CreateTargetRequest,
-    TargetCapabilitiesInfo,
-    TargetInstance,
     TargetListResponse,
 )
 
 __all__ = [
+    # Media
+    "DEFAULT_MEDIA_EXTENSIONS",
     # Attacks
     "AddMessageRequest",
     "AddMessageResponse",
@@ -103,18 +105,16 @@ __all__ = [
     "CreateConverterRequest",
     "CreateConverterResponse",
     "PreviewStep",
+    # Datasets
+    "DatasetInfo",
+    "DatasetListResponse",
     # Scenarios
     "ListRegisteredScenariosResponse",
-    "RegisteredScenario",
-    "ScenarioParameterSummary",
+    "ScenarioRunListResponse",
     # Initializers
-    "InitializerParameterSummary",
     "ListRegisteredInitializersResponse",
-    "RegisteredInitializer",
     "RegisterInitializerRequest",
     # Targets
     "CreateTargetRequest",
-    "TargetCapabilitiesInfo",
-    "TargetInstance",
     "TargetListResponse",
 ]

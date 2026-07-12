@@ -7,6 +7,7 @@ import uuid
 from typing import Any
 
 from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
+from pyrit.converter import Converter, ConverterResult
 from pyrit.exceptions import (
     InvalidJsonException,
     pyrit_json_retry,
@@ -18,13 +19,12 @@ from pyrit.models import (
     PromptDataType,
     SeedPrompt,
 )
-from pyrit.prompt_converter import ConverterResult, PromptConverter
 from pyrit.prompt_target import PromptTarget
 
 logger = logging.getLogger(__name__)
 
 
-class FuzzerConverter(PromptConverter):
+class FuzzerConverter(Converter):
     """
     Base class for GPTFUZZER converters.
 

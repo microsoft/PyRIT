@@ -44,7 +44,12 @@ def _check_forbidden_imports(*, import_statement: str, forbidden: list[str]) -> 
 
 
 # Heavy modules that should never be loaded during CLI arg parsing.
-# This ensures `pyrit_scan --help` stays near-instant (~0.3s).
+# This ensures `pyrit_scan --help` stays near-instant (~0.4s).
+#
+# ``pyrit.models`` and ``pyrit.backend`` are the real cost we're guarding
+# against — eagerly importing ``pyrit.models`` adds ~500ms to ``--help``.
+# ``pydantic`` is kept as cheap insurance against eager BaseModel class
+# compilation creeping into the bootstrap path.
 _CLI_FORBIDDEN = [
     "alembic",
     "av",
@@ -54,6 +59,8 @@ _CLI_FORBIDDEN = [
     "openai",
     "pandas",
     "pydantic",
+    "pyrit.backend",
+    "pyrit.models",
     "scipy",
     "sqlalchemy",
     "torch",

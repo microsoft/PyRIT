@@ -15,7 +15,7 @@
 #
 # ## Translating from Seeds for Attack Parameters
 #
-# Most [attacks](../executor/attack/0_attack.md) make use of several parameters.
+# Most [executors](../executor/0_executor.md) make use of several parameters.
 #
 # 1. An **objective** - what you're trying to achieve
 # 2. A **next_message** (optional) - the next message to send to the target
@@ -127,7 +127,7 @@ await output_attack_async(results.completed_results[0])
 #
 # ### Example: Loading a System Prompt
 #
-# The following example shows how a `PromptConverter` might load its system prompt from a YAML file:
+# The following example shows how a `Converter` might load its system prompt from a YAML file:
 
 # %%
 from pyrit.common.path import CONVERTER_SEED_PROMPT_PATH

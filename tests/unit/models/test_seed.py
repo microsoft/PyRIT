@@ -13,6 +13,7 @@ from PIL import Image
 from scipy.io import wavfile
 
 from pyrit.common.path import DATASETS_PATH
+from pyrit.memory.storage.serializers import set_seed_sha256_async
 from pyrit.models import (
     Message,
     MessagePiece,
@@ -562,7 +563,7 @@ async def test_hashes_generated():
         value="Hello1",
         data_type="text",
     )
-    await entry.set_sha256_value_async()
+    await set_seed_sha256_async(entry)
     assert entry.value_sha256 == "948edbe7ede5aa7423476ae29dcd7d61e7711a071aea0d83698377effa896525"
 
 
@@ -577,7 +578,7 @@ async def test_hashes_generated_files():
             value=filename,
             data_type="image_path",
         )
-        await entry.set_sha256_value_async()
+        await set_seed_sha256_async(entry)
         assert entry.value_sha256 == "948edbe7ede5aa7423476ae29dcd7d61e7711a071aea0d83698377effa896525"
 
     os.remove(filename)

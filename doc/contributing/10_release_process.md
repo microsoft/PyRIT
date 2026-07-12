@@ -204,7 +204,55 @@ Note: You may need to build the package again if those changes modify any depend
 Lastly, **Verify pyrit-internal is up to date.** Follow the instructions at [aka.ms/internal-release](https://aka.ms/internal-release) to ensure the internal package is current.
 
 
-## 9. Publish to PyPI
+## 9. Migrate Production Database Schema
+
+Apply any pending Alembic migrations to the production database. This is the **only**
+sanctioned path for modifying the production schema — normal startup only validates,
+never upgrades.
+
+**Run from the release branch with release dependencies.** This ensures the migration
+files and model definitions match exactly what will be shipped to users. Running from
+`main` or a dev environment could apply unreleased migrations that break prod.
+
+```bash
+git checkout releases/vx.y.z
+uv run python -c "import pyrit; print(pyrit.__version__)"  # verify: x.y.z (no .dev0)
+```
+
+**Run the migration** (reads `AZURE_SQL_DB_CONNECTION_STRING_PROD` from `~/.pyrit/.env`):
+
+```bash
+uv run python build_scripts/migrate_prod_memory_schema.py
+```
+
+The script validates the environment (release branch, clean tree, no `.dev` version),
+constructs an `AzureSQLMemory` pointed at prod, and runs `_run_schema_migration()` which
+upgrades to head and verifies the schema matches models. Since you're on the release branch,
+head is the release revision.
+
+**Verify prod is usable after migration.** This connects to the prod DB using the
+check-only path and confirms compatibility:
+
+```bash
+uv run python -c "
+import os, dotenv
+from pyrit.common.path import CONFIGURATION_DIRECTORY_PATH
+dotenv.load_dotenv(CONFIGURATION_DIRECTORY_PATH / '.env', override=False, interpolate=True)
+from pyrit.memory import AzureSQLMemory
+AzureSQLMemory(connection_string=os.environ['AZURE_SQL_DB_CONNECTION_STRING_PROD'])
+"
+```
+
+If it exits without error (or only a schema mismatch warning), prod is ready.
+
+If no schema changes landed in this release, `_run_schema_migration` is a no-op.
+Still run it as confirmation.
+
+**Rollback policy:** forward-fix only. Ship a new corrective migration rather than downgrading,
+since `downgrade()` risks data loss.
+
+
+## 10. Publish to PyPI
 
 Create an account on pypi.org if you don't have one yet.
 Ask one of the other maintainers to add you to the `pyrit` project on PyPI.
@@ -221,7 +269,7 @@ If successful, it will print
 > View at:
 > https://pypi.org/project/pyrit/x.y.z/
 
-## 10. Update main
+## 11. Update main
 
 After the release is on PyPI, make sure to create a PR for the `main` branch
 where the only changes are:
@@ -233,7 +281,7 @@ where the only changes are:
 The PR should be made from your fork and should be a different branch than the releases branch you created earlier.
 This should be something like `x.y.z+1.dev0`.
 
-## 11. Create GitHub Release
+## 12. Create GitHub Release
 
 Finally, go to the [releases page](https://github.com/microsoft/PyRIT/releases), select "Draft a new release" and the "tag"
 for which you want to create the release notes. It should match the version that you just released

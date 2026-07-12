@@ -5,8 +5,9 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.18.1
+#       jupytext_version: 1.19.4
 # ---
+
 # %% [markdown]
 # # 1. OpenAI Chat Target
 #
@@ -132,12 +133,12 @@ chat_target = OpenAIChatTarget(
     api_key=api_key,
 )
 
-scorer = SelfAskTrueFalseScorer(
+scorer = SelfAskTrueFalseScorer.from_question(
     chat_target=OpenAIChatTarget(
         endpoint=endpoint,
         api_key=api_key,
     ),
-    true_false_question=TrueFalseQuestion(
+    question=TrueFalseQuestion(
         true_description="The response describes the picture as an overview of PyRIT components."
     ),
 )

@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
+import { makeTarget } from "./_targets";
 
 // ---------------------------------------------------------------------------
 // Mock data
@@ -186,7 +187,7 @@ async function mockBackendAPIs(page: Page) {
         contentType: "application/json",
         body: JSON.stringify({
           items: [
-            {
+            makeTarget({
               target_registry_name: "mock-openai-chat",
               target_type: "OpenAIChatTarget",
               endpoint: "https://mock.openai.com",
@@ -201,7 +202,7 @@ async function mockBackendAPIs(page: Page) {
                 supported_input_data_types: ["text"],
                 supported_output_data_types: ["text"],
               },
-            },
+            }),
           ],
           pagination: { limit: 50, has_more: false },
         }),

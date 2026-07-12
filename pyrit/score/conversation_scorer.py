@@ -1,16 +1,17 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-import uuid
 from abc import ABC, abstractmethod
-from typing import cast
-from uuid import UUID
+from typing import TYPE_CHECKING, cast
 
 from pyrit.models import ComponentIdentifier, Message, MessagePiece, Score
 from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
 from pyrit.score.scorer import Scorer
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
+
+if TYPE_CHECKING:
+    from uuid import UUID
 
 
 class ConversationScorer(Scorer, ABC):
@@ -43,6 +44,11 @@ class ConversationScorer(Scorer, ABC):
         scorer's text-only validator accepts the synthetic message and scores the full
         conversation, even when the triggering turn was blocked or errored; the wrapped
         scorer's fallback only fires when the rendered conversation is genuinely unscoreable.
+
+        The wrapped scorer is invoked via its protected ``_score_async`` so it does not
+        persist its own copy of the scores. The outer ``Scorer.score_async`` that invoked
+        this method persists the returned scores exactly once, keyed to the original
+        ``message_piece_id``.
 
         Args:
             message (Message): A message from the conversation to be scored.
@@ -103,7 +109,7 @@ class ConversationScorer(Scorer, ABC):
                     converted_value=conversation_text,
                     id=original_piece.id,
                     conversation_id=original_piece.conversation_id,
-                    labels=original_piece.labels,  # deprecated
+                    labels=original_piece.labels,
                     original_value_data_type="text",
                     converted_value_data_type="text",
                     response_error="none",
@@ -118,14 +124,10 @@ class ConversationScorer(Scorer, ABC):
         )
 
         wrapped_scorer = self._get_wrapped_scorer()
-        scores = await wrapped_scorer.score_async(message=conversation_message, objective=objective)
-
-        # Generate new IDs for the scores to avoid ID collisions when the wrapped scorer's
-        # scores are already in the database
-        for score in scores:
-            score.id = uuid.uuid4()
-
-        return scores
+        # Call the wrapped scorer's protected ``_score_async`` rather than the public
+        # ``score_async`` so the wrapped scorer does not persist its own copy of the
+        # scores.
+        return await wrapped_scorer._score_async(message=conversation_message, objective=objective)
 
     async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
         """
@@ -180,7 +182,7 @@ def create_conversation_scorer(
         ValueError: If the scorer is not an instance of FloatScaleScorer or TrueFalseScorer.
 
     Example:
-        >>> float_scorer = SelfAskLikertScorer(chat_target=target, likert_scale=scale)
+        >>> float_scorer = SelfAskLikertScorer.from_likert_scale(chat_target=target, likert_scale=scale)
         >>> conversation_scorer = create_conversation_scorer(scorer=float_scorer)
         >>> isinstance(conversation_scorer, FloatScaleScorer)  # True
         >>> isinstance(conversation_scorer, ConversationScorer)  # True

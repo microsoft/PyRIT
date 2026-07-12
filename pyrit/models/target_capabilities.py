@@ -22,7 +22,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import cast
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, computed_field
 
 from pyrit.models.literals import PromptDataType  # noqa: TC001  (runtime-required by Pydantic field annotations)
 
@@ -63,6 +63,12 @@ class TargetCapabilities(BaseModel):
 
     Immutable (``frozen``) so a single capabilities object can be safely shared
     across targets and reused as a known-model profile.
+
+    This model also serves as the REST wire snapshot of a target's capabilities
+    (it is embedded in ``TargetInstance``). The modality *combination* fields
+    (``input_modalities`` / ``output_modalities``) are excluded from serialization;
+    API consumers read the flattened ``supported_input_modalities`` /
+    ``supported_output_modalities`` computed fields instead.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -97,11 +103,44 @@ class TargetCapabilities(BaseModel):
     #: ``BargeInAttack``.
     supports_streaming_audio: bool = False
 
-    #: The input modalities supported by the target (e.g., "text", "image").
-    input_modalities: frozenset[frozenset[PromptDataType]] = Field(default=_DEFAULT_TEXT_MODALITIES)
+    #: The input modalities supported by the target, as combinations of data types
+    #: (e.g., ``{{"text"}, {"image_path", "text"}}``). Excluded from serialization —
+    #: API consumers read the flattened ``supported_input_modalities`` instead.
+    input_modalities: frozenset[frozenset[PromptDataType]] = Field(default=_DEFAULT_TEXT_MODALITIES, exclude=True)
 
-    #: The output modalities supported by the target (e.g., "text", "image").
-    output_modalities: frozenset[frozenset[PromptDataType]] = Field(default=_DEFAULT_TEXT_MODALITIES)
+    #: The output modalities supported by the target, as combinations of data types.
+    #: Excluded from serialization — see ``supported_output_modalities``.
+    output_modalities: frozenset[frozenset[PromptDataType]] = Field(default=_DEFAULT_TEXT_MODALITIES, exclude=True)
+
+    @computed_field(  # type: ignore[prop-decorator]
+        description="Sorted unique input modality data types the target accepts (e.g., ['image_path', 'text'])",
+    )
+    @property
+    def supported_input_modalities(self) -> list[str]:
+        """
+        Flattened, sorted unique input modality data types.
+
+        The internal ``input_modalities`` models modality *combinations*
+        (``frozenset[frozenset]``); API consumers use only per-piece modality
+        checks, so this flattens the combinations into a sorted unique list.
+
+        Returns:
+            list[str]: Sorted unique input modality data types.
+        """
+        return sorted({str(data_type) for combo in self.input_modalities for data_type in combo})
+
+    @computed_field(  # type: ignore[prop-decorator]
+        description="Sorted unique output modality data types the target produces (e.g., ['audio_path', 'text'])",
+    )
+    @property
+    def supported_output_modalities(self) -> list[str]:
+        """
+        Flattened, sorted unique output modality data types.
+
+        Returns:
+            list[str]: Sorted unique output modality data types.
+        """
+        return sorted({str(data_type) for combo in self.output_modalities for data_type in combo})
 
     def includes(self, *, capability: CapabilityName) -> bool:
         """

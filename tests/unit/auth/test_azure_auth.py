@@ -13,6 +13,8 @@ from pyrit.auth.azure_auth import (
     get_azure_token_provider,
     get_speech_config,
     get_speech_config_from_default_azure_credential,
+    is_azure_ml_endpoint,
+    is_azure_openai_endpoint,
 )
 
 curr_epoch_time = int(time.time())
@@ -170,3 +172,70 @@ def test_get_access_token_from_interactive_login_propagates_exception():
     ):
         with pytest.raises(ValueError, match="auth failed"):
             get_access_token_from_interactive_login(scope="https://test.scope")
+
+
+class TestIsAzureOpenAIEndpoint:
+    """Strict hostname-suffix validation for Azure OpenAI / AI Foundry endpoints."""
+
+    @pytest.mark.parametrize(
+        "endpoint",
+        [
+            "https://my-resource.openai.azure.com",
+            "https://my-resource.openai.azure.com/openai/deployments/gpt-4o",
+            "https://my-project.ai.azure.com",
+            "https://my-project.services.ai.azure.com",
+            "https://my-resource.cognitiveservices.azure.com",
+            "https://MY-RESOURCE.OpenAI.Azure.Com",  # case-insensitive
+        ],
+    )
+    def test_recognises_valid_endpoints(self, endpoint: str) -> None:
+        assert is_azure_openai_endpoint(endpoint) is True
+
+    @pytest.mark.parametrize(
+        "endpoint",
+        [
+            None,
+            "",
+            "not a url",
+            "https://openai.com",
+            "https://api.openai.com/v1",
+            "https://my-resource.notazure.com",
+            # Suffix-injection / spoofing: the real suffix is only a substring, not the host suffix.
+            "https://evil.openai.azure.com.attacker.com",
+            "https://openai.azure.com.attacker.com",
+            "https://myopenai.azure.com",  # ".azure.com" without a recognised leading label
+        ],
+    )
+    def test_rejects_invalid_or_spoofed_endpoints(self, endpoint: str | None) -> None:
+        assert is_azure_openai_endpoint(endpoint) is False
+
+    def test_does_not_match_azure_ml_endpoint(self) -> None:
+        assert is_azure_openai_endpoint("https://my-endpoint.inference.ml.azure.com") is False
+
+
+class TestIsAzureMLEndpoint:
+    """Strict hostname-suffix validation for Azure ML managed online endpoints."""
+
+    @pytest.mark.parametrize(
+        "endpoint",
+        [
+            "https://my-endpoint.inference.ml.azure.com",
+            "https://my-endpoint.inference.ml.azure.com/score",
+            "https://MY-ENDPOINT.Inference.ML.Azure.Com",  # case-insensitive
+        ],
+    )
+    def test_recognises_valid_endpoints(self, endpoint: str) -> None:
+        assert is_azure_ml_endpoint(endpoint) is True
+
+    @pytest.mark.parametrize(
+        "endpoint",
+        [
+            None,
+            "",
+            "https://my-resource.openai.azure.com",
+            "https://my-endpoint.inference.ml.azure.com.attacker.com",  # suffix injection
+            "https://myinference.ml.azure.com",
+        ],
+    )
+    def test_rejects_invalid_or_spoofed_endpoints(self, endpoint: str | None) -> None:
+        assert is_azure_ml_endpoint(endpoint) is False

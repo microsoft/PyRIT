@@ -18,6 +18,10 @@ const PIECE_TYPE_LABELS: Record<string, string> = {
   video: 'Video',
 }
 
+// Converter classes the backend can build but that aren't useful to offer in the
+// picker (base/helper classes).
+const HIDDEN_CONVERTER_TYPES = new Set<string>(['SelectiveTextConverter'])
+
 interface ConverterPanelProps {
   onClose: () => void
   previewText?: string
@@ -50,7 +54,7 @@ export default function ConverterPanel({ onClose, previewText = '', attachmentDa
     convertersApi.listConverterCatalog()
       .then((response) => {
         if (cancelled) return
-        setConverters(response.items)
+        setConverters(response.items.filter((c) => !HIDDEN_CONVERTER_TYPES.has(c.converter_type)))
         setError(null)
       })
       .catch((err) => {
@@ -162,8 +166,8 @@ export default function ConverterPanel({ onClose, previewText = '', attachmentDa
     const newConverter = converters.find((c) => c.converter_type === type)
     const defaults: Record<string, string> = {}
     for (const p of newConverter?.parameters ?? []) {
-      if (p.default_value != null) {
-        defaults[p.name] = p.default_value
+      if (p.default != null) {
+        defaults[p.name] = p.default
       }
     }
     setParamValues(defaults)
@@ -316,7 +320,7 @@ export default function ConverterPanel({ onClose, previewText = '', attachmentDa
         <div className={styles.headerTitle}>
           <Text weight="semibold" size={300}>Converters</Text>
           <Text size={200} className={styles.hintText}>
-            Select and preview prompt converters here in the next step.
+            Select and preview converters here in the next step.
           </Text>
         </div>
         <Button

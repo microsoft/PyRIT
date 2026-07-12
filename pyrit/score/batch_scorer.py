@@ -46,7 +46,6 @@ class BatchScorer:
         self,
         *,
         scorer: Scorer,
-        attack_id: str | uuid.UUID | None = None,
         conversation_id: str | uuid.UUID | None = None,
         prompt_ids: list[str] | list[uuid.UUID] | None = None,
         labels: dict[str, str] | None = None,
@@ -64,7 +63,6 @@ class BatchScorer:
 
         Args:
             scorer (Scorer): The Scorer object to use for scoring.
-            attack_id (str | uuid.UUID | None): The ID of the attack. Defaults to None.
             conversation_id (str | uuid.UUID | None): The ID of the conversation. Defaults to None.
             prompt_ids (list[str] | list[uuid.UUID] | None): A list of prompt IDs. Defaults to None.
             labels (dict[str, str] | None): A dictionary of labels. Defaults to None.
@@ -88,7 +86,6 @@ class BatchScorer:
         """
         message_pieces: Sequence[MessagePiece] = []
         message_pieces = self._memory.get_message_pieces(
-            attack_id=attack_id,
             conversation_id=conversation_id,
             prompt_ids=prompt_ids,
             labels=labels,

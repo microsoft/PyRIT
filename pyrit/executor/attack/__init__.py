@@ -50,19 +50,11 @@ from pyrit.executor.attack.single_turn import (
     FlipAttack,
     ManyShotJailbreakAttack,
     PromptSendingAttack,
-    RolePlayAttack,
-    RolePlayPaths,
     SingleTurnAttackContext,
     SingleTurnAttackStrategy,
     SkeletonKeyAttack,
 )
 from pyrit.executor.attack.streaming import BargeInAttack, BargeInAttackContext
-
-# Backward-compatibility aliases — import from pyrit.output.attack_result directly.
-# TODO: Remove these re-exports in two releases (target removal: 0.16.0).
-from pyrit.output.attack_result.base import AttackResultPrinterBase as AttackResultPrinter
-from pyrit.output.attack_result.markdown import MarkdownAttackResultMemoryPrinter as MarkdownAttackResultPrinter
-from pyrit.output.attack_result.pretty import PrettyAttackResultMemoryPrinter as ConsoleAttackResultPrinter
 
 __all__ = [
     "AttackAdversarialConfig",
@@ -71,14 +63,12 @@ __all__ = [
     "AttackExecutor",
     "AttackExecutorResult",
     "AttackParameters",
-    "AttackResultPrinter",
     "AttackScoringConfig",
     "AttackStrategy",
     "BargeInAttack",
     "BargeInAttackContext",
     "ChunkedRequestAttack",
     "ChunkedRequestAttackContext",
-    "ConsoleAttackResultPrinter",
     "ContextComplianceAttack",
     "ConversationManager",
     "ConversationSession",
@@ -88,7 +78,6 @@ __all__ = [
     "CrescendoAttackResult",
     "FlipAttack",
     "ManyShotJailbreakAttack",
-    "MarkdownAttackResultPrinter",
     "MultiPromptSendingAttack",
     "MultiPromptSendingAttackParameters",
     "MultiTurnAttackContext",
@@ -98,8 +87,6 @@ __all__ = [
     "PromptSendingAttack",
     "RTASystemPromptPaths",
     "RedTeamingAttack",
-    "RolePlayAttack",
-    "RolePlayPaths",
     "SequenceCompletionPolicy",
     "SequentialAttack",
     "SequentialAttackResult",

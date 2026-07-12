@@ -103,6 +103,10 @@ class _AegisContentSafetyDataset(_RemoteDatasetLoader):
             ValueError: If any provided harm category is not an ``AegisHarmCategory``.
         """
         if harm_categories is not None:
+            if not harm_categories:
+                raise ValueError(
+                    "`harm_categories` must be a non-empty list (pass None to include all harm categories)"
+                )
             self._validate_enums(harm_categories, AegisHarmCategory, "harm category")
 
         self._selected_category_values = {c.value for c in harm_categories} if harm_categories is not None else None
@@ -111,7 +115,7 @@ class _AegisContentSafetyDataset(_RemoteDatasetLoader):
     @property
     @override
     def dataset_name(self) -> str:
-        """Return the dataset name."""
+        """The dataset name."""
         return "aegis_content_safety"
 
     @override

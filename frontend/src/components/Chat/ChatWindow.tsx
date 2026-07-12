@@ -18,6 +18,7 @@ import { attacksApi } from '../../services/api'
 import { toApiError } from '../../services/errors'
 import { buildMessagePieces, backendMessagesToFrontend } from '../../utils/messageMapper'
 import type { Message, MessageAttachment, TargetInstance, TargetInfo } from '../../types'
+import { targetEndpoint, targetModelName, targetType } from '../../utils/targetIdentity'
 import type { ViewName } from '../Sidebar/Navigation'
 import { useChatWindowStyles } from './ChatWindow.styles'
 
@@ -347,8 +348,21 @@ export default function ChatWindow({
         setLoadedConversationId(effectiveConvId!)
       }
     } catch (err) {
+      const viewedConversationId = viewedConvRef.current
+      const isViewingFailedConversation = viewedConversationId === sendConvId
+        || viewedConversationId === (activeConversationId ?? conversationId)
+        || (viewedConversationId == null && sendConvId !== '__pending__')
+
       // Only show error in UI if user is still on this conversation
-      if (viewedConvRef.current === sendConvId || viewedConvRef.current === (activeConversationId ?? conversationId)) {
+      if (isViewingFailedConversation) {
+        // Mark the viewed conversation as loaded so first-send failures do not
+        // get stuck behind the "Loading conversation..." placeholder.
+        if (viewedConversationId) {
+          setLoadedConversationId(viewedConversationId)
+        } else if (sendConvId !== '__pending__') {
+          setLoadedConversationId(sendConvId)
+        }
+
         const apiError = toApiError(err)
         let description: string
         if (apiError.isNetworkError) {
@@ -513,9 +527,9 @@ export default function ChatWindow({
   // The user can "Continue with your target" to branch into a new attack with their target.
   const isCrossTargetLocked = Boolean(
     attackResultId && attackTarget && activeTarget && (
-      attackTarget.target_type !== activeTarget.target_type ||
-      (attackTarget.endpoint ?? '') !== (activeTarget.endpoint ?? '') ||
-      (attackTarget.model_name ?? '') !== (activeTarget.model_name ?? '')
+      attackTarget.target_type !== targetType(activeTarget) ||
+      (attackTarget.endpoint ?? '') !== (targetEndpoint(activeTarget) ?? '') ||
+      (attackTarget.model_name ?? '') !== (targetModelName(activeTarget) ?? '')
     )
   )
 

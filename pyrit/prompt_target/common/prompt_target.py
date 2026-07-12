@@ -3,9 +3,8 @@
 
 import abc
 import logging
-from typing import Any, final
+from typing import Any, ClassVar, Literal, final
 
-from pyrit.common.deprecation import print_deprecation_message
 from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import ComponentIdentifier, Conversation, Identifiable, Message, MessagePiece, TargetIdentifier
 from pyrit.prompt_target.common.json_response_config import _JsonResponseConfig
@@ -18,6 +17,13 @@ from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 
 logger = logging.getLogger(__name__)
 
+# Authentication modes a target can expose to the create-target catalog / API.
+# ``api_key`` passes a key (from params or the target's env var); ``identity``
+# omits the key so the target authenticates itself via an ambient Azure identity
+# (e.g. minting a Microsoft Entra ID token for its own endpoint, or falling back
+# to ``DefaultAzureCredential``).
+AuthMode = Literal["api_key", "identity"]
+
 
 class PromptTarget(Identifiable):
     """
@@ -29,7 +35,7 @@ class PromptTarget(Identifiable):
 
     _memory: MemoryInterface
 
-    # A list of PromptConverters that are supported by the prompt target.
+    # A list of Converters that are supported by the prompt target.
     # An empty list implies that the prompt target supports all converters.
     supported_converters: list[Any]
 
@@ -46,6 +52,19 @@ class PromptTarget(Identifiable):
     # constructor parameter, which takes precedence over the class-level value.
     _DEFAULT_CONFIGURATION: TargetConfiguration = TargetConfiguration(capabilities=TargetCapabilities())
 
+    # Declarative auth facts consumed by the create-target service and catalog.
+    # Kept off ``TargetCapabilities`` (auth is a construction/credential axis, not
+    # a message-handling capability) and out of the identity hash. It is surfaced
+    # on ``TargetIdentifier`` only as a ``Param.ClassAttr`` (``Evaluate.Exclude``)
+    # so the registry can read it into ``TargetMetadata`` without building an
+    # instance — never as an identity input or a constructor argument.
+    #
+    # ``supported_auth_modes`` lists the auth modes the create-target API accepts
+    # for this type. Base default is api-key only; targets that can authenticate
+    # via an ambient Azure identity when given no key (e.g. OpenAI, Azure ML,
+    # Azure Blob Storage, Prompt Shield) override this to add ``"identity"``.
+    supported_auth_modes: ClassVar[tuple[AuthMode, ...]] = ("api_key",)
+
     def __init_subclass__(cls, **kwargs: object) -> None:
         """
         Validate that subclasses follow the keyword-only ``__init__`` contract.
@@ -55,7 +74,7 @@ class PromptTarget(Identifiable):
 
         Raises:
             TypeError: If the subclass ``__init__`` accepts positional parameters
-                after ``self`` and is not grandfathered via ``_brick_legacy_init``.
+                after ``self``.
         """
         super().__init_subclass__(**kwargs)
         # Local import to avoid a circular dependency at package init time.
@@ -63,13 +82,9 @@ class PromptTarget(Identifiable):
 
         enforce_keyword_only_init(cls, base_name="PromptTarget")
 
-    # TODO: ``PromptTarget.__init__`` itself accepts positional parameters, which
-    # violates the keyword-only contract enforced by ``__init_subclass__`` on
-    # subclasses. The hook only runs for subclasses, so the base class non-
-    # compliance is tolerated during the warn-first phase. Reshape this
-    # signature (insert ``*`` after ``self``) in 0.16.0 as a BREAKING CHANGE.
     def __init__(
         self,
+        *,
         verbose: bool = False,
         max_requests_per_minute: int | None = None,
         endpoint: str = "",
@@ -291,8 +306,6 @@ class PromptTarget(Identifiable):
         *,
         system_prompt: str,
         conversation_id: str,
-        attack_identifier: ComponentIdentifier | None = None,
-        labels: dict[str, str] | None = None,  # deprecated
     ) -> None:
         """
         Inject a system prompt into memory for the given conversation.
@@ -313,28 +326,11 @@ class PromptTarget(Identifiable):
         Args:
             system_prompt (str): The system prompt text to set.
             conversation_id (str): The conversation id to attach the prompt to.
-            attack_identifier (ComponentIdentifier | None): Optional attack identifier.
-                Deprecated: this parameter is ignored and will be removed in release 0.17.0.
-            labels (dict[str, str] | None): Optional labels.
 
         Raises:
             ValueError: If the target does not support multi-turn or editable history.
             RuntimeError: If the conversation already has messages.
         """
-        if labels is not None:
-            print_deprecation_message(
-                old_item="set_system_prompt(..., labels=...)",
-                new_item="set_system_prompt(...)",
-                removed_in="0.16.0",
-            )
-
-        if attack_identifier is not None:
-            print_deprecation_message(
-                old_item="set_system_prompt(..., attack_identifier=...)",
-                new_item="set_system_prompt(...)",
-                removed_in="0.17.0",
-            )
-
         if not self.capabilities.supports_multi_turn or not self.capabilities.supports_editable_history:
             raise ValueError(
                 f"Target {type(self).__name__} does not support setting a system prompt. "
@@ -355,7 +351,6 @@ class PromptTarget(Identifiable):
                 conversation_id=conversation_id,
                 original_value=system_prompt,
                 converted_value=system_prompt,
-                labels=labels or {},
             ).to_message(),
         )
 

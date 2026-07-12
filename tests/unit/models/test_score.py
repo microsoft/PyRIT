@@ -2,7 +2,6 @@
 # Licensed under the MIT license.
 
 import uuid
-import warnings
 from datetime import datetime, timezone
 
 import pytest
@@ -165,7 +164,7 @@ def test_model_dump_contains_expected_keys():
     assert expected_keys <= set(result)
     assert result["id"] == str(score.id)
     assert result["message_piece_id"] == str(score.message_piece_id)
-    assert result["scorer_class_identifier"] == score.scorer_class_identifier.to_dict()
+    assert result["scorer_class_identifier"] == score.scorer_class_identifier.model_dump(mode="json")
     assert result["objective"] == "Task1"
 
 
@@ -194,46 +193,6 @@ def test_model_validate_accepts_dict_scorer_identifier():
     assert isinstance(dumped["scorer_class_identifier"], dict)
     reconstructed = Score.model_validate(dumped)
     assert isinstance(reconstructed.scorer_class_identifier, ComponentIdentifier)
-
-
-# --------------------------------------------------------------------------- #
-# Deprecated method shims (removed in 0.16.0)
-# --------------------------------------------------------------------------- #
-def test_to_dict_emits_warning_and_matches_model_dump():
-    score = _make_score()
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        result = score.to_dict()
-    msgs = [w for w in caught if issubclass(w.category, DeprecationWarning)]
-    assert any("to_dict" in str(m.message) for m in msgs)
-    assert result == score.model_dump(mode="json")
-
-
-def test_from_dict_emits_warning_and_matches_model_validate():
-    score = _make_score()
-    serialized = score.model_dump(mode="json")
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        reconstructed = Score.from_dict(serialized)
-    msgs = [w for w in caught if issubclass(w.category, DeprecationWarning)]
-    assert any("from_dict" in str(m.message) for m in msgs)
-    assert reconstructed.model_dump(mode="json") == serialized
-
-
-def test_validate_emits_warning_and_revalidates():
-    score = _make_score(score_type="true_false", score_value="true")
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        score.validate()
-    msgs = [w for w in caught if issubclass(w.category, DeprecationWarning)]
-    assert any("validate" in str(m.message) for m in msgs)
-
-
-def test_validate_raises_when_instance_made_invalid():
-    score = _make_score(score_type="true_false", score_value="true")
-    score.score_value = "maybe"
-    with pytest.raises(ValueError):
-        score.validate()
 
 
 # --------------------------------------------------------------------------- #

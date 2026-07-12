@@ -18,9 +18,9 @@ PyRIT has two registry patterns for different use cases:
 | **Class Registry** | Classes (type[T]) | Components instantiated with user-provided parameters |
 | **Instance Registry** | Pre-configured instances | Components requiring complex setup before use |
 
-## Common API (RegistryProtocol)
+## Common API
 
-Both registry types implement `RegistryProtocol`, sharing a consistent interface:
+Registries share a consistent interface for discovery and introspection:
 
 | Method | Description |
 |--------|-------------|
@@ -29,14 +29,17 @@ Both registry types implement `RegistryProtocol`, sharing a consistent interface
 | `list_metadata()` | Get descriptive metadata for all items |
 | `reset_instance()` | Reset the singleton (useful for testing) |
 
-This protocol enables writing code that works with any registry type:
+This makes it easy to write code that inspects any registry:
 
 ```python
-from pyrit.registry import RegistryProtocol
+from pyrit.registry import ScenarioRegistry
 
-def show_registry_contents(registry: RegistryProtocol) -> None:
+def show_registry_contents(registry) -> None:
     for name in registry.get_names():
         print(name)
+
+
+show_registry_contents(ScenarioRegistry.get_registry_singleton())
 ```
 
 

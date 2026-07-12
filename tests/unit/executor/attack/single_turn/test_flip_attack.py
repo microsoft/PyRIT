@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from pyrit.converter import FlipConverter
 from pyrit.executor.attack import (
     AttackConverterConfig,
     AttackParameters,
@@ -18,8 +19,7 @@ from pyrit.models import (
     AttackResult,
     ComponentIdentifier,
 )
-from pyrit.prompt_converter import FlipConverter
-from pyrit.prompt_normalizer import PromptConverterConfiguration, PromptNormalizer
+from pyrit.prompt_normalizer import ConverterConfiguration, PromptNormalizer
 from pyrit.prompt_target import PromptTarget
 from pyrit.score import TrueFalseScorer
 
@@ -100,9 +100,9 @@ class TestFlipAttackInitialization:
 
     def test_init_with_existing_converters_prepends_flip_converter(self, mock_objective_target):
         """Test that FlipConverter is prepended to existing converters"""
-        from pyrit.prompt_converter import Base64Converter
+        from pyrit.converter import Base64Converter
 
-        existing_converter = PromptConverterConfiguration.from_converters(converters=[Base64Converter()])
+        existing_converter = ConverterConfiguration.from_converters(converters=[Base64Converter()])
         converter_config = AttackConverterConfig(request_converters=existing_converter)
 
         attack = FlipAttack(objective_target=mock_objective_target, attack_converter_config=converter_config)

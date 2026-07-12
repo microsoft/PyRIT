@@ -12,17 +12,13 @@ import pytest
 
 from pyrit.common.apply_defaults import reset_default_values
 from pyrit.common.singleton import Singleton
+from pyrit.registry import InitializerRegistry
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
-from pyrit.setup.initialization import (
-    _load_env_from_akv_async,
-    _load_environment_files,
-    _load_initializers_from_scripts,
-    _parse_akv_secret_url,
-)
+from pyrit.setup.initialization import _load_env_from_akv_async, _load_environment_files, _parse_akv_secret_url
 
 
 class TestLoadInitializersFromScripts:
-    """Tests for _load_initializers_from_scripts function."""
+    """Tests for InitializerRegistry.create_from_script_paths."""
 
     def test_load_initializer_from_script(self):
         """Test loading an initializer from a Python script."""
@@ -47,7 +43,9 @@ class TestInitializer(PyRITInitializer):
             script_path = f.name
 
         try:
-            initializers = _load_initializers_from_scripts(script_paths=[script_path])
+            initializers = InitializerRegistry.get_registry_singleton().create_from_script_paths(
+                script_paths=[script_path]
+            )
             assert len(initializers) == 1
             assert initializers[0].name == "Test Initializer"
         finally:
@@ -56,7 +54,9 @@ class TestInitializer(PyRITInitializer):
     def test_script_not_found_raises_error(self):
         """Test that FileNotFoundError is raised for non-existent script."""
         with pytest.raises(FileNotFoundError):
-            _load_initializers_from_scripts(script_paths=["nonexistent_script.py"])
+            InitializerRegistry.get_registry_singleton().create_from_script_paths(
+                script_paths=["nonexistent_script.py"]
+            )
 
     def test_ignores_imported_initializer_classes(self):
         """Test that imported initializer classes are not instantiated from the script."""
@@ -106,7 +106,9 @@ class LocalInitializer(PyRITInitializer):
 """
             )
 
-            initializers = _load_initializers_from_scripts(script_paths=[script_path])
+            initializers = InitializerRegistry.get_registry_singleton().create_from_script_paths(
+                script_paths=[script_path]
+            )
 
             assert len(initializers) == 1
             assert initializers[0].name == "Local"

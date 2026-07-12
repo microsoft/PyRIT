@@ -66,6 +66,11 @@ class TestVisualLeakBenchDataset:
         with pytest.raises(ValueError, match="Expected VisualLeakBenchCategory"):
             _VisualLeakBenchDataset(categories=["PII Leakage"])
 
+    def test_init_with_empty_categories_raises(self):
+        """Test that an empty categories list raises ValueError."""
+        with pytest.raises(ValueError, match="`categories` must be a non-empty list"):
+            _VisualLeakBenchDataset(categories=[])
+
     def test_init_with_pii_types(self):
         """Test initialization with PII type filtering."""
         pii_types = [VisualLeakBenchPIIType.EMAIL, VisualLeakBenchPIIType.SSN]
@@ -81,6 +86,11 @@ class TestVisualLeakBenchDataset:
         """Test that raw strings matching enum values are rejected."""
         with pytest.raises(ValueError, match="Expected VisualLeakBenchPIIType"):
             _VisualLeakBenchDataset(pii_types=["Email"])
+
+    def test_init_with_empty_pii_types_raises(self):
+        """Test that an empty pii_types list raises ValueError."""
+        with pytest.raises(ValueError, match="`pii_types` must be a non-empty list"):
+            _VisualLeakBenchDataset(pii_types=[])
 
     async def test_fetch_dataset_ocr_creates_pair(self):
         """Test that OCR Injection example creates an image+text pair."""

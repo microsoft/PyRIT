@@ -2,12 +2,11 @@
 # Licensed under the MIT license.
 
 import logging
-import warnings
 
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import Modality, SeedDataset, SeedPrompt
+from pyrit.models import Modality, SeedDataset, SeedPrompt, SeedUnion
 
 logger = logging.getLogger(__name__)
 
@@ -37,24 +36,6 @@ class _ORBenchBaseDataset(_RemoteDatasetLoader):
     modalities: tuple[Modality, ...] = (Modality.TEXT,)
     tags: frozenset[str] = frozenset({"default", "safety", "refusal"})
 
-    def __init__(self, *, split: str | None = None) -> None:
-        """
-        Initialize the OR-Bench dataset loader.
-
-        Args:
-            split: **Deprecated.** Every config of ``bench-llm/OR-Bench`` publishes only
-                the ``"train"`` split, so this kwarg has no effect. It will be removed in
-                v0.16.0.
-        """
-        if split is not None:
-            warnings.warn(
-                "'split' is deprecated and will be removed in v0.16.0. "
-                "Every config of bench-llm/OR-Bench publishes only the 'train' split, "
-                "so this kwarg has no effect.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-
     async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch OR-Bench dataset from HuggingFace and return as SeedDataset.
@@ -83,7 +64,7 @@ class _ORBenchBaseDataset(_RemoteDatasetLoader):
         source_url = f"https://huggingface.co/datasets/{self.HF_DATASET_NAME}"
         groups = ["UCLA", "UC Berkeley"]
 
-        seed_prompts = [
+        seed_prompts: list[SeedUnion] = [
             SeedPrompt(
                 value=item["prompt"],
                 data_type="text",
@@ -120,7 +101,7 @@ class _ORBench80KDataset(_ORBenchBaseDataset):
 
     @property
     def dataset_name(self) -> str:
-        """Return the dataset name."""
+        """The dataset name."""
         return "or_bench_80k"
 
 
@@ -142,7 +123,7 @@ class _ORBenchHardDataset(_ORBenchBaseDataset):
 
     @property
     def dataset_name(self) -> str:
-        """Return the dataset name."""
+        """The dataset name."""
         return "or_bench_hard"
 
 
@@ -165,5 +146,5 @@ class _ORBenchToxicDataset(_ORBenchBaseDataset):
 
     @property
     def dataset_name(self) -> str:
-        """Return the dataset name."""
+        """The dataset name."""
         return "or_bench_toxic"
