@@ -52,8 +52,8 @@ def test_image_resizing_converter_initialization_output_format_validation():
 
 def test_image_resizing_converter_initialization_scale_factor_validation():
     """Test validation of scale_factor parameter."""
-    for invalid_scale_factor in [0.0, -0.1, -1.0, -100.0]:
-        with pytest.raises(ValueError, match="Scale factor must be positive"):
+    for invalid_scale_factor in [0.0, -0.1, -1.0, -100.0, float("nan"), float("inf"), float("-inf")]:
+        with pytest.raises(ValueError, match="Scale factor must be a positive finite number"):
             ImageResizingConverter(scale_factor=invalid_scale_factor)
 
     for valid_scale_factor in [0.1, 0.5, 1.0, 2.0, 10.0]:
@@ -229,3 +229,12 @@ async def test_image_resizing_converter_output_dimensions(sample_image_bytes):
     expected_width = int(original_size[0] * scale_factor)
     expected_height = int(original_size[1] * scale_factor)
     assert resized_image.size == (expected_width, expected_height)
+
+
+def test_image_resizing_converter_invalid_dimensions():
+    """Test that scale factor yielding zero dimensions raises ValueError."""
+    converter = ImageResizingConverter(scale_factor=0.5)
+    # A 1x1 image scaled by 0.5 becomes 0x0
+    image = Image.new("RGB", (1, 1))
+    with pytest.raises(ValueError, match="Resizing would result in invalid dimensions"):
+        converter._apply_transform(image)
