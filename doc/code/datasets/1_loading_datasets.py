@@ -53,6 +53,7 @@
 # StrongREJECT [@souly2024strongreject],
 # TDC23 [@mazeika2023tdc],
 # ToxicChat [@lin2023toxicchat],
+# Turkish Conversation Prompt-Injection [@deniz2026turkishpromptinjection],
 # VLSU [@palaskar2025vlsu],
 # VLGuard [@zong2024vlguard],
 # XSTest [@rottger2023xstest],
@@ -68,6 +69,37 @@
 # `garak_raku_packages`), system-prompt libraries (`garak_drh_system_prompts`,
 # `garak_tm_system_prompts`), and an audio jailbreak set
 # (`garak_audio_achilles_heel`).
+
+# %% [markdown]
+# ## Loading Turkish Prompt-Injection and Boundary Examples
+#
+# The `turkish_conversation_prompt_injection` loader defaults to attack examples
+# and preserves each record's attack family, source context, split, and pair ID.
+# Typed filters can also load legitimate Turkish requests, a specific published
+# split, or selected attack families. For example:
+#
+# ```python
+# from pyrit.datasets.seed_datasets.remote import (
+#     TurkishConversationPromptInjectionAttackFamily,
+#     TurkishConversationPromptInjectionLabel,
+#     TurkishConversationPromptInjectionSplit,
+#     _TurkishConversationPromptInjectionDataset,
+# )
+#
+# test_surface_loader = _TurkishConversationPromptInjectionDataset(
+#     label=TurkishConversationPromptInjectionLabel.ALL,
+#     split=TurkishConversationPromptInjectionSplit.TEST,
+# )
+# test_surface = await test_surface_loader.fetch_dataset_async()
+#
+# obfuscation_loader = _TurkishConversationPromptInjectionDataset(
+#     split=TurkishConversationPromptInjectionSplit.TEST,
+#     attack_families=[
+#         TurkishConversationPromptInjectionAttackFamily.OBFUSCATION_CODE_SWITCHING,
+#     ],
+# )
+# obfuscation_attacks = await obfuscation_loader.fetch_dataset_async()
+# ```
 
 # %%
 from pyrit.datasets import SeedDatasetProvider
