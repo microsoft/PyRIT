@@ -168,7 +168,7 @@ from pyrit.cli._output import print_scenario_list
 logging.getLogger("pyrit").setLevel(logging.ERROR)
 
 response = await get_scenario_service().list_scenarios_async(limit=200)  # type: ignore
-print_scenario_list(items=[s.model_dump() for s in response.items])
+print_scenario_list(items=response.items)
 
 # %% [markdown]
 #

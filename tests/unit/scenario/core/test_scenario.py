@@ -24,6 +24,7 @@ from pyrit.scenario import (
     ScenarioResult,
 )
 from pyrit.scenario.core import AtomicAttack, BaselineAttackPolicy, Scenario, ScenarioTechnique
+from pyrit.scenario.core.scenario_context import ScenarioContext
 from pyrit.score import Scorer
 from tests.unit.mocks import make_scenario_identifier, make_scenario_result
 
@@ -1072,6 +1073,19 @@ class TestScenarioResumeDeterministicUnderMaxDatasetSize:
                 )
             ]
 
+    class _PerObjectiveScenario(ConcreteScenarioWithTrueFalseScorer):
+        async def _build_atomic_attacks_async(self, *, context: ScenarioContext) -> list[AtomicAttack]:
+            from pyrit.scenario.core.attack_technique import AttackTechnique
+
+            return [
+                AtomicAttack(
+                    atomic_attack_name=f"strategy-{index}",
+                    attack_technique=AttackTechnique(attack=MagicMock()),
+                    seed_groups=[seed_group],
+                )
+                for index, seed_group in enumerate(context.seed_groups)
+            ]
+
     def _make_config(self):
         from pyrit.models import SeedGroup, SeedObjective
 
@@ -1139,6 +1153,44 @@ class TestScenarioResumeDeterministicUnderMaxDatasetSize:
         # Exactly the originally-persisted subset, not the divergent "last 3" draw.
         assert set(strategy.objectives) == persisted_objectives
         assert set(baseline.objectives) == persisted_objectives
+
+    async def test_resume_discards_per_objective_attacks_outside_persisted_subset(self, mock_objective_target):
+        def _sample_first_k(population, k):
+            return list(population)[:k]
+
+        with patch(
+            "pyrit.scenario.core.dataset_configuration.random.sample",
+            side_effect=_sample_first_k,
+        ):
+            scenario = self._PerObjectiveScenario(name="Per-objective resume", version=1)
+            scenario.set_params_from_args(
+                args={
+                    "objective_target": mock_objective_target,
+                    "scenario_strategies": None,
+                    "dataset_config": self._make_config(),
+                }
+            )
+            await scenario.initialize_async()
+
+        original_id = scenario._scenario_result_id
+        assert original_id is not None
+
+        resumed = self._PerObjectiveScenario(
+            name="Per-objective resume",
+            version=1,
+            scenario_result_id=original_id,
+        )
+        resumed.set_params_from_args(
+            args={
+                "objective_target": mock_objective_target,
+                "scenario_strategies": None,
+                "dataset_config": self._make_config(),
+            }
+        )
+        await resumed.initialize_async()
+
+        assert len(resumed._atomic_attacks) == 4
+        assert all(atomic_attack.seed_groups for atomic_attack in resumed._atomic_attacks)
 
     async def test_fresh_run_still_samples(self, mock_objective_target):
         """The resume bypass must not disable sampling for a normal (non-resume) run."""
