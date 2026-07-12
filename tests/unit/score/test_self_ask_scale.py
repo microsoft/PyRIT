@@ -11,7 +11,7 @@ import pytest
 from unit.mocks import get_mock_target_identifier
 
 from pyrit.models import ComponentIdentifier, Message, MessagePiece, SeedPrompt, UnvalidatedScore
-from pyrit.score import ContentClassifierPaths, Scale, SelfAskScaleScorer
+from pyrit.score import ContentClassifierPaths, NumericRubric, SelfAskScaleScorer
 
 tree_scale_path = SelfAskScaleScorer.ScalePaths.TREE_OF_ATTACKS_SCALE.value
 task_scale_path = SelfAskScaleScorer.ScalePaths.TASK_ACHIEVED_SCALE.value
@@ -44,7 +44,7 @@ def scale_scorer(patch_central_database) -> SelfAskScaleScorer:
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     return SelfAskScaleScorer.from_scale(
         chat_target=chat_target,
-        scale=Scale.from_yaml(SelfAskScaleScorer.ScalePaths.TREE_OF_ATTACKS_SCALE.value),
+        scale=NumericRubric.from_yaml(SelfAskScaleScorer.ScalePaths.TREE_OF_ATTACKS_SCALE.value),
     )
 
 
@@ -71,7 +71,7 @@ async def test_scale_scorer_set_system_prompt(
 
     scorer = SelfAskScaleScorer.from_scale(
         chat_target=chat_target,
-        scale=Scale.from_yaml(scale_path) if scale_path else None,
+        scale=NumericRubric.from_yaml(scale_path) if scale_path else None,
         system_prompt_template=SeedPrompt.from_yaml_file(system_prompt_path) if system_prompt_path else None,
     )
 
@@ -89,9 +89,9 @@ async def test_scale_scorer_set_system_prompt(
 def test_scale_scorer_invalid_scale_file_contents():
     chat_target = MagicMock()
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
-    # When using a YAML with wrong keys the Scale constructor will raise an exception.
+    # When using a YAML with wrong keys the NumericRubric constructor will raise an exception.
     with pytest.raises(ValueError):
-        Scale.from_yaml(ContentClassifierPaths.HARMFUL_CONTENT_CLASSIFIER.value)
+        NumericRubric.from_yaml(ContentClassifierPaths.HARMFUL_CONTENT_CLASSIFIER.value)
 
 
 @pytest.mark.parametrize(
@@ -133,7 +133,7 @@ def test_scale_scorer_invalid_scale_file_contents():
 )
 def test_validate_scale_arguments_missing_args_raises_value_error(scale_args: dict[str, Any]) -> None:
     with pytest.raises(ValueError):
-        Scale.model_validate(scale_args)
+        NumericRubric.model_validate(scale_args)
 
 
 async def test_scale_scorer_score(scorer_scale_response: Message, patch_central_database):
@@ -144,7 +144,7 @@ async def test_scale_scorer_score(scorer_scale_response: Message, patch_central_
 
     scorer = SelfAskScaleScorer.from_scale(
         chat_target=chat_target,
-        scale=Scale.from_yaml(SelfAskScaleScorer.ScalePaths.TREE_OF_ATTACKS_SCALE.value),
+        scale=NumericRubric.from_yaml(SelfAskScaleScorer.ScalePaths.TREE_OF_ATTACKS_SCALE.value),
     )
 
     score = await scorer.score_text_async(text="example text", objective="task")
@@ -173,7 +173,7 @@ async def test_scale_scorer_score_custom_scale(scorer_scale_response: Message, p
 
     chat_target.send_prompt_async = AsyncMock(return_value=[scorer_scale_response])
 
-    scale = Scale.from_yaml(SelfAskScaleScorer.ScalePaths.TREE_OF_ATTACKS_SCALE.value).model_copy(
+    scale = NumericRubric.from_yaml(SelfAskScaleScorer.ScalePaths.TREE_OF_ATTACKS_SCALE.value).model_copy(
         update={"minimum_value": 1, "maximum_value": 100}
     )
     scorer = SelfAskScaleScorer.from_scale(
@@ -202,7 +202,7 @@ async def test_scale_scorer_score_calls_send_chat(patch_central_database):
 
     scorer = SelfAskScaleScorer.from_scale(
         chat_target=chat_target,
-        scale=Scale.from_yaml(SelfAskScaleScorer.ScalePaths.TREE_OF_ATTACKS_SCALE.value),
+        scale=NumericRubric.from_yaml(SelfAskScaleScorer.ScalePaths.TREE_OF_ATTACKS_SCALE.value),
     )
 
     score = UnvalidatedScore(
@@ -236,7 +236,7 @@ async def test_scale_scorer_non_text_sends_prepended_text(patch_central_database
 
     scorer = SelfAskScaleScorer.from_scale(
         chat_target=chat_target,
-        scale=Scale.from_yaml(SelfAskScaleScorer.ScalePaths.TASK_ACHIEVED_SCALE.value),
+        scale=NumericRubric.from_yaml(SelfAskScaleScorer.ScalePaths.TASK_ACHIEVED_SCALE.value),
         validator=ScorerPromptValidator(supported_data_types=["image_path"], is_objective_required=True),
     )
 
@@ -273,7 +273,7 @@ def test_scale_init_no_chat_target_raises():
         SelfAskScaleScorer(
             chat_target=None,
             system_prompt="rubric",
-            scale=Scale(minimum_value=0, maximum_value=1, category="test"),
+            scale=NumericRubric(minimum_value=0, maximum_value=1, category="test"),
         )
 
 
@@ -288,7 +288,7 @@ def test_scale_factory_default_system_prompt(patch_central_database):
 def test_scale_factory_renders_minimal_inline_scale(patch_central_database):
     chat_target = MagicMock()
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
-    scale = Scale(minimum_value=0, maximum_value=10, category="custom")
+    scale = NumericRubric(minimum_value=0, maximum_value=10, category="custom")
 
     scorer = SelfAskScaleScorer.from_scale(chat_target=chat_target, scale=scale)
 
@@ -300,7 +300,7 @@ def test_scale_init_system_prompt_str_and_invalid_type(patch_central_database):
     chat_target = MagicMock()
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
 
-    scale = Scale(minimum_value=1, maximum_value=7, category="c")
+    scale = NumericRubric(minimum_value=1, maximum_value=7, category="c")
     scorer = SelfAskScaleScorer(chat_target=chat_target, system_prompt="verbatim", scale=scale)
     assert scorer._system_prompt == "verbatim"
 

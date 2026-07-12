@@ -11,7 +11,7 @@ from pydantic import BaseModel, ConfigDict, model_validator
 from pyrit.common import verify_and_resolve_path
 
 
-class NumericScale(BaseModel):
+class NumericRange(BaseModel):
     """The numeric range and optional category used to normalize a float score."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -21,7 +21,7 @@ class NumericScale(BaseModel):
     category: str | None = None
 
     @model_validator(mode="after")
-    def _validate_range(self) -> "NumericScale":
+    def _validate_range(self) -> "NumericRange":
         if self.minimum_value >= self.maximum_value:
             raise ValueError("minimum_value must be less than maximum_value.")
         if self.category is not None and not self.category:
@@ -29,7 +29,7 @@ class NumericScale(BaseModel):
         return self
 
 
-class Scale(NumericScale):
+class NumericRubric(NumericRange):
     """A configurable numeric scoring scale and its prompt-rendering parameters."""
 
     model_config = ConfigDict(extra="allow", frozen=True)
@@ -41,7 +41,7 @@ class Scale(NumericScale):
     examples: str | None = None
 
     @classmethod
-    def from_yaml(cls, path: Path | str) -> "Scale":
+    def from_yaml(cls, path: Path | str) -> "NumericRubric":
         """
         Load a scale and its template parameters from a YAML file.
 
@@ -49,7 +49,7 @@ class Scale(NumericScale):
             path (Path | str): Path to the scale YAML.
 
         Returns:
-            Scale: The loaded scale.
+            NumericRubric: The loaded rubric.
 
         Raises:
             ValueError: If the YAML does not contain a mapping or fails model validation.
@@ -57,7 +57,7 @@ class Scale(NumericScale):
         resolved_path = verify_and_resolve_path(path)
         loaded = yaml.safe_load(resolved_path.read_text(encoding="utf-8"))
         if not isinstance(loaded, Mapping):
-            raise ValueError(f"Scale YAML file '{resolved_path}' must contain a mapping.")
+            raise ValueError(f"Numeric rubric YAML file '{resolved_path}' must contain a mapping.")
         return cls.model_validate(loaded)
 
     @property

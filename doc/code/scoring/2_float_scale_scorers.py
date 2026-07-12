@@ -137,10 +137,10 @@ print(f"rationale: {scored.score_rationale}")
 # %% [markdown]
 # ### Other self-ask float-scale scorers
 #
-# - **`SelfAskScaleScorer`** — rate against a custom `Scale` constructed in memory or loaded from
-#   YAML.
+# - **`SelfAskScaleScorer`** — rate against a custom `NumericRubric` constructed in memory or
+#   loaded from YAML.
 # - **`SelfAskGeneralFloatScaleScorer`** — full control: provide your own system prompt,
-#   JSON schema, and `NumericScale`. See
+#   JSON schema, and `NumericRange`. See
 #   [Combining & stacking scorers](3_combining_scorers.ipynb) for custom-scorer guidance.
 # %% [markdown]
 # ## Multimodal scorers

@@ -21,7 +21,7 @@ from pyrit.score import (
     ContentClassifierPaths,
     InsecureCodeScorer,
     LikertScalePaths,
-    Scale,
+    NumericRubric,
     SelfAskCategoryScorer,
     SelfAskLikertScorer,
     SelfAskScaleScorer,
@@ -61,7 +61,7 @@ def _make_scorer(scorer_id: str):
         target = _mock_target('{"score_value": "1", "description": "d", "rationale": "r"}')
         scorer = SelfAskScaleScorer.from_scale(
             chat_target=target,
-            scale=Scale.from_yaml(SelfAskScaleScorer.ScalePaths.TREE_OF_ATTACKS_SCALE.value),
+            scale=NumericRubric.from_yaml(SelfAskScaleScorer.ScalePaths.TREE_OF_ATTACKS_SCALE.value),
         )
     elif scorer_id == "likert":
         target = _mock_target('{"score_value": "1", "description": "d", "rationale": "r"}')

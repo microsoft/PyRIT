@@ -14,7 +14,7 @@ from pyrit.models import (
 )
 from pyrit.prompt_target import CHAT_TARGET_REQUIREMENTS, PromptTarget
 from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
-from pyrit.score.float_scale.numeric_scale import Scale
+from pyrit.score.float_scale.numeric_scale import NumericRubric
 from pyrit.score.llm_scoring import _run_llm_scoring_async
 from pyrit.score.response_handler import JsonSchemaResponseHandler, ResponseHandler
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
@@ -26,7 +26,7 @@ _DEFAULT_SCALE_SYSTEM_PROMPT_PATH = Path(SCORER_SCALES_PATH, "general_system_pro
 
 def render_scale_system_prompt(
     *,
-    scale: Scale,
+    scale: NumericRubric,
     system_prompt_template: SeedPrompt | str | None = None,
 ) -> SeedPrompt:
     """
@@ -37,7 +37,7 @@ def render_scale_system_prompt(
     inline Jinja template.
 
     Args:
-        scale (Scale): The scale supplying prompt parameters and normalization bounds.
+        scale (NumericRubric): The rubric supplying prompt parameters and normalization bounds.
         system_prompt_template (SeedPrompt | str | None): A custom template or the bundled default.
 
     Returns:
@@ -55,9 +55,9 @@ class SelfAskScaleScorer(FloatScaleScorer):
     """
     A "self-ask" scorer for text scoring on a customizable numeric scale.
 
-    The scorer holds a ``chat_target``, a rendered or static ``system_prompt``, a ``Scale`` defining
-    normalization and category, and a ``response_handler``. Use ``from_scale`` to render a template
-    and configure the scorer from one scale object.
+    The scorer holds a ``chat_target``, a rendered or static ``system_prompt``, a ``NumericRubric``
+    defining normalization and category, and a ``response_handler``. Use ``from_scale`` to render a
+    template and configure the scorer from one rubric object.
     """
 
     class ScalePaths(enum.Enum):
@@ -85,7 +85,7 @@ class SelfAskScaleScorer(FloatScaleScorer):
         *,
         chat_target: PromptTarget | None = None,
         system_prompt: SeedPrompt | str,
-        scale: Scale,
+        scale: NumericRubric,
         response_handler: ResponseHandler | None = None,
         validator: ScorerPromptValidator | None = None,
     ) -> None:
@@ -96,7 +96,7 @@ class SelfAskScaleScorer(FloatScaleScorer):
             chat_target (PromptTarget | None): The chat target used for scoring. Must satisfy
                 CHAT_TARGET_REQUIREMENTS.
             system_prompt (SeedPrompt | str): The rendered or static scoring system prompt.
-            scale (Scale): The scale defining score normalization and category.
+            scale (NumericRubric): The rubric defining score normalization and category.
             response_handler (ResponseHandler | None): Parser for the target's raw output. Defaults
                 to ``JsonSchemaResponseHandler``.
             validator (ScorerPromptValidator | None): Custom validator for the scorer. Defaults to
@@ -127,13 +127,13 @@ class SelfAskScaleScorer(FloatScaleScorer):
         cls,
         *,
         chat_target: PromptTarget,
-        scale: Scale | None = None,
+        scale: NumericRubric | None = None,
         system_prompt_template: SeedPrompt | str | None = None,
         response_handler: ResponseHandler | None = None,
         validator: ScorerPromptValidator | None = None,
     ) -> "SelfAskScaleScorer":
         """
-        Build a scorer whose prompt and normalization are driven by one ``Scale``.
+        Build a scorer whose prompt and normalization are driven by one ``NumericRubric``.
 
         When ``scale`` is omitted, the bundled tree-of-attacks scale is used. The supplied scale is
         rendered through the bundled template or ``system_prompt_template`` and is also stored on the
@@ -141,7 +141,8 @@ class SelfAskScaleScorer(FloatScaleScorer):
 
         Args:
             chat_target (PromptTarget): The chat target used for scoring.
-            scale (Scale | None): The scale to use. Defaults to the bundled tree-of-attacks scale.
+            scale (NumericRubric | None): The rubric to use. Defaults to the bundled tree-of-attacks
+                rubric.
             system_prompt_template (SeedPrompt | str | None): A custom Jinja template or the bundled
                 general template.
             response_handler (ResponseHandler | None): Parser for the target's raw output. Defaults
@@ -151,7 +152,7 @@ class SelfAskScaleScorer(FloatScaleScorer):
         Returns:
             SelfAskScaleScorer: The constructed scorer.
         """
-        resolved_scale = scale or Scale.from_yaml(_DEFAULT_SCALE_PATH)
+        resolved_scale = scale or NumericRubric.from_yaml(_DEFAULT_SCALE_PATH)
         system_prompt = render_scale_system_prompt(
             scale=resolved_scale,
             system_prompt_template=system_prompt_template,

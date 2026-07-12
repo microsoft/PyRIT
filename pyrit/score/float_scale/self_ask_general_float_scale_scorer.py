@@ -19,7 +19,7 @@ if TYPE_CHECKING:
         Score,
     )
     from pyrit.prompt_target import PromptTarget
-    from pyrit.score.float_scale.numeric_scale import NumericScale
+    from pyrit.score.float_scale.numeric_scale import NumericRange
 
 
 class SelfAskGeneralFloatScaleScorer(FloatScaleScorer):
@@ -41,7 +41,7 @@ class SelfAskGeneralFloatScaleScorer(FloatScaleScorer):
         self,
         *,
         system_prompt_format_string: str,
-        scale: NumericScale,
+        scale: NumericRange,
         chat_target: PromptTarget | None = None,
         prompt_format_string: str | None = None,
         response_handler: ResponseHandler | None = None,
@@ -66,7 +66,7 @@ class SelfAskGeneralFloatScaleScorer(FloatScaleScorer):
         Args:
             system_prompt_format_string (str): System prompt template with placeholders for
                 objective, prompt, and message_piece.
-            scale (NumericScale): The required native score range and optional category.
+            scale (NumericRange): The required native score range and optional category.
             chat_target (PromptTarget | None): The chat target used to score. Must satisfy
                 CHAT_TARGET_REQUIREMENTS.
             prompt_format_string (str | None): User prompt template with the same placeholders.

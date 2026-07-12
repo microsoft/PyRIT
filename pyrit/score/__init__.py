@@ -24,7 +24,7 @@ from pyrit.score.float_scale.insecure_code_scorer import (
     render_insecure_code_system_prompt,
 )
 from pyrit.score.float_scale.likert_scale import LikertScale, LikertScaleEntry
-from pyrit.score.float_scale.numeric_scale import NumericScale, Scale
+from pyrit.score.float_scale.numeric_scale import NumericRange, NumericRubric
 from pyrit.score.float_scale.plagiarism_scorer import PlagiarismMetric, PlagiarismScorer
 from pyrit.score.float_scale.self_ask_general_float_scale_scorer import SelfAskGeneralFloatScaleScorer
 from pyrit.score.float_scale.self_ask_likert_scorer import (
@@ -184,7 +184,8 @@ __all__ = [
     "MethKeywordScorer",
     "MetricsType",
     "NerveAgentKeywordScorer",
-    "NumericScale",
+    "NumericRange",
+    "NumericRubric",
     "ObjectiveHumanLabeledEntry",
     "ObjectiveScorerEvaluator",
     "ObjectiveScorerMetrics",
@@ -212,7 +213,6 @@ __all__ = [
     "get_scorer_info",
     "find_objective_metrics_by_eval_hash",
     "ScorerPromptValidator",
-    "Scale",
     "SelfAskCategoryScorer",
     "SelfAskGeneralFloatScaleScorer",
     "SelfAskGeneralTrueFalseScorer",
