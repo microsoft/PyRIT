@@ -7,6 +7,7 @@ import pytest
 
 from pyrit.memory import MemoryInterface
 from pyrit.models import (
+    AtomicAttackIdentifier,
     AttackOutcome,
     AttackResult,
     ComponentIdentifier,
@@ -14,7 +15,6 @@ from pyrit.models import (
     Message,
     MessagePiece,
     Score,
-    build_atomic_attack_identifier,
 )
 from pyrit.models.conversation_reference import ConversationReference
 from pyrit.output.attack_result.pretty import PrettyAttackResultMemoryPrinter
@@ -57,7 +57,7 @@ def printer(patch_central_database):
 def attack_result():
     return AttackResult(
         objective="Test objective",
-        atomic_attack_identifier=build_atomic_attack_identifier(attack_identifier=_attack_id()),
+        atomic_attack_identifier=AtomicAttackIdentifier.build(attack_identifier=_attack_id()),
         conversation_id="conv-main",
         executed_turns=3,
         execution_time_ms=1500,

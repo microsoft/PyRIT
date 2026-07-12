@@ -364,7 +364,7 @@ class ObjectiveTargetEvaluationIdentifier(EvaluationIdentifier):
     )
 
 
-def compute_inner_attack_eval_hash(*, attack: AttackStrategy) -> str:
+def compute_inner_attack_eval_hash(*, attack: AttackStrategy[Any, Any]) -> str:
     """
     Predict the eval hash the executor will stamp on persisted child rows
     for this attack.
@@ -380,7 +380,7 @@ def compute_inner_attack_eval_hash(*, attack: AttackStrategy) -> str:
         str: The eval hash that will appear on persisted child rows.
     """
     # Local import avoids a circular dependency inside the identifiers package.
-    from pyrit.models.identifiers.atomic_attack_identifier import build_atomic_attack_identifier
+    from pyrit.models.identifiers.atomic_attack_identifier import AtomicAttackIdentifier
 
-    composite = build_atomic_attack_identifier(attack_identifier=attack.get_identifier())
+    composite = AtomicAttackIdentifier.build(attack_identifier=attack.get_identifier())
     return AtomicAttackEvaluationIdentifier(composite).eval_hash

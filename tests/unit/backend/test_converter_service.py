@@ -530,13 +530,13 @@ def _try_instantiate_converter(converter_name: str):
         ):
             mock_target = MagicMock(spec=PromptTarget)
             mock_target.__class__.__name__ = "MockChatTarget"
-            # Configure get_identifier() to return a proper identifier-like object
-            # so that _create_identifier can extract class_name, model_name, etc.
-            mock_id = MagicMock()
-            mock_id.class_name = "MockChatTarget"
-            mock_id.model_name = "test-model"
-            mock_id.temperature = None
-            mock_id.top_p = None
+            # Configure get_identifier() to return a real identifier so that
+            # _create_identifier can promote it into the typed child slot.
+            mock_id = ComponentIdentifier(
+                class_name="MockChatTarget",
+                class_module="mock",
+                params={"model_name": "test-model"},
+            )
             mock_target.get_identifier.return_value = mock_id
             kwargs[pname] = mock_target
         # PromptConverter — use a real simple converter to avoid JSON serialization issues

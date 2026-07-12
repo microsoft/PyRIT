@@ -11,6 +11,7 @@ import pytest
 
 from pyrit.memory import MemoryInterface, PromptMemoryEntry
 from pyrit.models import (
+    AtomicAttackIdentifier,
     AttackResult,
     ComponentIdentifier,
     IdentifierFilter,
@@ -18,7 +19,6 @@ from pyrit.models import (
     MessagePiece,
     Score,
     SeedPrompt,
-    build_atomic_attack_identifier,
 )
 
 
@@ -49,7 +49,7 @@ def test_get_scores_by_attack_id_and_label(
             AttackResult(
                 conversation_id=sample_conversations[0].conversation_id,
                 objective="test objective",
-                atomic_attack_identifier=build_atomic_attack_identifier(attack_identifier=attack_strategy_id),
+                atomic_attack_identifier=AtomicAttackIdentifier.build(attack_identifier=attack_strategy_id),
             )
         ]
     )

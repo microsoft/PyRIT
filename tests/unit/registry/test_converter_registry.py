@@ -209,7 +209,7 @@ class TestConverterRegistryBuildMetadata:
         self.registry.register_instance(converter, name="text_converter")
 
         metadata = self.registry.list_metadata()
-        assert metadata[0].params["supported_input_types"] == ("text",)
+        assert metadata[0].params["supported_input_types"] == ["text"]
 
     def test_build_metadata_includes_supported_output_types(self):
         """Test that metadata includes supported_output_types in params."""
@@ -217,7 +217,7 @@ class TestConverterRegistryBuildMetadata:
         self.registry.register_instance(converter, name="text_converter")
 
         metadata = self.registry.list_metadata()
-        assert metadata[0].params["supported_output_types"] == ("text",)
+        assert metadata[0].params["supported_output_types"] == ["text"]
 
     def test_build_metadata_is_component_identifier(self):
         """Test that metadata is the converter's ComponentIdentifier."""
@@ -234,8 +234,8 @@ class TestConverterRegistryBuildMetadata:
         self.registry.register_instance(converter, name="image_converter")
 
         metadata = self.registry.list_metadata()
-        assert metadata[0].params["supported_input_types"] == ("image_path",)
-        assert metadata[0].params["supported_output_types"] == ("text",)
+        assert metadata[0].params["supported_input_types"] == ["image_path"]
+        assert metadata[0].params["supported_output_types"] == ["text"]
         assert metadata[0].class_name == "MockImageConverter"
 
 

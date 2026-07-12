@@ -23,11 +23,7 @@ One of the most fundamental data structures in PyRIT is [MessagePiece](../../../
 - **`labels`**: Dictionary of labels for categorization and filtering
 - **`prompt_metadata`**: Component-specific metadata (e.g., blob URIs, document types)
 - **`converter_identifiers`**: List of converters applied to transform the prompt
-- **`scorer_identifier`**: Information about the scorer that evaluated this prompt
 - **`response_error`**: Error status (e.g., `none`, `blocked`, `processing`)
-- **`originator`**: Source of the prompt (`attack`, `converter`, `scorer`, `undefined`)
-- **`scores`**: List of `Score` objects associated with this piece
-- **`targeted_harm_categories`**: Harm categories associated with the prompt
 - **`timestamp`**: When the piece was created
 
 This rich context allows PyRIT to track the full lifecycle of each interaction, including transformations, targeting, scoring, and error handling.
@@ -135,6 +131,7 @@ Scores enable automated evaluation of attack success, content harmfulness, and o
 - **`outcome_reason`**: Optional explanation for the outcome
 - **`related_conversations`**: Set of related conversation references
 - **`metadata`**: Arbitrary metadata about the attack execution
+- **`targeted_harm_categories`**: Harm categories this attack targeted, auto-populated from the attack's seed group
 
 `AttackResult` objects provide comprehensive reporting on attack campaigns, enabling analysis of red teaming effectiveness and vulnerability identification.
 
@@ -153,7 +150,7 @@ Identifiers are content-addressed: the same configuration always produces the sa
 
 ### Composite Identifiers
 
-For atomic attacks, `build_atomic_attack_identifier` composes a tree of identifiers:
+For atomic attacks, `AtomicAttackIdentifier.build` composes a tree of identifiers:
 
 - **`attack_technique`** — the attack strategy and its children (target, converters, scorer, technique seeds)
 - **`seed_identifiers`** — all seeds from the seed group, for traceability

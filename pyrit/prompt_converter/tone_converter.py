@@ -65,5 +65,5 @@ class ToneConverter(LLMGenericTextConverter):
             params={
                 "tone": self._tone,
             },
-            children={"converter_target": self._converter_target.get_identifier()},
+            converter_target=self._converter_target.get_identifier(),
         )

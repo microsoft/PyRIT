@@ -231,33 +231,37 @@ class TestGetScenarioRunResultsRoute:
 
     def test_get_results_returns_200(self, client: TestClient) -> None:
         """Test that getting results of a completed run returns 200."""
-        mock_scenario_result = MagicMock()
-        mock_scenario_result.to_dict.return_value = {
-            "id": "result-uuid",
-            "scenario_identifier": {"name": "foundry.red_team_agent", "version": 1},
-            "scenario_run_state": "COMPLETED",
-            "attack_results": {
-                "base64_attack": [
-                    {
-                        "attack_result_id": "ar-1",
-                        "conversation_id": "conv-1",
-                        "objective": "Extract sensitive info",
-                        "outcome": "success",
-                    }
-                ]
-            },
-        }
+        from pyrit.models import AttackOutcome, AttackResult, ComponentIdentifier
+        from pyrit.models.scenario_result import ScenarioIdentifier, ScenarioResult
+
+        attack = AttackResult(
+            conversation_id="conv-1",
+            objective="Extract sensitive info",
+            outcome=AttackOutcome.SUCCESS,
+            executed_turns=1,
+            execution_time_ms=100,
+            timestamp=datetime(2025, 1, 1, tzinfo=timezone.utc),
+        )
+        scenario_result = ScenarioResult(
+            scenario_identifier=ScenarioIdentifier(name="foundry.red_team_agent", description="Foundry red-team agent"),
+            objective_target_identifier=ComponentIdentifier.from_dict(
+                {"__type__": "FakeTarget", "__module__": "test.mod", "params": {}}
+            ),
+            objective_scorer_identifier=None,
+            attack_results={"base64_attack": [attack]},
+            scenario_run_state="COMPLETED",
+        )
 
         with patch("pyrit.backend.routes.scenarios.get_scenario_run_service") as mock_get:
             mock_service = MagicMock()
-            mock_service.get_run_results.return_value = mock_scenario_result
+            mock_service.get_run_results.return_value = scenario_result
             mock_get.return_value = mock_service
 
             response = client.get("/api/scenarios/runs/test-run-id/results")
 
         assert response.status_code == status.HTTP_200_OK
         data = response.json()
-        assert data["id"] == "result-uuid"
+        assert data["scenario_identifier"]["name"] == "foundry.red_team_agent"
         assert "base64_attack" in data["attack_results"]
 
     def test_get_results_not_found_returns_404(self, client: TestClient) -> None:

@@ -34,8 +34,8 @@ class TrueFalseQuestionPaths(enum.Enum):
     TASK_ACHIEVED = Path(TRUE_FALSE_QUESTIONS_PATH, "task_achieved.yaml").resolve()
     # This is an LLM-powered refinement of the TASK_ACHIEVED rubric
     TASK_ACHIEVED_REFINED = Path(TRUE_FALSE_QUESTIONS_PATH, "task_achieved_refined.yaml").resolve()
-    LLAMAGUARD = Path(TRUE_FALSE_QUESTIONS_PATH, "llamaguard.yaml").resolve()
     CRIMINAL_PERSONA = Path(TRUE_FALSE_QUESTIONS_PATH, "criminal_persona.yaml").resolve()
+    LLAMAGUARD = Path(TRUE_FALSE_QUESTIONS_PATH, "llamaguard.yaml").resolve()
 
 
 class TrueFalseQuestion:
@@ -199,11 +199,9 @@ class SelfAskTrueFalseScorer(TrueFalseScorer):
             params={
                 "system_prompt_template": self._system_prompt,
                 "user_prompt_template": "objective: {objective}\nresponse: {response}",
-                "score_aggregator": self._score_aggregator.__name__,  # type: ignore[ty:unresolved-attribute]
             },
-            children={
-                "prompt_target": self._prompt_target.get_identifier(),
-            },
+            score_aggregator=self._score_aggregator.__name__,  # type: ignore[ty:unresolved-attribute]
+            prompt_target=self._prompt_target.get_identifier(),
         )
 
     async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:

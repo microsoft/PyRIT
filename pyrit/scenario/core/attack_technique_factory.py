@@ -37,9 +37,9 @@ from pyrit.models import (
     ComponentIdentifier,
     Identifiable,
     SeedAttackTechniqueGroup,
+    SeedIdentifier,
     SeedPrompt,
     SeedSimulatedConversation,
-    build_seed_identifier,
 )
 from pyrit.models.seeds.seed_simulated_conversation import NextMessageSystemPromptPaths
 from pyrit.scenario.core.attack_technique import AttackTechnique
@@ -758,7 +758,7 @@ class AttackTechniqueFactory(Identifiable):
 
         children: dict[str, Any] = {}
         if self._seed_technique is not None:
-            technique_seed_ids = [build_seed_identifier(seed) for seed in self._seed_technique.seeds]
+            technique_seed_ids = [SeedIdentifier.from_seed(seed) for seed in self._seed_technique.seeds]
             if technique_seed_ids:
                 children["technique_seeds"] = technique_seed_ids
 

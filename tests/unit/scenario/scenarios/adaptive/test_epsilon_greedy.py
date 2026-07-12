@@ -137,6 +137,7 @@ class TestEpsilonGreedySelectorScope:
 
         # Default scope is all_runs(): the per-call scenario_result_id is dropped.
         assert mock_compute.call_args.kwargs["scenario_result_id"] is None
+        assert mock_compute.call_args.kwargs["targeted_harm_categories"] is None
 
     @patch(_COMPUTE_PATH, side_effect=_empty_rates)
     async def test_current_run_scope_forwards_scenario_result_id(self, mock_compute):
@@ -144,6 +145,17 @@ class TestEpsilonGreedySelectorScope:
         await selector.select_async(technique_identifiers=TECHNIQUES, objective="obj", scenario_result_id="run-42")
 
         assert mock_compute.call_args.kwargs["scenario_result_id"] == "run-42"
+
+    @patch(_COMPUTE_PATH, side_effect=_empty_rates)
+    async def test_scope_filter_fields_forwarded(self, mock_compute):
+        scope = SelectorScope(
+            targeted_harm_categories=["misinformation"],
+        )
+        selector = EpsilonGreedyTechniqueSelector(epsilon=0.0, random_seed=0, scope=scope)
+        await selector.select_async(technique_identifiers=TECHNIQUES, objective="obj")
+
+        kwargs = mock_compute.call_args.kwargs
+        assert kwargs["targeted_harm_categories"] == ["misinformation"]
 
 
 class TestEpsilonGreedyEstimate:

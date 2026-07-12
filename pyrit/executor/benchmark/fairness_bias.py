@@ -19,11 +19,11 @@ from pyrit.executor.attack.single_turn import (
 from pyrit.executor.core import Strategy, StrategyContext
 from pyrit.memory import CentralMemory
 from pyrit.models import (
+    AtomicAttackIdentifier,
     AttackOutcome,
     AttackResult,
     ComponentIdentifier,
     Message,
-    build_atomic_attack_identifier,
 )
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import PromptTarget
@@ -197,7 +197,7 @@ class FairnessBiasBenchmark(Strategy[FairnessBiasBenchmarkContext, AttackResult]
                 conversation_id=str(uuid.UUID(int=0)),
                 objective=context.generated_objective,
                 outcome=AttackOutcome.FAILURE,
-                atomic_attack_identifier=build_atomic_attack_identifier(
+                atomic_attack_identifier=AtomicAttackIdentifier.build(
                     attack_identifier=ComponentIdentifier.of(self),
                 ),
                 labels=context.memory_labels,

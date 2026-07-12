@@ -37,6 +37,7 @@ from pyrit.executor.attack.multi_turn.multi_turn_attack_strategy import (
 from pyrit.memory.central_memory import CentralMemory
 from pyrit.message_normalizer import ConversationContextNormalizer
 from pyrit.models import (
+    AtomicAttackIdentifier,
     AttackOutcome,
     AttackResult,
     ConversationReference,
@@ -44,7 +45,6 @@ from pyrit.models import (
     Message,
     Score,
     SeedPrompt,
-    build_atomic_attack_identifier,
 )
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import CapabilityName, TargetRequirements
@@ -427,7 +427,7 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
 
         # Prepare the result
         result = CrescendoAttackResult(
-            atomic_attack_identifier=build_atomic_attack_identifier(attack_identifier=self.get_identifier()),
+            atomic_attack_identifier=AtomicAttackIdentifier.build(attack_identifier=self.get_identifier()),
             conversation_id=context.session.conversation_id,
             objective=context.objective,
             outcome=(AttackOutcome.SUCCESS if achieved_objective else AttackOutcome.FAILURE),
