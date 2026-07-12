@@ -5,7 +5,7 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.19.1
+#       jupytext_version: 1.19.4
 # ---
 
 # %% [markdown]
@@ -47,12 +47,12 @@ objective_target = OpenAIChatTarget()
 # pyrit_scan airt.rapid_response \
 #   --initializers target \
 #   --target openai_chat \
-#   --techniques role_play \
+#   --techniques role_play_movie_script \
 #   --dataset-names airt_hate \
 #   --max-dataset-size 1
 # ```
 #
-# **Available techniques:** ALL, DEFAULT, SINGLE_TURN, MULTI_TURN, role_play, many_shot, tap
+# **Available techniques:** ALL, DEFAULT, SINGLE_TURN, MULTI_TURN, role_play_movie_script, many_shot, tap
 
 # %%
 from pyrit.scenario.airt import RapidResponse, RapidResponseTechnique
@@ -63,7 +63,7 @@ scenario = RapidResponse()
 scenario.set_params_from_args(  # type: ignore
     args={
         "objective_target": objective_target,
-        "scenario_techniques": [RapidResponseTechnique.role_play],
+        "scenario_techniques": [RapidResponseTechnique.role_play_movie_script],
         "dataset_config": dataset_config,
     }
 )

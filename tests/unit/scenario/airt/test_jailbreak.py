@@ -11,7 +11,6 @@ from pyrit.common.path import JAILBREAK_TEMPLATES_PATH
 from pyrit.datasets import TextJailBreak
 from pyrit.executor.attack.single_turn.many_shot_jailbreak import ManyShotJailbreakAttack
 from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
-from pyrit.executor.attack.single_turn.role_play import RolePlayAttack
 from pyrit.executor.attack.single_turn.skeleton_key import SkeletonKeyAttack
 from pyrit.models import ComponentIdentifier, SeedAttackGroup, SeedObjective
 from pyrit.prompt_target import PromptTarget
@@ -330,7 +329,7 @@ class TestJailbreakAttackGeneration:
             atomic_attacks = scenario._atomic_attacks
             for run in atomic_attacks:
                 assert isinstance(
-                    run.attack_technique.attack, (RolePlayAttack, ManyShotJailbreakAttack, SkeletonKeyAttack)
+                    run.attack_technique.attack, (PromptSendingAttack, ManyShotJailbreakAttack, SkeletonKeyAttack)
                 )
 
     async def test_attack_generation_for_manyshot(
@@ -427,7 +426,9 @@ class TestJailbreakAttackGeneration:
             await scenario.initialize_async()
             atomic_attacks = scenario._atomic_attacks
             for run in atomic_attacks:
-                assert isinstance(run.attack_technique.attack, RolePlayAttack)
+                assert isinstance(run.attack_technique.attack, PromptSendingAttack)
+                assert run.attack_technique.seed_technique is not None
+                assert run.attack_technique.seed_technique.has_simulated_conversation
 
     async def test_attack_runs_include_objectives(
         self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups
@@ -673,7 +674,7 @@ class TestJailbreakAdversarialTarget:
             assert len(atomic_attacks) >= 2
 
             # All role-play attacks should share the same adversarial target
-            adversarial_targets = [run.attack_technique.attack._adversarial_chat for run in atomic_attacks]
+            adversarial_targets = [run._adversarial_chat for run in atomic_attacks]
             assert all(t is adversarial_targets[0] for t in adversarial_targets)
 
 

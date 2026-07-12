@@ -523,7 +523,7 @@ class AttackTechniqueFactory(Identifiable):
         if system_prompt is not None:
             config_kwargs["system_prompt"] = system_prompt
         if seed_prompt is not None:
-            config_kwargs["seed_prompt"] = seed_prompt
+            config_kwargs["first_message"] = seed_prompt
         return AttackAdversarialConfig(**config_kwargs)
 
     def _get_accepted_params(self) -> set[str]:

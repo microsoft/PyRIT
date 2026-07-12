@@ -5,18 +5,19 @@ from pathlib import Path
 from typing import Any
 
 from pyrit.common import apply_defaults
+from pyrit.common.path import EXECUTOR_RED_TEAM_PATH, EXECUTOR_SIMULATED_TARGET_PATH
 from pyrit.converter import TextJailbreakConverter
 from pyrit.datasets import TextJailBreak
-from pyrit.executor.attack.core.attack_config import AttackAdversarialConfig, AttackConverterConfig, AttackScoringConfig
+from pyrit.executor.attack.core.attack_config import AttackConverterConfig, AttackScoringConfig
 from pyrit.executor.attack.single_turn.many_shot_jailbreak import ManyShotJailbreakAttack
 from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
-from pyrit.executor.attack.single_turn.role_play import RolePlayAttack, RolePlayPaths
 from pyrit.executor.attack.single_turn.skeleton_key import SkeletonKeyAttack
 from pyrit.models import SeedAttackGroup
 from pyrit.prompt_normalizer import ConverterConfiguration
 from pyrit.prompt_target.common.prompt_target import PromptTarget
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
+from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
 from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
 from pyrit.scenario.core.scenario import Scenario
 from pyrit.scenario.core.scenario_context import ScenarioContext
@@ -50,7 +51,7 @@ class JailbreakTechnique(ScenarioTechnique):
     # Complex techniques
     ManyShot = ("many_shot", {"complex"})
     SkeletonKey = ("skeleton", {"complex"})
-    RolePlay = ("role_play", {"complex"})
+    RolePlay = ("role_play_persuasion", {"complex"})
 
     @classmethod
     def get_aggregate_tags(cls) -> set[str]:
@@ -197,12 +198,16 @@ class Jailbreak(Scenario):
             request_converters=ConverterConfiguration.from_converters(converters=[jailbreak_converter])
         )
 
-        attack: ManyShotJailbreakAttack | PromptSendingAttack | RolePlayAttack | SkeletonKeyAttack | None = None
+        attack: ManyShotJailbreakAttack | PromptSendingAttack | SkeletonKeyAttack | None = None
         args: dict[str, Any] = {
             "objective_target": self._objective_target,
             "attack_scoring_config": AttackScoringConfig(objective_scorer=self._objective_scorer),
             "attack_converter_config": converter_config,
         }
+
+        # Extract template name without extension for the atomic attack name
+        template_name = Path(jailbreak_template_name).stem
+
         match technique:
             case "many_shot":
                 attack = ManyShotJailbreakAttack(**args)
@@ -210,20 +215,36 @@ class Jailbreak(Scenario):
                 attack = PromptSendingAttack(**args)
             case "skeleton":
                 attack = SkeletonKeyAttack(**args)
-            case "role_play":
-                args["attack_adversarial_config"] = AttackAdversarialConfig(
-                    target=self._get_or_create_adversarial_target()
+            case "role_play_persuasion":
+                # Role play is a simulated-conversation technique: an adversarial
+                # chat improvises a short persuasion role play, then the objective
+                # is delivered to the target with the jailbreak converter applied.
+                adversarial_target = self._get_or_create_adversarial_target()
+                role_play_technique = AttackTechniqueFactory.with_simulated_conversation(
+                    name="role_play_persuasion",
+                    adversarial_chat_system_prompt_path=EXECUTOR_RED_TEAM_PATH
+                    / "role_play"
+                    / "role_play_persuasion.yaml",
+                    next_message_system_prompt_path=EXECUTOR_SIMULATED_TARGET_PATH / "role_play_next_message.yaml",
+                    num_turns=2,
+                ).create(
+                    objective_target=self._objective_target,
+                    attack_scoring_config=AttackScoringConfig(objective_scorer=self._objective_scorer),
+                    adversarial_chat=adversarial_target,
+                    extra_request_converters=ConverterConfiguration.from_converters(converters=[jailbreak_converter]),
                 )
-                args["role_play_definition_path"] = RolePlayPaths.PERSUASION_SCRIPT.value
-                attack = RolePlayAttack(**args)
+                return AtomicAttack(
+                    atomic_attack_name=f"jailbreak_{template_name}",
+                    attack_technique=role_play_technique,
+                    seed_groups=seed_groups,
+                    adversarial_chat=adversarial_target,
+                    objective_scorer=self._objective_scorer,
+                )
             case _:
                 raise ValueError(f"Unknown JailbreakTechnique `{technique}`.")
 
         if not attack:
             raise ValueError(f"Attack cannot be None!")
-
-        # Extract template name without extension for the atomic attack name
-        template_name = Path(jailbreak_template_name).stem
 
         return AtomicAttack(
             atomic_attack_name=f"jailbreak_{template_name}",

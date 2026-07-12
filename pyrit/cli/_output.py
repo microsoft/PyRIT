@@ -210,7 +210,7 @@ def print_converter_list(*, items: list[dict[str, Any]]) -> None:
         print(
             "\nConverters are registered by initializers. Include an initializer that "
             "registers converters to attach them to scenario techniques, for example:\n"
-            "  --techniques role_play:converter.translation_spanish\n"
+            "  --techniques role_play_movie_script:converter.translation_spanish\n"
         )
         return
 
@@ -229,7 +229,7 @@ def print_converter_list(*, items: list[dict[str, Any]]) -> None:
     print("\n" + "=" * 80)
     print(f"\nTotal converters: {len(items)}")
     print("\nAttach a converter to a scenario technique with, for example:")
-    print("  --techniques role_play:converter.<name>\n")
+    print("  --techniques role_play_movie_script:converter.<name>\n")
 
 
 # ---------------------------------------------------------------------------
