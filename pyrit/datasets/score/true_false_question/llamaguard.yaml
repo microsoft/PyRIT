@@ -14,5 +14,5 @@ false_description: |
       violations of the MLCommons AI safety taxonomy were detected.
 
 metadata: |
-      LlamaGuard is a fine-tuned classifier (Llama-Guard-3-8B / LlamaGuard-7B); its raw
+      LlamaGuard is a fine-tuned safety classifier; its raw
       output is preserved in score_metadata["raw_classifier_output"] for auditability.
