@@ -756,6 +756,9 @@ def test_target_identifier_persists_inner_targets_and_edges(sqlite_instance: Mem
         children={"targets": [inner_a, inner_b]},
     )
     sqlite_instance.add_conversation_to_memory(
+        conversation=Conversation(conversation_id="conv-inner-a", target_identifier=inner_a)
+    )
+    sqlite_instance.add_conversation_to_memory(
         conversation=Conversation(conversation_id="conv-multi", target_identifier=multi)
     )
 

@@ -16,6 +16,7 @@ from pyrit.memory.memory_models import (
     PromptMemoryEntry,
     ScenarioResultEntry,
     ScoreEntry,
+    ScorerIdentifierEntry,
     SeedEntry,
     UTCDateTime,
     _load_identifier,
@@ -30,6 +31,7 @@ from pyrit.models import (
     MessagePiece,
     ScenarioResult,
     Score,
+    ScorerIdentifier,
     SeedObjective,
     SeedPrompt,
     SeedSimulatedConversation,
@@ -160,6 +162,35 @@ def test_load_identifier_injects_pyrit_version():
     loaded = _load_identifier(stored, pyrit_version="9.9.9")
     assert loaded is not None
     assert loaded.pyrit_version == "9.9.9"
+
+
+def test_scorer_identifier_entry_constructs_full_sub_scorer_graph():
+    leaf = ScorerIdentifier(
+        class_name="LeafScorer",
+        class_module="pyrit.score",
+        scorer_type="float_scale",
+    )
+    nested = ScorerIdentifier(
+        class_name="NestedScorer",
+        class_module="pyrit.score",
+        scorer_type="true_false",
+        sub_scorers=[leaf],
+    )
+    root = ScorerIdentifier(
+        class_name="RootScorer",
+        class_module="pyrit.score",
+        scorer_type="true_false",
+        sub_scorers=[nested, leaf],
+    )
+
+    entry = ScorerIdentifierEntry.from_domain_model(domain_model=root)
+
+    assert [edge.position for edge in entry.sub_scorers] == [0, 1]
+    assert entry.sub_scorers[0].child.hash == nested.hash
+    assert entry.sub_scorers[1].child.hash == leaf.hash
+    nested_entry = entry.sub_scorers[0].child
+    assert len(nested_entry.sub_scorers) == 1
+    assert nested_entry.sub_scorers[0].child is entry.sub_scorers[1].child
 
 
 # ---------------------------------------------------------------------------

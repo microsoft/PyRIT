@@ -2,6 +2,7 @@
 # Licensed under the MIT license.
 
 import ast
+import json
 import os
 import tempfile
 import uuid
@@ -804,6 +805,76 @@ def test_conversations_migration_downgrade_restores_columns():
                 cols_down = {c["name"] for c in inspect(connection).get_columns("PromptMemoryEntries")}
                 assert "prompt_target_identifier" in cols_down
                 assert "attack_identifier" in cols_down
+        finally:
+            engine.dispose()
+
+
+# =============================================================================
+# Backfill tests for scorer identifier persistence (a6c8e0f2b4d6)
+# =============================================================================
+
+
+def test_scorer_identifier_migration_backfills_graph_and_score_link():
+    """Existing scorer JSON is materialized and linked without changing its content identity."""
+    from pyrit.models import ComponentIdentifier
+
+    prompt_target = ComponentIdentifier(
+        class_name="OpenAIChatTarget",
+        class_module="pyrit.prompt_target",
+        params={"endpoint": "https://example.test"},
+    )
+    sub_scorer = ComponentIdentifier(
+        class_name="SelfAskScorer",
+        class_module="pyrit.score",
+        children={"prompt_target": prompt_target},
+    )
+    composite = ComponentIdentifier(
+        class_name="CompositeScorer",
+        class_module="pyrit.score",
+        params={"scorer_type": "true_false", "score_aggregator": "AND_"},
+        children={"sub_scorers": [sub_scorer]},
+    )
+    score_id = str(uuid.uuid4())
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        engine = create_engine(f"sqlite:///{os.path.join(temp_dir, 'scorer-backfill.db')}")
+        try:
+            with engine.begin() as connection:
+                config = _config_for(connection)
+                command.upgrade(config, "e5f7a9c1b3d2")
+                connection.execute(
+                    text(
+                        'INSERT INTO "ScoreEntries" '
+                        "(id, score_value, score_type, score_metadata, scorer_class_identifier, timestamp) "
+                        "VALUES (:id, 'True', 'true_false', '{}', :identifier, '2026-07-13')"
+                    ),
+                    {"id": score_id, "identifier": json.dumps(composite.model_dump())},
+                )
+
+                command.upgrade(config, "a6c8e0f2b4d6")
+
+                score_hash = connection.execute(
+                    text('SELECT scorer_identifier_hash FROM "ScoreEntries" WHERE id = :id'),
+                    {"id": score_id},
+                ).scalar_one()
+                scorer_rows = connection.execute(
+                    text(
+                        'SELECT hash, scorer_type, score_aggregator, prompt_target_hash FROM "ScorerIdentifiers"'
+                    )
+                ).fetchall()
+                target_hashes = connection.execute(text('SELECT hash FROM "TargetIdentifiers"')).scalars().all()
+                scorer_child = connection.execute(
+                    text('SELECT parent_hash, position, child_hash FROM "ScorerIdentifierChildren"')
+                ).one()
+
+            assert score_hash == composite.hash
+            assert {row[0] for row in scorer_rows} == {composite.hash, sub_scorer.hash}
+            root_row = next(row for row in scorer_rows if row[0] == composite.hash)
+            sub_scorer_row = next(row for row in scorer_rows if row[0] == sub_scorer.hash)
+            assert root_row[1:] == ("true_false", "AND_", None)
+            assert sub_scorer_row[3] == prompt_target.hash
+            assert target_hashes == [prompt_target.hash]
+            assert scorer_child == (composite.hash, 0, sub_scorer.hash)
         finally:
             engine.dispose()
 

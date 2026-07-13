@@ -28,8 +28,8 @@ from pyrit.memory.memory_models import (
     PromptMemoryEntry,
     ScenarioResultEntry,
     ScoreEntry,
+    ScorerIdentifierEntry,
     SeedEntry,
-    TargetIdentifierChildEntry,
     TargetIdentifierEntry,
 )
 from pyrit.memory.storage import (
@@ -48,6 +48,7 @@ from pyrit.models import (
     MessagePiece,
     ScenarioResult,
     Score,
+    ScorerIdentifier,
     Seed,
     SeedDataset,
     SeedGroup,
@@ -491,15 +492,11 @@ class MemoryInterface(abc.ABC):
         """
         Persist ``target_identifier`` and its inner targets as content-addressed rows.
 
-        Mirrors the conversation-registration contract ("ensure dependencies exist
-        first"): every inner target in ``target_identifier.targets`` is persisted
-        recursively before this identifier's own row, so the ``TargetIdentifierChildren``
-        edges (which foreign-key both endpoints into ``TargetIdentifiers``) resolve.
-        Identifier rows are immutable and keyed by their content hash, so this is an
-        idempotent insert-if-absent: an identical target -- or a shared inner target --
-        reused across many conversations maps to a single row. Runs inside the caller's
-        session so every row is flushed before the FK-bearing ``ConversationEntry`` is
-        added.
+        The complete ORM graph is constructed from the domain model and merged into the
+        caller's session. SQLAlchemy reconciles shared child targets by primary key and
+        cascades the merge through ordered child edges. Identifier rows are immutable
+        and keyed by their content hash, so an identical target reused across many
+        conversations maps to a single row.
 
         If the row already exists it was fully persisted before (children and edges
         included, since rows are immutable), so this returns early. Otherwise the row and
@@ -514,20 +511,10 @@ class MemoryInterface(abc.ABC):
         """
         if session.get(TargetIdentifierEntry, target_identifier.hash) is not None:
             return
-        # Children first, so the parent's edge foreign keys resolve on flush.
-        for inner_target in target_identifier.targets:
-            MemoryInterface._persist_target_identifier(session=session, target_identifier=inner_target)
         try:
             with session.begin_nested():
-                session.add(TargetIdentifierEntry.from_domain_model(target_identifier))
-                for position, inner_target in enumerate(target_identifier.targets):
-                    session.add(
-                        TargetIdentifierChildEntry(
-                            parent_hash=target_identifier.hash,
-                            position=position,
-                            child_hash=inner_target.hash,
-                        )
-                    )
+                entry = TargetIdentifierEntry.from_domain_model(target_identifier)
+                session.merge(entry)
                 session.flush()
         except IntegrityError:
             # A racing writer inserted the same content-addressed row; immutable
@@ -862,6 +849,9 @@ class MemoryInterface(abc.ABC):
         Persisting the score even without a piece is intentional: aggregate
         analytics (e.g. refusal rate over a batch) still want the score row
         even when the scored content was never a real conversation turn.
+
+        Raises:
+            SQLAlchemyError: If the score or identifier rows cannot be persisted.
         """
         for score in scores:
             if score.message_piece_id:
@@ -873,7 +863,45 @@ class MemoryInterface(abc.ABC):
                 # auto-link score to the original prompt id if the prompt is a duplicate
                 if pieces[0].original_prompt_id != pieces[0].id:
                     score.message_piece_id = pieces[0].original_prompt_id  # type: ignore[ty:invalid-assignment]
-        self._insert_entries(entries=[ScoreEntry(entry=score) for score in scores])
+        entries = [ScoreEntry(entry=score) for score in scores]
+        with closing(self.get_session()) as session:
+            try:
+                for entry in entries:
+                    if entry.scorer_class_identifier:
+                        self._persist_scorer_identifier(
+                            session=session,
+                            scorer_identifier=ScorerIdentifier.model_validate(entry.scorer_class_identifier),
+                        )
+                session.add_all(entries)
+                session.commit()
+            except SQLAlchemyError as e:
+                session.rollback()
+                logger.exception(f"Error inserting scores: {e}")
+                raise
+
+    @staticmethod
+    def _persist_scorer_identifier(*, session: Any, scorer_identifier: ScorerIdentifier) -> None:
+        """Persist a complete scorer graph and its target dependencies."""
+        if session.get(ScorerIdentifierEntry, scorer_identifier.hash) is not None:
+            return
+
+        pending_scorers = [scorer_identifier]
+        while pending_scorers:
+            pending_scorer = pending_scorers.pop()
+            if pending_scorer.prompt_target is not None:
+                MemoryInterface._persist_target_identifier(
+                    session=session,
+                    target_identifier=pending_scorer.prompt_target,
+                )
+            pending_scorers.extend(pending_scorer.sub_scorers)
+
+        try:
+            with session.begin_nested():
+                entry = ScorerIdentifierEntry.from_domain_model(scorer_identifier)
+                session.merge(entry)
+                session.flush()
+        except IntegrityError:
+            pass
 
     def get_scores(
         self,

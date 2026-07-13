@@ -54,6 +54,7 @@ from pyrit.models import (
     ScenarioRunState,
     Score,
     ScorerEvaluationIdentifier,
+    ScorerIdentifier,
     Seed,
     SeedObjective,
     SeedPrompt,
@@ -506,9 +507,7 @@ class ComponentIdentifierEntry(DomainBackedEntry[T]):
 
             child_value = getattr(domain_model, field_name)
             children = (
-                child_value
-                if isinstance(child_value, list)
-                else ([child_value] if child_value is not None else [])
+                child_value if isinstance(child_value, list) else ([child_value] if child_value is not None else [])
             )
             edge_rows = getattr(entry, spec.relationship_name)
             for position, child_identifier in enumerate(children):
@@ -583,9 +582,10 @@ class TargetIdentifierChildEntry(Base):
     ``TargetIdentifierEntry.identifier_json`` remains the source of truth for
     reconstruction (inner targets are stored inline there too).
 
-    Materialized by ``MemoryInterface._persist_target_identifier`` while persisting a
-    target and its children; it is never built from a single domain model, so it is a
-    plain ``Base`` row rather than a ``DomainBackedEntry``.
+    Constructed as part of the complete graph returned by
+    ``TargetIdentifierEntry.from_domain_model`` and persisted by
+    ``MemoryInterface._persist_target_identifier``. It is a plain ``Base`` row rather
+    than a ``DomainBackedEntry`` because an edge has no standalone domain model.
     """
 
     __tablename__ = "TargetIdentifierChildren"
@@ -609,6 +609,71 @@ class TargetIdentifierChildEntry(Base):
     #: Child target row referenced by ``child_hash``.
     child: Mapped["TargetIdentifierEntry"] = relationship(
         "TargetIdentifierEntry",
+        foreign_keys=[child_hash],
+    )
+
+
+class ScorerIdentifierEntry(ComponentIdentifierEntry[ScorerIdentifier]):
+    """Content-addressed store of ``ScorerIdentifier`` projections."""
+
+    __tablename__ = "ScorerIdentifiers"
+    __table_args__ = {"extend_existing": True}
+
+    CHILD_RELATIONSHIP_SPECS: ClassVar[dict[str, _ChildRelationshipSpec]] = {
+        "sub_scorers": _ChildRelationshipSpec(
+            relationship_name="sub_scorers",
+            edge_factory=lambda: ScorerIdentifierChildEntry(),
+            edge_child_attr="child",
+            edge_position_attr="position",
+        )
+    }
+
+    scorer_type: Mapped[str | None] = mapped_column(String, nullable=True)
+    score_aggregator: Mapped[str | None] = mapped_column(String, nullable=True)
+    prompt_target_hash: Mapped[str | None] = mapped_column(
+        String(64), ForeignKey(f"{TargetIdentifierEntry.__tablename__}.hash"), nullable=True
+    )
+
+    prompt_target: Mapped["TargetIdentifierEntry | None"] = relationship(
+        "TargetIdentifierEntry",
+        foreign_keys=[prompt_target_hash],
+    )
+    sub_scorers: Mapped[list["ScorerIdentifierChildEntry"]] = relationship(
+        "ScorerIdentifierChildEntry",
+        primaryjoin="ScorerIdentifierEntry.hash == ScorerIdentifierChildEntry.parent_hash",
+        foreign_keys="ScorerIdentifierChildEntry.parent_hash",
+        order_by="ScorerIdentifierChildEntry.position",
+        back_populates="parent",
+    )
+
+    @classmethod
+    def _from_domain_model_shallow(cls, *, domain_model: ScorerIdentifier) -> Self:
+        entry = super()._from_domain_model_shallow(domain_model=domain_model)
+        entry.prompt_target_hash = domain_model.prompt_target.hash if domain_model.prompt_target is not None else None
+        return entry
+
+
+class ScorerIdentifierChildEntry(Base):
+    """Ordered edge linking a composite scorer to one of its sub-scorers."""
+
+    __tablename__ = "ScorerIdentifierChildren"
+    __table_args__ = {"extend_existing": True}
+
+    parent_hash: Mapped[str] = mapped_column(
+        String(64), ForeignKey(f"{ScorerIdentifierEntry.__tablename__}.hash"), primary_key=True
+    )
+    position: Mapped[int] = mapped_column(INTEGER, primary_key=True)
+    child_hash: Mapped[str] = mapped_column(
+        String(64), ForeignKey(f"{ScorerIdentifierEntry.__tablename__}.hash"), nullable=False
+    )
+
+    parent: Mapped["ScorerIdentifierEntry"] = relationship(
+        "ScorerIdentifierEntry",
+        foreign_keys=[parent_hash],
+        back_populates="sub_scorers",
+    )
+    child: Mapped["ScorerIdentifierEntry"] = relationship(
+        "ScorerIdentifierEntry",
         foreign_keys=[child_hash],
     )
 
@@ -713,6 +778,9 @@ class ScoreEntry(Base):
     score_rationale = mapped_column(String, nullable=True)
     score_metadata: Mapped[dict[str, str | int | float]] = mapped_column(JSON)
     scorer_class_identifier: Mapped[dict[str, Any]] = mapped_column(JSON)
+    scorer_identifier_hash: Mapped[str | None] = mapped_column(
+        String(64), ForeignKey(f"{ScorerIdentifierEntry.__tablename__}.hash"), nullable=True
+    )
     prompt_request_response_id = mapped_column(CustomUUID, ForeignKey(f"{PromptMemoryEntry.__tablename__}.id"))
     timestamp = mapped_column(UTCDateTime, nullable=False)
     task = mapped_column(String, nullable=True)  # Deprecated: Use objective instead
@@ -744,6 +812,7 @@ class ScoreEntry(Base):
                 ScorerEvaluationIdentifier(normalized_scorer).eval_hash
             )
         self.scorer_class_identifier = normalized_scorer.model_dump() if normalized_scorer else {}
+        self.scorer_identifier_hash = normalized_scorer.hash if normalized_scorer else None
         self.prompt_request_response_id = entry.message_piece_id if entry.message_piece_id else None
         self.timestamp = entry.timestamp
         # Store in both columns for backward compatibility
