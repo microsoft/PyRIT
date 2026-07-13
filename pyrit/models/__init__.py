@@ -101,10 +101,10 @@ from pyrit.models.score import Score, ScoreType, UnvalidatedScore
 # Seeds - import from new seeds submodule for forward compatibility
 # Also keep imports from old locations for backward compatibility
 from pyrit.models.seeds import (
+    AttackSeedGroup,
+    AttackTechniqueSeedGroup,
     NextMessageSystemPromptPaths,
     Seed,
-    SeedAttackGroup,
-    SeedAttackTechniqueGroup,
     SeedDataset,
     SeedGroup,
     SeedObjective,
@@ -191,8 +191,8 @@ __all__ = [
     "ScenarioResult",
     "ScenarioRunState",
     "Seed",
-    "SeedAttackGroup",
-    "SeedAttackTechniqueGroup",
+    "AttackSeedGroup",
+    "AttackTechniqueSeedGroup",
     "SeedObjective",
     "SeedPrompt",
     "SeedDataset",

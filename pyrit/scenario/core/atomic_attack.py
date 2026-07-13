@@ -22,7 +22,7 @@ from pyrit.common.utils import to_sha256
 from pyrit.executor.attack import AttackExecutor
 from pyrit.executor.attack.core.attack_result_attribution import AttackResultAttribution
 from pyrit.memory import CentralMemory
-from pyrit.models import AtomicAttackEvaluationIdentifier, AtomicAttackIdentifier, AttackResult, SeedAttackGroup
+from pyrit.models import AtomicAttackEvaluationIdentifier, AtomicAttackIdentifier, AttackResult, AttackSeedGroup
 
 if TYPE_CHECKING:
     from pyrit.executor.attack.core.attack_executor import AttackExecutorResult
@@ -41,11 +41,11 @@ class AtomicAttack:
     all objectives in a dataset. Multiple AtomicAttacks can be grouped together into
     larger test scenarios for comprehensive security testing and evaluation.
 
-    The AtomicAttack uses SeedAttackGroups as the single source of truth for objectives,
-    prepended conversations, and next messages. Each SeedAttackGroup must have an objective set.
+    The AtomicAttack uses AttackSeedGroups as the single source of truth for objectives,
+    prepended conversations, and next messages. Each AttackSeedGroup must have an objective set.
 
     An ``AttackTechnique`` bundles the attack strategy with an optional
-    ``SeedAttackTechniqueGroup``, cleanly separating "how to attack" from
+    ``AttackTechniqueSeedGroup``, cleanly separating "how to attack" from
     "what to attack" (the objective).
     """
 
@@ -55,7 +55,7 @@ class AtomicAttack:
         atomic_attack_name: str,
         display_group: str | None = None,
         attack_technique: AttackTechnique,
-        seed_groups: list[SeedAttackGroup],
+        seed_groups: list[AttackSeedGroup],
         adversarial_chat: PromptTarget | None = None,
         objective_scorer: TrueFalseScorer | None = None,
         memory_labels: dict[str, str] | None = None,
@@ -74,7 +74,7 @@ class AtomicAttack:
             attack_technique: An AttackTechnique bundling the attack strategy and optional
                 technique seeds.
             seed_groups: List of seed attack groups. Each must be a
-                ``SeedAttackGroup`` (which guarantees exactly one objective).
+                ``AttackSeedGroup`` (which guarantees exactly one objective).
             adversarial_chat: Optional chat target for generating
                 adversarial prompts or simulated conversations.
             objective_scorer: Optional scorer for evaluating simulated
@@ -85,7 +85,7 @@ class AtomicAttack:
 
         Raises:
             ValueError: If seed_groups list is empty.
-            TypeError: If any entry of ``seed_groups`` is not a ``SeedAttackGroup``.
+            TypeError: If any entry of ``seed_groups`` is not a ``AttackSeedGroup``.
         """
         self.atomic_attack_name = atomic_attack_name
         self.display_group = display_group or atomic_attack_name
@@ -96,13 +96,13 @@ class AtomicAttack:
         if not seed_groups:
             raise ValueError("seed_groups list cannot be empty")
 
-        # Validate that each seed_group is actually a SeedAttackGroup (which Pydantic
+        # Validate that each seed_group is actually a AttackSeedGroup (which Pydantic
         # already ensured holds the AtomicAttack invariant of "exactly one objective"
-        # at construction time). A plain SeedGroup or SeedAttackTechniqueGroup is not
+        # at construction time). A plain SeedGroup or AttackTechniqueSeedGroup is not
         # accepted here even though they share a base class.
         for sg in seed_groups:
-            if not isinstance(sg, SeedAttackGroup):
-                raise TypeError(f"seed_groups must contain SeedAttackGroup instances; got {type(sg).__name__}.")
+            if not isinstance(sg, AttackSeedGroup):
+                raise TypeError(f"seed_groups must contain AttackSeedGroup instances; got {type(sg).__name__}.")
 
         self._seed_groups = seed_groups
         self._validate_unique_objective_hashes()
@@ -203,12 +203,12 @@ class AtomicAttack:
         return [sg.objective.value for sg in self._seed_groups if sg.objective is not None]
 
     @property
-    def seed_groups(self) -> list[SeedAttackGroup]:
+    def seed_groups(self) -> list[AttackSeedGroup]:
         """
         A copy of the seed groups list for this atomic attack.
 
         Returns:
-            list[SeedAttackGroup]: A copy of the seed groups list.
+            list[AttackSeedGroup]: A copy of the seed groups list.
         """
         return list(self._seed_groups)
 
@@ -251,7 +251,7 @@ class AtomicAttack:
             no longer exist in the dataset.
         """
         retained: set[str] = set()
-        new_groups: list[SeedAttackGroup] = []
+        new_groups: list[AttackSeedGroup] = []
         for sg in self._seed_groups:
             if sg.objective is None:
                 continue

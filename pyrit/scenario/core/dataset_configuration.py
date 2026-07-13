@@ -6,7 +6,7 @@ Dataset configuration for scenarios.
 
 ``DatasetConfiguration`` is the object a scenario uses to say "where do my seeds come
 from." ``DatasetAttackConfiguration`` -- the configuration most scenarios use -- groups
-the resolved seeds into ``SeedAttackGroup`` s (each carrying exactly one objective plus
+the resolved seeds into ``AttackSeedGroup`` s (each carrying exactly one objective plus
 optional prompts).
 
 Constraints are expressed through a single mechanism: ``validators``. Each validator is a
@@ -34,7 +34,7 @@ from functools import cached_property
 from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from pyrit.memory import CentralMemory
-from pyrit.models import Seed, SeedAttackGroup, SeedGroup, group_seeds_into_attack_groups
+from pyrit.models import AttackSeedGroup, Seed, SeedGroup, group_seeds_into_attack_groups
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -251,7 +251,7 @@ class DatasetConfiguration:
 
     This base class handles resolution, fetching, validation, and sampling.
     ``DatasetAttackConfiguration`` is the concrete subclass most scenarios use; it groups
-    the resolved seeds into ``SeedAttackGroup`` s. A configuration draws from exactly one
+    the resolved seeds into ``AttackSeedGroup`` s. A configuration draws from exactly one
     source:
 
     - ``seeds`` -- an explicit, inline list of seeds (never touches memory).
@@ -537,11 +537,11 @@ class DatasetAttackConfiguration(DatasetConfiguration):
     """
     A ``DatasetConfiguration`` that groups resolved seeds into attack groups.
 
-    This is the default most scenarios use: scenarios run over ``SeedAttackGroup`` s
+    This is the default most scenarios use: scenarios run over ``AttackSeedGroup`` s
     (each carrying exactly one objective plus optional prompts). ``max_dataset_size`` is a
     single global budget for the configuration; both resolvers apply it the same way:
 
-    - ``get_seed_attack_groups_async`` -- a flat ``list[SeedAttackGroup]``, sampled
+    - ``get_attack_seed_groups_async`` -- a flat ``list[AttackSeedGroup]``, sampled
       globally over all built groups.
     - ``get_attack_groups_by_dataset_async`` -- the same globally sampled groups, keyed by
       dataset name, used when a scenario fans atomic attacks out per (technique, dataset).
@@ -558,7 +558,7 @@ class DatasetAttackConfiguration(DatasetConfiguration):
     ``prompt_group_id`` via ``group_seeds_into_attack_groups``.
     """
 
-    def _build_attack_groups(self, seeds: list[Seed]) -> list[SeedAttackGroup]:
+    def _build_attack_groups(self, seeds: list[Seed]) -> list[AttackSeedGroup]:
         """
         Shape raw seeds into attack groups (override seam).
 
@@ -569,28 +569,28 @@ class DatasetAttackConfiguration(DatasetConfiguration):
             seeds (list[Seed]): The raw seeds to group.
 
         Returns:
-            list[SeedAttackGroup]: The built attack groups.
+            list[AttackSeedGroup]: The built attack groups.
         """
         return group_seeds_into_attack_groups(seeds)
 
-    def _inline_attack_groups(self) -> list[SeedAttackGroup] | None:
+    def _inline_attack_groups(self) -> list[AttackSeedGroup] | None:
         """
         Return inline attack groups when built from explicit ``seeds``/``seed_groups``.
 
         Returns:
-            list[SeedAttackGroup] | None: The inline attack groups, or None when the
+            list[AttackSeedGroup] | None: The inline attack groups, or None when the
                 configuration draws from ``dataset_names``.
         """
         if self._seed_groups is not None:
             return [
-                group if isinstance(group, SeedAttackGroup) else SeedAttackGroup(seeds=list(group.seeds))
+                group if isinstance(group, AttackSeedGroup) else AttackSeedGroup(seeds=list(group.seeds))
                 for group in self._seed_groups
             ]
         if self._seeds is not None:
             return self._build_attack_groups(list(self._seeds))
         return None
 
-    async def _build_groups_by_dataset_async(self) -> tuple[dict[str, list[SeedAttackGroup]], ResolvedDataset]:
+    async def _build_groups_by_dataset_async(self) -> tuple[dict[str, list[AttackSeedGroup]], ResolvedDataset]:
         """
         Build attack groups keyed by dataset, plus the resolved seed set for validation.
 
@@ -600,7 +600,7 @@ class DatasetAttackConfiguration(DatasetConfiguration):
         ``_build_attack_groups``.
 
         Returns:
-            tuple[dict[str, list[SeedAttackGroup]], ResolvedDataset]: Groups keyed by
+            tuple[dict[str, list[AttackSeedGroup]], ResolvedDataset]: Groups keyed by
                 dataset name, and the flat resolved seeds with their source kind.
 
         Raises:
@@ -622,9 +622,9 @@ class DatasetAttackConfiguration(DatasetConfiguration):
         )
         return groups_by_dataset, resolved
 
-    async def get_seed_attack_groups_async(self, *, apply_sampling: bool = True) -> list[SeedAttackGroup]:
+    async def get_attack_seed_groups_async(self, *, apply_sampling: bool = True) -> list[AttackSeedGroup]:
         """
-        Resolve the configured dataset into a flat ``list[SeedAttackGroup]``.
+        Resolve the configured dataset into a flat ``list[AttackSeedGroup]``.
 
         Builds attack groups (inline or from memory, auto-fetching missing datasets),
         validates the full resolved seed set, then samples ``max_dataset_size`` globally
@@ -637,7 +637,7 @@ class DatasetAttackConfiguration(DatasetConfiguration):
                 exactly rather than intersected against a fresh (divergent) sample.
 
         Returns:
-            list[SeedAttackGroup]: The validated attack groups (sampled when ``apply_sampling``
+            list[AttackSeedGroup]: The validated attack groups (sampled when ``apply_sampling``
                 is True, otherwise the full resolved set).
 
         Raises:
@@ -656,7 +656,7 @@ class DatasetAttackConfiguration(DatasetConfiguration):
 
     async def get_attack_groups_by_dataset_async(
         self, *, apply_sampling: bool = True
-    ) -> dict[str, list[SeedAttackGroup]]:
+    ) -> dict[str, list[AttackSeedGroup]]:
         """
         Resolve attack groups keyed by dataset name, globally sampled.
 
@@ -673,7 +673,7 @@ class DatasetAttackConfiguration(DatasetConfiguration):
                 exactly rather than intersected against a fresh (divergent) sample.
 
         Returns:
-            dict[str, list[SeedAttackGroup]]: Dataset name -> attack groups (sampled when
+            dict[str, list[AttackSeedGroup]]: Dataset name -> attack groups (sampled when
                 ``apply_sampling`` is True, otherwise the full resolved set).
 
         Raises:
@@ -690,8 +690,8 @@ class DatasetAttackConfiguration(DatasetConfiguration):
         return result
 
     def _sample_groups_by_dataset(
-        self, groups_by_dataset: dict[str, list[SeedAttackGroup]]
-    ) -> dict[str, list[SeedAttackGroup]]:
+        self, groups_by_dataset: dict[str, list[AttackSeedGroup]]
+    ) -> dict[str, list[AttackSeedGroup]]:
         """
         Apply ``max_dataset_size`` as one global budget across datasets, preserving keys.
 
@@ -699,13 +699,13 @@ class DatasetAttackConfiguration(DatasetConfiguration):
         across the union, then regroups the survivors under their originating dataset name.
 
         Args:
-            groups_by_dataset (dict[str, list[SeedAttackGroup]]): Built groups keyed by dataset.
+            groups_by_dataset (dict[str, list[AttackSeedGroup]]): Built groups keyed by dataset.
 
         Returns:
-            dict[str, list[SeedAttackGroup]]: The globally sampled groups, still keyed by dataset.
+            dict[str, list[AttackSeedGroup]]: The globally sampled groups, still keyed by dataset.
         """
         pairs = [(name, group) for name, groups in groups_by_dataset.items() for group in groups]
-        result: dict[str, list[SeedAttackGroup]] = {}
+        result: dict[str, list[AttackSeedGroup]] = {}
         for name, group in self._apply_max_dataset_size(pairs):
             result.setdefault(name, []).append(group)
         return result
@@ -837,7 +837,7 @@ class CompoundDatasetAttackConfiguration(DatasetAttackConfiguration):
         for child in self._configurations:
             child.update_filters(filters=filters)
 
-    async def get_seed_attack_groups_async(self, *, apply_sampling: bool = True) -> list[SeedAttackGroup]:
+    async def get_attack_seed_groups_async(self, *, apply_sampling: bool = True) -> list[AttackSeedGroup]:
         """
         Concatenate every child's flat result, then validate and apply the global cap.
 
@@ -850,21 +850,21 @@ class CompoundDatasetAttackConfiguration(DatasetAttackConfiguration):
                 dataset with no sampling at any level -- used on resume (propagated to children).
 
         Returns:
-            list[SeedAttackGroup]: The combined, validated attack groups (capped when
+            list[AttackSeedGroup]: The combined, validated attack groups (capped when
                 ``apply_sampling`` is True).
 
         Raises:
             DatasetConstraintError: If a child yields nothing, or the combined result fails validation.
         """
-        groups: list[SeedAttackGroup] = []
+        groups: list[AttackSeedGroup] = []
         for child in self._configurations:
-            groups.extend(await child.get_seed_attack_groups_async(apply_sampling=apply_sampling))
+            groups.extend(await child.get_attack_seed_groups_async(apply_sampling=apply_sampling))
         self.validate(self._resolved_from_groups(groups))
         return self._apply_max_dataset_size(groups) if apply_sampling else groups
 
     async def get_attack_groups_by_dataset_async(
         self, *, apply_sampling: bool = True
-    ) -> dict[str, list[SeedAttackGroup]]:
+    ) -> dict[str, list[AttackSeedGroup]]:
         """
         Merge each child's by-dataset result, validate, then apply the global cap across the union.
 
@@ -874,12 +874,12 @@ class CompoundDatasetAttackConfiguration(DatasetAttackConfiguration):
                 dataset with no sampling at any level -- used on resume (propagated to children).
 
         Returns:
-            dict[str, list[SeedAttackGroup]]: Combined groups keyed by dataset name.
+            dict[str, list[AttackSeedGroup]]: Combined groups keyed by dataset name.
 
         Raises:
             DatasetConstraintError: If a child yields nothing, or the combined result fails validation.
         """
-        merged: dict[str, list[SeedAttackGroup]] = {}
+        merged: dict[str, list[AttackSeedGroup]] = {}
         for child in self._configurations:
             child_groups = await child.get_attack_groups_by_dataset_async(apply_sampling=apply_sampling)
             for name, groups in child_groups.items():
@@ -887,12 +887,12 @@ class CompoundDatasetAttackConfiguration(DatasetAttackConfiguration):
         self.validate(self._resolved_from_groups([group for groups in merged.values() for group in groups]))
         return self._sample_groups_by_dataset(merged) if apply_sampling else merged
 
-    def _resolved_from_groups(self, groups: list[SeedAttackGroup]) -> ResolvedDataset:
+    def _resolved_from_groups(self, groups: list[AttackSeedGroup]) -> ResolvedDataset:
         """
         Build a ResolvedDataset over the combined groups for compound-level validation.
 
         Args:
-            groups (list[SeedAttackGroup]): The combined attack groups.
+            groups (list[AttackSeedGroup]): The combined attack groups.
 
         Returns:
             ResolvedDataset: Carries the flattened seeds, source kind, and aggregated names.

@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 """
-AttackTechnique - Bundles an AttackStrategy with an optional SeedAttackTechniqueGroup.
+AttackTechnique - Bundles an AttackStrategy with an optional AttackTechniqueSeedGroup.
 
 Represents "how to attack" independently of "what to attack" (the objective).
 """
@@ -15,7 +15,7 @@ from pyrit.models import AttackTechniqueIdentifier, ComponentIdentifier, Identif
 
 if TYPE_CHECKING:
     from pyrit.executor.attack import AttackStrategy
-    from pyrit.models import SeedAttackTechniqueGroup
+    from pyrit.models import AttackTechniqueSeedGroup
 
 
 class AttackTechnique(Identifiable):
@@ -25,14 +25,14 @@ class AttackTechnique(Identifiable):
     An AttackTechnique encapsulates the full attack configuration — the technique
     (including its target, converters, and scorer) plus any reusable technique seeds
     (e.g. jailbreak templates). The objectives that define which weaknesses to probe
-    live separately on the SeedAttackGroup / AtomicAttack.
+    live separately on the AttackSeedGroup / AtomicAttack.
     """
 
     def __init__(
         self,
         *,
         attack: AttackStrategy[Any, Any],
-        seed_technique: SeedAttackTechniqueGroup | None = None,
+        seed_technique: AttackTechniqueSeedGroup | None = None,
     ) -> None:
         """Initialize an AttackTechnique."""
         self._attack = attack
@@ -44,7 +44,7 @@ class AttackTechnique(Identifiable):
         return self._attack
 
     @property
-    def seed_technique(self) -> SeedAttackTechniqueGroup | None:
+    def seed_technique(self) -> AttackTechniqueSeedGroup | None:
         """The optional technique seed group."""
         return self._seed_technique
 
