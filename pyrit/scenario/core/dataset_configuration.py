@@ -31,9 +31,8 @@ import random
 from dataclasses import dataclass
 from enum import Enum
 from functools import cached_property
-from typing import TYPE_CHECKING, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
-from pyrit.common.deprecation import print_deprecation_message
 from pyrit.memory import CentralMemory
 from pyrit.models import Seed, SeedAttackGroup, SeedGroup, group_seeds_into_attack_groups
 
@@ -46,9 +45,6 @@ if TYPE_CHECKING:
 # they have no real dataset name. Inline and named sources are mutually exclusive, so this
 # never collides with a configured dataset name.
 INLINE_DATASET_NAME = "inline"
-
-# Version in which the deprecated legacy getters will be removed (current ver: 0.15.0.dev0).
-_LEGACY_REMOVED_IN = "0.17.0"
 
 # Internal helper TypeVar for size-capping any homogeneous list.
 _ItemT = TypeVar("_ItemT")
@@ -276,9 +272,6 @@ class DatasetConfiguration:
       check). The preferred way to enforce a constraint type-wide.
     - ``_collect_seeds_for_dataset_async`` -- the per-dataset memory query (override for
       richer filters).
-
-    The legacy getters (``get_seed_groups`` / ``get_all_seed_attack_groups`` / ...) are
-    deprecated and will be removed in 0.17.0; prefer ``DatasetAttackConfiguration``.
     """
 
     def __init__(
@@ -288,6 +281,7 @@ class DatasetConfiguration:
         seed_groups: list[SeedGroup] | None = None,
         dataset_names: list[str] | None = None,
         max_dataset_size: int | None = None,
+        filters: dict[str, list[str]] | None = None,
         validators: Sequence[Callable[[ResolvedDataset], None]] | None = None,
         auto_fetch: bool = True,
     ) -> None:
@@ -301,6 +295,9 @@ class DatasetConfiguration:
             dataset_names (list[str] | None): Names of datasets to load from memory.
             max_dataset_size (int | None): If set, randomly samples up to this many items
                 from the resolved dataset (without replacement).
+            filters (dict[str, list[str]] | None): Filters passed to ``MemoryInterface.get_seeds``
+                when resolving named datasets (e.g. ``{"harm_categories": ["cyber"]}``).
+                Applied before ``max_dataset_size`` sampling; ignored for inline seeds.
             validators (Sequence[Callable[[ResolvedDataset], None]] | None): Constraint
                 callbacks run against the resolved dataset; each raises on violation. These
                 are appended to the subclass's ``_default_validators``.
@@ -326,6 +323,7 @@ class DatasetConfiguration:
         self._seed_groups = list(seed_groups) if seed_groups is not None else None
         self._dataset_names = list(dataset_names) if dataset_names is not None else None
         self.max_dataset_size = max_dataset_size
+        self._filters: dict[str, list[str]] = dict(filters or {})
         self._validators: list[Callable[[ResolvedDataset], None]] = [
             *self._default_validators(),
             *(list(validators) if validators else []),
@@ -384,6 +382,41 @@ class DatasetConfiguration:
             return DatasetSourceKind.INLINE
         return DatasetSourceKind.MEMORY
 
+    @property
+    def filters(self) -> dict[str, list[str]]:
+        """
+        The ``get_seeds`` filters applied when resolving named datasets.
+
+        Returns:
+            dict[str, list[str]]: A copy of the configured filters.
+        """
+        return dict(self._filters)
+
+    @property
+    def _get_seeds_filters(self) -> dict[str, Any]:
+        """
+        The configured filters widened to ``Any`` for ``get_seeds`` keyword unpacking.
+
+        ``get_seeds`` has a heterogeneous signature, so the list-valued filters must be widened
+        at this boundary before being unpacked as ``**kwargs``.
+
+        Returns:
+            dict[str, Any]: The filters typed for keyword unpacking.
+        """
+        return cast("dict[str, Any]", self._filters)
+
+    def update_filters(self, *, filters: dict[str, list[str]]) -> None:
+        """
+        Merge additional ``get_seeds`` filters into this configuration (run-time override).
+
+        Used when a run overrides dataset selection without rebuilding the configuration --
+        the provided filters take precedence over any already configured with the same key.
+
+        Args:
+            filters (dict[str, list[str]]): Filters to merge, keyed by ``get_seeds`` kwarg name.
+        """
+        self._filters = {**self._filters, **filters}
+
     # =========================================================================
     # Resolution helpers
     # =========================================================================
@@ -421,7 +454,7 @@ class DatasetConfiguration:
             DatasetConstraintError: If the dataset yields no seeds even after auto-fetch, or
                 if auto-fetch itself fails (the provider error is chained as the cause).
         """
-        found = list(self._memory.get_seeds(dataset_name=dataset_name))
+        found = list(self._memory.get_seeds(dataset_name=dataset_name, **self._get_seeds_filters))
         if not found and self._auto_fetch:
             try:
                 await self._fetch_dataset_async(dataset_name=dataset_name)
@@ -429,8 +462,12 @@ class DatasetConfiguration:
                 raise DatasetConstraintError(
                     f"Dataset '{dataset_name}' could not be loaded: auto-fetch from the registered provider failed."
                 ) from exc
-            found = list(self._memory.get_seeds(dataset_name=dataset_name))
+            found = list(self._memory.get_seeds(dataset_name=dataset_name, **self._get_seeds_filters))
         if not found:
+            if self._filters and self._memory.get_seeds(dataset_name=dataset_name):
+                raise DatasetConstraintError(
+                    f"Dataset '{dataset_name}' has seeds, but none match the configured filters {self._filters}."
+                )
             hint = (
                 "auto-fetch from the registered provider did not populate it"
                 if self._auto_fetch
@@ -494,164 +531,6 @@ class DatasetConfiguration:
         if self.max_dataset_size is None or len(items) <= self.max_dataset_size:
             return items
         return random.sample(items, self.max_dataset_size)
-
-    # =========================================================================
-    # Legacy getters (deprecated; removed in 0.17.0)
-    # =========================================================================
-
-    def get_seed_groups(self) -> dict[str, list[SeedGroup]]:
-        """
-        Resolve and return seed groups keyed by dataset (deprecated).
-
-        Returns:
-            dict[str, list[SeedGroup]]: Dataset name -> seed groups, sampled per dataset.
-
-        Raises:
-            ValueError: If no seed groups could be resolved from the configuration.
-        """
-        print_deprecation_message(
-            old_item="DatasetConfiguration.get_seed_groups",
-            new_item="DatasetAttackConfiguration.get_attack_groups_by_dataset_async",
-            removed_in=_LEGACY_REMOVED_IN,
-        )
-        return self._get_seed_groups()
-
-    def _get_seed_groups(self) -> dict[str, list[SeedGroup]]:
-        """
-        Resolve and return seed groups keyed by dataset (legacy implementation).
-
-        Returns:
-            dict[str, list[SeedGroup]]: Dataset name -> seed groups, sampled per dataset.
-
-        Raises:
-            ValueError: If no seed groups could be resolved from the configuration.
-        """
-        result: dict[str, list[SeedGroup]] = {}
-
-        if self._seed_groups is not None:
-            sampled = self._apply_max_dataset_size(list(self._seed_groups))
-            if sampled:
-                result[INLINE_DATASET_NAME] = sampled
-        elif self._dataset_names is not None:
-            for name in self._dataset_names:
-                loaded = self._load_seed_groups_for_dataset(dataset_name=name)
-                if loaded:
-                    result[name] = self._apply_max_dataset_size(loaded)
-
-        if not result:
-            raise ValueError("DatasetConfiguration has no seed_groups. Set seed_groups or dataset_names.")
-
-        return result
-
-    def _load_seed_groups_for_dataset(self, *, dataset_name: str) -> list[SeedGroup]:
-        """
-        Load seed groups for a single dataset from memory (legacy override hook).
-
-        Args:
-            dataset_name (str): The dataset name to load.
-
-        Returns:
-            list[SeedGroup]: Seed groups loaded from memory, or empty list if none found.
-        """
-        return list(self._memory.get_seed_groups(dataset_name=dataset_name) or [])
-
-    def get_all_seed_groups(self) -> list[SeedGroup]:
-        """
-        Resolve and return all seed groups as a flat list (deprecated).
-
-        Returns:
-            list[SeedGroup]: All resolved seed groups across datasets.
-        """
-        print_deprecation_message(
-            old_item="DatasetConfiguration.get_all_seed_groups",
-            new_item="DatasetAttackConfiguration.get_seed_attack_groups_async",
-            removed_in=_LEGACY_REMOVED_IN,
-        )
-        all_groups: list[SeedGroup] = []
-        for groups in self._get_seed_groups().values():
-            all_groups.extend(groups)
-        return all_groups
-
-    def get_seed_attack_groups(self) -> dict[str, list[SeedAttackGroup]]:
-        """
-        Resolve and return seed groups as SeedAttackGroups, keyed by dataset (deprecated).
-
-        Returns:
-            dict[str, list[SeedAttackGroup]]: Dataset name -> seed attack groups.
-        """
-        print_deprecation_message(
-            old_item="DatasetConfiguration.get_seed_attack_groups",
-            new_item="DatasetAttackConfiguration.get_attack_groups_by_dataset_async",
-            removed_in=_LEGACY_REMOVED_IN,
-        )
-        return self._get_seed_attack_groups()
-
-    def _get_seed_attack_groups(self) -> dict[str, list[SeedAttackGroup]]:
-        """
-        Resolve and return seed groups as SeedAttackGroups, keyed by dataset (legacy impl).
-
-        Returns:
-            dict[str, list[SeedAttackGroup]]: Dataset name -> seed attack groups.
-        """
-        result: dict[str, list[SeedAttackGroup]] = {}
-        for dataset_name, groups in self._get_seed_groups().items():
-            result[dataset_name] = [SeedAttackGroup(seeds=list(sg.seeds)) for sg in groups]
-        return result
-
-    def get_all_seed_attack_groups(self) -> list[SeedAttackGroup]:
-        """
-        Resolve and return all seed groups as SeedAttackGroups in a flat list (deprecated).
-
-        Returns:
-            list[SeedAttackGroup]: All resolved seed attack groups across datasets.
-        """
-        print_deprecation_message(
-            old_item="DatasetConfiguration.get_all_seed_attack_groups",
-            new_item="DatasetAttackConfiguration.get_seed_attack_groups_async",
-            removed_in=_LEGACY_REMOVED_IN,
-        )
-        all_groups: list[SeedAttackGroup] = []
-        for groups in self._get_seed_attack_groups().values():
-            all_groups.extend(groups)
-        return all_groups
-
-    def get_default_dataset_names(self) -> list[str]:
-        """
-        Get the list of default dataset names for this configuration (deprecated).
-
-        Returns:
-            list[str]: Dataset names, or empty list if using inline seeds.
-        """
-        print_deprecation_message(
-            old_item="DatasetConfiguration.get_default_dataset_names",
-            new_item="DatasetConfiguration.dataset_names",
-            removed_in=_LEGACY_REMOVED_IN,
-        )
-        return self.dataset_names
-
-    def get_all_seeds(self) -> list[Seed]:
-        """
-        Load all seeds from memory for all configured datasets (deprecated).
-
-        Returns:
-            list[Seed]: Seeds from all configured datasets (sampled per dataset).
-
-        Raises:
-            ValueError: If no dataset names are configured.
-        """
-        print_deprecation_message(
-            old_item="DatasetConfiguration.get_all_seeds",
-            new_item="DatasetAttackConfiguration.get_seed_attack_groups_async",
-            removed_in=_LEGACY_REMOVED_IN,
-        )
-        if self._dataset_names is None:
-            raise ValueError("No dataset names configured. Set dataset_names to use get_all_seeds.")
-
-        all_seeds: list[Seed] = []
-        for dataset_name in self._dataset_names:
-            seeds = list(self._memory.get_seeds(dataset_name=dataset_name))
-            all_seeds.extend(self._apply_max_dataset_size(seeds))
-        return all_seeds
 
 
 class DatasetAttackConfiguration(DatasetConfiguration):
@@ -743,7 +622,7 @@ class DatasetAttackConfiguration(DatasetConfiguration):
         )
         return groups_by_dataset, resolved
 
-    async def get_seed_attack_groups_async(self) -> list[SeedAttackGroup]:
+    async def get_seed_attack_groups_async(self, *, apply_sampling: bool = True) -> list[SeedAttackGroup]:
         """
         Resolve the configured dataset into a flat ``list[SeedAttackGroup]``.
 
@@ -751,8 +630,15 @@ class DatasetAttackConfiguration(DatasetConfiguration):
         validates the full resolved seed set, then samples ``max_dataset_size`` globally
         over all built groups.
 
+        Args:
+            apply_sampling (bool): When True (default), apply ``max_dataset_size`` sampling.
+                Pass False to resolve the full, deterministic dataset with no ``random.sample``
+                draw -- used on resume so the persisted objective subset can be reconstructed
+                exactly rather than intersected against a fresh (divergent) sample.
+
         Returns:
-            list[SeedAttackGroup]: The validated, sampled attack groups.
+            list[SeedAttackGroup]: The validated attack groups (sampled when ``apply_sampling``
+                is True, otherwise the full resolved set).
 
         Raises:
             DatasetConstraintError: If a configured dataset yields no seeds, the resolved
@@ -761,13 +647,16 @@ class DatasetAttackConfiguration(DatasetConfiguration):
         groups_by_dataset, resolved = await self._build_groups_by_dataset_async()
         self.validate(resolved)
         groups = [group for groups in groups_by_dataset.values() for group in groups]
-        groups = self._apply_max_dataset_size(groups)
+        if apply_sampling:
+            groups = self._apply_max_dataset_size(groups)
         if not groups:
             names = ", ".join(self._dataset_names) if self._dataset_names else "<inline>"
             raise DatasetConstraintError(f"Resolved attack-group dataset is empty (datasets: {names}).")
         return groups
 
-    async def get_attack_groups_by_dataset_async(self) -> dict[str, list[SeedAttackGroup]]:
+    async def get_attack_groups_by_dataset_async(
+        self, *, apply_sampling: bool = True
+    ) -> dict[str, list[SeedAttackGroup]]:
         """
         Resolve attack groups keyed by dataset name, globally sampled.
 
@@ -777,8 +666,15 @@ class DatasetAttackConfiguration(DatasetConfiguration):
         keyed by their originating dataset. For an independent budget per dataset, compose
         ``CompoundDatasetAttackConfiguration.per_dataset(...)`` instead.
 
+        Args:
+            apply_sampling (bool): When True (default), apply ``max_dataset_size`` sampling.
+                Pass False to resolve the full, deterministic dataset with no ``random.sample``
+                draw -- used on resume so the persisted objective subset can be reconstructed
+                exactly rather than intersected against a fresh (divergent) sample.
+
         Returns:
-            dict[str, list[SeedAttackGroup]]: Dataset name -> sampled attack groups.
+            dict[str, list[SeedAttackGroup]]: Dataset name -> attack groups (sampled when
+                ``apply_sampling`` is True, otherwise the full resolved set).
 
         Raises:
             DatasetConstraintError: If a configured dataset yields no seeds, the resolved
@@ -786,7 +682,8 @@ class DatasetAttackConfiguration(DatasetConfiguration):
         """
         groups_by_dataset, resolved = await self._build_groups_by_dataset_async()
         self.validate(resolved)
-        result = {name: groups for name, groups in self._sample_groups_by_dataset(groups_by_dataset).items() if groups}
+        sampled = self._sample_groups_by_dataset(groups_by_dataset) if apply_sampling else groups_by_dataset
+        result = {name: groups for name, groups in sampled.items() if groups}
         if not result:
             names = ", ".join(self._dataset_names) if self._dataset_names else "<inline>"
             raise DatasetConstraintError(f"Resolved attack-group dataset is empty (datasets: {names}).")
@@ -862,6 +759,7 @@ class CompoundDatasetAttackConfiguration(DatasetAttackConfiguration):
         dataset_names: Sequence[str],
         max_dataset_size: int | None = None,
         auto_fetch: bool = True,
+        filters: dict[str, list[str]] | None = None,
         validators: Sequence[Callable[[ResolvedDataset], None]] | None = None,
     ) -> CompoundDatasetAttackConfiguration:
         """
@@ -874,6 +772,7 @@ class CompoundDatasetAttackConfiguration(DatasetAttackConfiguration):
             dataset_names (Sequence[str]): The dataset names; one child is built per name.
             max_dataset_size (int | None): Per-dataset cap applied to each child.
             auto_fetch (bool): Passed to each child (fetch missing datasets into memory).
+            filters (dict[str, list[str]] | None): ``get_seeds`` filters applied to each child.
             validators (Sequence[Callable[[ResolvedDataset], None]] | None): Applied to each child.
 
         Returns:
@@ -890,6 +789,7 @@ class CompoundDatasetAttackConfiguration(DatasetAttackConfiguration):
                     dataset_names=[name],
                     max_dataset_size=max_dataset_size,
                     auto_fetch=auto_fetch,
+                    filters=filters,
                     validators=validators,
                 )
                 for name in dataset_names
@@ -923,28 +823,55 @@ class CompoundDatasetAttackConfiguration(DatasetAttackConfiguration):
             return DatasetSourceKind.INLINE
         return DatasetSourceKind.MEMORY
 
-    async def get_seed_attack_groups_async(self) -> list[SeedAttackGroup]:
+    def update_filters(self, *, filters: dict[str, list[str]]) -> None:
+        """
+        Merge filters into the compound and propagate them to every child configuration.
+
+        The children run the actual ``get_seeds`` queries, so run-time filter overrides must
+        reach each child to take effect.
+
+        Args:
+            filters (dict[str, list[str]]): Filters to merge, keyed by ``get_seeds`` kwarg name.
+        """
+        super().update_filters(filters=filters)
+        for child in self._configurations:
+            child.update_filters(filters=filters)
+
+    async def get_seed_attack_groups_async(self, *, apply_sampling: bool = True) -> list[SeedAttackGroup]:
         """
         Concatenate every child's flat result, then validate and apply the global cap.
 
         Each child validates and samples itself; the combined result is validated against this
         compound's validators and capped by an optional compound ``max_dataset_size``.
 
+        Args:
+            apply_sampling (bool): When True (default), sample both each child and the combined
+                result under ``max_dataset_size``. Pass False to resolve the full, deterministic
+                dataset with no sampling at any level -- used on resume (propagated to children).
+
         Returns:
-            list[SeedAttackGroup]: The combined, validated, capped attack groups.
+            list[SeedAttackGroup]: The combined, validated attack groups (capped when
+                ``apply_sampling`` is True).
 
         Raises:
             DatasetConstraintError: If a child yields nothing, or the combined result fails validation.
         """
         groups: list[SeedAttackGroup] = []
         for child in self._configurations:
-            groups.extend(await child.get_seed_attack_groups_async())
+            groups.extend(await child.get_seed_attack_groups_async(apply_sampling=apply_sampling))
         self.validate(self._resolved_from_groups(groups))
-        return self._apply_max_dataset_size(groups)
+        return self._apply_max_dataset_size(groups) if apply_sampling else groups
 
-    async def get_attack_groups_by_dataset_async(self) -> dict[str, list[SeedAttackGroup]]:
+    async def get_attack_groups_by_dataset_async(
+        self, *, apply_sampling: bool = True
+    ) -> dict[str, list[SeedAttackGroup]]:
         """
         Merge each child's by-dataset result, validate, then apply the global cap across the union.
+
+        Args:
+            apply_sampling (bool): When True (default), sample both each child and the merged
+                union under ``max_dataset_size``. Pass False to resolve the full, deterministic
+                dataset with no sampling at any level -- used on resume (propagated to children).
 
         Returns:
             dict[str, list[SeedAttackGroup]]: Combined groups keyed by dataset name.
@@ -954,10 +881,11 @@ class CompoundDatasetAttackConfiguration(DatasetAttackConfiguration):
         """
         merged: dict[str, list[SeedAttackGroup]] = {}
         for child in self._configurations:
-            for name, groups in (await child.get_attack_groups_by_dataset_async()).items():
+            child_groups = await child.get_attack_groups_by_dataset_async(apply_sampling=apply_sampling)
+            for name, groups in child_groups.items():
                 merged.setdefault(name, []).extend(groups)
         self.validate(self._resolved_from_groups([group for groups in merged.values() for group in groups]))
-        return self._sample_groups_by_dataset(merged)
+        return self._sample_groups_by_dataset(merged) if apply_sampling else merged
 
     def _resolved_from_groups(self, groups: list[SeedAttackGroup]) -> ResolvedDataset:
         """

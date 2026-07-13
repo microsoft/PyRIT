@@ -18,17 +18,16 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-from pyrit.common.deprecation import print_deprecation_message
 from pyrit.common.utils import to_sha256
-from pyrit.executor.attack import AttackExecutor, AttackStrategy
+from pyrit.executor.attack import AttackExecutor
 from pyrit.executor.attack.core.attack_result_attribution import AttackResultAttribution
 from pyrit.memory import CentralMemory
 from pyrit.models import AtomicAttackEvaluationIdentifier, AtomicAttackIdentifier, AttackResult, SeedAttackGroup
-from pyrit.scenario.core.attack_technique import AttackTechnique
 
 if TYPE_CHECKING:
     from pyrit.executor.attack.core.attack_executor import AttackExecutorResult
     from pyrit.prompt_target import PromptTarget
+    from pyrit.scenario.core.attack_technique import AttackTechnique
     from pyrit.score import TrueFalseScorer
 
 logger = logging.getLogger(__name__)
@@ -55,8 +54,7 @@ class AtomicAttack:
         *,
         atomic_attack_name: str,
         display_group: str | None = None,
-        attack_technique: AttackTechnique | None = None,
-        attack: AttackStrategy[Any, Any] | None = None,
+        attack_technique: AttackTechnique,
         seed_groups: list[SeedAttackGroup],
         adversarial_chat: PromptTarget | None = None,
         objective_scorer: TrueFalseScorer | None = None,
@@ -74,9 +72,7 @@ class AtomicAttack:
                 output (console printer, reports).  When ``None``, falls back
                 to ``atomic_attack_name``.
             attack_technique: An AttackTechnique bundling the attack strategy and optional
-                technique seeds. Preferred over the deprecated ``attack`` parameter.
-            attack: **Deprecated.** Will be removed in v0.16.0. The configured attack
-                strategy to execute. Use ``attack_technique`` instead.
+                technique seeds.
             seed_groups: List of seed attack groups. Each must be a
                 ``SeedAttackGroup`` (which guarantees exactly one objective).
             adversarial_chat: Optional chat target for generating
@@ -88,27 +84,13 @@ class AtomicAttack:
                 execution method.
 
         Raises:
-            ValueError: If seed_groups list is empty, or if neither attack_technique
-                nor attack is provided, or both are provided.
+            ValueError: If seed_groups list is empty.
             TypeError: If any entry of ``seed_groups`` is not a ``SeedAttackGroup``.
         """
         self.atomic_attack_name = atomic_attack_name
         self.display_group = display_group or atomic_attack_name
 
-        if attack_technique is not None and attack is not None:
-            raise ValueError("Provide either attack_technique or attack, not both.")
-
-        if attack_technique is not None:
-            self._attack_technique = attack_technique
-        elif attack is not None:
-            print_deprecation_message(
-                old_item="AtomicAttack(attack=...)",
-                new_item="AtomicAttack(attack_technique=AttackTechnique(attack=...))",
-                removed_in="0.16.0",
-            )
-            self._attack_technique = AttackTechnique(attack=attack)
-        else:
-            raise ValueError("Either attack_technique or attack must be provided.")
+        self._attack_technique = attack_technique
 
         # Validate seed_groups
         if not seed_groups:
@@ -249,28 +231,6 @@ class AtomicAttack:
             sg for sg in self._seed_groups if sg.objective is None or to_sha256(sg.objective.value) not in hashes
         ]
 
-    def filter_seed_groups_by_objectives(self, *, remaining_objectives: list[str]) -> None:
-        """
-        Filter seed groups to only those with objectives in the remaining list.
-
-        .. deprecated::
-            Use ``drop_seed_groups_with_hashes`` (or ``keep_seed_groups_with_hashes``)
-            which keys on content-addressed ``objective_sha256`` instead of
-            objective text. Scheduled for removal in 0.16.0.
-
-        Args:
-            remaining_objectives (list[str]): List of objectives that still need to be executed.
-        """
-        print_deprecation_message(
-            old_item="AtomicAttack.filter_seed_groups_by_objectives(remaining_objectives=...)",
-            new_item="AtomicAttack.keep_seed_groups_with_hashes(hashes=...)",
-            removed_in="0.16.0",
-        )
-        remaining_set = set(remaining_objectives)
-        self._seed_groups = [
-            sg for sg in self._seed_groups if sg.objective is not None and sg.objective.value in remaining_set
-        ]
-
     def keep_seed_groups_with_hashes(self, *, hashes: set[str]) -> set[str]:
         """
         Keep only seed groups whose ``objective_sha256`` is in ``hashes``.
@@ -307,7 +267,6 @@ class AtomicAttack:
         *,
         executor: AttackExecutor | None = None,
         return_partial_on_failure: bool = True,
-        max_concurrency: int | None = None,
         **attack_params: Any,
     ) -> AttackExecutorResult[AttackResult]:
         """
@@ -330,15 +289,10 @@ class AtomicAttack:
             executor (AttackExecutor | None): Optional ``AttackExecutor`` to run the
                 attack with. When provided, its concurrency budget is used and is
                 shared with anything else holding a reference to it. When ``None``,
-                a fresh ``AttackExecutor(max_concurrency=max_concurrency)`` is created
-                for this call.
+                a fresh ``AttackExecutor(max_concurrency=1)`` is created for this call.
             return_partial_on_failure (bool): If True, returns partial results even when
                 some objectives don't complete execution. If False, raises an exception on
                 any execution failure. Defaults to True.
-            max_concurrency (int | None): **Deprecated.** Will be removed in 0.16.0. Pass
-                ``executor=AttackExecutor(max_concurrency=...)`` instead. Passing any
-                value here emits a ``DeprecationWarning``. When ``executor`` is also
-                provided, this value is silently ignored.
             **attack_params: Additional parameters to pass to the attack strategy.
 
         Returns:
@@ -348,15 +302,8 @@ class AtomicAttack:
         Raises:
             ValueError: If the attack execution fails completely and return_partial_on_failure=False.
         """
-        if max_concurrency is not None:
-            print_deprecation_message(
-                old_item="AtomicAttack.run_async(max_concurrency=...)",
-                new_item="AtomicAttack.run_async(executor=AttackExecutor(max_concurrency=...))",
-                removed_in="0.16.0",
-            )
-
         if executor is None:
-            executor = AttackExecutor(max_concurrency=max_concurrency if max_concurrency is not None else 1)
+            executor = AttackExecutor(max_concurrency=1)
 
         logger.info(
             f"Starting atomic attack execution with {len(self._seed_groups)} seed groups "

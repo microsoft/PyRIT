@@ -12,7 +12,7 @@ from pyrit.executor.attack.core import AttackExecutorResult
 from pyrit.memory import CentralMemory
 from pyrit.models import AttackOutcome, AttackResult, ComponentIdentifier
 from pyrit.scenario import DatasetConfiguration, ScenarioResult
-from pyrit.scenario.core import AtomicAttack, BaselineAttackPolicy, Scenario, ScenarioStrategy
+from pyrit.scenario.core import AtomicAttack, BaselineAttackPolicy, Scenario, ScenarioTechnique
 
 # Test constants
 TEST_ATTACK_TYPE = "TestAttack"
@@ -128,7 +128,7 @@ def create_mock_atomic_attack(name: str, objectives: list[str], run_async_mock: 
     Returns:
         MagicMock configured as an AtomicAttack
     """
-    # Create a mock attack strategy
+    # Create a mock attack technique
     mock_attack_strategy = MagicMock()
     mock_attack_strategy.get_objective_target.return_value = MagicMock()
     mock_attack_strategy.get_attack_scoring_config.return_value = MagicMock()
@@ -168,27 +168,27 @@ class ConcreteScenario(Scenario):
     BASELINE_ATTACK_POLICY: ClassVar[BaselineAttackPolicy] = BaselineAttackPolicy.Forbidden
 
     def __init__(self, *, atomic_attacks_to_return=None, objective_scorer=None, **kwargs):
-        strategy_class = kwargs.pop("strategy_class", None) or _build_test_strategy()
+        technique_class = kwargs.pop("technique_class", None) or _build_test_technique()
 
         # Create a default mock scorer if not provided
         if objective_scorer is None:
             objective_scorer = MagicMock()
             objective_scorer.get_identifier.return_value = _mock_scorer_id("MockScorer")
 
-        kwargs.setdefault("default_strategy", strategy_class.ALL)
+        kwargs.setdefault("default_technique", technique_class.ALL)
         kwargs.setdefault("default_dataset_config", DatasetConfiguration())
-        super().__init__(strategy_class=strategy_class, objective_scorer=objective_scorer, **kwargs)
+        super().__init__(technique_class=technique_class, objective_scorer=objective_scorer, **kwargs)
         self._atomic_attacks_to_return = atomic_attacks_to_return or []
 
-    async def _resolve_seed_groups_by_dataset_async(self):
+    async def _resolve_seed_groups_by_dataset_async(self, *, apply_sampling: bool = True):
         return {}
 
     async def _build_atomic_attacks_async(self, *, context):
         return self._atomic_attacks_to_return
 
 
-def _build_test_strategy():
-    class TestStrategy(ScenarioStrategy):
+def _build_test_technique():
+    class TestTechnique(ScenarioTechnique):
         CONCRETE = ("concrete", {"concrete"})
         ALL = ("all", {"all"})
 
@@ -196,7 +196,7 @@ def _build_test_strategy():
         def get_aggregate_tags(cls) -> set[str]:
             return {"all"}
 
-    return TestStrategy
+    return TestTechnique
 
 
 @pytest.fixture
@@ -240,10 +240,13 @@ class TestScenarioRetry:
             version=1,
             atomic_attacks_to_return=mock_atomic_attacks,
         )
-        await scenario.initialize_async(
-            objective_target=mock_objective_target,
-            max_retries=3,  # Set retries but shouldn't use them on success
+        scenario.set_params_from_args(
+            args={
+                "objective_target": mock_objective_target,
+                "max_retries": 3,  # Set retries but shouldn't use them on success
+            }
         )
+        await scenario.initialize_async()
 
         result = await scenario.run_async()
 
@@ -279,11 +282,14 @@ class TestScenarioRetry:
             version=1,
             atomic_attacks_to_return=mock_atomic_attacks,
         )
-        await scenario.initialize_async(
-            objective_target=mock_objective_target,
-            max_concurrency=1,
-            max_retries=2,
+        scenario.set_params_from_args(
+            args={
+                "objective_target": mock_objective_target,
+                "max_concurrency": 1,
+                "max_retries": 2,
+            }
         )
+        await scenario.initialize_async()
 
         result = await scenario.run_async()
 
@@ -302,10 +308,13 @@ class TestScenarioRetry:
             version=1,
             atomic_attacks_to_return=mock_atomic_attacks,
         )
-        await scenario.initialize_async(
-            objective_target=mock_objective_target,
-            max_retries=2,  # Allow 2 retries (3 total attempts)
+        scenario.set_params_from_args(
+            args={
+                "objective_target": mock_objective_target,
+                "max_retries": 2,  # Allow 2 retries (3 total attempts)
+            }
         )
+        await scenario.initialize_async()
 
         # Verify that scenario raises exception after exhausting retries
         with pytest.raises(Exception, match="Persistent failure"):
@@ -324,10 +333,13 @@ class TestScenarioRetry:
             version=1,
             atomic_attacks_to_return=mock_atomic_attacks,
         )
-        await scenario.initialize_async(
-            objective_target=mock_objective_target,
-            max_retries=0,  # No retries
+        scenario.set_params_from_args(
+            args={
+                "objective_target": mock_objective_target,
+                "max_retries": 0,  # No retries
+            }
         )
+        await scenario.initialize_async()
 
         # Verify that scenario raises exception immediately without retry
         with pytest.raises(Exception, match="Test failure"):
@@ -361,11 +373,14 @@ class TestScenarioRetry:
             version=1,
             atomic_attacks_to_return=mock_atomic_attacks,
         )
-        await scenario.initialize_async(
-            objective_target=mock_objective_target,
-            max_concurrency=1,
-            max_retries=3,
+        scenario.set_params_from_args(
+            args={
+                "objective_target": mock_objective_target,
+                "max_concurrency": 1,
+                "max_retries": 3,
+            }
         )
+        await scenario.initialize_async()
 
         result = await scenario.run_async()
 
@@ -398,11 +413,14 @@ class TestScenarioRetry:
             version=1,
             atomic_attacks_to_return=mock_atomic_attacks,
         )
-        await scenario.initialize_async(
-            objective_target=mock_objective_target,
-            max_concurrency=1,
-            max_retries=1,
+        scenario.set_params_from_args(
+            args={
+                "objective_target": mock_objective_target,
+                "max_concurrency": 1,
+                "max_retries": 1,
+            }
         )
+        await scenario.initialize_async()
 
         with caplog.at_level("ERROR"):
             result = await scenario.run_async()
@@ -450,10 +468,13 @@ class TestScenarioResumption:
             version=1,
             atomic_attacks_to_return=[atomic_attack],
         )
-        await scenario.initialize_async(
-            objective_target=mock_objective_target,
-            max_retries=1,
+        scenario.set_params_from_args(
+            args={
+                "objective_target": mock_objective_target,
+                "max_retries": 1,
+            }
         )
+        await scenario.initialize_async()
 
         result = await scenario.run_async()
 
@@ -506,10 +527,13 @@ class TestScenarioResumption:
             version=1,
             atomic_attacks_to_return=[attack1, attack2, attack3],
         )
-        await scenario.initialize_async(
-            objective_target=mock_objective_target,
-            max_retries=1,
+        scenario.set_params_from_args(
+            args={
+                "objective_target": mock_objective_target,
+                "max_retries": 1,
+            }
         )
+        await scenario.initialize_async()
 
         result = await scenario.run_async()
 
@@ -573,10 +597,13 @@ class TestScenarioResumption:
             version=1,
             atomic_attacks_to_return=attacks,
         )
-        await scenario.initialize_async(
-            objective_target=mock_objective_target,
-            max_retries=1,
+        scenario.set_params_from_args(
+            args={
+                "objective_target": mock_objective_target,
+                "max_retries": 1,
+            }
         )
+        await scenario.initialize_async()
 
         result = await scenario.run_async()
 
@@ -630,7 +657,8 @@ class TestScenarioForeignKeyResumeRegression:
             version=1,
             atomic_attacks_to_return=[atomic_attack],
         )
-        await scenario.initialize_async(objective_target=mock_objective_target, max_retries=0)
+        scenario.set_params_from_args(args={"objective_target": mock_objective_target, "max_retries": 0})
+        await scenario.initialize_async()
 
         with pytest.raises(Exception, match="simulated crash"):
             await scenario.run_async()
@@ -659,7 +687,8 @@ class TestScenarioForeignKeyResumeRegression:
             atomic_attacks_to_return=[atomic_attack_resume],
             scenario_result_id=scenario_result_id,
         )
-        await scenario_resumed.initialize_async(objective_target=mock_objective_target, max_retries=0)
+        scenario_resumed.set_params_from_args(args={"objective_target": mock_objective_target, "max_retries": 0})
+        await scenario_resumed.initialize_async()
         await scenario_resumed.run_async()
 
         # Resume executed only the missing objectives — the core fix.
@@ -708,7 +737,8 @@ class TestScenarioForeignKeyResumeRegression:
         )
 
         with caplog.at_level("WARNING"):
-            await scenario.initialize_async(objective_target=mock_objective_target)
+            scenario.set_params_from_args(args={"objective_target": mock_objective_target})
+            await scenario.initialize_async()
 
         assert not any("duplicate atomic_attack_name" in record.message for record in caplog.records), (
             "Duplicate atomic_attack_name should be supported without warning"

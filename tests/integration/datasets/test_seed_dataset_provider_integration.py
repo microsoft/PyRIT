@@ -660,7 +660,7 @@ class TestHarmbenchMetadataInScenario:
         from pyrit.executor.attack.core.attack_config import AttackScoringConfig
         from pyrit.prompt_target import TextTarget
         from pyrit.scenario.scenarios.foundry.red_team_agent import (
-            FoundryStrategy,
+            FoundryTechnique,
             RedTeamAgent,
         )
         from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
@@ -676,7 +676,7 @@ class TestHarmbenchMetadataInScenario:
 
         # Mock scorer to avoid Azure dependency
         mock_scorer = MagicMock(spec=TrueFalseScorer)
-        mock_scorer.get_identifier.return_value = ComponentIdentifier.from_dict({"__type__": "MockScorer"})
+        mock_scorer.get_identifier.return_value = ComponentIdentifier.model_validate({"__type__": "MockScorer"})
 
         target = TextTarget()
         rta = RedTeamAgent(
@@ -687,12 +687,15 @@ class TestHarmbenchMetadataInScenario:
         # This is the critical call — it loads seed groups from memory
         # and builds atomic attacks. If metadata broke the pipeline,
         # this would raise ValueError about missing seed_groups.
-        await rta.initialize_async(
-            objective_target=target,
-            max_concurrency=1,
-            scenario_strategies=[FoundryStrategy.Base64],
-            include_baseline=False,
+        rta.set_params_from_args(
+            args={
+                "objective_target": target,
+                "max_concurrency": 1,
+                "scenario_techniques": [FoundryTechnique.Base64],
+                "include_baseline": False,
+            }
         )
+        await rta.initialize_async()
 
         # Verify the scenario got objectives from harmbench
         attacks = rta._atomic_attacks

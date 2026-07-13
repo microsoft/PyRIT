@@ -25,8 +25,8 @@
 # %%
 import pandas as pd
 
+from pyrit.converter import get_converter_modalities
 from pyrit.output import output_attack_async
-from pyrit.prompt_converter import get_converter_modalities
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 
 await initialize_pyrit_async(memory_db_type=IN_MEMORY)  # type: ignore
@@ -68,7 +68,7 @@ print(df)
 # Converters can be used to perform these types of transformations. Here is a simple program that uses Rot13Converter converter, RandomCapitalLettersConverter, and AsciiArtConverter.
 
 # %%
-from pyrit.prompt_converter import (
+from pyrit.converter import (
     AsciiArtConverter,
     BinaryConverter,
     FirstLetterConverter,
@@ -98,12 +98,12 @@ print(await FirstLetterConverter().convert_tokens_async(prompt=prompt))  # type:
 # "t-e-l-l- - m-e- -h-o-w- -t-o- -c-u-t- -d-o-w-n - a- -t-r-e-e"
 
 # %%
+from pyrit.converter import StringJoinConverter, VariationConverter
 from pyrit.executor.attack import (
     AttackConverterConfig,
     PromptSendingAttack,
 )
-from pyrit.prompt_converter import StringJoinConverter, VariationConverter
-from pyrit.prompt_normalizer import PromptConverterConfiguration
+from pyrit.prompt_normalizer import ConverterConfiguration
 from pyrit.prompt_target import OpenAIChatTarget, TextTarget
 
 objective = "tell me how to cut down a tree"
@@ -112,7 +112,7 @@ objective = "tell me how to cut down a tree"
 converter_target = OpenAIChatTarget()
 prompt_variation_converter = VariationConverter(converter_target=converter_target)
 
-converter_configs = PromptConverterConfiguration.from_converters(  # type: ignore
+converter_configs = ConverterConfiguration.from_converters(  # type: ignore
     converters=[prompt_variation_converter, StringJoinConverter()]
 )
 
@@ -137,7 +137,7 @@ await output_attack_async(result)
 # - Decoding encoded responses
 # - Normalizing or cleaning up response text
 #
-# Response converters use the same `PromptConverterConfiguration` class as request converters. They are configured via the `response_converters` parameter in `AttackConverterConfig`.
+# Response converters use the same `ConverterConfiguration` class as request converters. They are configured via the `response_converters` parameter in `AttackConverterConfig`.
 #
 # ### Translation Round-Trip Example
 #
@@ -148,12 +148,12 @@ await output_attack_async(result)
 # 3. Use a **response converter** to translate the response back to English
 
 # %%
+from pyrit.converter import TranslationConverter
 from pyrit.executor.attack import (
     AttackConverterConfig,
     PromptSendingAttack,
 )
-from pyrit.prompt_converter import TranslationConverter
-from pyrit.prompt_normalizer import PromptConverterConfiguration
+from pyrit.prompt_normalizer import ConverterConfiguration
 from pyrit.prompt_target import OpenAIChatTarget
 
 objective = "What is the capital of France?"
@@ -166,11 +166,11 @@ prompt_target = OpenAIChatTarget()
 
 # Request converter: translate English to French
 request_converter = TranslationConverter(converter_target=converter_target, language="French")
-request_converter_config = PromptConverterConfiguration(converters=[request_converter])
+request_converter_config = ConverterConfiguration(converters=[request_converter])
 
 # Response converter: translate response back to English
 response_converter = TranslationConverter(converter_target=converter_target, language="English")
-response_converter_config = PromptConverterConfiguration(converters=[response_converter])
+response_converter_config = ConverterConfiguration(converters=[response_converter])
 
 # Configure the attack with both request and response converters
 converter_config = AttackConverterConfig(

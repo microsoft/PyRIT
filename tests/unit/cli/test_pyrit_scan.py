@@ -31,6 +31,22 @@ def _sp(*, name, description="", default=None, param_type="str", choices=None, i
     )
 
 
+def test_dataset_filter_help_covers_every_request_model_key():
+    """
+    The frontend per-key ``--dataset-filters`` help must describe exactly the server-side allow-list.
+
+    A missing key means a filter the request model accepts has no CLI help (and, by design, no
+    documented semantics); an extra key means the CLI advertises a filter the server rejects.
+    Adding to ``DATASET_FILTERS`` therefore forces adding a ``_DATASET_FILTER_HELP`` entry, where
+    the surrounding entries model the one-line semantics note to write.
+    """
+    from pyrit.cli._cli_args import _DATASET_FILTER_HELP
+    from pyrit.models.catalog.scenario import DATASET_FILTERS
+
+    assert set(_DATASET_FILTER_HELP) == DATASET_FILTERS
+    assert all(_DATASET_FILTER_HELP.values()), "every dataset filter key needs a semantics note"
+
+
 class TestParseArgs:
     """Tests for parse_args function."""
 
@@ -64,13 +80,13 @@ class TestParseArgs:
         args = pyrit_scan.parse_args(["--list-datasets"])
         assert args.list_datasets is True
 
-    def test_parse_args_with_strategies(self):
-        args = pyrit_scan.parse_args(["test_scenario", "--strategies", "s1", "s2"])
-        assert args.scenario_strategies == ["s1", "s2"]
+    def test_parse_args_with_techniques(self):
+        args = pyrit_scan.parse_args(["test_scenario", "--techniques", "s1", "s2"])
+        assert args.scenario_techniques == ["s1", "s2"]
 
-    def test_parse_args_with_strategies_short_flag(self):
-        args = pyrit_scan.parse_args(["test_scenario", "-s", "s1", "s2"])
-        assert args.scenario_strategies == ["s1", "s2"]
+    def test_parse_args_with_techniques_short_flag(self):
+        args = pyrit_scan.parse_args(["test_scenario", "-t", "s1", "s2"])
+        assert args.scenario_techniques == ["s1", "s2"]
 
     def test_parse_args_with_max_concurrency(self):
         args = pyrit_scan.parse_args(["test_scenario", "--max-concurrency", "5"])
@@ -84,6 +100,14 @@ class TestParseArgs:
         args = pyrit_scan.parse_args(["test_scenario", "--memory-labels", '{"key":"value"}'])
         assert args.memory_labels == '{"key":"value"}'
 
+    def test_parse_args_with_dataset_filters(self):
+        args = pyrit_scan.parse_args(["test_scenario", "--dataset-filters", "harm_categories=cyber", "data_types=text"])
+        assert args.dataset_filters == [("harm_categories", "cyber"), ("data_types", "text")]
+
+    def test_parse_args_dataset_filter_without_equals_errors(self):
+        with pytest.raises(SystemExit):
+            pyrit_scan.parse_args(["test_scenario", "--dataset-filters", "harm_categories"])
+
     def test_parse_args_complex_command(self):
         args = pyrit_scan.parse_args(
             [
@@ -92,7 +116,7 @@ class TestParseArgs:
                 "INFO",
                 "--initializers",
                 "openai_target",
-                "--strategies",
+                "--techniques",
                 "base64",
                 "rot13",
                 "--max-concurrency",
@@ -106,7 +130,7 @@ class TestParseArgs:
         assert args.scenario_name == "encoding_scenario"
         assert args.log_level == logging.INFO
         assert args.initializers == ["openai_target"]
-        assert args.scenario_strategies == ["base64", "rot13"]
+        assert args.scenario_techniques == ["base64", "rot13"]
         assert args.max_concurrency == 10
         assert args.max_retries == 5
 
@@ -234,9 +258,9 @@ def _mock_api_client():
         scenario_name="test_scenario",
         scenario_type="X",
         description="",
-        default_strategy="",
-        aggregate_strategies=[],
-        all_strategies=[],
+        default_technique="",
+        aggregate_techniques=[],
+        all_techniques=[],
         default_datasets=[],
         supported_parameters=[],
     )
@@ -247,7 +271,7 @@ def _mock_api_client():
         status=ScenarioRunState.CREATED,
         created_at=now,
         updated_at=now,
-        strategies_used=[],
+        techniques_used=[],
         total_attacks=0,
         completed_attacks=0,
         objective_achieved_rate=0,
@@ -259,7 +283,7 @@ def _mock_api_client():
         status=ScenarioRunState.COMPLETED,
         created_at=now,
         updated_at=now,
-        strategies_used=[],
+        techniques_used=[],
         total_attacks=5,
         completed_attacks=5,
         objective_achieved_rate=40,
@@ -600,11 +624,12 @@ class TestBuildRunRequest:
                 {"name": "openai_target", "args": {"model": "gpt-4"}},
                 "datasets",
             ],
-            scenario_strategies=None,
+            scenario_techniques=None,
             max_concurrency=None,
             max_retries=None,
             dataset_names=None,
             max_dataset_size=None,
+            dataset_filters=None,
             memory_labels=None,
         )
         request = pyrit_scan._build_run_request(parsed_args=parsed, scenario_name="s")
@@ -615,30 +640,62 @@ class TestBuildRunRequest:
         parsed = Namespace(
             target="t",
             initializers=None,
-            scenario_strategies=["s1"],
+            scenario_techniques=["s1"],
             max_concurrency=3,
             max_retries=2,
             dataset_names=["d1"],
             max_dataset_size=10,
+            dataset_filters=None,
             memory_labels='{"key":"value"}',
         )
         request = pyrit_scan._build_run_request(parsed_args=parsed, scenario_name="s")
-        assert request.strategies == ["s1"]
+        assert request.techniques == ["s1"]
         assert request.max_concurrency == 3
         assert request.max_retries == 2
         assert request.dataset_names == ["d1"]
         assert request.max_dataset_size == 10
         assert request.labels == {"key": "value"}
 
-    def test_includes_scenario_declared_params(self):
+    def test_populates_dataset_filters(self):
         parsed = Namespace(
-            target=None,
+            target="t",
             initializers=None,
-            scenario_strategies=None,
+            scenario_techniques=None,
             max_concurrency=None,
             max_retries=None,
             dataset_names=None,
             max_dataset_size=None,
+            dataset_filters=[("harm_categories", "cyber"), ("data_types", "text")],
+            memory_labels=None,
+        )
+        request = pyrit_scan._build_run_request(parsed_args=parsed, scenario_name="s")
+        assert request.dataset_filters == {"harm_categories": ["cyber"], "data_types": ["text"]}
+
+    def test_duplicate_dataset_filter_key_raises(self):
+        parsed = Namespace(
+            target="t",
+            initializers=None,
+            scenario_techniques=None,
+            max_concurrency=None,
+            max_retries=None,
+            dataset_names=None,
+            max_dataset_size=None,
+            dataset_filters=[("harm_categories", "cyber"), ("harm_categories", "violence")],
+            memory_labels=None,
+        )
+        with pytest.raises(ValueError, match="Duplicate dataset filter 'harm_categories'"):
+            pyrit_scan._build_run_request(parsed_args=parsed, scenario_name="s")
+
+    def test_includes_scenario_declared_params(self):
+        parsed = Namespace(
+            target=None,
+            initializers=None,
+            scenario_techniques=None,
+            max_concurrency=None,
+            max_retries=None,
+            dataset_names=None,
+            max_dataset_size=None,
+            dataset_filters=None,
             memory_labels=None,
             scenario__max_turns="7",
         )
@@ -901,18 +958,18 @@ class TestMainExtraPaths:
                 scenario_name="alt_a",
                 scenario_type="X",
                 description="",
-                default_strategy="",
-                aggregate_strategies=[],
-                all_strategies=[],
+                default_technique="",
+                aggregate_techniques=[],
+                all_techniques=[],
                 default_datasets=[],
             ),
             RegisteredScenario(
                 scenario_name="alt_b",
                 scenario_type="X",
                 description="",
-                default_strategy="",
-                aggregate_strategies=[],
-                all_strategies=[],
+                default_technique="",
+                aggregate_techniques=[],
+                all_techniques=[],
                 default_datasets=[],
             ),
         ]
@@ -1088,9 +1145,9 @@ class TestScenarioParamFlow:
                 scenario_name="foo",
                 scenario_type="X",
                 description="",
-                default_strategy="",
-                aggregate_strategies=[],
-                all_strategies=[],
+                default_technique="",
+                aggregate_techniques=[],
+                all_techniques=[],
                 default_datasets=[],
             )
         ]
@@ -1098,9 +1155,9 @@ class TestScenarioParamFlow:
             scenario_name="foo",
             scenario_type="X",
             description="",
-            default_strategy="",
-            aggregate_strategies=[],
-            all_strategies=[],
+            default_technique="",
+            aggregate_techniques=[],
+            all_techniques=[],
             default_datasets=[],
             supported_parameters=typed_params,
         )

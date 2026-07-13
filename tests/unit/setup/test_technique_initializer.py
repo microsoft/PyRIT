@@ -23,7 +23,11 @@ from pyrit.setup.initializers.techniques import (
 )
 
 CORE_TECHNIQUE_NAMES: list[str] = [
-    "role_play",
+    "role_play_movie_script",
+    "role_play_video_game",
+    "role_play_trivia_game",
+    "role_play_persuasion",
+    "role_play_persuasion_written",
     "many_shot",
     "tap",
     "crescendo_simulated",
@@ -40,6 +44,14 @@ PERSONA_CRESCENDO_TECHNIQUE_NAMES: list[str] = [
     "crescendo_movie_director",
     "crescendo_history_lecture",
     "crescendo_journalist_interview",
+]
+
+ROLE_PLAY_TECHNIQUE_NAMES: list[str] = [
+    "role_play_movie_script",
+    "role_play_video_game",
+    "role_play_trivia_game",
+    "role_play_persuasion",
+    "role_play_persuasion_written",
 ]
 
 
@@ -83,8 +95,8 @@ class TestCoreGroupCatalog:
     def test_factories_do_not_bake_in_group_tag(self):
         """The ``core`` group tag is injected by build_technique_factories, not baked in here."""
         for factory in core.get_technique_factories():
-            assert "core" not in factory.strategy_tags
-            assert "extra" not in factory.strategy_tags
+            assert "core" not in factory.technique_tags
+            assert "extra" not in factory.technique_tags
 
 
 class TestExtraGroupCatalog:
@@ -96,8 +108,8 @@ class TestExtraGroupCatalog:
 
     def test_factories_do_not_bake_in_group_tag(self):
         for factory in extra.get_technique_factories():
-            assert "extra" not in factory.strategy_tags
-            assert "core" not in factory.strategy_tags
+            assert "extra" not in factory.technique_tags
+            assert "core" not in factory.technique_tags
 
     def test_violent_durian_has_max_turns_three(self):
         factory = next(f for f in extra.get_technique_factories() if f.name == "violent_durian")
@@ -120,13 +132,13 @@ class TestBuildTechniqueFactories:
         factories = build_technique_factories(groups=["core"])
         assert {f.name for f in factories} == set(CORE_TECHNIQUE_NAMES)
         for factory in factories:
-            assert "core" in factory.strategy_tags
+            assert "core" in factory.technique_tags
 
     def test_extra_group_injects_extra_tag(self):
         factories = build_technique_factories(groups=["extra"])
         assert {f.name for f in factories} == set(EXTRA_TECHNIQUE_NAMES)
         for factory in factories:
-            assert "extra" in factory.strategy_tags
+            assert "extra" in factory.technique_tags
 
     def test_default_returns_all_groups(self):
         names = {f.name for f in build_technique_factories()}
@@ -193,8 +205,8 @@ class TestPersonaCrescendoFactories:
 
     def test_all_tagged_core_single_turn(self):
         for f in self._persona_factories():
-            assert "core" in f.strategy_tags
-            assert "single_turn" in f.strategy_tags
+            assert "core" in f.technique_tags
+            assert "single_turn" in f.technique_tags
 
     def test_seed_technique_num_turns_matches_canonical_default(self):
         """Persona variants share the canonical num_turns=3 of crescendo_simulated."""
@@ -244,6 +256,91 @@ class TestPersonaCrescendoYamls:
 
 
 # ---------------------------------------------------------------------------
+# Role-play factories (simulated-conversation personas in the core group)
+# ---------------------------------------------------------------------------
+
+
+class TestRolePlayFactories:
+    """Tests for the role-play simulated-conversation entries in the core catalog."""
+
+    @staticmethod
+    def _role_play_factories():
+        all_factories = build_technique_factories(groups=["core"])
+        return [f for f in all_factories if f.name in ROLE_PLAY_TECHNIQUE_NAMES]
+
+    def test_returns_five_factories(self):
+        assert len(self._role_play_factories()) == len(ROLE_PLAY_TECHNIQUE_NAMES)
+
+    def test_all_use_prompt_sending_attack(self):
+        for f in self._role_play_factories():
+            assert f.attack_class is PromptSendingAttack
+
+    def test_all_have_seed_technique_with_simulated_conversation(self):
+        for f in self._role_play_factories():
+            assert f.seed_technique is not None
+            assert f.seed_technique.has_simulated_conversation
+
+    def test_all_tagged_core_single_turn_light(self):
+        for f in self._role_play_factories():
+            assert "core" in f.technique_tags
+            assert "single_turn" in f.technique_tags
+            assert "light" in f.technique_tags
+
+    def test_seed_technique_num_turns_matches_role_play_default(self):
+        for f in self._role_play_factories():
+            sim = f.seed_technique.simulated_conversation_config
+            assert sim is not None
+            assert sim.num_turns == core.ROLE_PLAY_SIMULATED_NUM_TURNS
+
+    def test_seed_technique_yaml_path_resolves_to_existing_file(self):
+        for f in self._role_play_factories():
+            sim = f.seed_technique.simulated_conversation_config
+            assert sim is not None
+            assert sim.adversarial_chat_system_prompt_path.exists()
+
+    def test_all_use_role_play_next_message_prompt(self):
+        for f in self._role_play_factories():
+            sim = f.seed_technique.simulated_conversation_config
+            assert sim is not None
+            assert sim.next_message_system_prompt_path is not None
+            assert sim.next_message_system_prompt_path.name == "role_play_next_message.yaml"
+            assert sim.next_message_system_prompt_path.exists()
+
+
+class TestRolePlayYamls:
+    """Tests for the role-play persona YAML files."""
+
+    @pytest.mark.parametrize("technique_name", ROLE_PLAY_TECHNIQUE_NAMES)
+    def test_yaml_loads_with_required_parameters(self, technique_name):
+        path = Path(EXECUTOR_SEED_PROMPT_PATH) / "red_teaming" / "role_play" / f"{technique_name}.yaml"
+        sp = SeedPrompt.from_yaml_with_required_parameters(
+            template_path=path,
+            required_parameters=["objective", "max_turns"],
+        )
+        assert sp.parameters == ["objective", "max_turns"]
+
+    @pytest.mark.parametrize("technique_name", ROLE_PLAY_TECHNIQUE_NAMES)
+    def test_yaml_renders_with_objective_and_max_turns(self, technique_name):
+        path = Path(EXECUTOR_SEED_PROMPT_PATH) / "red_teaming" / "role_play" / f"{technique_name}.yaml"
+        sp = SeedPrompt.from_yaml_with_required_parameters(
+            template_path=path,
+            required_parameters=["objective", "max_turns"],
+        )
+        rendered = sp.render_template_value(objective="UNIQUE_TEST_OBJECTIVE", max_turns=7)
+        assert "UNIQUE_TEST_OBJECTIVE" in rendered
+        assert "7" in rendered
+
+    @pytest.mark.parametrize("technique_name", ROLE_PLAY_TECHNIQUE_NAMES)
+    def test_yaml_has_no_em_or_en_dashes(self, technique_name):
+        """Author convention: persona YAMLs avoid em-dashes and en-dashes."""
+        path = Path(EXECUTOR_SEED_PROMPT_PATH) / "red_teaming" / "role_play" / f"{technique_name}.yaml"
+        text = path.read_text(encoding="utf-8")
+        # Literal em-dash and en-dash characters used as needles for absence assertions on the YAMLs
+        assert "–" not in text, f"{technique_name}.yaml contains an en-dash"
+        assert "—" not in text, f"{technique_name}.yaml contains an em-dash"
+
+
+# ---------------------------------------------------------------------------
 # Initializer registration
 # ---------------------------------------------------------------------------
 
@@ -264,8 +361,8 @@ class TestTechniqueInitializerRegistration:
         init = TechniqueInitializer()
         await init.initialize_async()
 
-        factory = AttackTechniqueRegistry.get_registry_singleton().get_factories()["role_play"]
-        assert "core" in factory.strategy_tags
+        factory = AttackTechniqueRegistry.get_registry_singleton().get_factories()["role_play_movie_script"]
+        assert "core" in factory.technique_tags
 
     async def test_extra_tag_registers_extra_techniques(self, mock_adversarial_target):
         init = TechniqueInitializer()
@@ -348,9 +445,9 @@ class TestViolentDurianTechnique:
 
     def test_tagged_extra_not_core_or_default(self):
         factory = self._violent_durian_factory()
-        assert "core" not in factory.strategy_tags
-        assert "default" not in factory.strategy_tags
-        assert set(factory.strategy_tags) == {"multi_turn", "extra"}
+        assert "core" not in factory.technique_tags
+        assert "default" not in factory.technique_tags
+        assert set(factory.technique_tags) == {"multi_turn", "extra"}
 
     def test_uses_red_teaming_attack_with_adversarial(self):
         factory = self._violent_durian_factory()

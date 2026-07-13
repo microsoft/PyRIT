@@ -6,16 +6,13 @@ from __future__ import annotations
 import copy
 import uuid
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, cast
 
 from pydantic import BaseModel, ConfigDict, model_validator
 
-from pyrit.common.deprecation import print_deprecation_message
 from pyrit.models.messages.message_piece import MessagePiece
 
 if TYPE_CHECKING:
-    from collections.abc import MutableSequence, Sequence
-
     from pyrit.models.literals import ChatMessageRole, PromptDataType
 
 
@@ -34,58 +31,9 @@ class Message(BaseModel):
 
     message_pieces: list[MessagePiece]
 
-    def __init__(self, *args: Any, **data: Any) -> None:
-        """
-        Initialize a Message from one or more message pieces.
-
-        Supports the canonical keyword form ``Message(message_pieces=[...])`` as
-        well as two deprecated forms that emit a ``DeprecationWarning``:
-
-        - positional construction ``Message([piece, ...])``
-        - the ``skip_validation`` keyword (now a no-op; validation always runs)
-
-        Raises:
-            TypeError: If more than one positional argument is supplied.
-            ValueError: If no message pieces are provided (via validation).
-        """
-        if args:
-            if len(args) > 1:
-                raise TypeError(f"Message() takes at most 1 positional argument but {len(args)} were given.")
-            print_deprecation_message(
-                old_item="Message(message_pieces) (positional)",
-                new_item="Message(message_pieces=...)",
-                removed_in="0.16.0",
-            )
-            data["message_pieces"] = args[0]
-        if "skip_validation" in data:
-            data.pop("skip_validation")
-            print_deprecation_message(
-                old_item="Message(..., skip_validation=...)",
-                new_item="Message(message_pieces=...)",
-                removed_in="0.16.0",
-            )
-        super().__init__(**data)
-
     # ------------------------------------------------------------------ #
     # Validators
     # ------------------------------------------------------------------ #
-    @model_validator(mode="before")
-    @classmethod
-    def _rewrite_legacy_dict(cls, data: Any) -> Any:
-        """
-        Accept the legacy ``to_dict()`` payload shape during ``model_validate``.
-
-        The legacy dict carries top-level convenience fields plus a ``pieces``
-        list. Under ``extra="forbid"`` those extra keys would be rejected, so
-        collapse the payload down to ``{"message_pieces": [...]}``.
-
-        Returns:
-            The normalized input ``data``.
-        """
-        if isinstance(data, dict) and "pieces" in data and "message_pieces" not in data:
-            return {"message_pieces": data["pieces"]}
-        return data
-
     @model_validator(mode="after")
     def _validate_after(self) -> Message:
         """
@@ -410,126 +358,3 @@ class Message(BaseModel):
             piece.timestamp = new_timestamp
             # original_prompt_id intentionally kept the same to track the origin
         return Message(message_pieces=new_pieces)
-
-    # ------------------------------------------------------------------ #
-    # Deprecated method shims (removed in 0.16.0)
-    # ------------------------------------------------------------------ #
-    def set_response_not_in_database(self) -> None:
-        """
-        Mark every piece in this message as ephemeral (DEPRECATED — use ``set_response_not_in_memory``).
-        """
-        print_deprecation_message(
-            old_item="Message.set_response_not_in_database()",
-            new_item="Message.set_response_not_in_memory()",
-            removed_in="0.16.0",
-        )
-        self.set_response_not_in_memory()
-
-    def duplicate_message(self) -> Message:
-        """
-        Create a deep copy of this message (DEPRECATED — use ``duplicate``).
-
-        Returns:
-            Message: A new Message with deep-copied pieces, new IDs, and fresh timestamp.
-        """
-        print_deprecation_message(
-            old_item="Message.duplicate_message()",
-            new_item="Message.duplicate()",
-            removed_in="0.16.0",
-        )
-        return self.duplicate()
-
-    def to_dict(self) -> dict[str, object]:
-        """
-        Convert the message to a dictionary representation (DEPRECATED — use ``model_dump``).
-
-        Includes the original top-level fields ('role', 'converted_value', 'conversation_id',
-        'sequence', 'converted_value_data_type') for backward compatibility, plus a 'pieces'
-        list containing each piece's Pydantic JSON dump.
-
-        Returns:
-            dict[str, object]: Dictionary with 'role', 'converted_value', 'conversation_id',
-                'sequence', 'converted_value_data_type', and 'pieces' keys.
-        """
-        print_deprecation_message(
-            old_item="Message.to_dict()",
-            new_item='Message.model_dump(mode="json")',
-            removed_in="0.16.0",
-        )
-        if len(self.message_pieces) == 1:
-            converted_value: str | list[str] = self.message_pieces[0].converted_value
-            converted_value_data_type: str | list[str] = self.message_pieces[0].converted_value_data_type
-        else:
-            converted_value = [piece.converted_value for piece in self.message_pieces]
-            converted_value_data_type = [piece.converted_value_data_type for piece in self.message_pieces]
-
-        return {
-            "role": self.api_role,
-            "converted_value": converted_value,
-            "conversation_id": self.conversation_id,
-            "sequence": self.sequence,
-            "converted_value_data_type": converted_value_data_type,
-            "pieces": [piece.model_dump(mode="json") for piece in self.message_pieces],
-        }
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> Message:
-        """
-        Reconstruct a Message from a dictionary (DEPRECATED — use ``model_validate``).
-
-        Args:
-            data (dict[str, Any]): Dictionary as produced by ``to_dict()``.
-
-        Returns:
-            Message: Reconstructed instance.
-        """
-        print_deprecation_message(
-            old_item="Message.from_dict()",
-            new_item="Message.model_validate()",
-            removed_in="0.16.0",
-        )
-        return cls.model_validate(data)
-
-    @staticmethod
-    def get_all_values(messages: Sequence[Message]) -> list[str]:
-        """
-        Return all converted values across the provided messages (DEPRECATED — use the module function).
-
-        Args:
-            messages (Sequence[Message]): Messages to aggregate.
-
-        Returns:
-            list[str]: Flattened list of converted values.
-
-        """
-        print_deprecation_message(
-            old_item="Message.get_all_values()",
-            new_item="pyrit.models.get_all_values()",
-            removed_in="0.16.0",
-        )
-        from pyrit.models.messages.conversations import get_all_values as _get_all_values
-
-        return _get_all_values(messages)
-
-    @staticmethod
-    def flatten_to_message_pieces(
-        messages: Sequence[Message],
-    ) -> MutableSequence[MessagePiece]:
-        """
-        Flatten messages into a single list of message pieces (DEPRECATED — use the module function).
-
-        Args:
-            messages (Sequence[Message]): Messages to flatten.
-
-        Returns:
-            MutableSequence[MessagePiece]: Flattened message pieces.
-
-        """
-        print_deprecation_message(
-            old_item="Message.flatten_to_message_pieces()",
-            new_item="pyrit.models.flatten_to_message_pieces()",
-            removed_in="0.16.0",
-        )
-        from pyrit.models.messages.conversations import flatten_to_message_pieces as _flatten
-
-        return _flatten(messages)

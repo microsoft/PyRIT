@@ -11,14 +11,14 @@ from openai import RateLimitError
 from unit.mocks import get_sample_conversations
 
 from pyrit.exceptions import EmptyResponseException, RateLimitException
-from pyrit.models import Message, MessagePiece
+from pyrit.models import Message, MessagePiece, flatten_to_message_pieces
 from pyrit.prompt_target import AzureMLChatTarget
 
 
 @pytest.fixture
 def sample_conversations() -> MutableSequence[MessagePiece]:
     conversations = get_sample_conversations()
-    return Message.flatten_to_message_pieces(conversations)
+    return flatten_to_message_pieces(conversations)
 
 
 @pytest.fixture

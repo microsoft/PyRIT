@@ -37,7 +37,7 @@ def _scenario_result(
         pyrit_version="1.0.0",
         scenario_description=description,
         objective_target_identifier=_target_identifier(**(target_params or {})),
-        attack_results=attack_results or {"strategy_a": [_attack_result()]},
+        attack_results=attack_results or {"technique_a": [_attack_result()]},
         objective_scorer_identifier=objective_scorer_identifier,
         display_group_map=display_group_map or {},
     )
@@ -56,11 +56,11 @@ async def test_write_async_renders_full_summary(printer, capsys):
         description="A scenario with a long description that should be wrapped neatly across multiple lines",
         target_params={"model_name": "gpt-test", "endpoint": "https://example.com"},
         attack_results={
-            "strategy_a": [
+            "technique_a": [
                 _attack_result(outcome=AttackOutcome.SUCCESS),
                 _attack_result(outcome=AttackOutcome.FAILURE),
             ],
-            "strategy_b": [_attack_result(outcome=AttackOutcome.SUCCESS)],
+            "technique_b": [_attack_result(outcome=AttackOutcome.SUCCESS)],
         },
     )
     await printer.write_async(result)
@@ -74,11 +74,11 @@ async def test_write_async_renders_full_summary(printer, capsys):
     assert "gpt-test" in out
     assert "https://example.com" in out
     assert "Overall Statistics" in out
-    assert "Total Strategies: 2" in out
+    assert "Total Techniques: 2" in out
     assert "Total Attack Results: 3" in out
     assert "Per-Group Breakdown" in out
-    assert "strategy_a" in out
-    assert "strategy_b" in out
+    assert "technique_a" in out
+    assert "technique_b" in out
 
 
 async def test_write_async_with_unknown_target_when_no_params(printer, capsys):
@@ -86,7 +86,7 @@ async def test_write_async_with_unknown_target_when_no_params(printer, capsys):
         scenario_name="TestScenario",
         scenario_version=1,
         pyrit_version="1.0.0",
-        objective_target_identifier=ComponentIdentifier.from_dict({}),
+        objective_target_identifier=ComponentIdentifier.model_validate({}),
         attack_results={"s": []},
         objective_scorer_identifier=None,
     )
@@ -154,10 +154,10 @@ async def test_write_async_per_group_breakdown_with_display_group_map(printer, c
 
 
 async def test_write_async_per_group_breakdown_with_empty_group(printer, capsys):
-    result = _scenario_result(attack_results={"empty_strategy": []})
+    result = _scenario_result(attack_results={"empty_technique": []})
     await printer.write_async(result)
     out = capsys.readouterr().out
-    assert "Group: empty_strategy" in out
+    assert "Group: empty_technique" in out
     assert "Number of Results: 0" in out
     assert "Success Rate: 0%" in out
 
@@ -219,17 +219,4 @@ async def test_write_async_sort_is_stable_for_ties(patch_central_database, capsy
     )
     await sorting_printer.write_async(result)
     # Tied 100% groups retain their original relative order; 0% group goes last.
-    assert _group_order(capsys.readouterr().out) == [
-        "first_success",
-        "second_success",
-        "fail",
-    ]
-
-
-# --- deprecated alias ---
-
-
-async def test_print_summary_async_emits_deprecation_warning(printer, capsys):
-    with pytest.warns(DeprecationWarning, match="print_summary_async"):
-        await printer.print_summary_async(_scenario_result())
-    assert "SCENARIO RESULTS" in capsys.readouterr().out
+    assert _group_order(capsys.readouterr().out) == ["first_success", "second_success", "fail"]

@@ -20,9 +20,9 @@ if TYPE_CHECKING:
 
 class AttackTechnique(Identifiable):
     """
-    Bundles an attack strategy with an optional technique seed group.
+    Bundles an attack technique with an optional technique seed group.
 
-    An AttackTechnique encapsulates the full attack configuration — the strategy
+    An AttackTechnique encapsulates the full attack configuration — the technique
     (including its target, converters, and scorer) plus any reusable technique seeds
     (e.g. jailbreak templates). The objectives that define which weaknesses to probe
     live separately on the SeedAttackGroup / AtomicAttack.
@@ -40,7 +40,7 @@ class AttackTechnique(Identifiable):
 
     @property
     def attack(self) -> AttackStrategy[Any, Any]:
-        """The attack strategy."""
+        """The attack technique."""
         return self._attack
 
     @property
@@ -52,7 +52,7 @@ class AttackTechnique(Identifiable):
         """
         Build the behavioral identity for this attack technique.
 
-        The identifier always contains the attack strategy as ``children["attack"]``.
+        The identifier always contains the attack technique as ``children["attack"]``.
         When a seed technique is present, its seeds are added as
         ``children["technique_seeds"]``.
 

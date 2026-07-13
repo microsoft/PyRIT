@@ -58,6 +58,18 @@ def _cmd_check() -> None:
         tmp_path.unlink(missing_ok=True)
 
 
+def _cmd_head() -> None:
+    """Print the current Alembic head revision ID."""
+    from alembic.config import Config
+    from alembic.script import ScriptDirectory
+
+    script_location = Path(__file__).parent.parent / "pyrit" / "memory" / "alembic"
+    config = Config()
+    config.set_main_option("script_location", str(script_location))
+    head = ScriptDirectory.from_config(config).get_current_head()
+    print(head)
+
+
 def _build_parser() -> argparse.ArgumentParser:
     """Build the CLI argument parser."""
     parser = argparse.ArgumentParser(
@@ -71,6 +83,8 @@ def _build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("check", help="Verify all migrations apply cleanly and add up to the current memory models.")
 
+    sub.add_parser("head", help="Print the current Alembic head revision ID.")
+
     return parser
 
 
@@ -82,6 +96,8 @@ def main() -> int:
         _cmd_generate(message=args.message, force=args.force)
     elif args.command == "check":
         _cmd_check()
+    elif args.command == "head":
+        _cmd_head()
 
     return 0
 

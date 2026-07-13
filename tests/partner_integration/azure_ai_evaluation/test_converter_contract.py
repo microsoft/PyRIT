@@ -1,30 +1,30 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-"""Contract tests for PromptConverter interface and specific converters used by azure-ai-evaluation.
+"""Contract tests for Converter interface and specific converters used by azure-ai-evaluation.
 
 The azure-ai-evaluation red team module:
-- Extends PromptConverter via _DefaultConverter
+- Extends Converter via _DefaultConverter
 - Imports 20+ specific converters in _agent/_agent_utils.py and strategy_utils.py
 - Uses ConverterResult as the return type
 """
 
 import pytest
 
-from pyrit.prompt_converter import ConverterResult, PromptConverter
+from pyrit.converter import Converter, ConverterResult
 
 
-class TestPromptConverterContract:
-    """Validate PromptConverter base class interface stability."""
+class TestConverterContract:
+    """Validate Converter base class interface stability."""
 
-    def test_prompt_converter_has_convert_async(self):
+    def test_converter_has_convert_async(self):
         """_DefaultConverter overrides convert_async."""
-        assert hasattr(PromptConverter, "convert_async")
+        assert hasattr(Converter, "convert_async")
 
-    def test_prompt_converter_subclassable(self):
-        """_DefaultConverter subclasses PromptConverter with convert_async."""
+    def test_converter_subclassable(self):
+        """_DefaultConverter subclasses Converter with convert_async."""
 
-        class TestConverter(PromptConverter):
+        class TestConverter(Converter):
             SUPPORTED_INPUT_TYPES = ("text",)
             SUPPORTED_OUTPUT_TYPES = ("text",)
 
@@ -32,7 +32,7 @@ class TestPromptConverterContract:
                 return ConverterResult(output_text=prompt, output_type="text")
 
         converter = TestConverter()
-        assert isinstance(converter, PromptConverter)
+        assert isinstance(converter, Converter)
 
 
 class TestSpecificConvertersImportable:
@@ -72,22 +72,22 @@ class TestSpecificConvertersImportable:
         ],
     )
     def test_converter_importable(self, converter_name):
-        """Each converter used by azure-ai-evaluation must be importable from pyrit.prompt_converter."""
-        import pyrit.prompt_converter as pc
+        """Each converter used by azure-ai-evaluation must be importable from pyrit.converter."""
+        import pyrit.converter as pc
 
         converter_class = getattr(pc, converter_name, None)
         assert converter_class is not None, (
-            f"{converter_name} not found in pyrit.prompt_converter — azure-ai-evaluation depends on this converter"
+            f"{converter_name} not found in pyrit.converter — azure-ai-evaluation depends on this converter"
         )
 
     def test_ascii_smuggler_converter_importable(self):
         """AsciiSmugglerConverter is imported in _agent/_agent_utils.py."""
-        from pyrit.prompt_converter import AsciiSmugglerConverter
+        from pyrit.converter import AsciiSmugglerConverter
 
         assert AsciiSmugglerConverter is not None
 
     def test_llm_generic_text_converter_importable(self):
         """LLMGenericTextConverter is used for tense/translation strategies."""
-        from pyrit.prompt_converter import LLMGenericTextConverter
+        from pyrit.converter import LLMGenericTextConverter
 
         assert LLMGenericTextConverter is not None

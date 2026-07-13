@@ -9,9 +9,9 @@ from pathlib import Path
 
 import av
 
+from pyrit.converter import AzureSpeechAudioToTextConverter
 from pyrit.memory import CentralMemory
 from pyrit.models import MessagePiece, Score
-from pyrit.prompt_converter import AzureSpeechAudioToTextConverter
 from pyrit.score.scorer import Scorer
 
 logger = logging.getLogger(__name__)

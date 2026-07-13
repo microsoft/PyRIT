@@ -226,7 +226,7 @@ class PromptMemoryEntry(Base):
         prompt_metadata (JSON): The metadata associated with the prompt. This can be specific to any scenarios.
             Because memory is how components talk with each other, this can be component specific.
             e.g. the URI from a file uploaded to a blob store, or a document type you want to upload.
-        converters (list[PromptConverter]): The converters for the prompt.
+        converters (list[Converter]): The converters for the prompt.
         prompt_target (PromptTarget): The target for the prompt.
         original_value_data_type (PromptDataType): The data type of the original prompt (text, image)
         original_value (str): The text of the original prompt. If prompt is an image, it's a link.

@@ -10,7 +10,7 @@ selected groups into the singleton ``AttackTechniqueRegistry`` via
 ``TechniqueInitializer``.
 
 Each group module (e.g. ``core.py``) exposes ``get_technique_factories()``;
-``build_technique_factories`` injects the group name as a strategy tag so
+``build_technique_factories`` injects the group name as a technique tag so
 techniques are selectable as a group (e.g. the ``core`` aggregate).
 
 Per-name registration is idempotent: pre-existing entries in the registry are
@@ -49,7 +49,7 @@ def build_technique_factories(*, groups: list[str] | None = None) -> list[Attack
     """
     Build the technique factories for the requested groups.
 
-    Each group's factories get the group name injected as a strategy tag (e.g.
+    Each group's factories get the group name injected as a technique tag (e.g.
     every ``core`` technique gains the ``core`` tag). When ``groups`` is None,
     every group is included — used by consumers that need the full catalog
     regardless of registry state.
@@ -74,7 +74,7 @@ def build_technique_factories(*, groups: list[str] | None = None) -> list[Attack
             )
         group_factories = builder()
         for factory in group_factories:
-            factory.add_strategy_tags(group)
+            factory.add_technique_tags(group)
         factories.extend(group_factories)
 
     return factories

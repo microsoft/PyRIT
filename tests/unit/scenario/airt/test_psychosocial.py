@@ -10,7 +10,7 @@ import pytest
 from pyrit.common.path import DATASETS_PATH
 from pyrit.models import ComponentIdentifier, SeedAttackGroup, SeedDataset, SeedGroup, SeedObjective
 from pyrit.prompt_target import OpenAIChatTarget, PromptTarget
-from pyrit.scenario.airt import Psychosocial, PsychosocialStrategy  # type: ignore[ty:unresolved-import]
+from pyrit.scenario.airt import Psychosocial, PsychosocialTechnique  # type: ignore[ty:unresolved-import]
 from pyrit.scenario.scenarios.airt.psychosocial import SubharmConfig
 from pyrit.score import FloatScaleThresholdScorer
 
@@ -168,8 +168,9 @@ class TestPsychosocialInitialization:
             "pyrit.scenario.core.dataset_configuration.DatasetConfiguration._fetch_dataset_async",
             new_callable=AsyncMock,
         ):
+            scenario.set_params_from_args(args={"objective_target": mock_objective_target})
             with pytest.raises(DatasetConstraintError, match="could not be loaded"):
-                await scenario.initialize_async(objective_target=mock_objective_target)
+                await scenario.initialize_async()
 
 
 @pytest.mark.usefixtures(*FIXTURES)
@@ -192,7 +193,13 @@ class TestPsychosocialAttackGeneration:
         ):
             scenario = Psychosocial(objective_scorer=mock_objective_scorer)
 
-            await scenario.initialize_async(objective_target=mock_objective_target, dataset_config=mock_dataset_config)
+            scenario.set_params_from_args(
+                args={
+                    "objective_target": mock_objective_target,
+                    "dataset_config": mock_dataset_config,
+                }
+            )
+            await scenario.initialize_async()
             atomic_attacks = scenario._atomic_attacks
 
             assert len(atomic_attacks) > 0
@@ -217,7 +224,13 @@ class TestPsychosocialAttackGeneration:
                 objective_scorer=mock_objective_scorer,
             )
 
-            await scenario.initialize_async(objective_target=mock_objective_target, dataset_config=mock_dataset_config)
+            scenario.set_params_from_args(
+                args={
+                    "objective_target": mock_objective_target,
+                    "dataset_config": mock_dataset_config,
+                }
+            )
+            await scenario.initialize_async()
             atomic_attacks = scenario._atomic_attacks
 
             for run in atomic_attacks:
@@ -242,7 +255,13 @@ class TestPsychosocialAttackGeneration:
                 objective_scorer=mock_objective_scorer,
             )
 
-            await scenario.initialize_async(objective_target=mock_objective_target, dataset_config=mock_dataset_config)
+            scenario.set_params_from_args(
+                args={
+                    "objective_target": mock_objective_target,
+                    "dataset_config": mock_dataset_config,
+                }
+            )
+            await scenario.initialize_async()
             atomic_attacks = scenario._atomic_attacks
             assert len(atomic_attacks) > 0
             assert all(run.attack_technique is not None for run in atomic_attacks)
@@ -268,9 +287,14 @@ class TestPsychosocialHarmsLifecycle:
             return_value=mock_seed_groups_by_dataset,
         ):
             scenario = Psychosocial(objective_scorer=mock_objective_scorer)
-            await scenario.initialize_async(
-                objective_target=mock_objective_target, max_concurrency=20, dataset_config=mock_dataset_config
+            scenario.set_params_from_args(
+                args={
+                    "objective_target": mock_objective_target,
+                    "max_concurrency": 20,
+                    "dataset_config": mock_dataset_config,
+                }
             )
+            await scenario.initialize_async()
             assert scenario._max_concurrency == 20
 
     async def test_initialize_async_with_memory_labels(
@@ -291,11 +315,14 @@ class TestPsychosocialHarmsLifecycle:
             return_value=mock_seed_groups_by_dataset,
         ):
             scenario = Psychosocial(objective_scorer=mock_objective_scorer)
-            await scenario.initialize_async(
-                memory_labels=memory_labels,
-                objective_target=mock_objective_target,
-                dataset_config=mock_dataset_config,
+            scenario.set_params_from_args(
+                args={
+                    "memory_labels": memory_labels,
+                    "objective_target": mock_objective_target,
+                    "dataset_config": mock_dataset_config,
+                }
             )
+            await scenario.initialize_async()
             assert scenario._memory_labels == memory_labels
 
 
@@ -315,15 +342,15 @@ class TestPsychosocialProperties:
 
         assert scenario.VERSION == 1
 
-    def test_get_strategy_class(self, mock_objective_scorer) -> None:
-        """Test that the strategy class is PsychosocialStrategy."""
+    def test_get_technique_class(self, mock_objective_scorer) -> None:
+        """Test that the technique class is PsychosocialTechnique."""
         scenario = Psychosocial(objective_scorer=mock_objective_scorer)
-        assert scenario._strategy_class == PsychosocialStrategy
+        assert scenario._technique_class == PsychosocialTechnique
 
-    def test_get_default_strategy(self, mock_objective_scorer) -> None:
-        """Test that the default strategy is ALL."""
+    def test_get_default_technique(self, mock_objective_scorer) -> None:
+        """Test that the default technique is ALL."""
         scenario = Psychosocial(objective_scorer=mock_objective_scorer)
-        assert scenario._default_strategy == PsychosocialStrategy.ALL
+        assert scenario._default_technique == PsychosocialTechnique.ALL
 
     async def test_no_target_duplication_async(
         self,
@@ -340,7 +367,13 @@ class TestPsychosocialProperties:
             return_value=mock_seed_groups_by_dataset,
         ):
             scenario = Psychosocial()
-            await scenario.initialize_async(objective_target=mock_objective_target, dataset_config=mock_dataset_config)
+            scenario.set_params_from_args(
+                args={
+                    "objective_target": mock_objective_target,
+                    "dataset_config": mock_dataset_config,
+                }
+            )
+            await scenario.initialize_async()
 
             objective_target = scenario._objective_target
             adversarial_target = scenario._adversarial_chat
@@ -377,10 +410,13 @@ class TestPsychosocialTargetRequirements:
         ):
             scenario = Psychosocial(objective_scorer=mock_objective_scorer)
             with patch("pyrit.prompt_target.common.target_requirements.TargetRequirements.validate") as mock_validate:
-                await scenario.initialize_async(
-                    objective_target=mock_objective_target,
-                    dataset_config=mock_dataset_config,
+                scenario.set_params_from_args(
+                    args={
+                        "objective_target": mock_objective_target,
+                        "dataset_config": mock_dataset_config,
+                    }
                 )
+                await scenario.initialize_async()
 
             # Scorers / attacks also validate; ensure the scenario itself validated objective_target.
             assert any(call.kwargs.get("target") is mock_objective_target for call in mock_validate.call_args_list), (
@@ -414,36 +450,39 @@ class TestPsychosocialTargetRequirements:
             return_value=mock_seed_groups_by_dataset,
         ):
             scenario = Psychosocial(objective_scorer=mock_objective_scorer)
+            scenario.set_params_from_args(
+                args={
+                    "objective_target": non_chat_target,
+                    "dataset_config": mock_dataset_config,
+                }
+            )
             with pytest.raises(ValueError, match="editable_history"):
-                await scenario.initialize_async(
-                    objective_target=non_chat_target,
-                    dataset_config=mock_dataset_config,
-                )
+                await scenario.initialize_async()
 
 
 @pytest.mark.usefixtures(*FIXTURES)
-class TestPsychosocialHarmsStrategy:
-    """Tests for PsychosocialHarmsStrategy enum."""
+class TestPsychosocialTechnique:
+    """Tests for PsychosocialTechnique enum."""
 
-    def test_strategy_tags(self):
-        """Test that strategies have correct tags."""
-        assert PsychosocialStrategy.ALL.tags == {"all"}
+    def test_technique_tags(self):
+        """Test that techniques have correct tags."""
+        assert PsychosocialTechnique.ALL.tags == {"all"}
 
     def test_aggregate_tags(self):
         """Test that only 'all' is an aggregate tag."""
-        aggregate_tags = PsychosocialStrategy.get_aggregate_tags()
+        aggregate_tags = PsychosocialTechnique.get_aggregate_tags()
         assert "all" in aggregate_tags
 
-    def test_strategy_values(self):
-        """Test that strategy values are correct."""
-        assert PsychosocialStrategy.ALL.value == "all"
+    def test_technique_values(self):
+        """Test that technique values are correct."""
+        assert PsychosocialTechnique.ALL.value == "all"
 
 
 @pytest.mark.usefixtures(*FIXTURES)
 class TestPsychosocialBaselineUniformity:
-    """ADO 9012 regression: baseline shares objectives with strategies under max_dataset_size."""
+    """ADO 9012 regression: baseline shares objectives with techniques under max_dataset_size."""
 
-    async def test_one_resolution_call_baseline_matches_strategies(self, mock_objective_target, mock_objective_scorer):
+    async def test_one_resolution_call_baseline_matches_techniques(self, mock_objective_target, mock_objective_scorer):
         from pyrit.scenario import DatasetAttackConfiguration
 
         seed_groups = [SeedAttackGroup(seeds=[SeedObjective(value=f"obj{i}")]) for i in range(10)]
@@ -459,11 +498,14 @@ class TestPsychosocialBaselineUniformity:
             ) as mock_sample,
         ):
             scenario = Psychosocial(objective_scorer=mock_objective_scorer)
-            await scenario.initialize_async(
-                objective_target=mock_objective_target,
-                dataset_config=config,
-                include_baseline=True,
+            scenario.set_params_from_args(
+                args={
+                    "objective_target": mock_objective_target,
+                    "dataset_config": config,
+                    "include_baseline": True,
+                }
             )
+            await scenario.initialize_async()
 
         assert mock_sample.call_count == 1
         assert scenario._atomic_attacks[0].atomic_attack_name == "baseline"

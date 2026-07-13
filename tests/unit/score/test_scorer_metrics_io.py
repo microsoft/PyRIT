@@ -163,7 +163,7 @@ def test_metrics_to_registry_dict_includes_values():
 
 def test_find_objective_metrics_by_eval_hash_found(tmp_path):
     identifier = _make_identifier()
-    entry = identifier.to_dict()
+    entry = identifier.model_dump()
     entry["eval_hash"] = "hash_abc"
     entry["metrics"] = _metrics_to_registry_dict(_make_objective_metrics(accuracy=0.88))
     path = tmp_path / "objective_achieved_metrics.jsonl"
@@ -200,7 +200,7 @@ def test_find_objective_metrics_default_path():
 
 def test_find_harm_metrics_by_eval_hash_found():
     identifier = _make_identifier()
-    entry = identifier.to_dict()
+    entry = identifier.model_dump()
     entry["eval_hash"] = "harm_hash"
     entry["metrics"] = _metrics_to_registry_dict(_make_harm_metrics(mean_absolute_error=0.12))
 
@@ -223,7 +223,7 @@ def test_find_harm_metrics_by_eval_hash_not_found():
 def test_get_all_objective_metrics_from_file(tmp_path):
     identifier = _make_identifier(class_name="Scorer1")
     metrics = _make_objective_metrics()
-    entry = identifier.to_dict()
+    entry = identifier.model_dump()
     entry["eval_hash"] = "h1"
     entry["metrics"] = _metrics_to_registry_dict(metrics)
     path = tmp_path / "objective_achieved_metrics.jsonl"
@@ -257,7 +257,7 @@ def test_get_all_objective_metrics_default_path():
 def test_get_all_harm_metrics():
     identifier = _make_identifier()
     metrics = _make_harm_metrics()
-    entry = identifier.to_dict()
+    entry = identifier.model_dump()
     entry["metrics"] = _metrics_to_registry_dict(metrics)
 
     with patch("pyrit.score.scorer_evaluation.scorer_metrics_io._load_jsonl") as mock_load:

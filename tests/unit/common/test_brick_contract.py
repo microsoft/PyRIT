@@ -1,8 +1,6 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-import warnings
-
 import pytest
 
 from pyrit.common.brick_contract import enforce_keyword_only_init
@@ -60,7 +58,6 @@ def test_positional_init_raises_typeerror() -> None:
     assert "_FakeBase contract" in message
     assert "foo" in message
     assert "bar" in message
-    assert "_brick_legacy_init" in message
 
 
 def test_positional_or_keyword_default_still_raises() -> None:
@@ -92,66 +89,6 @@ def test_starargs_first_passes() -> None:
             self.bar = bar
 
     assert StarArgsFirst(bar=1).bar == 1
-
-
-def test_legacy_opt_out_downgrades_to_warning() -> None:
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-
-        class Grandfathered(_FakeBase):
-            _brick_legacy_init = True
-
-            def __init__(self, foo: str, bar: int = 0) -> None:
-                self.foo = foo
-                self.bar = bar
-
-    deprecations = [w for w in caught if issubclass(w.category, DeprecationWarning)]
-    assert len(deprecations) == 1
-    message = str(deprecations[0].message)
-    assert "Grandfathered" in message
-    assert "0.16.0" in message
-    assert "foo" in message
-    # Class still works after the warning.
-    instance = Grandfathered("hi", 2)
-    assert instance.foo == "hi"
-    assert instance.bar == 2
-
-
-def test_legacy_opt_out_false_still_raises() -> None:
-    with pytest.raises(TypeError):
-
-        class NotGrandfathered(_FakeBase):
-            _brick_legacy_init = False
-
-            def __init__(self, foo: str) -> None:
-                self.foo = foo
-
-
-def test_legacy_opt_out_is_not_inherited_by_subclass() -> None:
-    """The opt-out only applies to the class that sets it; subclasses still hard-fail."""
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-
-        class Grandfathered(_FakeBase):
-            _brick_legacy_init = True
-
-            def __init__(self, foo: str) -> None:
-                self.foo = foo
-
-    deprecations = [w for w in caught if issubclass(w.category, DeprecationWarning)]
-    assert len(deprecations) == 1
-
-    with pytest.raises(TypeError) as excinfo:
-
-        class NewSubclass(Grandfathered):
-            def __init__(self, foo: str, bar: int = 0) -> None:
-                self.foo = foo
-                self.bar = bar
-
-    message = str(excinfo.value)
-    assert "_FakeBase contract" in message
-    assert "foo" in message
-    assert "bar" in message
 
 
 def test_error_message_lists_only_positional_offenders() -> None:

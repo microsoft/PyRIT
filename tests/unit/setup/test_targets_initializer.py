@@ -61,7 +61,7 @@ class TestTargetInitializerInitialize:
         """Test that a target is registered when its env vars are set."""
         os.environ["PLATFORM_OPENAI_CHAT_ENDPOINT"] = "https://api.openai.com/v1"
         os.environ["PLATFORM_OPENAI_CHAT_KEY"] = "test_key"
-        os.environ["PLATFORM_OPENAI_CHAT_GPT4O_MODEL"] = "gpt-4o"
+        os.environ["PLATFORM_OPENAI_CHAT_MODEL"] = "gpt-4o"
 
         init = TargetInitializer()
         await init.initialize_async()
@@ -76,7 +76,7 @@ class TestTargetInitializerInitialize:
         """Test that target is not registered if endpoint is missing."""
         # Only set key, not endpoint
         os.environ["PLATFORM_OPENAI_CHAT_KEY"] = "test_key"
-        os.environ["PLATFORM_OPENAI_CHAT_GPT4O_MODEL"] = "gpt-4o"
+        os.environ["PLATFORM_OPENAI_CHAT_MODEL"] = "gpt-4o"
 
         init = TargetInitializer()
         await init.initialize_async()
@@ -88,7 +88,7 @@ class TestTargetInitializerInitialize:
         """Test that target is not registered if api_key env var is missing."""
         # Only set endpoint, not key
         os.environ["PLATFORM_OPENAI_CHAT_ENDPOINT"] = "https://api.openai.com/v1"
-        os.environ["PLATFORM_OPENAI_CHAT_GPT4O_MODEL"] = "gpt-4o"
+        os.environ["PLATFORM_OPENAI_CHAT_MODEL"] = "gpt-4o"
 
         init = TargetInitializer()
         await init.initialize_async()
@@ -101,7 +101,7 @@ class TestTargetInitializerInitialize:
         # Set up platform_openai_chat
         os.environ["PLATFORM_OPENAI_CHAT_ENDPOINT"] = "https://api.openai.com/v1"
         os.environ["PLATFORM_OPENAI_CHAT_KEY"] = "test_key"
-        os.environ["PLATFORM_OPENAI_CHAT_GPT4O_MODEL"] = "gpt-4o"
+        os.environ["PLATFORM_OPENAI_CHAT_MODEL"] = "gpt-4o"
 
         # Set up openai_image_platform (uses ENDPOINT2/KEY2/MODEL2)
         os.environ["OPENAI_IMAGE_ENDPOINT2"] = "https://api.openai.com/v1"

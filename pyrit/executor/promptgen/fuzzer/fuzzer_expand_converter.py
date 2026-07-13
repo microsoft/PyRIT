@@ -6,11 +6,11 @@ import uuid
 
 from pyrit.common.apply_defaults import apply_defaults
 from pyrit.common.path import CONVERTER_SEED_PROMPT_PATH
+from pyrit.converter.converter import ConverterResult
 from pyrit.executor.promptgen.fuzzer.fuzzer_converter_base import (
     FuzzerConverter,
 )
 from pyrit.models import Message, MessagePiece, PromptDataType, SeedPrompt
-from pyrit.prompt_converter.prompt_converter import ConverterResult
 from pyrit.prompt_target import PromptTarget
 
 

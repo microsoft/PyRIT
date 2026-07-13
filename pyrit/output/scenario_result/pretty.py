@@ -5,7 +5,6 @@ import textwrap
 
 from colorama import Fore, Style
 
-from pyrit.common.deprecation import print_deprecation_message
 from pyrit.models import AttackOutcome, ScenarioResult
 from pyrit.output.scenario_result.base import ScenarioResultPrinterBase
 from pyrit.output.scorer.base import ScorerPrinterBase
@@ -188,11 +187,11 @@ class PrettyScenarioResultPrinter(ScenarioResultPrinterBase):
         lines = []
         lines.append(self._render_section_header("Overall Statistics"))
         total_results = sum(len(results) for results in result.attack_results.values())
-        total_strategies = len(result.get_strategies_used())
+        total_techniques = len(result.get_techniques_used())
         overall_rate = result.objective_achieved_rate()
 
         lines.append(self._format_colored(f"{self._indent}📈 Summary", Style.BRIGHT))
-        lines.append(self._format_colored(f"{self._indent * 2}• Total Strategies: {total_strategies}", Fore.GREEN))
+        lines.append(self._format_colored(f"{self._indent * 2}• Total Techniques: {total_techniques}", Fore.GREEN))
         lines.append(self._format_colored(f"{self._indent * 2}• Total Attack Results: {total_results}", Fore.GREEN))
         lines.append(
             self._format_colored(
@@ -234,16 +233,6 @@ class PrettyScenarioResultPrinter(ScenarioResultPrinterBase):
         parts.append("".join(lines))
 
         return "".join(parts)
-
-    async def print_summary_async(self, result: ScenarioResult) -> None:
-        """
-        Use ``write_async`` instead. This method is deprecated.
-
-        Args:
-            result (ScenarioResult): The scenario result to summarize.
-        """
-        print_deprecation_message(old_item="print_summary_async", new_item="write_async", removed_in="0.16.0")
-        await self.write_async(result)
 
 
 class PrettyScenarioResultMemoryPrinter(PrettyScenarioResultPrinter):

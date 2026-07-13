@@ -55,8 +55,3 @@ class TestSimpleSafetyTestsDataset:
         """Test dataset_name property."""
         loader = _SimpleSafetyTestsDataset()
         assert loader.dataset_name == "simple_safety_tests"
-
-    def test_split_kwarg_emits_deprecation_warning(self):
-        """Passing the deprecated ``split`` kwarg emits a DeprecationWarning."""
-        with pytest.warns(DeprecationWarning, match="'split' is deprecated"):
-            _SimpleSafetyTestsDataset(split="test")

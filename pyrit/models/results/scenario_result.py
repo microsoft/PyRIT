@@ -11,8 +11,6 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validator
 
-from pyrit.common.deprecation import print_deprecation_message
-
 # Runtime-required by Pydantic field / computed-field annotations.
 from pyrit.models.identifiers.scenario_identifier import ScenarioIdentifier  # noqa: TC001
 from pyrit.models.identifiers.scorer_identifier import ScorerIdentifier  # noqa: TC001
@@ -155,12 +153,12 @@ class ScenarioResult(BaseModel):
         """Primary scorer the scenario evaluates with, delegated to the identifier."""
         return self.scenario_identifier.objective_scorer
 
-    def get_strategies_used(self) -> list[str]:
+    def get_techniques_used(self) -> list[str]:
         """
-        Get the list of strategies used in this scenario.
+        Get the list of techniques used in this scenario.
 
         Returns:
-            list[str]: Atomic attack strategy names present in the results.
+            list[str]: Atomic attack technique names present in the results.
 
         """
         return list(self.attack_results.keys())
@@ -199,19 +197,19 @@ class ScenarioResult(BaseModel):
 
         """
         objectives: list[str] = []
-        strategies_to_process: list[list[AttackResult]]
+        techniques_to_process: list[list[AttackResult]]
 
         if not atomic_attack_name:
             # Include all atomic attacks
-            strategies_to_process = list(self.attack_results.values())
+            techniques_to_process = list(self.attack_results.values())
         else:
             # Include only specified atomic attack
             if atomic_attack_name in self.attack_results:
-                strategies_to_process = [self.attack_results[atomic_attack_name]]
+                techniques_to_process = [self.attack_results[atomic_attack_name]]
             else:
-                strategies_to_process = []
+                techniques_to_process = []
 
-        for results in strategies_to_process:
+        for results in techniques_to_process:
             objectives.extend(result.objective for result in results)
 
         return list(set(objectives))
@@ -246,42 +244,6 @@ class ScenarioResult(BaseModel):
 
         successful_results = sum(1 for result in all_results if result.outcome == AttackOutcome.SUCCESS)
         return int((successful_results / total_results) * 100)
-
-    def to_dict(self) -> dict[str, Any]:
-        """
-        Serialize this scenario result to a JSON-compatible dictionary.
-
-        Deprecated: use ``model_dump(mode="json", by_alias=True)`` instead.
-
-        Returns:
-            dict[str, Any]: Serialized payload suitable for REST APIs or persistence.
-        """
-        print_deprecation_message(
-            old_item="ScenarioResult.to_dict()",
-            new_item="ScenarioResult.model_dump(mode='json', by_alias=True)",
-            removed_in="0.16.0",
-        )
-        return self.model_dump(mode="json", by_alias=True)
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> ScenarioResult:
-        """
-        Reconstruct a ScenarioResult from a dictionary.
-
-        Deprecated: use ``model_validate(...)`` instead.
-
-        Args:
-            data (dict[str, Any]): Dictionary as produced by ``model_dump(mode="json")``.
-
-        Returns:
-            ScenarioResult: Reconstructed instance.
-        """
-        print_deprecation_message(
-            old_item="ScenarioResult.from_dict(...)",
-            new_item="ScenarioResult.model_validate(...)",
-            removed_in="0.16.0",
-        )
-        return cls.model_validate(data)
 
     @staticmethod
     def normalize_scenario_name(scenario_name: str) -> str:

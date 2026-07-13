@@ -148,7 +148,7 @@ class MultiPromptSendingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[An
 
         Args:
             objective_target (PromptTarget): The target system to attack.
-            attack_converter_config (AttackConverterConfig | None): Configuration for prompt converters.
+            attack_converter_config (AttackConverterConfig | None): Configuration for converters.
             attack_scoring_config (AttackScoringConfig | None): Configuration for scoring components.
             prompt_normalizer (PromptNormalizer | None): Normalizer for handling prompts.
 
@@ -360,13 +360,15 @@ class MultiPromptSendingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[An
             objective_target_conversation_id=context.session.conversation_id,
             objective=context.objective,
         ):
+            if context.memory_labels:
+                for piece in current_message.message_pieces:
+                    piece.labels = context.memory_labels
             return await self._prompt_normalizer.send_prompt_async(
                 message=current_message,
                 target=self._objective_target,
                 conversation_id=context.session.conversation_id,
                 request_converter_configurations=self._request_converters,
                 response_converter_configurations=self._response_converters,
-                labels=context.memory_labels,  # combined with strategy labels at _setup()
             )
 
     async def _evaluate_response_async(self, *, response: Message, objective: str) -> Score | None:

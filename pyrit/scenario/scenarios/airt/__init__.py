@@ -5,44 +5,44 @@
 
 from typing import Any
 
-from pyrit.scenario.scenarios.airt.cyber import Cyber, _build_cyber_strategy
-from pyrit.scenario.scenarios.airt.jailbreak import Jailbreak, JailbreakStrategy
-from pyrit.scenario.scenarios.airt.leakage import Leakage, _build_leakage_strategy
-from pyrit.scenario.scenarios.airt.psychosocial import Psychosocial, PsychosocialStrategy
-from pyrit.scenario.scenarios.airt.rapid_response import RapidResponse, _build_rapid_response_strategy
-from pyrit.scenario.scenarios.airt.scam import Scam, ScamStrategy
+from pyrit.scenario.scenarios.airt.cyber import Cyber, _build_cyber_technique
+from pyrit.scenario.scenarios.airt.jailbreak import Jailbreak, JailbreakTechnique
+from pyrit.scenario.scenarios.airt.leakage import Leakage, _build_leakage_technique
+from pyrit.scenario.scenarios.airt.psychosocial import Psychosocial, PsychosocialTechnique
+from pyrit.scenario.scenarios.airt.rapid_response import RapidResponse, _build_rapid_response_technique
+from pyrit.scenario.scenarios.airt.scam import Scam, ScamTechnique
 
 
 def __getattr__(name: str) -> Any:
     """
-    Lazily resolve dynamic strategy classes.
+    Lazily resolve dynamic technique classes.
 
     Returns:
-        Any: The resolved strategy class.
+        Any: The resolved technique class.
 
     Raises:
         AttributeError: If the attribute name is not recognized.
     """
-    if name == "RapidResponseStrategy":
-        return _build_rapid_response_strategy()
-    if name == "LeakageStrategy":
-        return _build_leakage_strategy()
-    if name == "CyberStrategy":
-        return _build_cyber_strategy()
+    if name == "RapidResponseTechnique":
+        return _build_rapid_response_technique()
+    if name == "LeakageTechnique":
+        return _build_leakage_technique()
+    if name == "CyberTechnique":
+        return _build_cyber_technique()
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 __all__ = [
     "Cyber",
-    "CyberStrategy",
+    "CyberTechnique",
     "Jailbreak",
-    "JailbreakStrategy",
+    "JailbreakTechnique",
     "Leakage",
-    "LeakageStrategy",
+    "LeakageTechnique",
     "Psychosocial",
-    "PsychosocialStrategy",
+    "PsychosocialTechnique",
     "RapidResponse",
-    "RapidResponseStrategy",
+    "RapidResponseTechnique",
     "Scam",
-    "ScamStrategy",
+    "ScamTechnique",
 ]

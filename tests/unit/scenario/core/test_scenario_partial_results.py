@@ -12,7 +12,7 @@ from pyrit.executor.attack.core import AttackExecutorResult
 from pyrit.memory import CentralMemory
 from pyrit.models import AttackOutcome, AttackResult, ComponentIdentifier
 from pyrit.scenario import DatasetConfiguration, ScenarioResult
-from pyrit.scenario.core import AtomicAttack, BaselineAttackPolicy, Scenario, ScenarioStrategy
+from pyrit.scenario.core import AtomicAttack, BaselineAttackPolicy, Scenario, ScenarioTechnique
 
 
 def _mock_scorer_id(name: str = "MockScorer") -> ComponentIdentifier:
@@ -97,27 +97,27 @@ class ConcreteScenario(Scenario):
     BASELINE_ATTACK_POLICY: ClassVar[BaselineAttackPolicy] = BaselineAttackPolicy.Forbidden
 
     def __init__(self, *, atomic_attacks_to_return=None, objective_scorer=None, **kwargs):
-        strategy_class = kwargs.pop("strategy_class", None) or _build_test_strategy()
+        technique_class = kwargs.pop("technique_class", None) or _build_test_technique()
 
         # Create a default mock scorer if not provided
         if objective_scorer is None:
             objective_scorer = MagicMock()
             objective_scorer.get_identifier.return_value = _mock_scorer_id("MockScorer")
 
-        kwargs.setdefault("default_strategy", strategy_class.ALL)
+        kwargs.setdefault("default_technique", technique_class.ALL)
         kwargs.setdefault("default_dataset_config", DatasetConfiguration())
-        super().__init__(strategy_class=strategy_class, objective_scorer=objective_scorer, **kwargs)
+        super().__init__(technique_class=technique_class, objective_scorer=objective_scorer, **kwargs)
         self._test_atomic_attacks = atomic_attacks_to_return or []
 
-    async def _resolve_seed_groups_by_dataset_async(self):
+    async def _resolve_seed_groups_by_dataset_async(self, *, apply_sampling: bool = True):
         return {}
 
     async def _build_atomic_attacks_async(self, *, context):
         return self._test_atomic_attacks
 
 
-def _build_test_strategy():
-    class TestStrategy(ScenarioStrategy):
+def _build_test_technique():
+    class TestTechnique(ScenarioTechnique):
         CONCRETE = ("concrete", {"concrete"})
         ALL = ("all", {"all"})
 
@@ -125,7 +125,7 @@ def _build_test_strategy():
         def get_aggregate_tags(cls) -> set[str]:
             return {"all"}
 
-    return TestStrategy
+    return TestTechnique
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -179,10 +179,13 @@ class TestScenarioPartialAttackCompletion:
             version=1,
             atomic_attacks_to_return=[atomic_attack],
         )
-        await scenario.initialize_async(
-            objective_target=mock_objective_target,
-            max_retries=1,
+        scenario.set_params_from_args(
+            args={
+                "objective_target": mock_objective_target,
+                "max_retries": 1,
+            }
         )
+        await scenario.initialize_async()
 
         result = await scenario.run_async()
 
@@ -226,10 +229,13 @@ class TestScenarioPartialAttackCompletion:
             version=1,
             atomic_attacks_to_return=[atomic_attack],
         )
-        await scenario.initialize_async(
-            objective_target=mock_objective_target,
-            max_retries=0,  # No retries
+        scenario.set_params_from_args(
+            args={
+                "objective_target": mock_objective_target,
+                "max_retries": 0,  # No retries
+            }
         )
+        await scenario.initialize_async()
 
         # Should raise error because of incomplete objectives
         with pytest.raises(ValueError, match="incomplete"):
@@ -297,10 +303,13 @@ class TestScenarioPartialAttackCompletion:
             version=1,
             atomic_attacks_to_return=[atomic_attack],
         )
-        await scenario.initialize_async(
-            objective_target=mock_objective_target,
-            max_retries=1,
+        scenario.set_params_from_args(
+            args={
+                "objective_target": mock_objective_target,
+                "max_retries": 1,
+            }
         )
+        await scenario.initialize_async()
 
         result = await scenario.run_async()
 
@@ -376,10 +385,13 @@ class TestScenarioPartialAttackCompletion:
             version=1,
             atomic_attacks_to_return=[attack1, attack2, attack3],
         )
-        await scenario.initialize_async(
-            objective_target=mock_objective_target,
-            max_retries=1,
+        scenario.set_params_from_args(
+            args={
+                "objective_target": mock_objective_target,
+                "max_retries": 1,
+            }
         )
+        await scenario.initialize_async()
 
         result = await scenario.run_async()
 

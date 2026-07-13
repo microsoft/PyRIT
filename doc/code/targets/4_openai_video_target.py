@@ -5,8 +5,9 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.17.2
+#       jupytext_version: 1.19.4
 # ---
+
 # %% [markdown]
 # # 4. OpenAI Video Target
 #
@@ -53,9 +54,9 @@ objectives = [
     "Video of a raccoon pirate eating a croissant at a cafe in France",
 ]
 
-objective_scorer = SelfAskTrueFalseScorer(
+objective_scorer = SelfAskTrueFalseScorer.from_question(
     chat_target=OpenAIChatTarget(),
-    true_false_question=TrueFalseQuestion(true_description="A raccoon dressed as a pirate is actively eating a pastry"),
+    question=TrueFalseQuestion(true_description="A raccoon dressed as a pirate is actively eating a pastry"),
 )
 
 video_scorer = VideoTrueFalseScorer(
@@ -94,17 +95,15 @@ objectives = [
 ]
 
 # Visual scorer - checks what is SEEN in the video frames
-visual_scorer = SelfAskTrueFalseScorer(
+visual_scorer = SelfAskTrueFalseScorer.from_question(
     chat_target=OpenAIChatTarget(),
-    true_false_question=TrueFalseQuestion(true_description="A raccoon dressed as a pirate is actively eating a pastry"),
+    question=TrueFalseQuestion(true_description="A raccoon dressed as a pirate is actively eating a pastry"),
 )
 
 # Audio transcript scorer - checks what is SAID in the video
-audio_text_scorer = SelfAskTrueFalseScorer(
+audio_text_scorer = SelfAskTrueFalseScorer.from_question(
     chat_target=OpenAIChatTarget(),
-    true_false_question=TrueFalseQuestion(
-        true_description="Someone introduces themselves and expresses enjoyment of a croissant"
-    ),
+    question=TrueFalseQuestion(true_description="Someone introduces themselves and expresses enjoyment of a croissant"),
 )
 
 # BOTH the audio and visual scorers must be true for the overall score to be true (AND aggregation)

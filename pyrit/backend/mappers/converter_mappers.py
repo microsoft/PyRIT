@@ -11,11 +11,11 @@ wire for the converter's class, supported data types, and constructor params.
 """
 
 from pyrit.backend.models import ConverterInstance
+from pyrit.converter import Converter
 from pyrit.models import ConverterIdentifier
-from pyrit.prompt_converter import PromptConverter
 
 
-def converter_object_to_instance(converter_id: str, converter_obj: PromptConverter) -> ConverterInstance:
+def converter_object_to_instance(converter_id: str, converter_obj: Converter) -> ConverterInstance:
     """
     Build a ConverterInstance DTO from a registry converter object.
 
@@ -25,7 +25,7 @@ def converter_object_to_instance(converter_id: str, converter_obj: PromptConvert
 
     Args:
         converter_id: The unique converter instance identifier.
-        converter_obj: The domain PromptConverter object from the registry.
+        converter_obj: The domain Converter object from the registry.
 
     Returns:
         ConverterInstance DTO wrapping the converter's identifier.

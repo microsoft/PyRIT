@@ -168,7 +168,7 @@ all = "error"
 # missing-type-argument is clean under numpy>=2.4 (Python 3.14) but flags 38
 # bare `np.ndarray` generics under numpy 2.2.6 -- the version the lock pins for
 # Python 3.10-3.13, i.e. CI's 3.11 -- across 5 files (analytics/conversation_analytics,
-# prompt_converter/transparency_attack_converter, score/scorer_evaluation/*).
+# converter/transparency_attack_converter, score/scorer_evaluation/*).
 # Annotating those generics is real code work, so keep the rule deferred until
 # that numpy-generics debt is addressed.
 missing-type-argument = "ignore"
@@ -387,6 +387,16 @@ extend-select = [
 
 [tool.ruff.lint.isort]
 known-first-party = ["pyrit"]
+
+[tool.ruff.lint.flake8-type-checking]
+# Pydantic resolves model field annotations at runtime (the models use
+# ``from __future__ import annotations``), so imports used only as field types
+# must stay at module level. Ruff auto-detects direct ``pydantic.BaseModel``
+# subclasses, but not models whose base is an intermediate PyRIT class, so we
+# enumerate those bases here to keep their field imports runtime-evaluated.
+runtime-evaluated-base-classes = [
+    "pyrit.models.results.strategy_result.StrategyResult",
+]
 
 [tool.ruff.lint.flake8-copyright]
 min-file-size = 1

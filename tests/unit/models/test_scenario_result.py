@@ -4,8 +4,6 @@
 import uuid
 from datetime import datetime, timezone
 
-import pytest
-
 from pyrit.models import (
     ComponentIdentifier,
     ConversationReference,
@@ -18,7 +16,7 @@ from tests.unit.mocks import make_scenario_result
 
 
 def _make_component_identifier_dict(class_name="TestTarget"):
-    return ComponentIdentifier.from_dict({"__type__": class_name, "__module__": "test.module", "params": {}})
+    return ComponentIdentifier.model_validate({"__type__": class_name, "__module__": "test.module", "params": {}})
 
 
 def _make_attack_result(*, objective="test objective", outcome=AttackOutcome.SUCCESS):
@@ -50,22 +48,22 @@ class TestScenarioResult:
         explicit_id = uuid.uuid4()
         result = make_scenario_result(
             scenario_name="TestScenario",
-            objective_target_identifier=ComponentIdentifier.from_dict({}),
+            objective_target_identifier=ComponentIdentifier.model_validate({}),
             attack_results={},
-            objective_scorer_identifier=ComponentIdentifier.from_dict({}),
+            objective_scorer_identifier=ComponentIdentifier.model_validate({}),
             id=explicit_id,
         )
         assert result.id == explicit_id
 
-    def test_get_strategies_used(self):
+    def test_get_techniques_used(self):
         result = make_scenario_result(
             scenario_name="TestScenario",
-            objective_target_identifier=ComponentIdentifier.from_dict({}),
+            objective_target_identifier=ComponentIdentifier.model_validate({}),
             attack_results={"crescendo": [], "flip": []},
-            objective_scorer_identifier=ComponentIdentifier.from_dict({}),
+            objective_scorer_identifier=ComponentIdentifier.model_validate({}),
         )
-        strategies = result.get_strategies_used()
-        assert sorted(strategies) == ["crescendo", "flip"]
+        techniques = result.get_techniques_used()
+        assert sorted(techniques) == ["crescendo", "flip"]
 
     def test_get_objectives_all(self):
         ar1 = _make_attack_result(objective="obj1")
@@ -73,9 +71,9 @@ class TestScenarioResult:
         ar3 = _make_attack_result(objective="obj1")
         result = make_scenario_result(
             scenario_name="TestScenario",
-            objective_target_identifier=ComponentIdentifier.from_dict({}),
+            objective_target_identifier=ComponentIdentifier.model_validate({}),
             attack_results={"s1": [ar1, ar3], "s2": [ar2]},
-            objective_scorer_identifier=ComponentIdentifier.from_dict({}),
+            objective_scorer_identifier=ComponentIdentifier.model_validate({}),
         )
         objectives = result.get_objectives()
         assert sorted(objectives) == ["obj1", "obj2"]
@@ -85,9 +83,9 @@ class TestScenarioResult:
         ar2 = _make_attack_result(objective="obj2")
         result = make_scenario_result(
             scenario_name="TestScenario",
-            objective_target_identifier=ComponentIdentifier.from_dict({}),
+            objective_target_identifier=ComponentIdentifier.model_validate({}),
             attack_results={"s1": [ar1], "s2": [ar2]},
-            objective_scorer_identifier=ComponentIdentifier.from_dict({}),
+            objective_scorer_identifier=ComponentIdentifier.model_validate({}),
         )
         assert result.get_objectives(atomic_attack_name="s1") == ["obj1"]
         assert result.get_objectives(atomic_attack_name="nonexistent") == []
@@ -101,30 +99,30 @@ class TestScenarioResult:
         ]
         sr = make_scenario_result(
             scenario_name="TestScenario",
-            objective_target_identifier=ComponentIdentifier.from_dict({}),
+            objective_target_identifier=ComponentIdentifier.model_validate({}),
             attack_results={"s1": results},
-            objective_scorer_identifier=ComponentIdentifier.from_dict({}),
+            objective_scorer_identifier=ComponentIdentifier.model_validate({}),
         )
         assert sr.objective_achieved_rate() == 50
 
     def test_objective_achieved_rate_empty(self):
         sr = make_scenario_result(
             scenario_name="TestScenario",
-            objective_target_identifier=ComponentIdentifier.from_dict({}),
+            objective_target_identifier=ComponentIdentifier.model_validate({}),
             attack_results={"s1": []},
-            objective_scorer_identifier=ComponentIdentifier.from_dict({}),
+            objective_scorer_identifier=ComponentIdentifier.model_validate({}),
         )
         assert sr.objective_achieved_rate() == 0
 
     def test_objective_achieved_rate_by_name(self):
         sr = make_scenario_result(
             scenario_name="TestScenario",
-            objective_target_identifier=ComponentIdentifier.from_dict({}),
+            objective_target_identifier=ComponentIdentifier.model_validate({}),
             attack_results={
                 "s1": [_make_attack_result(outcome=AttackOutcome.SUCCESS)],
                 "s2": [_make_attack_result(outcome=AttackOutcome.FAILURE)],
             },
-            objective_scorer_identifier=ComponentIdentifier.from_dict({}),
+            objective_scorer_identifier=ComponentIdentifier.model_validate({}),
         )
         assert sr.objective_achieved_rate(atomic_attack_name="s1") == 100
         assert sr.objective_achieved_rate(atomic_attack_name="s2") == 0
@@ -144,9 +142,9 @@ class TestScenarioResult:
         """error_attack_result_ids defaults to empty list."""
         sr = make_scenario_result(
             scenario_name="TestScenario",
-            objective_target_identifier=ComponentIdentifier.from_dict({}),
+            objective_target_identifier=ComponentIdentifier.model_validate({}),
             attack_results={},
-            objective_scorer_identifier=ComponentIdentifier.from_dict({}),
+            objective_scorer_identifier=ComponentIdentifier.model_validate({}),
         )
         assert sr.error_attack_result_ids == []
 
@@ -154,9 +152,9 @@ class TestScenarioResult:
         """error_attack_result_ids are stored correctly."""
         sr = make_scenario_result(
             scenario_name="TestScenario",
-            objective_target_identifier=ComponentIdentifier.from_dict({}),
+            objective_target_identifier=ComponentIdentifier.model_validate({}),
             attack_results={},
-            objective_scorer_identifier=ComponentIdentifier.from_dict({}),
+            objective_scorer_identifier=ComponentIdentifier.model_validate({}),
             error_attack_result_ids=["id-1", "id-2"],
         )
         assert sr.error_attack_result_ids == ["id-1", "id-2"]
@@ -219,12 +217,13 @@ def test_scenario_result_to_dict_from_dict_roundtrip():
         error_message="partial failure",
         error_type="RuntimeError",
     )
-    roundtripped = ScenarioResult.from_dict(original.to_dict())
-    assert original.to_dict() == roundtripped.to_dict()
+    dumped = original.model_dump(mode="json", by_alias=True)
+    roundtripped = ScenarioResult.model_validate(dumped)
+    assert dumped == roundtripped.model_dump(mode="json", by_alias=True)
     # Identity facts round-trip as denormalized flat scalars on the result.
-    assert original.to_dict()["scenario_name"] == "ContentHarms"
-    assert original.to_dict()["scenario_version"] == 2
-    assert original.to_dict()["pyrit_version"] == "0.14.0"
+    assert dumped["scenario_name"] == "ContentHarms"
+    assert dumped["scenario_version"] == 2
+    assert dumped["pyrit_version"] == "0.14.0"
 
 
 def test_scenario_result_from_dict_preserves_missing_completion_time():
@@ -241,30 +240,16 @@ def test_scenario_result_from_dict_preserves_missing_completion_time():
     )
     original.completion_time = None  # type: ignore[ty:invalid-assignment]
 
-    roundtripped = ScenarioResult.from_dict(original.to_dict())
+    roundtripped = ScenarioResult.model_validate(original.model_dump(mode="json", by_alias=True))
     assert roundtripped.completion_time is None
     assert roundtripped.scenario_run_state == "IN_PROGRESS"
-
-
-def test_scenario_result_to_dict_from_dict_emit_deprecation_warnings():
-    result = make_scenario_result(
-        scenario_name="Test",
-        pyrit_version="0.14.0",
-        objective_target_identifier=ComponentIdentifier.from_dict({}),
-        objective_scorer_identifier=None,
-        attack_results={},
-    )
-    with pytest.warns(DeprecationWarning):
-        payload = result.to_dict()
-    with pytest.warns(DeprecationWarning):
-        ScenarioResult.from_dict(payload)
 
 
 def test_scenario_result_display_group_map_is_public_field():
     result = make_scenario_result(
         scenario_name="Test",
         pyrit_version="0.14.0",
-        objective_target_identifier=ComponentIdentifier.from_dict({}),
+        objective_target_identifier=ComponentIdentifier.model_validate({}),
         objective_scorer_identifier=None,
         attack_results={"crescendo": []},
         display_group_map={"crescendo": "Crescendo Attack"},

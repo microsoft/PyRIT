@@ -8,7 +8,6 @@ from uuid import uuid4
 
 import numpy as np
 from sqlalchemy.exc import SQLAlchemyError
-from unit.mocks import make_scenario_result
 
 from pyrit.memory import AzureSQLMemory
 from pyrit.memory.memory_models import (
@@ -22,6 +21,8 @@ from pyrit.models import (
     AttackResult,
     ComponentIdentifier,
     MessagePiece,
+    ScenarioIdentifier,
+    ScenarioResult,
     SeedPrompt,
 )
 
@@ -71,6 +72,47 @@ def get_test_scorer_identifier(**kwargs) -> ComponentIdentifier:
         class_module=kwargs.get("class_module", "tests.integration.memory.test_azure_sql_memory_integration"),
         params={k: v for k, v in params.items() if v is not None},
     )
+
+
+def make_scenario_result(
+    *,
+    scenario_name: str = "TestScenario",
+    scenario_version: int = 1,
+    objective_target_identifier: ComponentIdentifier | None = None,
+    objective_scorer_identifier: ComponentIdentifier | None = None,
+    pyrit_version: str | None = None,
+    **kwargs,
+) -> ScenarioResult:
+    """
+    Build a ScenarioResult for integration tests from flat identity kwargs.
+
+    The identity kwargs are folded into a ScenarioIdentifier; all other kwargs
+    (e.g. attack_results, labels, completion_time) pass through to ScenarioResult.
+
+    Args:
+        scenario_name (str): The scenario class name. Defaults to "TestScenario".
+        scenario_version (int): The scenario version. Defaults to 1.
+        objective_target_identifier (ComponentIdentifier | None): The objective target identifier.
+        objective_scorer_identifier (ComponentIdentifier | None): The objective scorer identifier.
+        pyrit_version (str | None): The PyRIT version to record on the identifier.
+        **kwargs: Additional keyword arguments passed through to ScenarioResult.
+
+    Returns:
+        ScenarioResult: The constructed scenario result.
+    """
+    extra: dict = {}
+    if pyrit_version is not None:
+        extra["pyrit_version"] = pyrit_version
+    identifier = ScenarioIdentifier(
+        class_name=scenario_name,
+        class_module="tests.integration.memory.test_azure_sql_memory_integration",
+        version=scenario_version,
+        params={},
+        objective_target=objective_target_identifier,
+        objective_scorer=objective_scorer_identifier,
+        **extra,
+    )
+    return ScenarioResult(scenario_identifier=identifier, **kwargs)
 
 
 @contextmanager
@@ -352,7 +394,7 @@ async def test_scenario_result_scorer_identifier_roundtrip(
         scenario = make_scenario_result(
             scenario_name=f"Scorer Test Scenario {test_id}",
             scenario_version=1,
-            objective_target_identifier=ComponentIdentifier.from_dict(
+            objective_target_identifier=ComponentIdentifier.model_validate(
                 {"endpoint": f"https://test-{test_id}.example.com"}
             ),
             attack_results={},
@@ -394,7 +436,7 @@ async def test_get_scenario_results_by_labels(azuresql_instance: AzureSQLMemory)
         scenario1 = make_scenario_result(
             scenario_name=f"Test Scenario 1 {test_id}",
             scenario_version=1,
-            objective_target_identifier=ComponentIdentifier.from_dict({"endpoint": "https://api.openai.com"}),
+            objective_target_identifier=ComponentIdentifier.model_validate({"endpoint": "https://api.openai.com"}),
             attack_results={},
             objective_scorer_identifier=scorer_id,
             labels={
@@ -407,7 +449,7 @@ async def test_get_scenario_results_by_labels(azuresql_instance: AzureSQLMemory)
         scenario2 = make_scenario_result(
             scenario_name=f"Test Scenario 2 {test_id}",
             scenario_version=1,
-            objective_target_identifier=ComponentIdentifier.from_dict({"endpoint": "https://api.azure.com"}),
+            objective_target_identifier=ComponentIdentifier.model_validate({"endpoint": "https://api.azure.com"}),
             attack_results={},
             objective_scorer_identifier=scorer_id,
             labels={"environment": "test", "priority": "high", "test_id": test_id},
@@ -415,7 +457,7 @@ async def test_get_scenario_results_by_labels(azuresql_instance: AzureSQLMemory)
         scenario3 = make_scenario_result(
             scenario_name=f"Test Scenario 3 {test_id}",
             scenario_version=1,
-            objective_target_identifier=ComponentIdentifier.from_dict({"endpoint": "https://api.anthropic.com"}),
+            objective_target_identifier=ComponentIdentifier.model_validate({"endpoint": "https://api.anthropic.com"}),
             attack_results={},
             objective_scorer_identifier=scorer_id,
             labels={"environment": "prod", "test_id": test_id},
@@ -465,7 +507,7 @@ async def test_get_scenario_results_by_target_endpoint(
         scenario1 = make_scenario_result(
             scenario_name=f"OpenAI Test {test_id}",
             scenario_version=1,
-            objective_target_identifier=ComponentIdentifier.from_dict(
+            objective_target_identifier=ComponentIdentifier.model_validate(
                 {"endpoint": f"https://api-{test_id}.openai.com/v1/chat"}
             ),
             attack_results={},
@@ -474,7 +516,7 @@ async def test_get_scenario_results_by_target_endpoint(
         scenario2 = make_scenario_result(
             scenario_name=f"Azure OpenAI Test {test_id}",
             scenario_version=1,
-            objective_target_identifier=ComponentIdentifier.from_dict(
+            objective_target_identifier=ComponentIdentifier.model_validate(
                 {"endpoint": f"https://myresource-{test_id}.openai.azure.com/openai"}
             ),
             attack_results={},
@@ -483,7 +525,7 @@ async def test_get_scenario_results_by_target_endpoint(
         scenario3 = make_scenario_result(
             scenario_name=f"Anthropic Test {test_id}",
             scenario_version=1,
-            objective_target_identifier=ComponentIdentifier.from_dict(
+            objective_target_identifier=ComponentIdentifier.model_validate(
                 {"endpoint": f"https://api-{test_id}.anthropic.com/v1/messages"}
             ),
             attack_results={},
@@ -492,7 +534,7 @@ async def test_get_scenario_results_by_target_endpoint(
         scenario4 = make_scenario_result(
             scenario_name=f"Azure Other {test_id}",
             scenario_version=1,
-            objective_target_identifier=ComponentIdentifier.from_dict(
+            objective_target_identifier=ComponentIdentifier.model_validate(
                 {"endpoint": f"https://myresource-{test_id}.cognitiveservices.azure.com"}
             ),
             attack_results={},
@@ -548,28 +590,28 @@ async def test_get_scenario_results_by_target_model_name(
         scenario1 = make_scenario_result(
             scenario_name=f"GPT-4 Test {test_id}",
             scenario_version=1,
-            objective_target_identifier=ComponentIdentifier.from_dict({"model_name": f"gpt-4-turbo-{test_id}"}),
+            objective_target_identifier=ComponentIdentifier.model_validate({"model_name": f"gpt-4-turbo-{test_id}"}),
             attack_results={},
             objective_scorer_identifier=scorer_id,
         )
         scenario2 = make_scenario_result(
             scenario_name=f"GPT-4 Omni Test {test_id}",
             scenario_version=1,
-            objective_target_identifier=ComponentIdentifier.from_dict({"model_name": f"gpt-4o-{test_id}"}),
+            objective_target_identifier=ComponentIdentifier.model_validate({"model_name": f"gpt-4o-{test_id}"}),
             attack_results={},
             objective_scorer_identifier=scorer_id,
         )
         scenario3 = make_scenario_result(
             scenario_name=f"GPT-3.5 Test {test_id}",
             scenario_version=1,
-            objective_target_identifier=ComponentIdentifier.from_dict({"model_name": f"gpt-3.5-turbo-{test_id}"}),
+            objective_target_identifier=ComponentIdentifier.model_validate({"model_name": f"gpt-3.5-turbo-{test_id}"}),
             attack_results={},
             objective_scorer_identifier=scorer_id,
         )
         scenario4 = make_scenario_result(
             scenario_name=f"Claude Test {test_id}",
             scenario_version=1,
-            objective_target_identifier=ComponentIdentifier.from_dict({"model_name": f"claude-3-opus-{test_id}"}),
+            objective_target_identifier=ComponentIdentifier.model_validate({"model_name": f"claude-3-opus-{test_id}"}),
             attack_results={},
             objective_scorer_identifier=scorer_id,
         )
@@ -627,7 +669,7 @@ async def test_get_scenario_results_combined_filters(azuresql_instance: AzureSQL
             scenario_name=f"Production Test {test_id}",
             scenario_version=1,
             pyrit_version="0.4.0",
-            objective_target_identifier=ComponentIdentifier.from_dict(
+            objective_target_identifier=ComponentIdentifier.model_validate(
                 {
                     "endpoint": f"https://api-{test_id}.openai.com",
                     "model_name": f"gpt-4-turbo-{test_id}",
@@ -642,7 +684,7 @@ async def test_get_scenario_results_combined_filters(azuresql_instance: AzureSQL
             scenario_name=f"Test Environment {test_id}",
             scenario_version=1,
             pyrit_version="0.4.0",
-            objective_target_identifier=ComponentIdentifier.from_dict(
+            objective_target_identifier=ComponentIdentifier.model_validate(
                 {
                     "endpoint": f"https://test-{test_id}.openai.com",
                     "model_name": f"gpt-4-turbo-{test_id}",
@@ -657,7 +699,7 @@ async def test_get_scenario_results_combined_filters(azuresql_instance: AzureSQL
             scenario_name=f"Old Version Test {test_id}",
             scenario_version=1,
             pyrit_version="0.3.0",
-            objective_target_identifier=ComponentIdentifier.from_dict(
+            objective_target_identifier=ComponentIdentifier.model_validate(
                 {
                     "endpoint": f"https://api-{test_id}.openai.com",
                     "model_name": f"gpt-3.5-turbo-{test_id}",
