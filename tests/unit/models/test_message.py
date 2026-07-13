@@ -6,6 +6,7 @@ import pytest
 from pyrit.models import (
     Message,
     MessagePiece,
+    get_all_values,
 )
 
 
@@ -73,7 +74,7 @@ def test_get_pieces_by_type_returns_matching_pieces() -> None:
         converted_value_data_type="image_path",
         conversation_id=conversation_id,
     )
-    msg = Message([text_piece, image_piece])
+    msg = Message(message_pieces=[text_piece, image_piece])
 
     result = msg.get_pieces_by_type(data_type="text")
     assert len(result) == 1
@@ -86,7 +87,7 @@ def test_get_pieces_by_type_returns_matching_pieces() -> None:
 
 def test_get_pieces_by_type_returns_empty_for_no_match() -> None:
     piece = MessagePiece(role="user", original_value="hello", converted_value="hello")
-    msg = Message([piece])
+    msg = Message(message_pieces=[piece])
     assert msg.get_pieces_by_type(data_type="image_path") == []
 
 
@@ -94,13 +95,13 @@ def test_get_piece_by_type_returns_first_match() -> None:
     conversation_id = "test-conv"
     text1 = MessagePiece(role="user", original_value="a", converted_value="a", conversation_id=conversation_id)
     text2 = MessagePiece(role="user", original_value="b", converted_value="b", conversation_id=conversation_id)
-    msg = Message([text1, text2])
+    msg = Message(message_pieces=[text1, text2])
     assert msg.get_piece_by_type(data_type="text") is text1
 
 
 def test_get_piece_by_type_returns_none_for_no_match() -> None:
     piece = MessagePiece(role="user", original_value="hello", converted_value="hello")
-    msg = Message([piece])
+    msg = Message(message_pieces=[piece])
     assert msg.get_piece_by_type(data_type="image_path") is None
 
 
@@ -108,19 +109,19 @@ def test_get_all_values_returns_all_converted_strings(message_pieces: list[Messa
     response_one = Message(message_pieces=message_pieces[:2])
     response_two = Message(message_pieces=message_pieces[2:])
 
-    flattened = Message.get_all_values([response_one, response_two])
+    flattened = get_all_values([response_one, response_two])
 
     assert flattened == ["First piece", "Second piece", "Third piece"]
 
 
 class TestMessageDuplication:
-    """Tests for the Message.duplicate_message() method."""
+    """Tests for the Message.duplicate() method."""
 
-    def test_duplicate_message_creates_new_ids(self, message: Message) -> None:
-        """Test that duplicate_message creates new IDs for all pieces."""
+    def test_duplicate_creates_new_ids(self, message: Message) -> None:
+        """Test that duplicate creates new IDs for all pieces."""
         original_ids = [piece.id for piece in message.message_pieces]
 
-        duplicated = message.duplicate_message()
+        duplicated = message.duplicate()
 
         duplicated_ids = [piece.id for piece in duplicated.message_pieces]
 
@@ -131,9 +132,9 @@ class TestMessageDuplication:
         # Verify duplicated IDs are unique
         assert len(set(duplicated_ids)) == len(duplicated_ids)
 
-    def test_duplicate_message_preserves_content(self, message: Message) -> None:
-        """Test that duplicate_message preserves all content fields."""
-        duplicated = message.duplicate_message()
+    def test_duplicate_preserves_content(self, message: Message) -> None:
+        """Test that duplicate preserves all content fields."""
+        duplicated = message.duplicate()
 
         for orig_piece, dup_piece in zip(message.message_pieces, duplicated.message_pieces, strict=False):
             assert orig_piece.original_value == dup_piece.original_value
@@ -143,30 +144,36 @@ class TestMessageDuplication:
             assert orig_piece.conversation_id == dup_piece.conversation_id
             assert orig_piece.sequence == dup_piece.sequence
 
-    def test_duplicate_message_preserves_original_prompt_id(self, message: Message) -> None:
-        """Test that duplicate_message preserves original_prompt_id for tracing."""
-        duplicated = message.duplicate_message()
+    def test_duplicate_preserves_original_prompt_id(self, message: Message) -> None:
+        """Test that duplicate preserves original_prompt_id for tracing."""
+        duplicated = message.duplicate()
 
         for orig_piece, dup_piece in zip(message.message_pieces, duplicated.message_pieces, strict=False):
             assert orig_piece.original_prompt_id == dup_piece.original_prompt_id
 
-    def test_duplicate_message_creates_new_timestamp(self, message: Message) -> None:
-        """Test that duplicate_message creates new timestamps."""
-        import time
+    def test_duplicate_creates_new_timestamp(self, message: Message) -> None:
+        """Test that duplicate creates new timestamps."""
+        from datetime import timedelta, timezone
+        from unittest.mock import patch
 
         original_timestamps = [piece.timestamp for piece in message.message_pieces]
+        fake_now = max(original_timestamps) + timedelta(seconds=1)
 
-        time.sleep(0.01)  # Small delay to ensure different timestamp
-        duplicated = message.duplicate_message()
+        with patch("pyrit.models.messages.message.datetime") as mock_datetime:
+            mock_datetime.now.return_value = fake_now
+            duplicated = message.duplicate()
 
         for dup_piece in duplicated.message_pieces:
-            # Verify timestamp is newer than all original timestamps
+            # Every duplicated piece shares the new timestamp produced by duplicate.
+            assert dup_piece.timestamp == fake_now
+            # And it is strictly newer than every original timestamp.
             for orig_ts in original_timestamps:
-                assert dup_piece.timestamp >= orig_ts
+                assert dup_piece.timestamp > orig_ts
+        mock_datetime.now.assert_called_once_with(tz=timezone.utc)
 
-    def test_duplicate_message_is_deep_copy(self, message: Message) -> None:
-        """Test that duplicate_message creates a deep copy (modifications don't affect original)."""
-        duplicated = message.duplicate_message()
+    def test_duplicate_is_deep_copy(self, message: Message) -> None:
+        """Test that duplicate creates a deep copy (modifications don't affect original)."""
+        duplicated = message.duplicate()
 
         # Modify the duplicated message
         duplicated.message_pieces[0].original_value = "Modified value"
@@ -174,10 +181,10 @@ class TestMessageDuplication:
         # Verify original is unchanged
         assert message.message_pieces[0].original_value == "First piece"
 
-    def test_duplicate_message_multiple_times(self, message: Message) -> None:
+    def test_duplicate_multiple_times(self, message: Message) -> None:
         """Test that duplicating multiple times creates unique IDs each time."""
-        dup1 = message.duplicate_message()
-        dup2 = message.duplicate_message()
+        dup1 = message.duplicate()
+        dup2 = message.duplicate()
 
         dup1_ids = {piece.id for piece in dup1.message_pieces}
         dup2_ids = {piece.id for piece in dup2.message_pieces}
@@ -219,18 +226,6 @@ class TestMessageFromPrompt:
 
         assert len(message.message_pieces) == 1
         assert message.message_pieces[0].original_value == ""
-
-
-def test_message_to_dict() -> None:
-    """Test that to_dict returns the expected dictionary structure."""
-    message = Message.from_prompt(prompt="Hello world", role="user")
-    result = message.to_dict()
-
-    assert result["role"] == "user"
-    assert result["converted_value"] == "Hello world"
-    assert "conversation_id" in result
-    assert "sequence" in result
-    assert result["converted_value_data_type"] == "text"
 
 
 class TestMessageSimulatedAssistantRole:
@@ -282,7 +277,7 @@ class TestMessageSimulatedAssistantRole:
         assert message.is_simulated is True
         assert message.api_role == "assistant"
         for piece in message.message_pieces:
-            assert piece._role == "simulated_assistant"
+            assert piece.role == "simulated_assistant"
             assert piece.is_simulated is True
 
     def test_set_simulated_role_only_changes_assistant_role(self) -> None:
@@ -297,5 +292,84 @@ class TestMessageSimulatedAssistantRole:
 
         # User roles should remain unchanged
         for piece in message.message_pieces:
-            assert piece._role == "user"
+            assert piece.role == "user"
             assert piece.is_simulated is False
+
+
+class TestSetResponseNotInMemory:
+    """Tests for ``Message.set_response_not_in_memory``."""
+
+    def test_set_response_not_in_memory_flags_every_piece(self) -> None:
+        pieces = [
+            MessagePiece(role="user", original_value="a", conversation_id="conv-1"),
+            MessagePiece(role="user", original_value="b", conversation_id="conv-1"),
+        ]
+        message = Message(message_pieces=pieces)
+        for p in pieces:
+            assert p.not_in_memory is False
+        message.set_response_not_in_memory()
+        for p in pieces:
+            assert p.not_in_memory is True
+
+
+class TestMessagePydanticShape:
+    """Tests for the Pydantic v2 BaseModel behavior of Message."""
+
+    def test_keyword_construction_does_not_warn(self) -> None:
+        import warnings as _warnings
+
+        piece = MessagePiece(role="user", original_value="hi", conversation_id="c")
+        with _warnings.catch_warnings(record=True) as caught:
+            _warnings.simplefilter("always")
+            Message(message_pieces=[piece])
+        assert not [w for w in caught if issubclass(w.category, DeprecationWarning)]
+
+    def test_positional_construction_no_longer_supported(self) -> None:
+        piece = MessagePiece(role="user", original_value="hi", conversation_id="c")
+        positional_args = ([piece],)
+        with pytest.raises(TypeError):
+            Message(*positional_args)  # type: ignore[misc]
+
+    def test_model_validate_canonical_shape(self) -> None:
+        piece = MessagePiece(role="user", original_value="hi", conversation_id="c")
+        message = Message.model_validate({"message_pieces": [piece.model_dump()]})
+        assert message.get_value() == "hi"
+
+    def test_value_equality(self, message_pieces: list[MessagePiece]) -> None:
+        assert Message(message_pieces=message_pieces) == Message(message_pieces=message_pieces)
+
+    def test_membership_uses_value_equality(self, message_pieces: list[MessagePiece]) -> None:
+        a = Message(message_pieces=message_pieces)
+        b = Message(message_pieces=message_pieces)
+        assert a in [b]
+
+    def test_validate_instance_method_still_callable(self, message: Message) -> None:
+        message.validate()
+        message.message_pieces = []
+        with pytest.raises(ValueError, match="at least one message piece"):
+            message.validate()
+
+    def test_duplicate_creates_new_ids_and_deep_copy(self, message: Message) -> None:
+        duplicated = message.duplicate()
+        original_ids = {p.id for p in message.message_pieces}
+        duplicated_ids = {p.id for p in duplicated.message_pieces}
+        assert original_ids.isdisjoint(duplicated_ids)
+        duplicated.message_pieces[0].original_value = "changed"
+        assert message.message_pieces[0].original_value == "First piece"
+
+
+class TestMessageModuleLayout:
+    """Lock in the messages-package layout and its backward-compatible re-exports."""
+
+    def test_conversation_helpers_live_in_conversations_module(self) -> None:
+        from pyrit.models import messages
+        from pyrit.models.messages import conversations
+
+        for name in (
+            "get_all_values",
+            "flatten_to_message_pieces",
+            "group_conversation_message_pieces_by_sequence",
+            "group_message_pieces_into_conversations",
+            "construct_response_from_request",
+        ):
+            assert getattr(conversations, name) is getattr(messages, name)

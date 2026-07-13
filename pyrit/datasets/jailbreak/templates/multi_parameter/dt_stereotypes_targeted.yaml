@@ -1,6 +1,33 @@
 name: Decoding Trust Stereotypes Targeted System Prompt
 dataset_name: Decoding Trust Stereotypes
 description: Stereotype 'targeted' system prompt provided by Decoding Trust dataset (https://github.com/AI-secure/DecodingTrust/blob/main/data/stereotype/dataset/system_prompts.csv)
+authors:
+  - Boxin Wang
+  - Weixin Chen
+  - Hengzhi Pei
+  - Chulin Xie
+  - Mintong Kang
+  - Chenhui Zhang
+  - Chejian Xu
+  - Zidi Xiong
+  - Ritik Dutta
+  - Rylan Schaeffer
+  - Sang T. Truong
+  - Simran Arora
+  - Mantas Mazeika
+  - Dan Hendrycks
+  - Zinan Lin
+  - Yu Cheng
+  - Sanmi Koyejo
+  - Dawn Song
+  - Bo Li
+groups:
+  - University of Illinois at Urbana-Champaign
+  - Stanford University
+  - UC Berkeley
+  - Center for AI Safety
+  - Microsoft Corporation
+  - The Chinese University of Hong Kong
 harm_categories:
   - stereotypes
 source: DecodingTrust

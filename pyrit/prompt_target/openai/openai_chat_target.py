@@ -3,18 +3,17 @@
 
 import logging
 from collections.abc import MutableSequence
-from typing import Any, Optional
+from typing import Any
 
 from pyrit.exceptions import (
     EmptyResponseException,
     pyrit_target_retry,
 )
-from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import (
+    ComponentIdentifier,
     Message,
     MessagePiece,
 )
-from pyrit.models.json_response_config import _JsonResponseConfig
 from pyrit.prompt_target.common.chat_completions_message_builder import (
     build_multimodal_chat_messages_async,
     build_response_format,
@@ -31,17 +30,21 @@ from pyrit.prompt_target.common.chat_completions_response_parser import (
     save_audio_response_async,
     validate_chat_completion_response,
 )
-from pyrit.prompt_target.common.prompt_target import PromptTarget
+from pyrit.prompt_target.common.json_response_config import _JsonResponseConfig
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
-from pyrit.prompt_target.common.utils import limit_requests_per_minute, validate_temperature, validate_top_p
+from pyrit.prompt_target.common.utils import (
+    limit_requests_per_minute,
+    validate_temperature,
+    validate_top_p,
+)
 from pyrit.prompt_target.openai.openai_chat_audio_config import OpenAIChatAudioConfig
 from pyrit.prompt_target.openai.openai_target import OpenAITarget
 
 logger = logging.getLogger(__name__)
 
 
-class OpenAIChatTarget(OpenAITarget, PromptTarget):
+class OpenAIChatTarget(OpenAITarget):
     """
     Facilitates multimodal (image and text) input and text output generation.
 
@@ -89,17 +92,17 @@ class OpenAIChatTarget(OpenAITarget, PromptTarget):
     def __init__(
         self,
         *,
-        max_completion_tokens: Optional[int] = None,
-        max_tokens: Optional[int] = None,
-        temperature: Optional[float] = None,
-        top_p: Optional[float] = None,
-        frequency_penalty: Optional[float] = None,
-        presence_penalty: Optional[float] = None,
-        seed: Optional[int] = None,
-        n: Optional[int] = None,
-        audio_response_config: Optional[OpenAIChatAudioConfig] = None,
-        extra_body_parameters: Optional[dict[str, Any]] = None,
-        custom_configuration: Optional[TargetConfiguration] = None,
+        max_completion_tokens: int | None = None,
+        max_tokens: int | None = None,
+        temperature: float | None = None,
+        top_p: float | None = None,
+        frequency_penalty: float | None = None,
+        presence_penalty: float | None = None,
+        seed: int | None = None,
+        n: int | None = None,
+        audio_response_config: OpenAIChatAudioConfig | None = None,
+        extra_body_parameters: dict[str, Any] | None = None,
+        custom_configuration: TargetConfiguration | None = None,
         **kwargs: Any,
     ) -> None:
         """
@@ -242,10 +245,10 @@ class OpenAIChatTarget(OpenAITarget, PromptTarget):
 
         logger.info(f"Sending the following prompt to the prompt target: {message}")
 
-        body = await self._construct_request_body(conversation=normalized_conversation, json_config=json_config)
+        body = await self._construct_request_body_async(conversation=normalized_conversation, json_config=json_config)
 
         # Use unified error handling - automatically detects ChatCompletion and validates
-        response = await self._handle_openai_request(
+        response = await self._handle_openai_request_async(
             api_call=lambda: self._client.chat.completions.create(**body),
             request=message,
         )
@@ -263,7 +266,7 @@ class OpenAIChatTarget(OpenAITarget, PromptTarget):
         """
         return is_content_filter_response(response)
 
-    def _extract_partial_content(self, response: Any) -> Optional[str]:
+    def _extract_partial_content(self, response: Any) -> str | None:
         """
         Extract partial content from a Chat Completions response with finish_reason=content_filter.
 
@@ -278,7 +281,7 @@ class OpenAIChatTarget(OpenAITarget, PromptTarget):
         """
         return extract_partial_content(response)
 
-    def _validate_response(self, response: Any, request: MessagePiece) -> Optional[Message]:
+    def _validate_response(self, response: Any, request: MessagePiece) -> Message | None:
         """
         Validate a Chat Completions API response for errors.
 
@@ -344,7 +347,7 @@ class OpenAIChatTarget(OpenAITarget, PromptTarget):
             prefer_transcript_for_history=prefer_transcript_for_history,
         )
 
-    async def _construct_message_from_response(self, response: Any, request: MessagePiece) -> Message:
+    async def _construct_message_from_response_async(self, response: Any, request: MessagePiece) -> Message:
         """
         Construct a Message from a ChatCompletion response.
 
@@ -453,7 +456,7 @@ class OpenAIChatTarget(OpenAITarget, PromptTarget):
             conversation, prefer_transcript_for_history=prefer_transcript_for_history
         )
 
-    async def _construct_request_body(
+    async def _construct_request_body_async(
         self, *, conversation: MutableSequence[Message], json_config: _JsonResponseConfig
     ) -> dict[str, Any]:
         messages = await self._build_chat_messages_async(conversation)
@@ -480,5 +483,5 @@ class OpenAIChatTarget(OpenAITarget, PromptTarget):
         # Filter out None values
         return {k: v for k, v in body_parameters.items() if v is not None}
 
-    def _build_response_format(self, json_config: _JsonResponseConfig) -> Optional[dict[str, Any]]:
+    def _build_response_format(self, json_config: _JsonResponseConfig) -> dict[str, Any] | None:
         return build_response_format(json_config=json_config)

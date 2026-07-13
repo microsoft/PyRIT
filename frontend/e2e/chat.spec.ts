@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
+import { makeTarget } from "./_targets";
 
 // ---------------------------------------------------------------------------
 // Helpers – mock backend API responses so tests don't require an OpenAI key
@@ -19,12 +20,12 @@ async function mockBackendAPIs(page: Page) {
         contentType: "application/json",
         body: JSON.stringify({
           items: [
-            {
+            makeTarget({
               target_registry_name: "mock-openai-chat",
               target_type: "OpenAIChatTarget",
               endpoint: "https://mock.openai.com",
               model_name: "gpt-4o-mock",
-            },
+            }),
           ],
         }),
       });
@@ -53,9 +54,9 @@ async function mockBackendAPIs(page: Page) {
         turn_number: turnNumber,
         role: "user",
         created_at: new Date().toISOString(),
-        pieces: [
+        message_pieces: [
           {
-            piece_id: `piece-u-${turnNumber}`,
+            id: `piece-u-${turnNumber}`,
             original_value_data_type: "text",
             converted_value_data_type: "text",
             original_value: userText,
@@ -69,9 +70,9 @@ async function mockBackendAPIs(page: Page) {
         turn_number: turnNumber,
         role: "assistant",
         created_at: new Date().toISOString(),
-        pieces: [
+        message_pieces: [
           {
-            piece_id: `piece-a-${turnNumber}`,
+            id: `piece-a-${turnNumber}`,
             original_value_data_type: "text",
             converted_value_data_type: "text",
             original_value: `Mock response for: ${userText}`,
@@ -137,7 +138,7 @@ async function activateMockTarget(page: Page) {
 
   // Return to Chat view
   await page.getByTitle("Chat").click();
-  await expect(page.getByText("PyRIT Attack")).toBeVisible({ timeout: 5000 });
+  await expect(page.getByTestId("new-attack-btn")).toBeVisible({ timeout: 5000 });
 }
 
 // ---------------------------------------------------------------------------
@@ -153,15 +154,19 @@ test.describe("Application Smoke Tests", () => {
     await expect(page.locator("body")).toBeVisible();
   });
 
-  test("should display PyRIT header", async ({ page }) => {
-    await expect(page.getByText("PyRIT Attack")).toBeVisible({ timeout: 10000 });
+  test("should display chat ribbon", async ({ page }) => {
+    await expect(page.getByTitle("Chat")).toBeVisible({ timeout: 10000 });
+    await page.getByTitle("Chat").click();
+    await expect(page.getByTestId("new-attack-btn")).toBeVisible({ timeout: 10000 });
   });
 
   test("should have New Attack button", async ({ page }) => {
+    await page.getByTitle("Chat").click();
     await expect(page.getByRole("button", { name: /new attack/i })).toBeVisible();
   });
 
   test("should show 'no target' hint when no target is active", async ({ page }) => {
+    await page.getByTitle("Chat").click();
     await expect(page.getByTestId("no-target-banner")).toBeVisible();
   });
 });
@@ -169,23 +174,23 @@ test.describe("Application Smoke Tests", () => {
 test.describe("Theme Toggle", () => {
   test("should toggle dark/light theme", async ({ page }) => {
     await page.goto("/");
-    await expect(page.getByText("PyRIT Attack")).toBeVisible({ timeout: 10000 });
+    await expect(page.getByTitle("Chat")).toBeVisible({ timeout: 10000 });
 
-    // The app defaults to dark mode, so the toggle button title should say "Light Mode"
-    const themeBtn = page.getByTitle("Light Mode");
+    // The app defaults to system mode, so the toggle button title should say "Theme: System"
+    const themeBtn = page.getByTitle("Theme: System");
     await expect(themeBtn).toBeVisible();
 
-    // Click to switch to light mode
+    // Open the theme menu and select Light
     await themeBtn.click();
+    await page.getByRole("menuitemradio", { name: "Light" }).click();
 
-    // Now the button title should change to "Dark Mode"
-    await expect(page.getByTitle("Dark Mode")).toBeVisible({ timeout: 5000 });
-    // The old title should no longer be present
-    await expect(page.getByTitle("Light Mode")).not.toBeVisible();
+    // Now the button title should say "Theme: Light"
+    await expect(page.getByTitle("Theme: Light")).toBeVisible({ timeout: 5000 });
 
-    // Click again to switch back to dark mode
-    await page.getByTitle("Dark Mode").click();
-    await expect(page.getByTitle("Light Mode")).toBeVisible({ timeout: 5000 });
+    // Open the menu again and select Dark
+    await page.getByTitle("Theme: Light").click();
+    await page.getByRole("menuitemradio", { name: "Dark" }).click();
+    await expect(page.getByTitle("Theme: Dark")).toBeVisible({ timeout: 5000 });
   });
 });
 
@@ -197,8 +202,12 @@ test.describe("Chat Functionality", () => {
   });
 
   test("should display target info after activation", async ({ page }) => {
-    await expect(page.getByText("OpenAIChatTarget")).toBeVisible();
-    await expect(page.getByText(/gpt-4o-mock/)).toBeVisible();
+    // Scope queries to the badge so we don't also match the (hidden)
+    // copy of the target text that Fluent's Tooltip renders into the DOM.
+    const badge = page.getByTestId("target-badge");
+    await expect(badge).toBeVisible();
+    await expect(badge).toContainText("OpenAIChatTarget");
+    await expect(badge).toContainText(/gpt-4o-mock/);
   });
 
   test("should send a message and receive backend response", async ({ page }) => {
@@ -293,6 +302,7 @@ test.describe("Multiple Messages", () => {
 test.describe("Chat without target", () => {
   test("should disable input when no target is active", async ({ page }) => {
     await page.goto("/");
+    await page.getByTitle("Chat").click();
 
     // The no-target-banner should be visible because no target is active
     await expect(page.getByTestId("no-target-banner")).toBeVisible();
@@ -318,12 +328,12 @@ function buildModalityMock(
           contentType: "application/json",
           body: JSON.stringify({
             items: [
-              {
+              makeTarget({
                 target_registry_name: "mock-target",
                 target_type: "OpenAIChatTarget",
                 endpoint: "https://mock.endpoint.com",
                 model_name: "test-model",
-              },
+              }),
             ],
           }),
         });
@@ -353,9 +363,9 @@ function buildModalityMock(
             turn_number: 0,
             role: "user",
             created_at: new Date().toISOString(),
-            pieces: [
+            message_pieces: [
               {
-                piece_id: "u1",
+                id: "u1",
                 original_value_data_type: "text",
                 converted_value_data_type: "text",
                 original_value: userText,
@@ -369,7 +379,7 @@ function buildModalityMock(
             turn_number: 1,
             role: "assistant",
             created_at: new Date().toISOString(),
-            pieces: assistantPieces,
+            message_pieces: assistantPieces,
           },
         ];
         postSeen = true;
@@ -414,7 +424,7 @@ function buildModalityMock(
 test.describe("Multi-modal: Image response", () => {
   const setupImageMock = buildModalityMock([
     {
-      piece_id: "img-1",
+      id: "img-1",
       original_value_data_type: "text",
       converted_value_data_type: "image_path",
       original_value: "generated image",
@@ -448,7 +458,7 @@ test.describe("Multi-modal: Image response", () => {
 test.describe("Multi-modal: Audio response", () => {
   const setupAudioMock = buildModalityMock([
     {
-      piece_id: "aud-1",
+      id: "aud-1",
       original_value_data_type: "text",
       converted_value_data_type: "audio_path",
       original_value: "spoken text",
@@ -479,7 +489,7 @@ test.describe("Multi-modal: Audio response", () => {
 test.describe("Multi-modal: Video response", () => {
   const setupVideoMock = buildModalityMock([
     {
-      piece_id: "vid-1",
+      id: "vid-1",
       original_value_data_type: "text",
       converted_value_data_type: "video_path",
       original_value: "generated video",
@@ -511,7 +521,7 @@ test.describe("Multi-modal: Video response", () => {
 test.describe("Multi-modal: Mixed text + image response", () => {
   const setupMixedMock = buildModalityMock([
     {
-      piece_id: "txt-1",
+      id: "txt-1",
       original_value_data_type: "text",
       converted_value_data_type: "text",
       original_value: "Here is the analysis:",
@@ -520,7 +530,7 @@ test.describe("Multi-modal: Mixed text + image response", () => {
       response_error: "none",
     },
     {
-      piece_id: "img-2",
+      id: "img-2",
       original_value_data_type: "text",
       converted_value_data_type: "image_path",
       original_value: "chart image",
@@ -550,7 +560,7 @@ test.describe("Multi-modal: Mixed text + image response", () => {
 test.describe("Multi-modal: Error response from target", () => {
   const setupErrorMock = buildModalityMock([
     {
-      piece_id: "err-1",
+      id: "err-1",
       original_value_data_type: "text",
       converted_value_data_type: "text",
       original_value: "",
@@ -668,7 +678,7 @@ test.describe("Target type scenarios", () => {
       endpoint: "https://api.openai.com",
       model_name: "tts-1-hd",
     },
-  ];
+  ].map(makeTarget);
 
   test("should list multiple target types on config page", async ({ page }) => {
     await page.route(/\/api\/targets/, async (route) => {
@@ -721,7 +731,11 @@ test.describe("Target type scenarios", () => {
 
     // Navigate to chat
     await page.getByTitle("Chat").click();
-    await expect(page.getByText("OpenAIImageTarget")).toBeVisible();
-    await expect(page.getByText(/dall-e-3/)).toBeVisible();
+    // Scope queries to the badge so we don't also match the (hidden)
+    // copy of the target text that Fluent's Tooltip renders into the DOM.
+    const badge = page.getByTestId("target-badge");
+    await expect(badge).toBeVisible();
+    await expect(badge).toContainText("OpenAIImageTarget");
+    await expect(badge).toContainText(/dall-e-3/);
   });
 });

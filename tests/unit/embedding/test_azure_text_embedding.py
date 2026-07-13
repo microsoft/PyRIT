@@ -5,6 +5,7 @@ import os
 from unittest.mock import MagicMock, patch
 
 import pytest
+from openai import OpenAIError
 
 from pyrit.embedding import OpenAITextEmbedding
 
@@ -26,16 +27,14 @@ def test_valid_init_env():
 
 
 def test_invalid_key_raises():
-    """Test that empty API key is accepted by constructor but would fail on use."""
+    """Test that an empty API key is rejected by the underlying OpenAI client."""
     os.environ[OpenAITextEmbedding.API_KEY_ENVIRONMENT_VARIABLE] = ""
-    # Empty string api_key is accepted by OpenAI constructor
-    # It will only fail when actually making a request
-    embedding = OpenAITextEmbedding(
-        api_key="",
-        endpoint="https://mock.azure.com/",
-        model_name="gpt-4",
-    )
-    assert embedding is not None
+    with pytest.raises(OpenAIError, match="Missing credentials"):
+        OpenAITextEmbedding(
+            api_key="",
+            endpoint="https://mock.azure.com/",
+            model_name="gpt-4",
+        )
 
 
 def test_invalid_endpoint_raises():

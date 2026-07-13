@@ -21,12 +21,12 @@ from pyrit.exceptions import (
     PyritException,
     handle_bad_request_exception,
 )
+from pyrit.memory import data_serializer_factory
 from pyrit.models import (
     Message,
     MessagePiece,
     TokenUsage,
     construct_response_from_request,
-    data_serializer_factory,
 )
 
 logger = logging.getLogger(__name__)
@@ -189,14 +189,14 @@ async def save_audio_response_async(*, audio_data_base64: str, audio_format: str
 
     if audio_format == "pcm16":
         # Raw PCM needs WAV headers - OpenAI uses 24kHz mono PCM16
-        await audio_serializer.save_formatted_audio(
+        await audio_serializer.save_formatted_audio_async(
             data=audio_bytes,
             num_channels=1,
             sample_width=2,
             sample_rate=24000,
         )
     else:
-        await audio_serializer.save_data(audio_bytes)
+        await audio_serializer.save_data_async(audio_bytes)
 
     return audio_serializer.value
 

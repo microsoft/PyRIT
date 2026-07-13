@@ -12,8 +12,7 @@ from pyrit.executor.promptgen.anecdoctor import (
     AnecdoctorGenerator,
     AnecdoctorResult,
 )
-from pyrit.identifiers import ComponentIdentifier
-from pyrit.models import Message
+from pyrit.models import ComponentIdentifier, Message
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import PromptTarget
 
@@ -405,6 +404,7 @@ class TestAnecdoctorGeneratorHelperMethods:
     async def test_extract_knowledge_graph(self, mock_objective_target, mock_processing_model, sample_context):
         """Test knowledge graph extraction."""
         generator = AnecdoctorGenerator(objective_target=mock_objective_target, processing_model=mock_processing_model)
+        generator._memory_labels = {"test": "label"}
 
         mock_kg_response = MagicMock()
         mock_kg_response.get_value.return_value = "Extracted KG data"
@@ -416,6 +416,8 @@ class TestAnecdoctorGeneratorHelperMethods:
 
             assert result == "Extracted KG data"
             mock_send.assert_called_once()
+            sent_message = mock_send.call_args.kwargs["message"]
+            assert sent_message.message_pieces[0].labels == generator._memory_labels
 
 
 @pytest.mark.usefixtures("patch_central_database")

@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from pyrit.identifiers import ComponentIdentifier
+from pyrit.models import ComponentIdentifier
 from pyrit.output.scorer.pretty import PrettyScorerMemoryPrinter
 from pyrit.score.scorer_evaluation.scorer_metrics import (
     HarmScorerMetrics,
@@ -85,7 +85,7 @@ def test_init_negative_indent_raises():
 # --- write_async (objective) tests ---
 
 
-@patch("pyrit.identifiers.evaluation_identifier.ScorerEvaluationIdentifier")
+@patch("pyrit.models.ScorerEvaluationIdentifier")
 @patch("pyrit.score.scorer_evaluation.scorer_metrics_io.find_objective_metrics_by_eval_hash")
 async def test_write_async_objective_with_metrics(mock_find, mock_eval_id_cls, capsys):
     printer = PrettyScorerMemoryPrinter(enable_colors=False)
@@ -106,7 +106,7 @@ async def test_write_async_objective_with_metrics(mock_find, mock_eval_id_cls, c
     mock_find.assert_called_once_with(eval_hash="abc123")
 
 
-@patch("pyrit.identifiers.evaluation_identifier.ScorerEvaluationIdentifier")
+@patch("pyrit.models.ScorerEvaluationIdentifier")
 @patch("pyrit.score.scorer_evaluation.scorer_metrics_io.find_objective_metrics_by_eval_hash")
 async def test_write_async_objective_omits_optional_fields(mock_find, mock_eval_id_cls, capsys):
     printer = PrettyScorerMemoryPrinter(enable_colors=False)
@@ -127,7 +127,7 @@ async def test_write_async_objective_omits_optional_fields(mock_find, mock_eval_
     assert "Recall" not in output
 
 
-@patch("pyrit.identifiers.evaluation_identifier.ScorerEvaluationIdentifier")
+@patch("pyrit.models.ScorerEvaluationIdentifier")
 @patch("pyrit.score.scorer_evaluation.scorer_metrics_io.find_objective_metrics_by_eval_hash")
 async def test_write_async_objective_no_metrics(mock_find, mock_eval_id_cls, capsys):
     printer = PrettyScorerMemoryPrinter(enable_colors=False)
@@ -142,7 +142,7 @@ async def test_write_async_objective_no_metrics(mock_find, mock_eval_id_cls, cap
 # --- write_async (harm) tests ---
 
 
-@patch("pyrit.identifiers.evaluation_identifier.ScorerEvaluationIdentifier")
+@patch("pyrit.models.ScorerEvaluationIdentifier")
 @patch("pyrit.score.scorer_evaluation.scorer_metrics_io.find_harm_metrics_by_eval_hash")
 async def test_write_async_harm_with_metrics(mock_find, mock_eval_id_cls, capsys):
     printer = PrettyScorerMemoryPrinter(enable_colors=False)
@@ -159,7 +159,7 @@ async def test_write_async_harm_with_metrics(mock_find, mock_eval_id_cls, capsys
     mock_find.assert_called_once_with(eval_hash="harm_hash", harm_category="hate")
 
 
-@patch("pyrit.identifiers.evaluation_identifier.ScorerEvaluationIdentifier")
+@patch("pyrit.models.ScorerEvaluationIdentifier")
 @patch("pyrit.score.scorer_evaluation.scorer_metrics_io.find_harm_metrics_by_eval_hash")
 async def test_write_async_harm_omits_optional_fields(mock_find, mock_eval_id_cls, capsys):
     printer = PrettyScorerMemoryPrinter(enable_colors=False)
@@ -177,7 +177,7 @@ async def test_write_async_harm_omits_optional_fields(mock_find, mock_eval_id_cl
     assert "Krippendorff Alpha (Combined)" not in output
 
 
-@patch("pyrit.identifiers.evaluation_identifier.ScorerEvaluationIdentifier")
+@patch("pyrit.models.ScorerEvaluationIdentifier")
 @patch("pyrit.score.scorer_evaluation.scorer_metrics_io.find_harm_metrics_by_eval_hash")
 async def test_write_async_harm_no_metrics(mock_find, mock_eval_id_cls, capsys):
     printer = PrettyScorerMemoryPrinter(enable_colors=False)
@@ -192,7 +192,7 @@ async def test_write_async_harm_no_metrics(mock_find, mock_eval_id_cls, capsys):
 # --- write_async with composite scorer / display params / colors enabled ---
 
 
-@patch("pyrit.identifiers.evaluation_identifier.ScorerEvaluationIdentifier")
+@patch("pyrit.models.ScorerEvaluationIdentifier")
 @patch("pyrit.score.scorer_evaluation.scorer_metrics_io.find_objective_metrics_by_eval_hash")
 async def test_write_async_renders_composite_scorer_with_target_and_filtered_params(
     mock_find, mock_eval_id_cls, capsys
@@ -228,7 +228,7 @@ async def test_write_async_renders_composite_scorer_with_target_and_filtered_par
     assert "hidden" not in output
 
 
-@patch("pyrit.identifiers.evaluation_identifier.ScorerEvaluationIdentifier")
+@patch("pyrit.models.ScorerEvaluationIdentifier")
 @patch("pyrit.score.scorer_evaluation.scorer_metrics_io.find_objective_metrics_by_eval_hash")
 async def test_write_async_with_colors_enabled_emits_ansi_codes(mock_find, mock_eval_id_cls, capsys):
     printer = PrettyScorerMemoryPrinter(enable_colors=True)
@@ -241,7 +241,7 @@ async def test_write_async_with_colors_enabled_emits_ansi_codes(mock_find, mock_
     assert "\x1b[" in output  # ANSI escape sequences present
 
 
-@patch("pyrit.identifiers.evaluation_identifier.ScorerEvaluationIdentifier")
+@patch("pyrit.models.ScorerEvaluationIdentifier")
 @patch("pyrit.score.scorer_evaluation.scorer_metrics_io.find_harm_metrics_by_eval_hash")
 async def test_write_async_harm_with_colors_covers_lower_is_better_bands(mock_find, mock_eval_id_cls, capsys):
     printer = PrettyScorerMemoryPrinter(enable_colors=True)

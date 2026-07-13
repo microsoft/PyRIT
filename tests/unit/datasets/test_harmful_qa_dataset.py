@@ -39,7 +39,7 @@ class TestHarmfulQADataset:
         """Test fetching HarmfulQA dataset."""
         loader = _HarmfulQADataset()
 
-        with patch.object(loader, "_fetch_from_huggingface", new=AsyncMock(return_value=mock_harmful_qa_data)):
+        with patch.object(loader, "_fetch_from_huggingface_async", new=AsyncMock(return_value=mock_harmful_qa_data)):
             dataset = await loader.fetch_dataset_async()
 
             assert isinstance(dataset, SeedDataset)

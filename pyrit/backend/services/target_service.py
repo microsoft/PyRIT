@@ -12,75 +12,37 @@ Targets can be:
 - Retrieved from registry (pre-registered at startup or created earlier)
 """
 
+import logging
 from functools import lru_cache
-from typing import Any
+from typing import Any, Literal, cast
 
-from pyrit import prompt_target
 from pyrit.backend.mappers.target_mappers import target_object_to_instance
 from pyrit.backend.models.common import PaginationInfo
 from pyrit.backend.models.targets import (
     CreateTargetRequest,
-    TargetInstance,
+    TargetCatalogEntry,
+    TargetCatalogResponse,
     TargetListResponse,
 )
-from pyrit.prompt_target import PromptTarget
-from pyrit.registry.object_registries import TargetRegistry
+from pyrit.models.catalog.target import TargetInstance
+from pyrit.registry import TargetRegistry
 
-
-def _build_target_class_registry() -> dict[str, type]:
-    """
-    Build a registry mapping target class names to their classes.
-
-    Uses the prompt_target module's __all__ to discover all available targets.
-
-    Returns:
-        Dict mapping class name (str) to class (type).
-    """
-    registry: dict[str, type] = {}
-    for name in prompt_target.__all__:
-        cls = getattr(prompt_target, name, None)
-        if cls is not None and isinstance(cls, type) and issubclass(cls, PromptTarget):
-            registry[name] = cls
-    return registry
-
-
-# Module-level class registry (built once on import)
-_TARGET_CLASS_REGISTRY: dict[str, type] = _build_target_class_registry()
+logger = logging.getLogger(__name__)
 
 
 class TargetService:
     """
     Service for managing target instances.
 
-    Uses TargetRegistry as the sole source of truth.
-    API metadata is derived from the target objects' identifiers.
+    Uses TargetRegistry as the sole source of truth. Class discovery,
+    construction (incl. param coercion and reference resolution), and endpoint
+    validation are all owned by the registry and the target classes; this
+    service only orchestrates the request → registry hand-off.
     """
 
     def __init__(self) -> None:
         """Initialize the target service."""
         self._registry = TargetRegistry.get_registry_singleton()
-
-    def _get_target_class(self, *, target_type: str) -> type:
-        """
-        Get the target class for a given type name.
-
-        Looks up the class in the module-level target class registry.
-
-        Args:
-            target_type: The exact class name of the target (e.g., 'TextTarget').
-
-        Returns:
-            The target class.
-
-        Raises:
-            ValueError: If the target type is not found.
-        """
-        cls = _TARGET_CLASS_REGISTRY.get(target_type)
-        if cls is None:
-            raise ValueError(
-                f"Target type '{target_type}' not found. Available types: {sorted(_TARGET_CLASS_REGISTRY.keys())}"
-            )
-        return cls
 
     def _build_instance_from_object(self, *, target_registry_name: str, target_obj: Any) -> TargetInstance:
         """
@@ -109,13 +71,18 @@ class TargetService:
         """
         items = [
             self._build_instance_from_object(target_registry_name=entry.name, target_obj=entry.instance)
-            for entry in self._registry.get_all_instances()
+            for entry in self._registry.instances.get_all_instances()
         ]
         page, has_more = self._paginate(items=items, cursor=cursor, limit=limit)
         next_cursor = page[-1].target_registry_name if has_more and page else None
         return TargetListResponse(
             items=page,
-            pagination=PaginationInfo(limit=limit, has_more=has_more, next_cursor=next_cursor, prev_cursor=cursor),
+            pagination=PaginationInfo(
+                limit=limit,
+                has_more=has_more,
+                next_cursor=next_cursor,
+                prev_cursor=cursor,
+            ),
         )
 
     @staticmethod
@@ -144,7 +111,7 @@ class TargetService:
         Returns:
             TargetInstance if found, None otherwise.
         """
-        obj = self._registry.get_instance_by_name(target_registry_name)
+        obj = self._registry.instances.get(target_registry_name)
         if obj is None:
             return None
         return self._build_instance_from_object(target_registry_name=target_registry_name, target_obj=obj)
@@ -156,32 +123,102 @@ class TargetService:
         Returns:
             The PromptTarget object if found, None otherwise.
         """
-        return self._registry.get_instance_by_name(target_registry_name)
+        return self._registry.instances.get(target_registry_name)
+
+    async def list_target_catalog_async(self) -> TargetCatalogResponse:
+        """
+        List all available target types from the target class registry.
+
+        Returns every constructible target with its derived constructor
+        parameters and the auth modes it supports, all projected from the
+        registry's ``TargetMetadata``. Deciding which entries to surface to a
+        user is a presentation concern owned by the caller (e.g. the frontend),
+        not this service.
+
+        Returns:
+            TargetCatalogResponse containing all available target classes.
+        """
+        items: list[TargetCatalogEntry] = [
+            TargetCatalogEntry(
+                target_type=metadata.class_name,
+                parameters=[p for p in metadata.parameters if p.is_string_coercible],
+                supported_auth_modes=cast("list[Literal['api_key', 'identity']]", list(metadata.supported_auth_modes)),
+                description=metadata.class_description or None,
+            )
+            for metadata in self._registry.get_all_registered_class_metadata()
+        ]
+        return TargetCatalogResponse(items=items)
 
     async def create_target_async(self, *, request: CreateTargetRequest) -> TargetInstance:
         """
         Create a new target instance from API request.
 
-        Instantiates the target with the given type and params,
-        then registers it in the registry under its registry name.
+        Class discovery is owned by the ``TargetRegistry``. Targets whose build
+        contract references other registry instances (e.g. ``RoundRobinTarget``'s
+        ``targets``) are constructed via ``registry.create_instance`` so the
+        resolver turns registry names into live objects; all other targets carry
+        their base configuration (``endpoint`` / ``model_name`` / ``api_key``)
+        through ``**kwargs``, which is not part of the registry's derived
+        parameter contract, so they are constructed directly from the registry
+        class. Endpoint trust and identity token minting are owned by the target
+        classes themselves. This service only enforces the request-level auth
+        contract: for ``identity`` it confirms the target supports it and omits
+        the api_key so the target validates its own endpoint and authenticates
+        itself.
 
         Args:
-            request: The create target request with type and params.
+            request: The create target request with type, params, and auth_mode.
 
         Returns:
             TargetInstance with the new target's details.
 
         Raises:
-            ValueError: If the target type is not found.
+            ValueError: If the target type is not registered or identity auth is
+                requested but unsupported by the target type. Construction errors
+                (unknown params, incompatible inner targets, unrecognized identity
+                endpoints) are raised by the registry / target classes.
         """
-        # Instantiate from request params and register (uses unique_name as key by default)
-        target_class = self._get_target_class(target_type=request.type)
-        target_obj = target_class(**request.params)
-        self._registry.register_instance(target_obj)
+        if request.type not in self._registry:
+            raise ValueError(
+                f"Target type '{request.type}' not found. Available types: {self._registry.get_class_names()}"
+            )
 
-        # Build response from the registered instance
+        target_cls = self._registry.get_class(request.type)
+        params: dict[str, Any] = dict(request.params)
+
+        if request.auth_mode == "identity":
+            if "identity" not in target_cls.supported_auth_modes:
+                raise ValueError(f"Target type '{request.type}' does not support identity-based authentication.")
+            # Omit any api_key so the target validates its own endpoint and authenticates itself.
+            params.pop("api_key", None)
+
+        if self._has_reference_params(target_type=request.type):
+            # e.g. RoundRobinTarget: `targets` is a list of registry names the
+            # resolver turns into live target objects.
+            target_obj = self._registry.create_instance(request.type, **params)
+        else:
+            target_obj = target_cls(**params)
+
+        self._registry.instances.register(target_obj)
+
         target_registry_name = target_obj.get_identifier().unique_name
         return self._build_instance_from_object(target_registry_name=target_registry_name, target_obj=target_obj)
+
+    def _has_reference_params(self, *, target_type: str) -> bool:
+        """
+        Return True if the target type's build contract references other registry
+        instances (so construction must go through the resolver).
+
+        Args:
+            target_type (str): The registered target class name.
+
+        Returns:
+            bool: True if any derived parameter is a registry reference.
+        """
+        metadata = self._registry.get_registered_class_metadata(target_type)
+        if metadata is None:
+            return False
+        return any(param.reference is not None for param in metadata.parameters)
 
 
 @lru_cache(maxsize=1)

@@ -44,6 +44,24 @@ class TestFromSeedGroupAsync:
 
         assert params.objective == "Test objective"
 
+    async def test_extracts_targeted_harm_categories_from_seed_group(self) -> None:
+        """Harm categories from the seed group's seeds are captured onto the parameters."""
+        objective = SeedObjective(value="Test objective", harm_categories=["violence"])
+        prompt = SeedPrompt(value="Test prompt", data_type="text", role="user", harm_categories=["hate", "violence"])
+        seed_group = SeedAttackGroup(seeds=[objective, prompt])
+
+        params = await AttackParameters.from_seed_group_async(seed_group=seed_group)
+
+        assert sorted(params.targeted_harm_categories) == ["hate", "violence"]
+
+    async def test_targeted_harm_categories_empty_when_seed_group_has_none(
+        self, seed_group_with_objective: SeedAttackGroup
+    ) -> None:
+        """When no seed declares harm categories, the parameters list is empty."""
+        params = await AttackParameters.from_seed_group_async(seed_group=seed_group_with_objective)
+
+        assert params.targeted_harm_categories == []
+
     async def test_raises_when_no_objective(self) -> None:
         """Test that ValueError is raised when SeedAttackGroup has no objective."""
         # SeedAttackGroup now validates exactly one objective at construction
@@ -134,7 +152,7 @@ class TestFromSeedGroupAsyncWithSimulatedConversation:
 
     @pytest.fixture
     def mock_simulated_result(self) -> list:
-        """Create a mock simulated conversation result (List[SeedPrompt])."""
+        """Create a mock simulated conversation result (list[SeedPrompt])."""
         return [
             SeedPrompt(value="Simulated user message", data_type="text", role="user", sequence=0),
             SeedPrompt(value="Simulated assistant response", data_type="text", role="assistant", sequence=1),
@@ -309,12 +327,14 @@ class TestExcluding:
             )
 
 
-async def test_from_seed_group_async_raises_when_objective_is_none():
-    """Test that from_seed_group_async raises ValueError when seed_group.objective is None."""
-    seed_group = MagicMock(spec=SeedAttackGroup)
-    seed_group.validate = MagicMock()
-    seed_group.objective = None
-    seed_group.simulated_conversation = None
+async def test_from_seed_group_async_rejects_plain_seed_group():
+    """Plain SeedGroup is rejected at the boundary because it doesn't enforce the
+    'exactly one objective' invariant SeedAttackGroup does. A real SeedAttackGroup
+    can't reach this method with objective=None — Pydantic validation at construction
+    blocks that — so the runtime guard targets the more interesting failure mode:
+    callers passing the wrong subtype."""
+    from pyrit.models import SeedGroup
 
-    with pytest.raises(ValueError, match="seed_group.objective is not initialized"):
-        await AttackParameters.from_seed_group_async(seed_group=seed_group)
+    plain_group = SeedGroup(seeds=[SeedObjective(value="Test objective")])
+    with pytest.raises(TypeError, match="seed_group must be a SeedAttackGroup"):
+        await AttackParameters.from_seed_group_async(seed_group=plain_group)  # type: ignore[arg-type]

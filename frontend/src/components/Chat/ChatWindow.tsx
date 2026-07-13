@@ -1,8 +1,7 @@
-import { useState, useRef, useEffect, useCallback } from 'react'
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import {
   Button,
   Text,
-  Badge,
   Tooltip,
 } from '@fluentui/react-components'
 import { AddRegular, PanelRightRegular } from '@fluentui/react-icons'
@@ -10,6 +9,7 @@ import MessageList from './MessageList'
 import ChatInputArea from './ChatInputArea'
 import ConversationPanel from './ConversationPanel'
 import ConverterPanel from './ConverterPanel'
+import TargetBadge from './TargetBadge'
 import type { PieceConversion } from './converterTypes'
 import { PIECE_TYPE_TO_DATA_TYPE, basenameFromValue, buildMediaUrl, dataTypeToAttachmentKind, isPathDataType } from './converterTypes'
 import LabelsBar from '../Labels/LabelsBar'
@@ -18,6 +18,7 @@ import { attacksApi } from '../../services/api'
 import { toApiError } from '../../services/errors'
 import { buildMessagePieces, backendMessagesToFrontend } from '../../utils/messageMapper'
 import type { Message, MessageAttachment, TargetInstance, TargetInfo } from '../../types'
+import { targetEndpoint, targetModelName, targetType } from '../../utils/targetIdentity'
 import type { ViewName } from '../Sidebar/Navigation'
 import { useChatWindowStyles } from './ChatWindow.styles'
 
@@ -81,37 +82,43 @@ export default function ChatWindow({
     setAttachmentData(data)
   }, [])
 
-  // Auto-clear stale conversions when their original input no longer matches.
+  // Auto-prune stale conversions whose original input no longer matches.
   // For text: the typed text differs from the captured originalValue.
   // For media: the uploaded base64 changed (or was removed).
-  useEffect(() => {
-    setPieceConversions((prev) => {
-      const entries = Object.entries(prev)
-      if (entries.length === 0) return prev
-      let changed = false
-      const next: Record<string, PieceConversion> = {}
-      for (const [key, conv] of entries) {
-        if (key === 'text') {
-          if (conv.originalValue !== chatInputText) {
-            changed = true
-            continue
-          }
-        } else if (attachmentData[key] !== conv.originalValue) {
-          changed = true
-          continue
-        }
+  // Deriving this rather than syncing via an effect avoids triggering
+  // react-hooks/set-state-in-effect and is the pattern recommended by React
+  // (see frontend-style-guide → "Prefer Derived Values Over Effects").
+  const activePieceConversions = useMemo(() => {
+    const entries = Object.entries(pieceConversions)
+    if (entries.length === 0) return pieceConversions
+    const next: Record<string, PieceConversion> = {}
+    let hasStale = false
+    for (const [key, conv] of entries) {
+      const stillValid = key === 'text'
+        ? conv.originalValue === chatInputText
+        : attachmentData[key] === conv.originalValue
+      if (stillValid) {
         next[key] = conv
+      } else {
+        hasStale = true
       }
-      return changed ? next : prev
-    })
-  }, [chatInputText, attachmentData])
-
-  // Auto-open conversation sidebar when loading a historical attack with multiple conversations
-  useEffect(() => {
-    if (relatedConversationCount && relatedConversationCount > 0) {
-      setIsPanelOpen(true)
     }
-  }, [attackResultId, relatedConversationCount])
+    return hasStale ? next : pieceConversions
+  }, [pieceConversions, chatInputText, attachmentData])
+
+  // Auto-open conversation sidebar when loading a historical attack with multiple
+  // conversations. Uses the "adjust state during render" pattern to avoid
+  // react-hooks/set-state-in-effect.
+  const [autoOpenedForAttack, setAutoOpenedForAttack] = useState<string | null>(null)
+  if (
+    attackResultId
+    && attackResultId !== autoOpenedForAttack
+    && relatedConversationCount
+    && relatedConversationCount > 0
+  ) {
+    setAutoOpenedForAttack(attackResultId)
+    setIsPanelOpen(true)
+  }
   // Set by panel click to bypass the in-flight guard on the next useEffect cycle.
   // This lets users switch to a sending conversation while still protecting
   // optimistic messages when handleSend internally updates activeConversationId.
@@ -126,13 +133,18 @@ export default function ChatWindow({
   // Used to restore the user's input when switching back to an in-flight conversation.
   const pendingUserMessagesRef = useRef<Map<string, Message[]>>(new Map())
 
-  // Clear internal messages when attack state is reset (e.g. New Attack)
-  useEffect(() => {
+  // Clear internal messages when attack state is reset (e.g. New Attack).
+  // Uses the "adjust state during render" pattern (see React docs:
+  // https://react.dev/reference/react/useState#storing-information-from-previous-renders)
+  // instead of a useEffect so we don't trigger react-hooks/set-state-in-effect.
+  const [prevAttackResultId, setPrevAttackResultId] = useState<string | null>(attackResultId)
+  if (attackResultId !== prevAttackResultId) {
+    setPrevAttackResultId(attackResultId)
     if (!attackResultId) {
       setMessages([])
       setLoadedConversationId(null)
     }
-  }, [attackResultId])
+  }
 
   // Load messages for a given conversation
   const loadConversation = useCallback(async (arId: string, convId: string) => {
@@ -180,9 +192,11 @@ export default function ChatWindow({
   // Synchronous loading derivation: if activeConversationId differs from the
   // conversation whose messages we've loaded, we're in a transition gap.
   // This avoids the 1-frame flash between useEffect fire and render.
+  // Reads `sendingConversations` (state) rather than `sendingConvIdsRef` so the
+  // computation stays render-safe (the ref is for handlers/effects only).
   const awaitingConversationLoad = Boolean(
     activeConversationId && activeConversationId !== loadedConversationId
-    && !sendingConvIdsRef.current.has(activeConversationId)
+    && !sendingConversations.has(activeConversationId)
   )
 
   // Handle conversation selection from the panel
@@ -199,7 +213,7 @@ export default function ChatWindow({
     if (!activeTarget) { return }
 
     // Capture all piece conversions upfront before any async work or state clears
-    const conversions = { ...pieceConversions }
+    const conversions = { ...activePieceConversions }
     const textConversion = conversions['text']
     const isTextTextConversion = textConversion?.convertedDataType === 'text'
     const isTextFileConversion = Boolean(textConversion) && !isTextTextConversion
@@ -222,7 +236,6 @@ export default function ChatWindow({
         name: basenameFromValue(textConversion.convertedValue, `output.${kind}`),
         url,
         mimeType: 'application/octet-stream',
-        size: 0,
       })
     }
 
@@ -335,8 +348,21 @@ export default function ChatWindow({
         setLoadedConversationId(effectiveConvId!)
       }
     } catch (err) {
+      const viewedConversationId = viewedConvRef.current
+      const isViewingFailedConversation = viewedConversationId === sendConvId
+        || viewedConversationId === (activeConversationId ?? conversationId)
+        || (viewedConversationId == null && sendConvId !== '__pending__')
+
       // Only show error in UI if user is still on this conversation
-      if (viewedConvRef.current === sendConvId || viewedConvRef.current === (activeConversationId ?? conversationId)) {
+      if (isViewingFailedConversation) {
+        // Mark the viewed conversation as loaded so first-send failures do not
+        // get stuck behind the "Loading conversation..." placeholder.
+        if (viewedConversationId) {
+          setLoadedConversationId(viewedConversationId)
+        } else if (sendConvId !== '__pending__') {
+          setLoadedConversationId(sendConvId)
+        }
+
         const apiError = toApiError(err)
         let description: string
         if (apiError.isNetworkError) {
@@ -501,9 +527,9 @@ export default function ChatWindow({
   // The user can "Continue with your target" to branch into a new attack with their target.
   const isCrossTargetLocked = Boolean(
     attackResultId && attackTarget && activeTarget && (
-      attackTarget.target_type !== activeTarget.target_type ||
-      (attackTarget.endpoint ?? '') !== (activeTarget.endpoint ?? '') ||
-      (attackTarget.model_name ?? '') !== (activeTarget.model_name ?? '')
+      attackTarget.target_type !== targetType(activeTarget) ||
+      (attackTarget.endpoint ?? '') !== (targetEndpoint(activeTarget) ?? '') ||
+      (attackTarget.model_name ?? '') !== (targetModelName(activeTarget) ?? '')
     )
   )
 
@@ -551,19 +577,10 @@ export default function ChatWindow({
         />
       )}
       <div className={styles.chatArea}>
-        <div className={styles.ribbon}>
+        <div className={styles.ribbon} data-tour="chat-area">
           <div className={styles.conversationInfo}>
-            <Text>PyRIT Attack</Text>
             {activeTarget ? (
-              <div className={styles.targetInfo}>
-                <Text size={200}>→</Text>
-                <Tooltip content={activeTarget.target_registry_name} relationship="label">
-                  <Badge appearance="outline" size="medium">
-                    {activeTarget.target_type}
-                    {activeTarget.model_name ? ` (${activeTarget.model_name})` : ''}
-                  </Badge>
-                </Tooltip>
-              </div>
+              <TargetBadge target={activeTarget} />
             ) : (
               <Text size={200} className={styles.noTarget}>
                 No target selected
@@ -584,15 +601,19 @@ export default function ChatWindow({
                 aria-label="Toggle conversations panel"
               />
             </Tooltip>
-            <Button
-              appearance="primary"
-              icon={<AddRegular />}
-              onClick={() => { setIsPanelOpen(false); onNewAttack() }}
-              disabled={!attackResultId}
-              data-testid="new-attack-btn"
-            >
-              New Attack
-            </Button>
+            <Tooltip content="New Attack" relationship="label">
+              <Button
+                appearance="primary"
+                icon={<AddRegular />}
+                onClick={() => { setIsPanelOpen(false); onNewAttack() }}
+                disabled={!attackResultId}
+                data-testid="new-attack-btn"
+                aria-label="New Attack"
+                className={styles.newAttackButton}
+              >
+                <span className={styles.newAttackLabel}>New Attack</span>
+              </Button>
+            </Tooltip>
           </div>
         </div>
         <MessageList
@@ -624,8 +645,8 @@ export default function ChatWindow({
           isConverterPanelOpen={isConverterPanelOpen}
           onInputChange={setChatInputText}
           onAttachmentsChange={handleAttachmentsChange}
-          convertedValue={pieceConversions['text']?.convertedDataType === 'text' ? (pieceConversions['text']?.convertedValue ?? null) : null}
-          originalValue={pieceConversions['text']?.originalValue ?? null}
+          convertedValue={activePieceConversions['text']?.convertedDataType === 'text' ? (activePieceConversions['text']?.convertedValue ?? null) : null}
+          originalValue={activePieceConversions['text']?.originalValue ?? null}
           onClearConversion={() => setPieceConversions((prev) => { const next = { ...prev }; delete next['text']; return next })}
           onConvertedValueChange={(val) => setPieceConversions((prev) => {
             const existing = prev['text']
@@ -633,7 +654,7 @@ export default function ChatWindow({
             return { ...prev, text: { ...existing, convertedValue: val } }
           })}
           convertedFileChip={(() => {
-            const tc = pieceConversions['text']
+            const tc = activePieceConversions['text']
             if (!tc || tc.convertedDataType === 'text') return null
             if (!isPathDataType(tc.convertedDataType)) return null
             return {
@@ -643,8 +664,8 @@ export default function ChatWindow({
             }
           })()}
           onClearConvertedFileChip={() => setPieceConversions((prev) => { const next = { ...prev }; delete next['text']; return next })}
-          converterOutputDataTypes={Object.values(pieceConversions).map((c) => c.convertedDataType)}
-          mediaConversions={Object.entries(pieceConversions)
+          converterOutputDataTypes={Object.values(activePieceConversions).map((c) => c.convertedDataType)}
+          mediaConversions={Object.entries(activePieceConversions)
             .filter(([k]) => k !== 'text')
             .map(([k, v]) => ({ pieceType: k, convertedValue: v.convertedValue, convertedDataType: v.convertedDataType }))}
           onClearMediaConversion={(pieceType) => setPieceConversions((prev) => {

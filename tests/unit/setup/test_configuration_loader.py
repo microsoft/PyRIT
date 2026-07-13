@@ -11,6 +11,7 @@ from pyrit.setup.configuration_loader import (
     ConfigurationLoader,
     InitializerConfig,
     ScenarioConfig,
+    ServerConfig,
     initialize_from_config_async,
 )
 
@@ -41,6 +42,7 @@ class TestConfigurationLoader:
         assert config.initializers == []
         assert config.initialization_scripts is None  # None means "use defaults"
         assert config.env_files is None  # None means "use defaults"
+        assert config.env_akv_ref is None
         assert config.silent is False
 
     def test_valid_memory_db_types_snake_case(self):
@@ -145,6 +147,7 @@ class TestConfigurationLoader:
             "initializers": ["simple"],
             "initialization_scripts": ["/path/to/script.py"],
             "env_files": ["/path/to/.env"],
+            "env_akv_ref": ["https://vault.vault.azure.net/secrets/one"],
             "silent": True,
         }
         config = ConfigurationLoader.from_dict(data)
@@ -152,6 +155,7 @@ class TestConfigurationLoader:
         assert config.initializers == ["simple"]
         assert config.initialization_scripts == ["/path/to/script.py"]
         assert config.env_files == ["/path/to/.env"]
+        assert config.env_akv_ref == ["https://vault.vault.azure.net/secrets/one"]
         assert config.silent is True
 
     def test_from_dict_filters_none_values(self):
@@ -246,57 +250,71 @@ silent: true
 class TestConfigurationLoaderResolvers:
     """Tests for ConfigurationLoader path resolution methods."""
 
-    def test_resolve_initialization_scripts_none_returns_none(self):
+    def testresolve_initialization_scripts_none_returns_none(self):
         """Test that None (default) returns None to signal 'use defaults'."""
         config = ConfigurationLoader()
-        assert config._resolve_initialization_scripts() is None
+        assert config.resolve_initialization_scripts() is None
 
-    def test_resolve_initialization_scripts_empty_list_returns_empty_list(self):
+    def testresolve_initialization_scripts_empty_list_returns_empty_list(self):
         """Test that explicit empty list [] returns empty list to signal 'load nothing'."""
         config = ConfigurationLoader(initialization_scripts=[])
-        resolved = config._resolve_initialization_scripts()
+        resolved = config.resolve_initialization_scripts()
         assert resolved is not None
         assert resolved == []
 
-    def test_resolve_initialization_scripts_absolute_path(self):
+    def testresolve_initialization_scripts_absolute_path(self):
         """Test resolving absolute script paths."""
         config = ConfigurationLoader(initialization_scripts=["/absolute/path/script.py"])
-        resolved = config._resolve_initialization_scripts()
+        resolved = config.resolve_initialization_scripts()
         assert resolved is not None
         assert len(resolved) == 1
         # Check path ends with expected components (Windows adds drive letter to Unix-style paths)
         assert resolved[0].parts[-3:] == ("absolute", "path", "script.py")
 
-    def test_resolve_initialization_scripts_relative_path(self):
+    def testresolve_initialization_scripts_relative_path(self):
         """Test resolving relative script paths (converted to absolute)."""
         config = ConfigurationLoader(initialization_scripts=["relative/script.py"])
-        resolved = config._resolve_initialization_scripts()
+        resolved = config.resolve_initialization_scripts()
         assert resolved is not None
         assert len(resolved) == 1
         assert resolved[0].is_absolute()
         # Check path ends with expected components (works on both Unix and Windows)
         assert resolved[0].parts[-2:] == ("relative", "script.py")
 
-    def test_resolve_env_files_none_returns_none(self):
+    def testresolve_env_files_none_returns_none(self):
         """Test that None (default) returns None to signal 'use defaults'."""
         config = ConfigurationLoader()
-        assert config._resolve_env_files() is None
+        assert config.resolve_env_files() is None
 
-    def test_resolve_env_files_empty_list_returns_empty_list(self):
+    def testresolve_env_files_empty_list_returns_empty_list(self):
         """Test that explicit empty list [] returns empty list to signal 'load nothing'."""
         config = ConfigurationLoader(env_files=[])
-        resolved = config._resolve_env_files()
+        resolved = config.resolve_env_files()
         assert resolved is not None
         assert resolved == []
 
-    def test_resolve_env_files_absolute_path(self):
+    def testresolve_env_files_absolute_path(self):
         """Test resolving absolute env file paths."""
         config = ConfigurationLoader(env_files=["/path/to/.env"])
-        resolved = config._resolve_env_files()
+        resolved = config.resolve_env_files()
         assert resolved is not None
         assert len(resolved) == 1
         # Check path ends with expected components (Windows adds drive letter to Unix-style paths)
         assert resolved[0].parts[-3:] == ("path", "to", ".env")
+
+    def testresolve_env_akv_ref_none_returns_none(self):
+        """Test that None is returned when env_akv_ref is not configured."""
+        config = ConfigurationLoader()
+        assert config.resolve_env_akv_ref() is None
+
+    def testresolve_env_akv_ref_returns_configured_values(self):
+        """Test that configured AKV references are returned unchanged."""
+        refs = [
+            "https://vault.vault.azure.net/secrets/first",
+            "https://vault.vault.azure.net/secrets/second/version",
+        ]
+        config = ConfigurationLoader(env_akv_ref=refs)
+        assert config.resolve_env_akv_ref() == refs
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -316,7 +334,23 @@ class TestConfigurationLoaderInitialization:
         assert call_kwargs["initialization_scripts"] is None
         assert call_kwargs["initializers"] is None
         assert call_kwargs["env_files"] is None
+        assert call_kwargs["env_akv_ref"] is None
         assert call_kwargs["silent"] is False
+
+    @mock.patch("pyrit.setup.configuration_loader.initialize_pyrit_async")
+    async def test_initialize_pyrit_async_with_env_akv_ref(self, mock_init):
+        """Test initialization forwards env_akv_ref to initialize_pyrit_async."""
+        refs = [
+            "https://vault.vault.azure.net/secrets/first",
+            "https://vault.vault.azure.net/secrets/second/version",
+        ]
+        config = ConfigurationLoader(memory_db_type="in_memory", env_akv_ref=refs)
+
+        await config.initialize_pyrit_async()
+
+        mock_init.assert_called_once()
+        call_kwargs = mock_init.call_args.kwargs
+        assert call_kwargs["env_akv_ref"] == refs
 
     @mock.patch("pyrit.setup.configuration_loader.initialize_pyrit_async")
     @mock.patch("pyrit.registry.InitializerRegistry")
@@ -326,11 +360,9 @@ class TestConfigurationLoaderInitialization:
         mock_registry = mock.MagicMock()
         mock_registry_cls.return_value = mock_registry
 
-        # Mock an initializer class
-        mock_initializer_class = mock.MagicMock()
+        # Mock the configured initializer instance produced by the registry
         mock_initializer_instance = mock.MagicMock()
-        mock_initializer_class.return_value = mock_initializer_instance
-        mock_registry.get_class.return_value = mock_initializer_class
+        mock_registry.create_and_configure.return_value = mock_initializer_instance
 
         config = ConfigurationLoader(
             memory_db_type="in_memory",
@@ -338,9 +370,8 @@ class TestConfigurationLoaderInitialization:
         )
         await config.initialize_pyrit_async()
 
-        # Verify registry was used to resolve initializer
-        mock_registry.get_class.assert_called_once_with("simple")
-        mock_initializer_class.assert_called_once_with()
+        # Verify registry was used to resolve and configure the initializer
+        mock_registry.create_and_configure.assert_called_once_with("simple", initializer_params=None)
 
         # Verify initialize was called with resolved initializers
         mock_init.assert_called_once()
@@ -352,8 +383,8 @@ class TestConfigurationLoaderInitialization:
         """Test that unknown initializer name raises ValueError."""
         mock_registry = mock.MagicMock()
         mock_registry_cls.return_value = mock_registry
-        mock_registry.get_class.return_value = None
-        mock_registry.get_names.return_value = ["simple", "airt"]
+        mock_registry.create_and_configure.side_effect = KeyError("unknown_initializer")
+        mock_registry.get_class_names.return_value = ["simple", "airt"]
 
         config = ConfigurationLoader(
             memory_db_type="in_memory",
@@ -424,6 +455,21 @@ class TestLoadWithOverrides:
         assert config.initialization_scripts is None
         assert config.env_files is None
 
+    @mock.patch("pyrit.setup.configuration_loader.ConfigurationLoader.from_yaml_file")
+    @mock.patch("pyrit.setup.configuration_loader.DEFAULT_CONFIG_PATH")
+    def test_load_with_overrides_reads_env_akv_ref_from_default_config(self, mock_default_path, mock_from_yaml):
+        """Test env_akv_ref is loaded when default config file exists."""
+        mock_default_path.exists.return_value = True
+        mock_from_yaml.return_value = ConfigurationLoader(
+            memory_db_type="sqlite",
+            env_akv_ref=["https://default.vault.azure.net/secrets/from-default"],
+        )
+
+        config = ConfigurationLoader.load_with_overrides()
+
+        mock_from_yaml.assert_called_once_with(mock_default_path)
+        assert config.env_akv_ref == ["https://default.vault.azure.net/secrets/from-default"]
+
     @mock.patch("pyrit.setup.configuration_loader.DEFAULT_CONFIG_PATH")
     def test_load_with_overrides_memory_db_type_override(self, mock_default_path):
         """Test memory_db_type override takes precedence."""
@@ -462,6 +508,17 @@ class TestLoadWithOverrides:
         assert config.env_files == ["/path/to/.env"]
 
     @mock.patch("pyrit.setup.configuration_loader.DEFAULT_CONFIG_PATH")
+    def test_load_with_overrides_env_akv_ref_override(self, mock_default_path):
+        """Test env_akv_ref override takes precedence."""
+        mock_default_path.exists.return_value = False
+
+        config = ConfigurationLoader.load_with_overrides(
+            env_akv_ref=["https://vault.vault.azure.net/secrets/one"],
+        )
+
+        assert config.env_akv_ref == ["https://vault.vault.azure.net/secrets/one"]
+
+    @mock.patch("pyrit.setup.configuration_loader.DEFAULT_CONFIG_PATH")
     def test_load_with_overrides_converts_sequence_to_list(self, mock_default_path):
         """Test that Sequence inputs are converted to list for dataclass compatibility."""
         mock_default_path.exists.return_value = False
@@ -471,15 +528,18 @@ class TestLoadWithOverrides:
             initializers=("init1", "init2"),
             initialization_scripts=("/path/script1.py", "/path/script2.py"),
             env_files=("/path/.env",),
+            env_akv_ref=("https://vault.vault.azure.net/secrets/one",),
         )
 
         # Verify they are stored as lists
         assert isinstance(config.initializers, list)
         assert isinstance(config.initialization_scripts, list)
         assert isinstance(config.env_files, list)
+        assert isinstance(config.env_akv_ref, list)
         assert config.initializers == ["init1", "init2"]
         assert config.initialization_scripts == ["/path/script1.py", "/path/script2.py"]
         assert config.env_files == ["/path/.env"]
+        assert config.env_akv_ref == ["https://vault.vault.azure.net/secrets/one"]
 
     def test_load_with_overrides_explicit_config_file_not_found(self):
         """Test FileNotFoundError when explicit config file doesn't exist."""
@@ -502,6 +562,8 @@ initialization_scripts:
   - /explicit/script.py
 env_files:
   - /explicit/.env
+env_akv_ref:
+    - https://vault.vault.azure.net/secrets/explicit
 """
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
             f.write(yaml_content)
@@ -514,6 +576,7 @@ env_files:
             assert config._initializer_configs[0].name == "explicit_init"
             assert config.initialization_scripts == ["/explicit/script.py"]
             assert config.env_files == ["/explicit/.env"]
+            assert config.env_akv_ref == ["https://vault.vault.azure.net/secrets/explicit"]
         finally:
             config_path.unlink()
 
@@ -623,3 +686,27 @@ class TestScenarioConfig:
             assert config._scenario_config == ScenarioConfig(name="scam", args={"max_turns": 10})
         finally:
             config_path.unlink()
+
+
+class TestNormalizeServer:
+    """Tests for ConfigurationLoader._normalize_server."""
+
+    def test_server_none_yields_no_server_config(self):
+        config = ConfigurationLoader(server=None)
+        assert config.server_config is None
+
+    def test_server_dict_with_url_normalizes(self):
+        config = ConfigurationLoader(server={"url": "http://remote:9000/"})
+        assert config.server_config == ServerConfig(url="http://remote:9000")
+
+    def test_server_dict_without_url_uses_default(self):
+        config = ConfigurationLoader(server={})
+        assert config.server_config == ServerConfig(url="http://localhost:8000")
+
+    def test_server_url_non_string_raises(self):
+        with pytest.raises(ValueError, match="Server 'url' must be a string"):
+            ConfigurationLoader(server={"url": 12345})
+
+    def test_server_non_dict_raises(self):
+        with pytest.raises(ValueError, match="Server entry must be a dict"):
+            ConfigurationLoader(server="http://oops:8000")  # type: ignore[arg-type]

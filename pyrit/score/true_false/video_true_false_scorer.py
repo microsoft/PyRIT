@@ -1,10 +1,8 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from typing import Optional
 
-from pyrit.identifiers import ComponentIdentifier
-from pyrit.models import MessagePiece, Score
+from pyrit.models import ComponentIdentifier, MessagePiece, Score
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.true_false.true_false_score_aggregator import TrueFalseScoreAggregator
 from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
@@ -31,11 +29,11 @@ class VideoTrueFalseScorer(TrueFalseScorer):
         self,
         *,
         image_capable_scorer: TrueFalseScorer,
-        audio_scorer: Optional[TrueFalseScorer] = None,
-        num_sampled_frames: Optional[int] = None,
-        validator: Optional[ScorerPromptValidator] = None,
-        image_objective_template: Optional[str] = VideoHelper._DEFAULT_IMAGE_OBJECTIVE_TEMPLATE,
-        audio_objective_template: Optional[str] = None,
+        audio_scorer: TrueFalseScorer | None = None,
+        num_sampled_frames: int | None = None,
+        validator: ScorerPromptValidator | None = None,
+        image_objective_template: str | None = VideoHelper._DEFAULT_IMAGE_OBJECTIVE_TEMPLATE,
+        audio_objective_template: str | None = None,
     ) -> None:
         """
         Initialize the VideoTrueFalseScorer.
@@ -90,12 +88,10 @@ class VideoTrueFalseScorer(TrueFalseScorer):
                 "image_objective_template": self._video_helper.image_objective_template,
                 "audio_objective_template": self._video_helper.audio_objective_template,
             },
-            children={
-                "sub_scorers": sub_scorer_ids,
-            },
+            sub_scorers=sub_scorer_ids,
         )
 
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: Optional[str] = None) -> list[Score]:
+    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
         """
         Score a single video piece by extracting frames and optionally audio, then aggregating their scores.
 

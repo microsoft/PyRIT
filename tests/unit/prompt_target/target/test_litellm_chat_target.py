@@ -16,12 +16,12 @@ from pyrit.exceptions import (
     get_retry_max_num_attempts,
 )
 from pyrit.models import Message, MessagePiece
-from pyrit.models.json_response_config import _JsonResponseConfig
 from pyrit.prompt_target import (
     OpenAIChatAudioConfig,
     TargetCapabilities,
     TargetConfiguration,
 )
+from pyrit.prompt_target.common.json_response_config import _JsonResponseConfig
 from pyrit.prompt_target.litellm_chat_target import LiteLLMChatTarget
 
 # ---------------------------------------------------------------------------
@@ -514,7 +514,7 @@ async def test_send_prompt_parses_audio_response(patch_central_database, litellm
     with patch("pyrit.prompt_target.common.chat_completions_response_parser.data_serializer_factory") as mock_factory:
         mock_serializer = MagicMock()
         mock_serializer.value = "/path/to/audio.wav"
-        mock_serializer.save_data = AsyncMock()
+        mock_serializer.save_data_async = AsyncMock()
         mock_factory.return_value = mock_serializer
 
         responses = await target.send_prompt_async(message=piece.to_message())

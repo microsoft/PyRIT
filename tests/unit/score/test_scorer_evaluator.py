@@ -170,6 +170,9 @@ def test_compute_harm_metrics_perfect_agreement(mock_harm_scorer):
     )
     assert metrics.mean_absolute_error == 0.0
     assert metrics.mae_standard_error == 0.0
+    # Perfect agreement: diff is all zeros, t-test guarded to avoid NaN propagation.
+    assert metrics.t_statistic == 0.0
+    assert metrics.p_value == 1.0
     assert metrics.krippendorff_alpha_combined == 1.0
     assert metrics.krippendorff_alpha_humans == 1.0
     assert metrics.krippendorff_alpha_model == 1.0
@@ -177,13 +180,31 @@ def test_compute_harm_metrics_perfect_agreement(mock_harm_scorer):
 
 def test_compute_harm_metrics_partial_agreement(mock_harm_scorer):
     evaluator = HarmScorerEvaluator(scorer=mock_harm_scorer)
-    # 2 responses, 3 human scores each, model is off by 0.1 for each
+    # 2 responses, 3 human scores each, model is off by 0.1 for each (constant bias, zero variance)
     all_human_scores = np.array([[0.1, 0.2], [0.1, 0.2], [0.1, 0.2]])
     all_model_scores = np.array([[0.2, 0.3], [0.2, 0.3]])
     metrics = evaluator._compute_metrics(
         all_human_scores=all_human_scores, all_model_scores=all_model_scores, num_scorer_trials=2
     )
     assert np.isclose(metrics.mean_absolute_error, 0.1)
+    # Constant non-zero diff has no within-sample variance: t-test undefined, reported as NaN.
+    # MAE captures the bias magnitude.
+    assert np.isnan(metrics.t_statistic)
+    assert np.isnan(metrics.p_value)
+
+
+def test_compute_harm_metrics_partial_agreement_with_variance(mock_harm_scorer):
+    evaluator = HarmScorerEvaluator(scorer=mock_harm_scorer)
+    # Model scores have variance across responses so ttest_1samp is well-defined.
+    all_human_scores = np.array([[0.1, 0.5], [0.1, 0.5], [0.1, 0.5]])
+    all_model_scores = np.array([[0.2, 0.3], [0.2, 0.3]])
+    metrics = evaluator._compute_metrics(
+        all_human_scores=all_human_scores, all_model_scores=all_model_scores, num_scorer_trials=2
+    )
+    # diff = [0.1, -0.2]; both t_statistic and p_value should be finite floats.
+    assert np.isfinite(metrics.t_statistic)
+    assert np.isfinite(metrics.p_value)
+    assert 0.0 <= metrics.p_value <= 1.0
 
 
 @patch("pyrit.score.scorer_evaluation.scorer_evaluator.find_objective_metrics_by_eval_hash")

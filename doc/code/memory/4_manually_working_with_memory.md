@@ -13,7 +13,7 @@ The second way to share data is to use local SQLite Memory (see [here](../memory
 1. Export and import the database as described [here](https://dbeaver.com/docs/dbeaver/Data-transfer/). This allows a lot of flexibility and can include partial exports (for example based on labels or time):
 2. Copy the PyRIT `results/dbdata` directory over; it will contain multi-modal data that the database references.
 
-See https://dbeaver.com/docs/guides/sql_editors/sqlite.html for a more comprehensive guide on using DBeaver with SQLite.
+See https://dbeaver.com/docs/dbeaver/Database-driver-SQLite/ for a more comprehensive guide on using DBeaver with SQLite.
 
 ## Using SQLite and Excel to Query and Visualize Data
 
@@ -46,25 +46,3 @@ If you are using an AzureSQL Database, you can use the Query Editor to run SQL q
 
 ## Updating DB Entries Manually
 If you catch entries you want to update (e.g., if you want to correct scores or change labels of a prompt), you could either change them in the database or in Excel and re-import. (Note: the most stable way of doing this is in the database since the mapping can be off in some cases when reimporting.) Entries in the database can be updated using a PyRIT function located in `memory_interface.py` such as `update_entries` or `update_labels_by_conversation_id` (work for both AzureSQLMemory and SQLiteMemory). Alternatively, a data management tool like DBeaver can be used to directly update locally stored memory entries in SQLite.
-
-## Entering Manual Prompts
-
-Although most prompts are run through `PromptTargets` which will add prompts to memory, there are a few reasons you may want to enter in manual prompts. For example, if you ssh into a box, are not using PyRIT to probe for weaknesses, but want to add prompts later for reporting or scoring.
-
-One of the easiest way to add prompts is through the `TextTarget` target. You can create a csv of prompts that looks as follows:
-
-```
-role, value
-user, hello
-assistant, hi how are you?
-user, new conversation
-```
-
-This very simple format doesn't have very much information, but already it standardizes the prompts that can then be used in mass scoring (or manual scoring with HITLScorer).
-
-And you can import it using code like this
-
-```
-target = TextTarget()
-target.import_scores_from_csv(csv_file_path=".\path.csv")
-```

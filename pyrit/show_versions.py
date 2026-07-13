@@ -4,7 +4,7 @@
 """
 Utility methods to print system info for debugging.
 
-Adapted from :py:func:`pandas.show_versions` and :py:func:`sklearn.show_versions`.
+Adapted from ``pandas.show_versions`` and ``sklearn.show_versions``.
 """
 
 import platform

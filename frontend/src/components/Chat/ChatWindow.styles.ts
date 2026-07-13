@@ -33,19 +33,27 @@ export const useChatWindowStyles = makeStyles({
     gap: tokens.spacingHorizontalS,
     color: tokens.colorNeutralForeground2,
     fontSize: tokens.fontSizeBase300,
-  },
-  targetInfo: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: tokens.spacingHorizontalXS,
+    flex: '1 1 auto',
+    minWidth: 0,
+    overflow: 'hidden',
   },
   noTarget: {
     color: tokens.colorNeutralForeground3,
     fontStyle: 'italic',
+    flexShrink: 0,
   },
   ribbonActions: {
     display: 'flex',
     alignItems: 'center',
     gap: tokens.spacingHorizontalS,
+    flexShrink: 0,
+  },
+  newAttackButton: {
+    flexShrink: 0,
+  },
+  newAttackLabel: {
+    '@media (max-width: 600px)': {
+      display: 'none',
+    },
   },
 })

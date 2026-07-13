@@ -610,7 +610,7 @@ class TestSeedAttackGroupWithTechnique:
         merged = base.with_technique(technique=technique)
 
         assert isinstance(merged, SeedAttackGroup)
-        merged.validate()  # should not raise
+        merged._check_invariants()  # should not raise
 
     def test_raises_when_technique_has_simulated_conversation_and_prompts_overlap(self):
         """Merging a technique with SeedSimulatedConversation into a group with overlapping prompts raises."""

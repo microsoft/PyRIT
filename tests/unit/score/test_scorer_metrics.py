@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
-from pyrit.identifiers import ComponentIdentifier
+from pyrit.models import ComponentIdentifier
 from pyrit.score import (
     HarmScorerMetrics,
     ObjectiveScorerMetrics,
@@ -21,7 +21,7 @@ from pyrit.score.scorer_evaluation.scorer_metrics_io import (
 class TestScorerMetricsSerialization:
     """Tests for ScorerMetrics JSON serialization."""
 
-    def test_harm_metrics_to_json_and_from_json(self, tmp_path):
+    def test_harm_metrics_to_json_and_from_json_file(self, tmp_path):
         metrics = HarmScorerMetrics(
             num_responses=10,
             num_human_raters=3,
@@ -41,10 +41,10 @@ class TestScorerMetricsSerialization:
         file_path = tmp_path / "metrics.json"
         with open(file_path, "w") as f:
             f.write(json_str)
-        loaded = HarmScorerMetrics.from_json(str(file_path))
+        loaded = HarmScorerMetrics.from_json_file(str(file_path))
         assert loaded == metrics
 
-    def test_objective_metrics_to_json_and_from_json(self, tmp_path):
+    def test_objective_metrics_to_json_and_from_json_file(self, tmp_path):
         metrics = ObjectiveScorerMetrics(
             num_responses=10,
             num_human_raters=3,
@@ -61,7 +61,7 @@ class TestScorerMetricsSerialization:
         file_path = tmp_path / "metrics.json"
         with open(file_path, "w") as f:
             f.write(json_str)
-        loaded = ObjectiveScorerMetrics.from_json(str(file_path))
+        loaded = ObjectiveScorerMetrics.from_json_file(str(file_path))
         assert loaded == metrics
 
 

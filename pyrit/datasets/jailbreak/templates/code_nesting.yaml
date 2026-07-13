@@ -1,6 +1,17 @@
 ---
 name: code nesting
 description: Instruct model to output its response in a code block.
+authors:
+  - Peng Ding
+  - Jun Kuang
+  - Dan Ma
+  - Xuezhi Cao
+  - Yunsen Xian
+  - Jiajun Chen
+  - Shujian Huang
+groups:
+  - National Key Laboratory for Novel Software Technology, Nanjing University
+  - Meituan Inc.
 source: https://arxiv.org/abs/2311.08268 A Wolf in Sheep's Clothing Generalized Nested Jailbreak Prompts can Fool Large Language Models Easily
 parameters:
   - prompt

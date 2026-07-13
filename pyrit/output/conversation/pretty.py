@@ -31,6 +31,8 @@ class PrettyConversationPrinter(ConversationPrinterBase):
         indent_size: int = 2,
         enable_colors: bool = True,
         score_printer: PrettyScorePrinter | None = None,
+        blur_images: bool = False,
+        blur_radius: int = 20,
     ) -> None:
         """
         Initialize the pretty conversation printer.
@@ -42,11 +44,18 @@ class PrettyConversationPrinter(ConversationPrinterBase):
             enable_colors (bool): Whether to enable ANSI color output. Defaults to True.
             score_printer (PrettyScorePrinter | None): Score printer for inline score rendering.
                 Defaults to a new PrettyScorePrinter with matching settings.
+            blur_images (bool): If True, apply a Gaussian blur to image outputs before
+                displaying them. Useful for reducing reviewer exposure to unsafe imagery
+                while still allowing the general content to be inspected. Defaults to False.
+            blur_radius (int): Gaussian blur radius applied when ``blur_images`` is True.
+                Defaults to 20.
         """
         super().__init__(sink=sink)
         self._width = width
         self._indent = " " * indent_size
         self._enable_colors = enable_colors
+        self._blur_images = blur_images
+        self._blur_radius = blur_radius
         self._score_printer = score_printer or PrettyScorePrinter(
             sink=sink, width=width, indent_size=indent_size, enable_colors=enable_colors
         )
@@ -249,6 +258,8 @@ class PrettyConversationMemoryPrinter(PrettyConversationPrinter):
         indent_size: int = 2,
         enable_colors: bool = True,
         score_printer: PrettyScorePrinter | None = None,
+        blur_images: bool = False,
+        blur_radius: int = 20,
     ) -> None:
         """
         Initialize the pretty conversation printer with CentralMemory data source.
@@ -259,9 +270,19 @@ class PrettyConversationMemoryPrinter(PrettyConversationPrinter):
             indent_size (int): Number of spaces for indentation. Defaults to 2.
             enable_colors (bool): Whether to enable ANSI color output. Defaults to True.
             score_printer (PrettyScorePrinter | None): Score printer for inline score rendering.
+            blur_images (bool): If True, apply a Gaussian blur to image outputs before
+                displaying them. Defaults to False.
+            blur_radius (int): Gaussian blur radius applied when ``blur_images`` is True.
+                Defaults to 20.
         """
         super().__init__(
-            sink=sink, width=width, indent_size=indent_size, enable_colors=enable_colors, score_printer=score_printer
+            sink=sink,
+            width=width,
+            indent_size=indent_size,
+            enable_colors=enable_colors,
+            score_printer=score_printer,
+            blur_images=blur_images,
+            blur_radius=blur_radius,
         )
         from pyrit.memory import CentralMemory
 
@@ -302,7 +323,7 @@ class PrettyConversationMemoryPrinter(PrettyConversationPrinter):
         """
         Display an image from a message piece in notebook environments.
 
-        Uses ``DataTypeSerializer.read_data`` for transparent storage access
+        Uses ``DataTypeSerializer.read_data_async`` for transparent storage access
         (local disk or Azure Blob) and ``IPython.display.Image`` for rendering.
         No-op outside notebook environments.
 
@@ -317,14 +338,19 @@ class PrettyConversationMemoryPrinter(PrettyConversationPrinter):
         if not is_in_ipython_session():
             return
 
-        from pyrit.models.data_type_serializer import ImagePathDataTypeSerializer
+        from pyrit.memory import ImagePathDataTypeSerializer
 
         try:
             serializer = ImagePathDataTypeSerializer(category="", prompt_text=piece.converted_value)
-            image_bytes = await serializer.read_data()
+            image_bytes = await serializer.read_data_async()
         except Exception as e:
             logger.error(f"Failed to read image from {piece.converted_value}: {e}")
             return
+
+        if self._blur_images:
+            from pyrit.output._image_utils import blur_image_bytes
+
+            image_bytes = blur_image_bytes(image_bytes=image_bytes, radius=self._blur_radius)
 
         from IPython.display import Image, display
 

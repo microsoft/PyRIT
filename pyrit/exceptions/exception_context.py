@@ -13,9 +13,9 @@ meaningful context in their messages.
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Optional
+from typing import Any, cast
 
-from pyrit.identifiers.component_identifier import ComponentIdentifier
+from pyrit.models import ComponentIdentifier
 
 
 class ComponentRole(Enum):
@@ -59,25 +59,25 @@ class ExecutionContext:
     component_role: ComponentRole = ComponentRole.UNKNOWN
 
     # The attack strategy class name (e.g., "PromptSendingAttack")
-    attack_strategy_name: Optional[str] = None
+    attack_strategy_name: str | None = None
 
     # The identifier for the attack strategy
-    attack_identifier: Optional[ComponentIdentifier] = None
+    attack_identifier: ComponentIdentifier | None = None
 
     # The identifier from the component's get_identifier() (target, scorer, etc.)
-    component_identifier: Optional[ComponentIdentifier] = None
+    component_identifier: ComponentIdentifier | None = None
 
     # The objective target conversation ID if available
-    objective_target_conversation_id: Optional[str] = None
+    objective_target_conversation_id: str | None = None
 
     # The endpoint/URI if available (extracted from component_identifier for quick access)
-    endpoint: Optional[str] = None
+    endpoint: str | None = None
 
     # The component class name (extracted from component_identifier.__type__ for quick access)
-    component_name: Optional[str] = None
+    component_name: str | None = None
 
     # The attack objective if available
-    objective: Optional[str] = None
+    objective: str | None = None
 
     def get_retry_context_string(self) -> str:
         """
@@ -135,15 +135,15 @@ class ExecutionContext:
 
 
 # The contextvar that stores the current execution context
-_execution_context: ContextVar[Optional[ExecutionContext]] = ContextVar("execution_context", default=None)
+_execution_context: ContextVar[ExecutionContext | None] = ContextVar("execution_context", default=None)
 
 
-def get_execution_context() -> Optional[ExecutionContext]:
+def get_execution_context() -> ExecutionContext | None:
     """
     Get the current execution context.
 
     Returns:
-        Optional[ExecutionContext]: The current context, or None if not set.
+        ExecutionContext | None: The current context, or None if not set.
 
     """
     return _execution_context.get()
@@ -213,11 +213,11 @@ class ExecutionContextManager:
 def execution_context(
     *,
     component_role: ComponentRole,
-    attack_strategy_name: Optional[str] = None,
-    attack_identifier: Optional[ComponentIdentifier] = None,
-    component_identifier: Optional[ComponentIdentifier] = None,
-    objective_target_conversation_id: Optional[str] = None,
-    objective: Optional[str] = None,
+    attack_strategy_name: str | None = None,
+    attack_identifier: ComponentIdentifier | None = None,
+    component_identifier: ComponentIdentifier | None = None,
+    objective_target_conversation_id: str | None = None,
+    objective: str | None = None,
 ) -> ExecutionContextManager:
     """
     Create an execution context manager with the specified parameters.
@@ -235,10 +235,10 @@ def execution_context(
 
     """
     # Extract endpoint and component_name from component_identifier if available
-    endpoint = None
+    endpoint: str | None = None
     component_name = None
     if component_identifier:
-        endpoint = component_identifier.params.get("endpoint")
+        endpoint = cast("str | None", component_identifier.params.get("endpoint"))
         component_name = component_identifier.class_name
 
     context = ExecutionContext(

@@ -21,7 +21,7 @@ def mock_jbb_data():
 async def test_fetch_dataset(mock_jbb_data):
     loader = _JBBBehaviorsDataset()
 
-    with patch.object(loader, "_fetch_from_huggingface", new=AsyncMock(return_value=mock_jbb_data)):
+    with patch.object(loader, "_fetch_from_huggingface_async", new=AsyncMock(return_value=mock_jbb_data)):
         dataset = await loader.fetch_dataset_async()
 
     assert isinstance(dataset, SeedDataset)
@@ -34,7 +34,7 @@ async def test_fetch_dataset_empty_raises():
     loader = _JBBBehaviorsDataset()
     empty_data = [{"Behavior": "", "Category": ""}]
 
-    with patch.object(loader, "_fetch_from_huggingface", new=AsyncMock(return_value=empty_data)):
+    with patch.object(loader, "_fetch_from_huggingface_async", new=AsyncMock(return_value=empty_data)):
         # Source wraps ValueError in generic Exception (see jbb_behaviors_dataset.py:122-124)
         with pytest.raises(Exception, match="Error loading JBB-Behaviors dataset"):
             await loader.fetch_dataset_async()

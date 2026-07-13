@@ -262,3 +262,104 @@ def test_validate_aggregates_all_violations():
     assert "2 required capability" in message
     assert CapabilityName.MULTI_TURN.value in message
     assert CapabilityName.JSON_OUTPUT.value in message
+
+
+# ---------------------------------------------------------------------------
+# Modality validation
+# ---------------------------------------------------------------------------
+
+
+def test_validate_passes_when_no_modality_requirements():
+    """Backward compat: empty modality requirements should always pass."""
+    target = _make_target(
+        configuration=TargetConfiguration(
+            capabilities=TargetCapabilities(),
+        ),
+    )
+    TargetRequirements().validate(target=target)
+
+
+def test_validate_passes_when_input_modality_matches():
+    reqs = TargetRequirements(
+        required_input_modalities=frozenset({frozenset({"text"})}),
+    )
+    target = _make_target(
+        configuration=TargetConfiguration(
+            capabilities=TargetCapabilities(
+                input_modalities=frozenset({frozenset({"text"})}),
+            ),
+        ),
+    )
+    reqs.validate(target=target)
+
+
+def test_validate_passes_when_target_modality_is_superset():
+    reqs = TargetRequirements(
+        required_input_modalities=frozenset({frozenset({"text"})}),
+    )
+    target = _make_target(
+        configuration=TargetConfiguration(
+            capabilities=TargetCapabilities(
+                input_modalities=frozenset({frozenset({"text", "image_path"})}),
+            ),
+        ),
+    )
+    reqs.validate(target=target)
+
+
+def test_validate_fails_on_missing_input_modality():
+    reqs = TargetRequirements(
+        required_input_modalities=frozenset({frozenset({"image_path"})}),
+    )
+    target = _make_target(
+        configuration=TargetConfiguration(
+            capabilities=TargetCapabilities(
+                input_modalities=frozenset({frozenset({"text"})}),
+            ),
+        ),
+    )
+    with pytest.raises(ValueError, match="input modality"):
+        reqs.validate(target=target)
+
+
+def test_validate_fails_on_missing_output_modality():
+    reqs = TargetRequirements(
+        required_output_modalities=frozenset({frozenset({"audio_path"})}),
+    )
+    target = _make_target(
+        configuration=TargetConfiguration(
+            capabilities=TargetCapabilities(
+                output_modalities=frozenset({frozenset({"text"})}),
+            ),
+        ),
+    )
+    with pytest.raises(ValueError, match="output modality"):
+        reqs.validate(target=target)
+
+
+def test_validate_aggregates_modality_and_capability_errors():
+    reqs = TargetRequirements(
+        native_required=frozenset({CapabilityName.MULTI_TURN}),
+        required_input_modalities=frozenset({frozenset({"image_path"})}),
+    )
+    target = _make_target(
+        configuration=TargetConfiguration(
+            capabilities=TargetCapabilities(
+                supports_multi_turn=False,
+                input_modalities=frozenset({frozenset({"text"})}),
+            ),
+        ),
+    )
+    with pytest.raises(ValueError) as exc_info:
+        reqs.validate(target=target)
+
+    message = str(exc_info.value)
+    assert "2 required capability" in message
+    assert CapabilityName.MULTI_TURN.value in message
+    assert "input modality" in message
+
+
+def test_default_modality_requirements_are_empty():
+    reqs = TargetRequirements()
+    assert reqs.required_input_modalities == frozenset()
+    assert reqs.required_output_modalities == frozenset()

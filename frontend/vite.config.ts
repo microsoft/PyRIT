@@ -93,10 +93,9 @@ export default defineConfig({
       '@fluentui/react-icons',
       'axios',
     ],
-    // Use esbuild for fast transforms
-    esbuildOptions: {
+    // Vite 8 uses Rolldown for dependency pre-bundling
+    rolldownOptions: {
       target: 'esnext',
-      keepNames: false,
     },
     exclude: [],
   },
@@ -108,9 +107,20 @@ export default defineConfig({
     // Optimize chunk splitting
     rollupOptions: {
       output: {
-        manualChunks: {
-          'react-vendor': ['react', 'react-dom'],
-          'fluent-vendor': ['@fluentui/react-components', '@fluentui/react-icons'],
+        // Vite 8 / Rolldown requires manualChunks to be a function, not an object
+        manualChunks: (id) => {
+          if (id.includes('node_modules')) {
+            if (id.includes('@fluentui/')) {
+              return 'fluent-vendor'
+            }
+            if (
+              id.includes('/react/') ||
+              id.includes('/react-dom/') ||
+              id.includes('/scheduler/')
+            ) {
+              return 'react-vendor'
+            }
+          }
         },
       },
     },

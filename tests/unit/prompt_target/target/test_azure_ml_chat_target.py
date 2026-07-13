@@ -11,14 +11,14 @@ from openai import RateLimitError
 from unit.mocks import get_sample_conversations
 
 from pyrit.exceptions import EmptyResponseException, RateLimitException
-from pyrit.models import Message, MessagePiece
+from pyrit.models import Message, MessagePiece, flatten_to_message_pieces
 from pyrit.prompt_target import AzureMLChatTarget
 
 
 @pytest.fixture
 def sample_conversations() -> MutableSequence[MessagePiece]:
     conversations = get_sample_conversations()
-    return Message.flatten_to_message_pieces(conversations)
+    return flatten_to_message_pieces(conversations)
 
 
 @pytest.fixture
@@ -54,12 +54,33 @@ def test_initialization_with_no_api_raises():
         AzureMLChatTarget(api_key="xxxxx")
 
 
-def test_get_headers_with_valid_api_key(aml_online_chat: AzureMLChatTarget):
-    expected_headers = {
-        "Content-Type": "application/json",
-        "Authorization": "Bearer valid_api_key",
-    }
-    assert aml_online_chat._get_headers() == expected_headers
+def test_no_key_recognized_aml_endpoint_auto_mints_entra(patch_central_database):
+    """With no key and a recognized *.inference.ml.azure.com endpoint, the target
+    auto-mints an Entra token provider for the AML scope."""
+
+    async def _provider() -> str:
+        return "aml-entra-token"
+
+    with (
+        patch.dict(os.environ, {AzureMLChatTarget.api_key_environment_variable: ""}),
+        patch(
+            "pyrit.prompt_target.azure_ml_chat_target.get_azure_async_token_provider",
+            return_value=_provider,
+        ) as mock_provider,
+    ):
+        target = AzureMLChatTarget(endpoint="https://my-aml.region.inference.ml.azure.com/score")
+
+    mock_provider.assert_called_once_with(AzureMLChatTarget._AZURE_ML_SCOPE)
+    assert target._api_key_provider is _provider
+    assert target._api_key == ""
+
+
+def test_no_key_non_aml_endpoint_raises(patch_central_database):
+    """With no key and an endpoint that is not a recognized AML host, the target
+    refuses to mint a bearer token."""
+    with patch.dict(os.environ, {AzureMLChatTarget.api_key_environment_variable: ""}):
+        with pytest.raises(ValueError, match="recognized Azure ML"):
+            AzureMLChatTarget(endpoint="https://example.com/score")
 
 
 async def test_complete_chat_async(aml_online_chat: AzureMLChatTarget):
@@ -115,7 +136,7 @@ async def test_complete_chat_async_bad_json_response(aml_online_chat: AzureMLCha
 
 async def test_send_prompt_async_bad_request_error_adds_to_memory(aml_online_chat: AzureMLChatTarget):
     mock_memory = MagicMock()
-    mock_memory.get_conversation.return_value = []
+    mock_memory.get_conversation_messages.return_value = []
     mock_memory.add_message_to_memory = AsyncMock()
 
     aml_online_chat._memory = mock_memory
@@ -131,7 +152,7 @@ async def test_send_prompt_async_bad_request_error_adds_to_memory(aml_online_cha
 
     with pytest.raises(HTTPStatusError) as bre:
         await aml_online_chat.send_prompt_async(message=message)
-        aml_online_chat._memory.get_conversation.assert_called_once_with(conversation_id="123")
+        aml_online_chat._memory.get_conversation_messages.assert_called_once_with(conversation_id="123")
         aml_online_chat._memory.add_message_to_memory.assert_called_once_with(request=message)
 
     assert str(bre.value) == "Bad Request"
@@ -139,7 +160,7 @@ async def test_send_prompt_async_bad_request_error_adds_to_memory(aml_online_cha
 
 async def test_send_prompt_async_rate_limit_exception_adds_to_memory(aml_online_chat: AzureMLChatTarget):
     mock_memory = MagicMock()
-    mock_memory.get_conversation.return_value = []
+    mock_memory.get_conversation_messages.return_value = []
     mock_memory.add_message_to_memory = AsyncMock()
 
     aml_online_chat._memory = mock_memory
@@ -154,7 +175,7 @@ async def test_send_prompt_async_rate_limit_exception_adds_to_memory(aml_online_
 
     with pytest.raises(RateLimitException) as rle:
         await aml_online_chat.send_prompt_async(message=message)
-        aml_online_chat._memory.get_conversation.assert_called_once_with(conversation_id="123")
+        aml_online_chat._memory.get_conversation_messages.assert_called_once_with(conversation_id="123")
         aml_online_chat._memory.add_message_to_memory.assert_called_once_with(request=message)
 
     assert str(rle.value) == "Status Code: 429, Message: Rate Limit Exception"
@@ -236,3 +257,114 @@ def test_valid_temperature_and_top_p(patch_central_database):
     )
     assert target._temperature == 1.5
     assert target._top_p == 0.9
+
+
+def test_initialization_with_async_token_provider_stores_provider(patch_central_database):
+    """A callable api_key is stored as the token provider and _api_key is cleared."""
+
+    async def async_provider() -> str:
+        return "entra-token"
+
+    target = AzureMLChatTarget(
+        endpoint="http://aml-test-endpoint.com",
+        api_key=async_provider,
+    )
+
+    assert target._api_key_provider is async_provider
+    assert target._api_key == ""
+
+
+def test_initialization_with_sync_token_provider_is_wrapped(patch_central_database):
+    """A sync token provider is wrapped so it can be awaited in the async send path."""
+
+    def sync_provider() -> str:
+        return "entra-token"
+
+    target = AzureMLChatTarget(
+        endpoint="http://aml-test-endpoint.com",
+        api_key=sync_provider,
+    )
+
+    # ensure_async_token_provider wraps it, so it's not the same callable but is still callable.
+    assert target._api_key_provider is not None
+    assert target._api_key_provider is not sync_provider
+    assert callable(target._api_key_provider)
+    assert target._api_key == ""
+
+
+def test_initialization_with_callable_ignores_env_var(patch_central_database):
+    """When a callable api_key is provided, AZURE_ML_KEY must not leak through."""
+
+    async def async_provider() -> str:
+        return "entra-token"
+
+    with patch.dict(os.environ, {AzureMLChatTarget.api_key_environment_variable: "env-key"}):
+        target = AzureMLChatTarget(
+            endpoint="http://aml-test-endpoint.com",
+            api_key=async_provider,
+        )
+
+    assert target._api_key_provider is async_provider
+    assert target._api_key == ""
+
+
+async def test_get_headers_async_resolves_token_from_provider(patch_central_database):
+    """_get_headers_async awaits the configured provider and builds a Bearer header."""
+
+    async def async_provider() -> str:
+        return "fresh-entra-token"
+
+    target = AzureMLChatTarget(
+        endpoint="http://aml-test-endpoint.com",
+        api_key=async_provider,
+    )
+
+    headers = await target._get_headers_async()
+
+    assert headers == {
+        "Content-Type": "application/json",
+        "Authorization": "Bearer fresh-entra-token",
+    }
+
+
+async def test_get_headers_async_falls_back_to_static_key(patch_central_database):
+    """With a static api_key, _get_headers_async returns Bearer-<key> headers."""
+    target = AzureMLChatTarget(
+        endpoint="http://aml-test-endpoint.com",
+        api_key="static-key",
+    )
+
+    headers = await target._get_headers_async()
+
+    assert headers == {
+        "Content-Type": "application/json",
+        "Authorization": "Bearer static-key",
+    }
+
+
+async def test_complete_chat_async_uses_token_provider_per_request(patch_central_database):
+    """Each send re-acquires the token from the provider (auto-refresh)."""
+    token_provider = AsyncMock(side_effect=["token-1", "token-2"])
+
+    target = AzureMLChatTarget(
+        endpoint="http://aml-test-endpoint.com",
+        api_key=token_provider,
+    )
+
+    messages = [
+        Message(message_pieces=[MessagePiece(role="user", conversation_id="abc", original_value="hi")]),
+    ]
+
+    with patch("pyrit.common.net_utility.make_request_and_raise_if_error_async", new_callable=AsyncMock) as mock:
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"output": "ok"}
+        mock.return_value = mock_response
+
+        await target._complete_chat_async(messages)
+        await target._complete_chat_async(messages)
+
+        assert token_provider.await_count == 2
+        headers_first = mock.call_args_list[0].kwargs["headers"]
+        headers_second = mock.call_args_list[1].kwargs["headers"]
+        assert headers_first["Authorization"] == "Bearer token-1"
+        assert headers_second["Authorization"] == "Bearer token-2"

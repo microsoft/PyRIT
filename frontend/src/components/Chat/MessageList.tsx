@@ -144,9 +144,8 @@ export default function MessageList({ messages, onCopyToInput, onCopyToNewConver
   if (messages.length === 0) {
     return (
       <div className={styles.emptyState}>
-        <Text size={500} weight="semibold">Welcome to PyRIT</Text>
         <Text size={300} style={{ color: tokens.colorNeutralForeground3 }}>
-          Start a conversation to test AI safety and robustness
+          There are no messages in this conversation yet.
         </Text>
       </div>
     )

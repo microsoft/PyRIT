@@ -61,6 +61,7 @@ class TestServeMedia:
         try:
             response = client.get("/api/media", params={"path": outside_path})
             assert response.status_code == 403
+            assert "outside the allowed results directory" in response.json()["detail"]
         finally:
             os.unlink(outside_path)
 
@@ -69,6 +70,34 @@ class TestServeMedia:
         traversal_path = str(_mock_memory / ".." / ".." / "etc" / "passwd")
         response = client.get("/api/media", params={"path": traversal_path})
         assert response.status_code == 403
+        assert "outside the allowed results directory" in response.json()["detail"]
+
+    def test_rejects_symlink_pointing_outside_results(self, client: TestClient, _mock_memory: Path) -> None:
+        """A symlink under an allowed subdirectory that points outside the results dir is rejected.
+
+        ``Path.resolve()`` resolves symlinks, so a symlink that targets a file outside the
+        allowed root must be rejected just like a plain path traversal attempt.
+        """
+        # Create a file outside the allowed directory
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+            tmp.write(b"\x89PNG\r\n\x1a\n")
+            outside_target = tmp.name
+
+        try:
+            symlink_path = _mock_memory / "prompt-memory-entries" / "evil_symlink.png"
+            try:
+                os.symlink(outside_target, symlink_path)
+            except (OSError, NotImplementedError) as exc:
+                # Symlink creation may fail on Windows without admin / developer mode.
+                pytest.skip(f"Cannot create symlink in this environment: {exc}")
+
+            response = client.get("/api/media", params={"path": str(symlink_path)})
+            assert response.status_code == 403
+            # Confirm the rejection reason is the symlink-escape check specifically,
+            # not one of the other 403 paths (subdirectory / extension).
+            assert "outside the allowed results directory" in response.json()["detail"]
+        finally:
+            os.unlink(outside_target)
 
     def test_returns_404_for_nonexistent_file(self, client: TestClient, _mock_memory: Path) -> None:
         """Non-existent files under allowed subdirectory return 404."""

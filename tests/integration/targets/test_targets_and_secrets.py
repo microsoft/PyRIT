@@ -460,8 +460,8 @@ async def test_connect_tts(sqlite_instance, endpoint, api_key, model_name):
     [
         ("AZURE_OPENAI_VIDEO_ENDPOINT", "AZURE_OPENAI_VIDEO_KEY", "AZURE_OPENAI_VIDEO_MODEL"),
         # OpenAI Platform endpoint returns HTTP 401 "Missing scopes: api.videos.write" for all requests
-        # ("PLATFORM_OPENAI_VIDEO_ENDPOINT", "PLATFORM_OPENAI_VIDEO_KEY",  # noqa: ERA001
-        #  "PLATFORM_OPENAI_VIDEO_MODEL"),  # noqa: ERA001
+        # ("PLATFORM_OPENAI_VIDEO_ENDPOINT", "PLATFORM_OPENAI_VIDEO_KEY",
+        #  "PLATFORM_OPENAI_VIDEO_MODEL"),
     ],
 )
 async def test_connect_video(sqlite_instance, endpoint, api_key, model_name):
@@ -571,7 +571,7 @@ async def test_video_remix_chain(sqlite_instance):
         original_value="A cat sitting on a windowsill",
         converted_value="A cat sitting on a windowsill",
     )
-    result = await target.send_prompt_async(message=Message([text_piece]))
+    result = await target.send_prompt_async(message=Message(message_pieces=[text_piece]))
     assert len(result) == 1
     response_piece = result[0].message_pieces[0]
     assert response_piece.response_error == "none"
@@ -586,7 +586,7 @@ async def test_video_remix_chain(sqlite_instance):
         converted_value="Make it a watercolor painting style",
         prompt_metadata={"video_id": video_id},
     )
-    remix_result = await target.send_prompt_async(message=Message([remix_piece]))
+    remix_result = await target.send_prompt_async(message=Message(message_pieces=[remix_piece]))
     assert len(remix_result) == 1
     remix_response = remix_result[0].message_pieces[0]
     assert remix_response.response_error == "none"
@@ -636,7 +636,7 @@ async def test_video_image_to_video(sqlite_instance):
         converted_value_data_type="image_path",
         conversation_id=conversation_id,
     )
-    result = await target.send_prompt_async(message=Message([text_piece, image_piece]))
+    result = await target.send_prompt_async(message=Message(message_pieces=[text_piece, image_piece]))
     assert len(result) == 1
     response_piece = result[0].message_pieces[0]
     assert response_piece.response_error == "none", f"Image-to-video failed: {response_piece.converted_value}"

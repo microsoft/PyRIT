@@ -1,4 +1,5 @@
 import { test, expect, type Page, type Route } from "@playwright/test";
+import { makeTarget } from "./_targets";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -15,9 +16,9 @@ function buildSuccessMessageMock(userText: string) {
           turn_number: 1,
           role: "user",
           created_at: new Date().toISOString(),
-          pieces: [
+          message_pieces: [
             {
-              piece_id: "p-u",
+              id: "p-u",
               original_value_data_type: "text",
               converted_value_data_type: "text",
               original_value: userText,
@@ -31,9 +32,9 @@ function buildSuccessMessageMock(userText: string) {
           turn_number: 1,
           role: "assistant",
           created_at: new Date().toISOString(),
-          pieces: [
+          message_pieces: [
             {
-              piece_id: "p-a",
+              id: "p-a",
               original_value_data_type: "text",
               converted_value_data_type: "text",
               original_value: `Reply to: ${userText}`,
@@ -67,12 +68,12 @@ async function mockAllAPIs(
         contentType: "application/json",
         body: JSON.stringify({
           items: [
-            {
+            makeTarget({
               target_registry_name: "mock-target",
               target_type: "OpenAIChatTarget",
               endpoint: "https://mock.endpoint.com",
               model_name: "gpt-4o-mock",
-            },
+            }),
           ],
         }),
       });
@@ -175,7 +176,7 @@ async function activateMockTarget(page: Page) {
   await expect(setActiveBtn).toBeVisible({ timeout: 5000 });
   await setActiveBtn.click();
   await page.getByTitle("Chat").click();
-  await expect(page.getByText("PyRIT Attack")).toBeVisible({ timeout: 5000 });
+  await expect(page.getByTestId("new-attack-btn")).toBeVisible({ timeout: 5000 });
 }
 
 /** Send a message and wait for the response. */
@@ -264,6 +265,29 @@ test.describe("Error: backend 500 on send message", () => {
     // The failed text should be restored in the input for easy re-send
     await expect(input).toHaveValue("This should fail", { timeout: 5000 });
   });
+
+  test("should recover cleanly when the first send fails", async ({ page }) => {
+    await mockAllAPIs(page, async (route) => {
+      await route.fulfill({
+        status: 500,
+        contentType: "application/json",
+        body: JSON.stringify({ detail: "Internal server error" }),
+      });
+    });
+
+    await page.goto("/");
+    await activateMockTarget(page);
+
+    const input = page.getByRole("textbox");
+    await input.fill("First send fails");
+    await page.getByRole("button", { name: /send/i }).click();
+
+    await expect(page.getByText(/Internal server error/i)).toBeVisible({
+      timeout: 10000,
+    });
+    await expect(page.getByTestId("loading-state")).toHaveCount(0);
+    await expect(input).toHaveValue("First send fails", { timeout: 5000 });
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -324,7 +348,7 @@ test.describe("Error: connection banner on health failure", () => {
   }) => {
     // Let the page load normally first
     await page.goto("/");
-    await expect(page.getByText("PyRIT Attack")).toBeVisible({
+    await expect(page.getByTitle("Chat")).toBeVisible({
       timeout: 10000,
     });
 
@@ -372,7 +396,7 @@ test.describe("Error: connection banner recovery", () => {
     });
 
     await page.goto("/");
-    await expect(page.getByText("PyRIT Attack")).toBeVisible({
+    await expect(page.getByTitle("Chat")).toBeVisible({
       timeout: 10000,
     });
 
@@ -415,12 +439,12 @@ test.describe("Error: create attack fails", () => {
           contentType: "application/json",
           body: JSON.stringify({
             items: [
-              {
+              makeTarget({
                 target_registry_name: "mock-target",
                 target_type: "OpenAIChatTarget",
                 endpoint: "https://mock.endpoint.com",
                 model_name: "gpt-4o-mock",
-              },
+              }),
             ],
           }),
         });

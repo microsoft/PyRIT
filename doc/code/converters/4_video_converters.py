@@ -20,7 +20,7 @@
 # - **[Image to Video](#image-to-video)**: Add images to video files
 
 # %% [markdown]
-# <a id="image-to-video"></a>
+# (image-to-video)=
 # ## Image to Video
 #
 # ### AddImageVideoConverter
@@ -31,7 +31,7 @@
 # %%
 import pathlib
 
-from pyrit.prompt_converter import AddImageVideoConverter
+from pyrit.converter import AddImageVideoConverter
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 
 await initialize_pyrit_async(memory_db_type=IN_MEMORY)  # type: ignore

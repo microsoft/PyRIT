@@ -61,7 +61,6 @@
 # %%
 # Import the Azure ML SDK components required for workspace connection and model management.
 import os
-from typing import Union
 
 # Import necessary libraries for Azure ML operations and authentication
 from azure.ai.ml import MLClient, UserIdentityConfiguration
@@ -160,7 +159,7 @@ print(f"Idle time before scale down in seconds: {idle_time_before_scale_down}")
 # %%
 # Setup Azure credentials, preferring DefaultAzureCredential and falling back to InteractiveBrowserCredential if necessary
 try:
-    credential: Union[DefaultAzureCredential, InteractiveBrowserCredential] = DefaultAzureCredential()
+    credential: DefaultAzureCredential | InteractiveBrowserCredential = DefaultAzureCredential()
     # Verify if the default credential can fetch a token successfully
     credential.get_token("https://management.azure.com/.default")
 except Exception as ex:

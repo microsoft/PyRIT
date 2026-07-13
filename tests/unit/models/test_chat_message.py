@@ -6,11 +6,7 @@ import json
 import pytest
 from pydantic import ValidationError
 
-from pyrit.models.chat_message import (
-    ChatMessage,
-    ChatMessagesDataset,
-    ToolCall,
-)
+from pyrit.models import ChatMessage, ChatMessagesDataset, ToolCall
 
 
 def test_tool_call_init():
@@ -64,9 +60,9 @@ def test_chat_message_invalid_role():
         ChatMessage(role="invalid_role", content="hi")
 
 
-def test_chat_message_to_json():
+def test_chat_message_serializes_with_model_dump_json():
     msg = ChatMessage(role="user", content="test")
-    json_str = msg.to_json()
+    json_str = msg.model_dump_json()
     parsed = json.loads(json_str)
     assert parsed["role"] == "user"
     assert parsed["content"] == "test"
@@ -82,18 +78,18 @@ def test_chat_message_to_dict_excludes_none():
     assert d["content"] == "test"
 
 
-def test_chat_message_from_json():
+def test_chat_message_model_validate_json_roundtrip():
     original = ChatMessage(role="system", content="you are helpful")
-    json_str = original.to_json()
-    restored = ChatMessage.from_json(json_str)
+    json_str = original.model_dump_json()
+    restored = ChatMessage.model_validate_json(json_str)
     assert restored.role == original.role
     assert restored.content == original.content
 
 
-def test_chat_message_from_json_roundtrip_with_tool_calls():
+def test_chat_message_model_validate_json_roundtrip_with_tool_calls():
     tc = ToolCall(id="c1", type="function", function="fn")
     original = ChatMessage(role="assistant", content="ok", tool_calls=[tc], tool_call_id="c1")
-    restored = ChatMessage.from_json(original.to_json())
+    restored = ChatMessage.model_validate_json(original.model_dump_json())
     assert restored.tool_calls[0].id == "c1"
     assert restored.tool_call_id == "c1"
 

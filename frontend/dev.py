@@ -141,7 +141,7 @@ def _find_pids_on_port(port):
 def stop_servers():
     """Stop all running servers"""
     print("🛑 Stopping servers...")
-    backend_pids = find_pids_by_pattern("pyrit.cli.pyrit_backend")
+    backend_pids = find_pids_by_pattern("pyrit.backend.pyrit_backend")
     frontend_pids = find_pids_by_pattern("node.*vite")
     # Also find any parent dev.py processes (detached wrappers)
     wrapper_pids = find_pids_by_pattern("frontend/dev.py")
@@ -163,6 +163,10 @@ def start_backend(*, config_file: str | None = None, initializers: list[str] | N
     Configuration (initializers, database, env files) is read automatically
     from ~/.pyrit/.pyrit_conf by the pyrit_backend CLI via ConfigurationLoader,
     unless overridden with *config_file*.
+
+    When *initializers* is supplied without a *config_file*, a tiny temporary
+    runtime config is written to forward those names — ``pyrit_backend`` only
+    accepts ``--config-file`` now (no ``--initializers`` flag).
     """
     print("🚀 Starting backend on port 8000...")
 
@@ -178,7 +182,7 @@ def start_backend(*, config_file: str | None = None, initializers: list[str] | N
     cmd = [
         sys.executable,
         "-m",
-        "pyrit.cli.pyrit_backend",
+        "pyrit.backend.pyrit_backend",
         "--host",
         "localhost",
         "--port",
@@ -186,12 +190,22 @@ def start_backend(*, config_file: str | None = None, initializers: list[str] | N
         "--log-level",
         "info",
     ]
-    if config_file:
-        cmd.extend(["--config-file", config_file])
 
-    # Add initializers if specified
-    if initializers:
-        cmd.extend(["--initializers"] + initializers)
+    # Resolve config-file: explicit wins; otherwise synthesize one from initializers.
+    effective_config_file = config_file
+    if effective_config_file is None and initializers:
+        import tempfile
+
+        fd, synthesized_path = tempfile.mkstemp(suffix=".yaml", prefix="pyrit_dev_", text=True)
+        with os.fdopen(fd, "w") as synthesized:
+            synthesized.write("initializers:\n")
+            for name in initializers:
+                synthesized.write(f"  - {name}\n")
+        effective_config_file = synthesized_path
+        print(f"   Wrote initializer overrides to {effective_config_file}")
+
+    if effective_config_file:
+        cmd.extend(["--config-file", effective_config_file])
 
     # Pipe stdout/stderr so dev.py controls output ordering
     return subprocess.Popen(cmd, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
@@ -456,7 +470,7 @@ def main():
         elif command == "backend":
             print("🚀 Starting backend only...")
             # Kill stale backend processes
-            stale = find_pids_by_pattern("pyrit.cli.pyrit_backend")
+            stale = find_pids_by_pattern("pyrit.backend.pyrit_backend")
             if stale:
                 print(f"   Killing stale backend PIDs: {stale}")
                 kill_pids(stale)

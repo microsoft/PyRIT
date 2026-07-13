@@ -7,7 +7,7 @@ import re
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import SeedDataset, SeedPrompt
+from pyrit.models import Modality, SeedDataset, SeedPrompt, SeedUnion
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +32,11 @@ class _SaladBenchDataset(_RemoteDatasetLoader):
 
     HF_DATASET_NAME: str = "walledai/SaladBench"
 
+    # Metadata
+    modalities: tuple[Modality, ...] = (Modality.TEXT,)
+    size: str = "huge"  # 21318 harmful questions across 6 domains, 16 tasks, 65+ categories
+    tags: frozenset[str] = frozenset({"default", "safety", "jailbreak"})
+
     def __init__(
         self,
         *,
@@ -51,7 +56,7 @@ class _SaladBenchDataset(_RemoteDatasetLoader):
 
     @property
     def dataset_name(self) -> str:
-        """Return the dataset name."""
+        """The dataset name."""
         return "salad_bench"
 
     @staticmethod
@@ -79,7 +84,7 @@ class _SaladBenchDataset(_RemoteDatasetLoader):
         """
         logger.info(f"Loading SALAD-Bench dataset from {self.HF_DATASET_NAME}")
 
-        data = await self._fetch_from_huggingface(
+        data = await self._fetch_from_huggingface_async(
             dataset_name=self.HF_DATASET_NAME,
             config=self.config,
             split=self.split,
@@ -111,7 +116,7 @@ class _SaladBenchDataset(_RemoteDatasetLoader):
             "The Hong Kong Polytechnic University",
         ]
 
-        seed_prompts = [
+        seed_prompts: list[SeedUnion] = [
             SeedPrompt(
                 value=item["prompt"],
                 data_type="text",

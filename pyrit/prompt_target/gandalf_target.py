@@ -4,11 +4,9 @@
 import enum
 import json
 import logging
-from typing import Optional
 
 from pyrit.common import net_utility
-from pyrit.identifiers import ComponentIdentifier
-from pyrit.models import Message, construct_response_from_request
+from pyrit.models import ComponentIdentifier, Message, construct_response_from_request
 from pyrit.prompt_target.common.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.prompt_target.common.utils import limit_requests_per_minute
@@ -43,8 +41,8 @@ class GandalfTarget(PromptTarget):
         self,
         *,
         level: GandalfLevel,
-        max_requests_per_minute: Optional[int] = None,
-        custom_configuration: Optional[TargetConfiguration] = None,
+        max_requests_per_minute: int | None = None,
+        custom_configuration: TargetConfiguration | None = None,
     ) -> None:
         """
         Initialize the Gandalf target.
@@ -103,7 +101,7 @@ class GandalfTarget(PromptTarget):
 
         return [response_entry]
 
-    async def check_password(self, password: str) -> bool:
+    async def check_password_async(self, password: str) -> bool:
         """
         Check if the password is correct.
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict, dataclass, field
-from typing import TYPE_CHECKING, Generic, Optional, TypeVar, Union
+from typing import TYPE_CHECKING, Generic, TypeVar
 
 from pyrit.common.utils import verify_and_resolve_path
 
@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 
     import numpy as np
 
-    from pyrit.identifiers import ComponentIdentifier
+    from pyrit.models import ComponentIdentifier
     from pyrit.models.harm_definition import HarmDefinition
 
 T = TypeVar("T", bound="ScorerMetrics")
@@ -26,7 +26,9 @@ class ScorerMetrics:
     """
     Base dataclass for storing scorer evaluation metrics.
 
-    This class provides methods for serializing metrics to JSON and loading them from JSON files.
+    This class provides methods for serializing metrics to JSON strings (see
+    ``to_json``) and loading them from JSON files on disk (see
+    ``from_json_file``).
 
     Args:
         num_responses (int): Total number of responses evaluated.
@@ -41,14 +43,19 @@ class ScorerMetrics:
     num_responses: int
     num_human_raters: int
     num_scorer_trials: int = field(default=1, kw_only=True)
-    dataset_name: Optional[str] = field(default=None, kw_only=True)
-    dataset_version: Optional[str] = field(default=None, kw_only=True)
-    trial_scores: Optional[np.ndarray] = field(default=None, kw_only=True)
+    dataset_name: str | None = field(default=None, kw_only=True)
+    dataset_version: str | None = field(default=None, kw_only=True)
+    trial_scores: np.ndarray | None = field(default=None, kw_only=True)
     average_score_time_seconds: float = field(default=0.0, kw_only=True)
 
     def to_json(self) -> str:
         """
-        Convert the metrics to a JSON string.
+        Serialize this metrics instance to a JSON string.
+
+        This is the canonical serialization entry point for ``ScorerMetrics`` and its
+        subclasses. Pair it with ``from_json_file`` (which reads a JSON file written
+        from this string, optionally wrapped in a ``"metrics"`` key) for round-trip
+        (de)serialization.
 
         Returns:
             str: The JSON string representation of the metrics.
@@ -56,15 +63,21 @@ class ScorerMetrics:
         return json.dumps(asdict(self))
 
     @classmethod
-    def from_json(cls: type[T], file_path: Union[str, Path]) -> T:
+    def from_json_file(cls: type[T], file_path: str | Path) -> T:
         """
-        Load the metrics from a JSON file.
+        Load a metrics instance from a JSON file on disk.
+
+        This is the canonical deserialization entry point for ``ScorerMetrics`` and its
+        subclasses. It accepts a *file path* (string or ``Path``), not a JSON string —
+        the loader opens the file, unwraps a top-level ``"metrics"`` key if present
+        (as used by evaluation result files), and filters out internal underscore-prefixed
+        fields (e.g., cached ``init=False`` attributes) before constructing the instance.
 
         Args:
-            file_path (Union[str, Path]): The path to the JSON file.
+            file_path (str | Path): The path to the JSON file.
 
         Returns:
-            ScorerMetrics: An instance of ScorerMetrics with the loaded data.
+            ScorerMetrics: An instance of ScorerMetrics (or subclass) with the loaded data.
 
         Raises:
             FileNotFoundError: If the specified file does not exist.
@@ -94,9 +107,13 @@ class HarmScorerMetrics(ScorerMetrics):
             a confidence interval for the mean absolute error.
         t_statistic (float): The t-statistic for the one-sample t-test comparing model scores to human scores with a
             null hypothesis that the mean difference is 0. A high positive t-statistic (along with a low p-value)
-            indicates that the model scores are typically higher than the human scores.
+            indicates that the model scores are typically higher than the human scores. When the model perfectly
+            agrees with the gold labels (zero difference everywhere), this is reported as 0.0. When all differences
+            are equal and non-zero (a systematic constant bias with no variance), the t-test is undefined and this
+            is reported as NaN; consult `mean_absolute_error` for the bias magnitude in that case.
         p_value (float): The p-value for the one-sample t-test above. It represents the probability of obtaining a
             difference in means as extreme as the observed difference, assuming the null hypothesis is true.
+            Reported as 1.0 on perfect agreement and NaN on the constant-non-zero-bias case (see `t_statistic`).
         krippendorff_alpha_combined (float): Krippendorff's alpha for the reliability data, which includes both
             human and model scores. This measures the agreement between all the human raters and model scoring trials
             and ranges between -1.0 to 1.0 where 1.0 indicates perfect agreement, 0.0 indicates no agreement, and
@@ -117,14 +134,14 @@ class HarmScorerMetrics(ScorerMetrics):
     t_statistic: float
     p_value: float
     krippendorff_alpha_combined: float
-    harm_category: Optional[str] = field(default=None, kw_only=True)
-    harm_definition: Optional[str] = field(default=None, kw_only=True)
-    harm_definition_version: Optional[str] = field(default=None, kw_only=True)
-    krippendorff_alpha_humans: Optional[float] = None
-    krippendorff_alpha_model: Optional[float] = None
-    _harm_definition_obj: Optional[HarmDefinition] = field(default=None, init=False, repr=False)
+    harm_category: str | None = field(default=None, kw_only=True)
+    harm_definition: str | None = field(default=None, kw_only=True)
+    harm_definition_version: str | None = field(default=None, kw_only=True)
+    krippendorff_alpha_humans: float | None = None
+    krippendorff_alpha_model: float | None = None
+    _harm_definition_obj: HarmDefinition | None = field(default=None, init=False, repr=False)
 
-    def get_harm_definition(self) -> Optional[HarmDefinition]:
+    def get_harm_definition(self) -> HarmDefinition | None:
         """
         Load and return the HarmDefinition object for this metrics instance.
 
@@ -165,7 +182,7 @@ class ObjectiveScorerMetrics(ScorerMetrics):
             in its positive predictions.
         recall (float): The recall of the model scores, an indicator of the model's ability to correctly
             identify positive labels.
-        trial_scores (Optional[np.ndarray]): The raw scores from each trial. Shape is (num_trials, num_responses).
+        trial_scores (np.ndarray | None): The raw scores from each trial. Shape is (num_trials, num_responses).
             Useful for debugging and analyzing scorer variance.
     """
 

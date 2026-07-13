@@ -6,7 +6,7 @@ import logging
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import SeedDataset, SeedPrompt
+from pyrit.models import Modality, SeedDataset, SeedPrompt, SeedUnion
 
 logger = logging.getLogger(__name__)
 
@@ -28,22 +28,14 @@ class _SimpleSafetyTestsDataset(_RemoteDatasetLoader):
 
     HF_DATASET_NAME: str = "Bertievidgen/SimpleSafetyTests"
 
-    def __init__(
-        self,
-        *,
-        split: str = "test",
-    ) -> None:
-        """
-        Initialize the SimpleSafetyTests dataset loader.
-
-        Args:
-            split: Dataset split to load. Defaults to "test".
-        """
-        self.split = split
+    # Metadata
+    modalities: tuple[Modality, ...] = (Modality.TEXT,)
+    size: str = "small"  # 100 critical safety test prompts
+    tags: frozenset[str] = frozenset({"safety"})
 
     @property
     def dataset_name(self) -> str:
-        """Return the dataset name."""
+        """The dataset name."""
         return "simple_safety_tests"
 
     async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
@@ -58,9 +50,9 @@ class _SimpleSafetyTestsDataset(_RemoteDatasetLoader):
         """
         logger.info(f"Loading SimpleSafetyTests dataset from {self.HF_DATASET_NAME}")
 
-        data = await self._fetch_from_huggingface(
+        data = await self._fetch_from_huggingface_async(
             dataset_name=self.HF_DATASET_NAME,
-            split=self.split,
+            split="test",
             cache=cache,
         )
 
@@ -81,7 +73,7 @@ class _SimpleSafetyTestsDataset(_RemoteDatasetLoader):
         source_url = f"https://huggingface.co/datasets/{self.HF_DATASET_NAME}"
         groups = ["Patronus AI", "University of Oxford", "Bocconi University"]
 
-        seed_prompts = [
+        seed_prompts: list[SeedUnion] = [
             SeedPrompt(
                 value=item["prompt"],
                 data_type="text",

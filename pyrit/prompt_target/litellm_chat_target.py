@@ -15,8 +15,8 @@ from pyrit.exceptions import (
     get_retry_max_num_attempts,
     handle_bad_request_exception,
 )
-from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import (
+    ComponentIdentifier,
     Message,
     MessagePiece,
     PromptDataType,
@@ -36,7 +36,10 @@ from pyrit.prompt_target.common.chat_completions_response_parser import (
     validate_chat_completion_response,
 )
 from pyrit.prompt_target.common.prompt_target import PromptTarget
-from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
+from pyrit.prompt_target.common.target_capabilities import (
+    TargetCapabilities,
+    get_known_capabilities,
+)
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.prompt_target.common.utils import (
     limit_requests_per_minute,
@@ -112,13 +115,12 @@ class LiteLLMChatTarget(PromptTarget):
     ``pyrit.prompt_target.common.chat_completions_message_builder`` and
     ``pyrit.prompt_target.common.chat_completions_response_parser``.
 
-    Install the optional dependency::
-
-        pip install pyrit[litellm]
-
     LiteLLM reads provider API keys from environment variables automatically
     (e.g. ``ANTHROPIC_API_KEY``, ``AWS_ACCESS_KEY_ID``). You can also pass ``api_key``
     explicitly, or a callable/token-provider for Entra-style auth.
+
+    Install the optional dependency with ``pip install pyrit[litellm]`` (or ``pip install
+    pyrit[all]``).
 
     Args:
         model_name: LiteLLM model string (e.g. ``"anthropic/claude-sonnet-4-6"``,
@@ -255,7 +257,7 @@ class LiteLLMChatTarget(PromptTarget):
         # LiteLLM-derived default > conservative fallback. The base __init__ already applied the
         # first two; only derive from LiteLLM metadata when neither was supplied.
         if custom_configuration is None:
-            known = TargetCapabilities.get_known_capabilities(underlying_model) if underlying_model else None
+            known = get_known_capabilities(underlying_model) if underlying_model else None
             if known is None:
                 derived = self._derive_capabilities_from_litellm(resolved_model)
                 if derived is not None:
@@ -267,7 +269,7 @@ class LiteLLMChatTarget(PromptTarget):
             import litellm
         except ImportError as e:
             raise ImportError(
-                "The litellm package is required for LiteLLMChatTarget. Install it with: pip install pyrit[litellm]"
+                "The litellm package is required for LiteLLMChatTarget. Install it with `pip install pyrit[litellm]`."
             ) from e
         return litellm
 
@@ -389,7 +391,7 @@ class LiteLLMChatTarget(PromptTarget):
             ]
 
         validate_chat_completion_response(response=response)
-        return [await self._construct_message_from_response(response=response, request=request_piece)]
+        return [await self._construct_message_from_response_async(response=response, request=request_piece)]
 
     async def _resolve_api_key_async(self) -> str | None:
         """
@@ -456,7 +458,7 @@ class LiteLLMChatTarget(PromptTarget):
 
         return {k: v for k, v in body.items() if v is not None}
 
-    async def _construct_message_from_response(self, *, response: Any, request: MessagePiece) -> Message:
+    async def _construct_message_from_response_async(self, *, response: Any, request: MessagePiece) -> Message:
         audio_format = self._audio_response_config.audio_format if self._audio_response_config else "wav"
         pieces = await build_response_pieces_async(response=response, request=request, audio_format=audio_format)
         if not pieces:

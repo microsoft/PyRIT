@@ -14,15 +14,14 @@ implementation instead of re-inventing message construction.
 from collections.abc import MutableSequence
 from typing import Any
 
-from pyrit.common.data_url_converter import convert_local_image_to_data_url
+from pyrit.memory import DataTypeSerializer, data_serializer_factory
+from pyrit.memory.storage import convert_local_image_to_data_url_async
 from pyrit.models import (
     ChatMessage,
-    DataTypeSerializer,
     Message,
     MessagePiece,
-    data_serializer_factory,
 )
-from pyrit.models.json_response_config import _JsonResponseConfig
+from pyrit.prompt_target.common.json_response_config import _JsonResponseConfig
 
 # Data types that render as a plain text content part.
 _TEXT_DATA_TYPES = ("text", "error")
@@ -112,7 +111,7 @@ async def build_image_content_entry_async(*, message_piece: MessagePiece) -> dic
     Returns:
         dict[str, Any]: A ``{"type": "image_url", "image_url": {"url": ...}}`` content part.
     """
-    data_url = await convert_local_image_to_data_url(message_piece.converted_value)
+    data_url = await convert_local_image_to_data_url_async(message_piece.converted_value)
     return {"type": "image_url", "image_url": {"url": data_url}}
 
 
@@ -142,7 +141,7 @@ async def build_audio_content_entry_async(*, message_piece: MessagePiece) -> dic
         data_type="audio_path",
         extension=ext,
     )
-    base64_data = await audio_serializer.read_data_base64()
+    base64_data = await audio_serializer.read_data_base64_async()
     return {"type": "input_audio", "input_audio": {"data": base64_data, "format": ext.lower().lstrip(".")}}
 
 
@@ -254,12 +253,12 @@ def build_response_format(*, json_config: _JsonResponseConfig) -> dict[str, Any]
     if not json_config.enabled:
         return None
 
-    if json_config.schema:
+    if json_config.json_schema:
         return {
             "type": "json_schema",
             "json_schema": {
                 "name": json_config.schema_name,
-                "schema": json_config.schema,
+                "schema": json_config.json_schema,
                 "strict": json_config.strict,
             },
         }

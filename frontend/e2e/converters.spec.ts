@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
+import { makeTarget } from "./_targets";
 
 // ---------------------------------------------------------------------------
 // Mock data
@@ -186,7 +187,7 @@ async function mockBackendAPIs(page: Page) {
         contentType: "application/json",
         body: JSON.stringify({
           items: [
-            {
+            makeTarget({
               target_registry_name: "mock-openai-chat",
               target_type: "OpenAIChatTarget",
               endpoint: "https://mock.openai.com",
@@ -201,7 +202,7 @@ async function mockBackendAPIs(page: Page) {
                 supported_input_data_types: ["text"],
                 supported_output_data_types: ["text"],
               },
-            },
+            }),
           ],
           pagination: { limit: 50, has_more: false },
         }),
@@ -242,9 +243,9 @@ async function mockBackendAPIs(page: Page) {
         turn_number: turnNumber,
         role: "user",
         created_at: new Date().toISOString(),
-        pieces: [
+        message_pieces: [
           {
-            piece_id: `piece-u-${turnNumber}`,
+            id: `piece-u-${turnNumber}`,
             original_value_data_type: "text",
             converted_value_data_type: "text",
             original_value: userText,
@@ -258,9 +259,9 @@ async function mockBackendAPIs(page: Page) {
         turn_number: turnNumber,
         role: "assistant",
         created_at: new Date().toISOString(),
-        pieces: [
+        message_pieces: [
           {
-            piece_id: `piece-a-${turnNumber}`,
+            id: `piece-a-${turnNumber}`,
             original_value_data_type: "text",
             converted_value_data_type: "text",
             original_value: `Mock response for: ${displayText}`,
@@ -416,7 +417,7 @@ async function activateMockTarget(page: Page) {
   await setActiveBtn.click();
 
   await page.getByTitle("Chat", { exact: true }).click();
-  await expect(page.getByText("PyRIT Attack")).toBeVisible({ timeout: 5000 });
+  await expect(page.getByTestId("new-attack-btn")).toBeVisible({ timeout: 5000 });
 }
 
 /** Open converter panel and select a converter by name. */

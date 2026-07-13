@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 from collections.abc import Sequence
-from typing import Optional, get_args
+from typing import get_args
 
 from pyrit.models import ChatMessageRole, Message, MessagePiece, PromptDataType
 
@@ -18,32 +18,32 @@ class ScorerPromptValidator:
     def __init__(
         self,
         *,
-        supported_data_types: Optional[Sequence[PromptDataType]] = None,
-        required_metadata: Optional[Sequence[str]] = None,
-        supported_roles: Optional[Sequence[ChatMessageRole]] = None,
-        max_pieces_in_response: Optional[int] = None,
-        max_text_length: Optional[int] = None,
-        enforce_all_pieces_valid: Optional[bool] = False,
-        raise_on_no_valid_pieces: Optional[bool] = False,
+        supported_data_types: Sequence[PromptDataType] | None = None,
+        required_metadata: Sequence[str] | None = None,
+        supported_roles: Sequence[ChatMessageRole] | None = None,
+        max_pieces_in_response: int | None = None,
+        max_text_length: int | None = None,
+        enforce_all_pieces_valid: bool | None = False,
+        raise_on_no_valid_pieces: bool | None = False,
         is_objective_required: bool = False,
     ) -> None:
         """
         Initialize the ScorerPromptValidator.
 
         Args:
-            supported_data_types (Optional[Sequence[PromptDataType]]): Data types that the scorer supports.
+            supported_data_types (Sequence[PromptDataType] | None): Data types that the scorer supports.
                 Defaults to all data types if not provided.
-            required_metadata (Optional[Sequence[str]]): Metadata keys that must be present in message pieces.
+            required_metadata (Sequence[str] | None): Metadata keys that must be present in message pieces.
                 Defaults to empty list.
-            supported_roles (Optional[Sequence[ChatMessageRole]]): Message roles that the scorer supports.
+            supported_roles (Sequence[ChatMessageRole] | None): Message roles that the scorer supports.
                 Defaults to all roles if not provided.
-            max_pieces_in_response (Optional[int]): Maximum number of pieces allowed in a response.
+            max_pieces_in_response (int | None): Maximum number of pieces allowed in a response.
                 Defaults to None (no limit).
-            max_text_length (Optional[int]): Maximum character length for text data type pieces.
+            max_text_length (int | None): Maximum character length for text data type pieces.
                 Defaults to None (no limit).
-            enforce_all_pieces_valid (Optional[bool]): Whether all pieces must be valid or just at least one.
+            enforce_all_pieces_valid (bool | None): Whether all pieces must be valid or just at least one.
                 Defaults to False.
-            raise_on_no_valid_pieces (Optional[bool]): Whether to raise ValueError when no pieces are valid.
+            raise_on_no_valid_pieces (bool | None): Whether to raise ValueError when no pieces are valid.
                 Defaults to False, allowing scorers to handle empty results gracefully (e.g., returning
                 False for blocked responses). Set to True to raise an exception instead.
             is_objective_required (bool): Whether an objective must be provided for scoring. Defaults to False.

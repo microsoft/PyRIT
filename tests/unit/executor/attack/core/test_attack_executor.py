@@ -79,6 +79,73 @@ class TestAttackExecutorInitialization:
 
 
 @pytest.mark.usefixtures("patch_central_database")
+class TestAttackExecutorSemaphoreLifecycle:
+    """Tests for the lazy, loop-aware semaphore in ``AttackExecutor._get_semaphore``.
+
+    The semaphore is constructed lazily (not in ``__init__``) and rebuilt whenever the
+    running event loop changes. This guards against the ``RuntimeError: <Semaphore> is
+    bound to a different event loop`` failure mode that bites callers who construct an
+    ``AttackExecutor`` once and reuse it across ``asyncio.run(...)`` invocations.
+    """
+
+    def test_semaphore_is_none_immediately_after_init(self):
+        """Constructor must NOT touch the running loop; semaphore stays unbound until used."""
+        executor = AttackExecutor(max_concurrency=3)
+        assert executor._semaphore is None
+        assert executor._semaphore_loop is None
+
+    async def test_first_get_semaphore_call_binds_to_running_loop(self):
+        """First call inside a loop returns a Semaphore bound to that loop with correct permits."""
+        executor = AttackExecutor(max_concurrency=3)
+
+        sem = executor._get_semaphore()
+
+        assert isinstance(sem, asyncio.Semaphore)
+        # ``_value`` is CPython's internal permit counter — fine for a unit test sanity check.
+        assert sem._value == 3  # type: ignore[attr-defined]
+        assert executor._semaphore is sem
+        assert executor._semaphore_loop is asyncio.get_running_loop()
+
+    async def test_repeated_calls_in_same_loop_return_same_instance(self):
+        """Within a single loop the semaphore must be reused (not rebuilt) so permits are shared."""
+        executor = AttackExecutor(max_concurrency=2)
+
+        sem1 = executor._get_semaphore()
+        sem2 = executor._get_semaphore()
+        sem3 = executor._get_semaphore()
+
+        assert sem1 is sem2 is sem3
+
+    def test_semaphore_is_rebuilt_when_event_loop_changes(self):
+        """Reusing one AttackExecutor across asyncio.run() calls must NOT raise.
+
+        This is the regression test for the loop-binding bug: an ``asyncio.Semaphore``
+        bound to loop A raises ``RuntimeError`` if acquired under loop B. ``_get_semaphore``
+        detects the loop change and rebuilds, so the same executor is safe to reuse.
+        """
+        executor = AttackExecutor(max_concurrency=2)
+
+        captured: dict[str, object] = {}
+
+        async def take_semaphore(label: str) -> None:
+            sem = executor._get_semaphore()
+            captured[f"{label}_sem"] = sem
+            captured[f"{label}_loop"] = asyncio.get_running_loop()
+            # Actually acquire so we'd see the "bound to different loop" RuntimeError if
+            # the rebuild logic is broken.
+            async with sem:
+                pass
+
+        asyncio.run(take_semaphore("first"))
+        asyncio.run(take_semaphore("second"))
+
+        # Two separate asyncio.run() calls create two separate loops.
+        assert captured["first_loop"] is not captured["second_loop"]
+        # And the semaphore must have been rebuilt for the second loop.
+        assert captured["first_sem"] is not captured["second_sem"]
+
+
+@pytest.mark.usefixtures("patch_central_database")
 class TestExecuteAttackAsync:
     """Tests for execute_attack_async method."""
 
@@ -192,7 +259,8 @@ class TestExecuteAttackAsync:
             nonlocal concurrent_count, max_concurrent
             concurrent_count += 1
             max_concurrent = max(max_concurrent, concurrent_count)
-            await asyncio.sleep(0.05)
+            # Yield so other tasks bounded by the semaphore can also enter.
+            await asyncio.sleep(0)
             concurrent_count -= 1
             return create_attack_result(context.params.objective)
 
@@ -215,7 +283,8 @@ class TestExecuteAttackAsync:
         async def mock_execute(*, context):
             objective = context.params.objective
             execution_order.append(f"start_{objective}")
-            await asyncio.sleep(0.01)
+            # Yield once so another task could interleave if max_concurrency > 1.
+            await asyncio.sleep(0)
             execution_order.append(f"end_{objective}")
             return create_attack_result(objective)
 
@@ -334,6 +403,99 @@ class TestExecuteAttackFromSeedGroupsAsync:
                 seed_groups=[sg1, sg2],
                 field_overrides=[],
             )
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestAttributionPropagation:
+    """Tests for AttackResultAttribution propagation through the AttackExecutor.
+
+    The executor stamps the same ``AttackResultAttribution`` on every per-task
+    context. Per-task identity is reconstructed from each row's own
+    ``objective_sha256`` at hydration/resume time, so no positional state is
+    threaded through the executor.
+    """
+
+    async def test_attribution_stamps_every_per_task_context(self):
+        from pyrit.executor.attack.core.attack_result_attribution import AttackResultAttribution
+
+        attack = create_mock_attack()
+        seen_parent_ids: list[str] = []
+        seen_collections: list[str] = []
+
+        async def capture(context):
+            attr = context._attribution
+            assert attr is not None
+            seen_parent_ids.append(attr.parent_id)
+            seen_collections.append(attr.parent_collection)
+            return create_attack_result(context.params.objective)
+
+        attack.execute_with_context_async = AsyncMock(side_effect=capture)
+
+        seed_groups = [create_seed_group(f"obj-{i}") for i in range(4)]
+        attribution = AttackResultAttribution(parent_id="sid", parent_collection="atomic")
+
+        executor = AttackExecutor(max_concurrency=1)
+        result = await executor.execute_attack_from_seed_groups_async(
+            attack=attack,
+            seed_groups=seed_groups,
+            attribution=attribution,
+        )
+
+        assert seen_parent_ids == ["sid"] * 4
+        assert seen_collections == ["atomic"] * 4
+        assert len(result.completed_results) == 4
+
+    async def test_attribution_parallel_safe_with_high_concurrency(self):
+        """At max_concurrency > 1, every task still sees the same attribution
+        regardless of completion order — there is no per-task positional state.
+        """
+        from pyrit.executor.attack.core.attack_result_attribution import AttackResultAttribution
+
+        attack = create_mock_attack()
+        seen: dict[str, AttackResultAttribution] = {}
+
+        async def out_of_order(context):
+            attr = context._attribution
+            assert attr is not None
+            # Yield so all tasks run concurrently under the high-concurrency executor;
+            # the assertion verifies attribution is per-task regardless of order.
+            await asyncio.sleep(0)
+            seen[context.params.objective] = attr
+            return create_attack_result(context.params.objective)
+
+        attack.execute_with_context_async = AsyncMock(side_effect=out_of_order)
+
+        seed_groups = [create_seed_group(f"obj-{i}") for i in range(6)]
+        attribution = AttackResultAttribution(parent_id="sid", parent_collection="atomic")
+
+        executor = AttackExecutor(max_concurrency=6)
+        await executor.execute_attack_from_seed_groups_async(
+            attack=attack,
+            seed_groups=seed_groups,
+            attribution=attribution,
+        )
+
+        for i in range(6):
+            attr = seen[f"obj-{i}"]
+            assert attr.parent_id == "sid"
+            assert attr.parent_collection == "atomic"
+
+    async def test_no_attribution_leaves_context_attribution_none(self):
+        attack = create_mock_attack()
+
+        async def capture(context):
+            attr = context._attribution
+            assert attr is None
+            return create_attack_result(context.params.objective)
+
+        attack.execute_with_context_async = AsyncMock(side_effect=capture)
+
+        seed_groups = [create_seed_group("obj-0"), create_seed_group("obj-1")]
+        executor = AttackExecutor(max_concurrency=2)
+        await executor.execute_attack_from_seed_groups_async(
+            attack=attack,
+            seed_groups=seed_groups,
+        )
 
 
 @pytest.mark.usefixtures("patch_central_database")

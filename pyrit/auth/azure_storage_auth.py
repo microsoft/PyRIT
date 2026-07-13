@@ -20,7 +20,7 @@ class AzureStorageAuth:
     """
 
     @staticmethod
-    async def get_user_delegation_key(blob_service_client: BlobServiceClient) -> UserDelegationKey:
+    async def get_user_delegation_key_async(blob_service_client: BlobServiceClient) -> UserDelegationKey:
         """
         Retrieve a user delegation key valid for one day.
 
@@ -39,7 +39,7 @@ class AzureStorageAuth:
         )
 
     @staticmethod
-    async def get_sas_token(container_url: str) -> str:
+    async def get_sas_token_async(container_url: str) -> str:
         """
         Generate a SAS token for the specified blob using a user delegation key.
 
@@ -72,7 +72,7 @@ class AzureStorageAuth:
 
         try:
             async with BlobServiceClient(account_url=account_url, credential=credential) as blob_service_client:
-                user_delegation_key = await AzureStorageAuth.get_user_delegation_key(
+                user_delegation_key = await AzureStorageAuth.get_user_delegation_key_async(
                     blob_service_client=blob_service_client
                 )
                 container_name = parsed_url.path.lstrip("/")

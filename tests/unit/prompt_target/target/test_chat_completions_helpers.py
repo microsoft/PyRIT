@@ -12,7 +12,6 @@ import pytest
 
 from pyrit.exceptions import EmptyResponseException, PyritException
 from pyrit.models import Message, MessagePiece
-from pyrit.models.json_response_config import _JsonResponseConfig
 from pyrit.prompt_target.common.chat_completions_message_builder import (
     build_multimodal_chat_messages_async,
     build_response_format,
@@ -33,6 +32,7 @@ from pyrit.prompt_target.common.chat_completions_response_parser import (
     token_usage_from_chat_completion,
     validate_chat_completion_response,
 )
+from pyrit.prompt_target.common.json_response_config import _JsonResponseConfig
 
 pytestmark = pytest.mark.usefixtures("patch_central_database")
 
@@ -394,7 +394,7 @@ async def test_save_audio_response_async_wav():
     with patch("pyrit.prompt_target.common.chat_completions_response_parser.data_serializer_factory") as mock_factory:
         serializer = MagicMock()
         serializer.value = "/path/audio.wav"
-        serializer.save_data = AsyncMock()
+        serializer.save_data_async = AsyncMock()
         mock_factory.return_value = serializer
 
         result = await save_audio_response_async(
@@ -402,7 +402,7 @@ async def test_save_audio_response_async_wav():
         )
 
     mock_factory.assert_called_once_with(category="prompt-memory-entries", data_type="audio_path", extension=".wav")
-    serializer.save_data.assert_awaited_once_with(b"abc")
+    serializer.save_data_async.assert_awaited_once_with(b"abc")
     assert result == "/path/audio.wav"
 
 
@@ -410,7 +410,7 @@ async def test_save_audio_response_async_pcm16_wraps_wav():
     with patch("pyrit.prompt_target.common.chat_completions_response_parser.data_serializer_factory") as mock_factory:
         serializer = MagicMock()
         serializer.value = "/path/audio.wav"
-        serializer.save_formatted_audio = AsyncMock()
+        serializer.save_formatted_audio_async = AsyncMock()
         mock_factory.return_value = serializer
 
         result = await save_audio_response_async(
@@ -418,7 +418,7 @@ async def test_save_audio_response_async_pcm16_wraps_wav():
         )
 
     mock_factory.assert_called_once_with(category="prompt-memory-entries", data_type="audio_path", extension=".wav")
-    serializer.save_formatted_audio.assert_awaited_once_with(
+    serializer.save_formatted_audio_async.assert_awaited_once_with(
         data=b"pcmdata", num_channels=1, sample_width=2, sample_rate=24000
     )
     assert result == "/path/audio.wav"
@@ -431,7 +431,7 @@ async def test_build_audio_pieces_async_transcript_and_file():
     with patch("pyrit.prompt_target.common.chat_completions_response_parser.data_serializer_factory") as mock_factory:
         serializer = MagicMock()
         serializer.value = "/path/audio.wav"
-        serializer.save_data = AsyncMock()
+        serializer.save_data_async = AsyncMock()
         mock_factory.return_value = serializer
 
         pieces = await build_audio_pieces_async(message=message, request=_request_piece(), audio_format="wav")
@@ -454,7 +454,7 @@ async def test_build_response_pieces_async_orders_text_audio_tool():
     with patch("pyrit.prompt_target.common.chat_completions_response_parser.data_serializer_factory") as mock_factory:
         serializer = MagicMock()
         serializer.value = "/path/audio.wav"
-        serializer.save_data = AsyncMock()
+        serializer.save_data_async = AsyncMock()
         mock_factory.return_value = serializer
 
         pieces = await build_response_pieces_async(response=resp, request=_request_piece(), audio_format="wav")

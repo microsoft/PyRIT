@@ -23,7 +23,7 @@
 # - **[Audio to Audio](#audio-to-audio)**: Modify audio files (speed, volume, echo, frequency, noise)
 
 # %% [markdown]
-# <a id="text-to-audio"></a>
+# (text-to-audio)=
 # ## Text to Audio
 #
 # The `AzureSpeechTextToAudioConverter` converts text input into audio output, generating spoken audio files.
@@ -31,7 +31,7 @@
 # %%
 import os
 
-from pyrit.prompt_converter import AzureSpeechTextToAudioConverter
+from pyrit.converter import AzureSpeechTextToAudioConverter
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 
 await initialize_pyrit_async(memory_db_type=IN_MEMORY)  # type: ignore
@@ -45,7 +45,7 @@ print(audio_convert_result)
 assert os.path.exists(audio_convert_result.output_text)
 
 # %% [markdown]
-# <a id="audio-to-text"></a>
+# (audio-to-text)=
 # ## Audio to Text
 #
 # The `AzureSpeechAudioToTextConverter` transcribes audio files into text. Below we use the audio file created in the previous section.
@@ -55,7 +55,7 @@ import logging
 import pathlib
 
 from pyrit.common.path import DB_DATA_PATH
-from pyrit.prompt_converter import AzureSpeechAudioToTextConverter
+from pyrit.converter import AzureSpeechAudioToTextConverter
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -70,7 +70,7 @@ transcript = await speech_text_converter.convert_async(prompt=prompt)  # type: i
 print(transcript)
 
 # %% [markdown]
-# <a id="audio-to-audio"></a>
+# (audio-to-audio)=
 # ## Audio to Audio
 #
 # Audio-to-audio converters modify existing audio files. All of these converters accept `audio_path` input
@@ -84,7 +84,7 @@ print(transcript)
 # - **`AudioWhiteNoiseConverter`** — Mixes white noise into the signal
 
 # %%
-from pyrit.prompt_converter import (
+from pyrit.converter import (
     AudioEchoConverter,
     AudioFrequencyConverter,
     AudioSpeedConverter,

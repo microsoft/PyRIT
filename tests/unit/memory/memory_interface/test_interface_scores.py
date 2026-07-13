@@ -2,19 +2,17 @@
 # Licensed under the MIT license.
 
 
-import uuid
 from collections.abc import Sequence
 from typing import Literal
 from uuid import uuid4
 
 import pytest
-from unit.mocks import get_mock_target
 
-from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
-from pyrit.identifiers import ComponentIdentifier
-from pyrit.identifiers.identifier_filters import IdentifierFilter, IdentifierType
 from pyrit.memory import MemoryInterface, PromptMemoryEntry
 from pyrit.models import (
+    ComponentIdentifier,
+    IdentifierFilter,
+    IdentifierType,
     MessagePiece,
     Score,
     SeedPrompt,
@@ -29,9 +27,7 @@ def _test_scorer_id(name: str = "TestScorer") -> ComponentIdentifier:
     )
 
 
-def test_get_scores_by_attack_id_and_label(
-    sqlite_instance: MemoryInterface, sample_conversations: Sequence[MessagePiece]
-):
+def test_get_scores_by_label(sqlite_instance: MemoryInterface, sample_conversations: Sequence[MessagePiece]):
     # create list of scores that are associated with sample conversation entries
     # assert that that list of scores is the same as expected :-)
 
@@ -53,9 +49,8 @@ def test_get_scores_by_attack_id_and_label(
 
     sqlite_instance.add_scores_to_memory(scores=[score])
 
-    # Fetch the score we just added
-    assert sample_conversations[0].attack_identifier is not None
-    db_score = sqlite_instance.get_prompt_scores(attack_id=sample_conversations[0].attack_identifier.hash)
+    # Fetch the score we just added by label
+    db_score = sqlite_instance.get_prompt_scores(labels=sample_conversations[0].labels)
 
     assert len(db_score) == 1
     assert db_score[0].score_value == score.score_value
@@ -67,24 +62,11 @@ def test_get_scores_by_attack_id_and_label(
     assert db_score[0].scorer_class_identifier == score.scorer_class_identifier
     assert db_score[0].message_piece_id == score.message_piece_id
 
-    db_score = sqlite_instance.get_prompt_scores(labels=sample_conversations[0].labels)
-    assert len(db_score) == 1
-    assert db_score[0].score_value == score.score_value
-
     db_score = sqlite_instance.get_scores(score_ids=[str(score.id)])
     assert len(db_score) == 1
     assert db_score[0].score_value == score.score_value
 
-    assert sample_conversations[0].attack_identifier is not None
-    db_score = sqlite_instance.get_prompt_scores(
-        attack_id=sample_conversations[0].attack_identifier.hash,
-        labels={"x": "y"},
-    )
-    assert len(db_score) == 0
-
-    db_score = sqlite_instance.get_prompt_scores(
-        attack_id=str(uuid.uuid4()),
-    )
+    db_score = sqlite_instance.get_prompt_scores(labels={"x": "y"})
     assert len(db_score) == 0
 
     db_score = sqlite_instance.get_scores()
@@ -139,6 +121,7 @@ def test_get_prompt_scores_empty_prompt_ids_returns_empty(sqlite_instance: Memor
         role="user",
         original_value="original prompt text",
         converted_value="Hello, how are you?",
+        conversation_id=str(uuid4()),
     )
     sqlite_instance.add_message_pieces_to_memory(message_pieces=[piece])
 
@@ -160,7 +143,6 @@ def test_get_prompt_scores_empty_prompt_ids_returns_empty(sqlite_instance: Memor
 def test_add_score_duplicate_prompt(sqlite_instance: MemoryInterface):
     # Ensure that scores of duplicate prompts are linked back to the original
     original_id = uuid4()
-    attack = PromptSendingAttack(objective_target=get_mock_target())
     conversation_id = str(uuid4())
     pieces = [
         MessagePiece(
@@ -170,12 +152,11 @@ def test_add_score_duplicate_prompt(sqlite_instance: MemoryInterface):
             converted_value="Hello, how are you?",
             conversation_id=conversation_id,
             sequence=0,
-            attack_identifier=attack.get_identifier(),
         )
     ]
     sqlite_instance.add_message_pieces_to_memory(message_pieces=pieces)
     sqlite_instance.duplicate_conversation(conversation_id=conversation_id)
-    # Get the duplicated piece (it will have a different conversation_id but same attack_id)
+    # Get the duplicated piece (it will have a different conversation_id)
     all_pieces = sqlite_instance.get_message_pieces()
     dupe_piece = [p for p in all_pieces if p.id != original_id][0]
     dupe_id = dupe_piece.id
@@ -211,6 +192,7 @@ def test_get_scores_by_memory_labels(sqlite_instance: MemoryInterface):
             converted_value="Hello, how are you?",
             sequence=0,
             labels={"sample": "label"},
+            conversation_id=str(uuid4()),
         )
     ]
     sqlite_instance.add_message_pieces_to_memory(message_pieces=pieces)

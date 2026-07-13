@@ -26,7 +26,7 @@ Deviations from any particular rule can occur depending on context and need.
 - One parameter per line
 - Spaces not tabs. Tab value must be 4 spaces
 - Test names should be test_foo test_bar, test_baz, etc.
-- In the case of type name conflicts, the desired type should be used in its fully-qualified (or disambiguating relatively-qualified) form: e.g. "pyrit.shared.foo"
+- In the case of type name conflicts, the desired type should be used in its fully-qualified (or disambiguating relatively-qualified) form: e.g. `pyrit.shared.foo`
 - Naming should follow typical Python naming. e.g. some_descriptive_name
 - PyRIT imports go last (after a newline)
 - Imports should go in alphabetical order

@@ -174,11 +174,11 @@ class TestSeedSimulatedConversationInit:
         assert conv.next_message_system_prompt_path == next_msg_path
 
 
-class TestSeedSimulatedConversationFromDict:
-    """Tests for SeedSimulatedConversation.from_dict method."""
+class TestSeedSimulatedConversationFromMapping:
+    """Tests for constructing SeedSimulatedConversation from a dict via ``model_validate``."""
 
     def test_from_dict_with_paths(self, tmp_path):
-        """Test from_dict with path values."""
+        """Test construction from a dict with path values."""
         adv_path = tmp_path / "adversarial.yaml"
         adv_path.write_text("value: test\ndata_type: text")
 
@@ -186,13 +186,13 @@ class TestSeedSimulatedConversationFromDict:
             "num_turns": 5,
             "adversarial_chat_system_prompt_path": str(adv_path),
         }
-        conv = SeedSimulatedConversation.from_dict(data)
+        conv = SeedSimulatedConversation.model_validate(data)
 
         assert conv.num_turns == 5
         assert conv.adversarial_chat_system_prompt_path == adv_path
 
     def test_from_dict_without_simulated_target_path(self, tmp_path):
-        """Test from_dict without simulated_target_system_prompt_path uses compliant default."""
+        """Test construction without simulated_target_system_prompt_path uses compliant default."""
         adv_path = tmp_path / "adversarial.yaml"
         adv_path.write_text("value: test\ndata_type: text")
 
@@ -200,29 +200,29 @@ class TestSeedSimulatedConversationFromDict:
             "num_turns": 3,
             "adversarial_chat_system_prompt_path": str(adv_path),
         }
-        conv = SeedSimulatedConversation.from_dict(data)
+        conv = SeedSimulatedConversation.model_validate(data)
 
         # Default simulated_target_system_prompt_path is the compliant prompt
         assert conv.simulated_target_system_prompt_path == SimulatedTargetSystemPromptPaths.COMPLIANT.value
 
     def test_from_dict_default_num_turns(self, tmp_path):
-        """Test from_dict uses default num_turns when not specified."""
+        """Test that num_turns defaults to 3 when not specified."""
         adv_path = tmp_path / "adversarial.yaml"
         adv_path.write_text("value: test\ndata_type: text")
 
         data = {
             "adversarial_chat_system_prompt_path": str(adv_path),
         }
-        conv = SeedSimulatedConversation.from_dict(data)
+        conv = SeedSimulatedConversation.model_validate(data)
 
         assert conv.num_turns == 3
 
     def test_from_dict_missing_adversarial_path_raises_error(self):
-        """Test that from_dict raises error when adversarial path is missing."""
+        """Test that construction raises when adversarial path is missing (required field)."""
         data = {"num_turns": 3}
 
-        with pytest.raises(ValueError, match="adversarial_chat_system_prompt_path is required"):
-            SeedSimulatedConversation.from_dict(data)
+        with pytest.raises(ValueError, match="adversarial_chat_system_prompt_path"):
+            SeedSimulatedConversation.model_validate(data)
 
 
 class TestSeedSimulatedConversationGetIdentifier:

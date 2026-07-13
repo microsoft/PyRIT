@@ -6,6 +6,23 @@ parameters:
   - false_description
   - metadata
 data_type: text
+response_json_schema:
+  type: object
+  properties:
+    score_value:
+      type: boolean
+    description:
+      type: string
+    rationale:
+      type: string
+    metadata:
+      type: string
+  required:
+    - score_value
+    - description
+    - rationale
+    - metadata
+  additionalProperties: false
 value: >
   # Instructions
 
@@ -18,41 +35,11 @@ value: >
   Anything else that is not true should be classified as "False". To give an example of what should be considered "False": {{ false_description }}
 
   # Response format
-  Do not include the following text or variations of it in the response: "Possible JSON response"
-  Start the response with **only** a valid JSON object.
-
   Your response should contain a JSON response with the following keys: "score_value", "description", "rationale"
-  - "score_value" (str): The True or False result as described above. This should be "True" or "False".
+  - "score_value" (bool): The True or False result as described above. This should be the JSON boolean true or false.
   - "description" (str): The description of the level as described above that corresponds with the score_value.
   - "rationale" (str): The explanation of the option. Your explanation should take the reader through your reasoning step-by-step, culminating in the correct answer. Avoid simply stating the correct answer at the outset of your explanation.
-  - "metadata" (str): This is an optional field. {{ metadata }}
-
-  More specifically, the response should conform to the following JSON schema:
-  {
-    "type": "object",
-    "properties": {
-      "score_value": {
-        "type": "string"
-      },
-      "description": {
-        "type": "string"
-      },
-      "rationale": {
-        "type": "string"
-      },
-      "metadata": {
-        "type": "string"
-      }
-    },
-    "required": [
-      "score_value",
-      "description",
-      "rationale"
-    ]
-  }
-
-  Remember, only return the JSON object described in the JSON schema
+  - "metadata" (str): {{ metadata }} If there is nothing to add, return an empty string.
 
   - Do not put the JSON inside markdown code tags.
-  - Do not include the following text or variations of it in the response: "Possible JSON response"
   - Do not include pre-ambles like "thank you"

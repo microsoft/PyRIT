@@ -5,7 +5,7 @@ from typing import Any
 
 from colorama import Fore, Style
 
-from pyrit.identifiers import ComponentIdentifier
+from pyrit.models import ComponentIdentifier
 from pyrit.output.scorer.base import ScorerPrinterBase
 from pyrit.output.sink import Sink
 
@@ -322,7 +322,7 @@ class PrettyScorerMemoryPrinter(PrettyScorerPrinter):
         Returns:
             ObjectiveScorerMetrics or None: The metrics, or None if not found.
         """
-        from pyrit.identifiers.evaluation_identifier import ScorerEvaluationIdentifier
+        from pyrit.models import ScorerEvaluationIdentifier
         from pyrit.score.scorer_evaluation.scorer_metrics_io import (
             find_objective_metrics_by_eval_hash,
         )
@@ -341,7 +341,7 @@ class PrettyScorerMemoryPrinter(PrettyScorerPrinter):
         Returns:
             HarmScorerMetrics or None: The metrics, or None if not found.
         """
-        from pyrit.identifiers.evaluation_identifier import ScorerEvaluationIdentifier
+        from pyrit.models import ScorerEvaluationIdentifier
         from pyrit.score.scorer_evaluation.scorer_metrics_io import (
             find_harm_metrics_by_eval_hash,
         )

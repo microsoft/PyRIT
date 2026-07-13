@@ -5,11 +5,18 @@ import uuid
 
 import pytest
 
-from pyrit.identifiers import ComponentIdentifier
-from pyrit.identifiers.atomic_attack_identifier import build_atomic_attack_identifier
 from pyrit.memory import MemoryInterface
-from pyrit.models import AttackOutcome, AttackResult, ConversationType, Message, MessagePiece, Score
-from pyrit.models.conversation_reference import ConversationReference
+from pyrit.models import (
+    AtomicAttackIdentifier,
+    AttackOutcome,
+    AttackResult,
+    ComponentIdentifier,
+    ConversationReference,
+    ConversationType,
+    Message,
+    MessagePiece,
+    Score,
+)
 from pyrit.output.attack_result.pretty import PrettyAttackResultMemoryPrinter
 
 
@@ -50,7 +57,7 @@ def printer(patch_central_database):
 def attack_result():
     return AttackResult(
         objective="Test objective",
-        atomic_attack_identifier=build_atomic_attack_identifier(attack_identifier=_attack_id()),
+        atomic_attack_identifier=AtomicAttackIdentifier.build(attack_identifier=_attack_id()),
         conversation_id="conv-main",
         executed_turns=3,
         execution_time_ms=1500,
@@ -328,33 +335,6 @@ async def test_write_async_renders_reasoning_summary_when_requested(printer, att
     assert "Reasoning Summary" in content
     assert "step one" in content
     assert "step two" in content
-
-
-# --- deprecated aliases (smoke check that they still forward to write_async) ---
-
-
-async def test_print_result_async_emits_deprecation_warning_and_still_writes(printer, attack_result, capsys):
-    with pytest.warns(DeprecationWarning, match="print_result_async"):
-        await printer.print_result_async(attack_result)
-    assert "ATTACK RESULT" in capsys.readouterr().out
-
-
-async def test_output_conversation_async_emits_deprecation_warning(printer, attack_result, capsys):
-    with pytest.warns(DeprecationWarning, match="output_conversation_async"):
-        await printer.output_conversation_async(attack_result)
-    assert "No conversation found" in capsys.readouterr().out
-
-
-async def test_print_summary_async_emits_deprecation_warning(printer, attack_result, capsys):
-    with pytest.warns(DeprecationWarning, match="print_summary_async"):
-        await printer.print_summary_async(attack_result)
-    assert "Test objective" in capsys.readouterr().out
-
-
-async def test_print_messages_async_emits_deprecation_warning(printer, capsys):
-    with pytest.warns(DeprecationWarning, match="print_messages_async"):
-        await printer.print_messages_async([])
-    assert "No messages to display" in capsys.readouterr().out
 
 
 # --- early-return branches: include flags but no related refs ---

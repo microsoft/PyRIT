@@ -3,17 +3,26 @@
 
 import abc
 import logging
-from typing import Any, Union, final
+from typing import Any, ClassVar, Literal, final
 
-from pyrit.common.deprecation import print_deprecation_message
-from pyrit.identifiers import ComponentIdentifier, Identifiable
 from pyrit.memory import CentralMemory, MemoryInterface
-from pyrit.models import Message, MessagePiece
-from pyrit.models.json_response_config import _JsonResponseConfig
-from pyrit.prompt_target.common.target_capabilities import CapabilityName, TargetCapabilities
+from pyrit.models import ComponentIdentifier, Conversation, Identifiable, Message, MessagePiece, TargetIdentifier
+from pyrit.prompt_target.common.json_response_config import _JsonResponseConfig
+from pyrit.prompt_target.common.target_capabilities import (
+    CapabilityName,
+    TargetCapabilities,
+    get_known_capabilities,
+)
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 
 logger = logging.getLogger(__name__)
+
+# Authentication modes a target can expose to the create-target catalog / API.
+# ``api_key`` passes a key (from params or the target's env var); ``identity``
+# omits the key so the target authenticates itself via an ambient Azure identity
+# (e.g. minting a Microsoft Entra ID token for its own endpoint, or falling back
+# to ``DefaultAzureCredential``).
+AuthMode = Literal["api_key", "identity"]
 
 
 class PromptTarget(Identifiable):
@@ -26,7 +35,7 @@ class PromptTarget(Identifiable):
 
     _memory: MemoryInterface
 
-    # A list of PromptConverters that are supported by the prompt target.
+    # A list of Converters that are supported by the prompt target.
     # An empty list implies that the prompt target supports all converters.
     supported_converters: list[Any]
 
@@ -43,8 +52,39 @@ class PromptTarget(Identifiable):
     # constructor parameter, which takes precedence over the class-level value.
     _DEFAULT_CONFIGURATION: TargetConfiguration = TargetConfiguration(capabilities=TargetCapabilities())
 
+    # Declarative auth facts consumed by the create-target service and catalog.
+    # Kept off ``TargetCapabilities`` (auth is a construction/credential axis, not
+    # a message-handling capability) and out of the identity hash. It is surfaced
+    # on ``TargetIdentifier`` only as a ``Param.ClassAttr`` (``Evaluate.Exclude``)
+    # so the registry can read it into ``TargetMetadata`` without building an
+    # instance — never as an identity input or a constructor argument.
+    #
+    # ``supported_auth_modes`` lists the auth modes the create-target API accepts
+    # for this type. Base default is api-key only; targets that can authenticate
+    # via an ambient Azure identity when given no key (e.g. OpenAI, Azure ML,
+    # Azure Blob Storage, Prompt Shield) override this to add ``"identity"``.
+    supported_auth_modes: ClassVar[tuple[AuthMode, ...]] = ("api_key",)
+
+    def __init_subclass__(cls, **kwargs: object) -> None:
+        """
+        Validate that subclasses follow the keyword-only ``__init__`` contract.
+
+        Args:
+            **kwargs: Additional keyword arguments passed to the superclass.
+
+        Raises:
+            TypeError: If the subclass ``__init__`` accepts positional parameters
+                after ``self``.
+        """
+        super().__init_subclass__(**kwargs)
+        # Local import to avoid a circular dependency at package init time.
+        from pyrit.common.brick_contract import enforce_keyword_only_init
+
+        enforce_keyword_only_init(cls, base_name="PromptTarget")
+
     def __init__(
         self,
+        *,
         verbose: bool = False,
         max_requests_per_minute: int | None = None,
         endpoint: str = "",
@@ -94,11 +134,11 @@ class PromptTarget(Identifiable):
         1. Validates the message, fetches the conversation from memory, appends ``message``, and runs
            the normalization pipeline (system‑squash, history‑squash, etc.).
         2. Validates the normalized conversation against the target's capabilities.
-        3. Delegates to :meth:`_send_prompt_to_target_async` with the normalized
+        3. Delegates to ``_send_prompt_to_target_async`` with the normalized
            conversation.
 
         Subclasses MUST NOT override this method. Override
-        :meth:`_send_prompt_to_target_async` instead.
+        ``_send_prompt_to_target_async`` instead.
 
         Args:
             message (Message): The message to send.
@@ -121,7 +161,7 @@ class PromptTarget(Identifiable):
         """
         Target-specific send logic.
 
-        Called by :meth:`send_prompt_async` after validation and normalization.
+        Called by ``send_prompt_async`` after validation and normalization.
 
         Args:
             normalized_conversation (list[Message]): The full conversation
@@ -194,7 +234,9 @@ class PromptTarget(Identifiable):
                 history squashed, etc.).
         """
         conversation_id = message.message_pieces[0].conversation_id
-        conversation = list(self._memory.get_conversation(conversation_id=conversation_id))
+        conversation = (
+            list(self._memory.get_conversation_messages(conversation_id=conversation_id)) if conversation_id else []
+        )
         conversation.append(message)
         normalized = await self.configuration.normalize_async(messages=conversation)
         if normalized:
@@ -229,13 +271,26 @@ class PromptTarget(Identifiable):
         metadata so that the response built from the normalized message stays part of the
         correct conversation and retains traceability.
 
+        ``prompt_metadata`` is handled by provenance so that metadata-editing normalizers
+        are honored. A piece that shares the source piece's ``id`` is the same logical piece
+        (possibly a copy whose metadata a normalizer intentionally edited or stripped, e.g.
+        ``JsonSchemaNormalizer``) — its metadata is kept as-is. A piece with a different
+        ``id`` is brand-new (e.g. a squashed message), so the source's request metadata is
+        restored, with any keys the normalizer set on the new piece taking precedence.
+
         Args:
             source: The original (pre-normalization) message whose metadata is authoritative.
             target_message: The normalized message whose pieces will be updated in place.
         """
         source_piece = source.message_pieces[0]
         for piece in target_message.message_pieces:
-            piece.copy_lineage_from(source_piece)
+            normalized_metadata = dict(piece.prompt_metadata)
+            is_new_piece = piece.id != source_piece.id
+            piece.copy_lineage_from(source=source_piece)
+            if is_new_piece:
+                piece.prompt_metadata = {**dict(source_piece.prompt_metadata), **normalized_metadata}
+            else:
+                piece.prompt_metadata = normalized_metadata
 
     def set_model_name(self, *, model_name: str) -> None:
         """
@@ -251,8 +306,6 @@ class PromptTarget(Identifiable):
         *,
         system_prompt: str,
         conversation_id: str,
-        attack_identifier: ComponentIdentifier | None = None,
-        labels: dict[str, str] | None = None,  # deprecated
     ) -> None:
         """
         Inject a system prompt into memory for the given conversation.
@@ -263,7 +316,7 @@ class PromptTarget(Identifiable):
 
         If the target does not natively support system prompts, whether this
         call is ultimately honored depends on the target's
-        :class:`CapabilityHandlingPolicy`:
+        ``CapabilityHandlingPolicy``:
 
         * ``ADAPT`` — the normalization pipeline (e.g. system squash) will
           fold the system message into user content on the wire.
@@ -273,41 +326,32 @@ class PromptTarget(Identifiable):
         Args:
             system_prompt (str): The system prompt text to set.
             conversation_id (str): The conversation id to attach the prompt to.
-            attack_identifier (ComponentIdentifier | None): Optional attack identifier.
-            labels (dict[str, str] | None): Optional labels.
 
         Raises:
             ValueError: If the target does not support multi-turn or editable history.
             RuntimeError: If the conversation already has messages.
         """
-        if labels is not None:
-            print_deprecation_message(
-                old_item="set_system_prompt(..., labels=...)",
-                new_item="set_system_prompt(...)",
-                removed_in="0.16.0",
-            )
-
         if not self.capabilities.supports_multi_turn or not self.capabilities.supports_editable_history:
             raise ValueError(
                 f"Target {type(self).__name__} does not support setting a system prompt. "
                 "It must support both multi-turn conversations and editable history."
             )
 
-        messages = self._memory.get_conversation(conversation_id=conversation_id)
+        messages = self._memory.get_conversation_messages(conversation_id=conversation_id)
 
         if messages:
             raise RuntimeError("Conversation already exists, system prompt needs to be set at the beginning")
 
+        self._memory.add_conversation_to_memory(
+            conversation=Conversation(conversation_id=conversation_id, target_identifier=self.get_identifier())
+        )
         self._memory.add_message_to_memory(
             request=MessagePiece(
                 role="system",
                 conversation_id=conversation_id,
                 original_value=system_prompt,
                 converted_value=system_prompt,
-                prompt_target_identifier=self.get_identifier(),
-                attack_identifier=attack_identifier,
-                labels=labels,
-            ).to_message()
+            ).to_message(),
         )
 
     def dispose_db_engine(self) -> None:
@@ -320,14 +364,16 @@ class PromptTarget(Identifiable):
         self,
         *,
         params: dict[str, Any] | None = None,
-        children: dict[str, Union[ComponentIdentifier, list[ComponentIdentifier]]] | None = None,
+        targets: list[ComponentIdentifier] | None = None,
     ) -> ComponentIdentifier:
         """
         Construct the target identifier.
 
-        Builds a ComponentIdentifier with the base target parameters (endpoint,
-        model_name, max_requests_per_minute) and merges in any additional params
-        or children provided by subclasses.
+        Builds a ``TargetIdentifier`` with the base target params (endpoint,
+        model_name, max_requests_per_minute) and the target's promoted child slot.
+        The child slot is exposed as an explicit named parameter (mirroring
+        ``TargetIdentifier``'s promoted field) so it cannot drift into an untyped
+        ``children`` dict.
 
         Subclasses should call this method in their _build_identifier() implementation
         to set the identifier with their specific parameters.
@@ -335,23 +381,22 @@ class PromptTarget(Identifiable):
         Args:
             params (dict[str, Any] | None): Additional behavioral parameters from
                 the subclass (e.g., temperature, top_p). Merged into the base params.
-            children (dict[str, Union[ComponentIdentifier, list[ComponentIdentifier]]] | None):
-                Named child component identifiers.
+            targets (list[ComponentIdentifier] | None): Inner targets of a
+                multi-target (e.g., ``RoundRobinTarget``), promoted to
+                ``TargetIdentifier.targets``.
 
         Returns:
             ComponentIdentifier: The identifier for this prompt target.
         """
-        all_params: dict[str, Any] = {
-            "endpoint": self._endpoint,
-            "model_name": self._model_name or "",
-            "underlying_model_name": self._underlying_model or "",
-            "max_requests_per_minute": self._max_requests_per_minute,
-            "target_configuration": self.configuration.as_identifier_params(),
-        }
-        if params:
-            all_params.update(params)
-
-        return ComponentIdentifier.of(self, params=all_params, children=children)
+        return TargetIdentifier.of(
+            self,
+            params=params,
+            endpoint=self._endpoint,
+            model_name=self._model_name or "",
+            underlying_model_name=self._underlying_model or "",
+            max_requests_per_minute=self._max_requests_per_minute,
+            targets=targets,
+        )
 
     @property
     def configuration(self) -> TargetConfiguration:
@@ -388,7 +433,7 @@ class PromptTarget(Identifiable):
 
         Policy is preserved because it expresses user intent (ADAPT vs RAISE),
         independent of what the probe found. To change policy or normalizer
-        overrides, build a new :class:`TargetConfiguration` and pass it via
+        overrides, build a new ``TargetConfiguration`` and pass it via
         ``custom_configuration`` at construction time instead.
 
         Note:
@@ -418,7 +463,7 @@ class PromptTarget(Identifiable):
             ``_DEFAULT_CONFIGURATION`` if the model is unrecognized or not provided.
         """
         if underlying_model:
-            known = TargetCapabilities.get_known_capabilities(underlying_model)
+            known = get_known_capabilities(underlying_model)
             if known is not None:
                 return TargetConfiguration(capabilities=known)
             logger.info(

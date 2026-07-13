@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { makeTarget } from "./_targets";
 
 test.describe("Accessibility", () => {
   test.beforeEach(async ({ page }) => {
@@ -13,12 +14,12 @@ test.describe("Accessibility", () => {
         contentType: "application/json",
         body: JSON.stringify({
           items: [
-            {
+            makeTarget({
               target_registry_name: "a11y-form-target",
               target_type: "OpenAIChatTarget",
               endpoint: "https://test.com",
               model_name: "gpt-4o",
-            },
+            }),
           ],
           pagination: { limit: 200, has_more: false, next_cursor: null, prev_cursor: null },
         }),
@@ -55,14 +56,19 @@ test.describe("Accessibility", () => {
     const configBtn = page.getByTitle("Configuration");
     await expect(configBtn).toBeVisible();
 
-    // Theme toggle button
-    const themeBtn = page.getByTitle(/light mode|dark mode/i);
+    // Theme toggle button (now a menu trigger with "Theme: <mode>" title)
+    const themeBtn = page.getByTitle(/^Theme:/);
     await expect(themeBtn).toBeVisible();
   });
 
   test("should be navigable with keyboard", async ({ page }) => {
-    // Tab to the first interactive element
-    await page.keyboard.press("Tab");
+    // Wait for the sidebar to render so there is a focusable element for Tab
+    // to land on, and dispatch the Tab through `body` (rather than the bare
+    // keyboard) to guarantee the document has focus when the keystroke fires.
+    // Without both, Chromium sometimes leaves `:focus` empty under parallel
+    // worker load.
+    await expect(page.getByTitle("Home")).toBeVisible();
+    await page.locator("body").press("Tab");
     const focused = page.locator(":focus");
     await expect(focused).toBeVisible();
 
@@ -79,12 +85,12 @@ test.describe("Accessibility", () => {
         contentType: "application/json",
         body: JSON.stringify({
           items: [
-            {
+            makeTarget({
               target_registry_name: "a11y-focus-target",
               target_type: "OpenAIChatTarget",
               endpoint: "https://test.com",
               model_name: "gpt-4o",
-            },
+            }),
           ],
           pagination: { limit: 200, has_more: false, next_cursor: null, prev_cursor: null },
         }),
@@ -119,12 +125,12 @@ test.describe("Accessibility", () => {
         contentType: "application/json",
         body: JSON.stringify({
           items: [
-            {
+            makeTarget({
               target_registry_name: "a11y-test-target",
               target_type: "OpenAIChatTarget",
               endpoint: "https://test.com",
               model_name: "gpt-4o",
-            },
+            }),
           ],
           pagination: { limit: 200, has_more: false, next_cursor: null, prev_cursor: null },
         }),
@@ -145,18 +151,20 @@ test.describe("Visual Consistency", () => {
   test("should render without layout shifts", async ({ page }) => {
     await page.goto("/");
 
-    // Wait for initial render
-    await expect(page.getByText("PyRIT Attack")).toBeVisible();
+    // Wait for initial render then navigate to chat to measure the chat ribbon
+    await expect(page.getByTitle("Chat")).toBeVisible();
+    await page.getByTitle("Chat").click();
+    const anchor = page.getByTestId("new-attack-btn");
+    await expect(anchor).toBeVisible();
 
     // Take measurements
-    const header = page.getByText("PyRIT Attack");
-    const initialBox = await header.boundingBox();
+    const initialBox = await anchor.boundingBox();
 
     // Wait a moment for any delayed renders
     await page.waitForTimeout(500);
 
     // Verify position hasn't changed
-    const finalBox = await header.boundingBox();
+    const finalBox = await anchor.boundingBox();
 
     if (initialBox && finalBox) {
       expect(finalBox.x).toBe(initialBox.x);

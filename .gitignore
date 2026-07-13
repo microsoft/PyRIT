@@ -1,6 +1,6 @@
 # PyRIT-specific configs
 submodules/
-results/
+/results/
 dbdata/
 eval/
 default_memory.json.memory
@@ -59,6 +59,7 @@ coverage.xml
 *.py,cover
 .hypothesis/
 .pytest_cache/
+.mypy_cache/
 cover/
 
 # Translations
@@ -200,3 +201,6 @@ doc/_autosummary/
 
 # Custom user instructions
 .github/instructions/user-custom.instructions.md
+
+# Impeccable skill local cache
+.impeccable/

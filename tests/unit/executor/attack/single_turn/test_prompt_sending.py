@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from unit.mocks import get_mock_scorer_identifier, get_mock_target_identifier
 
+from pyrit.converter import Base64Converter, StringJoinConverter
 from pyrit.executor.attack import (
     AttackConverterConfig,
     AttackParameters,
@@ -24,8 +25,7 @@ from pyrit.models import (
     SeedGroup,
     SeedPrompt,
 )
-from pyrit.prompt_converter import Base64Converter, StringJoinConverter
-from pyrit.prompt_normalizer import PromptConverterConfiguration, PromptNormalizer
+from pyrit.prompt_normalizer import ConverterConfiguration, PromptNormalizer
 from pyrit.prompt_target import PromptTarget
 from pyrit.score import Scorer, TrueFalseScorer
 
@@ -87,10 +87,10 @@ def success_score():
     return Score(
         score_type="true_false",
         score_value="true",
-        score_category="test",
+        score_category=["test"],
         score_value_description="Test success score",
         score_rationale="Test rationale for success",
-        score_metadata="{}",
+        score_metadata={},
         message_piece_id=str(uuid.uuid4()),
         scorer_class_identifier=get_mock_scorer_identifier(),
     )
@@ -257,11 +257,11 @@ class TestSetupPhase:
         assert basic_context.conversation_id  # Should have a new conversation_id
 
     async def test_setup_updates_conversation_state_with_converters(self, mock_target, basic_context):
-        from pyrit.prompt_normalizer.prompt_converter_configuration import (
-            PromptConverterConfiguration,
+        from pyrit.prompt_normalizer.converter_configuration import (
+            ConverterConfiguration,
         )
 
-        converter_config = [PromptConverterConfiguration(converters=[])]
+        converter_config = [ConverterConfiguration(converters=[])]
         attack = PromptSendingAttack(
             objective_target=mock_target,
             attack_converter_config=AttackConverterConfig(request_converters=converter_config),
@@ -386,12 +386,12 @@ class TestPromptSending:
     async def test_send_prompt_to_target_with_all_configurations(
         self, mock_target, mock_prompt_normalizer, basic_context
     ):
-        from pyrit.prompt_normalizer.prompt_converter_configuration import (
-            PromptConverterConfiguration,
+        from pyrit.prompt_normalizer.converter_configuration import (
+            ConverterConfiguration,
         )
 
-        request_converters = [PromptConverterConfiguration(converters=[])]
-        response_converters = [PromptConverterConfiguration(converters=[])]
+        request_converters = [ConverterConfiguration(converters=[])]
+        response_converters = [ConverterConfiguration(converters=[])]
 
         attack = PromptSendingAttack(
             objective_target=mock_target,
@@ -417,8 +417,7 @@ class TestPromptSending:
         assert call_args.kwargs["conversation_id"] == basic_context.conversation_id
         assert call_args.kwargs["request_converter_configurations"] == request_converters
         assert call_args.kwargs["response_converter_configurations"] == response_converters
-        assert call_args.kwargs["labels"] == {"test": "label"}
-        assert "attack_identifier" in call_args.kwargs
+        assert message.message_pieces[0].labels == {"test": "label"}
 
     async def test_send_prompt_handles_none_response(self, mock_target, mock_prompt_normalizer, basic_context):
         attack = PromptSendingAttack(objective_target=mock_target, prompt_normalizer=mock_prompt_normalizer)
@@ -719,7 +718,7 @@ class TestConverterIntegration:
         input_text,
         expected_pattern,
     ):
-        converter_config = PromptConverterConfiguration.from_converters(converters=converters)
+        converter_config = ConverterConfiguration.from_converters(converters=converters)
 
         attack = PromptSendingAttack(
             objective_target=mock_target,
@@ -745,7 +744,7 @@ class TestConverterIntegration:
         self, mock_target, mock_prompt_normalizer, basic_context, sample_response
     ):
         response_converter = Base64Converter()
-        converter_config = PromptConverterConfiguration.from_converters(converters=[response_converter])
+        converter_config = ConverterConfiguration.from_converters(converters=[response_converter])
 
         attack = PromptSendingAttack(
             objective_target=mock_target,
@@ -846,10 +845,10 @@ class TestDetermineAttackOutcome:
         true_score = Score(
             score_type="true_false",
             score_value="true",
-            score_category="test",
+            score_category=["test"],
             score_value_description="Success",
             score_rationale="Objective achieved",
-            score_metadata="{}",
+            score_metadata={},
             message_piece_id=str(uuid.uuid4()),
             scorer_class_identifier=get_mock_scorer_identifier(),
         )
@@ -871,10 +870,10 @@ class TestDetermineAttackOutcome:
         false_score = Score(
             score_type="true_false",
             score_value="false",
-            score_category="test",
+            score_category=["test"],
             score_value_description="Failure",
             score_rationale="Objective not achieved",
-            score_metadata="{}",
+            score_metadata={},
             message_piece_id=str(uuid.uuid4()),
             scorer_class_identifier=get_mock_scorer_identifier(),
         )
@@ -896,10 +895,10 @@ class TestDetermineAttackOutcome:
         false_score = Score(
             score_type="true_false",
             score_value="False",
-            score_category="test",
+            score_category=["test"],
             score_value_description="Failure",
             score_rationale="Objective not achieved",
-            score_metadata="{}",
+            score_metadata={},
             message_piece_id=str(uuid.uuid4()),
             scorer_class_identifier=get_mock_scorer_identifier(),
         )

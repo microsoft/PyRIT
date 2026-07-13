@@ -65,7 +65,7 @@ class PrettyScorePrinter(PrinterBase):
         """
         lines: list[str] = []
         indent = self._indent * indent_level
-        scorer_name = score.scorer_class_identifier.class_name
+        scorer_name = (score.scorer_class_identifier.class_name if score.scorer_class_identifier else None) or "Unknown"
         lines.append(f"{indent}Scorer: {scorer_name}\n")
         lines.append(self._format_colored(f"{indent}• Category: {score.score_category or 'N/A'}", Fore.LIGHTMAGENTA_EX))
         lines.append(self._format_colored(f"{indent}• Type: {score.score_type}", Fore.CYAN))

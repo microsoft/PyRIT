@@ -4,15 +4,15 @@
 import uuid
 
 import pytest
+from unit.mocks import make_scenario_result
 
-from pyrit.identifiers.component_identifier import ComponentIdentifier
-from pyrit.models import AttackOutcome, AttackResult
-from pyrit.models.scenario_result import ScenarioIdentifier, ScenarioResult
+from pyrit.models import (
+    AttackOutcome,
+    AttackResult,
+    ComponentIdentifier,
+    ScenarioResult,
+)
 from pyrit.output.scenario_result.pretty import PrettyScenarioResultMemoryPrinter
-
-
-def _scenario_identifier(*, name: str = "TestScenario", description: str = "") -> ScenarioIdentifier:
-    return ScenarioIdentifier(name=name, description=description, scenario_version=1, pyrit_version="1.0.0")
 
 
 def _target_identifier(**params) -> ComponentIdentifier:
@@ -31,12 +31,15 @@ def _scenario_result(
     objective_scorer_identifier: ComponentIdentifier | None = None,
     display_group_map: dict[str, str] | None = None,
 ) -> ScenarioResult:
-    return ScenarioResult(
-        scenario_identifier=_scenario_identifier(description=description),
+    return make_scenario_result(
+        scenario_name="TestScenario",
+        scenario_version=1,
+        pyrit_version="1.0.0",
+        scenario_description=description,
         objective_target_identifier=_target_identifier(**(target_params or {})),
-        attack_results=attack_results or {"strategy_a": [_attack_result()]},
+        attack_results=attack_results or {"technique_a": [_attack_result()]},
         objective_scorer_identifier=objective_scorer_identifier,
-        display_group_map=display_group_map,
+        display_group_map=display_group_map or {},
     )
 
 
@@ -53,11 +56,11 @@ async def test_write_async_renders_full_summary(printer, capsys):
         description="A scenario with a long description that should be wrapped neatly across multiple lines",
         target_params={"model_name": "gpt-test", "endpoint": "https://example.com"},
         attack_results={
-            "strategy_a": [
+            "technique_a": [
                 _attack_result(outcome=AttackOutcome.SUCCESS),
                 _attack_result(outcome=AttackOutcome.FAILURE),
             ],
-            "strategy_b": [_attack_result(outcome=AttackOutcome.SUCCESS)],
+            "technique_b": [_attack_result(outcome=AttackOutcome.SUCCESS)],
         },
     )
     await printer.write_async(result)
@@ -71,17 +74,19 @@ async def test_write_async_renders_full_summary(printer, capsys):
     assert "gpt-test" in out
     assert "https://example.com" in out
     assert "Overall Statistics" in out
-    assert "Total Strategies: 2" in out
+    assert "Total Techniques: 2" in out
     assert "Total Attack Results: 3" in out
     assert "Per-Group Breakdown" in out
-    assert "strategy_a" in out
-    assert "strategy_b" in out
+    assert "technique_a" in out
+    assert "technique_b" in out
 
 
 async def test_write_async_with_unknown_target_when_no_params(printer, capsys):
-    result = ScenarioResult(
-        scenario_identifier=_scenario_identifier(),
-        objective_target_identifier=ComponentIdentifier.from_dict({}),
+    result = make_scenario_result(
+        scenario_name="TestScenario",
+        scenario_version=1,
+        pyrit_version="1.0.0",
+        objective_target_identifier=ComponentIdentifier.model_validate({}),
         attack_results={"s": []},
         objective_scorer_identifier=None,
     )
@@ -103,7 +108,9 @@ async def test_write_async_renders_scorer_section_when_scorer_identifier_present
     assert "[scorer-render-output]" in capsys.readouterr().out
 
 
-async def test_write_async_raises_when_scorer_identifier_present_without_scorer_printer(patch_central_database):
+async def test_write_async_raises_when_scorer_identifier_present_without_scorer_printer(
+    patch_central_database,
+):
     printer = PrettyScenarioResultMemoryPrinter(enable_colors=False)
     printer._scorer_printer = None
     result = _scenario_result(objective_scorer_identifier=_target_identifier())
@@ -116,7 +123,10 @@ async def test_write_async_raises_when_scorer_identifier_present_without_scorer_
     [
         (100, [AttackOutcome.SUCCESS, AttackOutcome.SUCCESS]),  # >=75 RED band
         (50, [AttackOutcome.SUCCESS, AttackOutcome.FAILURE]),  # >=50 YELLOW band
-        (33, [AttackOutcome.SUCCESS, AttackOutcome.FAILURE, AttackOutcome.FAILURE]),  # >=25 CYAN band
+        (
+            33,
+            [AttackOutcome.SUCCESS, AttackOutcome.FAILURE, AttackOutcome.FAILURE],
+        ),  # >=25 CYAN band
         (0, [AttackOutcome.FAILURE]),  # <25 GREEN band
     ],
 )
@@ -144,18 +154,69 @@ async def test_write_async_per_group_breakdown_with_display_group_map(printer, c
 
 
 async def test_write_async_per_group_breakdown_with_empty_group(printer, capsys):
-    result = _scenario_result(attack_results={"empty_strategy": []})
+    result = _scenario_result(attack_results={"empty_technique": []})
     await printer.write_async(result)
     out = capsys.readouterr().out
-    assert "Group: empty_strategy" in out
+    assert "Group: empty_technique" in out
     assert "Number of Results: 0" in out
     assert "Success Rate: 0%" in out
 
 
-# --- deprecated alias ---
+# --- sort_groups_by_success_rate ---
 
 
-async def test_print_summary_async_emits_deprecation_warning(printer, capsys):
-    with pytest.warns(DeprecationWarning, match="print_summary_async"):
-        await printer.print_summary_async(_scenario_result())
-    assert "SCENARIO RESULTS" in capsys.readouterr().out
+def _group_order(out: str) -> list[str]:
+    """Return the per-group display labels in the order they appear in the output."""
+    marker = "Group: "
+    order: list[str] = []
+    for line in out.splitlines():
+        idx = line.find(marker)
+        if idx == -1:
+            continue
+        order.append(line[idx + len(marker) :].strip())
+    return order
+
+
+async def test_write_async_preserves_insertion_order_by_default(printer, capsys):
+    result = _scenario_result(
+        attack_results={
+            "low": [_attack_result(outcome=AttackOutcome.FAILURE)],
+            "high": [_attack_result(outcome=AttackOutcome.SUCCESS)],
+            "mid": [
+                _attack_result(outcome=AttackOutcome.SUCCESS),
+                _attack_result(outcome=AttackOutcome.FAILURE),
+            ],
+        },
+    )
+    await printer.write_async(result)
+    assert _group_order(capsys.readouterr().out) == ["low", "high", "mid"]
+
+
+async def test_write_async_sorts_groups_by_success_rate_descending(patch_central_database, capsys):
+    sorting_printer = PrettyScenarioResultMemoryPrinter(enable_colors=False, sort_groups_by_success_rate=True)
+    result = _scenario_result(
+        attack_results={
+            "low": [_attack_result(outcome=AttackOutcome.FAILURE)],
+            "high": [_attack_result(outcome=AttackOutcome.SUCCESS)],
+            "mid": [
+                _attack_result(outcome=AttackOutcome.SUCCESS),
+                _attack_result(outcome=AttackOutcome.FAILURE),
+            ],
+        },
+    )
+    await sorting_printer.write_async(result)
+    assert _group_order(capsys.readouterr().out) == ["high", "mid", "low"]
+
+
+async def test_write_async_sort_is_stable_for_ties(patch_central_database, capsys):
+    sorting_printer = PrettyScenarioResultMemoryPrinter(enable_colors=False, sort_groups_by_success_rate=True)
+    result = _scenario_result(
+        attack_results={
+            "first_success": [_attack_result(outcome=AttackOutcome.SUCCESS)],
+            "fail": [_attack_result(outcome=AttackOutcome.FAILURE)],
+            "second_success": [_attack_result(outcome=AttackOutcome.SUCCESS)],
+        },
+    )
+    await sorting_printer.write_async(result)
+    # Tied 100% groups retain their original relative order; 0% group goes last.
+    assert _group_order(capsys.readouterr().out) == ["first_success", "second_success", "fail"]

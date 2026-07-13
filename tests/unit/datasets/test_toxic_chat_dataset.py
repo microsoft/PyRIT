@@ -41,7 +41,7 @@ class TestToxicChatDataset:
         """Test fetching ToxicChat dataset."""
         loader = _ToxicChatDataset()
 
-        with patch.object(loader, "_fetch_from_huggingface", new=AsyncMock(return_value=mock_toxic_chat_data)):
+        with patch.object(loader, "_fetch_from_huggingface_async", new=AsyncMock(return_value=mock_toxic_chat_data)):
             dataset = await loader.fetch_dataset_async()
 
             assert isinstance(dataset, SeedDataset)
@@ -82,7 +82,7 @@ class TestToxicChatDataset:
         ]
         loader = _ToxicChatDataset()
 
-        with patch.object(loader, "_fetch_from_huggingface", new=AsyncMock(return_value=data_with_html)):
+        with patch.object(loader, "_fetch_from_huggingface_async", new=AsyncMock(return_value=data_with_html)):
             dataset = await loader.fetch_dataset_async()
 
             assert len(dataset.seeds) == 2
@@ -122,7 +122,7 @@ class TestToxicChatDataset:
         ]
         loader = _ToxicChatDataset()
 
-        with patch.object(loader, "_fetch_from_huggingface", new=AsyncMock(return_value=data_with_endraw)):
+        with patch.object(loader, "_fetch_from_huggingface_async", new=AsyncMock(return_value=data_with_endraw)):
             dataset = await loader.fetch_dataset_async()
 
             # All entries are preserved — untrusted text is never passed through Jinja
@@ -146,7 +146,7 @@ class TestToxicChatDataset:
         ]
         loader = _ToxicChatDataset()
 
-        with patch.object(loader, "_fetch_from_huggingface", new=AsyncMock(return_value=data_with_for)):
+        with patch.object(loader, "_fetch_from_huggingface_async", new=AsyncMock(return_value=data_with_for)):
             dataset = await loader.fetch_dataset_async()
 
             assert len(dataset.seeds) == 1
@@ -176,7 +176,7 @@ class TestToxicChatDataset:
         ]
         loader = _ToxicChatDataset()
 
-        with patch.object(loader, "_fetch_from_huggingface", new=AsyncMock(return_value=data)):
+        with patch.object(loader, "_fetch_from_huggingface_async", new=AsyncMock(return_value=data)):
             dataset = await loader.fetch_dataset_async()
 
             assert len(dataset.seeds) == 1
@@ -201,7 +201,7 @@ class TestToxicChatDataset:
         )
 
         with patch.object(
-            loader, "_fetch_from_huggingface", new=AsyncMock(return_value=mock_toxic_chat_data)
+            loader, "_fetch_from_huggingface_async", new=AsyncMock(return_value=mock_toxic_chat_data)
         ) as mock_fetch:
             dataset = await loader.fetch_dataset_async()
 

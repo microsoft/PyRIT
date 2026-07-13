@@ -4,13 +4,17 @@
 import logging
 import uuid
 from enum import Enum
-from typing import Literal, Optional
+from typing import Literal
 
-from pyrit.common.net_utility import make_request_and_raise_if_error_async
+from typing_extensions import override
+
+from pyrit.datasets.seed_datasets.remote._image_cache import (
+    fetch_and_cache_image_async,
+)
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import SeedDataset, SeedPrompt, data_serializer_factory
+from pyrit.models import Modality, SeedDataset, SeedPrompt
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +45,34 @@ class _HarmBenchMultimodalDataset(_RemoteDatasetLoader):
     Paper: [@mazeika2024harmbench]
     """
 
+    _AUTHORS = [
+        "Mantas Mazeika",
+        "Long Phan",
+        "Xuwang Yin",
+        "Andy Zou",
+        "Zifan Wang",
+        "Norman Mu",
+        "Elham Sakhaee",
+        "Nathaniel Li",
+        "Steven Basart",
+        "Bo Li",
+        "David Forsyth",
+        "Dan Hendrycks",
+    ]
+
+    _GROUPS = [
+        "University of Illinois Urbana-Champaign",
+        "Center for AI Safety",
+        "Carnegie Mellon University",
+        "UC Berkeley",
+        "Microsoft",
+    ]
+
+    # Metadata
+    modalities: tuple[Modality, ...] = (Modality.TEXT, Modality.IMAGE)
+    size: str = "medium"  # 220 harmful multimodal behaviors
+    tags: frozenset[str] = frozenset({"safety", "jailbreak", "multimodal"})
+
     def __init__(
         self,
         *,
@@ -49,7 +81,7 @@ class _HarmBenchMultimodalDataset(_RemoteDatasetLoader):
             "harmbench_behaviors_multimodal_all.csv"
         ),
         source_type: Literal["public_url", "file"] = "public_url",
-        categories: Optional[list[SemanticCategory]] = None,
+        categories: list[SemanticCategory] | None = None,
     ) -> None:
         """
         Initialize the HarmBench multimodal dataset loader.
@@ -68,13 +100,17 @@ class _HarmBenchMultimodalDataset(_RemoteDatasetLoader):
         self.categories = categories
 
         if categories is not None:
+            if not categories:
+                raise ValueError("`categories` must be a non-empty list (pass None to include all categories)")
             self._validate_enums(categories, SemanticCategory, "semantic category")
 
     @property
+    @override
     def dataset_name(self) -> str:
-        """Return the dataset name."""
+        """The dataset name."""
         return "harmbench_multimodal"
 
+    @override
     async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch HarmBench multimodal examples and return as SeedDataset.
@@ -162,6 +198,8 @@ class _HarmBenchMultimodalDataset(_RemoteDatasetLoader):
                     "redacted_image_description": redacted_description,
                     "original_image_url": image_url,
                 },
+                authors=self._AUTHORS,
+                groups=self._GROUPS,
             )
             prompts.append(image_prompt)
 
@@ -178,27 +216,8 @@ class _HarmBenchMultimodalDataset(_RemoteDatasetLoader):
                 metadata={
                     "behavior_id": behavior_id,
                 },
-                authors=[
-                    "Mantas Mazeika",
-                    "Long Phan",
-                    "Xuwang Yin",
-                    "Andy Zou",
-                    "Zifan Wang",
-                    "Norman Mu",
-                    "Elham Sakhaee",
-                    "Nathaniel Li",
-                    "Steven Basart",
-                    "Bo Li",
-                    "David Forsyth",
-                    "Dan Hendrycks",
-                ],
-                groups=[
-                    "University of Illinois Urbana-Champaign",
-                    "Center for AI Safety",
-                    "Carnegie Mellon University",
-                    "UC Berkeley",
-                    "Microsoft",
-                ],
+                authors=self._AUTHORS,
+                groups=self._GROUPS,
             )
             prompts.append(text_prompt)
 
@@ -225,25 +244,8 @@ class _HarmBenchMultimodalDataset(_RemoteDatasetLoader):
         Raises:
             RuntimeError: If the serializer memory is not properly configured.
         """
-        filename = f"harmbench_{behavior_id}.png"
-        serializer = data_serializer_factory(category="seed-prompt-entries", data_type="image_path", extension="png")
-
-        # Return existing path if image already exists for this BehaviorID
-        results_path = serializer._memory.results_path
-        results_storage_io = serializer._memory.results_storage_io
-        if not results_path or results_storage_io is None:
-            raise RuntimeError(
-                "[HarmBench-Multimodal] Serializer memory is not properly configured: "
-                "results_path and results_storage_io must be set."
-            )
-        serializer.value = str(results_path + serializer.data_sub_directory + f"/{filename}")
-        try:
-            if await results_storage_io.path_exists(serializer.value):
-                return serializer.value
-        except Exception as e:
-            logger.warning(f"[HarmBench-Multimodal] Failed to check if image for {behavior_id} exists in cache: {e}")
-
-        response = await make_request_and_raise_if_error_async(endpoint_uri=image_url, method="GET")
-        await serializer.save_data(data=response.content, output_filename=filename.replace(".png", ""))
-
-        return str(serializer.value)
+        return await fetch_and_cache_image_async(
+            filename=f"harmbench_{behavior_id}.png",
+            image_url=image_url,
+            log_prefix="HarmBench-Multimodal",
+        )
