@@ -4,8 +4,13 @@
 """
 Integration tests for LiteLLMChatTarget.
 
-These reuse the existing ``PLATFORM_OPENAI_CHAT_*`` environment configuration to exercise
-LiteLLM against a real OpenAI-compatible endpoint (LiteLLM's ``openai/`` provider prefix).
+The chat/vision tests run against the Azure OpenAI GPT-5.4 deployment
+(``AZURE_OPENAI_GPT5_4_ENDPOINT`` / ``AZURE_OPENAI_GPT5_4_MODEL``, authenticated with Entra ID
+or ``AZURE_OPENAI_GPT5_4_KEY`` when present) through LiteLLM's OpenAI-compatible ``openai/``
+provider prefix, since Azure exposes an OpenAI-compatible ``/openai/v1`` endpoint. The audio test
+needs an audio-capable model, so it uses the platform OpenAI endpoint
+(``PLATFORM_OPENAI_CHAT_ENDPOINT`` / ``PLATFORM_OPENAI_CHAT_KEY``) with the ``gpt-audio`` model
+(override via ``PLATFORM_OPENAI_AUDIO_MODEL``).
 
 They verify:
 - Basic text completion
@@ -13,10 +18,6 @@ They verify:
 - Multimodal image input (vision)
 - Multimodal audio input/output
 - Token-usage metadata capture (parsed back through ``TokenUsage``)
-
-The chat/vision model defaults to ``gpt-5.4`` and the audio model to ``gpt-audio``; both can be
-overridden with the ``PLATFORM_OPENAI_CHAT_MODEL`` / ``PLATFORM_OPENAI_AUDIO_MODEL`` env vars to
-match whatever deployment names the target endpoint exposes.
 """
 
 import json
@@ -39,24 +40,39 @@ SAMPLE_IMAGE_FILE = HOME_PATH / "assets" / "pyrit_architecture.png"
 SAMPLE_AUDIO_FILE = HOME_PATH / "assets" / "converted_audio.wav"
 
 
+def _azure_gpt5_credential():
+    """
+    Return the auth credential for the Azure GPT-5.4 deployment.
+
+    Uses the API key when ``AZURE_OPENAI_GPT5_4_KEY`` is set; otherwise falls back to an Entra ID
+    (Azure AD) bearer-token provider, which ``LiteLLMChatTarget`` accepts and resolves per request.
+    """
+    key = os.environ.get("AZURE_OPENAI_GPT5_4_KEY")
+    if key:
+        return key
+
+    from azure.identity import DefaultAzureCredential, get_bearer_token_provider
+
+    return get_bearer_token_provider(DefaultAzureCredential(), "https://cognitiveservices.azure.com/.default")
+
+
 @pytest.fixture()
-def platform_litellm_args():
+def azure_gpt5_litellm_args():
     """
     Requires:
-        - PLATFORM_OPENAI_CHAT_ENDPOINT: An OpenAI-compatible endpoint (e.g. https://api.openai.com/v1)
-        - PLATFORM_OPENAI_CHAT_KEY: The API key
+        - AZURE_OPENAI_GPT5_4_ENDPOINT: The Azure OpenAI GPT-5.4 endpoint (OpenAI-compatible /openai/v1)
+        - AZURE_OPENAI_GPT5_4_KEY (optional): The API key; if unset, Entra ID auth is used
     """
-    endpoint = os.environ.get("PLATFORM_OPENAI_CHAT_ENDPOINT")
-    api_key = os.environ.get("PLATFORM_OPENAI_CHAT_KEY")
+    endpoint = os.environ.get("AZURE_OPENAI_GPT5_4_ENDPOINT")
 
-    if not endpoint or not api_key:
-        pytest.skip("PLATFORM_OPENAI_CHAT_ENDPOINT and PLATFORM_OPENAI_CHAT_KEY must be set")
+    if not endpoint:
+        pytest.skip("AZURE_OPENAI_GPT5_4_ENDPOINT must be set")
 
-    model = os.environ.get("PLATFORM_OPENAI_CHAT_MODEL", "gpt-5.4")
+    model = os.environ.get("AZURE_OPENAI_GPT5_4_MODEL", "gpt-5.4")
     return {
         "model_name": f"openai/{model}",
         "endpoint": endpoint,
-        "api_key": api_key,
+        "api_key": _azure_gpt5_credential(),
     }
 
 
@@ -82,8 +98,8 @@ def platform_litellm_audio_args():
 
 
 @pytest.mark.run_only_if_all_tests
-async def test_litellm_chat_target_text_completion(sqlite_instance, platform_litellm_args):
-    target = LiteLLMChatTarget(**platform_litellm_args)
+async def test_litellm_chat_target_text_completion(sqlite_instance, azure_gpt5_litellm_args):
+    target = LiteLLMChatTarget(**azure_gpt5_litellm_args)
 
     user_piece = MessagePiece(
         role="user",
@@ -102,7 +118,7 @@ async def test_litellm_chat_target_text_completion(sqlite_instance, platform_lit
 
 
 @pytest.mark.run_only_if_all_tests
-async def test_litellm_chat_target_tool_calling(sqlite_instance, platform_litellm_args):
+async def test_litellm_chat_target_tool_calling(sqlite_instance, azure_gpt5_litellm_args):
     tools = [
         {
             "type": "function",
@@ -121,7 +137,7 @@ async def test_litellm_chat_target_tool_calling(sqlite_instance, platform_litell
     ]
 
     target = LiteLLMChatTarget(
-        **platform_litellm_args,
+        **azure_gpt5_litellm_args,
         extra_body_parameters={"tools": tools, "tool_choice": "auto"},
     )
 
@@ -142,8 +158,8 @@ async def test_litellm_chat_target_tool_calling(sqlite_instance, platform_litell
 
 
 @pytest.mark.run_only_if_all_tests
-async def test_litellm_chat_target_token_usage_in_metadata(sqlite_instance, platform_litellm_args):
-    target = LiteLLMChatTarget(**platform_litellm_args)
+async def test_litellm_chat_target_token_usage_in_metadata(sqlite_instance, azure_gpt5_litellm_args):
+    target = LiteLLMChatTarget(**azure_gpt5_litellm_args)
 
     user_piece = MessagePiece(
         role="user",
@@ -163,10 +179,10 @@ async def test_litellm_chat_target_token_usage_in_metadata(sqlite_instance, plat
 
 
 @pytest.mark.run_only_if_all_tests
-async def test_litellm_chat_target_image_input(sqlite_instance, platform_litellm_args):
+async def test_litellm_chat_target_image_input(sqlite_instance, azure_gpt5_litellm_args):
     """Send a text + image message and verify the vision model returns a text response."""
     target = LiteLLMChatTarget(
-        **platform_litellm_args,
+        **azure_gpt5_litellm_args,
         custom_configuration=TargetConfiguration(
             capabilities=TargetCapabilities(
                 supports_multi_message_pieces=True,
