@@ -165,29 +165,38 @@ await output_scenario_async(scenario_result)
 # %% [markdown]
 # ## Jailbreak
 #
-# Tests target resilience against template-based jailbreak attacks using various prompt injection
-# templates.
+# Tests target resilience against jailbreak templates. A run crosses three selectors: the harmful
+# objectives (**dataset**, HarmBench), the **techniques** each jailbreak is delivered through
+# (default `prompt_sending` — "just send"; registry techniques like `role_play_*`, `many_shot`,
+# `tap` are opt-in), and which **jailbreaks** to run. Each selected jailbreak template is applied as
+# a request converter that renders the objective inline into the template, so the target sees the
+# jailbroken prompt exactly as authored; this keeps the scenario target-agnostic and composable with
+# every technique, and results are grouped by jailbreak template.
 #
 # ```bash
 # pyrit_scan airt.jailbreak \
-#   --initializers target \
+#   --initializers target load_default_datasets \
 #   --target openai_chat \
-#   --techniques prompt_sending \
+#   --dataset-names harmbench \
 #   --max-dataset-size 1
 # ```
 #
-# **Available techniques:** ALL, SIMPLE, COMPLEX, PromptSending, ManyShot, SkeletonKey, RolePlay
+# **Available techniques:** ALL, DEFAULT (`prompt_sending`), plus registry techniques
+# (`role_play_*`, `many_shot`, `tap`, …). By default a small curated set of jailbreak templates
+# runs; pass `num_templates` (random sample) or `jailbreak_names` (explicit) to widen or pin the
+# selection.
 
 # %%
 from pyrit.scenario.airt import Jailbreak, JailbreakTechnique
 
-dataset_config = DatasetAttackConfiguration(dataset_names=["airt_harms"], max_dataset_size=1)
+dataset_config = DatasetAttackConfiguration(dataset_names=["harmbench"], max_dataset_size=1)
 
 scenario = Jailbreak()
 scenario.set_params_from_args(  # type: ignore
     args={
         "objective_target": objective_target,
-        "scenario_techniques": [JailbreakTechnique.PromptSending],
+        "scenario_techniques": [JailbreakTechnique.DEFAULT],
+        "jailbreak_names": ["aim.yaml"],
         "dataset_config": dataset_config,
     }
 )
