@@ -134,11 +134,10 @@ class LiteLLMChatTarget(PromptTarget):
         headers: Optional extra HTTP headers forwarded to the provider (``extra_headers``).
         temperature: Sampling temperature (0-2).
         top_p: Nucleus sampling probability (0-1).
-        max_tokens: Maximum number of tokens to generate. Deprecated by OpenAI in favor of
-            ``max_completion_tokens``; not compatible with reasoning (o1-series) models.
-        max_completion_tokens: Upper bound on tokens generated for a completion, including
-            reasoning tokens. Use this for reasoning (o1-series) models. Mutually exclusive with
-            ``max_tokens``.
+        max_tokens: Maximum number of tokens to generate. This is the single token-limit knob:
+            LiteLLM normalizes it to the parameter each model/provider expects (for example, it
+            maps to ``max_completion_tokens`` for OpenAI reasoning and gpt-5 models). To send a
+            provider-specific token parameter directly instead, use ``extra_body_parameters``.
         frequency_penalty: Penalize frequently generated tokens.
         presence_penalty: Penalize tokens already present in the conversation.
         seed: Best-effort deterministic sampling seed.
@@ -185,7 +184,6 @@ class LiteLLMChatTarget(PromptTarget):
         temperature: float | None = None,
         top_p: float | None = None,
         max_tokens: int | None = None,
-        max_completion_tokens: int | None = None,
         frequency_penalty: float | None = None,
         presence_penalty: float | None = None,
         seed: int | None = None,
@@ -202,15 +200,11 @@ class LiteLLMChatTarget(PromptTarget):
         Initialize a LiteLLMChatTarget.
 
         Raises:
-            ValueError: If model_name is not provided and LITELLM_MODEL env var is not set, or if
-                both max_tokens and max_completion_tokens are provided.
+            ValueError: If model_name is not provided and LITELLM_MODEL env var is not set.
         """
         resolved_model = model_name or os.environ.get("LITELLM_MODEL", "")
         if not resolved_model:
             raise ValueError("model_name is required. Pass it directly or set the LITELLM_MODEL environment variable.")
-
-        if max_tokens is not None and max_completion_tokens is not None:
-            raise ValueError("Cannot provide both max_tokens and max_completion_tokens.")
 
         validate_temperature(temperature)
         validate_top_p(top_p)
@@ -234,7 +228,6 @@ class LiteLLMChatTarget(PromptTarget):
         self._temperature = temperature
         self._top_p = top_p
         self._max_tokens = max_tokens
-        self._max_completion_tokens = max_completion_tokens
         self._frequency_penalty = frequency_penalty
         self._presence_penalty = presence_penalty
         self._seed = seed
@@ -346,7 +339,6 @@ class LiteLLMChatTarget(PromptTarget):
                 "temperature": self._temperature,
                 "top_p": self._top_p,
                 "max_tokens": self._max_tokens,
-                "max_completion_tokens": self._max_completion_tokens,
                 "frequency_penalty": self._frequency_penalty,
                 "presence_penalty": self._presence_penalty,
                 "seed": self._seed,
@@ -450,7 +442,6 @@ class LiteLLMChatTarget(PromptTarget):
             "temperature": self._temperature,
             "top_p": self._top_p,
             "max_tokens": self._max_tokens,
-            "max_completion_tokens": self._max_completion_tokens,
             "frequency_penalty": self._frequency_penalty,
             "presence_penalty": self._presence_penalty,
             "seed": self._seed,

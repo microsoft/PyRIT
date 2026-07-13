@@ -333,16 +333,11 @@ def test_construct_request_body_forwards_optional_params(patch_central_database,
     assert body["api_base"] == "http://localhost:4000"
 
 
-def test_construct_request_body_forwards_max_completion_tokens(patch_central_database, litellm_stub):
-    t = LiteLLMChatTarget(model_name="openai/o1", max_completion_tokens=512)
+def test_max_completion_tokens_available_via_extra_body_passthrough(patch_central_database, litellm_stub):
+    t = LiteLLMChatTarget(model_name="openai/o1", extra_body_parameters={"max_completion_tokens": 512})
     body = t._construct_request_body(messages=[{"role": "user", "content": "hi"}], json_config=_disabled_json_config())
     assert body["max_completion_tokens"] == 512
     assert "max_tokens" not in body
-
-
-def test_max_tokens_and_max_completion_tokens_mutually_exclusive(patch_central_database, litellm_stub):
-    with pytest.raises(ValueError, match="Cannot provide both max_tokens and max_completion_tokens"):
-        LiteLLMChatTarget(model_name="openai/gpt-4o", max_tokens=10, max_completion_tokens=10)
 
 
 def test_construct_request_body_passthrough_extra_params(patch_central_database, litellm_stub):
