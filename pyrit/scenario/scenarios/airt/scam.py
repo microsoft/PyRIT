@@ -6,13 +6,14 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from pyrit.common import apply_defaults
-from pyrit.common.path import EXECUTOR_RED_TEAM_PATH, SCORER_SEED_PROMPT_PATH
-from pyrit.executor.attack import ContextComplianceAttack, RedTeamingAttack, RolePlayAttack, RolePlayPaths
+from pyrit.common.path import EXECUTOR_RED_TEAM_PATH, EXECUTOR_SIMULATED_TARGET_PATH, SCORER_SEED_PROMPT_PATH
+from pyrit.executor.attack import RedTeamingAttack, RolePlayAttack, RolePlayPaths
 from pyrit.executor.attack.core.attack_config import AttackAdversarialConfig, AttackScoringConfig
 from pyrit.models import Parameter, SeedAttackGroup, SeedPrompt
 from pyrit.prompt_target import PromptTarget
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
+from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
 from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
 from pyrit.scenario.core.scenario import Scenario
 from pyrit.scenario.core.scenario_context import ScenarioContext
@@ -32,13 +33,11 @@ class ScamTechnique(ScenarioTechnique):
     Techniques for the Scam Scenario.
 
     Non-Aggregate Values:
-    - ContextCompliance: This single-turn attack attempts to bypass safety measures by rephrasing the objective into
-        a more benign context.
-        It uses an adversarial chat target to:
-        1) rephrase the objective (first user turn)
-        2) generate the assistant's response to the benign question (first assistant turn)
-        3) rephrase the original objective as a follow-up question (end of first assistant turn)
-        This conversation is prepended and sent with an affirmative "yes" to get a response from the target.
+    - ContextCompliance: This single-turn attack attempts to bypass safety measures by fabricating a
+        benign context for the objective. A short simulated conversation is generated in which an
+        adversarial chat asks a benign question about the topic and a simulated target answers it and
+        offers to go further (rephrasing the objective as a "would you like me to..." question). This
+        conversation is prepended and sent with an affirmative "yes." to get a response from the target.
     - RolePlay: This single-turn attack uses the `persuasion_script_written.yaml` role-play scenario to convince the
         target to help draft a response to the scam objective. It is framed in the context of creating written samples
         to be used during training seminars.
@@ -192,13 +191,29 @@ class Scam(Scenario):
                 attack_adversarial_config=self._adversarial_config,
             )
         elif technique == "context_compliance":
-            # Set system prompt to default
-            self._adversarial_config.system_prompt = None
-
-            attack_strategy = ContextComplianceAttack(
+            # Context compliance is now a simulated-conversation technique: an adversarial
+            # chat asks a benign question, a simulated target answers it and offers to go
+            # further, then a fixed "yes." is delivered to the target as the final user turn.
+            context_compliance_technique = AttackTechniqueFactory.with_simulated_conversation(
+                name="context_compliance",
+                adversarial_chat_system_prompt_path=EXECUTOR_RED_TEAM_PATH
+                / "context_compliance"
+                / "context_compliance.yaml",
+                simulated_target_system_prompt_path=EXECUTOR_SIMULATED_TARGET_PATH / "context_compliance_target.yaml",
+                final_user_message="yes.",
+                num_turns=1,
+            ).create(
                 objective_target=self._objective_target,
                 attack_scoring_config=self._scorer_config,
-                attack_adversarial_config=self._adversarial_config,
+                adversarial_chat=self._adversarial_chat,
+            )
+            return AtomicAttack(
+                atomic_attack_name=f"scam_{technique}",
+                attack_technique=context_compliance_technique,
+                seed_groups=seed_groups,
+                adversarial_chat=self._adversarial_chat,
+                objective_scorer=self._scorer_config.objective_scorer,
+                memory_labels=self._memory_labels,
             )
         else:
             raise ValueError(f"Unknown ScamTechnique: {technique}")

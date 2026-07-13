@@ -15,8 +15,8 @@ scenario-relative and is declared per scenario (see
 ``default_technique_names``), not baked into the shared catalog.
 """
 
+from pyrit.common.path import EXECUTOR_RED_TEAM_PATH, EXECUTOR_SIMULATED_TARGET_PATH
 from pyrit.executor.attack import (
-    ContextComplianceAttack,
     ManyShotJailbreakAttack,
     RedTeamingAttack,
     RolePlayAttack,
@@ -80,9 +80,14 @@ def get_technique_factories() -> list[AttackTechniqueFactory]:
             attack_class=RedTeamingAttack,
             technique_tags=["multi_turn", "light"],
         ),
-        AttackTechniqueFactory(
+        AttackTechniqueFactory.with_simulated_conversation(
             name="context_compliance",
-            attack_class=ContextComplianceAttack,
+            adversarial_chat_system_prompt_path=EXECUTOR_RED_TEAM_PATH
+            / "context_compliance"
+            / "context_compliance.yaml",
+            simulated_target_system_prompt_path=EXECUTOR_SIMULATED_TARGET_PATH / "context_compliance_target.yaml",
+            final_user_message="yes.",
+            num_turns=1,
             technique_tags=["single_turn", "light"],
         ),
     ]

@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from pyrit.common.path import DATASETS_PATH
-from pyrit.executor.attack import ContextComplianceAttack, RedTeamingAttack, RolePlayAttack
+from pyrit.executor.attack import PromptSendingAttack, RedTeamingAttack, RolePlayAttack
 from pyrit.executor.attack.core.attack_config import AttackScoringConfig
 from pyrit.models import ComponentIdentifier, SeedAttackGroup, SeedDataset, SeedObjective
 from pyrit.prompt_target import OpenAIChatTarget, PromptTarget
@@ -266,7 +266,7 @@ class TestScamAttackGeneration:
 
             assert len(atomic_attacks) == 3
             attack_types = {type(run.attack_technique.attack) for run in atomic_attacks}
-            assert attack_types == {ContextComplianceAttack, RolePlayAttack, RedTeamingAttack}
+            assert attack_types == {PromptSendingAttack, RolePlayAttack, RedTeamingAttack}
 
     async def test_default_run_yields_single_turn_only(
         self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups, mock_dataset_config
@@ -292,7 +292,7 @@ class TestScamAttackGeneration:
 
             assert len(atomic_attacks) == 2
             attack_types = {type(run.attack_technique.attack) for run in atomic_attacks}
-            assert attack_types == {ContextComplianceAttack, RolePlayAttack}
+            assert attack_types == {PromptSendingAttack, RolePlayAttack}
             assert RedTeamingAttack not in attack_types
 
     async def test_attack_generation_for_singleturn_async(
@@ -320,7 +320,7 @@ class TestScamAttackGeneration:
         atomic_attacks = scenario._atomic_attacks
 
         for run in atomic_attacks:
-            assert isinstance(run.attack_technique.attack, (ContextComplianceAttack, RolePlayAttack))
+            assert isinstance(run.attack_technique.attack, (PromptSendingAttack, RolePlayAttack))
 
     async def test_attack_generation_for_multiturn_async(
         self, mock_objective_target, mock_objective_scorer, multi_turn_technique, mock_dataset_config

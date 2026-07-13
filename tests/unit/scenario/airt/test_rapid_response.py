@@ -10,13 +10,12 @@ import pytest
 
 from pyrit.common.path import DATASETS_PATH
 from pyrit.executor.attack import (
-    ContextComplianceAttack,
     ManyShotJailbreakAttack,
     PromptSendingAttack,
     RolePlayAttack,
     TreeOfAttacksWithPruningAttack,
 )
-from pyrit.models import ComponentIdentifier, SeedAttackGroup, SeedObjective, SeedPrompt
+from pyrit.models import ComponentIdentifier, SeedAttackGroup, SeedObjective
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry import TargetRegistry
 from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
@@ -127,10 +126,15 @@ def mock_runtime_env():
 
 
 def _make_seed_groups(name: str) -> list[SeedAttackGroup]:
-    """Create two seed attack groups for a given category."""
+    """Create two seed attack groups for a given category.
+
+    Groups are objective-only so they stay compatible with simulated-conversation
+    techniques (e.g. context_compliance), which generate their own prepended
+    conversation and reject seed groups that already carry a prompt at sequence 0.
+    """
     return [
-        SeedAttackGroup(seeds=[SeedObjective(value=f"{name} objective 1"), SeedPrompt(value=f"{name} prompt 1")]),
-        SeedAttackGroup(seeds=[SeedObjective(value=f"{name} objective 2"), SeedPrompt(value=f"{name} prompt 2")]),
+        SeedAttackGroup(seeds=[SeedObjective(value=f"{name} objective 1")]),
+        SeedAttackGroup(seeds=[SeedObjective(value=f"{name} objective 2")]),
     ]
 
 
@@ -322,10 +326,14 @@ class TestRapidResponseAttackGeneration:
         )
         technique_classes = {type(a.attack_technique.attack) for a in attacks}
         # Every core technique tagged ``single_turn`` in the scenario-technique catalog must appear.
-        # PromptSendingAttack is intentionally excluded from the catalog (provided by the baseline
-        # policy instead) and include_baseline=False here, so it should not appear.
-        assert {RolePlayAttack, ContextComplianceAttack} <= technique_classes
-        assert PromptSendingAttack not in technique_classes
+        # context_compliance is now a simulated-conversation PromptSendingAttack, so assert on the
+        # simulated-conversation seed rather than a dedicated class. RolePlay remains its own class.
+        assert RolePlayAttack in technique_classes
+        assert any(
+            a.attack_technique.seed_technique is not None
+            and a.attack_technique.seed_technique.has_simulated_conversation
+            for a in attacks
+        )
         # And no multi-turn-only attack should leak in.
         assert ManyShotJailbreakAttack not in technique_classes
         assert TreeOfAttacksWithPruningAttack not in technique_classes
@@ -349,15 +357,18 @@ class TestRapidResponseAttackGeneration:
             techniques=[_technique_class().ALL],
         )
         technique_classes = {type(a.attack_technique.attack) for a in attacks}
-        # Should include all known core techniques. PromptSendingAttack is intentionally
-        # excluded from the catalog (provided by the baseline policy instead) and
-        # include_baseline=False here, so it should not appear.
+        # Should include all known core techniques. context_compliance is now a
+        # simulated-conversation PromptSendingAttack, asserted via the seed technique.
         assert {
             RolePlayAttack,
             ManyShotJailbreakAttack,
             TreeOfAttacksWithPruningAttack,
         } <= technique_classes
-        assert PromptSendingAttack not in technique_classes
+        assert any(
+            a.attack_technique.seed_technique is not None
+            and a.attack_technique.seed_technique.has_simulated_conversation
+            for a in attacks
+        )
 
     async def test_single_technique_selection(self, mock_objective_target, mock_objective_scorer):
         attacks = await self._init_and_get_attacks(
