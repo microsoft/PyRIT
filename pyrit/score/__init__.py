@@ -19,11 +19,24 @@ from pyrit.score.float_scale.float_scale_score_aggregator import (
     FloatScaleScorerByCategory,
 )
 from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
-from pyrit.score.float_scale.insecure_code_scorer import InsecureCodeScorer
+from pyrit.score.float_scale.insecure_code_scorer import (
+    InsecureCodeScorer,
+    render_insecure_code_system_prompt,
+)
+from pyrit.score.float_scale.likert_scale import LikertScale, LikertScaleEntry
+from pyrit.score.float_scale.numeric_scale import NumericRange, NumericRubric
 from pyrit.score.float_scale.plagiarism_scorer import PlagiarismMetric, PlagiarismScorer
 from pyrit.score.float_scale.self_ask_general_float_scale_scorer import SelfAskGeneralFloatScaleScorer
-from pyrit.score.float_scale.self_ask_likert_scorer import LikertScaleEvalFiles, LikertScalePaths, SelfAskLikertScorer
-from pyrit.score.float_scale.self_ask_scale_scorer import SelfAskScaleScorer
+from pyrit.score.float_scale.self_ask_likert_scorer import (
+    LikertScaleEvalFiles,
+    LikertScalePaths,
+    SelfAskLikertScorer,
+    render_likert_system_prompt,
+)
+from pyrit.score.float_scale.self_ask_scale_scorer import (
+    SelfAskScaleScorer,
+    render_scale_system_prompt,
+)
 from pyrit.score.response_handler import (
     CallableResponseHandler,
     JsonSchemaResponseHandler,
@@ -66,7 +79,13 @@ from pyrit.score.true_false.regex.ssti_output_scorer import SSTIOutputScorer
 from pyrit.score.true_false.regex.static_prompt_injection_scorer import StaticPromptInjectionScorer
 from pyrit.score.true_false.regex.xss_output_scorer import XSSOutputScorer
 from pyrit.score.true_false.regex.xxe_output_scorer import XXEOutputScorer
-from pyrit.score.true_false.self_ask_category_scorer import ContentClassifierPaths, SelfAskCategoryScorer
+from pyrit.score.true_false.self_ask_category_scorer import (
+    ContentClassifier,
+    ContentClassifierCategory,
+    ContentClassifierPaths,
+    SelfAskCategoryScorer,
+    render_category_system_prompt,
+)
 from pyrit.score.true_false.self_ask_general_true_false_scorer import SelfAskGeneralTrueFalseScorer
 from pyrit.score.true_false.self_ask_question_answer_scorer import SelfAskQuestionAnswerScorer
 from pyrit.score.true_false.self_ask_refusal_scorer import RefusalScorerPaths, SelfAskRefusalScorer
@@ -135,6 +154,8 @@ __all__ = [
     "AzureContentFilterScorer",
     "BatchScorer",
     "CallableResponseHandler",
+    "ContentClassifier",
+    "ContentClassifierCategory",
     "ContentClassifierPaths",
     "ConversationScorer",
     "CredentialLeakScorer",
@@ -156,11 +177,15 @@ __all__ = [
     "JsonSchemaResponseHandler",
     "LDAPInjectionOutputScorer",
     "LikertScaleEvalFiles",
+    "LikertScale",
+    "LikertScaleEntry",
     "LikertScalePaths",
     "MarkdownInjectionScorer",
     "MethKeywordScorer",
     "MetricsType",
     "NerveAgentKeywordScorer",
+    "NumericRange",
+    "NumericRubric",
     "ObjectiveHumanLabeledEntry",
     "ObjectiveScorerEvaluator",
     "ObjectiveScorerMetrics",
@@ -172,6 +197,10 @@ __all__ = [
     "QuestionAnswerScorer",
     "RegexScorer",
     "RegistryUpdateBehavior",
+    "render_category_system_prompt",
+    "render_insecure_code_system_prompt",
+    "render_likert_system_prompt",
+    "render_scale_system_prompt",
     "render_true_false_system_prompt",
     "ResponseHandler",
     "Scorer",

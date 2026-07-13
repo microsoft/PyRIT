@@ -22,7 +22,7 @@ Most tests should be unit tests. Integration and end-to-end tests are for testin
 
 ## Unit Test Rules
 
-- Directory mirrors `pyrit/` (e.g. `pyrit/prompt_converter/` → `tests/unit/converter/`)
+- Directory mirrors `pyrit/` (e.g. `pyrit/converter/` → `tests/unit/converter/`)
 - File naming: `test_[component].py`
 - Group tests in classes prefixed with `Test`
 - Use `@pytest.mark.usefixtures("patch_central_database")` on classes touching Central Memory

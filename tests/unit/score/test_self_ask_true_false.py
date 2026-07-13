@@ -219,10 +219,15 @@ def test_init_static_str_system_prompt(patch_central_database):
     chat_target = MagicMock()
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
 
+    question = TrueFalseQuestion(
+        category="harm",
+        true_description="harmful",
+        false_description="not harmful",
+    )
     scorer = SelfAskTrueFalseScorer(
         chat_target=chat_target,
         system_prompt="a static classifier prompt",
-        score_category=["harm"],
+        question=question,
     )
 
     assert scorer._system_prompt == "a static classifier prompt"
@@ -236,7 +241,16 @@ def test_init_static_seed_prompt_preserves_schema(patch_central_database):
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
 
     seed_prompt = SeedPrompt(value="static seed prompt", data_type="text", response_json_schema={"type": "object"})
-    scorer = SelfAskTrueFalseScorer(chat_target=chat_target, system_prompt=seed_prompt, score_category=["harm"])
+    question = TrueFalseQuestion(
+        category="harm",
+        true_description="harmful",
+        false_description="not harmful",
+    )
+    scorer = SelfAskTrueFalseScorer(
+        chat_target=chat_target,
+        system_prompt=seed_prompt,
+        question=question,
+    )
 
     assert scorer._system_prompt == "static seed prompt"
     assert scorer._response_handler.response_schema == {"type": "object"}
@@ -249,7 +263,7 @@ def test_init_default_system_prompt_uses_task_achieved(patch_central_database):
 
     scorer = SelfAskTrueFalseScorer(chat_target=chat_target)
 
-    assert scorer._score_category == "task_achieved"
+    assert scorer._score_category == ["task_achieved"]
     assert scorer._response_handler.response_schema is not None
     assert "# Instructions" in scorer._system_prompt
 
@@ -265,7 +279,7 @@ def test_init_templated_seed_prompt_from_separate_files(patch_central_database):
     scorer = SelfAskTrueFalseScorer(
         chat_target=chat_target,
         system_prompt=seed_prompt,
-        score_category=[question.category],
+        question=question,
     )
 
     assert scorer._score_category == ["grounded"]
@@ -284,7 +298,7 @@ async def test_init_scores_end_to_end(patch_central_database, scorer_true_false_
     scorer = SelfAskTrueFalseScorer(
         chat_target=chat_target,
         system_prompt=render_true_false_system_prompt(question=question),
-        score_category=[question.category],
+        question=question,
     )
 
     scores = await scorer.score_text_async("true false")
@@ -328,6 +342,43 @@ def test_from_question_with_custom_question_sets_category(patch_central_database
     scorer = SelfAskTrueFalseScorer.from_question(chat_target=chat_target, question=custom_question)
 
     assert scorer._score_category == ["custom_harm_category"]
+
+
+@pytest.mark.parametrize(
+    "template",
+    [
+        "{{ true_description }} / {{ false_description }} / {{ metadata }}",
+        SeedPrompt(
+            value="{{ true_description }} / {{ false_description }} / {{ metadata }}",
+            data_type="text",
+        ),
+    ],
+)
+def test_from_question_supports_custom_template(patch_central_database, template: SeedPrompt | str):
+    chat_target = MagicMock()
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+    question = TrueFalseQuestion(
+        category="custom",
+        true_description="yes",
+        false_description="no",
+        metadata="context",
+    )
+
+    scorer = SelfAskTrueFalseScorer.from_question(
+        chat_target=chat_target,
+        question=question,
+        system_prompt_template=template,
+    )
+
+    assert scorer._system_prompt == "yes / no / context"
+
+
+def test_init_custom_prompt_requires_question(patch_central_database):
+    chat_target = MagicMock()
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+
+    with pytest.raises(ValueError, match="system_prompt and question must be provided together"):
+        SelfAskTrueFalseScorer(chat_target=chat_target, system_prompt="custom")
 
 
 def test_from_question_renders_metadata(patch_central_database):

@@ -182,7 +182,7 @@ def create_conversation_scorer(
         ValueError: If the scorer is not an instance of FloatScaleScorer or TrueFalseScorer.
 
     Example:
-        >>> float_scorer = SelfAskLikertScorer(chat_target=target, likert_scale=scale)
+        >>> float_scorer = SelfAskLikertScorer.from_likert_scale(chat_target=target, likert_scale=scale)
         >>> conversation_scorer = create_conversation_scorer(scorer=float_scorer)
         >>> isinstance(conversation_scorer, FloatScaleScorer)  # True
         >>> isinstance(conversation_scorer, ConversationScorer)  # True

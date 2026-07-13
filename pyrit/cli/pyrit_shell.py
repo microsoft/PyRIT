@@ -347,7 +347,7 @@ class PyRITShell(cmd.Cmd):
             --techniques, -t <t1> <t2> ...  Technique names. Append registered
                                             converters to a technique with
                                             ':converter.<name>' (repeatable), e.g.
-                                            role_play:converter.translation_spanish.
+                                            role_play_movie_script:converter.translation_spanish.
                                             Use list-converters to see names.
             --max-concurrency <N>           Maximum concurrent operations
             --max-retries <N>               Maximum retry attempts

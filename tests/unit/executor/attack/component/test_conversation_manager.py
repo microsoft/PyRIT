@@ -34,7 +34,7 @@ from pyrit.executor.attack.component.conversation_manager import (
 from pyrit.executor.attack.core import AttackContext
 from pyrit.executor.attack.core.attack_parameters import AttackParameters
 from pyrit.models import ComponentIdentifier, Message, MessagePiece, Score
-from pyrit.prompt_normalizer import PromptConverterConfiguration, PromptNormalizer
+from pyrit.prompt_normalizer import ConverterConfiguration, PromptNormalizer
 from pyrit.prompt_target import PromptTarget
 
 
@@ -1092,7 +1092,7 @@ class TestPrependedConversationConfigSettings:
         context = _TestAttackContext(params=AttackParameters(objective="Test objective"))
         context.prepended_conversation = sample_conversation
 
-        converter_config = [PromptConverterConfiguration(converters=[])]
+        converter_config = [ConverterConfiguration(converters=[])]
 
         await manager.initialize_context_async(
             context=context,
@@ -1119,7 +1119,7 @@ class TestPrependedConversationConfigSettings:
         context.prepended_conversation = sample_conversation
 
         config = PrependedConversationConfig(apply_converters_to_roles=["user"])
-        converter_config = [PromptConverterConfiguration(converters=[])]
+        converter_config = [ConverterConfiguration(converters=[])]
 
         await manager.initialize_context_async(
             context=context,
@@ -1147,7 +1147,7 @@ class TestPrependedConversationConfigSettings:
         context.prepended_conversation = sample_conversation
 
         config = PrependedConversationConfig(apply_converters_to_roles=["assistant"])
-        converter_config = [PromptConverterConfiguration(converters=[])]
+        converter_config = [ConverterConfiguration(converters=[])]
 
         await manager.initialize_context_async(
             context=context,
@@ -1175,7 +1175,7 @@ class TestPrependedConversationConfigSettings:
         context.prepended_conversation = sample_conversation
 
         config = PrependedConversationConfig(apply_converters_to_roles=[])
-        converter_config = [PromptConverterConfiguration(converters=[])]
+        converter_config = [ConverterConfiguration(converters=[])]
 
         await manager.initialize_context_async(
             context=context,
@@ -1464,7 +1464,7 @@ class TestAddPrependedConversationToMemory:
         manager = ConversationManager(prompt_normalizer=mock_prompt_normalizer)
         conversation_id = str(uuid.uuid4())
         conversation = [Message(message_pieces=[sample_user_piece])]
-        converter_config = [PromptConverterConfiguration(converters=[])]
+        converter_config = [ConverterConfiguration(converters=[])]
 
         await manager.add_prepended_conversation_to_memory_async(
             prepended_conversation=conversation,

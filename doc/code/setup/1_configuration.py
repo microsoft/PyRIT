@@ -134,14 +134,14 @@ import os
 
 from pyrit.auth import get_azure_openai_auth
 from pyrit.common.path import PYRIT_PATH
+from pyrit.converter import TenseConverter
 from pyrit.executor.attack import (
     AttackConverterConfig,
     AttackExecutor,
     PromptSendingAttack,
 )
-from pyrit.prompt_converter import TenseConverter
-from pyrit.prompt_normalizer.prompt_converter_configuration import (
-    PromptConverterConfiguration,
+from pyrit.prompt_normalizer.converter_configuration import (
+    ConverterConfiguration,
 )
 from pyrit.prompt_target import OpenAIChatTarget
 from pyrit.setup import initialize_pyrit_async
@@ -176,7 +176,7 @@ endpoint = os.environ["OPENAI_CHAT_ENDPOINT"]
 objective_target = OpenAIChatTarget(endpoint=endpoint, api_key=get_azure_openai_auth(endpoint))
 
 # TenseConverter automatically gets the default converter_target from our initializer
-converters = PromptConverterConfiguration.from_converters(converters=[TenseConverter(tense="past")])  # type: ignore
+converters = ConverterConfiguration.from_converters(converters=[TenseConverter(tense="past")])  # type: ignore
 converter_config = AttackConverterConfig(request_converters=converters)
 
 # Attack automatically gets default scorer configuration from our initializer

@@ -14,10 +14,13 @@ from pyrit.memory import CentralMemory
 from pyrit.models import ComponentIdentifier, Message, MessagePiece, Score
 from pyrit.prompt_target import PromptTarget
 from pyrit.score import (
+    FloatScaleScorer,
+    JsonSchemaResponseHandler,
     Scorer,
     ScorerPromptValidator,
     TrueFalseScorer,
 )
+from pyrit.score.llm_scoring import _run_llm_scoring_async
 
 
 @pytest.fixture
@@ -143,7 +146,9 @@ class MockFloatScorer(Scorer):
         for score in scores:
             assert 0 <= float(score.score_value) <= 1
 
-    def _build_fallback_score(self, *, message: Message, objective: str | None) -> list[Score]:
+    def _build_fallback_score(
+        self, *, message: Message, objective: str | None, scorer_response_blocked: bool = False
+    ) -> list[Score]:
         return [
             Score(
                 score_value="0.0",
@@ -172,11 +177,13 @@ async def test_scorer_send_chat_target_async_bad_json_exception_retries(bad_json
     chat_target.send_prompt_async = AsyncMock(return_value=[bad_json_resp])
     scorer = MockScorer()
     with pytest.raises(InvalidJsonException):
-        await scorer._score_value_with_llm_async(
-            prompt_target=chat_target,
+        await _run_llm_scoring_async(
+            chat_target=chat_target,
+            response_handler=JsonSchemaResponseHandler(),
+            scorer_identifier=scorer.get_identifier(),
             system_prompt="system_prompt",
-            message_value="message_value",
-            message_data_type="text",
+            value="message_value",
+            data_type="text",
             scored_prompt_id="123",
             category="category",
             objective="task",
@@ -194,11 +201,13 @@ async def test_scorer_score_value_with_llm_exception_display_prompt_id():
     scorer = MockScorer()
 
     with pytest.raises(Exception, match="Error scoring prompt with original prompt ID: 123"):
-        await scorer._score_value_with_llm_async(
-            prompt_target=chat_target,
+        await _run_llm_scoring_async(
+            chat_target=chat_target,
+            response_handler=JsonSchemaResponseHandler(),
+            scorer_identifier=scorer.get_identifier(),
             system_prompt="system_prompt",
-            message_value="message_value",
-            message_data_type="text",
+            value="message_value",
+            data_type="text",
             scored_prompt_id="123",
             category="category",
             objective="task",
@@ -216,11 +225,13 @@ async def test_scorer_send_chat_target_async_good_response(good_json):
 
     scorer = MockScorer()
 
-    await scorer._score_value_with_llm_async(
-        prompt_target=chat_target,
+    await _run_llm_scoring_async(
+        chat_target=chat_target,
+        response_handler=JsonSchemaResponseHandler(),
+        scorer_identifier=scorer.get_identifier(),
         system_prompt="system_prompt",
-        message_value="message_value",
-        message_data_type="text",
+        value="message_value",
+        data_type="text",
         scored_prompt_id="123",
         category="category",
         objective="task",
@@ -242,11 +253,13 @@ async def test_scorer_remove_markdown_json_called(good_json):
     with patch(
         "pyrit.score.response_handler.remove_markdown_json", wraps=remove_markdown_json
     ) as mock_remove_markdown_json:
-        await scorer._score_value_with_llm_async(
-            prompt_target=chat_target,
+        await _run_llm_scoring_async(
+            chat_target=chat_target,
+            response_handler=JsonSchemaResponseHandler(),
+            scorer_identifier=scorer.get_identifier(),
             system_prompt="system_prompt",
-            message_value="message_value",
-            message_data_type="text",
+            value="message_value",
+            data_type="text",
             scored_prompt_id="123",
             category="category",
             objective="task",
@@ -266,13 +279,15 @@ async def test_score_value_with_llm_prepended_text_message_piece_creates_multipi
 
     scorer = MockScorer()
 
-    await scorer._score_value_with_llm_async(
-        prompt_target=chat_target,
+    await _run_llm_scoring_async(
+        chat_target=chat_target,
+        response_handler=JsonSchemaResponseHandler(),
+        scorer_identifier=scorer.get_identifier(),
         system_prompt="system_prompt",
-        message_value="test_image.png",
-        message_data_type="image_path",
+        value="test_image.png",
+        data_type="image_path",
         scored_prompt_id="123",
-        prepended_text_message_piece="objective: test\nresponse:",
+        prepended_text="objective: test\nresponse:",
         category="category",
         objective="task",
     )
@@ -309,11 +324,13 @@ async def test_score_value_with_llm_no_prepended_text_creates_single_piece_messa
 
     scorer = MockScorer()
 
-    await scorer._score_value_with_llm_async(
-        prompt_target=chat_target,
+    await _run_llm_scoring_async(
+        chat_target=chat_target,
+        response_handler=JsonSchemaResponseHandler(),
+        scorer_identifier=scorer.get_identifier(),
         system_prompt="system_prompt",
-        message_value="objective: test\nresponse: some text",
-        message_data_type="text",
+        value="objective: test\nresponse: some text",
+        data_type="text",
         scored_prompt_id="123",
         category="category",
         objective="task",
@@ -344,13 +361,15 @@ async def test_score_value_with_llm_prepended_text_works_with_audio(good_json):
 
     scorer = MockScorer()
 
-    await scorer._score_value_with_llm_async(
-        prompt_target=chat_target,
+    await _run_llm_scoring_async(
+        chat_target=chat_target,
+        response_handler=JsonSchemaResponseHandler(),
+        scorer_identifier=scorer.get_identifier(),
         system_prompt="system_prompt",
-        message_value="test_audio.wav",
-        message_data_type="audio_path",
+        value="test_audio.wav",
+        data_type="audio_path",
         scored_prompt_id="123",
-        prepended_text_message_piece="objective: transcribe and evaluate\nresponse:",
+        prepended_text="objective: transcribe and evaluate\nresponse:",
         category="category",
         objective="task",
     )
@@ -1536,11 +1555,13 @@ async def test_score_value_with_llm_skips_reasoning_piece(good_json):
 
     scorer = MockScorer()
 
-    result = await scorer._score_value_with_llm_async(
-        prompt_target=chat_target,
+    result = await _run_llm_scoring_async(
+        chat_target=chat_target,
+        response_handler=JsonSchemaResponseHandler(),
+        scorer_identifier=scorer.get_identifier(),
         system_prompt="system_prompt",
-        message_value="message_value",
-        message_data_type="text",
+        value="message_value",
+        data_type="text",
         scored_prompt_id="123",
         category="category",
         objective="task",
@@ -1548,6 +1569,255 @@ async def test_score_value_with_llm_skips_reasoning_piece(good_json):
 
     assert result.raw_score_value == "1"
     assert result.score_rationale == "Valid response"
+
+
+async def test_score_value_with_llm_raises_when_scorer_response_blocked():
+    """When the scorer's own LLM response is blocked, the transport raises ScorerLLMResponseBlockedException."""
+    from pyrit.exceptions import ScorerLLMResponseBlockedException
+
+    chat_target = MagicMock(PromptTarget)
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+
+    blocked_piece = MessagePiece(
+        role="assistant",
+        original_value="",
+        original_value_data_type="error",
+        converted_value="",
+        converted_value_data_type="error",
+        conversation_id="test-convo",
+        response_error="blocked",
+    )
+    blocked_response = Message(message_pieces=[blocked_piece])
+    chat_target.send_prompt_async = AsyncMock(return_value=[blocked_response])
+
+    scorer = MockScorer()
+
+    with pytest.raises(ScorerLLMResponseBlockedException, match="blocked by content filtering"):
+        await _run_llm_scoring_async(
+            chat_target=chat_target,
+            response_handler=JsonSchemaResponseHandler(),
+            scorer_identifier=scorer.get_identifier(),
+            system_prompt="system_prompt",
+            value="message_value",
+            data_type="text",
+            scored_prompt_id="test-prompt-id",
+            category="category",
+            objective="task",
+        )
+
+    # A blocked response is a terminal condition, not a transient JSON error: it must not retry.
+    assert chat_target.send_prompt_async.call_count == 1
+
+
+async def test_score_value_with_llm_raises_empty_response_when_no_text_piece():
+    """A no-text response that wasn't content-filtered raises EmptyResponseException, not blocked."""
+    from pyrit.exceptions import EmptyResponseException
+
+    chat_target = MagicMock(PromptTarget)
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+
+    # An error piece that is NOT flagged as blocked (e.g. a flaky/empty response) and no text piece.
+    non_text_piece = MessagePiece(
+        role="assistant",
+        original_value="",
+        original_value_data_type="error",
+        converted_value="",
+        converted_value_data_type="error",
+        conversation_id="test-convo",
+        response_error="unknown",
+    )
+    chat_target.send_prompt_async = AsyncMock(return_value=[Message(message_pieces=[non_text_piece])])
+
+    scorer = MockScorer()
+
+    with pytest.raises(EmptyResponseException, match="no text to parse"):
+        await _run_llm_scoring_async(
+            chat_target=chat_target,
+            response_handler=JsonSchemaResponseHandler(),
+            scorer_identifier=scorer.get_identifier(),
+            system_prompt="system_prompt",
+            value="message_value",
+            data_type="text",
+            scored_prompt_id="test-prompt-id",
+            category="category",
+            objective="task",
+        )
+
+    # No parseable text is terminal here, not a transient JSON error: it must not retry.
+    assert chat_target.send_prompt_async.call_count == 1
+
+
+# ── Axis B: the scorer's own LLM response is blocked (raise_if_scorer_blocks) ─────────────
+
+
+class _ForwarderTrueFalseScorer(TrueFalseScorer):
+    """TrueFalseScorer whose piece scoring uses the shared LLM scoring composition helper."""
+
+    def __init__(self, *, chat_target: PromptTarget) -> None:
+        super().__init__(validator=DummyValidator())
+        self._prompt_target = chat_target
+        self._system_prompt = "system"
+        self._response_handler = JsonSchemaResponseHandler()
+
+    def _build_identifier(self) -> ComponentIdentifier:
+        return self._create_identifier()
+
+    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
+        unvalidated = await _run_llm_scoring_async(
+            chat_target=self._prompt_target,
+            response_handler=self._response_handler,
+            scorer_identifier=self.get_identifier(),
+            system_prompt=self._system_prompt,
+            value=message_piece.converted_value,
+            data_type="text",
+            scored_prompt_id=message_piece.id,
+            objective=objective,
+        )
+        return [unvalidated.to_score(score_value=unvalidated.raw_score_value, score_type="true_false")]
+
+
+class _DirectTransportTrueFalseScorer(TrueFalseScorer):
+    """TrueFalseScorer that calls ``_run_llm_scoring_async`` directly, like SelfAskTrueFalseScorer."""
+
+    def __init__(self, *, chat_target: PromptTarget) -> None:
+        from pyrit.score import JsonSchemaResponseHandler
+
+        super().__init__(validator=DummyValidator())
+        self._prompt_target = chat_target
+        self._system_prompt = "system"
+        self._response_handler = JsonSchemaResponseHandler()
+
+    def _build_identifier(self) -> ComponentIdentifier:
+        return self._create_identifier()
+
+    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
+        from pyrit.score.llm_scoring import _run_llm_scoring_async
+
+        unvalidated = await _run_llm_scoring_async(
+            chat_target=self._prompt_target,
+            system_prompt=self._system_prompt,
+            response_handler=self._response_handler,
+            value=message_piece.converted_value,
+            data_type="text",
+            scored_prompt_id=message_piece.id,
+            scorer_identifier=self.get_identifier(),
+            objective=objective,
+        )
+        return [unvalidated.to_score(score_value=unvalidated.raw_score_value, score_type="true_false")]
+
+
+class _ForwarderFloatScaleScorer(FloatScaleScorer):
+    """FloatScaleScorer whose piece scoring uses the shared LLM scoring composition helper."""
+
+    def __init__(self, *, chat_target: PromptTarget) -> None:
+        super().__init__(validator=DummyValidator())
+        self._prompt_target = chat_target
+        self._system_prompt = "system"
+        self._response_handler = JsonSchemaResponseHandler(numeric_value=True)
+
+    def _build_identifier(self) -> ComponentIdentifier:
+        return self._create_identifier()
+
+    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
+        unvalidated = await _run_llm_scoring_async(
+            chat_target=self._prompt_target,
+            response_handler=self._response_handler,
+            scorer_identifier=self.get_identifier(),
+            system_prompt=self._system_prompt,
+            value=message_piece.converted_value,
+            data_type="text",
+            scored_prompt_id=message_piece.id,
+            objective=objective,
+        )
+        return [unvalidated.to_score(score_value=unvalidated.raw_score_value, score_type="float_scale")]
+
+
+def _make_scorer_blocking_target() -> MagicMock:
+    """A chat target mock whose response is fully blocked by content filtering."""
+    chat_target = MagicMock(PromptTarget)
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+    chat_target.set_system_prompt = MagicMock()
+    blocked_piece = MessagePiece(
+        role="assistant",
+        original_value="",
+        original_value_data_type="error",
+        converted_value="",
+        converted_value_data_type="error",
+        conversation_id="scorer-convo",
+        response_error="blocked",
+    )
+    chat_target.send_prompt_async = AsyncMock(return_value=[Message(message_pieces=[blocked_piece])])
+    return chat_target
+
+
+def _make_normal_input_message() -> Message:
+    """A normal (non-blocked) message to be scored."""
+    return Message(
+        message_pieces=[
+            MessagePiece(
+                role="assistant",
+                original_value="some response to score",
+                converted_value="some response to score",
+                original_value_data_type="text",
+                converted_value_data_type="text",
+                conversation_id="input-convo",
+            )
+        ]
+    )
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestScorerResponseBlocked:
+    """Axis B: behavior when the scorer's own LLM response is content-filtered."""
+
+    async def test_raises_by_default(self):
+        from pyrit.exceptions import ScorerLLMResponseBlockedException
+
+        scorer = _ForwarderTrueFalseScorer(chat_target=_make_scorer_blocking_target())
+
+        with pytest.raises(ScorerLLMResponseBlockedException, match="blocked by content filtering"):
+            await scorer.score_async(_make_normal_input_message())
+
+    async def test_returns_false_when_flag_disabled(self):
+        target = _make_scorer_blocking_target()
+        scorer = _ForwarderTrueFalseScorer(chat_target=target)
+        scorer.raise_if_scorer_blocks = False
+
+        scores = await scorer.score_async(_make_normal_input_message())
+
+        assert len(scores) == 1
+        assert scores[0].score_value == "false"
+        assert "blocked by content filtering" in scores[0].score_rationale
+        # Blocked is terminal: no retry storm.
+        assert target.send_prompt_async.call_count == 1
+
+    async def test_returns_zero_for_float_scale_when_flag_disabled(self):
+        scorer = _ForwarderFloatScaleScorer(chat_target=_make_scorer_blocking_target())
+        scorer.raise_if_scorer_blocks = False
+
+        scores = await scorer.score_async(_make_normal_input_message())
+
+        assert len(scores) == 1
+        assert scores[0].score_value == "0.0"
+        assert "blocked by content filtering" in scores[0].score_rationale
+
+    async def test_direct_transport_caller_raises_by_default(self):
+        from pyrit.exceptions import ScorerLLMResponseBlockedException
+
+        scorer = _DirectTransportTrueFalseScorer(chat_target=_make_scorer_blocking_target())
+
+        with pytest.raises(ScorerLLMResponseBlockedException, match="blocked by content filtering"):
+            await scorer.score_async(_make_normal_input_message())
+
+    async def test_direct_transport_caller_returns_false_when_flag_disabled(self):
+        scorer = _DirectTransportTrueFalseScorer(chat_target=_make_scorer_blocking_target())
+        scorer.raise_if_scorer_blocks = False
+
+        scores = await scorer.score_async(_make_normal_input_message())
+
+        assert len(scores) == 1
+        assert scores[0].score_value == "false"
+        assert "blocked by content filtering" in scores[0].score_rationale
 
 
 # ── Helpers for score_blocked_content tests ──────────────────────────────────

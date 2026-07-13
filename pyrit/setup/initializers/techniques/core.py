@@ -15,7 +15,8 @@ scenario-relative and is declared per scenario (see
 ``default_technique_names``), not baked into the shared catalog.
 """
 
-from pyrit.common.path import EXECUTOR_SEED_PROMPT_PATH
+from pyrit.common.path import EXECUTOR_SEED_PROMPT_PATH, EXECUTOR_SIMULATED_TARGET_PATH
+from pyrit.converter import FlipConverter, TaskFramingConverter
 from pyrit.executor.attack import (
     AttackConverterConfig,
     ContextComplianceAttack,
@@ -23,13 +24,10 @@ from pyrit.executor.attack import (
     PrependedConversationConfig,
     PromptSendingAttack,
     RedTeamingAttack,
-    RolePlayAttack,
-    RolePlayPaths,
     TreeOfAttacksWithPruningAttack,
 )
 from pyrit.models import SeedAttackTechniqueGroup, SeedPrompt
-from pyrit.prompt_converter import FlipConverter, TaskFramingConverter
-from pyrit.prompt_normalizer import PromptConverterConfiguration
+from pyrit.prompt_normalizer import ConverterConfiguration
 from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
 
 
@@ -50,11 +48,50 @@ def get_technique_factories() -> list[AttackTechniqueFactory]:
         list[AttackTechniqueFactory]: The core scenario techniques.
     """
     return [
-        AttackTechniqueFactory(
-            name="role_play",
-            attack_class=RolePlayAttack,
+        AttackTechniqueFactory.with_simulated_conversation(
+            name="role_play_movie_script",
+            adversarial_chat_system_prompt_path=(
+                EXECUTOR_SEED_PROMPT_PATH / "red_teaming" / "role_play" / "role_play_movie_script.yaml"
+            ),
+            next_message_system_prompt_path=EXECUTOR_SIMULATED_TARGET_PATH / "role_play_next_message.yaml",
             technique_tags=["single_turn", "light"],
-            attack_kwargs={"role_play_definition_path": RolePlayPaths.MOVIE_SCRIPT.value},
+            num_turns=2,
+        ),
+        AttackTechniqueFactory.with_simulated_conversation(
+            name="role_play_video_game",
+            adversarial_chat_system_prompt_path=(
+                EXECUTOR_SEED_PROMPT_PATH / "red_teaming" / "role_play" / "role_play_video_game.yaml"
+            ),
+            next_message_system_prompt_path=EXECUTOR_SIMULATED_TARGET_PATH / "role_play_next_message.yaml",
+            technique_tags=["single_turn", "light"],
+            num_turns=2,
+        ),
+        AttackTechniqueFactory.with_simulated_conversation(
+            name="role_play_trivia_game",
+            adversarial_chat_system_prompt_path=(
+                EXECUTOR_SEED_PROMPT_PATH / "red_teaming" / "role_play" / "role_play_trivia_game.yaml"
+            ),
+            next_message_system_prompt_path=EXECUTOR_SIMULATED_TARGET_PATH / "role_play_next_message.yaml",
+            technique_tags=["single_turn", "light"],
+            num_turns=2,
+        ),
+        AttackTechniqueFactory.with_simulated_conversation(
+            name="role_play_persuasion",
+            adversarial_chat_system_prompt_path=(
+                EXECUTOR_SEED_PROMPT_PATH / "red_teaming" / "role_play" / "role_play_persuasion.yaml"
+            ),
+            next_message_system_prompt_path=EXECUTOR_SIMULATED_TARGET_PATH / "role_play_next_message.yaml",
+            technique_tags=["single_turn", "light"],
+            num_turns=2,
+        ),
+        AttackTechniqueFactory.with_simulated_conversation(
+            name="role_play_persuasion_written",
+            adversarial_chat_system_prompt_path=(
+                EXECUTOR_SEED_PROMPT_PATH / "red_teaming" / "role_play" / "role_play_persuasion_written.yaml"
+            ),
+            next_message_system_prompt_path=EXECUTOR_SIMULATED_TARGET_PATH / "role_play_next_message.yaml",
+            technique_tags=["single_turn", "light"],
+            num_turns=2,
         ),
         AttackTechniqueFactory(
             name="many_shot",
@@ -98,7 +135,7 @@ def get_technique_factories() -> list[AttackTechniqueFactory]:
             technique_tags=["single_turn", "light"],
             attack_kwargs={
                 "attack_converter_config": AttackConverterConfig(
-                    request_converters=PromptConverterConfiguration.from_converters(
+                    request_converters=ConverterConfiguration.from_converters(
                         converters=[FlipConverter(), TaskFramingConverter(strip_characters="'")]
                     )
                 ),

@@ -119,7 +119,7 @@ class ContextComplianceAttack(PromptSendingAttack):
         adversarial_chat = getattr(self, "_adversarial_chat", None)
         if adversarial_chat is None:
             return None
-        return AttackAdversarialConfig(target=adversarial_chat, seed_prompt=None)
+        return AttackAdversarialConfig(target=adversarial_chat, first_message=None)
 
     def _load_context_description_instructions(self, *, instructions_path: Path) -> None:
         """

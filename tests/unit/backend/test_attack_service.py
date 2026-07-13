@@ -1209,7 +1209,7 @@ class TestAddMessage:
             patch("pyrit.backend.services.attack_service.get_target_service") as mock_get_target_svc,
             patch("pyrit.backend.services.attack_service.get_converter_service") as mock_get_conv_svc,
             patch("pyrit.backend.services.attack_service.PromptNormalizer") as mock_normalizer_cls,
-            patch("pyrit.backend.services.attack_service.PromptConverterConfiguration") as mock_config,
+            patch("pyrit.backend.services.attack_service.ConverterConfiguration") as mock_config,
         ):
             mock_target_svc = MagicMock()
             mock_target_svc.get_target_object.return_value = _make_matching_target_mock()
@@ -1316,7 +1316,7 @@ class TestAddMessage:
         mock_converter = MagicMock()
         mock_converter.get_identifier.return_value = ComponentIdentifier(
             class_name="Base64Converter",
-            class_module="pyrit.prompt_converter",
+            class_module="pyrit.converter",
             params={"supported_input_types": ("text",), "supported_output_types": ("text",)},
         )
 
@@ -2366,17 +2366,17 @@ class TestAttackServiceAdditionalCoverage:
 
         existing_converter = ComponentIdentifier(
             class_name="ExistingConverter",
-            class_module="pyrit.prompt_converter",
+            class_module="pyrit.converter",
             params={"supported_input_types": ("text",), "supported_output_types": ("text",)},
         )
         duplicate_converter = ComponentIdentifier(
             class_name="ExistingConverter",
-            class_module="pyrit.prompt_converter",
+            class_module="pyrit.converter",
             params={"supported_input_types": ("text",), "supported_output_types": ("text",)},
         )
         new_converter = ComponentIdentifier(
             class_name="NewConverter",
-            class_module="pyrit.prompt_converter",
+            class_module="pyrit.converter",
             params={"supported_input_types": ("text",), "supported_output_types": ("text",)},
         )
 
@@ -2453,7 +2453,7 @@ class TestAttackServiceAdditionalCoverage:
         """Should merge converters via fallback path when atomic_attack_identifier has no attack_technique child."""
         new_converter = ComponentIdentifier(
             class_name="NewConverter",
-            class_module="pyrit.prompt_converter",
+            class_module="pyrit.converter",
             params={"supported_input_types": ("text",), "supported_output_types": ("text",)},
         )
 
@@ -2530,12 +2530,12 @@ class TestAttackServiceAdditionalCoverage:
 
         existing_converter = ComponentIdentifier(
             class_name="ExistingConverter",
-            class_module="pyrit.prompt_converter",
+            class_module="pyrit.converter",
             params={"supported_input_types": ("text",), "supported_output_types": ("text",)},
         )
         duplicate_converter = ComponentIdentifier(
             class_name="ExistingConverter",
-            class_module="pyrit.prompt_converter",
+            class_module="pyrit.converter",
             params={"supported_input_types": ("text",), "supported_output_types": ("text",)},
         )
 
@@ -2603,7 +2603,7 @@ class TestAttackServiceAdditionalCoverage:
 
         new_converter = ComponentIdentifier(
             class_name="NewConverter",
-            class_module="pyrit.prompt_converter",
+            class_module="pyrit.converter",
             params={"supported_input_types": ("text",), "supported_output_types": ("text",)},
         )
 

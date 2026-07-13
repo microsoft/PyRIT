@@ -197,7 +197,7 @@ If you are contributing to PyRIT, that work will most likely land in one of the 
 - Executors should use scoring and target capabilities implicitly. Executors should support multi-modal.
 - Compound attacks are possible, combining different attacks in different ways.
 - **Does not own**: packaging the attack. Those are passed in as configuration by the **attack technique**, not assembled here:
-  - prepended / system prompts, role-play framing, the converter stack, or dataset selection (e.g. `RolePlayAttack` building its own prompt scaffolding is attack-technique work bleeding into the executor)
+  - prepended / system prompts, role-play framing, the converter stack, or dataset selection (e.g. if an executor assembles its own prompt scaffolding for a simulated conversation, that is attack-technique work bleeding into the executor)
   - branching on raw responses (use a scorer), constructing its own components (use the registry), or formatting / persisting results (output / memory)
 
 **Framework Plans**:
@@ -310,7 +310,7 @@ The below talks about responsibilities of most modules in the PyRIT library
 
 **Responsibility**: Reshape prompts and conversations so components and targets can interoperate. There are two distinct modules:
 
-- **`prompt_normalizer`** applies converters and dispatches individual prompts to a `PromptTarget` (handling batching and memory persistence). `NormalizerRequest` and `PromptConverterConfiguration` describe what to send and which converters to apply.
+- **`prompt_normalizer`** applies converters and dispatches individual prompts to a `PromptTarget` (handling batching and memory persistence). `NormalizerRequest` and `ConverterConfiguration` describe what to send and which converters to apply.
 - **`message_normalizer`** reshapes multi-message conversation payloads into the structure a given model expects — for example, handling system-message behavior (keep / squash / ignore), history squashing, and tokenizer chat templates.
 
 ## [Output](./output/0_output)

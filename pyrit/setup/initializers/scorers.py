@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, ClassVar, TypeVar, cast
 
 from azure.ai.contentsafety.models import TextCategory
 
+from pyrit.models import SeedPrompt
 from pyrit.models.parameter import Parameter
 from pyrit.registry import ScorerRegistry, TargetRegistry
 from pyrit.score import (
@@ -253,7 +254,7 @@ class ScorerInitializer(PyRITInitializer):
             name=self.REFUSAL_GPT4O_OBJECTIVE_STRICT,
             factory=lambda: SelfAskRefusalScorer(
                 chat_target=self._require_dependency(gpt4o, name=GPT4O_TARGET),
-                refusal_system_prompt_path=RefusalScorerPaths.OBJECTIVE_STRICT,
+                system_prompt=SeedPrompt.from_yaml_file(RefusalScorerPaths.OBJECTIVE_STRICT.value),
             ),
             required_targets=[gpt4o],
             tags=refusal_tag,
@@ -262,7 +263,7 @@ class ScorerInitializer(PyRITInitializer):
             name=self.REFUSAL_GPT4O_OBJECTIVE_LENIENT,
             factory=lambda: SelfAskRefusalScorer(
                 chat_target=self._require_dependency(gpt4o, name=GPT4O_TARGET),
-                refusal_system_prompt_path=RefusalScorerPaths.OBJECTIVE_LENIENT,
+                system_prompt=SeedPrompt.from_yaml_file(RefusalScorerPaths.OBJECTIVE_LENIENT.value),
             ),
             required_targets=[gpt4o],
             tags=refusal_tag,
@@ -271,7 +272,7 @@ class ScorerInitializer(PyRITInitializer):
             name=self.REFUSAL_GPT4O_NO_OBJECTIVE_STRICT,
             factory=lambda: SelfAskRefusalScorer(
                 chat_target=self._require_dependency(gpt4o, name=GPT4O_TARGET),
-                refusal_system_prompt_path=RefusalScorerPaths.NO_OBJECTIVE_STRICT,
+                system_prompt=SeedPrompt.from_yaml_file(RefusalScorerPaths.NO_OBJECTIVE_STRICT.value),
             ),
             required_targets=[gpt4o],
             tags=refusal_tag,
@@ -280,7 +281,7 @@ class ScorerInitializer(PyRITInitializer):
             name=self.REFUSAL_GPT4O_NO_OBJECTIVE_LENIENT,
             factory=lambda: SelfAskRefusalScorer(
                 chat_target=self._require_dependency(gpt4o, name=GPT4O_TARGET),
-                refusal_system_prompt_path=RefusalScorerPaths.NO_OBJECTIVE_LENIENT,
+                system_prompt=SeedPrompt.from_yaml_file(RefusalScorerPaths.NO_OBJECTIVE_LENIENT.value),
             ),
             required_targets=[gpt4o],
             tags=refusal_tag,
@@ -320,7 +321,7 @@ class ScorerInitializer(PyRITInitializer):
         self._try_register(
             name=SCALE_GPT4O_TEMP9_THRESHOLD_09,
             factory=lambda: FloatScaleThresholdScorer(
-                scorer=SelfAskScaleScorer(
+                scorer=SelfAskScaleScorer.from_scale(
                     chat_target=self._require_dependency(gpt4o_temp9, name=GPT4O_TEMP9_TARGET),
                 ),
                 threshold=0.9,
@@ -414,9 +415,9 @@ class ScorerInitializer(PyRITInitializer):
                 scorer_name = f"likert_{scale.name.lower().removesuffix('_scale')}_gpt4o"
                 self._try_register(
                     name=scorer_name,
-                    factory=lambda s=scale: SelfAskLikertScorer(
+                    factory=lambda s=scale: SelfAskLikertScorer.from_likert_scale(
                         chat_target=self._require_dependency(gpt4o, name=GPT4O_TARGET),
-                        likert_scale=s,
+                        likert_scale=s.load(),
                     ),
                     required_targets=[gpt4o],
                     tags=likert_tag,

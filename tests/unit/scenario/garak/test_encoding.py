@@ -7,9 +7,9 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from pyrit.converter import Base64Converter
 from pyrit.executor.attack import PromptSendingAttack
 from pyrit.models import ComponentIdentifier, SeedAttackGroup, SeedObjective, SeedPrompt
-from pyrit.prompt_converter import Base64Converter
 from pyrit.prompt_target import PromptTarget
 from pyrit.scenario import CompoundDatasetAttackConfiguration, DatasetAttackConfiguration, DatasetConfiguration
 from pyrit.scenario.garak import Encoding, EncodingTechnique  # type: ignore[ty:unresolved-import]

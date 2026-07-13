@@ -9,9 +9,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from pyrit.common.path import EXECUTOR_SEED_PROMPT_PATH
-from pyrit.exceptions import (
-    InvalidJsonException,
-)
 from pyrit.executor.attack import (
     AttackAdversarialConfig,
     AttackConverterConfig,
@@ -462,11 +459,11 @@ class TestCrescendoAttackInitialization:
         mock_adversarial_chat: MagicMock,
     ):
         """Test initialization with converter configuration."""
-        from pyrit.prompt_converter import Base64Converter
-        from pyrit.prompt_normalizer import PromptConverterConfiguration
+        from pyrit.converter import Base64Converter
+        from pyrit.prompt_normalizer import ConverterConfiguration
 
         converter_config = AttackConverterConfig(
-            request_converters=[PromptConverterConfiguration(converters=[Base64Converter()])], response_converters=[]
+            request_converters=[ConverterConfiguration(converters=[Base64Converter()])], response_converters=[]
         )
 
         attack = CrescendoTestHelper.create_attack(
@@ -858,14 +855,14 @@ class TestPromptGeneration:
         assert "0.30" in result  # Score value
         assert failure_objective_score.score_rationale in result
 
-    async def test_send_prompt_to_adversarial_chat_handles_no_response(
+    async def test_generate_next_prompt_raises_when_adversarial_chat_returns_no_response(
         self,
         mock_objective_target: MagicMock,
         mock_adversarial_chat: MagicMock,
         mock_prompt_normalizer: MagicMock,
         basic_context: CrescendoAttackContext,
     ):
-        """Test handling when adversarial chat returns no response."""
+        """An empty adversarial-chat response surfaces as a ValueError through the manager."""
         attack = CrescendoTestHelper.create_attack(
             objective_target=mock_objective_target,
             adversarial_chat=mock_adversarial_chat,
@@ -876,18 +873,21 @@ class TestPromptGeneration:
         mock_prompt_normalizer.send_prompt_async.return_value = None
 
         with pytest.raises(ValueError, match="No response received from adversarial chat"):
-            await attack._send_prompt_to_adversarial_chat_async(prompt_text="Test prompt", context=basic_context)
+            await attack._generate_next_prompt_async(context=basic_context)
 
-    async def test_send_prompt_to_adversarial_chat_forwards_json_schema(
+    async def test_generate_next_prompt_forwards_seed_media_and_schema_to_adversarial_chat(
         self,
         mock_objective_target: MagicMock,
         mock_adversarial_chat: MagicMock,
         mock_prompt_normalizer: MagicMock,
         basic_context: CrescendoAttackContext,
     ):
-        """The shared adversarial_chat JSON schema is forwarded to the target via metadata."""
+        """Seed media travels to the adversarial chat and the shared JSON schema rides in metadata."""
         mock_adversarial_chat.configuration.capabilities.input_modalities = frozenset(
             {frozenset({"text"}), frozenset({"text", "image_path"})}
+        )
+        mock_objective_target.configuration.capabilities.input_modalities = frozenset(
+            {frozenset({"text", "image_path"})}
         )
         attack = CrescendoTestHelper.create_attack(
             objective_target=mock_objective_target,
@@ -920,11 +920,9 @@ class TestPromptGeneration:
             ]
         )
 
-        await attack._send_prompt_to_adversarial_chat_async(
-            prompt_text="Test prompt",
-            context=basic_context,
-            seed_message=seed_message,
-        )
+        basic_context.next_message = seed_message
+
+        await attack._generate_next_prompt_async(context=basic_context)
 
         sent_message = mock_prompt_normalizer.send_prompt_async.call_args.kwargs["message"]
         assert len(sent_message.message_pieces) == 2
@@ -933,122 +931,6 @@ class TestPromptGeneration:
         metadata = sent_message.message_pieces[0].prompt_metadata
         assert metadata["response_format"] == "json"
         assert metadata[JSON_SCHEMA_METADATA_KEY] == schema
-
-    @pytest.mark.parametrize(
-        "response_json,expected_error",
-        [
-            # Missing required keys - the attack expects all three fields
-            ('{"next_message": "Attack"}', "Missing required keys"),
-            # Extra keys are not allowed - strict JSON validation prevents unexpected data
-            (
-                (
-                    '{"next_message": "Attack", "last_response_summary": "Summary", '
-                    '"rationale": "Rationale", "extra_key": "value"}'
-                ),
-                "Unexpected keys",
-            ),
-            # Invalid JSON will trigger retry mechanism
-            ("invalid json", "Invalid JSON"),
-            # Wrong key names indicate incorrect adversarial chat response format
-            ('{"wrong_key": "value"}', "Missing required keys"),
-            # Empty question is valid - the attack can handle empty strings
-            (
-                ('{"next_message": "", "last_response_summary": "Summary", "rationale": "Rationale"}'),
-                None,
-            ),
-        ],
-    )
-    async def test_parse_adversarial_response_with_various_inputs(
-        self,
-        mock_objective_target: MagicMock,
-        mock_adversarial_chat: MagicMock,
-        response_json: str,
-        expected_error: str | None,
-    ):
-        """Test parsing adversarial response with various inputs.
-
-        This test verifies that the JSON parsing is strict and handles various
-        error cases appropriately. The strict validation ensures the adversarial
-        chat is providing responses in the expected format.
-        """
-        attack = CrescendoTestHelper.create_attack(
-            objective_target=mock_objective_target,
-            adversarial_chat=mock_adversarial_chat,
-        )
-
-        if expected_error:
-            with pytest.raises(InvalidJsonException) as exc_info:
-                attack._parse_adversarial_response(response_json)
-            assert expected_error in str(exc_info.value)
-        else:
-            # Should not raise
-            result = attack._parse_adversarial_response(response_json)
-            assert isinstance(result, str)
-
-    @pytest.mark.parametrize(
-        "raw,expected",
-        [
-            ("next_message", "next_message"),
-            ("nextMessage", "next_message"),
-            ("NextMessage", "next_message"),
-            ("rationale", "rationale"),
-            ("lastResponseSummary", "last_response_summary"),
-            ("", ""),
-        ],
-    )
-    def test_camel_to_snake_handles_common_cases(self, raw: str, expected: str) -> None:
-        """``_camel_to_snake`` normalizes camelCase / PascalCase and leaves snake_case alone."""
-        assert CrescendoAttack._camel_to_snake(raw) == expected
-
-    def test_parse_adversarial_response_accepts_camel_case_keys(
-        self,
-        mock_objective_target: MagicMock,
-        mock_adversarial_chat: MagicMock,
-    ) -> None:
-        """camelCase keys are normalized to snake_case so well-formed JSON with the wrong casing still parses.
-
-        Regression test for the Azure DevOps Integration Tests failure on
-        ``4_sequential_attack.ipynb``, where the adversarial model returned
-        ``nextMessage`` / ``rationale`` /
-        ``lastResponseSummary`` for three retries straight and the strict
-        snake_case-only parser tore down the run.
-        """
-        attack = CrescendoTestHelper.create_attack(
-            objective_target=mock_objective_target,
-            adversarial_chat=mock_adversarial_chat,
-        )
-        camel_case_response = (
-            '{"nextMessage": "Attack question", "lastResponseSummary": "Summary text", "rationale": "Why this works"}'
-        )
-
-        result = attack._parse_adversarial_response(camel_case_response)
-
-        assert result == "Attack question"
-
-    def test_parse_adversarial_response_mixed_casing_still_validates_extras(
-        self,
-        mock_objective_target: MagicMock,
-        mock_adversarial_chat: MagicMock,
-    ) -> None:
-        """Extra keys remain rejected even after camelCase normalization.
-
-        ``unexpectedKey`` normalizes to ``unexpected_key`` (still not in the
-        expected set), so the strict extra-key check continues to fire — we
-        only loosen casing, not the schema.
-        """
-        attack = CrescendoTestHelper.create_attack(
-            objective_target=mock_objective_target,
-            adversarial_chat=mock_adversarial_chat,
-        )
-        response_with_extra = (
-            '{"nextMessage": "Attack", '
-            '"lastResponseSummary": "Summary", '
-            '"rationale": "Rationale", '
-            '"unexpectedKey": "value"}'
-        )
-
-        with pytest.raises(InvalidJsonException, match="Unexpected keys"):
-            attack._parse_adversarial_response(response_with_extra)
 
     async def test_custom_message_is_sent_to_target(
         self,
@@ -2261,10 +2143,11 @@ class TestEdgeCases:
 
         mock_prompt_normalizer.send_prompt_async.side_effect = responses
 
-        # The retry decorator should handle the first failure transparently
-        result = await attack._get_attack_prompt_async(context=basic_context, refused_text="")
+        # The retry decorator (owned by the adversarial conversation manager) handles the first
+        # failure transparently.
+        result = await attack._generate_next_prompt_async(context=basic_context)
 
-        assert result == "Attack prompt"
+        assert result.get_value() == "Attack prompt"
         # Verify retry occurred - called at least twice due to first failure
         assert mock_prompt_normalizer.send_prompt_async.call_count >= 2
 
@@ -2471,8 +2354,10 @@ class TestModalityRouterIntegration:
             last_response=self._make_image_response(),
         )
 
-        with patch.object(attack, "_get_attack_prompt_async", new_callable=AsyncMock, return_value="next question"):
-            result = await attack._generate_next_prompt_async(context=context)
+        mock_prompt_normalizer.send_prompt_async.return_value = create_prompt_response(
+            text=create_adversarial_json_response(question="next question")
+        )
+        result = await attack._generate_next_prompt_async(context=context)
 
         assert len(result.message_pieces) == 2
         assert result.message_pieces[0].original_value == "next question"
@@ -2500,8 +2385,10 @@ class TestModalityRouterIntegration:
             last_response=self._make_image_response(),
         )
 
-        with patch.object(attack, "_get_attack_prompt_async", new_callable=AsyncMock, return_value="next question"):
-            result = await attack._generate_next_prompt_async(context=context)
+        mock_prompt_normalizer.send_prompt_async.return_value = create_prompt_response(
+            text=create_adversarial_json_response(question="next question")
+        )
+        result = await attack._generate_next_prompt_async(context=context)
 
         assert len(result.message_pieces) == 1
         assert result.get_value() == "next question"
@@ -2550,17 +2437,13 @@ class TestModalityRouterIntegration:
         )
         context.next_message = seed_message
 
-        with patch.object(
-            attack, "_get_attack_prompt_async", new_callable=AsyncMock, return_value="seed text"
-        ) as mock_get:
-            result = await attack._generate_next_prompt_async(context=context)
+        mock_prompt_normalizer.send_prompt_async.return_value = create_prompt_response(
+            text=create_adversarial_json_response(question="seed text")
+        )
+        result = await attack._generate_next_prompt_async(context=context)
 
         assert context.next_message is None
-        mock_get.assert_awaited_once_with(
-            context=context,
-            refused_text="",
-            seed_message=seed_message,
-        )
+        mock_prompt_normalizer.send_prompt_async.assert_awaited_once()
         assert len(result.message_pieces) == 2
         assert result.message_pieces[0].original_value == "seed text"
         assert result.message_pieces[0].original_value_data_type == "text"
@@ -2588,6 +2471,71 @@ class TestModalityRouterIntegration:
         with pytest.raises(ValueError, match="seed"):
             attack._validate_context(context=context)
 
+    async def test_generate_next_prompt_forwards_prev_image_to_adversarial_when_supported(
+        self,
+        mock_objective_target: MagicMock,
+        mock_adversarial_chat: MagicMock,
+        mock_prompt_normalizer: MagicMock,
+    ):
+        """A {text, image_path}-capable adversarial chat receives the prior objective image as feedback."""
+        mock_adversarial_chat.configuration.capabilities.input_modalities = frozenset(
+            {frozenset({"text"}), frozenset({"text", "image_path"})}
+        )
+        attack = CrescendoTestHelper.create_attack(
+            objective_target=mock_objective_target,
+            adversarial_chat=mock_adversarial_chat,
+            prompt_normalizer=mock_prompt_normalizer,
+        )
+
+        context = CrescendoAttackContext(
+            params=AttackParameters(objective="goal"),
+            session=ConversationSession(),
+            executed_turns=1,
+            last_response=self._make_image_response(),
+        )
+
+        mock_prompt_normalizer.send_prompt_async.return_value = create_prompt_response(
+            text=create_adversarial_json_response(question="next question")
+        )
+
+        await attack._generate_next_prompt_async(context=context)
+
+        sent_message = mock_prompt_normalizer.send_prompt_async.call_args.kwargs["message"]
+        assert len(sent_message.message_pieces) == 2
+        assert sent_message.message_pieces[1].original_value_data_type == "image_path"
+        assert sent_message.message_pieces[1].original_value == "/tmp/output.png"
+
+    async def test_generate_next_prompt_text_only_adversarial_drops_response_media(
+        self,
+        mock_objective_target: MagicMock,
+        mock_adversarial_chat: MagicMock,
+        mock_prompt_normalizer: MagicMock,
+    ):
+        """A text-only adversarial chat sees only feedback text when the objective response carried media."""
+        # mock_adversarial_chat default is text-only.
+        attack = CrescendoTestHelper.create_attack(
+            objective_target=mock_objective_target,
+            adversarial_chat=mock_adversarial_chat,
+            prompt_normalizer=mock_prompt_normalizer,
+        )
+
+        context = CrescendoAttackContext(
+            params=AttackParameters(objective="goal"),
+            session=ConversationSession(),
+            executed_turns=1,
+            last_response=self._make_image_response(),
+        )
+
+        mock_prompt_normalizer.send_prompt_async.return_value = create_prompt_response(
+            text=create_adversarial_json_response(question="next question")
+        )
+
+        await attack._generate_next_prompt_async(context=context)
+
+        sent_message = mock_prompt_normalizer.send_prompt_async.call_args.kwargs["message"]
+        assert len(sent_message.message_pieces) == 1
+        assert sent_message.message_pieces[0].converted_value_data_type == "text"
+
 
 class TestCrescendoAdversarialIdentity:
     """Tests for adversarial config in the Crescendo attack identity and inline system prompt."""
@@ -2604,7 +2552,7 @@ class TestCrescendoAdversarialIdentity:
         assert config is not None
         assert config.target is mock_adversarial_chat
         assert config.system_prompt is attack._adversarial_chat_system_prompt_template
-        assert config.seed_prompt is None
+        assert config.first_message is None
 
     def test_get_attack_adversarial_config_returns_none_without_target(
         self, mock_objective_target, mock_adversarial_chat, mock_objective_scorer

@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from pyrit import prompt_converter
+from pyrit import converter
 from pyrit.backend.models.converters import (
     ConverterPreviewRequest,
     CreateConverterRequest,
@@ -20,14 +20,14 @@ from pyrit.backend.services.converter_service import (
     ConverterService,
     get_converter_service,
 )
-from pyrit.models import ComponentIdentifier
-from pyrit.prompt_converter import (
+from pyrit.converter import (
     Base64Converter,
     CaesarConverter,
     RepeatTokenConverter,
     SuffixAppendConverter,
 )
-from pyrit.prompt_converter.prompt_converter import get_converter_modalities
+from pyrit.converter.converter import get_converter_modalities
+from pyrit.models import ComponentIdentifier
 from pyrit.registry.components import ConverterRegistry
 
 
@@ -54,7 +54,7 @@ class TestListConverters:
         """Test that list_converters returns converters from registry with full params."""
         service = ConverterService()
 
-        mock_converter = MagicMock(spec=prompt_converter.PromptConverter)
+        mock_converter = MagicMock(spec=converter.Converter)
         mock_identifier = ComponentIdentifier(
             class_name="MockConverter",
             class_module="tests.unit.backend.test_converter_service",
@@ -152,7 +152,7 @@ class TestGetConverter:
         """Test that get_converter returns converter built from registry object."""
         service = ConverterService()
 
-        mock_converter = MagicMock(spec=prompt_converter.PromptConverter)
+        mock_converter = MagicMock(spec=converter.Converter)
         mock_identifier = ComponentIdentifier(
             class_name="MockConverter",
             class_module="tests.unit.backend.test_converter_service",
@@ -186,7 +186,7 @@ class TestGetConverterObject:
     def test_get_converter_object_returns_object_from_registry(self) -> None:
         """Test that get_converter_object returns the actual converter object."""
         service = ConverterService()
-        mock_converter = MagicMock(spec=prompt_converter.PromptConverter)
+        mock_converter = MagicMock(spec=converter.Converter)
         service._registry.instances.register(mock_converter, name="conv-1")
 
         result = service.get_converter_object(converter_id="conv-1")
@@ -342,7 +342,7 @@ class TestPreviewConversion:
         """Test preview with converter IDs."""
         service = ConverterService()
 
-        mock_converter = MagicMock(spec=prompt_converter.PromptConverter)
+        mock_converter = MagicMock(spec=converter.Converter)
         mock_result = MagicMock()
         mock_result.output_text = "encoded_value"
         mock_result.output_type = "text"
@@ -366,13 +366,13 @@ class TestPreviewConversion:
         """Test that preview chains multiple converters."""
         service = ConverterService()
 
-        mock_converter1 = MagicMock(spec=prompt_converter.PromptConverter)
+        mock_converter1 = MagicMock(spec=converter.Converter)
         mock_result1 = MagicMock()
         mock_result1.output_text = "step1_output"
         mock_result1.output_type = "text"
         mock_converter1.convert_async = AsyncMock(return_value=mock_result1)
 
-        mock_converter2 = MagicMock(spec=prompt_converter.PromptConverter)
+        mock_converter2 = MagicMock(spec=converter.Converter)
         mock_result2 = MagicMock()
         mock_result2.output_text = "step2_output"
         mock_result2.output_type = "text"
@@ -397,7 +397,7 @@ class TestPreviewConversion:
         """Data URIs on *_path types are decoded via the DEFAULT_MEDIA_EXTENSIONS map and persisted."""
         service = ConverterService()
 
-        mock_converter = MagicMock(spec=prompt_converter.PromptConverter)
+        mock_converter = MagicMock(spec=converter.Converter)
         mock_result = MagicMock()
         mock_result.output_text = "/tmp/persisted.png"
         mock_result.output_type = "image_path"
@@ -430,7 +430,7 @@ class TestPreviewConversion:
         """Values that aren't URLs/data URIs/existing files are treated as raw base64 and persisted."""
         service = ConverterService()
 
-        mock_converter = MagicMock(spec=prompt_converter.PromptConverter)
+        mock_converter = MagicMock(spec=converter.Converter)
         mock_result = MagicMock()
         mock_result.output_text = "/tmp/persisted.wav"
         mock_result.output_type = "audio_path"
@@ -475,8 +475,8 @@ class TestGetConverterObjectsForIds:
         """Test that method returns converter objects in order."""
         service = ConverterService()
 
-        mock1 = MagicMock(spec=prompt_converter.PromptConverter)
-        mock2 = MagicMock(spec=prompt_converter.PromptConverter)
+        mock1 = MagicMock(spec=converter.Converter)
+        mock2 = MagicMock(spec=converter.Converter)
         service._registry.instances.register(mock1, name="conv-1")
         service._registry.instances.register(mock2, name="conv-2")
 
@@ -513,8 +513,8 @@ def _get_all_converter_names() -> list[str]:
     """
     Dynamically collect all converter class names from the codebase.
 
-    Uses get_converter_modalities() which reads from prompt_converter.__all__
-    and filters to only actual PromptConverter subclasses.
+    Uses get_converter_modalities() which reads from converter.__all__
+    and filters to only actual Converter subclasses.
     """
     return [name for name, _, _ in get_converter_modalities()]
 
@@ -523,7 +523,7 @@ def _try_instantiate_converter(converter_name: str):
     """
     Try to instantiate a converter with minimal representative arguments.
 
-    Uses mock objects for complex dependencies (PromptTarget, PromptConverter)
+    Uses mock objects for complex dependencies (PromptTarget, Converter)
     and provides minimal valid values for simple required parameters so that the
     identifier extraction test covers ALL converters without skipping.
 
@@ -558,9 +558,9 @@ def _try_instantiate_converter(converter_name: str):
         "ImagePromptStyleConverter": {"filter_name": "gritty_documentary"},
     }
 
-    converter_cls = getattr(prompt_converter, converter_name, None)
+    converter_cls = getattr(converter, converter_name, None)
     if converter_cls is None:
-        return None, f"Converter {converter_name} not found in prompt_converter module"
+        return None, f"Converter {converter_name} not found in converter module"
 
     if converter_name in skip_converters:
         return None, None  # Signal to skip without failure
@@ -602,12 +602,12 @@ def _try_instantiate_converter(converter_name: str):
             )
             mock_target.get_identifier.return_value = mock_id
             kwargs[pname] = mock_target
-        # PromptConverter — use a real simple converter to avoid JSON serialization issues
-        elif "PromptConverter" in ann_str:
+        # Converter — use a real simple converter to avoid JSON serialization issues
+        elif "Converter" in ann_str:
             kwargs[pname] = Base64Converter()
         # TextSelectionStrategy — use a real concrete technique
         elif "TextSelectionStrategy" in ann_str:
-            from pyrit.prompt_converter.text_selection_strategy import AllWordsSelectionStrategy
+            from pyrit.converter.text_selection_strategy import AllWordsSelectionStrategy
 
             kwargs[pname] = AllWordsSelectionStrategy()
         # TextJailBreak — use string template

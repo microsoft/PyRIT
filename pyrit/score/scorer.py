@@ -14,29 +14,23 @@ from typing import (
     cast,
 )
 
-from pyrit.exceptions import PyritException
+from pyrit.exceptions import PyritException, ScorerLLMResponseBlockedException
 from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import (
     ChatMessageRole,
     ComponentIdentifier,
     Identifiable,
-    JsonSchemaDefinition,
     Message,
     MessagePiece,
-    PromptDataType,
     Score,
     ScorerEvaluationIdentifier,
     ScorerIdentifier,
     ScoreType,
-    UnvalidatedScore,
 )
 from pyrit.prompt_target.batch_helper import batch_task_async
 from pyrit.prompt_target.common.target_requirements import TargetRequirements
-from pyrit.score.llm_scoring import _run_llm_scoring_async
-from pyrit.score.response_handler import JsonSchemaResponseHandler
 
 if TYPE_CHECKING:
-    import uuid
     from collections.abc import Sequence
 
     from pyrit.prompt_target import PromptTarget
@@ -80,6 +74,15 @@ class Scorer(Identifiable, abc.ABC):
     #: Note: Partial content extraction is supported for ``OpenAIChatTarget``
     #: (Chat Completions API) and ``OpenAIResponseTarget`` (Responses API).
     score_blocked_content: bool = False
+
+    #: Controls what happens when the scorer's *own* LLM response is blocked by content
+    #: filtering (common in red-teaming, since the scorer's rationale quotes harmful content).
+    #: When True (default), scoring raises ``ScorerLLMResponseBlockedException`` — a blocked
+    #: scorer endpoint is treated as a real error. When False, scoring returns the scorer's
+    #: type default instead (False for true/false scorers, 0.0 for float-scale). This is
+    #: distinct from ``score_blocked_content``, which concerns the target-under-test response.
+    #: Set this on scorer instances before use. Defaults to True.
+    raise_if_scorer_blocks: bool = True
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
         """
@@ -228,6 +231,8 @@ class Scorer(Identifiable, abc.ABC):
             list[Score]: A list of Score objects representing the results.
 
         Raises:
+            ScorerLLMResponseBlockedException: If the scorer's own LLM response is blocked by
+                content filtering and ``raise_if_scorer_blocks`` is True (the default).
             PyritException: If scoring raises a PyRIT exception (re-raised with enhanced context).
             RuntimeError: If scoring raises a non-PyRIT exception (wrapped with scorer context).
         """
@@ -258,6 +263,25 @@ class Scorer(Identifiable, abc.ABC):
             scores = await self._score_async(
                 scoring_message,
                 objective=objective,
+            )
+        except ScorerLLMResponseBlockedException as e:
+            # The scorer's own LLM response was content-filtered. By default this is a real
+            # error and re-raised; when raise_if_scorer_blocks is False, fall back to the
+            # scorer's type default (False / 0.0) instead. The decision lives here in the
+            # Scorer, not the transport (see doc/code/framework.md).
+            if self.raise_if_scorer_blocks:
+                e.message = f"Error in scorer {self.__class__.__name__}: {e.message}"
+                e.args = (f"Status Code: {e.status_code}, Message: {e.message}",)
+                raise
+            logger.info(
+                "Scorer %s LLM response was blocked by content filtering; "
+                "returning default score (raise_if_scorer_blocks=False).",
+                self.__class__.__name__,
+            )
+            scores = self._build_fallback_score(
+                message=scoring_message,
+                objective=objective,
+                scorer_response_blocked=True,
             )
         except PyritException as e:
             # Re-raise PyRIT exceptions with enhanced context while preserving type for retry decorators
@@ -401,7 +425,9 @@ class Scorer(Identifiable, abc.ABC):
         ]
 
     @abstractmethod
-    def _build_fallback_score(self, *, message: Message, objective: str | None) -> list[Score]:
+    def _build_fallback_score(
+        self, *, message: Message, objective: str | None, scorer_response_blocked: bool = False
+    ) -> list[Score]:
         """
         Return neutral fallback ``Score`` objects when ``_score_async`` produced no scores.
 
@@ -420,6 +446,9 @@ class Scorer(Identifiable, abc.ABC):
         Args:
             message (Message): The (possibly substituted) message that was scored.
             objective (str | None): The objective associated with this scoring call.
+            scorer_response_blocked (bool): When True, the fallback was triggered because the
+                scorer's *own* LLM response was blocked by content filtering (not the
+                target-under-test). Subclasses should reflect this in the rationale.
 
         Returns:
             list[Score]: One or more fallback scores. Must not be empty.
@@ -662,100 +691,6 @@ class Scorer(Identifiable, abc.ABC):
             return 0.0
 
         return (value - min_value) / (max_value - min_value)
-
-    async def _score_value_with_llm_async(
-        self,
-        *,
-        prompt_target: PromptTarget,
-        system_prompt: str,
-        message_value: str,
-        message_data_type: PromptDataType,
-        scored_prompt_id: str | uuid.UUID,
-        prepended_text_message_piece: str | None = None,
-        category: Sequence[str] | str | None = None,
-        objective: str | None = None,
-        score_value_output_key: str = "score_value",
-        rationale_output_key: str = "rationale",
-        description_output_key: str = "description",
-        metadata_output_key: str = "metadata",
-        category_output_key: str = "category",
-        response_json_schema: JsonSchemaDefinition | None = None,
-        numeric_value: bool = False,
-    ) -> UnvalidatedScore:
-        """
-        Send a request to a target, and take care of retries.
-
-        This is a thin internal forwarder to ``_run_llm_scoring_async``. It remains only so that
-        scorers that have not yet been migrated to compose the helper directly keep working.
-
-        The scorer target response should be JSON with value, rationale, and optional metadata and
-        description fields.
-
-        Args:
-            prompt_target (PromptTarget): The target LLM to send the message to.
-            system_prompt (str): The system-level prompt that guides the behavior of the target LLM.
-            message_value (str): The actual value or content to be scored by the LLM (e.g., text, image path,
-                audio path).
-            message_data_type (PromptDataType): The type of the data being sent in the message (e.g., "text",
-                "image_path", "audio_path").
-            scored_prompt_id (str | uuid.UUID): The ID of the scored prompt.
-            prepended_text_message_piece (str | None): Text context to prepend before the main
-                message_value. When provided, creates a multi-piece message with this text first, followed
-                by the message_value. Useful for adding objective/context when scoring non-text content.
-                Defaults to None.
-            category (Sequence[str] | str | None): The category of the score. Can also be parsed from
-                the JSON response if not provided. Defaults to None.
-            objective (str | None): A description of the objective that is associated with the score,
-                used for contextualizing the result. Defaults to None.
-            score_value_output_key (str): The key in the JSON response that contains the score value.
-                Defaults to "score_value".
-            rationale_output_key (str): The key in the JSON response that contains the rationale.
-                Defaults to "rationale".
-            description_output_key (str): The key in the JSON response that contains the description.
-                Defaults to "description".
-            metadata_output_key (str): The key in the JSON response that contains the metadata.
-                Defaults to "metadata".
-            category_output_key (str): The key in the JSON response that contains the category.
-                Defaults to "category".
-            response_json_schema (JsonSchemaDefinition | None): An optional JSON schema constraining
-                the scoring response. When provided, it is written to the request metadata; targets
-                that natively support JSON schemas enforce it, while others have it omitted by the
-                normalization pipeline. Defaults to None.
-            numeric_value (bool): When True, the response handler requires the parsed score value to
-                be parsable as a float and raises ``InvalidJsonException`` otherwise. Float-scale
-                scorers pass True. Defaults to False.
-
-        Returns:
-            UnvalidatedScore: The score object containing the response from the target LLM.
-                score_value still needs to be normalized and validated.
-
-        Raises:
-            ValueError: If required keys are missing from the response or if the response format is invalid.
-            InvalidJsonException: If the response is not valid JSON.
-            Exception: For other unexpected errors during scoring.
-        """
-        response_handler = JsonSchemaResponseHandler(
-            score_value_output_key=score_value_output_key,
-            rationale_output_key=rationale_output_key,
-            description_output_key=description_output_key,
-            metadata_output_key=metadata_output_key,
-            category_output_key=category_output_key,
-            response_schema=response_json_schema,
-            numeric_value=numeric_value,
-        )
-
-        return await _run_llm_scoring_async(
-            chat_target=prompt_target,
-            system_prompt=system_prompt,
-            response_handler=response_handler,
-            value=message_value,
-            data_type=message_data_type,
-            scored_prompt_id=scored_prompt_id,
-            scorer_identifier=self.get_identifier(),
-            prepended_text=prepended_text_message_piece,
-            category=category,
-            objective=objective,
-        )
 
     def _extract_objective_from_response(self, response: Message) -> str:
         """

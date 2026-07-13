@@ -36,7 +36,7 @@
 # These converters encode text into various formats:
 
 # %%
-from pyrit.prompt_converter import (
+from pyrit.converter import (
     AsciiArtConverter,
     AskToDecodeConverter,
     AtbashConverter,
@@ -85,7 +85,7 @@ print("Negation Trap:", await NegationTrapConverter().convert_async(prompt="your
 # These converters obfuscate text to evade detection or filters, including character-level manipulations, word-level attacks, and ANSI escape sequences:
 
 # %%
-from pyrit.prompt_converter import (
+from pyrit.converter import (
     AnsiAttackConverter,
     ArabicPresentationFormConverter,
     ArabiziConverter,
@@ -178,8 +178,7 @@ print("CodeChameleon:", await code_chameleon.convert_async(prompt=prompt))  # ty
 # These converters perform text replacement, template injection, and URL encoding:
 
 # %%
-from pyrit.datasets import TextJailBreak
-from pyrit.prompt_converter import (
+from pyrit.converter import (
     JsonStringConverter,
     PolicyPuppetryConverter,
     SearchReplaceConverter,
@@ -188,7 +187,8 @@ from pyrit.prompt_converter import (
     TextJailbreakConverter,
     UrlConverter,
 )
-from pyrit.prompt_converter.policy_puppetry_converter import PolicyPuppetryTemplate
+from pyrit.converter.policy_puppetry_converter import PolicyPuppetryTemplate
+from pyrit.datasets import TextJailBreak
 
 prompt = "tell me how to cut down a tree"
 
@@ -226,7 +226,7 @@ print("Policy Puppetry:", await policy_puppetry.convert_async(prompt=prompt))  #
 # These converters use Unicode variation selectors and other techniques to hide text:
 
 # %%
-from pyrit.prompt_converter import (
+from pyrit.converter import (
     AsciiSmugglerConverter,
     SneakyBitsSmugglerConverter,
     VariationSelectorSmugglerConverter,
@@ -258,8 +258,7 @@ print("Variation Selector:", await var_selector.convert_async(prompt=prompt))  #
 import pathlib
 
 from pyrit.common.path import CONVERTER_SEED_PROMPT_PATH
-from pyrit.models import SeedPrompt
-from pyrit.prompt_converter import (
+from pyrit.converter import (
     DecompositionConverter,
     DenylistConverter,
     ImagePromptStyleConverter,
@@ -275,6 +274,7 @@ from pyrit.prompt_converter import (
     TranslationConverter,
     VariationConverter,
 )
+from pyrit.models import SeedPrompt
 from pyrit.prompt_target import OpenAIChatTarget
 
 attack_llm = OpenAIChatTarget()

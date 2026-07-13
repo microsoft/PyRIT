@@ -31,7 +31,7 @@ from pyrit.scenario import Scenario
 from pyrit.scenario.core import DatasetAttackConfiguration
 
 if TYPE_CHECKING:
-    from pyrit.prompt_converter import PromptConverter
+    from pyrit.converter import Converter
     from pyrit.prompt_target import PromptTarget
 
 logger = logging.getLogger(__name__)
@@ -393,7 +393,7 @@ class ScenarioRunService:
         tokens: list[str],
         technique_class: type[Any],
         scenario_name: str,
-    ) -> tuple[list[Any], dict[str, list["PromptConverter"]]]:
+    ) -> tuple[list[Any], dict[str, list["Converter"]]]:
         """
         Resolve ``--techniques`` tokens into technique enums and per-technique converters.
 
@@ -417,7 +417,7 @@ class ScenarioRunService:
                 converter name is not registered.
         """
         technique_enums: list[Any] = []
-        technique_converters: dict[str, list[PromptConverter]] = {}
+        technique_converters: dict[str, list[Converter]] = {}
 
         for token in tokens:
             base_name, _, remainder = token.partition(":")
@@ -442,7 +442,7 @@ class ScenarioRunService:
 
         return technique_enums, technique_converters
 
-    def _resolve_converter_modifiers(self, *, modifiers: list[str], token: str) -> list["PromptConverter"]:
+    def _resolve_converter_modifiers(self, *, modifiers: list[str], token: str) -> list["Converter"]:
         """
         Resolve the converter modifiers of a single technique token to converter instances.
 
@@ -461,7 +461,7 @@ class ScenarioRunService:
             return []
 
         instances = ConverterRegistry.get_registry_singleton().instances
-        converters: list[PromptConverter] = []
+        converters: list[Converter] = []
         for modifier in modifiers:
             if not modifier.startswith(_CONVERTER_MODIFIER_PREFIX):
                 raise ValueError(

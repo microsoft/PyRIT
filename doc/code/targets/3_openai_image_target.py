@@ -5,8 +5,9 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.19.0
+#       jupytext_version: 1.19.4
 # ---
+
 # %% [markdown]
 # # 3. OpenAI Image Target
 #
@@ -41,12 +42,12 @@ img_prompt_target = OpenAIImageTarget(
 )
 
 chat_endpoint = os.environ["OPENAI_CHAT_ENDPOINT"]
-image_scorer = SelfAskTrueFalseScorer(
+image_scorer = SelfAskTrueFalseScorer.from_question(
     chat_target=OpenAIChatTarget(
         endpoint=chat_endpoint,
         api_key=get_azure_openai_auth(chat_endpoint),
     ),
-    true_false_question=TrueFalseQuestion(true_description="The response matches the objective {{objective}}"),
+    question=TrueFalseQuestion(true_description="The response matches the objective {{objective}}"),
 )
 
 scoring_config = AttackScoringConfig(objective_scorer=image_scorer)

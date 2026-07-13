@@ -102,12 +102,12 @@ Examples:
 
   # Run rapid response with specific datasets and concurrency
   pyrit_scan airt.rapid_response --target openai_chat
-    --techniques role_play --dataset-names airt_hate
+    --techniques role_play_movie_script --dataset-names airt_hate
     --max-dataset-size 5 --max-concurrency 4
 
   # Attach registered converters to a technique (repeatable, applied in order)
   pyrit_scan airt.rapid_response --target openai_chat
-    --techniques role_play:converter.translation_spanish:converter.leetspeak
+    --techniques role_play_movie_script:converter.translation_spanish:converter.leetspeak
 
   # Run multi-turn red team agent with labels for tracking
   pyrit_scan airt.red_team_agent --target openai_chat

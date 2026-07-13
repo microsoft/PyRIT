@@ -11,6 +11,7 @@ from unittest.mock import patch
 import pytest
 from unit.mocks import get_sample_conversations
 
+from pyrit.converter import Base64Converter
 from pyrit.memory.storage.serializers import set_message_piece_sha256_async
 from pyrit.models import (
     ComponentIdentifier,
@@ -23,7 +24,6 @@ from pyrit.models import (
     group_message_pieces_into_conversations,
     sort_message_pieces,
 )
-from pyrit.prompt_converter import Base64Converter
 
 
 @pytest.fixture
@@ -67,7 +67,7 @@ def test_converters_serialize():
     converter = entry.converter_identifiers[0]
 
     assert converter.class_name == "Base64Converter"
-    assert converter.class_module == "pyrit.prompt_converter.base64_converter"
+    assert converter.class_module == "pyrit.converter.base64_converter"
 
 
 async def test_hashes_generated():
@@ -656,7 +656,7 @@ def test_message_piece_to_dict():
         converter_identifiers=[
             ComponentIdentifier(
                 class_name="Base64Converter",
-                class_module="pyrit.prompt_converter.base64_converter",
+                class_module="pyrit.converter.base64_converter",
                 params={"supported_input_types": ["text"], "supported_output_types": ["text"]},
             )
         ],
@@ -952,7 +952,7 @@ def test_to_dict_from_dict_roundtrip():
     )
     converter_id = ComponentIdentifier(
         class_name="Base64Converter",
-        class_module="pyrit.prompt_converter",
+        class_module="pyrit.converter",
     )
     score = Score(
         score_value="true",

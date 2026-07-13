@@ -61,9 +61,10 @@ class AttackContext(StrategyContext, ABC, Generic[AttackParamsT]):
     execution state. The params field contains caller-provided inputs,
     while other fields track execution progress.
 
-    Attacks that generate certain values internally (e.g., RolePlayAttack generates
-    next_message and prepended_conversation) can set the mutable override fields
-    (_next_message_override, _prepended_conversation_override) during _setup_async.
+    Attacks that generate certain values internally (e.g., a simulated-conversation
+    technique generates next_message and prepended_conversation) can set the mutable
+    override fields (_next_message_override, _prepended_conversation_override) during
+    _setup_async.
     """
 
     # Immutable parameters from the caller
@@ -488,7 +489,7 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
         if adversarial_config is not None and getattr(adversarial_config, "target", None) is not None:
             adversarial_chat = TargetIdentifier.from_component_identifier(adversarial_config.target.get_identifier())
             adversarial_system_prompt = self._extract_adversarial_prompt_text(adversarial_config.system_prompt)
-            adversarial_seed_prompt = self._extract_adversarial_prompt_text(adversarial_config.seed_prompt)
+            adversarial_seed_prompt = self._extract_adversarial_prompt_text(adversarial_config.first_message)
 
         # Add request converter identifiers if present
         request_converters: list[ConverterIdentifier] | None = None
@@ -602,7 +603,7 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
         Get request converter configurations used by this strategy.
 
         Returns:
-            list[Any]: The list of request PromptConverterConfiguration objects.
+            list[Any]: The list of request ConverterConfiguration objects.
         """
         return self._request_converters
 

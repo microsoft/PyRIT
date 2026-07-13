@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from pyrit.converter import Base64Converter, StringJoinConverter
 from pyrit.executor.attack import (
     AttackConverterConfig,
     AttackScoringConfig,
@@ -23,8 +24,7 @@ from pyrit.models import (
     MessagePiece,
     Score,
 )
-from pyrit.prompt_converter import Base64Converter, StringJoinConverter
-from pyrit.prompt_normalizer import PromptConverterConfiguration, PromptNormalizer
+from pyrit.prompt_normalizer import ConverterConfiguration, PromptNormalizer
 from pyrit.prompt_target import PromptTarget
 from pyrit.score import Scorer, TrueFalseScorer
 
@@ -160,8 +160,8 @@ class TestMultiPromptSendingAttackInitialization:
 
     def test_init_with_all_custom_configurations(self, mock_target, mock_true_false_scorer, mock_prompt_normalizer):
         converter_cfg = AttackConverterConfig(
-            request_converters=[PromptConverterConfiguration(converters=[Base64Converter()])],
-            response_converters=[PromptConverterConfiguration(converters=[StringJoinConverter()])],
+            request_converters=[ConverterConfiguration(converters=[Base64Converter()])],
+            response_converters=[ConverterConfiguration(converters=[StringJoinConverter()])],
         )
         scoring_cfg = AttackScoringConfig(objective_scorer=mock_true_false_scorer)
 
@@ -290,7 +290,7 @@ class TestSetupPhase:
         }
 
     async def test_setup_updates_conversation_state_with_converters(self, mock_target, basic_context):
-        converter_config = [PromptConverterConfiguration(converters=[])]
+        converter_config = [ConverterConfiguration(converters=[])]
         attack = MultiPromptSendingAttack(
             objective_target=mock_target,
             attack_converter_config=AttackConverterConfig(request_converters=converter_config),
@@ -314,8 +314,8 @@ class TestPromptSending:
     async def test_send_prompt_to_target_with_all_configurations(
         self, mock_target, mock_prompt_normalizer, basic_context, sample_response
     ):
-        request_converters = [PromptConverterConfiguration(converters=[])]
-        response_converters = [PromptConverterConfiguration(converters=[])]
+        request_converters = [ConverterConfiguration(converters=[])]
+        response_converters = [ConverterConfiguration(converters=[])]
 
         attack = MultiPromptSendingAttack(
             objective_target=mock_target,
@@ -603,7 +603,7 @@ class TestConverterIntegration:
         self, mock_target, mock_prompt_normalizer, basic_context, sample_response
     ):
         converter_config = AttackConverterConfig(
-            request_converters=[PromptConverterConfiguration(converters=[Base64Converter()])]
+            request_converters=[ConverterConfiguration(converters=[Base64Converter()])]
         )
         mock_prompt_normalizer.send_prompt_async.return_value = sample_response
 
@@ -623,7 +623,7 @@ class TestConverterIntegration:
         self, mock_target, mock_prompt_normalizer, basic_context, sample_response
     ):
         converter_config = AttackConverterConfig(
-            response_converters=[PromptConverterConfiguration(converters=[StringJoinConverter()])]
+            response_converters=[ConverterConfiguration(converters=[StringJoinConverter()])]
         )
         mock_prompt_normalizer.send_prompt_async.return_value = sample_response
 

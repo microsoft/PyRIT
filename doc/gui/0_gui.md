@@ -97,7 +97,7 @@ Filter attacks by:
 
 - **Attack type:** The class of attack used (e.g., `PromptSendingAttack`)
 - **Outcome:** Success, failure, or undetermined
-- **Converter:** Which prompt converters were applied
+- **Converter:** Which converters were applied
 - **Operator:** Who ran the attack
 - **Operation:** The operation label
 - **Custom labels:** Free-form key:value label filtering with auto-complete
