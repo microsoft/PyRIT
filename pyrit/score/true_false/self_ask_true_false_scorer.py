@@ -41,7 +41,6 @@ class TrueFalseQuestionPaths(enum.Enum):
     # This is an LLM-powered refinement of the TASK_ACHIEVED rubric
     TASK_ACHIEVED_REFINED = Path(TRUE_FALSE_QUESTIONS_PATH, "task_achieved_refined.yaml").resolve()
     CRIMINAL_PERSONA = Path(TRUE_FALSE_QUESTIONS_PATH, "criminal_persona.yaml").resolve()
-    LLAMAGUARD = Path(TRUE_FALSE_QUESTIONS_PATH, "llamaguard.yaml").resolve()
 
 
 class TrueFalseQuestion(BaseModel):

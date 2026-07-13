@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 async def _run_llm_scoring_async(
     *,
     chat_target: PromptTarget,
-    system_prompt: str,
+    system_prompt: str | None,
     response_handler: ResponseHandler,
     value: str,
     data_type: PromptDataType,
@@ -38,7 +38,7 @@ async def _run_llm_scoring_async(
     """
     Perform a single scoring round-trip against an LLM target and delegate parsing.
 
-    This is the shared LLM evaluation mechanism: it sets the system prompt on the target, sends
+    This is the shared LLM evaluation mechanism: it optionally sets a system prompt on the target, sends
     the value to be scored (forwarding ``response_handler.response_schema`` so targets that
     support structured output can enforce it), applies the standard JSON retry behavior, and
     delegates parsing and validation to ``response_handler``. It is intentionally stateless and
@@ -54,7 +54,8 @@ async def _run_llm_scoring_async(
 
     Args:
         chat_target (PromptTarget): The target LLM to send the message to.
-        system_prompt (str): The system-level prompt that guides the target LLM.
+        system_prompt (str | None): The system-level prompt that guides the target LLM. When None,
+            the request is sent without configuring a system prompt.
         response_handler (ResponseHandler): Owns the response contract: supplies the optional
             response schema and turns the target's raw text into an ``UnvalidatedScore``.
         value (str): The content to be scored (e.g. text, image path, audio path).
@@ -86,10 +87,11 @@ async def _run_llm_scoring_async(
     """
     conversation_id = str(uuid.uuid4())
 
-    chat_target.set_system_prompt(
-        system_prompt=system_prompt,
-        conversation_id=conversation_id,
-    )
+    if system_prompt is not None:
+        chat_target.set_system_prompt(
+            system_prompt=system_prompt,
+            conversation_id=conversation_id,
+        )
     prompt_metadata: dict[str, Any] = {}
     response_format = response_handler.response_format
     if response_format is not None:
