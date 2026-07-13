@@ -677,7 +677,7 @@ class TestCustomAdversarialPrompt:
         config = technique.attack.attack_adversarial_config
         assert config.target is target
         assert config.system_prompt == "sys {{ objective }}"
-        assert config.seed_prompt is seed
+        assert config.first_message is seed
 
     def test_adversarial_chat_implies_uses_adversarial(self):
         target = MagicMock(spec=PromptTarget)
@@ -759,7 +759,7 @@ class TestCustomAdversarialPrompt:
         config = technique.attack.attack_adversarial_config
         assert config.target is fallback
         assert config.system_prompt == "durian sys {{ objective }}"
-        assert config.seed_prompt is seed
+        assert config.first_message is seed
 
     def test_create_adversarial_chat_is_combined_with_custom_prompts(self):
         seed = SeedPrompt(value="durian {{ objective }}", data_type="text", parameters=["objective"])
@@ -781,7 +781,7 @@ class TestCustomAdversarialPrompt:
         # The create-time target is used; the technique keeps its custom prompts.
         assert config.target is create_target
         assert config.system_prompt == "durian sys {{ objective }}"
-        assert config.seed_prompt is seed
+        assert config.first_message is seed
 
     def test_create_adversarial_chat_used_as_target(self):
         """A create-time adversarial_chat fills the lazy slot (no default resolution)."""

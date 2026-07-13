@@ -6,6 +6,7 @@ from __future__ import annotations
 import abc
 import json
 from abc import abstractmethod
+from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
 from pyrit.exceptions import InvalidJsonException, remove_markdown_json
@@ -13,7 +14,7 @@ from pyrit.models import UnvalidatedScore
 
 if TYPE_CHECKING:
     import uuid
-    from collections.abc import Callable, Sequence
+    from collections.abc import Callable
     from typing import Any
 
     from pyrit.models import ComponentIdentifier, JsonSchemaDefinition
@@ -34,7 +35,7 @@ def _build_unvalidated_score(
 ) -> UnvalidatedScore:
     category_response = parsed_response.get(category_output_key)
 
-    if category_response and category:
+    if category_response is not None and category is not None:
         raise ValueError("Category is present in the response and an argument")
 
     # Validate and normalize category to a list of strings
@@ -44,13 +45,16 @@ def _build_unvalidated_score(
         normalized_category = None
     elif isinstance(cat_val, str):
         normalized_category = [cat_val]
-    elif isinstance(cat_val, list):
+    elif isinstance(cat_val, Sequence):
         if not all(isinstance(x, str) for x in cat_val):
-            raise ValueError("'category' must be a string or a list of strings")
-        normalized_category = cat_val  # type: ignore[ty:invalid-assignment]
+            if category_response is not None:
+                raise InvalidJsonException(message="'category' must be a string or a sequence of strings")
+            raise ValueError("'category' must be a string or a sequence of strings")
+        normalized_category = list(cat_val)
     else:
-        # Category must be either a string or a list of strings
-        raise ValueError("'category' must be a string or a list of strings")
+        if category_response is not None:
+            raise InvalidJsonException(message="'category' must be a string or a sequence of strings")
+        raise ValueError("'category' must be a string or a sequence of strings")
 
     # Normalize metadata to a dictionary with string keys and string/int/float values
     raw_md = parsed_response.get(metadata_output_key)

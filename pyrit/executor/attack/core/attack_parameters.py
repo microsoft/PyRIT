@@ -211,7 +211,7 @@ class AttackParameters:
             ValueError: If any field_name is not a valid field of this class.
 
         Example:
-            RolePlayAttackParameters = AttackParameters.excluding("next_message", "prepended_conversation")
+            ReducedParameters = AttackParameters.excluding("next_message", "prepended_conversation")
         """
         # Validate all field names exist
         current_fields = {f.name for f in dataclasses.fields(cls)}

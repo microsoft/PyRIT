@@ -278,4 +278,4 @@ class TestLeakageTechniqueEnum:
         assert "first_letter" in values
         assert "image" in values
         # Core techniques included
-        assert "role_play" in values
+        assert "role_play_movie_script" in values

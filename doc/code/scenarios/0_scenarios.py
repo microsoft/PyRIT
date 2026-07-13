@@ -5,7 +5,7 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.18.1
+#       jupytext_version: 1.19.4
 # ---
 
 # %% [markdown]
@@ -95,7 +95,6 @@
 # `build_matrix_atomic_attacks` helper, which builds atomic attacks automatically from the
 # registered attack techniques.
 # %%
-
 from pyrit.common import apply_defaults
 from pyrit.scenario import (
     DatasetConfiguration,
@@ -117,7 +116,7 @@ class MyTechnique(ScenarioTechnique):
     SINGLE_TURN = ("single_turn", {"single_turn"})
     # Technique members represent attack techniques
     PromptSending = ("prompt_sending", {"single_turn", "default"})
-    RolePlay = ("role_play", {"single_turn"})
+    RolePlay = ("role_play_movie_script", {"single_turn"})
 
 
 class MyScenario(Scenario):

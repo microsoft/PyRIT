@@ -160,7 +160,9 @@ class TrueFalseScorer(Scorer):
             )
         ]
 
-    def _build_fallback_score(self, *, message: Message, objective: str | None) -> list[Score]:
+    def _build_fallback_score(
+        self, *, message: Message, objective: str | None, scorer_response_blocked: bool = False
+    ) -> list[Score]:
         """
         Build a single-element list containing a ``false`` score when no pieces could be scored.
 
@@ -170,6 +172,8 @@ class TrueFalseScorer(Scorer):
         Args:
             message (Message): The message whose first piece is inspected for status.
             objective (str | None): The objective associated with this scoring call.
+            scorer_response_blocked (bool): When True, the scorer's own LLM response was
+                blocked by content filtering; reflected in the rationale.
 
         Returns:
             list[Score]: A single-element list containing a ``false`` ``true_false`` score
@@ -183,7 +187,13 @@ class TrueFalseScorer(Scorer):
         if piece_id is None:
             raise ValueError("Cannot create score: message piece has no id or original_prompt_id")
 
-        if first_piece.is_blocked():
+        if scorer_response_blocked:
+            rationale = (
+                "The scorer's own LLM response was blocked by content filtering "
+                "(raise_if_scorer_blocks is False); returning false."
+            )
+            description = "Scorer response blocked; returning false."
+        elif first_piece.is_blocked():
             rationale = (
                 "The request was blocked by the target "
                 "(score_blocked_content is False or no partial content available); returning false."

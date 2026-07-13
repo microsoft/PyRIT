@@ -5,7 +5,7 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.19.1
+#       jupytext_version: 1.19.4
 # ---
 
 # %% [markdown]
@@ -143,11 +143,11 @@
 # Then reference a converter by name in `--techniques`:
 #
 # ```shell
-# # Add the registered "translation_spanish" converter to role_play only
-# pyrit_scan airt.rapid_response --target openai_chat --initializers load_default_datasets target my_converters --techniques role_play:converter.translation_spanish
+# # Add the registered "translation_spanish" converter to role_play_movie_script only
+# pyrit_scan airt.rapid_response --target openai_chat --initializers load_default_datasets target my_converters --techniques role_play_movie_script:converter.translation_spanish
 #
 # # Chain multiple converters (applied in order) and combine with plain techniques
-# pyrit_scan airt.rapid_response --target openai_chat --initializers load_default_datasets target my_converters --techniques role_play:converter.translation_spanish:converter.base64 many_shot
+# pyrit_scan airt.rapid_response --target openai_chat --initializers load_default_datasets target my_converters --techniques role_play_movie_script:converter.translation_spanish:converter.base64 many_shot
 # ```
 
 # %% [markdown]
