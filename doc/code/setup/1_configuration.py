@@ -1,14 +1,14 @@
-from pyrit.output import output_attack_async
-
 # ---
 # jupyter:
 #   jupytext:
+#     cell_metadata_filter: -all
 #     text_representation:
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
 #       jupytext_version: 1.19.1
 # ---
+
 # %% [markdown]
 # # 1. Configuration
 #
@@ -18,7 +18,7 @@ from pyrit.output import output_attack_async
 #
 # 1. Set up environment variables (recommended)
 # 2. Pick a database (required)
-# 3. Set initialization scripts and defaults (recommended)
+# 3. Set initializers and initialization scripts (recommended)
 #
 # Alternatively, you can write a config file (`~/.pyrit/.pyrit_conf`) to parameterize this for you.
 # %% [markdown]
@@ -33,7 +33,7 @@ await initialize_from_config_async()  # type: ignore
 # %% [markdown]
 # ## Simple Example
 #
-# This section goes into each of the three steps mentioned earlier. But first, the easiest way; this sets up reasonable defaults using `TargetInitializer` and `ScorerInitializer` and stores the results in memory.
+# This section goes into each of the three steps mentioned earlier. But first, the easiest way; this registers configured targets and scorers using `TargetInitializer` and `ScorerInitializer` and stores results in memory.
 
 # %%
 # Set OPENAI_CHAT_ENDPOINT, OPENAI_CHAT_MODEL, and OPENAI_CHAT_KEY environment variables before running this code
@@ -115,35 +115,29 @@ target3 = OpenAIChatTarget(
 # The next required step is to pick a database. PyRIT supports three types of databases; InMemory, sqlite, and SQL Azure. These are detailed in the [memory](../memory/0_memory.md) section of documentation. InMemory and sqlite are local so require no configuration, but SQL Azure will need the appropriate environment variables set. This configuration is all specified in `memory_db_type` parameter to `initialize_pyrit_async`.
 
 # %% [markdown]
-# ## Setting up Initialization Scripts and Defaults
+# ## Setting up Initialization Scripts and Registries
 #
-# When you call initialize_pyrit_async, you can pass it initialization_scripts and/or initializers. These can do anything, including setting convenience variables. But one of the primary purposes is to set default values. It is recommended to always use an initializer.
+# When you call `initialize_pyrit_async`, you can pass it `initialization_scripts` and/or `initializers`. Built-in initializers register configured components so they can be selected by name or tag. Custom initializers can also set constructor defaults and convenience variables.
 #
 # ### Using Built-In Initializers
 #
-# Imagine you have an `OpenAIChatTarget`. What is the default?
-#
-# There is no good way to set these generally. An `OpenAIChatTarget` may be gpt-5, but it also might be llama. And these targets might take different parameters. Additionally, what is it being used for? A default scorer may want to use a different target than a default LLM being used for a converter. Should you always use entra auth?
-#
-# You can pass these in as arguments to every class initialization, but it can be a huge pain to set these every time. It would be nicer to just say out of the box that a scorer target LLM has a temperature of .5 by default, and a converter target LLM has a temperature of 1.1 by default. And it turns out you can!
-#
-# The following example shows how to use PyRIT initializers. This tackles a similar scenario to [Common Scenario Parameters](../scenarios/1_common_scenario_parameters.ipynb) but is much easier because defaults are set.
+# An `OpenAIChatTarget` may represent GPT-5, Llama, or another compatible model. Different roles may also need different settings. Instead of choosing one process-wide default, the built-in initializers register every configured component. The following example retrieves the configured `openai_chat` target and fallback scorer explicitly.
 
 # %%
-import os
-
-from pyrit.auth import get_azure_openai_auth
 from pyrit.common.path import PYRIT_PATH
 from pyrit.converter import TenseConverter
 from pyrit.executor.attack import (
     AttackConverterConfig,
     AttackExecutor,
+    AttackScoringConfig,
     PromptSendingAttack,
 )
+from pyrit.output import output_attack_async
 from pyrit.prompt_normalizer.converter_configuration import (
     ConverterConfiguration,
 )
-from pyrit.prompt_target import OpenAIChatTarget
+from pyrit.registry import ScorerRegistry, TargetRegistry
+from pyrit.score import TrueFalseScorer
 from pyrit.setup import initialize_pyrit_async
 from pyrit.setup.initializers import ScorerInitializer, TargetInitializer
 
@@ -157,9 +151,9 @@ await initialize_pyrit_async(
     memory_db_type="InMemory", initialization_scripts=[f"{PYRIT_PATH}/setup/initializers/targets.py"]
 )  # type: ignore
 
-# TargetInitializer registers sensible default targets for someone who only has OPENAI_CHAT_ENDPOINT, OPENAI_CHAT_MODEL, and OPENAI_CHAT_KEY configured
-# It can easily be combined with other PyRITInitializers (like ScorerInitializer) for a fuller setup
-# get_info_async() is a class method that shows how this initializer configures defaults and what global variables it sets
+# TargetInitializer registers targets for the endpoints it finds in the environment.
+# It can be combined with other PyRITInitializers, such as ScorerInitializer, for a fuller setup.
+# get_info_async() describes the initializer and the components it registers.
 info = await TargetInitializer.get_info_async()  # type: ignore
 for key, value in info.items():
     print(f"{key}: {value}")
@@ -169,23 +163,29 @@ objectives = [
     "Explain the theory of relativity in simple terms",
 ]
 
-# This is similar to the "Baseline-Only Execution" scenario but using defaults
+# This is similar to the "Baseline-Only Execution" scenario but uses registered components.
 
-# Create target without extensive configuration (uses defaults from initializer)
-endpoint = os.environ["OPENAI_CHAT_ENDPOINT"]
-objective_target = OpenAIChatTarget(endpoint=endpoint, api_key=get_azure_openai_auth(endpoint))
+# Retrieve the target and scorer registered from the OPENAI_CHAT_* environment variables.
+objective_target = TargetRegistry.get_registry_singleton().instances.get("openai_chat")
+objective_scorer = ScorerRegistry.get_registry_singleton().instances.get(ScorerInitializer.FALLBACK)
+if objective_target is None:
+    raise ValueError("The openai_chat target was not registered. Configure the OPENAI_CHAT_* environment variables.")
+if not isinstance(objective_scorer, TrueFalseScorer):
+    raise ValueError("The fallback objective scorer was not registered.")
 
-# TenseConverter automatically gets the default converter_target from our initializer
-converters = ConverterConfiguration.from_converters(converters=[TenseConverter(tense="past")])  # type: ignore
+# Reuse the registered chat target for conversion.
+converters = ConverterConfiguration.from_converters(
+    converters=[TenseConverter(tense="past", converter_target=objective_target)]
+)
 converter_config = AttackConverterConfig(request_converters=converters)
 
-# Attack automatically gets default scorer configuration from our initializer
 attack = PromptSendingAttack(
     objective_target=objective_target,
     attack_converter_config=converter_config,
+    attack_scoring_config=AttackScoringConfig(objective_scorer=objective_scorer),
 )
 
-# Execute the attack - all components use sensible defaults
+# Execute the attack with the selected registered components.
 results = await AttackExecutor().execute_attack_async(attack=attack, objectives=objectives)  # type: ignore
 
 for result in results:

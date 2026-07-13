@@ -11,11 +11,10 @@ declare their full initializer list in ``SCENARIO_INITIALIZERS`` and
 extra CLI args in ``SCENARIO_EXTRA_ARGS``.
 
 Note: e2e tests are not part of CI; they run via ``make end-to-end-test``
-on developer machines that have the appropriate env vars set
-(``ADVERSARIAL_CHAT_*`` for the benchmark scenario, in particular). The
-benchmark scenario reads its adversarial targets from ``--adversarial-targets``,
-which resolves names via ``TargetRegistry`` (populated by
-``TargetInitializer`` from those env vars).
+on developer machines that have the appropriate env vars set. The benchmark
+scenario reads its adversarial targets from ``--adversarial-targets``, which
+resolves names via ``TargetRegistry``. Its smoke test reuses the required
+``openai_chat`` target so it does not depend on an unregistered alias.
 """
 
 from pathlib import Path
@@ -44,7 +43,7 @@ SCENARIO_EXTRA_ARGS: dict[str, list[str]] = {
     # benchmark.adversarial requires --adversarial-targets at run time
     # (see AdversarialBenchmark.supported_parameters); without it the scenario
     # raises ValueError before any attack is built.
-    "benchmark.adversarial": ["--adversarial-targets", "adversarial_chat"],
+    "benchmark.adversarial": ["--adversarial-targets", "openai_chat"],
 }
 
 

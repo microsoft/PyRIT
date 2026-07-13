@@ -2,6 +2,8 @@ import { createLogger, defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import path from 'path'
 
+const backendUrl = process.env.E2E_BACKEND_URL ?? 'http://127.0.0.1:8000'
+
 // Suppress noisy ECONNREFUSED proxy errors while the backend is starting.
 // Without this, Vite logs dozens of "http proxy error" stack traces.
 const logger = createLogger()
@@ -40,7 +42,7 @@ export default defineConfig({
     proxy: {
       '/api': {
         // Use 127.0.0.1 to avoid Node.js 17+ resolving localhost to IPv6 ::1
-        target: 'http://127.0.0.1:8000',
+        target: backendUrl,
         changeOrigin: true,
         // Return 502 on proxy errors so in-flight requests fail fast
         // instead of hanging until the backend comes up.

@@ -13,7 +13,7 @@ test.describe("API Health Check", () => {
     const start = Date.now();
     while (Date.now() - start < maxWait) {
       try {
-        const resp = await request.get("/api/health");
+        const resp = await request.get("/api/health", { timeout: 2_000 });
         if (resp.ok()) return;
       } catch {
         // Backend not ready yet
@@ -24,7 +24,7 @@ test.describe("API Health Check", () => {
   });
 
   test("should have healthy backend API @seeded", async ({ request }) => {
-    const response = await request.get("/api/health");
+    const response = await request.get("/api/health", { timeout: 10_000 });
 
     expect(response.ok()).toBe(true);
     const data = await response.json();
@@ -48,7 +48,7 @@ test.describe("Targets API", () => {
     const start = Date.now();
     while (Date.now() - start < maxWait) {
       try {
-        const resp = await request.get("/api/health");
+        const resp = await request.get("/api/health", { timeout: 2_000 });
         if (resp.ok()) return;
       } catch {
         // Backend not ready yet
@@ -68,6 +68,8 @@ test.describe("Targets API", () => {
   });
 
   test("should create and retrieve a target @seeded", async ({ request }) => {
+    test.setTimeout(120_000);
+
     const createPayload = {
       type: "OpenAIChatTarget",
       params: {
@@ -87,7 +89,7 @@ test.describe("Targets API", () => {
 
     const created = await createResp.json();
     expect(created).toHaveProperty("target_registry_name");
-    expect(created.target_type).toBe("OpenAIChatTarget");
+    expect(created.identifier.class_name).toBe("OpenAIChatTarget");
 
     // Retrieve via list and check it's there
     const listResp = await request.get("/api/targets?limit=200");
@@ -108,7 +110,7 @@ test.describe("Attacks API", () => {
     const start = Date.now();
     while (Date.now() - start < maxWait) {
       try {
-        const resp = await request.get("/api/health");
+        const resp = await request.get("/api/health", { timeout: 2_000 });
         if (resp.ok()) return;
       } catch {
         // Backend not ready yet

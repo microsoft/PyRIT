@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+
 import { test, expect, type Page, type APIRequestContext } from "@playwright/test";
 
 // ---------------------------------------------------------------------------
@@ -9,6 +11,12 @@ import { test, expect, type Page, type APIRequestContext } from "@playwright/tes
  * Without it, only seeded tests run (safe for CI, no credentials needed).
  */
 const LIVE_MODE = process.env.E2E_LIVE_MODE === "true";
+const AZURE_OPENAI_HOSTNAME_SUFFIXES = [
+  ".openai.azure.com",
+  ".ai.azure.com",
+  ".services.ai.azure.com",
+  ".cognitiveservices.azure.com",
+] as const;
 
 // ---------------------------------------------------------------------------
 // Helpers - shared between seeded and live modes
@@ -21,7 +29,7 @@ async function waitForBackend(request: APIRequestContext): Promise<void> {
   const start = Date.now();
   while (Date.now() - start < maxWait) {
     try {
-      const resp = await request.get("/api/health");
+      const resp = await request.get("/api/health", { timeout: 2_000 });
       if (resp.ok()) return;
     } catch {
       // Backend not ready yet
@@ -72,6 +80,16 @@ interface MessagePiece {
   mime_type?: string;
 }
 
+interface MessagePieceResponse {
+  response_error: string;
+  response_error_description?: string | null;
+}
+
+interface MessageResponse {
+  role: string;
+  message_pieces: MessagePieceResponse[];
+}
+
 /** Store a message without calling the target (send=false). */
 async function storeMessage(
   request: APIRequestContext,
@@ -113,6 +131,17 @@ async function sendMessage(
     { data },
   );
   expect(resp.ok()).toBeTruthy();
+  const body: { messages: { messages: MessageResponse[] } } = await resp.json();
+  const assistantMessage = [...body.messages.messages].reverse().find(
+    (message) => message.role === "assistant",
+  );
+  expect(assistantMessage, "Target did not return an assistant message").toBeDefined();
+  for (const piece of assistantMessage?.message_pieces ?? []) {
+    expect(
+      piece.response_error,
+      piece.response_error_description ?? "Target returned an error response",
+    ).toBe("none");
+  }
 }
 
 /** Convenience: store a text-only message. */
@@ -153,12 +182,11 @@ async function createConversation(
 }
 
 /** Activate a target via the Configuration view so the chat UI is unlocked. */
-async function activateTarget(page: Page, targetType: string): Promise<void> {
+async function activateTarget(page: Page, targetRegistryName: string): Promise<void> {
   await page.getByTitle("Configuration").click();
   await expect(page.getByText("Target Configuration")).toBeVisible({ timeout: 10_000 });
-  // The table displays target_type (not registry name), so match by type.
-  // Use .first() because multiple targets of the same type may exist.
-  const row = page.locator("tr", { has: page.getByText(targetType, { exact: true }) }).first();
+  const row = page.getByTestId(`target-row-${targetRegistryName}`);
+  await expect(row).toBeVisible({ timeout: 10_000 });
   await row.getByRole("button", { name: /set active/i }).click();
   await page.getByTitle("Chat").click();
   await expect(page.getByTestId("new-attack-btn")).toBeVisible({ timeout: 5_000 });
@@ -191,9 +219,9 @@ async function openConversationPanel(page: Page): Promise<void> {
 // Target variant configurations
 // ---------------------------------------------------------------------------
 
-// Minimal 1x1 red PNG as base64
-const TINY_PNG =
-  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4DwkAAwAB/QHRAYAAAAABJRU5ErkJggg==";
+const TEST_PNG = readFileSync(
+  new URL("../../assets/gandalf-demo-setup.png", import.meta.url),
+).toString("base64");
 
 const DUMMY_OPENAI_PARAMS = {
   endpoint: "https://e2e-dummy.openai.azure.com",
@@ -213,7 +241,7 @@ interface TargetVariant {
    * Environment variables that must ALL be set for live mode.
    * If any is missing, the live test is skipped for this variant.
    */
-  liveEnvVars: string[];
+  liveEnvVars: readonly [endpoint: string, apiKey: string, model: string];
   /** Whether the target supports multi-turn conversations. */
   multiTurn: boolean;
   /** User turn pieces (seeded mode uses these directly). */
@@ -270,7 +298,7 @@ const TARGET_VARIANTS: TargetVariant[] = [
       { data_type: "text", original_value: "Describe this image" },
       {
         data_type: "image_path",
-        original_value: TINY_PNG,
+        original_value: TEST_PNG,
         mime_type: "image/png",
       },
     ],
@@ -296,7 +324,7 @@ const TARGET_VARIANTS: TargetVariant[] = [
     assistantPieces: [
       {
         data_type: "image_path",
-        original_value: TINY_PNG,
+        original_value: TEST_PNG,
         mime_type: "image/png",
       },
     ],
@@ -317,14 +345,14 @@ const TARGET_VARIANTS: TargetVariant[] = [
       { data_type: "text", original_value: "Edit this image" },
       {
         data_type: "image_path",
-        original_value: TINY_PNG,
+        original_value: TEST_PNG,
         mime_type: "image/png",
       },
     ],
     assistantPieces: [
       {
         data_type: "image_path",
-        original_value: TINY_PNG,
+        original_value: TEST_PNG,
         mime_type: "image/png",
       },
     ],
@@ -411,7 +439,7 @@ const TARGET_VARIANTS: TargetVariant[] = [
       },
       {
         data_type: "image_path",
-        original_value: TINY_PNG,
+        original_value: TEST_PNG,
         mime_type: "image/png",
       },
     ],
@@ -463,27 +491,24 @@ async function assertLiveAssistant(
   page: Page,
   exp: TargetVariant["expectAssistantLive"],
 ): Promise<void> {
+  const assistantBubble = page.getByTestId("message-bubble-1");
+  await expect(assistantBubble).toBeVisible({ timeout: 90_000 });
+
   if (exp.hasText) {
-    // At least one assistant bubble with non-empty text content
-    await expect(
-      page
-        .locator('[class*="assistantMessage"], [class*="assistantBubble"]')
-        .first(),
-    ).toBeVisible({ timeout: 90_000 });
+    await expect(assistantBubble).toContainText(/\S/, { timeout: 90_000 });
   }
   if (exp.hasImage) {
-    const imgs = page.locator(
-      '[class*="assistantMessage"] img, [class*="assistantBubble"] img',
-    );
-    await expect(imgs.first()).toBeVisible({ timeout: 90_000 });
+    await expect(assistantBubble.locator("img").first()).toBeVisible({
+      timeout: 90_000,
+    });
   }
   if (exp.hasVideo) {
-    await expect(page.locator("video").first()).toBeVisible({
+    await expect(assistantBubble.locator("video").first()).toBeVisible({
       timeout: 90_000,
     });
   }
   if (exp.hasAudio) {
-    await expect(page.locator("audio").first()).toBeVisible({
+    await expect(assistantBubble.locator("audio").first()).toBeVisible({
       timeout: 90_000,
     });
   }
@@ -521,7 +546,21 @@ async function seedFullTurn(
 
 /** Check if all required env vars for a live variant are present. */
 function hasLiveCredentials(variant: TargetVariant): boolean {
-  return variant.liveEnvVars.every((v) => !!process.env[v]);
+  const [endpointVariable, apiKeyVariable, modelVariable] = variant.liveEnvVars;
+  const endpoint = process.env[endpointVariable];
+  if (!endpoint || !process.env[modelVariable]) {
+    return false;
+  }
+
+  try {
+    const hostname = new URL(endpoint).hostname.toLowerCase();
+    const supportsIdentity = AZURE_OPENAI_HOSTNAME_SUFFIXES.some((suffix) =>
+      hostname.endsWith(suffix),
+    );
+    return supportsIdentity || Boolean(process.env[apiKeyVariable]);
+  } catch {
+    return false;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -546,7 +585,7 @@ for (const variant of TARGET_VARIANTS) {
 
     test.beforeEach(async ({ page }) => {
       await page.goto("/");
-      await activateTarget(page, variant.targetType);
+      await activateTarget(page, targetRegistryName);
     });
 
     test("should display seeded messages @seeded", async ({
@@ -759,7 +798,7 @@ for (const variant of TARGET_VARIANTS) {
 
         const expText = variant.expectAssistantSeeded.text;
         if (expText) {
-          await expect(page.getByText(expText)).toBeVisible({
+          await expect(page.getByTestId("message-bubble-1").getByText(expText)).toBeVisible({
             timeout: 10_000,
           });
         } else {
@@ -859,7 +898,7 @@ for (const variant of TARGET_VARIANTS) {
       // Wait for the chat view to fully load
       const expText = variant.expectAssistantSeeded.text;
       if (expText) {
-        await expect(page.getByText(expText)).toBeVisible({
+        await expect(page.getByTestId("message-bubble-1").getByText(expText)).toBeVisible({
           timeout: 10_000,
         });
       } else {
@@ -914,7 +953,8 @@ for (const variant of TARGET_VARIANTS) {
 
     let targetRegistryName: string;
 
-    test.beforeAll(async ({ request }) => {
+    test.beforeAll(async ({ request }, testInfo) => {
+      testInfo.setTimeout(120_000);
       if (!hasLiveCredentials(variant)) return;
       await waitForBackend(request);
       // In live mode, create target without explicit creds - the backend
@@ -928,6 +968,7 @@ for (const variant of TARGET_VARIANTS) {
         "Missing required env vars for " + variant.label,
       );
       await page.goto("/");
+      await activateTarget(page, targetRegistryName);
     });
 
     test("should send a real message and display the response @live", async ({
@@ -992,9 +1033,16 @@ for (const variant of TARGET_VARIANTS) {
       await openAttackInHistory(page, attackResultId);
       await assertLiveAssistant(page, variant.expectAssistantLive);
 
-      const branchBtn = page.getByTestId("branch-conv-btn-1");
-      await expect(branchBtn).toBeVisible({ timeout: 10_000 });
-      await branchBtn.click();
+      if (variant.multiTurn) {
+        const branchBtn = page.getByTestId("branch-conv-btn-1");
+        await expect(branchBtn).toBeVisible({ timeout: 10_000 });
+        await branchBtn.click();
+      } else {
+        await createConversation(request, attackResultId, {
+          sourceConversationId: conversationId,
+          cutoffIndex: 1,
+        });
+      }
 
       await expect
         .poll(
@@ -1049,11 +1097,21 @@ for (const variant of TARGET_VARIANTS) {
       await openAttackInHistory(page, attackResultId);
       await assertLiveAssistant(page, variant.expectAssistantLive);
 
-      const branchBtn = page.getByTestId("branch-conv-btn-1");
-      await expect(branchBtn).toBeVisible({ timeout: 10_000 });
-      await branchBtn.click();
+      if (variant.multiTurn) {
+        const branchBtn = page.getByTestId("branch-conv-btn-1");
+        await expect(branchBtn).toBeVisible({ timeout: 10_000 });
+        await branchBtn.click();
+        await expect(page.getByTestId("conversation-panel")).toBeVisible({
+          timeout: 15_000,
+        });
+      } else {
+        await createConversation(request, attackResultId, {
+          sourceConversationId: conversationId,
+          cutoffIndex: 1,
+        });
+        await openConversationPanel(page);
+      }
 
-      await openConversationPanel(page);
       const items = page.locator('[data-testid^="conversation-item-"]');
       await expect(items).toHaveCount(2, { timeout: 15_000 });
 

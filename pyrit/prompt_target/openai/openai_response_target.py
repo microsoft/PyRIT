@@ -242,7 +242,7 @@ class OpenAIResponseTarget(OpenAITarget):
             }
         if piece.converted_value_data_type == "image_path":
             data_url = await convert_local_image_to_data_url_async(piece.converted_value)
-            return {"type": "input_image", "image_url": {"url": data_url}}
+            return {"type": "input_image", "image_url": data_url}
         raise ValueError(f"Unsupported piece type for inline content: {piece.converted_value_data_type}")
 
     async def _build_input_for_multi_modal_async(self, conversation: MutableSequence[Message]) -> list[dict[str, Any]]:

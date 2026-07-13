@@ -1,5 +1,13 @@
 import { defineConfig, devices } from "@playwright/test";
 
+const frontendPort = Number.parseInt(process.env.E2E_FRONTEND_PORT ?? "3000", 10);
+if (!Number.isInteger(frontendPort) || frontendPort < 1 || frontendPort > 65535) {
+  throw new Error("E2E_FRONTEND_PORT must be a valid TCP port.");
+}
+
+const frontendOrigin = `http://localhost:${frontendPort}`;
+const useDedicatedVite = Boolean(process.env.CI) || process.env.E2E_FRONTEND_PORT !== undefined;
+
 export default defineConfig({
   testDir: "./e2e",
   fullyParallel: true,
@@ -10,7 +18,7 @@ export default defineConfig({
   timeout: 30000,
 
   use: {
-    baseURL: "http://localhost:3000",
+    baseURL: frontendOrigin,
     trace: "on-first-retry",
     screenshot: "only-on-failure",
     // Pre-set localStorage so the onboarding tour doesn't auto-start and
@@ -19,7 +27,7 @@ export default defineConfig({
       cookies: [],
       origins: [
         {
-          origin: "http://localhost:3000",
+          origin: frontendOrigin,
           localStorage: [
             { name: "pyrit-tour-completed", value: "true" },
           ],
@@ -38,11 +46,15 @@ export default defineConfig({
       name: "seeded",
       use: { ...devices["Desktop Chrome"] },
       grep: /@seeded/,
+      fullyParallel: false,
+      workers: 1,
     },
     {
       name: "live",
       use: { ...devices["Desktop Chrome"] },
       grep: /@live/,
+      fullyParallel: false,
+      workers: 1,
     },
     // Firefox can be enabled by installing: npx playwright install firefox
     // {
@@ -55,12 +67,12 @@ export default defineConfig({
   webServer: {
     // CI runs only the mock project (no backend needed) — start Vite directly.
     // Locally, dev.py starts both backend + frontend for seeded/live tests.
-    command: process.env.CI
-      ? "npx vite --port 3000"
+    command: useDedicatedVite
+      ? `npx vite --host 127.0.0.1 --port ${frontendPort} --strictPort`
       : "python dev.py",
     // Use 127.0.0.1 to avoid Node.js 17+ resolving localhost to IPv6 ::1
-    url: "http://127.0.0.1:3000",
-    reuseExistingServer: !process.env.CI,
+    url: `http://127.0.0.1:${frontendPort}`,
+    reuseExistingServer: !useDedicatedVite,
     // CI needs extra time for uv sync + backend startup
     timeout: 120_000,
   },

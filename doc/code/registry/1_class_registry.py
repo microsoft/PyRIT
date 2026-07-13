@@ -15,6 +15,18 @@
 
 # %%
 from pyrit.registry import ScenarioRegistry
+from pyrit.setup import IN_MEMORY, initialize_pyrit_async
+from pyrit.setup.initializers import (
+    LoadDefaultDatasets,
+    ScorerInitializer,
+    TargetInitializer,
+    TechniqueInitializer,
+)
+
+await initialize_pyrit_async(  # type: ignore
+    memory_db_type=IN_MEMORY,
+    initializers=[TargetInitializer(), ScorerInitializer(), TechniqueInitializer(), LoadDefaultDatasets()],
+)
 
 registry = ScenarioRegistry.get_registry_singleton()
 
@@ -46,10 +58,7 @@ print(f"Class name: {scenario_class.__name__}")
 
 # %%
 from pyrit.prompt_target import OpenAIChatTarget
-from pyrit.setup import IN_MEMORY, initialize_pyrit_async
-from pyrit.setup.initializers import LoadDefaultDatasets
 
-await initialize_pyrit_async(memory_db_type=IN_MEMORY, initializers=[LoadDefaultDatasets()])  # type: ignore
 target = OpenAIChatTarget()
 
 # Option 1: Get class then instantiate
