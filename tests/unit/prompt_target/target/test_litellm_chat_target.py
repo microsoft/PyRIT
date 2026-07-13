@@ -173,17 +173,33 @@ def test_init_endpoint_from_env(patch_central_database, litellm_stub):
     assert t._endpoint == "http://localhost:4000"
 
 
-def test_drop_params_always_set_in_body(target):
+def test_drop_params_defaults_to_true_in_body(target):
     body = target._construct_request_body(
         messages=[{"role": "user", "content": "hi"}], json_config=_disabled_json_config()
     )
     assert body["drop_params"] is True
 
 
+def test_drop_unsupported_params_false_sets_strict_body(patch_central_database, litellm_stub):
+    t = LiteLLMChatTarget(model_name="openai/gpt-4o", drop_unsupported_params=False)
+    body = t._construct_request_body(messages=[{"role": "user", "content": "hi"}], json_config=_disabled_json_config())
+    assert body["drop_params"] is False
+
+
 def test_drop_params_can_be_overridden_via_extra_body(patch_central_database, litellm_stub):
     t = LiteLLMChatTarget(model_name="openai/gpt-4o", extra_body_parameters={"drop_params": False})
     body = t._construct_request_body(messages=[{"role": "user", "content": "hi"}], json_config=_disabled_json_config())
     assert body["drop_params"] is False
+
+
+def test_extra_body_drop_params_overrides_init_arg(patch_central_database, litellm_stub):
+    t = LiteLLMChatTarget(
+        model_name="openai/gpt-4o",
+        drop_unsupported_params=False,
+        extra_body_parameters={"drop_params": True},
+    )
+    body = t._construct_request_body(messages=[{"role": "user", "content": "hi"}], json_config=_disabled_json_config())
+    assert body["drop_params"] is True
 
 
 def test_num_retries_default_from_pyrit_convention(target):

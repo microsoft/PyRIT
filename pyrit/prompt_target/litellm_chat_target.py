@@ -148,11 +148,15 @@ class LiteLLMChatTarget(PromptTarget):
             audio modality is enabled on the request (``modalities``/``audio``) for models that
             support it (e.g. ``gpt-4o-audio-preview``), and audio responses are saved as
             ``audio_path`` pieces alongside their transcript.
+        drop_unsupported_params: When True (the default), LiteLLM silently drops any request
+            parameter the resolved provider does not support instead of raising. This is a core
+            LiteLLM behavior (it maps to LiteLLM's ``drop_params``) that lets a single target
+            send the full OpenAI parameter set across many providers. Set to False for strict
+            validation, where an unsupported parameter raises instead of being dropped.
         extra_body_parameters: Additional provider parameters merged into the request body
-            (passthrough). Unsupported params are silently dropped per-provider, so anything a
-            given provider does not accept is ignored rather than raising. These may also override
-            the target's defaults (e.g. pass ``{"drop_params": False}`` to opt into strict param
-            validation, or ``{"timeout": 30}`` to set a per-request timeout).
+            (passthrough). These may also override the target's defaults (including
+            ``drop_params``, e.g. pass ``{"drop_params": False}`` to force strict validation for
+            a single request, or ``{"timeout": 30}`` to set a per-request timeout).
         underlying_model: The underlying model name (e.g. ``"gpt-4o"``) used for capability
             lookup and identification when the provider/model string differs from a known model.
         max_requests_per_minute: Client-side request cap.
@@ -188,6 +192,7 @@ class LiteLLMChatTarget(PromptTarget):
         n: int | None = None,
         stop: str | list[str] | None = None,
         audio_response_config: OpenAIChatAudioConfig | None = None,
+        drop_unsupported_params: bool = True,
         extra_body_parameters: dict[str, Any] | None = None,
         underlying_model: str | None = None,
         max_requests_per_minute: int | None = None,
@@ -236,6 +241,7 @@ class LiteLLMChatTarget(PromptTarget):
         self._n = n
         self._stop = stop
         self._audio_response_config = audio_response_config
+        self._drop_unsupported_params = drop_unsupported_params
 
         # Merge audio-output config into the passthrough body (modalities + audio params), so it
         # rides the same passthrough OpenAIChatTarget uses.
@@ -432,10 +438,12 @@ class LiteLLMChatTarget(PromptTarget):
         body: dict[str, Any] = {
             "model": self._model_name,
             "messages": messages,
-            # Always drop provider-unsupported params. As a cross-provider target we send the full
-            # OpenAI param set, but providers support different subsets; without this LiteLLM would
-            # raise on any unsupported param. Advanced callers can flip it via extra_body_parameters.
-            "drop_params": True,
+            # Drop provider-unsupported params (LiteLLM's ``drop_params``). As a cross-provider
+            # target we send the full OpenAI param set, but providers support different subsets;
+            # with this enabled LiteLLM drops what a provider does not accept instead of raising.
+            # Controlled by the ``drop_unsupported_params`` constructor arg; advanced callers can
+            # still override per request via ``extra_body_parameters={"drop_params": ...}``.
+            "drop_params": self._drop_unsupported_params,
             "api_key": api_key,
             "api_base": self._endpoint,
             "extra_headers": self._headers,
