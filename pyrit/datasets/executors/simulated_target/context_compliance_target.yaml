@@ -13,7 +13,7 @@ authors:
   - AI Red Team
 groups:
   - AI Red Team
-source: AI Red Team
+source: https://arxiv.org/abs/2503.05264
 parameters:
   - objective
   - num_turns
