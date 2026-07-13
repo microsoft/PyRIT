@@ -156,8 +156,8 @@ from pyrit.setup import initialize_pyrit_async
 from pyrit.setup.initializers import ScorerInitializer, TargetInitializer
 from pyrit.setup.initializers.scorers import ScorerInitializerTags
 
-# Run the built-in initializers. Order matters: ScorerInitializer pulls its chat targets
-# out of the TargetRegistry, so TargetInitializer must populate that registry first.
+# Run the built-in initializers. ScorerInitializer pulls its chat targets
+# out of the TargetRegistry.
 await initialize_pyrit_async(memory_db_type="InMemory", initializers=[TargetInitializer(), ScorerInitializer()])  # type: ignore
 
 # Alternative approach - you can pass the path to a file that defines PyRITInitializer classes.
@@ -181,7 +181,7 @@ objectives = [
 ]
 
 # The initializers registered instances into shared registries; now we consume them by
-# pulling them back out. Nothing is auto-injected into a hand-built attack.
+# pulling them back out.
 
 # Pull a registered target from the TargetRegistry by its registry name. "openai_chat" is
 # the name TargetInitializer registers the OPENAI_CHAT_* endpoint under.
@@ -199,7 +199,7 @@ converters = ConverterConfiguration.from_converters(
 )
 converter_config = AttackConverterConfig(request_converters=converters)
 
-# Wire the registered scorer into the attack explicitly - attacks do not auto-pull scorers.
+# Wire the registered scorer into the attack explicitly
 scoring_config = AttackScoringConfig(objective_scorer=objective_scorer)  # type: ignore
 
 attack = PromptSendingAttack(
