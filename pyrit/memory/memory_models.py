@@ -678,6 +678,43 @@ class ScorerIdentifierChildEntry(Base):
     )
 
 
+class ScenarioIdentifierEntry(ComponentIdentifierEntry[ScenarioIdentifier]):
+    """Content-addressed store of ``ScenarioIdentifier`` projections."""
+
+    __tablename__ = "ScenarioIdentifiers"
+    __table_args__ = {"extend_existing": True}
+
+    version: Mapped[int | None] = mapped_column(INTEGER, nullable=True)
+    techniques: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+    datasets: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+    objective_target_hash: Mapped[str | None] = mapped_column(
+        String(64), ForeignKey(f"{TargetIdentifierEntry.__tablename__}.hash"), nullable=True
+    )
+    objective_scorer_hash: Mapped[str | None] = mapped_column(
+        String(64), ForeignKey(f"{ScorerIdentifierEntry.__tablename__}.hash"), nullable=True
+    )
+
+    objective_target: Mapped["TargetIdentifierEntry | None"] = relationship(
+        "TargetIdentifierEntry",
+        foreign_keys=[objective_target_hash],
+    )
+    objective_scorer: Mapped["ScorerIdentifierEntry | None"] = relationship(
+        "ScorerIdentifierEntry",
+        foreign_keys=[objective_scorer_hash],
+    )
+
+    @classmethod
+    def _from_domain_model_shallow(cls, *, domain_model: ScenarioIdentifier) -> Self:
+        entry = super()._from_domain_model_shallow(domain_model=domain_model)
+        entry.objective_target_hash = (
+            domain_model.objective_target.hash if domain_model.objective_target is not None else None
+        )
+        entry.objective_scorer_hash = (
+            domain_model.objective_scorer.hash if domain_model.objective_scorer is not None else None
+        )
+        return entry
+
+
 class ConversationEntry(Base):
     """
     Conversation-scoped metadata, persisted once per ``conversation_id``.
@@ -1474,6 +1511,13 @@ class ScenarioResultEntry(Base):
     #: Canonical scenario identity (class name, version, techniques, datasets,
     #: resolved params, objective target / scorer children) with its eval hash.
     scenario_identifier: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    scenario_identifier_hash: Mapped[str | None] = mapped_column(
+        String(64), ForeignKey(f"{ScenarioIdentifierEntry.__tablename__}.hash"), nullable=True
+    )
+    scenario_identifier_entry: Mapped["ScenarioIdentifierEntry | None"] = relationship(
+        "ScenarioIdentifierEntry",
+        foreign_keys=[scenario_identifier_hash],
+    )
     objective_target_identifier: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
     objective_scorer_identifier: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     scenario_run_state: Mapped[str] = mapped_column(String, nullable=False, default="CREATED")
@@ -1516,6 +1560,7 @@ class ScenarioResultEntry(Base):
             ScenarioEvaluationIdentifier(entry.scenario_identifier).eval_hash
         )
         self.scenario_identifier = scenario_identifier.model_dump()
+        self.scenario_identifier_hash = scenario_identifier.hash
 
         # Convert ComponentIdentifier to dict for JSON storage
         target_identifier = entry.objective_target_identifier

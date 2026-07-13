@@ -26,6 +26,7 @@ from pyrit.memory.memory_models import (
     ConversationEntry,
     EmbeddingDataEntry,
     PromptMemoryEntry,
+    ScenarioIdentifierEntry,
     ScenarioResultEntry,
     ScoreEntry,
     ScorerIdentifierEntry,
@@ -46,6 +47,7 @@ from pyrit.models import (
     IdentifierType,
     Message,
     MessagePiece,
+    ScenarioIdentifier,
     ScenarioResult,
     Score,
     ScorerIdentifier,
@@ -2213,10 +2215,46 @@ class MemoryInterface(abc.ABC):
 
         Args:
             scenario_results: Sequence of ScenarioResult objects to store in the database.
+
+        Raises:
+            SQLAlchemyError: If a scenario result or identifier graph cannot be persisted.
         """
-        self._insert_entries(
-            entries=[ScenarioResultEntry(entry=scenario_result) for scenario_result in scenario_results]
-        )
+        entries = [ScenarioResultEntry(entry=scenario_result) for scenario_result in scenario_results]
+        with closing(self.get_session()) as session:
+            try:
+                for scenario_result in scenario_results:
+                    self._persist_scenario_identifier(
+                        session=session,
+                        scenario_identifier=scenario_result.scenario_identifier,
+                    )
+                session.add_all(entries)
+                session.commit()
+            except SQLAlchemyError:
+                session.rollback()
+                raise
+
+    @staticmethod
+    def _persist_scenario_identifier(*, session: Any, scenario_identifier: ScenarioIdentifier) -> None:
+        """Persist a scenario identifier and its target and scorer dependencies."""
+        if session.get(ScenarioIdentifierEntry, scenario_identifier.hash) is not None:
+            return
+        if scenario_identifier.objective_target is not None:
+            MemoryInterface._persist_target_identifier(
+                session=session,
+                target_identifier=scenario_identifier.objective_target,
+            )
+        if scenario_identifier.objective_scorer is not None:
+            MemoryInterface._persist_scorer_identifier(
+                session=session,
+                scorer_identifier=scenario_identifier.objective_scorer,
+            )
+        try:
+            with session.begin_nested():
+                entry = ScenarioIdentifierEntry.from_domain_model(scenario_identifier)
+                session.merge(entry)
+                session.flush()
+        except IntegrityError:
+            pass
 
     def update_scenario_run_state(
         self,

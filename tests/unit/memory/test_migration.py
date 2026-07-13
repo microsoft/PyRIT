@@ -879,6 +879,97 @@ def test_scorer_identifier_migration_backfills_graph_and_score_link():
             engine.dispose()
 
 
+# =============================================================================
+# Backfill tests for scenario identifier persistence (b7d9f1a3c5e7)
+# =============================================================================
+
+
+def test_scenario_identifier_migration_backfills_dependencies_and_result_link():
+    """Scenario-only target and scorer graphs are materialized before the scenario row."""
+    from pyrit.models import ScenarioIdentifier, ScorerIdentifier, TargetIdentifier
+
+    target = TargetIdentifier(
+        class_name="ObjectiveTarget",
+        class_module="pyrit.prompt_target",
+        model_name="objective-model",
+    )
+    scorer_target = TargetIdentifier(
+        class_name="ScorerTarget",
+        class_module="pyrit.prompt_target",
+        model_name="scorer-model",
+    )
+    scorer = ScorerIdentifier(
+        class_name="SelfAskScorer",
+        class_module="pyrit.score",
+        scorer_type="true_false",
+        prompt_target=scorer_target,
+    )
+    scenario = ScenarioIdentifier(
+        class_name="TestScenario",
+        class_module="pyrit.scenario",
+        version=3,
+        techniques=["TechniqueA"],
+        datasets=["DatasetA"],
+        objective_target=target,
+        objective_scorer=scorer,
+    )
+    result_id = str(uuid.uuid4())
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        engine = create_engine(f"sqlite:///{os.path.join(temp_dir, 'scenario-backfill.db')}")
+        try:
+            with engine.begin() as connection:
+                config = _config_for(connection)
+                command.upgrade(config, "a6c8e0f2b4d6")
+                connection.execute(
+                    text(
+                        'INSERT INTO "ScenarioResultEntries" '
+                        "(id, scenario_name, scenario_version, pyrit_version, scenario_identifier, "
+                        "objective_target_identifier, objective_scorer_identifier, scenario_run_state, "
+                        "attack_results_json, number_tries, completion_time, timestamp) "
+                        "VALUES (:id, 'TestScenario', 3, '0.10.0', :scenario, :target, :scorer, "
+                        "'COMPLETED', '{}', 1, '2026-07-13', '2026-07-13')"
+                    ),
+                    {
+                        "id": result_id,
+                        "scenario": json.dumps(scenario.model_dump()),
+                        "target": json.dumps(target.model_dump()),
+                        "scorer": json.dumps(scorer.model_dump()),
+                    },
+                )
+
+                command.upgrade(config, "b7d9f1a3c5e7")
+
+                result_hash = connection.execute(
+                    text('SELECT scenario_identifier_hash FROM "ScenarioResultEntries" WHERE id = :id'),
+                    {"id": result_id},
+                ).scalar_one()
+                scenario_row = connection.execute(
+                    text(
+                        'SELECT hash, version, techniques, datasets, objective_target_hash, objective_scorer_hash '
+                        'FROM "ScenarioIdentifiers"'
+                    )
+                ).one()
+                target_hashes = set(connection.execute(text('SELECT hash FROM "TargetIdentifiers"')).scalars())
+                scorer_row = connection.execute(
+                    text('SELECT hash, prompt_target_hash FROM "ScorerIdentifiers"')
+                ).one()
+
+            assert result_hash == scenario.hash
+            assert scenario_row == (
+                scenario.hash,
+                3,
+                json.dumps(["TechniqueA"]),
+                json.dumps(["DatasetA"]),
+                target.hash,
+                scorer.hash,
+            )
+            assert target_hashes == {target.hash, scorer_target.hash}
+            assert scorer_row == (scorer.hash, scorer_target.hash)
+        finally:
+            engine.dispose()
+
+
 _STRING_TYPES_REQUIRING_LENGTH = {"String", "VARCHAR", "NVARCHAR", "Unicode"}
 
 
