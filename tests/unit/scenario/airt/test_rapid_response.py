@@ -15,7 +15,7 @@ from pyrit.executor.attack import (
     PromptSendingAttack,
     TreeOfAttacksWithPruningAttack,
 )
-from pyrit.models import ComponentIdentifier, AttackSeedGroup, SeedObjective
+from pyrit.models import AttackSeedGroup, ComponentIdentifier, SeedObjective
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry import TargetRegistry
 from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
