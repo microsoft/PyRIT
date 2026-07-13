@@ -858,9 +858,7 @@ def test_scorer_identifier_migration_backfills_graph_and_score_link():
                     {"id": score_id},
                 ).scalar_one()
                 scorer_rows = connection.execute(
-                    text(
-                        'SELECT hash, scorer_type, score_aggregator, prompt_target_hash FROM "ScorerIdentifiers"'
-                    )
+                    text('SELECT hash, scorer_type, score_aggregator, prompt_target_hash FROM "ScorerIdentifiers"')
                 ).fetchall()
                 target_hashes = connection.execute(text('SELECT hash FROM "TargetIdentifiers"')).scalars().all()
                 scorer_child = connection.execute(
@@ -946,14 +944,12 @@ def test_scenario_identifier_migration_backfills_dependencies_and_result_link():
                 ).scalar_one()
                 scenario_row = connection.execute(
                     text(
-                        'SELECT hash, version, techniques, datasets, objective_target_hash, objective_scorer_hash '
+                        "SELECT hash, version, techniques, datasets, objective_target_hash, objective_scorer_hash "
                         'FROM "ScenarioIdentifiers"'
                     )
                 ).one()
                 target_hashes = set(connection.execute(text('SELECT hash FROM "TargetIdentifiers"')).scalars())
-                scorer_row = connection.execute(
-                    text('SELECT hash, prompt_target_hash FROM "ScorerIdentifiers"')
-                ).one()
+                scorer_row = connection.execute(text('SELECT hash, prompt_target_hash FROM "ScorerIdentifiers"')).one()
 
             assert result_hash == scenario.hash
             assert scenario_row == (

@@ -76,10 +76,7 @@ def _backfill_scenario_identifiers() -> None:
 
     bind = op.get_bind()
     result_rows = bind.execute(
-        sa.text(
-            'SELECT id, scenario_identifier FROM "ScenarioResultEntries" '
-            "WHERE scenario_identifier IS NOT NULL"
-        )
+        sa.text('SELECT id, scenario_identifier FROM "ScenarioResultEntries" WHERE scenario_identifier IS NOT NULL')
     ).fetchall()
     existing_hashes = {row[0] for row in bind.execute(sa.text('SELECT hash FROM "ScenarioIdentifiers"')).fetchall()}
     target_hashes = {row[0] for row in bind.execute(sa.text('SELECT hash FROM "TargetIdentifiers"')).fetchall()}
@@ -114,9 +111,7 @@ def _backfill_scenario_identifiers() -> None:
         "VALUES (:hash, :class_name, :class_module, :identifier_json, :version, :techniques, :datasets, "
         ":objective_target_hash, :objective_scorer_hash, :pyrit_version)"
     )
-    update_stmt = sa.text(
-        'UPDATE "ScenarioResultEntries" SET scenario_identifier_hash = :hash WHERE id = :id'
-    )
+    update_stmt = sa.text('UPDATE "ScenarioResultEntries" SET scenario_identifier_hash = :hash WHERE id = :id')
 
     def _insert_target(identifier: TargetIdentifier) -> None:
         if identifier.hash in target_hashes:

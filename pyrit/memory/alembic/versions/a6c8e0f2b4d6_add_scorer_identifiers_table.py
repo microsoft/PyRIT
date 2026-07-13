@@ -81,10 +81,7 @@ def _backfill_scorer_identifiers() -> None:
 
     bind = op.get_bind()
     score_rows = bind.execute(
-        sa.text(
-            'SELECT id, scorer_class_identifier FROM "ScoreEntries" '
-            "WHERE scorer_class_identifier IS NOT NULL"
-        )
+        sa.text('SELECT id, scorer_class_identifier FROM "ScoreEntries" WHERE scorer_class_identifier IS NOT NULL')
     ).fetchall()
     scorer_hashes = {row[0] for row in bind.execute(sa.text('SELECT hash FROM "ScorerIdentifiers"')).fetchall()}
     target_hashes = {row[0] for row in bind.execute(sa.text('SELECT hash FROM "TargetIdentifiers"')).fetchall()}
