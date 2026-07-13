@@ -21,6 +21,7 @@
 # 0DIN [@odin2024],
 # Aegis [@ghosh2025aegis],
 # Agent Threat Rules [@atr2026],
+# Agentic Prompt-Injection Boundary Pairs [@deniz2026agenticboundarypairs],
 # ALERT [@tedeschi2024alert],
 # BeaverTails [@ji2023beavertails],
 # CBT-Bench [@zhang2024cbtbench],
@@ -68,6 +69,28 @@
 # `garak_raku_packages`), system-prompt libraries (`garak_drh_system_prompts`,
 # `garak_tm_system_prompts`), and an audio jailbreak set
 # (`garak_audio_achilles_heel`).
+
+# %% [markdown]
+# ## Loading Agentic Prompt-Injection Boundary Pairs
+#
+# The `agentic_prompt_injection_boundary_pairs` loader defaults to attack
+# prompts for red-team use. It can also return the paired legitimate requests,
+# preserving each record's pair ID, scenario, attack family, source context,
+# target boundary, and expected action. For example:
+#
+# ```python
+# from pyrit.datasets.seed_datasets.remote import (
+#     AgenticPromptInjectionBoundaryLabel,
+#     AgenticPromptInjectionBoundarySplit,
+#     _AgenticPromptInjectionBoundaryDataset,
+# )
+#
+# paired_test_loader = _AgenticPromptInjectionBoundaryDataset(
+#     label=AgenticPromptInjectionBoundaryLabel.ALL,
+#     split=AgenticPromptInjectionBoundarySplit.TEST,
+# )
+# paired_test_surface = await paired_test_loader.fetch_dataset_async()
+# ```
 
 # %%
 from pyrit.datasets import SeedDatasetProvider
