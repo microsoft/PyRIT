@@ -13,16 +13,23 @@ from unit.mocks import get_mock_target
 
 from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
 from pyrit.memory import MemoryInterface, PromptMemoryEntry
+from pyrit.memory.memory_models import (
+    ConverterIdentifierEntry,
+    PromptConverterIdentifierEntry,
+    TargetIdentifierEntry,
+)
 from pyrit.memory.storage.serializers import set_message_piece_sha256_async
 from pyrit.models import (
     ComponentIdentifier,
     Conversation,
+    ConverterIdentifier,
     IdentifierFilter,
     IdentifierType,
     Message,
     MessagePiece,
     Score,
     SeedPrompt,
+    TargetIdentifier,
 )
 
 
@@ -60,6 +67,51 @@ def test_add_message_pieces_to_memory(
 
     sqlite_instance.add_message_to_memory(request=message)
     assert len(sqlite_instance.get_message_pieces()) == num_conversations
+
+
+def test_add_message_pieces_persists_converter_identifier_graph(sqlite_instance: MemoryInterface):
+    target = TargetIdentifier(
+        class_name="ConverterTarget",
+        class_module="tests.unit.memory",
+        model_name="converter-model",
+    )
+    nested = ConverterIdentifier(
+        class_name="NestedConverter",
+        class_module="tests.unit.memory",
+        supported_input_types=["text"],
+        supported_output_types=["text"],
+        converter_target=target,
+    )
+    converter = ConverterIdentifier(
+        class_name="CompositeConverter",
+        class_module="tests.unit.memory",
+        supported_input_types=["text"],
+        supported_output_types=["text"],
+        sub_converter=nested,
+    )
+    pieces = [
+        MessagePiece(
+            conversation_id=str(uuid4()),
+            role="user",
+            original_value=f"Prompt {index}",
+            converter_identifiers=[converter, nested],
+        )
+        for index in range(2)
+    ]
+
+    sqlite_instance.add_message_pieces_to_memory(message_pieces=pieces)
+
+    converter_rows = sqlite_instance._query_entries(ConverterIdentifierEntry)
+    link_rows = sqlite_instance._query_entries(PromptConverterIdentifierEntry)
+    assert {row.hash for row in converter_rows} == {converter.hash, nested.hash}
+    assert next(row for row in converter_rows if row.hash == converter.hash).sub_converter_hash == nested.hash
+    assert next(row for row in converter_rows if row.hash == nested.hash).converter_target_hash == target.hash
+    assert len(sqlite_instance._query_entries(TargetIdentifierEntry)) == 1
+    assert len(link_rows) == 4
+    assert {(row.position, row.converter_identifier_hash) for row in link_rows} == {
+        (0, converter.hash),
+        (1, nested.hash),
+    }
 
 
 def test_get_message_pieces_uuid_and_string_ids(sqlite_instance: MemoryInterface):

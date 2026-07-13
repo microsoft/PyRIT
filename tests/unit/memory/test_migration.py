@@ -878,6 +878,80 @@ def test_scorer_identifier_migration_backfills_graph_and_score_link():
 
 
 # =============================================================================
+# Backfill tests for converter identifier persistence (c8e1f3a5b7d9)
+# =============================================================================
+
+
+def test_converter_identifier_migration_backfills_graph_and_prompt_links():
+    """Existing converter JSON is normalized with dependencies and ordered prompt links."""
+    from pyrit.models import ConverterIdentifier, TargetIdentifier
+
+    target = TargetIdentifier(
+        class_name="ConverterTarget",
+        class_module="pyrit.prompt_target",
+        model_name="converter-model",
+    )
+    nested = ConverterIdentifier(
+        class_name="NestedConverter",
+        class_module="pyrit.prompt_converter",
+        supported_input_types=["text"],
+        supported_output_types=["text"],
+        converter_target=target,
+    )
+    converter = ConverterIdentifier(
+        class_name="CompositeConverter",
+        class_module="pyrit.prompt_converter",
+        supported_input_types=["text"],
+        supported_output_types=["text"],
+        sub_converter=nested,
+    )
+    prompt_id = uuid.uuid4()
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        engine = create_engine(f"sqlite:///{os.path.join(temp_dir, 'converter-backfill.db')}")
+        try:
+            with engine.begin() as connection:
+                config = _config_for(connection)
+                command.upgrade(config, "b7d9f1a3c5e7")
+                connection.execute(
+                    text(
+                        'INSERT INTO "PromptMemoryEntries" '
+                        "(id, role, conversation_id, sequence, timestamp, labels, prompt_metadata, "
+                        "converter_identifiers, original_value_data_type, original_value, "
+                        "converted_value_data_type, original_prompt_id, pyrit_version) "
+                        "VALUES (:id, 'user', 'conversation', 0, '2026-07-13', '{}', '{}', :identifiers, "
+                        "'text', 'prompt', 'text', :id, '0.10.0')"
+                    ),
+                    {
+                        "id": str(prompt_id),
+                        "identifiers": json.dumps([converter.model_dump(), nested.model_dump()]),
+                    },
+                )
+
+                command.upgrade(config, "c8e1f3a5b7d9")
+
+                converter_rows = connection.execute(
+                    text('SELECT hash, converter_target_hash, sub_converter_hash FROM "ConverterIdentifiers"')
+                ).fetchall()
+                target_hashes = connection.execute(text('SELECT hash FROM "TargetIdentifiers"')).scalars().all()
+                links = connection.execute(
+                    text(
+                        'SELECT position, converter_identifier_hash FROM "PromptConverterIdentifiers" ORDER BY position'
+                    )
+                ).fetchall()
+
+            assert {row[0] for row in converter_rows} == {converter.hash, nested.hash}
+            root_row = next(row for row in converter_rows if row[0] == converter.hash)
+            nested_row = next(row for row in converter_rows if row[0] == nested.hash)
+            assert root_row[2] == nested.hash
+            assert nested_row[1] == target.hash
+            assert target_hashes == [target.hash]
+            assert links == [(0, converter.hash), (1, nested.hash)]
+        finally:
+            engine.dispose()
+
+
+# =============================================================================
 # Backfill tests for scenario identifier persistence (b7d9f1a3c5e7)
 # =============================================================================
 

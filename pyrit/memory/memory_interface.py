@@ -25,7 +25,9 @@ from pyrit.memory.memory_models import (
     Base,
     ComponentIdentifierEntry,
     ConversationEntry,
+    ConverterIdentifierEntry,
     EmbeddingDataEntry,
+    PromptConverterIdentifierEntry,
     PromptMemoryEntry,
     ScenarioIdentifierEntry,
     ScenarioResultEntry,
@@ -45,6 +47,7 @@ from pyrit.models import (
     ComponentIdentifier,
     Conversation,
     ConversationStats,
+    ConverterIdentifier,
     IdentifierFilter,
     IdentifierType,
     Message,
@@ -418,6 +421,27 @@ class MemoryInterface(abc.ABC):
                 ``not_in_memory``), each carrying a non-empty ``conversation_id``.
         """
 
+    def _persist_message_pieces(self, *, message_pieces: Sequence[MessagePiece]) -> None:
+        entries = [PromptMemoryEntry(entry=piece) for piece in message_pieces]
+        with closing(self.get_session()) as session:
+            try:
+                for piece, entry in zip(message_pieces, entries, strict=True):
+                    for position, identifier in enumerate(piece.converter_identifiers):
+                        converter_identifier = ConverterIdentifier.from_component_identifier(identifier)
+                        self._persist_identifier(session=session, identifier=converter_identifier)
+                        entry.converter_identifier_links.append(
+                            PromptConverterIdentifierEntry(
+                                position=position,
+                                converter_identifier_hash=converter_identifier.hash,
+                            )
+                        )
+                session.add_all(entries)
+                session.commit()
+            except SQLAlchemyError as e:
+                session.rollback()
+                logger.exception(f"Error inserting prompt memory entries: {e}")
+                raise
+
     @staticmethod
     def _validate_persistable_conversation_ids(*, message_pieces: Sequence[MessagePiece]) -> None:
         """
@@ -535,6 +559,8 @@ class MemoryInterface(abc.ABC):
     def _get_identifier_entry_type(identifier: ComponentIdentifier) -> type[ComponentIdentifierEntry[Any]]:
         if isinstance(identifier, TargetIdentifier):
             return TargetIdentifierEntry
+        if isinstance(identifier, ConverterIdentifier):
+            return ConverterIdentifierEntry
         if isinstance(identifier, ScorerIdentifier):
             return ScorerIdentifierEntry
         if isinstance(identifier, ScenarioIdentifier):

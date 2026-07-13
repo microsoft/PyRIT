@@ -14,6 +14,7 @@ from pyrit.memory.memory_models import (
     AttackResultEntry,
     ComponentIdentifierEntry,
     ConversationMessageWithSimilarity,
+    ConverterIdentifierEntry,
     EmbeddingDataEntry,
     EmbeddingMessageWithSimilarity,
     PromptMemoryEntry,
@@ -33,6 +34,7 @@ from pyrit.models import (
     ComponentIdentifier,
     ConversationReference,
     ConversationType,
+    ConverterIdentifier,
     MessagePiece,
     ScenarioIdentifier,
     ScenarioResult,
@@ -204,6 +206,7 @@ def test_scorer_identifier_entry_constructs_full_sub_scorer_graph():
     ("identifier_type", "entry_type"),
     [
         (TargetIdentifier, TargetIdentifierEntry),
+        (ConverterIdentifier, ConverterIdentifierEntry),
         (ScorerIdentifier, ScorerIdentifierEntry),
         (ScenarioIdentifier, ScenarioIdentifierEntry),
     ],

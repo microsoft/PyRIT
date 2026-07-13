@@ -45,6 +45,7 @@ from pyrit.models import (
     Conversation,
     ConversationReference,
     ConversationType,
+    ConverterIdentifier,
     EvaluationIdentifier,
     MessagePiece,
     PromptDataType,
@@ -282,6 +283,13 @@ class PromptMemoryEntry(Base):
         primaryjoin="ScoreEntry.prompt_request_response_id == PromptMemoryEntry.original_prompt_id",
         back_populates="prompt_request_piece",
         foreign_keys="ScoreEntry.prompt_request_response_id",
+    )
+    converter_identifier_links: Mapped[list["PromptConverterIdentifierEntry"]] = relationship(
+        "PromptConverterIdentifierEntry",
+        primaryjoin="PromptMemoryEntry.id == PromptConverterIdentifierEntry.prompt_memory_entry_id",
+        foreign_keys="PromptConverterIdentifierEntry.prompt_memory_entry_id",
+        order_by="PromptConverterIdentifierEntry.position",
+        cascade="all, delete-orphan",
     )
 
     def __init__(self, *, entry: MessagePiece) -> None:
@@ -619,6 +627,60 @@ class TargetIdentifierChildEntry(Base):
     child: Mapped["TargetIdentifierEntry"] = relationship(
         "TargetIdentifierEntry",
         foreign_keys=[child_hash],
+    )
+
+
+class ConverterIdentifierEntry(ComponentIdentifierEntry[ConverterIdentifier]):
+    """Content-addressed store of ``ConverterIdentifier`` projections."""
+
+    __tablename__ = "ConverterIdentifiers"
+    __table_args__ = {"extend_existing": True}
+
+    CHILD_HASH_COLUMNS: ClassVar[dict[str, str]] = {
+        "converter_target": "converter_target_hash",
+        "sub_converter": "sub_converter_hash",
+    }
+
+    supported_input_types: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+    supported_output_types: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+    converter_target_hash: Mapped[str | None] = mapped_column(
+        String(64), ForeignKey(f"{TargetIdentifierEntry.__tablename__}.hash"), nullable=True
+    )
+    sub_converter_hash: Mapped[str | None] = mapped_column(
+        String(64), ForeignKey("ConverterIdentifiers.hash"), nullable=True
+    )
+
+    converter_target: Mapped["TargetIdentifierEntry | None"] = relationship(
+        "TargetIdentifierEntry",
+        foreign_keys=[converter_target_hash],
+    )
+    sub_converter: Mapped["ConverterIdentifierEntry | None"] = relationship(
+        "ConverterIdentifierEntry",
+        foreign_keys=[sub_converter_hash],
+        remote_side="ConverterIdentifierEntry.hash",
+    )
+
+
+class PromptConverterIdentifierEntry(Base):
+    """Ordered association between a prompt piece and an applied converter."""
+
+    __tablename__ = "PromptConverterIdentifiers"
+    __table_args__ = {"extend_existing": True}
+
+    prompt_memory_entry_id: Mapped[uuid.UUID] = mapped_column(
+        CustomUUID,
+        ForeignKey(f"{PromptMemoryEntry.__tablename__}.id"),
+        primary_key=True,
+    )
+    position: Mapped[int] = mapped_column(INTEGER, primary_key=True)
+    converter_identifier_hash: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey(f"{ConverterIdentifierEntry.__tablename__}.hash"),
+        nullable=False,
+    )
+    converter_identifier: Mapped["ConverterIdentifierEntry"] = relationship(
+        "ConverterIdentifierEntry",
+        foreign_keys=[converter_identifier_hash],
     )
 
 
