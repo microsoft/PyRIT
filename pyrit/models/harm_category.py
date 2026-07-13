@@ -80,7 +80,7 @@ class HarmCategory(StrEnum):
     INSECURE_CODE = "Insecure Code"
     MALWARE = "Malware"
     MILITARY = "Weapons Development & Military"
-    CBRN = "Chemical, Biological, Radiological, and Nuclear"
+    CBRN = "Chemical, Biological, Radiological, & Nuclear"
     HIGH_RISK_GOVERNMENT = "High-Risk Government Decision-Making"
     INFRASTRUCTURE_RISK = "Management or Operation of Critical Infrastructure in Energy, Transportation & Water"
     FINANCIAL_ADVICE = "Financial Advice"
@@ -232,21 +232,21 @@ class HarmCategory(StrEnum):
         other_category = cast("HarmCategory", cls.OTHER)
 
         resolved_categories: list[HarmCategory] = []
+
         for value in values:
             if isinstance(value, cls):
-                resolved_categories.append(value)
-                continue
-
-            if isinstance(value, str):
+                category = value
+            elif isinstance(value, str):
                 category = cls._resolve_canonical_category(value)
-                if category is not None:
-                    resolved_categories.append(category)
-                    continue
+            else:
+                category = None
 
-            if strict:
-                raise ValueError(f"Invalid harm category mapping value: {value!r}")
+            if category is None:
+                if strict:
+                    raise ValueError(f"Invalid harm category mapping value: {value!r}")
+                category = other_category
 
-            resolved_categories.append(other_category)
+            resolved_categories.append(category)
 
         return resolved_categories if resolved_categories else [other_category]
 
