@@ -9,7 +9,7 @@ from pyrit.executor.attack.compound.sequential_attack import (
     SequenceCompletionPolicy,
     SequentialAttack,
 )
-from pyrit.models import AttackOutcome, SeedAttackGroup, SeedObjective
+from pyrit.models import AttackOutcome, AttackSeedGroup, SeedObjective
 from pyrit.scenario.scenarios.adaptive.dispatcher import (
     ADAPTIVE_ATTEMPT_LABEL,
     AdaptiveTechniqueDispatcher,
@@ -53,8 +53,8 @@ def target() -> MagicMock:
 
 
 @pytest.fixture
-def seed_group() -> SeedAttackGroup:
-    return SeedAttackGroup(seeds=[SeedObjective(value="obj")])
+def seed_group() -> AttackSeedGroup:
+    return AttackSeedGroup(seeds=[SeedObjective(value="obj")])
 
 
 class TestDispatcherInit:
@@ -216,7 +216,7 @@ class TestEvalHashRoundTrip:
     async def test_predicted_hash_matches_persisted_row(self, sqlite_instance):
         from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
         from pyrit.memory.memory_models import AttackResultEntry
-        from pyrit.models import SeedAttackGroup, SeedObjective
+        from pyrit.models import AttackSeedGroup, SeedObjective
         from pyrit.models.identifiers import compute_inner_attack_eval_hash
         from tests.unit.mocks import MockPromptTarget
 
@@ -232,7 +232,7 @@ class TestEvalHashRoundTrip:
             max_attempts_per_objective=1,
         )
 
-        sg = SeedAttackGroup(seeds=[SeedObjective(value="say hello")])
+        sg = AttackSeedGroup(seeds=[SeedObjective(value="say hello")])
         sequential = await dispatcher.build_attack_async(seed_group=sg)
         await sequential.execute_async(objective="say hello")
 

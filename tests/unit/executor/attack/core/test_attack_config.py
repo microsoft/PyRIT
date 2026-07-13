@@ -8,6 +8,7 @@ import pytest
 from pyrit.executor.attack.core import AttackScoringConfig
 from pyrit.executor.attack.core.attack_config import (
     AttackAdversarialConfig,
+    resolve_adversarial_json_schema,
     resolve_adversarial_system_prompt,
 )
 from pyrit.models import SeedPrompt
@@ -97,6 +98,49 @@ class TestResolveAdversarialSystemPrompt:
         )
         assert seed.value == "persona {{ objective }}"
         assert "objective" in (seed.parameters or [])
+
+
+_SCHEMA: dict = {"type": "object", "properties": {"next_message": {"type": "string"}}}
+_OTHER_SCHEMA: dict = {"type": "object", "properties": {"foo": {"type": "string"}}}
+
+
+def _seed_with_schema(schema: dict | None) -> SeedPrompt:
+    return SeedPrompt(value="{{ objective }}", data_type="text", response_json_schema=schema)
+
+
+class TestResolveAdversarialJsonSchema:
+    """Tests for the module-level resolve_adversarial_json_schema helper."""
+
+    def test_returns_none_when_neither_declares(self):
+        assert resolve_adversarial_json_schema(system_prompt=None, first_message=None) is None
+        assert (
+            resolve_adversarial_json_schema(
+                system_prompt=_seed_with_schema(None), first_message=_seed_with_schema(None)
+            )
+            is None
+        )
+
+    def test_returns_system_prompt_schema(self):
+        result = resolve_adversarial_json_schema(
+            system_prompt=_seed_with_schema(_SCHEMA), first_message=_seed_with_schema(None)
+        )
+        assert result == _SCHEMA
+
+    def test_returns_first_message_schema(self):
+        result = resolve_adversarial_json_schema(
+            system_prompt=_seed_with_schema(None), first_message=_seed_with_schema(_SCHEMA)
+        )
+        assert result == _SCHEMA
+
+    def test_raises_when_both_declare_schema(self):
+        with pytest.raises(ValueError, match="only one of them"):
+            resolve_adversarial_json_schema(
+                system_prompt=_seed_with_schema(_SCHEMA), first_message=_seed_with_schema(_OTHER_SCHEMA)
+            )
+
+
+class TestResolveAdversarialSystemPrompt:
+    """Tests for resolve_adversarial_system_prompt."""
 
     def test_explicit_seedprompt_with_required_params_returned_as_is(self):
         """An explicitly provided SeedPrompt declaring the required params is returned unchanged."""

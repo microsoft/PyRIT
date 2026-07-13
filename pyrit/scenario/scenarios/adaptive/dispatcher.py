@@ -7,7 +7,7 @@
 
 The dispatcher is a plain class, not an ``AttackStrategy``. It does not
 execute anything and does not persist anything. ``AdaptiveScenario`` calls
-``build_attack_async`` once per ``SeedAttackGroup`` during scenario
+``build_attack_async`` once per ``AttackSeedGroup`` during scenario
 initialization, wraps each returned attack in its own ``AtomicAttack``, and
 hands them to the scenario base for execution.
 
@@ -37,7 +37,7 @@ from pyrit.executor.attack.compound.sequential_attack import (
 
 if TYPE_CHECKING:
     from pyrit.executor.attack.core.attack_strategy import AttackStrategy
-    from pyrit.models import AttackResult, SeedAttackGroup, SeedAttackTechniqueGroup
+    from pyrit.models import AttackResult, AttackSeedGroup, AttackTechniqueSeedGroup
     from pyrit.prompt_target import PromptTarget
     from pyrit.scenario.scenarios.adaptive.selectors import TechniqueSelector
     from pyrit.score import TrueFalseScorer
@@ -72,7 +72,7 @@ class TechniqueBundle:
 
     attack: AttackStrategy[Any, AttackResult]
     name: str = ""
-    seed_technique: SeedAttackTechniqueGroup | None = None
+    seed_technique: AttackTechniqueSeedGroup | None = None
     adversarial_chat: PromptTarget | None = None
 
 
@@ -83,7 +83,7 @@ class AdaptiveTechniqueDispatcher:
     Not an ``AttackStrategy``: the dispatcher does not execute anything
     and does not persist anything. It is a small factory used by
     ``AdaptiveScenario`` at initialization to translate one
-    ``SeedAttackGroup`` (one objective) into one ready-to-run attack.
+    ``AttackSeedGroup`` (one objective) into one ready-to-run attack.
 
     For each call: query the selector for the top
     ``max_attempts_per_objective`` techniques compatible with the seed
@@ -135,7 +135,7 @@ class AdaptiveTechniqueDispatcher:
         self._max_attempts = max_attempts_per_objective
         self._scenario_result_id = scenario_result_id
 
-    def compatible_techniques(self, *, seed_group: SeedAttackGroup) -> list[str]:
+    def compatible_techniques(self, *, seed_group: AttackSeedGroup) -> list[str]:
         """
         Return technique hashes whose ``seed_technique`` is compatible with ``seed_group``.
 
@@ -155,11 +155,11 @@ class AdaptiveTechniqueDispatcher:
     async def build_attack_async(
         self,
         *,
-        seed_group: SeedAttackGroup,
+        seed_group: AttackSeedGroup,
         compatible: list[str] | None = None,
     ) -> SequentialAttack:
         """
-        Build a ``SequentialAttack`` for one ``SeedAttackGroup``.
+        Build a ``SequentialAttack`` for one ``AttackSeedGroup``.
 
         Queries the selector for the top
         ``max_attempts_per_objective`` techniques (filtered by per-call
@@ -168,7 +168,7 @@ class AdaptiveTechniqueDispatcher:
         ``SequenceCompletionPolicy.FIRST_SUCCESS``.
 
         Args:
-            seed_group (SeedAttackGroup): The seed group for the
+            seed_group (AttackSeedGroup): The seed group for the
                 objective this attack will run against. Must carry a
                 non-None objective.
             compatible (list[str] | None): Precomputed result of

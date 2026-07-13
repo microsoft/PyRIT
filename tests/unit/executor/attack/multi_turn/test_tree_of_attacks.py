@@ -47,6 +47,20 @@ from pyrit.score.score_utils import normalize_score_to_float
 logger = logging.getLogger(__name__)
 
 
+# Mirrors the shipped ``adversarial_chat.yaml``: every key required, no extras allowed. Used to
+# exercise the strict validation TAP/PAIR now inherit by delegating to the shared parser.
+_STRICT_ADVERSARIAL_CHAT_SCHEMA: dict = {
+    "type": "object",
+    "properties": {
+        "next_message": {"type": "string"},
+        "rationale": {"type": "string"},
+        "last_response_summary": {"type": "string"},
+    },
+    "required": ["next_message", "rationale", "last_response_summary"],
+    "additionalProperties": False,
+}
+
+
 @dataclass
 class NodeMockConfig:
     """Configuration for creating mock _TreeOfAttacksNode objects."""
@@ -1472,9 +1486,104 @@ class TestTreeOfAttacksNode:
         assert child_node.parent_id == parent_node.node_id
         assert child_node.completed is False
 
+    def _node_with_schema(self, node_components, schema):
+        """Build a real node whose adversarial system prompt advertises ``schema``.
+
+        The manager resolves its schema from ``_adversarial_chat_system_seed_prompt.response_json_schema``
+        (falling back to the canonical ``adversarial_chat`` schema when it is None), so overriding it
+        here lets the tests drive the real send/parse path through both the strict shipped-schema case
+        and the schemaless custom-prompt case.
+        """
+        node = _TreeOfAttacksNode(**node_components)
+        node._adversarial_chat_system_seed_prompt.response_json_schema = schema
+        return node
+
+    @staticmethod
+    def _mock_adversarial_reply(node, raw: str) -> None:
+        """Make the node's adversarial chat return ``raw`` so the manager parses it on the next send."""
+        node._prompt_normalizer.send_prompt_async = AsyncMock(
+            return_value=Message.from_prompt(prompt=raw, role="assistant")
+        )
+
+    async def test_send_to_adversarial_chat_returns_next_message_with_strict_schema(self, node_components):
+        """A schema-compliant reply yields the next_message the node forwards to the objective target."""
+        node = self._node_with_schema(node_components, _STRICT_ADVERSARIAL_CHAT_SCHEMA)
+        self._mock_adversarial_reply(
+            node, json.dumps({"next_message": "attack text", "rationale": "why", "last_response_summary": "summary"})
+        )
+
+        assert await node._send_to_adversarial_chat_async(prompt_text="x") == "attack text"
+
+    async def test_send_to_adversarial_chat_accepts_camel_case_keys(self, node_components):
+        """TAP/PAIR historically hand-rolled a parser that never normalized camelCase. Routing through the
+        shared manager closes that exact gap, so a schema-aware adversarial model that emits ``nextMessage``
+        no longer breaks the node the way it once broke a crescendo CI run."""
+        node = self._node_with_schema(node_components, _STRICT_ADVERSARIAL_CHAT_SCHEMA)
+        self._mock_adversarial_reply(
+            node, json.dumps({"nextMessage": "attack text", "rationale": "why", "lastResponseSummary": "summary"})
+        )
+
+        assert await node._send_to_adversarial_chat_async(prompt_text="x") == "attack text"
+
+    async def test_send_to_adversarial_chat_strict_schema_rejects_missing_key(self, node_components):
+        """With the shipped schema present the node enforces every required key, so a reply carrying only
+        next_message now raises instead of silently proceeding as the old TAP parser did."""
+        node = self._node_with_schema(node_components, _STRICT_ADVERSARIAL_CHAT_SCHEMA)
+        self._mock_adversarial_reply(node, '{"next_message": "x"}')
+
+        with pytest.raises(InvalidJsonException, match="Missing required keys"):
+            await node._send_to_adversarial_chat_async(prompt_text="x")
+
+    async def test_send_to_adversarial_chat_strict_schema_rejects_extra_key(self, node_components):
+        """``additionalProperties: false`` from the shipped schema is enforced through the manager."""
+        node = self._node_with_schema(node_components, _STRICT_ADVERSARIAL_CHAT_SCHEMA)
+        self._mock_adversarial_reply(
+            node,
+            json.dumps(
+                {
+                    "next_message": "x",
+                    "rationale": "why",
+                    "last_response_summary": "summary",
+                    "surprise": "nope",
+                }
+            ),
+        )
+
+        with pytest.raises(InvalidJsonException, match="Unexpected keys"):
+            await node._send_to_adversarial_chat_async(prompt_text="x")
+
+    async def test_send_to_adversarial_chat_without_declared_schema_enforces_canonical(self, node_components):
+        """A schemaless custom adversarial prompt no longer skips validation: the manager falls back to the
+        canonical adversarial_chat schema, so an incomplete reply is rejected instead of silently accepted.
+        This closes the old lax path where a custom prompt could proceed on an unvalidated reply."""
+        node = self._node_with_schema(node_components, None)
+        self._mock_adversarial_reply(node, '{"next_message": "x"}')
+
+        with pytest.raises(InvalidJsonException, match="Missing required keys"):
+            await node._send_to_adversarial_chat_async(prompt_text="x")
+
+    async def test_send_to_adversarial_chat_strips_markdown_fencing(self, node_components):
+        """Adversarial models routinely wrap JSON in ```json fences; the shared parser strips them."""
+        node = self._node_with_schema(node_components, _STRICT_ADVERSARIAL_CHAT_SCHEMA)
+        payload = json.dumps({"next_message": "attack text", "rationale": "why", "last_response_summary": "summary"})
+        self._mock_adversarial_reply(node, f"```json\n{payload}\n```")
+
+        assert await node._send_to_adversarial_chat_async(prompt_text="x") == "attack text"
+
+    async def test_send_to_adversarial_chat_invalid_json_raises(self, node_components):
+        """A non-JSON reply raises InvalidJsonException so the manager's json-retry can retry the turn."""
+        node = self._node_with_schema(node_components, _STRICT_ADVERSARIAL_CHAT_SCHEMA)
+        self._mock_adversarial_reply(node, "not json at all")
+
+        with pytest.raises(InvalidJsonException, match="Invalid JSON"):
+            await node._send_to_adversarial_chat_async(prompt_text="x")
+
     async def test_send_initial_prompt_to_target_applies_memory_labels(self, node_components):
         """Test that memory labels are applied to initial prompts."""
         node = _TreeOfAttacksNode(**node_components)
+        node._objective = "test"
+        # None -> the manager resolves the canonical adversarial_chat schema on the bypass path.
+        node._adversarial_chat_system_seed_prompt.response_json_schema = None
         node._initial_prompt = Message.from_prompt(prompt="initial prompt", role="user")
         response = Message.from_prompt(prompt="target response", role="assistant")
         node._prompt_normalizer.send_prompt_async = AsyncMock(return_value=response)
@@ -1528,33 +1637,14 @@ class TestTreeOfAttacksNode:
             return_value=Message.from_prompt(prompt='{"next_message": "x"}', role="assistant")
         )
 
-        seed_message = Message(
-            message_pieces=[
-                MessagePiece(
-                    role="user",
-                    original_value="",
-                    original_value_data_type="text",
-                    conversation_id="tap-seed-forwarding-conv",
-                    prompt_metadata={"adversarial_placeholder": True},
-                ),
-                MessagePiece(
-                    role="user",
-                    original_value="/path/to/seed.png",
-                    original_value_data_type="image_path",
-                    conversation_id="tap-seed-forwarding-conv",
-                ),
-            ]
-        )
-
-        await node._send_to_adversarial_chat_async(prompt_text="Test prompt", seed_message=seed_message)
+        await node._send_to_adversarial_chat_async(prompt_text="Test prompt")
 
         sent_message = prompt_normalizer.send_prompt_async.call_args.kwargs["message"]
-        assert len(sent_message.message_pieces) == 2
-        assert sent_message.message_pieces[1].original_value_data_type == "image_path"
-        assert sent_message.message_pieces[1].original_value == "/path/to/seed.png"
         metadata = sent_message.message_pieces[0].prompt_metadata
         assert metadata["response_format"] == "json"
         assert metadata[JSON_SCHEMA_METADATA_KEY] == schema
+
+    async def test_node_send_prompt_unexpected_error_handling(self, node_components):
         """Test handling of unexpected errors in send_prompt_async."""
         node = _TreeOfAttacksNode(**node_components)
 
@@ -1601,7 +1691,6 @@ class TestTreeOfAttacksNode:
             ) as red_teaming_mock,
             patch("pyrit.executor.attack.multi_turn.tree_of_attacks.get_retry_max_num_attempts", return_value=1),
             patch.object(node, "_send_to_adversarial_chat_async", new_callable=AsyncMock, return_value="new prompt"),
-            patch.object(node, "_parse_red_teaming_response", return_value="new prompt"),
         ):
             await node.send_prompt_async(objective="Test objective")
 
@@ -1647,13 +1736,18 @@ class TestTreeOfAttacksNode:
             target = kwargs.get("target")
 
             if target == node._adversarial_chat:
-                # Return JSON response for adversarial chat
+                # Return JSON response for adversarial chat. The manager now validates every reply
+                # against the canonical adversarial_chat schema, so include all required keys.
                 return Message(
                     message_pieces=[
                         MessagePiece(
                             role="assistant",
-                            original_value=json.dumps({"next_message": "test prompt", "rationale": "test"}),
-                            converted_value=json.dumps({"next_message": "test prompt", "rationale": "test"}),
+                            original_value=json.dumps(
+                                {"next_message": "test prompt", "rationale": "test", "last_response_summary": "s"}
+                            ),
+                            converted_value=json.dumps(
+                                {"next_message": "test prompt", "rationale": "test", "last_response_summary": "s"}
+                            ),
                             conversation_id=node.adversarial_chat_conversation_id,
                             id=str(uuid.uuid4()),
                         )
@@ -2257,7 +2351,6 @@ def test_tap_init_raises_when_objective_scorer_is_none():
             attack_adversarial_config=MagicMock(
                 target=MagicMock(spec=PromptTarget),
                 system_prompt=None,
-                system_prompt_path=None,
             ),
             attack_scoring_config=scoring_config,
         )
@@ -2780,22 +2873,22 @@ class TestModalityRouterIntegration:
 
         node = _TreeOfAttacksNode(**node_components)
         node._objective = "test"
+        # None -> the manager resolves the canonical adversarial_chat schema (requires all three keys).
+        node._adversarial_chat_system_seed_prompt.response_json_schema = None
 
         captured_message: dict = {}
 
-        async def capture_send(*args, **kwargs):
+        async def routed_send(*args, **kwargs):
+            # The adversarial chat send returns a JSON reply; the objective-target send is captured.
+            if kwargs.get("target") is node._adversarial_chat:
+                reply = {"next_message": "adv generated text", "rationale": "r", "last_response_summary": "s"}
+                return Message.from_prompt(prompt=json.dumps(reply), role="assistant")
             captured_message["message"] = kwargs.get("message")
             return Message.from_prompt(prompt="ok", role="assistant")
 
-        node._prompt_normalizer.send_prompt_async = AsyncMock(side_effect=capture_send)
+        node._prompt_normalizer.send_prompt_async = AsyncMock(side_effect=routed_send)
 
-        with patch.object(
-            node,
-            "_generate_red_teaming_prompt_async",
-            new_callable=AsyncMock,
-            return_value="adv generated text",
-        ):
-            await node._send_initial_prompt_to_target_async()
+        await node._send_initial_prompt_to_target_async()
 
         sent = captured_message["message"]
         assert sent is not None
@@ -2807,6 +2900,31 @@ class TestModalityRouterIntegration:
         # Seed media is preserved.
         assert sent.message_pieces[1].original_value_data_type == "image_path"
         assert sent.message_pieces[1].original_value == "/path/to/seed.png"
+
+    async def test_node_send_initial_prompt_bypass_no_placeholder(self, node_components):
+        """A concrete seed (no adversarial placeholder) is sent as-is, bypassing the adversarial chat."""
+        node = _TreeOfAttacksNode(**node_components)
+        node._objective = "test"
+        # The manager is still constructed on the bypass path, so give it a resolvable schema.
+        node._adversarial_chat_system_seed_prompt.response_json_schema = None
+        node._initial_prompt = Message.from_prompt(prompt="concrete seed prompt", role="user")
+
+        captured_message: dict = {}
+
+        async def routed_send(*args, **kwargs):
+            # The adversarial chat must never be sent to on the bypass path.
+            if kwargs.get("target") is node._adversarial_chat:
+                raise AssertionError("Adversarial chat must not be invoked when the seed has no placeholder")
+            captured_message["message"] = kwargs.get("message")
+            return Message.from_prompt(prompt="ok", role="assistant")
+
+        node._prompt_normalizer.send_prompt_async = AsyncMock(side_effect=routed_send)
+
+        await node._send_initial_prompt_to_target_async()
+
+        sent = captured_message["message"]
+        assert sent is not None
+        assert sent.get_value() == "concrete seed prompt"
 
     def test_validate_context_raises_when_edit_only_target_has_no_seed(self, attack_builder):
         """Edit-only objective without seed in next_message fails validation early."""
@@ -2821,6 +2939,58 @@ class TestModalityRouterIntegration:
         with pytest.raises(ValueError, match="seed"):
             attack._validate_context(context=context)
 
+    async def test_node_send_to_adversarial_forwards_prev_image_when_supported(self, node_components):
+        """A {text, image_path}-capable adversarial chat receives the prior objective image as feedback."""
+        node_components["adversarial_chat"].configuration.capabilities.input_modalities = frozenset(
+            {frozenset({"text"}), frozenset({"text", "image_path"})}
+        )
+        node_components["modality_router"] = _ModalityFeedbackRouter(
+            adversarial_chat=node_components["adversarial_chat"],
+            objective_target=node_components["objective_target"],
+        )
+        node = _TreeOfAttacksNode(**node_components)
+        node._objective = "test"
+        node._adversarial_chat_system_seed_prompt.response_json_schema = {
+            "type": "object",
+            "properties": {"next_message": {"type": "string"}},
+        }
+        node.last_response = self._make_image_response(node.objective_target_conversation_id)
+
+        node._prompt_normalizer.send_prompt_async = AsyncMock(
+            return_value=Message.from_prompt(prompt='{"next_message": "attack text"}', role="assistant")
+        )
+
+        result = await node._send_to_adversarial_chat_async(prompt_text="feedback text")
+
+        assert result == "attack text"
+        sent = node._prompt_normalizer.send_prompt_async.call_args.kwargs["message"]
+        assert len(sent.message_pieces) == 2
+        assert sent.message_pieces[0].original_value == "feedback text"
+        assert sent.message_pieces[1].original_value_data_type == "image_path"
+        assert sent.message_pieces[1].original_value == "/tmp/output.png"
+
+    async def test_node_send_to_adversarial_text_only_drops_response_media(self, node_components):
+        """A text-only adversarial chat receives only feedback text when the objective response carried media."""
+        # adversarial_chat default is text-only.
+        node = _TreeOfAttacksNode(**node_components)
+        node._objective = "test"
+        node._adversarial_chat_system_seed_prompt.response_json_schema = {
+            "type": "object",
+            "properties": {"next_message": {"type": "string"}},
+        }
+        node.last_response = self._make_image_response(node.objective_target_conversation_id)
+
+        node._prompt_normalizer.send_prompt_async = AsyncMock(
+            return_value=Message.from_prompt(prompt='{"next_message": "attack text"}', role="assistant")
+        )
+
+        result = await node._send_to_adversarial_chat_async(prompt_text="feedback text")
+
+        assert result == "attack text"
+        sent = node._prompt_normalizer.send_prompt_async.call_args.kwargs["message"]
+        assert len(sent.message_pieces) == 1
+        assert sent.get_value() == "feedback text"
+
 
 class TestTAPAdversarialIdentity:
     """Tests for adversarial config in the TAP attack identity and inline system prompt."""
@@ -2833,7 +3003,7 @@ class TestTAPAdversarialIdentity:
         assert config.target is builder.adversarial_chat
         assert config.system_prompt is attack._adversarial_chat_system_seed_prompt
         # TAP's first-message seed prompt is a fixed default and is excluded from identity.
-        assert config.seed_prompt is None
+        assert config.first_message is None
 
     def test_get_attack_adversarial_config_returns_none_without_target(self):
         builder = AttackBuilder().with_default_mocks()

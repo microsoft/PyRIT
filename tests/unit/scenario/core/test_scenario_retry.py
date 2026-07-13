@@ -700,14 +700,14 @@ class TestScenarioForeignKeyResumeRegression:
         objective text. We exercise the production constructor here to lock
         that contract in (the resume mocks bypass it intentionally)."""
         from pyrit.executor.attack import AttackStrategy
-        from pyrit.models import SeedAttackGroup, SeedObjective
+        from pyrit.models import AttackSeedGroup, SeedObjective
         from pyrit.scenario import AtomicAttack
         from pyrit.scenario.core.attack_technique import AttackTechnique
 
         mock_attack = MagicMock(spec=AttackStrategy)
         duplicate_groups = [
-            SeedAttackGroup(seeds=[SeedObjective(value="dup-obj")]),
-            SeedAttackGroup(seeds=[SeedObjective(value="dup-obj")]),
+            AttackSeedGroup(seeds=[SeedObjective(value="dup-obj")]),
+            AttackSeedGroup(seeds=[SeedObjective(value="dup-obj")]),
         ]
         with pytest.raises(ValueError, match="duplicate objective hash"):
             AtomicAttack(

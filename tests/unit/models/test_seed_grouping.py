@@ -8,7 +8,7 @@ import uuid
 import pytest
 
 from pyrit.models import (
-    SeedAttackGroup,
+    AttackSeedGroup,
     SeedObjective,
     SeedPrompt,
     group_seeds_into_attack_groups,
@@ -29,7 +29,7 @@ def test_groups_seeds_sharing_prompt_group_id():
     result = group_seeds_into_attack_groups(seeds)
 
     assert len(result) == 1
-    assert isinstance(result[0], SeedAttackGroup)
+    assert isinstance(result[0], AttackSeedGroup)
     assert len(result[0].seeds) == 2
     assert result[0].objective.value == "objective"
 
