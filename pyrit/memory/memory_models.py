@@ -449,6 +449,8 @@ class ComponentIdentifierEntry(DomainBackedEntry[T]):
     #: Optional per-child-field wiring for materialized edge relationships.
     #: Empty by default so identifier rows only persist their own projection.
     CHILD_RELATIONSHIP_SPECS: ClassVar[dict[str, _ChildRelationshipSpec]] = {}
+    #: Mapping from singular promoted child fields to their foreign-key columns.
+    CHILD_HASH_COLUMNS: ClassVar[dict[str, str]] = {}
 
     #: Content-addressed identity — the same value as ``ComponentIdentifier.hash``.
     #: SHA256 hex digest is 64 chars; bounded for SQL Server key/index compatibility.
@@ -496,7 +498,14 @@ class ComponentIdentifierEntry(DomainBackedEntry[T]):
         )
         for name, value in domain_model.promoted_scalar_values().items():
             setattr(entry, name, value)  # each promoted scalar → its mapped column
+        cls._populate_child_hashes(entry=entry, domain_model=domain_model)
         return entry
+
+    @classmethod
+    def _populate_child_hashes(cls, *, entry: Self, domain_model: T) -> None:
+        for child_field, hash_column in cls.CHILD_HASH_COLUMNS.items():
+            child = getattr(domain_model, child_field)
+            setattr(entry, hash_column, child.hash if child is not None else None)
 
     @classmethod
     def _attach_child_relationship_rows(cls, *, entry: Self, domain_model: T, seen: dict[str, Self]) -> None:
@@ -627,6 +636,7 @@ class ScorerIdentifierEntry(ComponentIdentifierEntry[ScorerIdentifier]):
             edge_position_attr="position",
         )
     }
+    CHILD_HASH_COLUMNS: ClassVar[dict[str, str]] = {"prompt_target": "prompt_target_hash"}
 
     scorer_type: Mapped[str | None] = mapped_column(String, nullable=True)
     score_aggregator: Mapped[str | None] = mapped_column(String, nullable=True)
@@ -645,12 +655,6 @@ class ScorerIdentifierEntry(ComponentIdentifierEntry[ScorerIdentifier]):
         order_by="ScorerIdentifierChildEntry.position",
         back_populates="parent",
     )
-
-    @classmethod
-    def _from_domain_model_shallow(cls, *, domain_model: ScorerIdentifier) -> Self:
-        entry = super()._from_domain_model_shallow(domain_model=domain_model)
-        entry.prompt_target_hash = domain_model.prompt_target.hash if domain_model.prompt_target is not None else None
-        return entry
 
 
 class ScorerIdentifierChildEntry(Base):
@@ -684,6 +688,11 @@ class ScenarioIdentifierEntry(ComponentIdentifierEntry[ScenarioIdentifier]):
     __tablename__ = "ScenarioIdentifiers"
     __table_args__ = {"extend_existing": True}
 
+    CHILD_HASH_COLUMNS: ClassVar[dict[str, str]] = {
+        "objective_target": "objective_target_hash",
+        "objective_scorer": "objective_scorer_hash",
+    }
+
     version: Mapped[int | None] = mapped_column(INTEGER, nullable=True)
     techniques: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
     datasets: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
@@ -702,17 +711,6 @@ class ScenarioIdentifierEntry(ComponentIdentifierEntry[ScenarioIdentifier]):
         "ScorerIdentifierEntry",
         foreign_keys=[objective_scorer_hash],
     )
-
-    @classmethod
-    def _from_domain_model_shallow(cls, *, domain_model: ScenarioIdentifier) -> Self:
-        entry = super()._from_domain_model_shallow(domain_model=domain_model)
-        entry.objective_target_hash = (
-            domain_model.objective_target.hash if domain_model.objective_target is not None else None
-        )
-        entry.objective_scorer_hash = (
-            domain_model.objective_scorer.hash if domain_model.objective_scorer is not None else None
-        )
-        return entry
 
 
 class ConversationEntry(Base):

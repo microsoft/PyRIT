@@ -7,7 +7,7 @@ import logging
 import re
 import uuid
 import weakref
-from collections.abc import MutableSequence, Sequence
+from collections.abc import Iterator, MutableSequence, Sequence
 from contextlib import closing
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, TypeVar
@@ -23,6 +23,7 @@ if TYPE_CHECKING:
 from pyrit.memory.memory_models import (
     AttackResultEntry,
     Base,
+    ComponentIdentifierEntry,
     ConversationEntry,
     EmbeddingDataEntry,
     PromptMemoryEntry,
@@ -41,6 +42,7 @@ from pyrit.memory.storage import (
 )
 from pyrit.models import (
     AttackResult,
+    ComponentIdentifier,
     Conversation,
     ConversationStats,
     IdentifierFilter,
@@ -489,8 +491,8 @@ class MemoryInterface(abc.ABC):
                 logger.exception(f"Error registering conversation {conversation.conversation_id}: {e}")
                 raise
 
-    @staticmethod
-    def _persist_target_identifier(*, session: Any, target_identifier: TargetIdentifier) -> None:
+    @classmethod
+    def _persist_target_identifier(cls, *, session: Any, target_identifier: TargetIdentifier) -> None:
         """
         Persist ``target_identifier`` and its inner targets as content-addressed rows.
 
@@ -511,17 +513,42 @@ class MemoryInterface(abc.ABC):
             session (Any): The active SQLAlchemy session (the caller's transaction).
             target_identifier (TargetIdentifier): The target identifier to persist.
         """
-        if session.get(TargetIdentifierEntry, target_identifier.hash) is not None:
+        cls._persist_identifier(session=session, identifier=target_identifier)
+
+    @classmethod
+    def _persist_identifier(cls, *, session: Any, identifier: ComponentIdentifier) -> None:
+        entry_type = cls._get_identifier_entry_type(identifier)
+        if session.get(entry_type, identifier.hash) is not None:
             return
+
+        for dependency in cls._iter_identifier_dependencies(identifier):
+            cls._persist_identifier(session=session, identifier=dependency)
+
         try:
             with session.begin_nested():
-                entry = TargetIdentifierEntry.from_domain_model(target_identifier)
-                session.merge(entry)
+                session.merge(entry_type.from_domain_model(identifier))
                 session.flush()
         except IntegrityError:
-            # A racing writer inserted the same content-addressed row; immutable
-            # rows make this a safe no-op.
             pass
+
+    @staticmethod
+    def _get_identifier_entry_type(identifier: ComponentIdentifier) -> type[ComponentIdentifierEntry[Any]]:
+        if isinstance(identifier, TargetIdentifier):
+            return TargetIdentifierEntry
+        if isinstance(identifier, ScorerIdentifier):
+            return ScorerIdentifierEntry
+        if isinstance(identifier, ScenarioIdentifier):
+            return ScenarioIdentifierEntry
+        raise TypeError(f"Identifier type {type(identifier).__name__} does not have a persistence entry.")
+
+    @staticmethod
+    def _iter_identifier_dependencies(identifier: ComponentIdentifier) -> Iterator[ComponentIdentifier]:
+        for field_name in identifier.promoted_child_field_names():
+            child = getattr(identifier, field_name)
+            if isinstance(child, ComponentIdentifier):
+                yield child
+            elif isinstance(child, list):
+                yield from (item for item in child if isinstance(item, ComponentIdentifier))
 
     @abc.abstractmethod
     def _add_embeddings_to_memory(self, *, embedding_data: Sequence[EmbeddingDataEntry]) -> None:
@@ -881,29 +908,10 @@ class MemoryInterface(abc.ABC):
                 logger.exception(f"Error inserting scores: {e}")
                 raise
 
-    @staticmethod
-    def _persist_scorer_identifier(*, session: Any, scorer_identifier: ScorerIdentifier) -> None:
+    @classmethod
+    def _persist_scorer_identifier(cls, *, session: Any, scorer_identifier: ScorerIdentifier) -> None:
         """Persist a complete scorer graph and its target dependencies."""
-        if session.get(ScorerIdentifierEntry, scorer_identifier.hash) is not None:
-            return
-
-        pending_scorers = [scorer_identifier]
-        while pending_scorers:
-            pending_scorer = pending_scorers.pop()
-            if pending_scorer.prompt_target is not None:
-                MemoryInterface._persist_target_identifier(
-                    session=session,
-                    target_identifier=pending_scorer.prompt_target,
-                )
-            pending_scorers.extend(pending_scorer.sub_scorers)
-
-        try:
-            with session.begin_nested():
-                entry = ScorerIdentifierEntry.from_domain_model(scorer_identifier)
-                session.merge(entry)
-                session.flush()
-        except IntegrityError:
-            pass
+        cls._persist_identifier(session=session, identifier=scorer_identifier)
 
     def get_scores(
         self,
@@ -2233,28 +2241,10 @@ class MemoryInterface(abc.ABC):
                 session.rollback()
                 raise
 
-    @staticmethod
-    def _persist_scenario_identifier(*, session: Any, scenario_identifier: ScenarioIdentifier) -> None:
+    @classmethod
+    def _persist_scenario_identifier(cls, *, session: Any, scenario_identifier: ScenarioIdentifier) -> None:
         """Persist a scenario identifier and its target and scorer dependencies."""
-        if session.get(ScenarioIdentifierEntry, scenario_identifier.hash) is not None:
-            return
-        if scenario_identifier.objective_target is not None:
-            MemoryInterface._persist_target_identifier(
-                session=session,
-                target_identifier=scenario_identifier.objective_target,
-            )
-        if scenario_identifier.objective_scorer is not None:
-            MemoryInterface._persist_scorer_identifier(
-                session=session,
-                scorer_identifier=scenario_identifier.objective_scorer,
-            )
-        try:
-            with session.begin_nested():
-                entry = ScenarioIdentifierEntry.from_domain_model(scenario_identifier)
-                session.merge(entry)
-                session.flush()
-        except IntegrityError:
-            pass
+        cls._persist_identifier(session=session, identifier=scenario_identifier)
 
     def update_scenario_run_state(
         self,

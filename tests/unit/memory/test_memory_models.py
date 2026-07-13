@@ -2,7 +2,9 @@
 # Licensed under the MIT license.
 
 import uuid
+from collections.abc import Sequence
 from datetime import datetime, timezone
+from typing import Any, get_origin
 from unittest.mock import MagicMock
 
 import pytest
@@ -10,14 +12,17 @@ from pydantic import ValidationError
 
 from pyrit.memory.memory_models import (
     AttackResultEntry,
+    ComponentIdentifierEntry,
     ConversationMessageWithSimilarity,
     EmbeddingDataEntry,
     EmbeddingMessageWithSimilarity,
     PromptMemoryEntry,
+    ScenarioIdentifierEntry,
     ScenarioResultEntry,
     ScoreEntry,
     ScorerIdentifierEntry,
     SeedEntry,
+    TargetIdentifierEntry,
     UTCDateTime,
     _load_identifier,
 )
@@ -29,12 +34,14 @@ from pyrit.models import (
     ConversationReference,
     ConversationType,
     MessagePiece,
+    ScenarioIdentifier,
     ScenarioResult,
     Score,
     ScorerIdentifier,
     SeedObjective,
     SeedPrompt,
     SeedSimulatedConversation,
+    TargetIdentifier,
 )
 from unit.mocks import make_scenario_result
 
@@ -191,6 +198,30 @@ def test_scorer_identifier_entry_constructs_full_sub_scorer_graph():
     nested_entry = entry.sub_scorers[0].child
     assert len(nested_entry.sub_scorers) == 1
     assert nested_entry.sub_scorers[0].child is entry.sub_scorers[1].child
+
+
+@pytest.mark.parametrize(
+    ("identifier_type", "entry_type"),
+    [
+        (TargetIdentifier, TargetIdentifierEntry),
+        (ScorerIdentifier, ScorerIdentifierEntry),
+        (ScenarioIdentifier, ScenarioIdentifierEntry),
+    ],
+)
+def test_identifier_entry_maps_promoted_children_by_cardinality(
+    identifier_type: type[ComponentIdentifier],
+    entry_type: type[ComponentIdentifierEntry[Any]],
+) -> None:
+    promoted_children = set(identifier_type.promoted_child_field_names())
+    collection_children = {
+        field_name
+        for field_name in promoted_children
+        if get_origin(identifier_type.model_fields[field_name].annotation) in (list, Sequence)
+    }
+    singular_children = promoted_children - collection_children
+
+    assert set(entry_type.CHILD_RELATIONSHIP_SPECS) == collection_children
+    assert set(entry_type.CHILD_HASH_COLUMNS) == singular_children
 
 
 # ---------------------------------------------------------------------------
