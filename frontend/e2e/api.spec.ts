@@ -78,16 +78,11 @@ test.describe("Targets API", () => {
     };
 
     const createResp = await request.post("/api/targets", { data: createPayload });
-    // The endpoint may require credentials or env setup that isn't available
-    // in CI.  Skip gracefully rather than masking real regressions.
-    if (!createResp.ok()) {
-      test.skip(true, `POST /api/targets returned ${createResp.status()} — skipping`);
-      return;
-    }
+    expect(createResp.ok()).toBe(true);
 
     const created = await createResp.json();
     expect(created).toHaveProperty("target_registry_name");
-    expect(created.target_type).toBe("OpenAIChatTarget");
+    expect(created.identifier.class_name).toBe("OpenAIChatTarget");
 
     // Retrieve via list and check it's there
     const listResp = await request.get("/api/targets?limit=200");
@@ -120,12 +115,6 @@ test.describe("Attacks API", () => {
 
   test("should list attacks @seeded", async ({ request }) => {
     const response = await request.get("/api/attacks");
-    // Backend may return 500 due to stale DB schema or 404 if not implemented.
-    // Only assert when the endpoint is actually healthy.
-    if (!response.ok()) {
-      test.skip(true, `GET /api/attacks returned ${response.status()} — skipping`);
-      return;
-    }
     expect(response.ok()).toBe(true);
   });
 });
