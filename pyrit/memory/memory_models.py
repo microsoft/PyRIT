@@ -5,9 +5,10 @@ import json
 import logging
 import uuid
 from abc import abstractmethod
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Generic, Literal, TypeVar
+from typing import Any, ClassVar, Generic, Literal, TypeVar, cast
 
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import (
@@ -414,6 +415,16 @@ class DomainBackedEntry(Base, Generic[TDomain]):
 T = TypeVar("T", bound=ComponentIdentifier)
 
 
+@dataclass(frozen=True)
+class _ChildRelationshipSpec:
+    """Mapping from a promoted child field to its ORM edge relationship wiring."""
+
+    relationship_name: str
+    edge_factory: Callable[[], Any]
+    edge_child_attr: str
+    edge_position_attr: str | None = "position"
+
+
 class ComponentIdentifierEntry(DomainBackedEntry[T]):
     """
     Abstract base for tables that persist a ``ComponentIdentifier`` projection.
@@ -434,6 +445,10 @@ class ComponentIdentifierEntry(DomainBackedEntry[T]):
 
     __abstract__ = True
 
+    #: Optional per-child-field wiring for materialized edge relationships.
+    #: Empty by default so identifier rows only persist their own projection.
+    CHILD_RELATIONSHIP_SPECS: ClassVar[dict[str, _ChildRelationshipSpec]] = {}
+
     #: Content-addressed identity — the same value as ``ComponentIdentifier.hash``.
     #: SHA256 hex digest is 64 chars; bounded for SQL Server key/index compatibility.
     hash: Mapped[str] = mapped_column(String(64), primary_key=True)
@@ -444,6 +459,68 @@ class ComponentIdentifierEntry(DomainBackedEntry[T]):
     #: Version that first wrote this content-addressed row. Nullable for backwards
     #: compatibility with existing databases.
     pyrit_version: Mapped[str | None] = mapped_column(String, nullable=True)
+
+    @classmethod
+    def from_domain_model(cls, domain_model: T) -> Self:
+        """
+        Build an unsaved component identifier memory entry from the given domain model.
+
+        Args:
+            domain_model (T): The domain model this entry persists.
+
+        Returns:
+            Self: A new, unsaved row.
+        """
+        return cls._from_domain_model_recursive(domain_model=domain_model, seen={})
+
+    @classmethod
+    def _from_domain_model_recursive(cls, *, domain_model: T, seen: dict[str, Self]) -> Self:
+        existing = seen.get(domain_model.hash)
+        if existing is not None:
+            return existing
+
+        entry = cls._from_domain_model_shallow(domain_model=domain_model)
+        seen[domain_model.hash] = entry
+        cls._attach_child_relationship_rows(entry=entry, domain_model=domain_model, seen=seen)
+        return entry
+
+    @classmethod
+    def _from_domain_model_shallow(cls, *, domain_model: T) -> Self:
+        entry = cls(
+            hash=domain_model.hash,
+            class_name=domain_model.class_name,
+            class_module=domain_model.class_module,
+            identifier_json=domain_model.model_dump(),
+            pyrit_version=domain_model.pyrit_version,
+        )
+        for name, value in domain_model.promoted_scalar_values().items():
+            setattr(entry, name, value)  # each promoted scalar → its mapped column
+        return entry
+
+    @classmethod
+    def _attach_child_relationship_rows(cls, *, entry: Self, domain_model: T, seen: dict[str, Self]) -> None:
+        for field_name in domain_model.promoted_child_field_names():
+            spec = cls.CHILD_RELATIONSHIP_SPECS.get(field_name)
+            if spec is None:
+                continue
+
+            child_value = getattr(domain_model, field_name)
+            children = (
+                child_value
+                if isinstance(child_value, list)
+                else ([child_value] if child_value is not None else [])
+            )
+            edge_rows = getattr(entry, spec.relationship_name)
+            for position, child_identifier in enumerate(children):
+                if not isinstance(child_identifier, ComponentIdentifier):
+                    continue
+                typed_child_identifier = cast("T", child_identifier)
+                child_entry = cls._from_domain_model_recursive(domain_model=typed_child_identifier, seen=seen)
+                edge_row = spec.edge_factory()
+                setattr(edge_row, spec.edge_child_attr, child_entry)
+                if spec.edge_position_attr:
+                    setattr(edge_row, spec.edge_position_attr, position)
+                edge_rows.append(edge_row)
 
 
 class TargetIdentifierEntry(ComponentIdentifierEntry[TargetIdentifier]):
@@ -463,6 +540,15 @@ class TargetIdentifierEntry(ComponentIdentifierEntry[TargetIdentifier]):
     __tablename__ = "TargetIdentifiers"
     __table_args__ = {"extend_existing": True}
 
+    CHILD_RELATIONSHIP_SPECS: ClassVar[dict[str, _ChildRelationshipSpec]] = {
+        "targets": _ChildRelationshipSpec(
+            relationship_name="targets",
+            edge_factory=lambda: TargetIdentifierChildEntry(),
+            edge_child_attr="child",
+            edge_position_attr="position",
+        )
+    }
+
     endpoint: Mapped[str | None] = mapped_column(String, nullable=True)
     model_name: Mapped[str | None] = mapped_column(String, nullable=True)
     underlying_model_name: Mapped[str | None] = mapped_column(String, nullable=True)
@@ -471,36 +557,16 @@ class TargetIdentifierEntry(ComponentIdentifierEntry[TargetIdentifier]):
     max_requests_per_minute: Mapped[int | None] = mapped_column(INTEGER, nullable=True)
     supported_auth_modes: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
 
-    @classmethod
-    def from_domain_model(cls, domain_model: TargetIdentifier) -> Self:
-        """
-        Build a row from a ``TargetIdentifier``.
-
-        Maps the shared columns plus the promoted scalar query columns; the full flat
-        dump (including any inner ``targets``) is stored in ``identifier_json``. Inner
-        target edges are written separately by
-        ``MemoryInterface._persist_target_identifier``.
-
-        Args:
-            domain_model (TargetIdentifier): The target identifier to persist.
-
-        Returns:
-            Self: A new, unsaved row keyed by the identifier's content hash.
-        """
-        return cls(
-            hash=domain_model.hash,
-            class_name=domain_model.class_name,
-            class_module=domain_model.class_module,
-            identifier_json=domain_model.model_dump(),
-            pyrit_version=domain_model.pyrit_version,
-            endpoint=domain_model.endpoint,
-            model_name=domain_model.model_name,
-            underlying_model_name=domain_model.underlying_model_name,
-            temperature=domain_model.temperature,
-            top_p=domain_model.top_p,
-            max_requests_per_minute=domain_model.max_requests_per_minute,
-            supported_auth_modes=domain_model.supported_auth_modes,
-        )
+    #: Ordered child-edge rows (``parent_hash -> child_hash``) for this target.
+    #: Reconstructing nested targets from relational rows requires joining through
+    #: this relationship and then following ``TargetIdentifierChildEntry.child``.
+    targets: Mapped[list["TargetIdentifierChildEntry"]] = relationship(
+        "TargetIdentifierChildEntry",
+        primaryjoin="TargetIdentifierEntry.hash == TargetIdentifierChildEntry.parent_hash",
+        foreign_keys="TargetIdentifierChildEntry.parent_hash",
+        order_by="TargetIdentifierChildEntry.position",
+        back_populates="parent",
+    )
 
 
 class TargetIdentifierChildEntry(Base):
@@ -532,6 +598,18 @@ class TargetIdentifierChildEntry(Base):
     position: Mapped[int] = mapped_column(INTEGER, primary_key=True)
     child_hash: Mapped[str] = mapped_column(
         String(64), ForeignKey(f"{TargetIdentifierEntry.__tablename__}.hash"), nullable=False
+    )
+
+    #: Parent target that owns this edge position.
+    parent: Mapped["TargetIdentifierEntry"] = relationship(
+        "TargetIdentifierEntry",
+        foreign_keys=[parent_hash],
+        back_populates="targets",
+    )
+    #: Child target row referenced by ``child_hash``.
+    child: Mapped["TargetIdentifierEntry"] = relationship(
+        "TargetIdentifierEntry",
+        foreign_keys=[child_hash],
     )
 
 
