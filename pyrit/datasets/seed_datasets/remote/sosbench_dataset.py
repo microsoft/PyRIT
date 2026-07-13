@@ -94,6 +94,7 @@ class _SOSBenchDataset(_RemoteDatasetLoader):
                     item.get("subject"),
                     alias_overrides=alias_overrides,
                 ),
+                metadata={"sosbench_subject": item.get("subject")},
                 description=(
                     "SOSBench is a regulation-grounded, hazard-focused benchmark encompassing "
                     "six high-risk scientific domains: chemistry, biology, medicine, pharmacology, "

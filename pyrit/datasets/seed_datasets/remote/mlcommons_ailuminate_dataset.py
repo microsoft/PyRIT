@@ -148,11 +148,16 @@ class _MLCommonsAILuminateDataset(_RemoteDatasetLoader):
                 value=example["prompt_text"],
                 data_type="text",
                 dataset_name=self.dataset_name,
-                # Saving both the full hazard category name and the abbreviation
+                # Standardize using both the full hazard category name and the abbreviation,
+                # and preserve the original AILuminate hazard labels in metadata.
                 harm_categories=self._standardize_harm_categories(
                     [self.HAZARD_CATEGORIES_MAP[example["hazard"]], example["hazard"]],
                     alias_overrides=harm_category_alias_overrides,
                 ),
+                metadata={
+                    "mlcommons_ailuminate_hazard": example["hazard"],
+                    "mlcommons_ailuminate_hazard_name": self.HAZARD_CATEGORIES_MAP[example["hazard"]],
+                },
                 description=(
                     "This dataset contains the DEMO prompt library of the AILuminate 1.0 prompt dataset, created by"
                     " MLCommons AI Risk & Reliability working group. It contains 1,200 human-generated prompts that"

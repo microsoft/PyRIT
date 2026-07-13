@@ -41,6 +41,7 @@ class TestSOSBenchDataset:
         assert len(dataset.seeds) == 1
         assert isinstance(dataset.seeds[0], SeedPrompt)
         assert dataset.seeds[0].harm_categories == expected_categories
+        assert dataset.seeds[0].metadata["sosbench_subject"] == subject
 
     async def test_fetch_dataset_no_subject_returns_empty_categories(self):
         # Rows whose subject is missing should not raise; they resolve to no categories.
@@ -51,3 +52,4 @@ class TestSOSBenchDataset:
             dataset = await loader.fetch_dataset_async()
 
         assert dataset.seeds[0].harm_categories == []
+        assert dataset.seeds[0].metadata["sosbench_subject"] is None

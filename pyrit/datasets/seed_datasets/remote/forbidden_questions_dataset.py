@@ -112,6 +112,7 @@ Financial Advice, Health Consultation, and Government Decision."""
                     item.get("content_policy_name"),
                     alias_overrides=alias_overrides,
                 ),
+                metadata={"forbidden_questions_content_policy_name": item.get("content_policy_name")},
                 source="https://huggingface.co/datasets/TrustAIRLab/forbidden_question_set",
                 description=description,
             )

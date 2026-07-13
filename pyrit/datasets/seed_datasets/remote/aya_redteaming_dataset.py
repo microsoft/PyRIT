@@ -164,6 +164,10 @@ class _AyaRedteamingDataset(_RemoteDatasetLoader):
                     data_type="text",
                     dataset_name=self.dataset_name,
                     harm_categories=standardized_categories if standardized_categories else None,
+                    metadata={
+                        "aya_redteaming_categories": ", ".join(categories),
+                        "aya_redteaming_scope": example["global_or_local"],
+                    },
                     source="https://huggingface.co/datasets/CohereForAI/aya_redteaming",
                     authors=self._AUTHORS,
                     groups=self._GROUPS,

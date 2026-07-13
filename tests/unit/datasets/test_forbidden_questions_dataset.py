@@ -48,3 +48,4 @@ class TestForbiddenQuestionsDataset:
         assert len(dataset.seeds) == 1
         assert isinstance(dataset.seeds[0], SeedPrompt)
         assert dataset.seeds[0].harm_categories == expected_categories
+        assert dataset.seeds[0].metadata["forbidden_questions_content_policy_name"] == native_label
