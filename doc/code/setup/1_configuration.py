@@ -1,3 +1,15 @@
+# ---
+# jupyter:
+#   jupytext:
+#     cell_metadata_filter: -all
+#     text_representation:
+#       extension: .py
+#       format_name: percent
+#       format_version: '1.3'
+#       jupytext_version: 1.19.4
+# ---
+
+# %%
 from pyrit.output import output_attack_async
 
 # ---
@@ -125,7 +137,7 @@ target3 = OpenAIChatTarget(
 #
 # Registering a component is only half the loop — the payoff is that any consumer can later ask a singleton registry for an instance by **name** or **tag** and use it. Importantly, nothing is auto-injected into a hand-built attack: you pull the registered instances back out yourself and wire them in. (Scenarios do this pull for you, which is why a scenario "just works" after these initializers run.)
 #
-# The following example runs the built-in `TargetInitializer` and `ScorerInitializer`, then demonstrates the register-then-retrieve loop by pulling a target and a scorer out of their registries and wiring them into an attack. This tackles a similar scenario to [Common Scenario Parameters](../scenarios/1_common_scenario_parameters.ipynb) but is much easier because the components are already configured.
+# The following example runs the built-in `TargetInitializer` and `ScorerInitializer`, then demonstrates the register-then-retrieve loop by pulling a target and a scorer out of their registries and wiring them into an attack.
 
 # %%
 from pyrit.common.path import PYRIT_PATH
