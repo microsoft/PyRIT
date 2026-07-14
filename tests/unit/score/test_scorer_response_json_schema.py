@@ -14,8 +14,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from unit.mocks import get_mock_target_identifier
 
-from pyrit.models import COMMON_JSON_SCHEMAS, Message, MessagePiece
-from pyrit.models.json_schema_definition import JSON_SCHEMA_METADATA_KEY
+from pyrit.models import COMMON_JSON_SCHEMAS, JSON_SCHEMA_METADATA_KEY, Message, MessagePiece
 from pyrit.score import (
     ContentClassifier,
     ContentClassifierPaths,

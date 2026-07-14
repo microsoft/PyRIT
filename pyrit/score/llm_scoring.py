@@ -4,10 +4,10 @@
 from __future__ import annotations
 
 import uuid
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from pyrit.exceptions import EmptyResponseException, ScorerLLMResponseBlockedException, pyrit_json_retry
-from pyrit.models import JSON_SCHEMA_METADATA_KEY, Message, MessagePiece
+from pyrit.models import JsonResponseConfig, Message, MessagePiece
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -90,15 +90,12 @@ async def _run_llm_scoring_async(
         system_prompt=system_prompt,
         conversation_id=conversation_id,
     )
-    prompt_metadata: dict[str, Any] = {}
-    response_format = response_handler.response_format
-    if response_format is not None:
-        prompt_metadata["response_format"] = response_format
-    response_schema = response_handler.response_schema
-    if response_schema is not None:
-        # Always forward the schema; the target's normalization pipeline omits it
-        # when the target cannot natively enforce a JSON schema.
-        prompt_metadata[JSON_SCHEMA_METADATA_KEY] = response_schema
+    # Forward the JSON-response request (and any schema) via the canonical config; the
+    # target's normalization pipeline omits the schema when it cannot natively enforce one.
+    prompt_metadata = JsonResponseConfig(
+        enabled=response_handler.response_format is not None,
+        json_schema=response_handler.response_schema,
+    ).to_metadata()
 
     # Build message pieces - prepended text context first (if provided), then the main message being scored
     message_pieces: list[MessagePiece] = []

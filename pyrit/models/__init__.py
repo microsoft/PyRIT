@@ -49,15 +49,6 @@ from pyrit.models.identifiers import (
     snake_case_to_class_name,
     validate_registry_name,
 )
-from pyrit.models.json_schema_definition import (
-    COMMON_JSON_SCHEMAS,
-    JSON_SCHEMA_METADATA_KEY,
-    SEED_RESPONSE_JSON_SCHEMA_METADATA_KEY,
-    JsonSchemaDefinition,
-    get_common_json_schema,
-    register_common_json_schema,
-    unregister_common_json_schema,
-)
 from pyrit.models.literals import (
     MEDIA_PATH_DATA_TYPES,
     ChatMessageRole,
@@ -114,8 +105,19 @@ from pyrit.models.seeds import (
     SimulatedTargetSystemPromptPaths,
     group_seeds_into_attack_groups,
 )
-from pyrit.models.target_capabilities import CapabilityName, TargetCapabilities
-from pyrit.models.token_usage import TokenUsage
+from pyrit.models.target import (
+    COMMON_JSON_SCHEMAS,
+    JSON_SCHEMA_METADATA_KEY,
+    SEED_RESPONSE_JSON_SCHEMA_METADATA_KEY,
+    CapabilityName,
+    JsonResponseConfig,
+    JsonSchemaDefinition,
+    TargetCapabilities,
+    TokenUsage,
+    get_common_json_schema,
+    register_common_json_schema,
+    unregister_common_json_schema,
+)
 
 __all__ = [
     "ALLOWED_CHAT_MESSAGE_ROLES",
@@ -161,6 +163,7 @@ __all__ = [
     "IdentifierType",
     "JSONValue",
     "COMMON_JSON_SCHEMAS",
+    "JsonResponseConfig",
     "get_common_json_schema",
     "register_common_json_schema",
     "unregister_common_json_schema",

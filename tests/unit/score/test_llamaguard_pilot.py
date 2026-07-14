@@ -18,8 +18,7 @@ import pytest
 from unit.mocks import get_mock_target_identifier
 
 from pyrit.exceptions.exception_classes import InvalidJsonException
-from pyrit.models import Message, MessagePiece
-from pyrit.models.json_schema_definition import JSON_SCHEMA_METADATA_KEY
+from pyrit.models import JSON_SCHEMA_METADATA_KEY, Message, MessagePiece
 from pyrit.score import CallableResponseHandler, SelfAskTrueFalseScorer, TrueFalseQuestion
 
 # A compact stand-in for a canonical LlamaGuard system prompt. The real prompt is long and static;
