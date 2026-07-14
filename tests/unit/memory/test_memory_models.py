@@ -10,7 +10,7 @@ from unittest.mock import MagicMock
 import pytest
 from pydantic import ValidationError
 from sqlalchemy import create_engine, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import MappedColumn, Session
 
 from pyrit.memory.memory_models import (
     AtomicAttackIdentifierEntry,
@@ -243,6 +243,31 @@ def test_identifier_entry_maps_promoted_children_by_cardinality(
 
     assert set(entry_type.CHILD_RELATIONSHIP_SPECS) == collection_children
     assert set(entry_type.CHILD_HASH_COLUMNS) == singular_children
+
+
+@pytest.mark.parametrize(
+    ("identifier_type", "entry_type"),
+    [
+        (TargetIdentifier, TargetIdentifierEntry),
+        (ConverterIdentifier, ConverterIdentifierEntry),
+        (ScorerIdentifier, ScorerIdentifierEntry),
+        (ScenarioIdentifier, ScenarioIdentifierEntry),
+        (SeedIdentifier, SeedIdentifierEntry),
+        (AttackIdentifier, AttackIdentifierEntry),
+        (AttackTechniqueIdentifier, AttackTechniqueIdentifierEntry),
+        (AtomicAttackIdentifier, AtomicAttackIdentifierEntry),
+    ],
+)
+def test_identifier_entry_maps_promoted_scalars_to_columns(
+    identifier_type: type[ComponentIdentifier],
+    entry_type: type[ComponentIdentifierEntry[Any]],
+) -> None:
+    shared_columns = {name for name, value in vars(ComponentIdentifierEntry).items() if isinstance(value, MappedColumn)}
+    mapped_scalars = set(entry_type.__table__.columns.keys())
+    mapped_scalars -= shared_columns
+    mapped_scalars -= set(entry_type.CHILD_HASH_COLUMNS.values())
+
+    assert mapped_scalars == set(identifier_type.promoted_scalar_field_names())
 
 
 def test_atomic_attack_identifier_graph_persists_with_result_link() -> None:
