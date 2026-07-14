@@ -80,6 +80,7 @@ logger = logging.getLogger(__name__)
 
 
 Model = TypeVar("Model")
+IdentifierModel = TypeVar("IdentifierModel", bound=ComponentIdentifier)
 
 
 class MemoryInterface(abc.ABC):
@@ -591,6 +592,346 @@ class MemoryInterface(abc.ABC):
                 yield child
             elif isinstance(child, list):
                 yield from (item for item in child if isinstance(item, ComponentIdentifier))
+
+    def _get_identifiers(
+        self,
+        *,
+        identifier_type: type[IdentifierModel],
+        entry_type: type[ComponentIdentifierEntry[Any]],
+        identifier_hashes: Sequence[str] | None,
+        filters: dict[str, Any],
+    ) -> Sequence[IdentifierModel]:
+        if identifier_hashes is not None and not identifier_hashes:
+            return []
+
+        conditions = [getattr(entry_type, name) == value for name, value in filters.items() if value is not None]
+        if identifier_hashes is not None:
+            entries = self._execute_batched_query(
+                entry_type,
+                batch_column=entry_type.hash,
+                batch_values=identifier_hashes,
+                other_conditions=conditions,
+                order_by=entry_type.hash,
+            )
+        else:
+            entries = self._query_entries(
+                entry_type,
+                conditions=and_(*conditions) if conditions else None,
+                order_by=entry_type.hash,
+            )
+
+        identifiers: list[IdentifierModel] = []
+        seen_hashes: set[str] = set()
+        for entry in sorted(entries, key=lambda item: item.hash):
+            if entry.hash in seen_hashes:
+                continue
+            if entry.identifier_json is None:
+                raise ValueError(f"Identifier row {entry.hash} in {entry_type.__tablename__} has no identifier JSON.")
+            identifier = identifier_type.model_validate(entry.identifier_json)
+            if identifier.hash != entry.hash:
+                raise ValueError(
+                    f"Identifier row {entry.hash} in {entry_type.__tablename__} does not match its stored JSON hash."
+                )
+            identifiers.append(identifier)
+            seen_hashes.add(entry.hash)
+        return identifiers
+
+    def get_target_identifiers(
+        self,
+        *,
+        identifier_hashes: Sequence[str] | None = None,
+        class_name: str | None = None,
+        endpoint: str | None = None,
+        model_name: str | None = None,
+        underlying_model_name: str | None = None,
+        temperature: float | None = None,
+        top_p: float | None = None,
+        max_requests_per_minute: int | None = None,
+        supported_auth_modes: Sequence[str] | None = None,
+    ) -> Sequence[TargetIdentifier]:
+        """
+        Retrieve target identifiers using exact normalized-column filters.
+
+        Args:
+            identifier_hashes (Sequence[str] | None): Content hashes to include.
+            class_name (str | None): Component class name to match.
+            endpoint (str | None): Target endpoint to match.
+            model_name (str | None): Target model name to match.
+            underlying_model_name (str | None): Underlying model name to match.
+            temperature (float | None): Temperature to match.
+            top_p (float | None): Top-p value to match.
+            max_requests_per_minute (int | None): Request limit to match.
+            supported_auth_modes (Sequence[str] | None): Ordered authentication modes to match.
+
+        Returns:
+            Sequence[TargetIdentifier]: Matching identifiers ordered by content hash.
+        """
+        return self._get_identifiers(
+            identifier_type=TargetIdentifier,
+            entry_type=TargetIdentifierEntry,
+            identifier_hashes=identifier_hashes,
+            filters={
+                "class_name": class_name,
+                "endpoint": endpoint,
+                "model_name": model_name,
+                "underlying_model_name": underlying_model_name,
+                "temperature": temperature,
+                "top_p": top_p,
+                "max_requests_per_minute": max_requests_per_minute,
+                "supported_auth_modes": list(supported_auth_modes) if supported_auth_modes is not None else None,
+            },
+        )
+
+    def get_converter_identifiers(
+        self,
+        *,
+        identifier_hashes: Sequence[str] | None = None,
+        class_name: str | None = None,
+        supported_input_types: Sequence[str] | None = None,
+        supported_output_types: Sequence[str] | None = None,
+        converter_target_hash: str | None = None,
+        sub_converter_hash: str | None = None,
+    ) -> Sequence[ConverterIdentifier]:
+        """
+        Retrieve converter identifiers using exact normalized-column filters.
+
+        Args:
+            identifier_hashes (Sequence[str] | None): Content hashes to include.
+            class_name (str | None): Component class name to match.
+            supported_input_types (Sequence[str] | None): Ordered input types to match.
+            supported_output_types (Sequence[str] | None): Ordered output types to match.
+            converter_target_hash (str | None): Converter target hash to match.
+            sub_converter_hash (str | None): Nested converter hash to match.
+
+        Returns:
+            Sequence[ConverterIdentifier]: Matching identifiers ordered by content hash.
+        """
+        return self._get_identifiers(
+            identifier_type=ConverterIdentifier,
+            entry_type=ConverterIdentifierEntry,
+            identifier_hashes=identifier_hashes,
+            filters={
+                "class_name": class_name,
+                "supported_input_types": (
+                    list(supported_input_types) if supported_input_types is not None else None
+                ),
+                "supported_output_types": (
+                    list(supported_output_types) if supported_output_types is not None else None
+                ),
+                "converter_target_hash": converter_target_hash,
+                "sub_converter_hash": sub_converter_hash,
+            },
+        )
+
+    def get_scorer_identifiers(
+        self,
+        *,
+        identifier_hashes: Sequence[str] | None = None,
+        class_name: str | None = None,
+        scorer_type: str | None = None,
+        score_aggregator: str | None = None,
+        prompt_target_hash: str | None = None,
+    ) -> Sequence[ScorerIdentifier]:
+        """
+        Retrieve scorer identifiers using exact normalized-column filters.
+
+        Args:
+            identifier_hashes (Sequence[str] | None): Content hashes to include.
+            class_name (str | None): Component class name to match.
+            scorer_type (str | None): Scorer type to match.
+            score_aggregator (str | None): Score aggregator to match.
+            prompt_target_hash (str | None): Scorer target hash to match.
+
+        Returns:
+            Sequence[ScorerIdentifier]: Matching identifiers ordered by content hash.
+        """
+        return self._get_identifiers(
+            identifier_type=ScorerIdentifier,
+            entry_type=ScorerIdentifierEntry,
+            identifier_hashes=identifier_hashes,
+            filters={
+                "class_name": class_name,
+                "scorer_type": scorer_type,
+                "score_aggregator": score_aggregator,
+                "prompt_target_hash": prompt_target_hash,
+            },
+        )
+
+    def get_scenario_identifiers(
+        self,
+        *,
+        identifier_hashes: Sequence[str] | None = None,
+        class_name: str | None = None,
+        version: int | None = None,
+        techniques: Sequence[str] | None = None,
+        datasets: Sequence[str] | None = None,
+        objective_target_hash: str | None = None,
+        objective_scorer_hash: str | None = None,
+    ) -> Sequence[ScenarioIdentifier]:
+        """
+        Retrieve scenario identifiers using exact normalized-column filters.
+
+        Args:
+            identifier_hashes (Sequence[str] | None): Content hashes to include.
+            class_name (str | None): Component class name to match.
+            version (int | None): Scenario definition version to match.
+            techniques (Sequence[str] | None): Ordered technique names to match.
+            datasets (Sequence[str] | None): Ordered dataset names to match.
+            objective_target_hash (str | None): Objective target hash to match.
+            objective_scorer_hash (str | None): Objective scorer hash to match.
+
+        Returns:
+            Sequence[ScenarioIdentifier]: Matching identifiers ordered by content hash.
+        """
+        return self._get_identifiers(
+            identifier_type=ScenarioIdentifier,
+            entry_type=ScenarioIdentifierEntry,
+            identifier_hashes=identifier_hashes,
+            filters={
+                "class_name": class_name,
+                "version": version,
+                "techniques": list(techniques) if techniques is not None else None,
+                "datasets": list(datasets) if datasets is not None else None,
+                "objective_target_hash": objective_target_hash,
+                "objective_scorer_hash": objective_scorer_hash,
+            },
+        )
+
+    def get_seed_identifiers(
+        self,
+        *,
+        identifier_hashes: Sequence[str] | None = None,
+        class_name: str | None = None,
+        value: str | None = None,
+        value_sha256: str | None = None,
+        data_type: str | None = None,
+        dataset_name: str | None = None,
+        is_general_technique: bool | None = None,
+    ) -> Sequence[SeedIdentifier]:
+        """
+        Retrieve seed identifiers using exact normalized-column filters.
+
+        Args:
+            identifier_hashes (Sequence[str] | None): Content hashes to include.
+            class_name (str | None): Component class name to match.
+            value (str | None): Seed value to match.
+            value_sha256 (str | None): Seed value hash to match.
+            data_type (str | None): Seed data type to match.
+            dataset_name (str | None): Dataset name to match.
+            is_general_technique (bool | None): General-technique flag to match.
+
+        Returns:
+            Sequence[SeedIdentifier]: Matching identifiers ordered by content hash.
+        """
+        return self._get_identifiers(
+            identifier_type=SeedIdentifier,
+            entry_type=SeedIdentifierEntry,
+            identifier_hashes=identifier_hashes,
+            filters={
+                "class_name": class_name,
+                "value": value,
+                "value_sha256": value_sha256,
+                "data_type": data_type,
+                "dataset_name": dataset_name,
+                "is_general_technique": is_general_technique,
+            },
+        )
+
+    def get_attack_identifiers(
+        self,
+        *,
+        identifier_hashes: Sequence[str] | None = None,
+        class_name: str | None = None,
+        adversarial_system_prompt: str | None = None,
+        adversarial_seed_prompt: str | None = None,
+        objective_target_hash: str | None = None,
+        adversarial_chat_hash: str | None = None,
+        objective_scorer_hash: str | None = None,
+    ) -> Sequence[AttackIdentifier]:
+        """
+        Retrieve attack identifiers using exact normalized-column filters.
+
+        Args:
+            identifier_hashes (Sequence[str] | None): Content hashes to include.
+            class_name (str | None): Component class name to match.
+            adversarial_system_prompt (str | None): Adversarial system prompt to match.
+            adversarial_seed_prompt (str | None): Adversarial seed prompt to match.
+            objective_target_hash (str | None): Objective target hash to match.
+            adversarial_chat_hash (str | None): Adversarial chat target hash to match.
+            objective_scorer_hash (str | None): Objective scorer hash to match.
+
+        Returns:
+            Sequence[AttackIdentifier]: Matching identifiers ordered by content hash.
+        """
+        return self._get_identifiers(
+            identifier_type=AttackIdentifier,
+            entry_type=AttackIdentifierEntry,
+            identifier_hashes=identifier_hashes,
+            filters={
+                "class_name": class_name,
+                "adversarial_system_prompt": adversarial_system_prompt,
+                "adversarial_seed_prompt": adversarial_seed_prompt,
+                "objective_target_hash": objective_target_hash,
+                "adversarial_chat_hash": adversarial_chat_hash,
+                "objective_scorer_hash": objective_scorer_hash,
+            },
+        )
+
+    def get_attack_technique_identifiers(
+        self,
+        *,
+        identifier_hashes: Sequence[str] | None = None,
+        class_name: str | None = None,
+        attack_identifier_hash: str | None = None,
+    ) -> Sequence[AttackTechniqueIdentifier]:
+        """
+        Retrieve attack technique identifiers using exact normalized-column filters.
+
+        Args:
+            identifier_hashes (Sequence[str] | None): Content hashes to include.
+            class_name (str | None): Component class name to match.
+            attack_identifier_hash (str | None): Attack identifier hash to match.
+
+        Returns:
+            Sequence[AttackTechniqueIdentifier]: Matching identifiers ordered by content hash.
+        """
+        return self._get_identifiers(
+            identifier_type=AttackTechniqueIdentifier,
+            entry_type=AttackTechniqueIdentifierEntry,
+            identifier_hashes=identifier_hashes,
+            filters={
+                "class_name": class_name,
+                "attack_identifier_hash": attack_identifier_hash,
+            },
+        )
+
+    def get_atomic_attack_identifiers(
+        self,
+        *,
+        identifier_hashes: Sequence[str] | None = None,
+        class_name: str | None = None,
+        attack_technique_identifier_hash: str | None = None,
+    ) -> Sequence[AtomicAttackIdentifier]:
+        """
+        Retrieve atomic attack identifiers using exact normalized-column filters.
+
+        Args:
+            identifier_hashes (Sequence[str] | None): Content hashes to include.
+            class_name (str | None): Component class name to match.
+            attack_technique_identifier_hash (str | None): Attack technique hash to match.
+
+        Returns:
+            Sequence[AtomicAttackIdentifier]: Matching identifiers ordered by content hash.
+        """
+        return self._get_identifiers(
+            identifier_type=AtomicAttackIdentifier,
+            entry_type=AtomicAttackIdentifierEntry,
+            identifier_hashes=identifier_hashes,
+            filters={
+                "class_name": class_name,
+                "attack_technique_identifier_hash": attack_technique_identifier_hash,
+            },
+        )
 
     @abc.abstractmethod
     def _add_embeddings_to_memory(self, *, embedding_data: Sequence[EmbeddingDataEntry]) -> None:
