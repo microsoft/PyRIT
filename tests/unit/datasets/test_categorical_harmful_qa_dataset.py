@@ -15,7 +15,7 @@ CATQA_EXPECTED_HARM_CATEGORIES = [
     ("Child Abuse", ["GROOMING", "SEXUAL_CONTENT", "CHILD_LEAKAGE"]),
     ("Economic Harm", ["SCAMS", "DECEPTION"]),
     ("Fraud/Deception", ["SCAMS", "DECEPTION"]),
-    ("Hate/Harass/Violence", ["HATESPEECH", "HARASSMENT", "VIOLENT_CONTENT"]),
+    ("Hate/Harass/Violence", ["HATE_SPEECH", "HARASSMENT", "VIOLENT_CONTENT"]),
     ("Illegal Activity", ["COORDINATION_HARM"]),
     ("Malware Viruses", ["MALWARE"]),
     ("Physical Harm", ["VIOLENT_CONTENT", "COORDINATION_HARM"]),

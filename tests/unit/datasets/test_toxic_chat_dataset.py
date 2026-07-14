@@ -189,7 +189,7 @@ class TestToxicChatDataset:
             assert "SEXUAL_CONTENT" in categories
             assert "VIOLENT_CONTENT" in categories
             assert "HARASSMENT" in categories
-            assert "HATESPEECH" not in categories
+            assert "HATE_SPEECH" not in categories
             assert "OTHER" not in categories
 
     def test_dataset_name(self):

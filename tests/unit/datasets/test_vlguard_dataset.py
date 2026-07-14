@@ -203,8 +203,8 @@ class TestVLGuardDataset:
             VLGuardSubcategory.SEXUALLY_EXPLICIT.value: ["SEXUAL_CONTENT"],
             VLGuardSubcategory.VIOLENCE.value: ["VIOLENT_CONTENT"],
             VLGuardSubcategory.DISINFORMATION.value: ["INFO_INTEGRITY"],
-            VLGuardSubcategory.SEX.value: ["REPRESENTATIONAL", "HATESPEECH"],
-            VLGuardSubcategory.RACE.value: ["REPRESENTATIONAL", "HATESPEECH"],
+            VLGuardSubcategory.SEX.value: ["REPRESENTATIONAL", "HATE_SPEECH"],
+            VLGuardSubcategory.RACE.value: ["REPRESENTATIONAL", "HATE_SPEECH"],
             VLGuardSubcategory.OTHER.value: ["OTHER"],
         }
         metadata = []

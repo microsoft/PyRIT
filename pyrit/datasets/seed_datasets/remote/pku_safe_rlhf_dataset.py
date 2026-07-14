@@ -126,7 +126,7 @@ class _PKUSafeRLHFDataset(_RemoteDatasetLoader):
             "Animal Abuse": [HarmCategory.OTHER],
             "Copyright Issues": [HarmCategory.COPYRIGHT],
             "Cybercrime": [HarmCategory.MALWARE, HarmCategory.COORDINATION_HARM],
-            "Discriminatory Behavior": [HarmCategory.HATESPEECH, HarmCategory.REPRESENTATIONAL],
+            "Discriminatory Behavior": [HarmCategory.HATE_SPEECH, HarmCategory.REPRESENTATIONAL],
             "Disrupting Public Order": [HarmCategory.COORDINATION_HARM],
             "Drugs": [HarmCategory.DRUG_USE, HarmCategory.REGULATED_GOODS],
             "Economic Crime": [HarmCategory.SCAMS, HarmCategory.DECEPTION],

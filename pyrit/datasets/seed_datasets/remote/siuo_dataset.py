@@ -116,7 +116,7 @@ class _SIUODataset(_RemoteDatasetLoader):
         "privacy violation": [HarmCategory.PPI],
         "morality": [HarmCategory.OTHER],
         "dangerous behavior": [HarmCategory.DANGEROUS_SITUATIONS],
-        "discrimination & stereotyping": [HarmCategory.REPRESENTATIONAL, HarmCategory.HATESPEECH],
+        "discrimination & stereotyping": [HarmCategory.REPRESENTATIONAL, HarmCategory.HATE_SPEECH],
         "information misinterpretation": [HarmCategory.INFO_INTEGRITY],
         "religion beliefs": [HarmCategory.PROTECTED_INFERENCE],
         "controversial topics, politics": [HarmCategory.INFO_INTEGRITY],

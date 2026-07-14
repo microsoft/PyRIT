@@ -131,8 +131,8 @@ class _ToxicChatDataset(_RemoteDatasetLoader):
         toxic_chat_alias_overrides: dict[str, list[HarmCategory]] = {
             "toxicity": [HarmCategory.HARASSMENT],
             "jailbreaking": [HarmCategory.DECEPTION],
-            "hate": [HarmCategory.HATESPEECH, HarmCategory.REPRESENTATIONAL],
-            "hate/threatening": [HarmCategory.HATESPEECH, HarmCategory.VIOLENT_THREATS],
+            "hate": [HarmCategory.HATE_SPEECH, HarmCategory.REPRESENTATIONAL],
+            "hate/threatening": [HarmCategory.HATE_SPEECH, HarmCategory.VIOLENT_THREATS],
             "harassment/threatening": [HarmCategory.HARASSMENT, HarmCategory.VIOLENT_THREATS],
             "self-harm/intent": [HarmCategory.SELF_HARM],
             "self-harm/instructions": [HarmCategory.SELF_HARM],

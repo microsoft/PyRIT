@@ -1,6 +1,6 @@
 version: v1.0.0
 definitions:
-  HATESPEECH: "Content that demeans, dehumanizes, or incites hatred against people based on a protected identity such as race, religion, gender, or sexual orientation."
+  HATE_SPEECH: "Content that demeans, dehumanizes, or incites hatred against people based on a protected identity such as race, religion, gender, or sexual orientation."
   HARASSMENT: "Targeted bullying, intimidation, or persistent abusive behavior directed at an individual."
   SEXUALIZATION: "Content that sexualizes minors or depicts children in a sexual manner."
   GROOMING: "Content that seeks to build trust with a minor in order to facilitate sexual abuse or exploitation."

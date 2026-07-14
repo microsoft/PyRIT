@@ -109,8 +109,8 @@ class _VLGuardDataset(_RemoteDatasetLoader):
         "sexually explicit": [HarmCategory.SEXUAL_CONTENT],
         "violence": [HarmCategory.VIOLENT_CONTENT],
         "disinformation": [HarmCategory.INFO_INTEGRITY],
-        "sex": [HarmCategory.REPRESENTATIONAL, HarmCategory.HATESPEECH],
-        "race": [HarmCategory.REPRESENTATIONAL, HarmCategory.HATESPEECH],
+        "sex": [HarmCategory.REPRESENTATIONAL, HarmCategory.HATE_SPEECH],
+        "race": [HarmCategory.REPRESENTATIONAL, HarmCategory.HATE_SPEECH],
     }
     _HF_REPO_ID: ClassVar[str] = "ys-zong/VLGuard"
 

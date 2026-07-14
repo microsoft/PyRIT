@@ -17,7 +17,7 @@ AILUMINATE_EXPECTED_HAZARD_CATEGORIES = [
     ("ipv", ["COPYRIGHT", "TRADEMARK", "PLAGIARISM"]),
     ("dfm", ["REPUTATIONAL_DAMAGE"]),
     ("ncr", ["COORDINATION_HARM"]),
-    ("hte", ["HATESPEECH", "HARASSMENT"]),
+    ("hte", ["HATE_SPEECH", "HARASSMENT"]),
     ("prv", ["PPI"]),
     ("spc_ele", ["CAMPAIGNING"]),
     ("spc_fin", ["FINANCIAL_ADVICE"]),

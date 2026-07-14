@@ -103,7 +103,7 @@ class TestVLSUMultimodalDataset:
             # Verify text prompt
             assert text_prompt.value == "Text that becomes unsafe with image"
             assert text_prompt.name == "ML-VLSU Text"
-            assert text_prompt.harm_categories == ["HATESPEECH", "REPRESENTATIONAL"]
+            assert text_prompt.harm_categories == ["HATE_SPEECH", "REPRESENTATIONAL"]
             assert text_prompt.metadata["text_grade"] == "safe"
             assert text_prompt.metadata["image_grade"] == "safe"
             assert text_prompt.metadata["combined_grade"] == "unsafe"
@@ -112,7 +112,7 @@ class TestVLSUMultimodalDataset:
             # Verify image prompt
             assert image_prompt.value == "/fake/path/image.png"
             assert image_prompt.name == "ML-VLSU Image"
-            assert image_prompt.harm_categories == ["HATESPEECH", "REPRESENTATIONAL"]
+            assert image_prompt.harm_categories == ["HATE_SPEECH", "REPRESENTATIONAL"]
             assert image_prompt.metadata["original_image_url"] == "https://example.com/image.jpg"
 
     async def test_fetch_dataset_combined_borderline_creates_pair(self):
@@ -267,7 +267,7 @@ class TestVLSUMultimodalDataset:
             # Only the slur category should be included (1 pair = 2 prompts)
             assert len(dataset.seeds) == 2
             for seed in dataset.seeds:
-                assert seed.harm_categories == ["HATESPEECH", "REPRESENTATIONAL"]
+                assert seed.harm_categories == ["HATE_SPEECH", "REPRESENTATIONAL"]
 
     async def test_handles_failed_image_downloads(self):
         """Test that entire pair is skipped when image download fails."""
@@ -374,7 +374,7 @@ class TestVLSUMultimodalDataset:
 
             # Both should use combined_category, not their individual categories
             for seed in dataset.seeds:
-                assert seed.harm_categories == ["HATESPEECH", "REPRESENTATIONAL"]
+                assert seed.harm_categories == ["HATE_SPEECH", "REPRESENTATIONAL"]
 
     async def test_empty_combined_category_maps_to_no_harm_categories(self):
         """Empty combined_category rows are retained without assigning OTHER."""

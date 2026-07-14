@@ -46,7 +46,7 @@ class _StrongRejectDataset(_RemoteDatasetLoader):
     HARM_CATEGORY_ALIAS_OVERRIDES: dict[str, list[HarmCategory]] = {
         "disinformation and deception": [HarmCategory.INFO_INTEGRITY, HarmCategory.DECEPTION],
         "hate, harassment and discrimination": [
-            HarmCategory.HATESPEECH,
+            HarmCategory.HATE_SPEECH,
             HarmCategory.HARASSMENT,
             HarmCategory.REPRESENTATIONAL,
         ],

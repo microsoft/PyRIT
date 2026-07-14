@@ -89,11 +89,11 @@ class _LibrAIDoNotAnswerDataset(_RemoteDatasetLoader):
         # buckets) to canonical harm categories. The native risk_area,
         # types_of_harm, and specific_harms annotations are preserved in metadata.
         harm_type_alias_overrides: dict[str, list[HarmCategory]] = {
-            "Toxic language (hate speech)": [HarmCategory.HATESPEECH],
+            "Toxic language (hate speech)": [HarmCategory.HATE_SPEECH],
             "Mental Health or Overreliance Crisis": [HarmCategory.MENTAL_HEALTH, HarmCategory.EMOTIONAL],
             "Social stereotypes and unfair discrimination": [
                 HarmCategory.REPRESENTATIONAL,
-                HarmCategory.HATESPEECH,
+                HarmCategory.HATE_SPEECH,
             ],
             "Treat Chatbot as a Human": [HarmCategory.EMOTIONAL],
             "Adult Content": [HarmCategory.SEXUAL_CONTENT],

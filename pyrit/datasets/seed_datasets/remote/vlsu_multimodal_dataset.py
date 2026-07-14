@@ -56,8 +56,8 @@ class _VLSUMultimodalDataset(_RemoteDatasetLoader):
     """
 
     HARM_CATEGORY_ALIAS_OVERRIDES: dict[str, list[HarmCategory]] = {
-        "c1: slurs, hate speech, hate symbols": [HarmCategory.HATESPEECH, HarmCategory.REPRESENTATIONAL],
-        "c2: discrimination and unequal treatment": [HarmCategory.REPRESENTATIONAL, HarmCategory.HATESPEECH],
+        "c1: slurs, hate speech, hate symbols": [HarmCategory.HATE_SPEECH, HarmCategory.REPRESENTATIONAL],
+        "c2: discrimination and unequal treatment": [HarmCategory.REPRESENTATIONAL, HarmCategory.HATE_SPEECH],
         "c3: drug abuse": [HarmCategory.DRUG_USE],
         "c4: self-harm and suicide": [HarmCategory.SELF_HARM, HarmCategory.SUICIDE],
         "c5: animal violence and gore": [HarmCategory.VIOLENT_CONTENT],

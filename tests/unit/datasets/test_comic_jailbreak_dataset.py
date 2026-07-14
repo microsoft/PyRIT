@@ -134,7 +134,7 @@ class TestComicJailbreakDataset:
                 assert seed.metadata["behavior"] == "Defamation"
                 assert seed.metadata["category"] == "Harassment/Discrimination"
                 assert "goal" in seed.metadata
-            assert seed.harm_categories == ["HARASSMENT", "HATESPEECH", "REPRESENTATIONAL"]
+            assert seed.harm_categories == ["HARASSMENT", "HATE_SPEECH", "REPRESENTATIONAL"]
 
     async def test_fetch_dataset_authors(self):
         mock_data = [_make_example()]
@@ -179,7 +179,7 @@ class TestComicJailbreakDataset:
             ("Expert advice", ["HEALTH_DIAGNOSIS", "LEGAL_ADVICE", "FINANCIAL_ADVICE"]),
             ("Fraud/Deception", ["SCAMS", "DECEPTION"]),
             ("Government decision-making", ["HIGH_RISK_GOVERNMENT"]),
-            ("Harassment/Discrimination", ["HARASSMENT", "HATESPEECH", "REPRESENTATIONAL"]),
+            ("Harassment/Discrimination", ["HARASSMENT", "HATE_SPEECH", "REPRESENTATIONAL"]),
             ("Malware-Hacking", ["MALWARE"]),
             ("Malware/Hacking", ["MALWARE"]),
             ("Physical harm", ["VIOLENT_CONTENT", "COORDINATION_HARM"]),

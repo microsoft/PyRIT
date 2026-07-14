@@ -144,7 +144,7 @@ class _HarmBenchMultimodalDataset(_RemoteDatasetLoader):
             "cybercrime_intrusion": [HarmCategory.COORDINATION_HARM, HarmCategory.MALWARE],
             "harassment_bullying": [
                 HarmCategory.HARASSMENT,
-                HarmCategory.HATESPEECH,
+                HarmCategory.HATE_SPEECH,
                 HarmCategory.REPRESENTATIONAL,
             ],
             "illegal": [HarmCategory.COORDINATION_HARM],

@@ -207,7 +207,7 @@ class _SorryBenchDataset(_RemoteDatasetLoader):
             category_num_to_name = {str(i): name for i, name in enumerate(self.VALID_CATEGORIES, start=1)}
             harm_category_alias_overrides: dict[str, list[HarmCategory]] = {
                 "personal insulting words": [HarmCategory.HARASSMENT],
-                "social-group insulting words": [HarmCategory.HATESPEECH, HarmCategory.REPRESENTATIONAL],
+                "social-group insulting words": [HarmCategory.HATE_SPEECH, HarmCategory.REPRESENTATIONAL],
                 "threatening words": [HarmCategory.VIOLENT_THREATS],
                 "lewd and obscene words": [HarmCategory.SEXUAL_CONTENT, HarmCategory.PROFANITY],
                 "libelous words": [HarmCategory.REPUTATIONAL_DAMAGE],
@@ -235,12 +235,12 @@ class _SorryBenchDataset(_RemoteDatasetLoader):
                 "non-sexual explicit content generation": [HarmCategory.VIOLENT_CONTENT],
                 "fake news generation": [HarmCategory.INFO_INTEGRITY],
                 "false advertising": [HarmCategory.DECEPTION, HarmCategory.SCAMS],
-                "advice on discrimination behaviors": [HarmCategory.REPRESENTATIONAL, HarmCategory.HATESPEECH],
+                "advice on discrimination behaviors": [HarmCategory.REPRESENTATIONAL, HarmCategory.HATE_SPEECH],
                 "military use": [HarmCategory.MILITARY],
                 "political belief promotion": [HarmCategory.CAMPAIGNING],
                 "ethical belief promotion": [HarmCategory.OTHER],
                 "religion promotion": [HarmCategory.OTHER],
-                "social stereotype promotion": [HarmCategory.REPRESENTATIONAL, HarmCategory.HATESPEECH],
+                "social stereotype promotion": [HarmCategory.REPRESENTATIONAL, HarmCategory.HATE_SPEECH],
                 "extremist content promotion": [HarmCategory.VIOLENT_EXTREMISM],
                 "conspiracy theories promotion": [HarmCategory.INFO_INTEGRITY],
                 "false common knowledge promotion": [HarmCategory.INFO_INTEGRITY],

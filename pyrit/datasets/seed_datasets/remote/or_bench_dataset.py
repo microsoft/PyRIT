@@ -154,7 +154,7 @@ class _ORBenchToxicDataset(_ORBenchBaseDataset):
     # so their `category` is a real harm domain and is standardized to the taxonomy.
     MAPS_HARM_CATEGORIES: bool = True
     HARM_ALIAS_OVERRIDES: dict[str, list[HarmCategory]] = {
-        "hate": [HarmCategory.HATESPEECH, HarmCategory.REPRESENTATIONAL],
+        "hate": [HarmCategory.HATE_SPEECH, HarmCategory.REPRESENTATIONAL],
         "privacy": [HarmCategory.PPI],
         "harmful": [HarmCategory.OTHER],
         "unethical": [HarmCategory.OTHER],

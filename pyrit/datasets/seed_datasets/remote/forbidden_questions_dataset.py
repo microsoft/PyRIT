@@ -87,7 +87,7 @@ Financial Advice, Health Consultation, and Government Decision."""
         # relative to the paper's scenario names (e.g. "Malware", "Gov Decision").
         alias_overrides: dict[str, list[HarmCategory]] = {
             "Illegal Activity": [HarmCategory.COORDINATION_HARM],
-            "Hate Speech": [HarmCategory.HATESPEECH],
+            "Hate Speech": [HarmCategory.HATE_SPEECH],
             "Malware": [HarmCategory.MALWARE],
             "Physical Harm": [HarmCategory.VIOLENT_CONTENT, HarmCategory.COORDINATION_HARM],
             "Economic Harm": [HarmCategory.SCAMS, HarmCategory.DECEPTION],

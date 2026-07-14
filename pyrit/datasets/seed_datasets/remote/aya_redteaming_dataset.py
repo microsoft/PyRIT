@@ -126,7 +126,7 @@ class _AyaRedteamingDataset(_RemoteDatasetLoader):
 
         harm_category_alias_overrides: dict[str, list[HarmCategory]] = {
             "bullying & harassment": [HarmCategory.HARASSMENT],
-            "discrimination & injustice": [HarmCategory.HATESPEECH, HarmCategory.REPRESENTATIONAL],
+            "discrimination & injustice": [HarmCategory.HATE_SPEECH, HarmCategory.REPRESENTATIONAL],
             "graphic material": [HarmCategory.VIOLENT_CONTENT],
             "harms of representation allocation and quality of service": [
                 HarmCategory.REPRESENTATIONAL,

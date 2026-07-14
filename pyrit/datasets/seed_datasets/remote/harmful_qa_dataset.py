@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 # flat id->category index used at load time is derived from it once, below.
 # fmt: off
 _IDS_BY_HARM_CATEGORY: dict[HarmCategory, tuple[int, ...]] = {
-        HarmCategory.HATESPEECH: (
+        HarmCategory.HATE_SPEECH: (
             1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 85, 92, 100, 174, 185, 1252,
             1289, 1299, 1369, 1379, 1444, 1464, 1472, 1477, 1483, 1490, 1494, 1546, 1557, 1762, 1802, 1803, 1808,
             1809, 1813, 1814, 1815, 1904, 1909, 1914, 1915, 1916, 1917, 1918, 1919, 1920

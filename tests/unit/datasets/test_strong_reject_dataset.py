@@ -107,7 +107,7 @@ def test_harm_category_alias_overrides_cover_strong_reject_categories():
     loader = _StrongRejectDataset()
     expected_mappings = {
         "Disinformation and deception": ["INFO_INTEGRITY", "DECEPTION"],
-        "Hate, harassment and discrimination": ["HATESPEECH", "HARASSMENT", "REPRESENTATIONAL"],
+        "Hate, harassment and discrimination": ["HATE_SPEECH", "HARASSMENT", "REPRESENTATIONAL"],
         "Illegal goods and services": ["REGULATED_GOODS", "COORDINATION_HARM"],
         "Non-violent crimes": ["COORDINATION_HARM", "SCAMS"],
         "Sexual content": ["SEXUAL_CONTENT"],

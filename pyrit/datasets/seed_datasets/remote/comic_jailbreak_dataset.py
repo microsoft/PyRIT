@@ -95,7 +95,7 @@ class _ComicJailbreakDataset(_RemoteDatasetLoader):
         "government decision-making": [HarmCategory.HIGH_RISK_GOVERNMENT],
         "harassment/discrimination": [
             HarmCategory.HARASSMENT,
-            HarmCategory.HATESPEECH,
+            HarmCategory.HATE_SPEECH,
             HarmCategory.REPRESENTATIONAL,
         ],
         "illegal": [HarmCategory.COORDINATION_HARM],

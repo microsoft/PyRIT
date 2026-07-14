@@ -18,7 +18,7 @@ AEGIS_EXPECTED_HARM_CATEGORIES = [
     ("Fraud/Deception", ["SCAMS", "DECEPTION"]),
     ("Guns and Illegal Weapons", ["REGULATED_GOODS", "COORDINATION_HARM", "VIOLENT_CONTENT"]),
     ("Harassment", ["HARASSMENT"]),
-    ("Hate/Identity Hate", ["HATESPEECH", "REPRESENTATIONAL"]),
+    ("Hate/Identity Hate", ["HATE_SPEECH", "REPRESENTATIONAL"]),
     ("High Risk Gov Decision Making", ["HIGH_RISK_GOVERNMENT"]),
     ("Illegal Activity", ["COORDINATION_HARM"]),
     ("Immoral/Unethical", ["OTHER"]),

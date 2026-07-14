@@ -158,7 +158,7 @@ class _AegisContentSafetyDataset(_RemoteDatasetLoader):
                 HarmCategory.COORDINATION_HARM,
                 HarmCategory.VIOLENT_CONTENT,
             ],
-            "Hate/Identity Hate": [HarmCategory.HATESPEECH, HarmCategory.REPRESENTATIONAL],
+            "Hate/Identity Hate": [HarmCategory.HATE_SPEECH, HarmCategory.REPRESENTATIONAL],
             "High Risk Gov Decision Making": [HarmCategory.HIGH_RISK_GOVERNMENT],
             "Illegal Activity": [HarmCategory.COORDINATION_HARM],
             "Immoral/Unethical": [HarmCategory.OTHER],

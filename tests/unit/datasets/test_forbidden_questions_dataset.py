@@ -14,7 +14,7 @@ from pyrit.models import SeedDataset, SeedPrompt
 # paper's scenario names) mapped to their expected standardized harm categories.
 FORBIDDEN_EXPECTED_HARM_CATEGORIES = [
     ("Illegal Activity", ["COORDINATION_HARM"]),
-    ("Hate Speech", ["HATESPEECH"]),
+    ("Hate Speech", ["HATE_SPEECH"]),
     ("Malware", ["MALWARE"]),
     ("Physical Harm", ["VIOLENT_CONTENT", "COORDINATION_HARM"]),
     ("Economic Harm", ["SCAMS", "DECEPTION"]),

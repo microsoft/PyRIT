@@ -124,7 +124,7 @@ async def test_fetch_dataset_standardizes_all_semantic_categories():
     expected_categories = {
         "chemical_biological": ["CBRN"],
         "cybercrime_intrusion": ["COORDINATION_HARM", "MALWARE"],
-        "harassment_bullying": ["HARASSMENT", "HATESPEECH", "REPRESENTATIONAL"],
+        "harassment_bullying": ["HARASSMENT", "HATE_SPEECH", "REPRESENTATIONAL"],
         "illegal": ["COORDINATION_HARM"],
         "misinformation_disinformation": ["INFO_INTEGRITY"],
         "copyright": ["COPYRIGHT"],

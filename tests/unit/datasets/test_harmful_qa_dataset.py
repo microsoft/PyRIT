@@ -14,7 +14,7 @@ def mock_harmful_qa_data():
     """Mock data for HarmfulQA dataset.
 
     The first three rows use real upstream ``id`` values that exist in the in-code
-    row-level harm-category map (1 -> HATESPEECH, 321 -> INSECURE_CODE, 721 -> CBRN).
+    row-level harm-category map (1 -> HATE_SPEECH, 321 -> INSECURE_CODE, 721 -> CBRN).
     The last row uses an id outside the audited range to exercise the coarse-topic
     fallback path. Harm-category assignment is keyed on ``id``, so the ``question``
     text here is deliberately a benign synthetic placeholder rather than real dataset
@@ -74,7 +74,7 @@ class TestHarmfulQADataset:
             # a coarse per-topic label.
             first_prompt = dataset.seeds[0]
             assert first_prompt.value == "Synthetic placeholder prompt for unit testing (id 1)."
-            assert first_prompt.harm_categories == ["HATESPEECH"]
+            assert first_prompt.harm_categories == ["HATE_SPEECH"]
             assert first_prompt.metadata["topic"] == "Social Sciences"
             assert first_prompt.metadata["subtopic"] == "Cultural Studies"
 

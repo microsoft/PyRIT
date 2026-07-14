@@ -21,8 +21,8 @@ def test_taxonomy_version_read_from_yaml() -> None:
 
 
 def test_str_returns_display_value() -> None:
-    # StrEnum (and the <3.11 backport) must render the value, not "HarmCategory.HATESPEECH".
-    assert str(HarmCategory.HATESPEECH) == "Hate Speech"
+    # StrEnum (and the <3.11 backport) must render the value, not "HarmCategory.HATE_SPEECH".
+    assert str(HarmCategory.HATE_SPEECH) == "Hate Speech"
     assert f"{HarmCategory.VIOLENT_CONTENT}" == "Graphic Violence and Gore"
 
 
@@ -41,8 +41,8 @@ def test_standardize_deduplicates_many_to_one() -> None:
 
 
 def test_standardize_deduplicates_overlapping_one_to_many() -> None:
-    # Both map to [REPRESENTATIONAL, HATESPEECH]; the overlap must not repeat.
-    assert standardize_harm_categories(["racism", "sexism"]) == ["REPRESENTATIONAL", "HATESPEECH"]
+    # Both map to [REPRESENTATIONAL, HATE_SPEECH]; the overlap must not repeat.
+    assert standardize_harm_categories(["racism", "sexism"]) == ["REPRESENTATIONAL", "HATE_SPEECH"]
 
 
 def test_canonical_name_resolves() -> None:
@@ -63,7 +63,7 @@ def test_unknown_category_falls_back_to_other_and_warns(caplog) -> None:
 @pytest.mark.parametrize(
     "raw, expected",
     [
-        ("hate", ["HATESPEECH", "REPRESENTATIONAL"]),
+        ("hate", ["HATE_SPEECH", "REPRESENTATIONAL"]),
         ("adult content", ["SEXUAL_CONTENT"]),
         ("cybercrime", ["COORDINATION_HARM", "MALWARE"]),
         ("defamation", ["REPUTATIONAL_DAMAGE"]),
@@ -127,11 +127,11 @@ def test_canonical_match_beats_alias_override() -> None:
 
 
 def test_parse_returns_first_of_many() -> None:
-    assert HarmCategory.parse("hate") == HarmCategory.HATESPEECH
+    assert HarmCategory.parse("hate") == HarmCategory.HATE_SPEECH
 
 
 def test_parse_many_returns_all() -> None:
-    assert HarmCategory.parse_many("hate") == [HarmCategory.HATESPEECH, HarmCategory.REPRESENTATIONAL]
+    assert HarmCategory.parse_many("hate") == [HarmCategory.HATE_SPEECH, HarmCategory.REPRESENTATIONAL]
 
 
 def test_parse_unknown_returns_other() -> None:

@@ -86,7 +86,7 @@ class _TransphobiaAwarenessDataset(_RemoteDatasetLoader):
 
         standardized_prompt_harm_categories = self._standardize_harm_categories(
             "transphobia",
-            alias_overrides={"transphobia": [HarmCategory.HATESPEECH, HarmCategory.REPRESENTATIONAL]},
+            alias_overrides={"transphobia": [HarmCategory.HATE_SPEECH, HarmCategory.REPRESENTATIONAL]},
         )
 
         sentiment_col = (

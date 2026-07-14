@@ -220,7 +220,7 @@ class TestSIUODataset:
             ("privacy violation", ["PPI"]),
             ("morality", ["OTHER"]),
             ("dangerous behavior", ["DANGEROUS_SITUATIONS"]),
-            ("discrimination & stereotyping", ["REPRESENTATIONAL", "HATESPEECH"]),
+            ("discrimination & stereotyping", ["REPRESENTATIONAL", "HATE_SPEECH"]),
             ("information misinterpretation", ["INFO_INTEGRITY"]),
             ("religion beliefs", ["PROTECTED_INFERENCE"]),
             ("controversial topics, politics", ["INFO_INTEGRITY"]),

@@ -149,10 +149,10 @@ class TestRemoteDatasetLoader:
 
         standardized = loader._standardize_harm_categories(
             "ableism",
-            alias_overrides={"ableism": ["HATESPEECH", "REPRESENTATIONAL"]},
+            alias_overrides={"ableism": ["HATE_SPEECH", "REPRESENTATIONAL"]},
         )
 
-        assert standardized == ["HATESPEECH", "REPRESENTATIONAL"]
+        assert standardized == ["HATE_SPEECH", "REPRESENTATIONAL"]
 
     def test_fetch_from_url_invalid_file_type_raises(self):
         loader = ConcreteRemoteLoader()

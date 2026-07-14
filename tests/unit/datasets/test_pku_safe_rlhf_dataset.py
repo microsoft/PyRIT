@@ -12,7 +12,7 @@ PKU_EXPECTED_HARM_CATEGORIES = [
     ("Animal Abuse", ["OTHER"]),
     ("Copyright Issues", ["COPYRIGHT"]),
     ("Cybercrime", ["MALWARE", "COORDINATION_HARM"]),
-    ("Discriminatory Behavior", ["HATESPEECH", "REPRESENTATIONAL"]),
+    ("Discriminatory Behavior", ["HATE_SPEECH", "REPRESENTATIONAL"]),
     ("Disrupting Public Order", ["COORDINATION_HARM"]),
     ("Drugs", ["DRUG_USE", "REGULATED_GOODS"]),
     ("Economic Crime", ["SCAMS", "DECEPTION"]),

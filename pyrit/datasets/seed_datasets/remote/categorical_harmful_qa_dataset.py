@@ -114,7 +114,7 @@ class _CategoricalHarmfulQADataset(_RemoteDatasetLoader):
             "economic harm": [HarmCategory.SCAMS, HarmCategory.DECEPTION],
             "fraud/deception": [HarmCategory.SCAMS, HarmCategory.DECEPTION],
             "hate/harass/violence": [
-                HarmCategory.HATESPEECH,
+                HarmCategory.HATE_SPEECH,
                 HarmCategory.HARASSMENT,
                 HarmCategory.VIOLENT_CONTENT,
             ],
