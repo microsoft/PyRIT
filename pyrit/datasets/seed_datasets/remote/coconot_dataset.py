@@ -202,10 +202,15 @@ class _CoCoNotBaseDataset(_RemoteDatasetLoader):
         if response:
             metadata["response"] = response
 
+        # CoCoNot's noncompliance taxonomy (incomplete/unsupported/indeterminate/
+        # humanizing/safety) is not a harm taxonomy, so harm categories are left
+        # empty while the native category stays in metadata.
+        harm_categories: list[str] = []
+
         return SeedObjective(
             value=row["prompt"],
             dataset_name=self.dataset_name,
-            harm_categories=[category] if category else [],
+            harm_categories=harm_categories,
             description=self.DEFAULT_DESCRIPTION,
             source=source_url,
             authors=self._AUTHORS,

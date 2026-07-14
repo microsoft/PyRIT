@@ -3,6 +3,11 @@
 
 """Attack components module."""
 
+from pyrit.executor.attack.component.adversarial_conversation_manager import (
+    AdversarialReply,
+    AdversarialTurn,
+    _AdversarialConversationManager,
+)
 from pyrit.executor.attack.component.conversation_manager import (
     ConversationManager,
     ConversationState,
@@ -16,6 +21,9 @@ from pyrit.executor.attack.component.prepended_conversation_config import (
 )
 
 __all__ = [
+    "_AdversarialConversationManager",
+    "AdversarialReply",
+    "AdversarialTurn",
     "build_conversation_context_string_async",
     "ConversationManager",
     "ConversationState",

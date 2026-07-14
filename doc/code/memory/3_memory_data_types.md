@@ -90,9 +90,9 @@ All seed types inherit from [`Seed`](../../../pyrit/models/seeds/seed.py), which
 
 Seeds are organized into [`SeedGroup`](../../../pyrit/models/seeds/seed_group.py) containers that enforce consistency (shared `prompt_group_id`, valid role sequences, no duplicate sequence numbers). Two specialized subclasses add further constraints:
 
-- [`SeedAttackGroup`](../../../pyrit/models/seeds/seed_attack_group.py) — Requires exactly one `SeedObjective`. Represents a complete attack specification: an objective plus optional prompts or simulated conversation config.
+- [`AttackSeedGroup`](../../../pyrit/models/seeds/attack_seed_group.py) — Requires exactly one `SeedObjective`. Represents a complete attack specification: an objective plus optional prompts or simulated conversation config.
 
-- [`SeedAttackTechniqueGroup`](../../../pyrit/models/seeds/seed_attack_technique_group.py) — All seeds must have `is_general_technique=True` and no `SeedObjective` is allowed. Represents reusable attack techniques (jailbreaks, role-plays, etc.) that can be composed with any objective.
+- [`AttackTechniqueSeedGroup`](../../../pyrit/models/seeds/attack_technique_seed_group.py) — All seeds must have `is_general_technique=True` and no `SeedObjective` is allowed. Represents reusable attack techniques (jailbreaks, role-plays, etc.) that can be composed with any objective.
 
 
 ## Scores

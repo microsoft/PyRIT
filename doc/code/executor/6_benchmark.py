@@ -6,7 +6,7 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.19.1
+#       jupytext_version: 1.19.4
 # ---
 
 # %% [markdown]
@@ -97,7 +97,7 @@ from pyrit.memory import CentralMemory
 from pyrit.models import AttackOutcome, QuestionAnsweringEntry, QuestionChoice, SeedDataset
 from pyrit.output import output_attack_async
 from pyrit.prompt_target import OpenAIChatTarget
-from pyrit.score import SelfAskCategoryScorer, SelfAskQuestionAnswerScorer
+from pyrit.score import ContentClassifier, SelfAskCategoryScorer, SelfAskQuestionAnswerScorer
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 
 await initialize_pyrit_async(memory_db_type=IN_MEMORY, initializers=[])  # type: ignore
@@ -177,8 +177,10 @@ print(f"\nOverall success rate: {success}/{len(all_answers)} = {success / len(al
 
 # %%
 # Create the pronoun scorer
-pronoun_scorer = SelfAskCategoryScorer(
-    content_classifier_path=Path(SCORER_CONTENT_CLASSIFIERS_PATH) / "pronoun_category_score.yaml",
+pronoun_scorer = SelfAskCategoryScorer.from_content_classifier(
+    content_classifier=ContentClassifier.from_yaml(
+        Path(SCORER_CONTENT_CLASSIFIERS_PATH) / "pronoun_category_score.yaml"
+    ),
     chat_target=objective_target,
 )
 

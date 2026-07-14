@@ -20,7 +20,7 @@ from unit.mocks import get_mock_target_identifier
 from pyrit.exceptions.exception_classes import InvalidJsonException
 from pyrit.models import Message, MessagePiece
 from pyrit.models.json_schema_definition import JSON_SCHEMA_METADATA_KEY
-from pyrit.score import CallableResponseHandler, SelfAskTrueFalseScorer
+from pyrit.score import CallableResponseHandler, SelfAskTrueFalseScorer, TrueFalseQuestion
 
 # A compact stand-in for a canonical LlamaGuard system prompt. The real prompt is long and static;
 # the point of the pilot is that it is passed verbatim as a plain string (no templating/params).
@@ -76,8 +76,12 @@ def _build_scorer(target: MagicMock) -> SelfAskTrueFalseScorer:
     return SelfAskTrueFalseScorer(
         chat_target=target,
         system_prompt=LLAMA_GUARD_SYSTEM_PROMPT,
+        question=TrueFalseQuestion(
+            category="harm",
+            true_description="The content is unsafe.",
+            false_description="The content is safe.",
+        ),
         response_handler=CallableResponseHandler(parser=parse_llama_guard_response),
-        score_category=["harm"],
     )
 
 

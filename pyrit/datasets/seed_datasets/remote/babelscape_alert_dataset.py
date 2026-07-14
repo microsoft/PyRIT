@@ -10,6 +10,7 @@ from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
 from pyrit.models import Modality, SeedDataset, SeedPrompt
+from pyrit.models.harm_category import HarmCategory
 
 if TYPE_CHECKING:
     from pyrit.models.seeds.seed_group import SeedUnion
@@ -27,6 +28,41 @@ class _BabelscapeAlertDataset(_RemoteDatasetLoader):
 
     Reference: [@tedeschi2024alert]
     """
+
+    HARM_CATEGORY_ALIAS_OVERRIDES: dict[str, list[HarmCategory]] = {
+        "crime_cyber": [HarmCategory.MALWARE, HarmCategory.COORDINATION_HARM],
+        "crime_injury": [HarmCategory.VIOLENT_CONTENT],
+        "crime_kidnapp": [HarmCategory.VIOLENT_THREATS, HarmCategory.COORDINATION_HARM],
+        "crime_other": [HarmCategory.COORDINATION_HARM],
+        "crime_privacy": [HarmCategory.PPI],
+        "crime_propaganda": [HarmCategory.INFO_INTEGRITY],
+        "crime_tax": [HarmCategory.COORDINATION_HARM],
+        "crime_theft": [HarmCategory.COORDINATION_HARM],
+        "hate_body": [HarmCategory.HATE_SPEECH, HarmCategory.REPRESENTATIONAL],
+        "hate_disabled": [HarmCategory.HATE_SPEECH, HarmCategory.REPRESENTATIONAL],
+        "hate_ethnic": [HarmCategory.HATE_SPEECH, HarmCategory.REPRESENTATIONAL],
+        "hate_lgbtq+": [HarmCategory.HATE_SPEECH, HarmCategory.REPRESENTATIONAL],
+        "hate_other": [HarmCategory.HATE_SPEECH, HarmCategory.REPRESENTATIONAL],
+        "hate_poor": [HarmCategory.HATE_SPEECH, HarmCategory.REPRESENTATIONAL],
+        "hate_religion": [HarmCategory.HATE_SPEECH, HarmCategory.REPRESENTATIONAL],
+        "hate_women": [HarmCategory.HATE_SPEECH, HarmCategory.REPRESENTATIONAL],
+        "self_harm_other": [HarmCategory.SELF_HARM],
+        "self_harm_suicide": [HarmCategory.SUICIDE, HarmCategory.SELF_HARM],
+        "self_harm_thin": [HarmCategory.EATING_DISORDERS, HarmCategory.SELF_HARM],
+        "sex_harrasment": [HarmCategory.HARASSMENT, HarmCategory.SEXUAL_SOLICITATION],
+        "sex_other": [HarmCategory.SEXUAL_CONTENT],
+        "sex_porn": [HarmCategory.SEXUAL_CONTENT],
+        "substance_alcohol": [HarmCategory.DRUG_USE, HarmCategory.REGULATED_GOODS],
+        "substance_cannabis": [HarmCategory.DRUG_USE, HarmCategory.REGULATED_GOODS],
+        "substance_drug": [HarmCategory.DRUG_USE],
+        "substance_other": [HarmCategory.DRUG_USE],
+        "substance_tobacco": [HarmCategory.DRUG_USE, HarmCategory.REGULATED_GOODS],
+        "weapon_biological": [HarmCategory.CBRN],
+        "weapon_chemical": [HarmCategory.CBRN],
+        "weapon_firearm": [HarmCategory.REGULATED_GOODS],
+        "weapon_other": [HarmCategory.REGULATED_GOODS],
+        "weapon_radioactive": [HarmCategory.CBRN],
+    }
 
     _AUTHORS = [
         "Simone Tedeschi",
@@ -112,7 +148,10 @@ class _BabelscapeAlertDataset(_RemoteDatasetLoader):
         seed_prompts: list[SeedUnion] = [
             SeedPrompt(
                 value=prompt,
-                harm_categories=[category],
+                harm_categories=self._standardize_harm_categories(
+                    category,
+                    alias_overrides=self.HARM_CATEGORY_ALIAS_OVERRIDES,
+                ),
                 data_type="text",
                 dataset_name=self.dataset_name,
                 description=(
@@ -121,6 +160,7 @@ class _BabelscapeAlertDataset(_RemoteDatasetLoader):
                     "red teaming prompts."
                 ),
                 source=f"https://huggingface.co/datasets/{self.source}",
+                metadata={"category": category},
                 authors=self._AUTHORS,
                 groups=self._GROUPS,
             )

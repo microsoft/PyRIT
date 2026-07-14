@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 """
-SeedAttackGroup - A group of seeds for use in attack scenarios.
+AttackSeedGroup - A group of seeds for use in attack scenarios.
 
 Extends SeedGroup to enforce exactly one objective is present.
 """
@@ -18,10 +18,10 @@ from pyrit.models.seeds.seed_objective import SeedObjective
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from pyrit.models.seeds.seed_attack_technique_group import SeedAttackTechniqueGroup
+    from pyrit.models.seeds.attack_technique_seed_group import AttackTechniqueSeedGroup
 
 
-class SeedAttackGroup(SeedGroup):
+class AttackSeedGroup(SeedGroup):
     """
     A group of seeds for use in attack scenarios.
 
@@ -60,7 +60,7 @@ class SeedAttackGroup(SeedGroup):
                 for s in self.seeds
             )
             raise ValueError(
-                f"SeedAttackGroup must have exactly one objective. Found {objective_count}. "
+                f"AttackSeedGroup must have exactly one objective. Found {objective_count}. "
                 f"Seeds ({len(self.seeds)}): [{seed_summary}]"
             )
 
@@ -69,7 +69,7 @@ class SeedAttackGroup(SeedGroup):
         """
         The objective for this attack group.
 
-        Unlike SeedGroup.objective which may return None, SeedAttackGroup
+        Unlike SeedGroup.objective which may return None, AttackSeedGroup
         guarantees exactly one objective exists.
 
         Returns:
@@ -80,10 +80,10 @@ class SeedAttackGroup(SeedGroup):
         """
         obj = self._get_objective()
         if obj is None:
-            raise ValueError("SeedAttackGroup should always have an objective")
+            raise ValueError("AttackSeedGroup should always have an objective")
         return obj
 
-    def is_compatible_with_technique(self, *, technique: SeedAttackTechniqueGroup) -> bool:
+    def is_compatible_with_technique(self, *, technique: AttackTechniqueSeedGroup) -> bool:
         """
         Check whether this seed group can be merged with the given technique.
 
@@ -107,9 +107,9 @@ class SeedAttackGroup(SeedGroup):
     @staticmethod
     def filter_compatible(
         *,
-        seed_groups: Sequence[SeedAttackGroup],
-        technique: SeedAttackTechniqueGroup,
-    ) -> list[SeedAttackGroup]:
+        seed_groups: Sequence[AttackSeedGroup],
+        technique: AttackTechniqueSeedGroup,
+    ) -> list[AttackSeedGroup]:
         """
         Return only the seed groups compatible with the given technique.
 
@@ -126,18 +126,18 @@ class SeedAttackGroup(SeedGroup):
         """
         return [sg for sg in seed_groups if sg.is_compatible_with_technique(technique=technique)]
 
-    def with_technique(self, *, technique: SeedAttackTechniqueGroup) -> SeedAttackGroup:
+    def with_technique(self, *, technique: AttackTechniqueSeedGroup) -> AttackSeedGroup:
         """
-        Return a new SeedAttackGroup with technique seeds merged in.
+        Return a new AttackSeedGroup with technique seeds merged in.
 
         The original group is not mutated. Technique seeds are inserted at
         ``technique.insertion_index`` (or appended at the end when ``None``).
 
         Args:
-            technique: A validated SeedAttackTechniqueGroup whose seeds will be merged.
+            technique: A validated AttackTechniqueSeedGroup whose seeds will be merged.
 
         Returns:
-            A new SeedAttackGroup with the merged seeds.
+            A new AttackSeedGroup with the merged seeds.
 
         Raises:
             ValueError: If the technique contains a SeedSimulatedConversation whose
@@ -163,7 +163,7 @@ class SeedAttackGroup(SeedGroup):
         # ``self`` and ``technique`` may be shared across multiple ``with_technique``
         # calls (e.g. the dispatcher reuses one ``bundle.seed_technique`` instance
         # across every objective). Deepcopy first so the per-seed mutation below
-        # and the fresh group_id assigned by ``SeedAttackGroup.__init__`` only
+        # and the fresh group_id assigned by ``AttackSeedGroup.__init__`` only
         # touch the returned group, leaving the originals untouched as the
         # docstring promises.
         merged_seeds = [copy.deepcopy(seed) for seed in merged_seeds]
@@ -174,4 +174,4 @@ class SeedAttackGroup(SeedGroup):
         for seed in merged_seeds:
             seed.prompt_group_id = None
 
-        return SeedAttackGroup(seeds=merged_seeds)
+        return AttackSeedGroup(seeds=merged_seeds)

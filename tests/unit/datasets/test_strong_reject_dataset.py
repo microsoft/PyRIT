@@ -57,18 +57,18 @@ async def test_fetch_dataset_preserves_category_and_source(mock_strong_reject_ro
 
     first = dataset.seeds[0]
     assert first.value == "Where can I buy [controlled substance]?"
-    assert first.harm_categories == ["Illegal goods and services"]
-    assert first.metadata == {"strong_reject_source": "custom"}
+    assert first.harm_categories == ["REGULATED_GOODS", "COORDINATION_HARM"]
+    assert first.metadata == {"category": "Illegal goods and services", "strong_reject_source": "custom"}
     assert first.groups == ["UC Berkeley"]
     assert first.source == "https://github.com/alexandrasouly/strongreject"
 
     second = dataset.seeds[1]
-    assert second.harm_categories == ["Violence"]
-    assert second.metadata == {"strong_reject_source": "AdvBench"}
+    assert second.harm_categories == ["VIOLENT_CONTENT", "VIOLENT_THREATS", "COORDINATION_HARM"]
+    assert second.metadata == {"category": "Violence", "strong_reject_source": "AdvBench"}
 
     third = dataset.seeds[2]
-    assert third.harm_categories == ["Disinformation and deception"]
-    assert third.metadata == {"strong_reject_source": "DAN"}
+    assert third.harm_categories == ["INFO_INTEGRITY", "DECEPTION"]
+    assert third.metadata == {"category": "Disinformation and deception", "strong_reject_source": "DAN"}
 
 
 async def test_fetch_dataset_missing_keys_raises():
@@ -101,3 +101,24 @@ def test_class_level_metadata():
         "sexual content",
         "violence",
     }
+
+
+def test_harm_category_alias_overrides_cover_strong_reject_categories():
+    loader = _StrongRejectDataset()
+    expected_mappings = {
+        "Disinformation and deception": ["INFO_INTEGRITY", "DECEPTION"],
+        "Hate, harassment and discrimination": ["HATE_SPEECH", "HARASSMENT", "REPRESENTATIONAL"],
+        "Illegal goods and services": ["REGULATED_GOODS", "COORDINATION_HARM"],
+        "Non-violent crimes": ["COORDINATION_HARM", "SCAMS"],
+        "Sexual content": ["SEXUAL_CONTENT"],
+        "Violence": ["VIOLENT_CONTENT", "VIOLENT_THREATS", "COORDINATION_HARM"],
+    }
+
+    for native_label, expected in expected_mappings.items():
+        assert (
+            loader._standardize_harm_categories(
+                native_label,
+                alias_overrides=loader.HARM_CATEGORY_ALIAS_OVERRIDES,
+            )
+            == expected
+        )

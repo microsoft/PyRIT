@@ -10,15 +10,15 @@ import pytest
 from pyrit.converter import Base64Converter, ROT13Converter
 from pyrit.executor.attack.core.attack_config import AttackConverterConfig, AttackScoringConfig
 from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
-from pyrit.models import ComponentIdentifier, Identifiable, SeedAttackTechniqueGroup, SeedPrompt
+from pyrit.models import AttackTechniqueSeedGroup, ComponentIdentifier, Identifiable, SeedPrompt
 from pyrit.prompt_normalizer import ConverterConfiguration
 from pyrit.prompt_target import PromptTarget
 from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory, ScorerOverridePolicy
 
 
-def _make_seed_technique() -> SeedAttackTechniqueGroup:
-    return SeedAttackTechniqueGroup(
+def _make_seed_technique() -> AttackTechniqueSeedGroup:
+    return AttackTechniqueSeedGroup(
         seeds=[
             SeedPrompt(value="technique1", data_type="text", is_general_technique=True),
         ]
@@ -491,10 +491,10 @@ class TestFactoryIdentifier:
 
     def test_different_seed_techniques_produce_different_hashes(self):
         """Two factories differing only by seed_technique must have different hashes."""
-        seed1 = SeedAttackTechniqueGroup(
+        seed1 = AttackTechniqueSeedGroup(
             seeds=[SeedPrompt(value="technique_a", data_type="text", is_general_technique=True)],
         )
-        seed2 = SeedAttackTechniqueGroup(
+        seed2 = AttackTechniqueSeedGroup(
             seeds=[SeedPrompt(value="technique_b", data_type="text", is_general_technique=True)],
         )
         factory1 = AttackTechniqueFactory(name="test", attack_class=_StubAttack, seed_technique=seed1)
@@ -706,7 +706,7 @@ class TestCustomAdversarialPrompt:
         config = technique.attack.attack_adversarial_config
         assert config.target is target
         assert config.system_prompt == "sys {{ objective }}"
-        assert config.seed_prompt is seed
+        assert config.first_message is seed
 
     def test_adversarial_chat_implies_uses_adversarial(self):
         target = MagicMock(spec=PromptTarget)
@@ -788,7 +788,7 @@ class TestCustomAdversarialPrompt:
         config = technique.attack.attack_adversarial_config
         assert config.target is fallback
         assert config.system_prompt == "durian sys {{ objective }}"
-        assert config.seed_prompt is seed
+        assert config.first_message is seed
 
     def test_create_adversarial_chat_is_combined_with_custom_prompts(self):
         seed = SeedPrompt(value="durian {{ objective }}", data_type="text", parameters=["objective"])
@@ -810,7 +810,7 @@ class TestCustomAdversarialPrompt:
         # The create-time target is used; the technique keeps its custom prompts.
         assert config.target is create_target
         assert config.system_prompt == "durian sys {{ objective }}"
-        assert config.seed_prompt is seed
+        assert config.first_message is seed
 
     def test_create_adversarial_chat_used_as_target(self):
         """A create-time adversarial_chat fills the lazy slot (no default resolution)."""

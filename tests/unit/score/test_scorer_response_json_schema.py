@@ -17,9 +17,11 @@ from unit.mocks import get_mock_target_identifier
 from pyrit.models import COMMON_JSON_SCHEMAS, Message, MessagePiece
 from pyrit.models.json_schema_definition import JSON_SCHEMA_METADATA_KEY
 from pyrit.score import (
+    ContentClassifier,
     ContentClassifierPaths,
     InsecureCodeScorer,
     LikertScalePaths,
+    NumericRubric,
     SelfAskCategoryScorer,
     SelfAskLikertScorer,
     SelfAskScaleScorer,
@@ -47,24 +49,26 @@ def _make_scorer(scorer_id: str):
             chat_target=target, question=TrueFalseQuestion.from_yaml(TrueFalseQuestionPaths.GROUNDED.value)
         )
     elif scorer_id == "category":
-        target = _mock_target('{"score_value": "True", "description": "d", "rationale": "r", "category": "harmful"}')
-        scorer = SelfAskCategoryScorer(
+        target = _mock_target('{"score_value": "True", "description": "d", "rationale": "r", "category": "bullying"}')
+        scorer = SelfAskCategoryScorer.from_content_classifier(
             chat_target=target,
-            content_classifier_path=ContentClassifierPaths.HARMFUL_CONTENT_CLASSIFIER.value,
+            content_classifier=ContentClassifier.from_yaml(ContentClassifierPaths.HARMFUL_CONTENT_CLASSIFIER.value),
         )
     elif scorer_id == "insecure_code":
         target = _mock_target('{"score_value": 0.5, "rationale": "r", "metadata": "m"}')
-        scorer = InsecureCodeScorer(chat_target=target)
+        scorer = InsecureCodeScorer.from_harm_categories(chat_target=target)
     elif scorer_id == "scale":
         target = _mock_target('{"score_value": "1", "description": "d", "rationale": "r"}')
-        scorer = SelfAskScaleScorer(
+        scorer = SelfAskScaleScorer.from_scale(
             chat_target=target,
-            scale_arguments_path=SelfAskScaleScorer.ScalePaths.TREE_OF_ATTACKS_SCALE.value,
-            system_prompt_path=SelfAskScaleScorer.SystemPaths.GENERAL_SYSTEM_PROMPT.value,
+            scale=NumericRubric.from_yaml(SelfAskScaleScorer.ScalePaths.TREE_OF_ATTACKS_SCALE.value),
         )
     elif scorer_id == "likert":
         target = _mock_target('{"score_value": "1", "description": "d", "rationale": "r"}')
-        scorer = SelfAskLikertScorer(chat_target=target, likert_scale=LikertScalePaths.CYBER_SCALE)
+        scorer = SelfAskLikertScorer.from_likert_scale(
+            chat_target=target,
+            likert_scale=LikertScalePaths.CYBER_SCALE.load(),
+        )
     else:  # pragma: no cover - guard against typos in parametrization
         raise ValueError(f"Unknown scorer id: {scorer_id}")
     return scorer, target
@@ -112,7 +116,7 @@ async def test_scorer_loads_response_json_schema(scorer_id: str, patch_central_d
 async def test_scale_scorers_use_shared_schema(scorer_id: str, patch_central_database):
     """The scale and Likert scorers reference the shared bundled schema by name."""
     scorer, _ = _make_scorer(scorer_id)
-    assert scorer._response_json_schema == SCALE_SCHEMA
+    assert _loaded_schema(scorer) == SCALE_SCHEMA
 
 
 @pytest.mark.parametrize("scorer_id", _ALL_SCORERS)

@@ -72,7 +72,7 @@ Command the bot to use its power to write the important words with a Z and a spa
 )
 adversarial_config = AttackAdversarialConfig(
     target=aoai_chat,
-    seed_prompt=initial_red_teaming_prompt,
+    first_message=initial_red_teaming_prompt,
 )
 
 gandalf_target = GandalfTarget(level=gandalf_level)

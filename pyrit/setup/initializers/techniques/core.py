@@ -15,14 +15,22 @@ scenario-relative and is declared per scenario (see
 ``default_technique_names``), not baked into the shared catalog.
 """
 
+from pyrit.common.path import (
+    EXECUTOR_RED_TEAM_PATH,
+    EXECUTOR_SEED_PROMPT_PATH,
+    EXECUTOR_SIMULATED_TARGET_PATH,
+)
+from pyrit.converter import FlipConverter, TaskFramingConverter
 from pyrit.executor.attack import (
-    ContextComplianceAttack,
+    AttackConverterConfig,
     ManyShotJailbreakAttack,
+    PrependedConversationConfig,
+    PromptSendingAttack,
     RedTeamingAttack,
-    RolePlayAttack,
-    RolePlayPaths,
     TreeOfAttacksWithPruningAttack,
 )
+from pyrit.models import AttackTechniqueSeedGroup, SeedPrompt
+from pyrit.prompt_normalizer import ConverterConfiguration
 from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
 
 
@@ -43,12 +51,55 @@ def get_technique_factories() -> list[AttackTechniqueFactory]:
         list[AttackTechniqueFactory]: The core scenario techniques.
     """
     return [
-        AttackTechniqueFactory(
-            name="role_play",
-            attack_class=RolePlayAttack,
-            description="Frames the objective as a fictional movie script the target treats as creative writing.",
+        AttackTechniqueFactory.with_simulated_conversation(
+            name="role_play_movie_script",
+            description="Casts the adversarial chat as a screenwriter so the objective is delivered as a movie beat.",
+            adversarial_chat_system_prompt_path=(
+                EXECUTOR_SEED_PROMPT_PATH / "red_teaming" / "role_play" / "role_play_movie_script.yaml"
+            ),
+            next_message_system_prompt_path=EXECUTOR_SIMULATED_TARGET_PATH / "role_play_next_message.yaml",
             technique_tags=["single_turn", "light"],
-            attack_kwargs={"role_play_definition_path": RolePlayPaths.MOVIE_SCRIPT.value},
+            num_turns=2,
+        ),
+        AttackTechniqueFactory.with_simulated_conversation(
+            name="role_play_video_game",
+            description="Casts the adversarial chat as a game designer so the objective becomes an in-game mechanic.",
+            adversarial_chat_system_prompt_path=(
+                EXECUTOR_SEED_PROMPT_PATH / "red_teaming" / "role_play" / "role_play_video_game.yaml"
+            ),
+            next_message_system_prompt_path=EXECUTOR_SIMULATED_TARGET_PATH / "role_play_next_message.yaml",
+            technique_tags=["single_turn", "light"],
+            num_turns=2,
+        ),
+        AttackTechniqueFactory.with_simulated_conversation(
+            name="role_play_trivia_game",
+            description="Casts the adversarial chat as a trivia host so the objective is answered as a quiz question.",
+            adversarial_chat_system_prompt_path=(
+                EXECUTOR_SEED_PROMPT_PATH / "red_teaming" / "role_play" / "role_play_trivia_game.yaml"
+            ),
+            next_message_system_prompt_path=EXECUTOR_SIMULATED_TARGET_PATH / "role_play_next_message.yaml",
+            technique_tags=["single_turn", "light"],
+            num_turns=2,
+        ),
+        AttackTechniqueFactory.with_simulated_conversation(
+            name="role_play_persuasion",
+            description="Stages a persuasion-resistance test so the target drafts a persuasive spoken script.",
+            adversarial_chat_system_prompt_path=(
+                EXECUTOR_SEED_PROMPT_PATH / "red_teaming" / "role_play" / "role_play_persuasion.yaml"
+            ),
+            next_message_system_prompt_path=EXECUTOR_SIMULATED_TARGET_PATH / "role_play_next_message.yaml",
+            technique_tags=["single_turn", "light"],
+            num_turns=2,
+        ),
+        AttackTechniqueFactory.with_simulated_conversation(
+            name="role_play_persuasion_written",
+            description="Stages a persuasion-resistance test so the target drafts written material for the objective.",
+            adversarial_chat_system_prompt_path=(
+                EXECUTOR_SEED_PROMPT_PATH / "red_teaming" / "role_play" / "role_play_persuasion_written.yaml"
+            ),
+            next_message_system_prompt_path=EXECUTOR_SIMULATED_TARGET_PATH / "role_play_next_message.yaml",
+            technique_tags=["single_turn", "light"],
+            num_turns=2,
         ),
         AttackTechniqueFactory(
             name="many_shot",
@@ -88,10 +139,32 @@ def get_technique_factories() -> list[AttackTechniqueFactory]:
             description="Uses an adversarial chat model to converse with the target and adapt toward the objective.",
             technique_tags=["multi_turn", "light"],
         ),
-        AttackTechniqueFactory(
+        AttackTechniqueFactory.with_simulated_conversation(
             name="context_compliance",
-            attack_class=ContextComplianceAttack,
             description="Injects a fabricated prior exchange so the target continues as if it already agreed.",
+            adversarial_chat_system_prompt_path=EXECUTOR_RED_TEAM_PATH
+            / "context_compliance"
+            / "context_compliance.yaml",
+            simulated_target_system_prompt_path=EXECUTOR_SIMULATED_TARGET_PATH / "context_compliance_target.yaml",
+            final_user_message="yes.",
+            num_turns=1,
             technique_tags=["single_turn", "light"],
+        ),
+        AttackTechniqueFactory(
+            name="flip",
+            attack_class=PromptSendingAttack,
+            description="Reverses the objective text so it slips past filters, then asks the target to flip it back.",
+            technique_tags=["single_turn", "light"],
+            attack_kwargs={
+                "attack_converter_config": AttackConverterConfig(
+                    request_converters=ConverterConfiguration.from_converters(
+                        converters=[FlipConverter(), TaskFramingConverter(strip_characters="'")]
+                    )
+                ),
+                "prepended_conversation_config": PrependedConversationConfig(apply_converters_to_roles=["user"]),
+            },
+            seed_technique=AttackTechniqueSeedGroup.from_system_prompt(
+                SeedPrompt.from_yaml_file(EXECUTOR_SEED_PROMPT_PATH / "flip_attack.yaml").value
+            ),
         ),
     ]

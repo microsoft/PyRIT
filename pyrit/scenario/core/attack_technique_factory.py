@@ -29,9 +29,9 @@ from pyrit.common.path import EXECUTOR_SEED_PROMPT_PATH
 from pyrit.executor.attack import PromptSendingAttack
 from pyrit.executor.attack.core.attack_config import AttackAdversarialConfig, AttackConverterConfig, AttackScoringConfig
 from pyrit.models import (
+    AttackTechniqueSeedGroup,
     ComponentIdentifier,
     Identifiable,
-    SeedAttackTechniqueGroup,
     SeedIdentifier,
     SeedPrompt,
     SeedSimulatedConversation,
@@ -80,7 +80,7 @@ class AttackTechniqueFactory(Identifiable):
         adversarial_chat: PromptTarget | None = None,
         adversarial_system_prompt: str | SeedPrompt | None = None,
         adversarial_seed_prompt: SeedPrompt | str | None = None,
-        seed_technique: SeedAttackTechniqueGroup | None = None,
+        seed_technique: AttackTechniqueSeedGroup | None = None,
         uses_adversarial: bool | None = None,
         scorer_override_policy: ScorerOverridePolicy = ScorerOverridePolicy.WARN,
     ) -> None:
@@ -158,7 +158,9 @@ class AttackTechniqueFactory(Identifiable):
         attack_class: type[AttackStrategy[Any, Any]] | None = None,
         description: str | None = None,
         adversarial_chat_system_prompt_path: str | Path | None = None,
+        simulated_target_system_prompt_path: str | Path | None = None,
         next_message_system_prompt_path: str | Path | None = None,
+        final_user_message: str | None = None,
         num_turns: int = 3,
         technique_tags: list[str] | None = None,
         attack_kwargs: dict[str, Any] | None = None,
@@ -169,7 +171,7 @@ class AttackTechniqueFactory(Identifiable):
         """
         Alternative constructor that builds a ``SeedSimulatedConversation`` inline.
 
-        Wraps a single ``SeedSimulatedConversation`` in a ``SeedAttackTechniqueGroup``
+        Wraps a single ``SeedSimulatedConversation`` in a ``AttackTechniqueSeedGroup``
         and assigns it as ``seed_technique`` so callers don't have to construct
         both manually. All other parameters are forwarded to ``__init__``.
 
@@ -184,10 +186,21 @@ class AttackTechniqueFactory(Identifiable):
             adversarial_chat_system_prompt_path: Path to the YAML file containing
                 the adversarial chat system prompt for the simulated conversation.
                 Defaults to ``EXECUTOR_SEED_PROMPT_PATH/red_teaming/{name}.yaml``.
+            simulated_target_system_prompt_path: Optional path to the YAML file
+                containing the system prompt for the simulated target (the
+                assistant side of the generated conversation). When ``None``,
+                ``SeedSimulatedConversation`` falls back to its compliant default.
             next_message_system_prompt_path: Optional path to the YAML file
                 containing the system prompt for generating a final user message
                 after the simulated conversation. Defaults to
-                ``NextMessageSystemPromptPaths.DIRECT.value``.
+                ``NextMessageSystemPromptPaths.DIRECT.value``. Ignored (forced to
+                ``None``) when ``final_user_message`` is provided.
+            final_user_message: Optional fixed final user message. When provided,
+                a static ``SeedPrompt`` carrying this text is appended after the
+                simulated conversation (so it becomes the ``next_message``) and no
+                LLM-generated next message is used. This supports techniques like
+                context compliance whose final turn is a hardcoded affirmation
+                (e.g. ``"yes."``) rather than an LLM-generated message.
             num_turns: Number of simulated conversation turns. Defaults to 3.
             technique_tags: Tags controlling which ``ScenarioTechnique`` aggregates
                 include this technique (e.g. ``"single_turn"``, ``"multi_turn"``,
@@ -217,18 +230,44 @@ class AttackTechniqueFactory(Identifiable):
             attack_class = PromptSendingAttack
         if adversarial_chat_system_prompt_path is None:
             adversarial_chat_system_prompt_path = Path(EXECUTOR_SEED_PROMPT_PATH) / "red_teaming" / f"{name}.yaml"
-        if next_message_system_prompt_path is None:
+
+        # A fixed final user message and an LLM-generated next message are mutually
+        # exclusive: when a fixed message is supplied it becomes the next_message via
+        # a static SeedPrompt, so no next-message generation prompt is used.
+        if final_user_message is not None:
+            next_message_system_prompt_path = None
+        elif next_message_system_prompt_path is None:
             next_message_system_prompt_path = NextMessageSystemPromptPaths.DIRECT.value
 
-        seed_technique = SeedAttackTechniqueGroup(
-            seeds=[
-                SeedSimulatedConversation(
-                    adversarial_chat_system_prompt_path=Path(adversarial_chat_system_prompt_path),
-                    next_message_system_prompt_path=Path(next_message_system_prompt_path),
-                    num_turns=num_turns,
-                ),
-            ],
-        )
+        simulated_conversation_kwargs: dict[str, Any] = {
+            "adversarial_chat_system_prompt_path": Path(adversarial_chat_system_prompt_path),
+            "num_turns": num_turns,
+        }
+        if simulated_target_system_prompt_path is not None:
+            simulated_conversation_kwargs["simulated_target_system_prompt_path"] = Path(
+                simulated_target_system_prompt_path
+            )
+        if next_message_system_prompt_path is not None:
+            simulated_conversation_kwargs["next_message_system_prompt_path"] = Path(next_message_system_prompt_path)
+
+        simulated_conversation = SeedSimulatedConversation(**simulated_conversation_kwargs)
+
+        seeds: list[Any] = [simulated_conversation]
+        if final_user_message is not None:
+            # Append the fixed final turn immediately after the simulated conversation's
+            # sequence range so it is extracted as the next_message (see
+            # AttackParameters.from_seed_group_async).
+            seeds.append(
+                SeedPrompt(
+                    value=final_user_message,
+                    role="user",
+                    data_type="text",
+                    sequence=simulated_conversation.sequence_range.stop,
+                    is_general_technique=True,
+                )
+            )
+
+        seed_technique = AttackTechniqueSeedGroup(seeds=seeds)
         return cls(
             name=name,
             attack_class=attack_class,
@@ -361,7 +400,7 @@ class AttackTechniqueFactory(Identifiable):
         return self._attack_class
 
     @property
-    def seed_technique(self) -> SeedAttackTechniqueGroup | None:
+    def seed_technique(self) -> AttackTechniqueSeedGroup | None:
         """The optional technique seed group."""
         return self._seed_technique
 
@@ -537,7 +576,7 @@ class AttackTechniqueFactory(Identifiable):
         if system_prompt is not None:
             config_kwargs["system_prompt"] = system_prompt
         if seed_prompt is not None:
-            config_kwargs["seed_prompt"] = seed_prompt
+            config_kwargs["first_message"] = seed_prompt
         return AttackAdversarialConfig(**config_kwargs)
 
     def _get_accepted_params(self) -> set[str]:
