@@ -77,12 +77,12 @@ def _loaded_schema(scorer):
     """Return the response schema regardless of where the scorer stores it.
 
     The composition-migrated true/false scorer keeps it on its response handler
-    (``_response_handler.response_schema``); the other, not-yet-migrated scorers still expose
-    ``_response_json_schema`` directly.
+    (``_response_handler.json_response_config.json_schema``); the other, not-yet-migrated scorers
+    still expose ``_response_json_schema`` directly.
     """
     handler = getattr(scorer, "_response_handler", None)
     if handler is not None:
-        return handler.response_schema
+        return handler.json_response_config.json_schema
     return scorer._response_json_schema
 
 

@@ -7,7 +7,7 @@ import uuid
 from typing import TYPE_CHECKING
 
 from pyrit.exceptions import EmptyResponseException, ScorerLLMResponseBlockedException, pyrit_json_retry
-from pyrit.models import JsonResponseConfig, Message, MessagePiece
+from pyrit.models import Message, MessagePiece
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -39,7 +39,7 @@ async def _run_llm_scoring_async(
     Perform a single scoring round-trip against an LLM target and delegate parsing.
 
     This is the shared LLM evaluation mechanism: it sets the system prompt on the target, sends
-    the value to be scored (forwarding ``response_handler.response_schema`` so targets that
+    the value to be scored (forwarding ``response_handler.json_response_config`` so targets that
     support structured output can enforce it), applies the standard JSON retry behavior, and
     delegates parsing and validation to ``response_handler``. It is intentionally stateless and
     independent of any particular ``Scorer`` so that scorers can compose it without inheriting LLM
@@ -90,12 +90,10 @@ async def _run_llm_scoring_async(
         system_prompt=system_prompt,
         conversation_id=conversation_id,
     )
-    # Forward the JSON-response request (and any schema) via the canonical config; the
-    # target's normalization pipeline omits the schema when it cannot natively enforce one.
-    prompt_metadata = JsonResponseConfig(
-        enabled=response_handler.response_format is not None,
-        json_schema=response_handler.response_schema,
-    ).to_metadata()
+    # Forward the JSON-response request (format and any schema together) via the handler's
+    # canonical config; the target's normalization pipeline omits the schema when it cannot
+    # natively enforce one.
+    prompt_metadata = response_handler.json_response_config.to_metadata()
 
     # Build message pieces - prepended text context first (if provided), then the main message being scored
     message_pieces: list[MessagePiece] = []

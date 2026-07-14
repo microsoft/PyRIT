@@ -166,7 +166,7 @@ class SelfAskRefusalScorer(TrueFalseScorer):
             params={
                 "system_prompt_template": self._system_prompt,
                 "user_prompt_template": self._prompt_format_string,
-                "response_json_schema": self._response_handler.response_schema,
+                "response_json_schema": self._response_handler.json_response_config.json_schema,
             },
             score_aggregator=self._score_aggregator.__name__,  # type: ignore[ty:unresolved-attribute]
             prompt_target=self._prompt_target.get_identifier(),

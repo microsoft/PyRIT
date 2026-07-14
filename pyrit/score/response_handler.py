@@ -10,7 +10,7 @@ from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
 from pyrit.exceptions import InvalidJsonException, remove_markdown_json
-from pyrit.models import UnvalidatedScore
+from pyrit.models import JsonResponseConfig, UnvalidatedScore
 
 if TYPE_CHECKING:
     import uuid
@@ -96,26 +96,17 @@ class ResponseHandler(abc.ABC):
     """
 
     @property
-    def response_format(self) -> str | None:
+    def json_response_config(self) -> JsonResponseConfig:
         """
-        The ``response_format`` hint forwarded onto the scoring request, or ``None`` for none.
+        The canonical JSON-response request this handler asks the scoring target for.
 
-        Round-trip helpers copy this onto the request metadata. Handlers that require a specific
-        wire format (e.g. JSON) override it; the default imposes nothing so targets that emit
-        plain text are not forced into a format they cannot honor.
+        Format and schema are one coupled unit: the LLM round-trip serializes this onto the
+        request metadata via ``to_metadata``, and targets that natively support structured output
+        enforce the schema (others have it omitted by normalization). The default is disabled,
+        imposing no wire format so targets that emit plain text are not forced into a format they
+        cannot honor. Handlers that require JSON override this.
         """
-        return None
-
-    @property
-    def response_schema(self) -> JsonSchemaDefinition | None:
-        """
-        The JSON schema, if any, describing the response the target should return.
-
-        The LLM round-trip forwards this to the scoring target so targets that natively support
-        structured output can enforce it; targets that cannot have it omitted by normalization.
-        Handlers that do not constrain the response shape return None (the default).
-        """
-        return None
+        return JsonResponseConfig(enabled=False)
 
     @abstractmethod
     def parse(
@@ -193,14 +184,9 @@ class JsonSchemaResponseHandler(ResponseHandler):
         self._numeric_value = numeric_value
 
     @property
-    def response_schema(self) -> JsonSchemaDefinition | None:
-        """The configured JSON schema to forward to the scoring target, if any."""
-        return self._response_schema
-
-    @property
-    def response_format(self) -> str | None:
-        """The ``"json"`` response format, since this handler parses JSON responses."""
-        return "json"
+    def json_response_config(self) -> JsonResponseConfig:
+        """The JSON-response request: always JSON, carrying the optional configured schema."""
+        return JsonResponseConfig(enabled=True, json_schema=self._response_schema)
 
     def parse(
         self,

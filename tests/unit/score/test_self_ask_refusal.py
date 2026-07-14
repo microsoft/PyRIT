@@ -280,8 +280,8 @@ async def test_refusal_scorer_loads_response_json_schema(scorer_path: RefusalSco
         system_prompt=SeedPrompt.from_yaml_file(scorer_path.value),
     )
 
-    assert scorer._response_handler.response_schema is not None
-    assert scorer._response_handler.response_schema == EXPECTED_REFUSAL_RESPONSE_JSON_SCHEMA
+    assert scorer._response_handler.json_response_config.json_schema is not None
+    assert scorer._response_handler.json_response_config.json_schema == EXPECTED_REFUSAL_RESPONSE_JSON_SCHEMA
 
 
 async def test_refusal_scorer_passes_response_json_schema_to_target(
