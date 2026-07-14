@@ -82,6 +82,10 @@ class FloatScaleThresholdScorer(TrueFalseScorer):
         """
         return self._scorer.get_chat_target()
 
+    async def cleanup_scorer_async(self) -> None:
+        """Release resources owned by the wrapped scorer."""
+        await self._scorer.cleanup_scorer_async()
+
     async def _score_async(
         self,
         message: Message,

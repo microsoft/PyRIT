@@ -14,6 +14,7 @@ from unit.mocks import (
     get_test_message_piece,
 )
 
+from pyrit.auth import AzureAsyncTokenProvider
 from pyrit.memory import CentralMemory
 from pyrit.memory.memory_interface import MemoryInterface
 from pyrit.models import Message, MessagePiece
@@ -52,6 +53,27 @@ async def test_score_async_unsupported_data_type_returns_zero(
     assert scores[0].get_value() == 0.0
 
     os.remove(audio_message_piece.converted_value)
+
+
+async def test_cleanup_scorer_closes_client_and_managed_provider(patch_central_database):
+    credential = AsyncMock()
+    client = AsyncMock()
+    with (
+        patch("pyrit.auth.azure_auth.AsyncDefaultAzureCredential", return_value=credential),
+        patch("pyrit.auth.azure_auth.get_async_bearer_token_provider", return_value=AsyncMock()),
+        patch(
+            "pyrit.score.float_scale.azure_content_filter_scorer.ContentSafetyClient",
+            return_value=client,
+        ),
+    ):
+        provider = AzureAsyncTokenProvider(scope="https://cognitiveservices.azure.com/.default")
+        scorer = AzureContentFilterScorer(api_key=provider, endpoint="https://content-safety.example")
+
+    await scorer.cleanup_scorer_async()
+    await scorer.cleanup_scorer_async()
+
+    client.close.assert_awaited_once()
+    credential.close.assert_awaited_once()
 
 
 async def test_score_piece_async_text(patch_central_database, text_message_piece: MessagePiece):

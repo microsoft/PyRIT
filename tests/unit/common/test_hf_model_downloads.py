@@ -40,9 +40,20 @@ def setup_environment():
 async def test_download_specific_files_async(setup_environment):
     """Test downloading specific files"""
     token = setup_environment  # Get the token from the fixture
+    cache_dir = Path("model-cache")
 
-    with patch("os.makedirs"), patch("pyrit.common.download_hf_model.download_files_async"):
-        await download_specific_files_async(MODEL_ID, FILE_PATTERNS, token, Path(""))
+    with (
+        patch("pathlib.Path.mkdir"),
+        patch("pyrit.common.download_hf_model.snapshot_download") as snapshot_download_mock,
+    ):
+        await download_specific_files_async(MODEL_ID, FILE_PATTERNS, token, cache_dir)
+
+    snapshot_download_mock.assert_called_once_with(
+        repo_id=MODEL_ID,
+        allow_patterns=FILE_PATTERNS,
+        token=token,
+        local_dir=cache_dir,
+    )
 
 
 async def test_download_files_async_dispatches_one_call_per_url():

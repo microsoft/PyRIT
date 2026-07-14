@@ -27,7 +27,19 @@
 # up and is reused by every command below. We stop it again at the end of the notebook.
 
 # %%
-# !pyrit_scan --start-server
+import socket
+from pathlib import Path
+
+with socket.socket() as available_port:
+    available_port.bind(("127.0.0.1", 0))
+    scan_server_port = available_port.getsockname()[1]
+scan_server_url = f"http://127.0.0.1:{scan_server_port}"
+scan_config_path = Path("pyrit_conf.yaml")
+if not scan_config_path.exists():
+    scan_config_path = Path("doc/scanner/pyrit_conf.yaml")
+scan_config_path = scan_config_path.resolve()
+
+# !pyrit_scan --server-url {scan_server_url} --config-file "{scan_config_path}" --start-server
 
 # %% [markdown]
 # ## Quick Start
@@ -43,7 +55,7 @@
 # List all available scenarios:
 
 # %%
-# !pyrit_scan --list-scenarios
+# !pyrit_scan --server-url {scan_server_url} --list-scenarios
 
 # %% [markdown]
 # **Tip**: You can also discover user-defined scenarios by providing initialization scripts:
@@ -63,7 +75,7 @@
 # List the available initializers using the --list-initializers flag.
 
 # %%
-# !pyrit_scan --list-initializers
+# !pyrit_scan --server-url {scan_server_url} --list-initializers
 
 # %% [markdown]
 # ### Running Scenarios
@@ -95,7 +107,7 @@
 # Example with a basic configuration that runs the Foundry scenario against the objective target defined in the `target` initializer.
 
 # %%
-# !pyrit_scan foundry.red_team_agent --target openai_chat --initializers target --techniques base64
+# !pyrit_scan --server-url {scan_server_url} foundry.red_team_agent --target openai_chat --initializers target --techniques base64
 
 # %% [markdown]
 # Or with all options and multiple techniques:
@@ -222,4 +234,4 @@ MyCustomScenario()
 # When you're done, stop the local backend that we started at the top of the notebook.
 
 # %%
-# !pyrit_scan --stop-server
+# !pyrit_scan --server-url {scan_server_url} --stop-server

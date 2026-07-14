@@ -5,7 +5,7 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.18.1
+#       jupytext_version: 1.19.4
 # ---
 
 # %% [markdown]
@@ -48,7 +48,7 @@
 
 # %%
 from pyrit.output import output_scenario_async
-from pyrit.prompt_target import OpenAIChatTarget
+from pyrit.registry import TargetRegistry
 from pyrit.scenario import DatasetAttackConfiguration
 from pyrit.scenario.benchmark import AdversarialBenchmark
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
@@ -64,15 +64,29 @@ await initialize_pyrit_async(  # type: ignore
     initializers=[TargetInitializer(), ScorerInitializer(), TechniqueInitializer(), LoadDefaultDatasets()],
 )
 
-objective_target = OpenAIChatTarget()
+target_registry = TargetRegistry.get_registry_singleton()
+objective_target = target_registry.instances.get("openai_chat")
+if objective_target is None:
+    raise ValueError("The openai_chat target must be registered. Configure the OPENAI_CHAT_* environment variables.")
+
+preferred_adversarial_targets = [
+    "adversarial_chat_singleturn",
+    "adversarial_chat_multiturn",
+    "azure_openai_gpt4o",
+    "openai_chat",
+]
+adversarial_targets = [name for name in preferred_adversarial_targets if name in target_registry.instances][:2]
+if not adversarial_targets:
+    raise ValueError("At least one adversarial-capable chat target must be registered.")
+print(f"Using registered adversarial target(s): {', '.join(adversarial_targets)}")
 
 # %%
-dataset_config = DatasetAttackConfiguration(dataset_names=["harmbench"], max_dataset_size=4)
+dataset_config = DatasetAttackConfiguration(dataset_names=["harmbench"], max_dataset_size=1)
 
 scenario = AdversarialBenchmark()
 scenario.set_params_from_args(
     args={
-        "adversarial_targets": ["adversarial_chat_singleturn", "adversarial_chat_multiturn"],
+        "adversarial_targets": adversarial_targets,
         "objective_target": objective_target,
         "dataset_config": dataset_config,
     }

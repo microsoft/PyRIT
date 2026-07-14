@@ -40,6 +40,15 @@ def create_mock_float_scorer(score_value: float):
     return scorer
 
 
+async def test_cleanup_scorer_closes_wrapped_scorer():
+    scorer = create_mock_float_scorer(0.5)
+    threshold_scorer = FloatScaleThresholdScorer(scorer=scorer, threshold=0.5)
+
+    await threshold_scorer.cleanup_scorer_async()
+
+    scorer.cleanup_scorer_async.assert_awaited_once()
+
+
 @pytest.mark.parametrize("threshold", [0.3, 0.5, 0.7])
 @pytest.mark.parametrize("score_value", [0.1, 0.3, 0.5, 0.7, 0.9])
 async def test_float_scale_threshold_scorer_adds_to_memory(threshold, score_value):

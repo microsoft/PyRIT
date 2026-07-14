@@ -3,12 +3,13 @@
 
 import time
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from pyrit.auth.auth_config import REFRESH_TOKEN_BEFORE_MSEC
 from pyrit.auth.azure_auth import (
+    AzureAsyncTokenProvider,
     AzureAuth,
     get_azure_token_provider,
     get_speech_config,
@@ -19,6 +20,28 @@ from pyrit.auth.azure_auth import (
 
 curr_epoch_time = int(time.time())
 mock_token = "fake token"
+
+
+async def test_azure_async_token_provider_closes_after_final_consumer():
+    credential = AsyncMock()
+    token_provider = AsyncMock(return_value="managed-token")
+    with (
+        patch("pyrit.auth.azure_auth.AsyncDefaultAzureCredential", return_value=credential),
+        patch("pyrit.auth.azure_auth.get_async_bearer_token_provider", return_value=token_provider),
+    ):
+        provider = AzureAsyncTokenProvider(scope="https://example/.default")
+
+    provider.acquire()
+    provider.acquire()
+    assert await provider() == "managed-token"
+
+    await provider.release_async()
+    credential.close.assert_not_awaited()
+    await provider.release_async()
+    credential.close.assert_awaited_once()
+
+    with pytest.raises(RuntimeError, match="provider is closed"):
+        await provider()
 
 
 def is_speechsdk_installed():

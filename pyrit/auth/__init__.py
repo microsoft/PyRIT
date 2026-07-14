@@ -8,6 +8,7 @@ Authentication functionality for a variety of services.
 from pyrit.auth.authenticator import Authenticator
 from pyrit.auth.azure_auth import (
     AsyncTokenProviderCredential,
+    AzureAsyncTokenProvider,
     AzureAuth,
     TokenProviderCredential,
     ensure_async_token_provider,
@@ -24,6 +25,7 @@ from pyrit.auth.manual_copilot_authenticator import ManualCopilotAuthenticator
 
 __all__ = [
     "AsyncTokenProviderCredential",
+    "AzureAsyncTokenProvider",
     "Authenticator",
     "AzureAuth",
     "AzureStorageAuth",

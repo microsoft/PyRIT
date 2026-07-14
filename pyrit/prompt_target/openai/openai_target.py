@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import asyncio
 import json
 import logging
 import re
@@ -22,7 +23,12 @@ from openai._exceptions import (
     AuthenticationError,
 )
 
-from pyrit.auth import ensure_async_token_provider, get_azure_openai_auth, is_azure_openai_endpoint
+from pyrit.auth import (
+    AzureAsyncTokenProvider,
+    ensure_async_token_provider,
+    get_azure_openai_auth,
+    is_azure_openai_endpoint,
+)
 from pyrit.common import default_values
 from pyrit.exceptions.exception_classes import (
     RateLimitException,
@@ -172,9 +178,26 @@ class OpenAITarget(PromptTarget):
                 )
 
         # Ensure api_key is async-compatible (wrap sync token providers if needed)
+        self._managed_token_provider = (
+            resolved_api_key if isinstance(resolved_api_key, AzureAsyncTokenProvider) else None
+        )
         self._api_key = ensure_async_token_provider(resolved_api_key)
 
         self._initialize_openai_client()
+        if self._managed_token_provider:
+            self._managed_token_provider.acquire()
+
+    async def cleanup_target_async(self) -> None:
+        """Close the OpenAI client and any managed Azure token provider."""
+        cleanup_tasks: list[Awaitable[Any]] = []
+        if self._async_client:
+            cleanup_tasks.append(self._async_client.close())
+            self._async_client = None
+        if self._managed_token_provider:
+            cleanup_tasks.append(self._managed_token_provider.release_async())
+            self._managed_token_provider = None
+        if cleanup_tasks:
+            await asyncio.gather(*cleanup_tasks)
 
     def _extract_deployment_from_azure_url(self, url: str) -> str:
         """

@@ -20,7 +20,8 @@
 
 # %%
 from pyrit.output import output_scenario_async
-from pyrit.prompt_target import OpenAIChatTarget
+from pyrit.prompt_target import OpenAITarget
+from pyrit.registry import ScorerRegistry, TargetRegistry
 from pyrit.scenario import DatasetAttackConfiguration
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 from pyrit.setup.initializers import (
@@ -35,7 +36,18 @@ await initialize_pyrit_async(  # type: ignore
     initializers=[TargetInitializer(), ScorerInitializer(), TechniqueInitializer(), LoadDefaultDatasets()],
 )
 
-objective_target = OpenAIChatTarget()
+target_registry = TargetRegistry.get_registry_singleton()
+objective_target = target_registry.instances.get("openai_chat")
+if objective_target is None:
+    raise ValueError("The openai_chat target must be registered. Configure the OPENAI_CHAT_* environment variables.")
+psychosocial_adversarial_chat = target_registry.instances.get("azure_openai_gpt4o2") or objective_target
+
+for alias, target in {
+    "objective_scorer_chat": objective_target,
+    "adversarial_chat": psychosocial_adversarial_chat,
+}.items():
+    if target_registry.instances.get(alias) is None:
+        target_registry.instances.register(target, name=alias)
 # %% [markdown]
 # ## Rapid Response
 #
@@ -111,7 +123,7 @@ from pyrit.scenario.airt import Psychosocial, PsychosocialTechnique
 
 dataset_config = DatasetAttackConfiguration(dataset_names=["airt_imminent_crisis"], max_dataset_size=1)
 
-scenario = Psychosocial()
+scenario = Psychosocial(adversarial_chat=psychosocial_adversarial_chat, max_turns=3)
 scenario.set_params_from_args(  # type: ignore
     args={
         "objective_target": objective_target,
@@ -285,3 +297,14 @@ scenario_result = await scenario.run_async()  # type: ignore
 
 # %%
 await output_scenario_async(scenario_result)
+
+# %%
+cleaned_target_ids: set[int] = set()
+for target_entry in target_registry.instances.get_all_instances():
+    target_id = id(target_entry.instance)
+    if isinstance(target_entry.instance, OpenAITarget) and target_id not in cleaned_target_ids:
+        await target_entry.instance.cleanup_target_async()
+        cleaned_target_ids.add(target_id)
+
+for scorer_entry in ScorerRegistry.get_registry_singleton().instances.get_all_instances():
+    await scorer_entry.instance.cleanup_scorer_async()

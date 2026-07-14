@@ -121,6 +121,9 @@ class Scorer(Identifiable, abc.ABC):
         """
         return getattr(self, "_prompt_target", None)
 
+    async def cleanup_scorer_async(self) -> None:
+        """Release resources owned by this scorer."""
+
     def get_identifier(self) -> ComponentIdentifier:
         """
         Get the scorer's identifier with eval_hash always attached.

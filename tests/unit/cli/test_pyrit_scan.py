@@ -764,9 +764,7 @@ class TestResolveServerUrl:
             assert await pyrit_scan._resolve_server_url_async(parsed_args=parsed) is None
         assert "nope" in capsys.readouterr().out
 
-    async def test_start_server_refuses_when_url_differs_from_default(self, capsys):
-        # User explicitly configured a non-default URL but asks us to launch the bundled
-        # backend. The launcher only knows how to bind localhost:8000, so we must refuse.
+    async def test_start_server_refuses_remote_url(self, capsys):
         parsed = Namespace(server_url="http://other:9999", start_server=True, config_file=None)
         start_async_mock = AsyncMock()
         with (
@@ -785,6 +783,23 @@ class TestResolveServerUrl:
         err = capsys.readouterr().err
         assert "cannot --start-server" in err
         assert "http://other:9999" in err
+
+    async def test_start_server_uses_custom_local_port(self):
+        parsed = Namespace(server_url="http://127.0.0.1:8765", start_server=True, config_file=None)
+        start_async_mock = AsyncMock(return_value="http://127.0.0.1:8765")
+        with (
+            patch(
+                "pyrit.cli._server_launcher.ServerLauncher.probe_health_async",
+                new=AsyncMock(return_value=False),
+            ),
+            patch(
+                "pyrit.cli._server_launcher.ServerLauncher.start_async",
+                new=start_async_mock,
+            ),
+        ):
+            result = await pyrit_scan._resolve_server_url_async(parsed_args=parsed)
+        assert result == "http://127.0.0.1:8765"
+        start_async_mock.assert_awaited_once_with(host="127.0.0.1", port=8765, config_file=None)
 
     async def test_resolution_order_cli_beats_config_beats_default(self):
         """CLI flag > config-file value > built-in default."""

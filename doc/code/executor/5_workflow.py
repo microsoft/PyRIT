@@ -6,7 +6,7 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.19.1
+#       jupytext_version: 1.19.4
 # ---
 
 # %% [markdown]
@@ -130,6 +130,10 @@ async def processing_callback() -> str:
 
 import logging
 
+from azure.core.exceptions import ClientAuthenticationError, HttpResponseError
+from azure.identity.aio import DefaultAzureCredential
+from azure.storage.blob.aio import ContainerClient
+
 # %% [markdown]
 #
 # Finally, we can put all the pieces together:
@@ -142,44 +146,56 @@ from pyrit.prompt_target import AzureBlobStorageTarget
 from pyrit.prompt_target.azure_blob_storage_target import SupportedContentType
 from pyrit.score import SubStringScorer
 
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.WARNING)
 
-abs_target = AzureBlobStorageTarget(
-    blob_content_type=SupportedContentType.HTML,
-)
+storage_available = False
+storage_credential = DefaultAzureCredential()
+try:
+    async with ContainerClient.from_container_url(
+        container_url=os.environ["AZURE_STORAGE_ACCOUNT_CONTAINER_URL"],
+        credential=storage_credential,
+    ) as container_client:
+        await container_client.get_container_properties()
+except (ClientAuthenticationError, HttpResponseError) as exc:
+    print(f"Website XPIA example not run: Azure Blob Storage is unavailable ({type(exc).__name__}).")
+else:
+    storage_available = True
+finally:
+    await storage_credential.close()
 
-jailbreak_converter = TextJailbreakConverter(
-    jailbreak_template=jailbreak_template,
-)
-converter_configuration = StrategyConverterConfig(
-    request_converters=ConverterConfiguration.from_converters(
-        converters=[jailbreak_converter],
+result = None
+if storage_available:
+    abs_target = AzureBlobStorageTarget(
+        blob_content_type=SupportedContentType.HTML,
     )
-)
-
-scorer = SubStringScorer(substring="space pirate", categories=["jailbreak"])
-
-workflow = XPIAWorkflow(
-    attack_setup_target=abs_target,
-    converter_config=converter_configuration,
-    scorer=scorer,
-)
-
-result = await workflow.execute_async(  # type: ignore
-    attack_content=xpia_prompt_group,
-    processing_callback=processing_callback,
-)
-
-print(result.score)
+    jailbreak_converter = TextJailbreakConverter(
+        jailbreak_template=jailbreak_template,
+    )
+    converter_configuration = StrategyConverterConfig(
+        request_converters=ConverterConfiguration.from_converters(
+            converters=[jailbreak_converter],
+        )
+    )
+    scorer = SubStringScorer(substring="space pirate", categories=["jailbreak"])
+    workflow = XPIAWorkflow(
+        attack_setup_target=abs_target,
+        converter_config=converter_configuration,
+        scorer=scorer,
+    )
+    result = await workflow.execute_async(  # type: ignore
+        attack_content=xpia_prompt_group,
+        processing_callback=processing_callback,
+    )
+    print(result.score)
 
 # %%
 from pyrit.memory import CentralMemory
 
 memory = CentralMemory.get_memory_instance()
-processing_response = memory.get_message_pieces(conversation_id=result.processing_conversation_id)
-
-print(f"Attack result status: {result.status}")
-print(f"Response from processing callback: {processing_response}")
+if result is not None:
+    processing_response = memory.get_message_pieces(conversation_id=result.processing_conversation_id)
+    print(f"Attack result status: {result.status}")
+    print(f"Response from processing callback: {processing_response}")
 
 # %% [markdown]
 # ## AI Recruiter (RAG) XPIA
@@ -197,7 +213,7 @@ from pyrit.executor.core import StrategyConverterConfig
 from pyrit.executor.workflow import XPIATestWorkflow
 from pyrit.models import Message
 from pyrit.prompt_normalizer import ConverterConfiguration
-from pyrit.prompt_target import HTTPXAPITarget
+from pyrit.prompt_target import HTTPXAPITarget, TargetCapabilities, TargetConfiguration
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 
 await initialize_pyrit_async(memory_db_type=IN_MEMORY)  # type: ignore
@@ -254,10 +270,20 @@ pdf_converter = PDFConverter(
     injection_items=injection_items,  # Inject hidden text
 )
 
-upload_target = HTTPXAPITarget(http_url=f"http://localhost:8000/upload/", method="POST", timeout=180)
+upload_target = HTTPXAPITarget(
+    http_url="http://localhost:8000/upload/",
+    method="POST",
+    timeout=180,
+    custom_configuration=TargetConfiguration(
+        capabilities=TargetCapabilities(
+            supports_multi_turn=True,
+            input_modalities=frozenset({frozenset({"binary_path"})}),
+        )
+    ),
+)
 
 http_api_processing_target = HTTPXAPITarget(
-    http_url=f"http://localhost:8000/search_candidates/", method="POST", timeout=180
+    http_url="http://localhost:8000/search_candidates/", method="POST", timeout=180
 )
 
 # "processing_prompt" is unused by the server because it only expects 'file' in /upload
@@ -281,10 +307,19 @@ processing_prompt = Message.from_prompt(
     role="user",
 )
 
-final_result = await workflow.execute_async(  # type: ignore
-    attack_content=attack_content,
-    processing_prompt=processing_prompt,
-)
+try:
+    recruiter_openapi = requests.get("http://localhost:8000/openapi.json", timeout=2)
+    recruiter_openapi.raise_for_status()
+    available_paths = {path.rstrip("/") for path in recruiter_openapi.json().get("paths", {})}
+    recruiter_available = {"/upload", "/search_candidates"}.issubset(available_paths)
+except requests.exceptions.RequestException:
+    recruiter_available = False
 
-# If scorer=None, final_result is the raw response from /search_candidates/
-print("\nFinal result from XPIA flow:", final_result)
+if recruiter_available:
+    final_result = await workflow.execute_async(  # type: ignore
+        attack_content=attack_content,
+        processing_prompt=processing_prompt,
+    )
+    print("\nFinal result from XPIA flow:", final_result)
+else:
+    print("AI Recruiter XPIA example not run: the local service is unavailable on port 8000.")

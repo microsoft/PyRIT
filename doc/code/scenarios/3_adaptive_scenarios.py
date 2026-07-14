@@ -5,7 +5,7 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.18.1
+#       jupytext_version: 1.19.4
 # ---
 
 # %% [markdown]
@@ -60,13 +60,19 @@ printer = PrettyScenarioResultMemoryPrinter()
 # %% [markdown]
 # ## Basic usage
 #
-# Defaults: `max_attempts_per_objective=3`, epsilon-greedy selector with `epsilon=0.2`,
-# the subclass's default datasets.
+# This executable example bounds the dataset and technique attempts. Omit those
+# arguments to use the production defaults.
 
 # %%
 scenario = TextAdaptive()
 
-scenario.set_params_from_args(args={"objective_target": objective_target})  # type: ignore
+scenario.set_params_from_args(  # type: ignore
+    args={
+        "objective_target": objective_target,
+        "dataset_config": DatasetAttackConfiguration(dataset_names=["airt_hate"], max_dataset_size=1),
+        "max_attempts_per_objective": 2,
+    }
+)
 await scenario.initialize_async()  # type: ignore
 result = await scenario.run_async()  # type: ignore
 await printer.write_async(result)  # type: ignore

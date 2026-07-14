@@ -287,6 +287,10 @@ def print_scenario_run_progress(*, run: ScenarioRunSummary, total_techniques: in
         bar_width = 30
         filled = int(bar_width * run.completed_attacks / run.total_attacks)
         bar = "█" * filled + "░" * (bar_width - filled)
+        try:
+            bar.encode(sys.stdout.encoding or "utf-8")
+        except (LookupError, UnicodeEncodeError):
+            bar = "#" * filled + "-" * (bar_width - filled)
         parts.append(f"[{bar}] {run.completed_attacks}/{run.total_attacks} attacks ({pct}%)")
     else:
         parts.append(f"attacks: {run.completed_attacks}")

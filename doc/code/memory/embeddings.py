@@ -6,7 +6,7 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.17.3
+#       jupytext_version: 1.19.4
 # ---
 
 # %% [markdown]
@@ -15,15 +15,23 @@
 # PyRIT also allows to get embeddings. The embedding response is a wrapper for the OpenAI embedding API.
 
 # %%
+import os
 from pprint import pprint
 
+from pyrit.auth import get_azure_openai_auth
 from pyrit.embedding import OpenAITextEmbedding
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 
 await initialize_pyrit_async(memory_db_type=IN_MEMORY)  # type: ignore
 
 input_text = "hello"
-ada_embedding_engine = OpenAITextEmbedding()
+embedding_endpoint = os.environ["OPENAI_EMBEDDING_ENDPOINT"]
+embedding_api_key = os.environ.get("OPENAI_EMBEDDING_KEY") or get_azure_openai_auth(embedding_endpoint)
+ada_embedding_engine = OpenAITextEmbedding(
+    endpoint=embedding_endpoint,
+    model_name=os.environ["OPENAI_EMBEDDING_MODEL"],
+    api_key=embedding_api_key,
+)
 embedding_response = await ada_embedding_engine.generate_text_embedding_async(text=input_text)  # type: ignore
 
 pprint(embedding_response, width=280, compact=True)

@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from pyrit.auth import ensure_async_token_provider
+from pyrit.auth import AzureAsyncTokenProvider, ensure_async_token_provider
 from pyrit.prompt_target.openai.openai_target import OpenAITarget
 
 
@@ -120,6 +120,27 @@ class TestOpenAITargetAuthResolution:
         """When both param and env var are set, the param wins."""
         target = _build_target(api_key="param-key", env_vars={"TEST_API_KEY": "env-key"})
         assert target._api_key == "param-key"
+
+    async def test_cleanup_releases_shared_managed_provider_after_final_target(self):
+        credential = AsyncMock()
+        token_provider = AsyncMock(return_value="entra-token")
+        clients = [AsyncMock(), AsyncMock()]
+        with (
+            patch("pyrit.auth.azure_auth.AsyncDefaultAzureCredential", return_value=credential),
+            patch("pyrit.auth.azure_auth.get_async_bearer_token_provider", return_value=token_provider),
+            patch("pyrit.prompt_target.openai.openai_target.AsyncOpenAI", side_effect=clients),
+        ):
+            provider = AzureAsyncTokenProvider(scope="https://cognitiveservices.azure.com/.default")
+            first_target = _build_target(api_key=provider)
+            second_target = _build_target(api_key=provider)
+
+        await first_target.cleanup_target_async()
+        clients[0].close.assert_awaited_once()
+        credential.close.assert_not_awaited()
+
+        await second_target.cleanup_target_async()
+        clients[1].close.assert_awaited_once()
+        credential.close.assert_awaited_once()
 
 
 class TestEnsureAsyncTokenProvider:
