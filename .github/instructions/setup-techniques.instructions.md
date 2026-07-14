@@ -42,17 +42,3 @@ stop — put the value back inline.
 - Keep entries free of long explanatory comments and paper citations. The factory should read as
   plain configuration; if a technique's mechanics are subtle, document them on the reusable
   converter/model it uses, or here in this file, not as an inline comment block.
-
-## Worked example: `flip`
-
-The `flip` technique (formerly the bespoke `FlipAttack` subclass) is expressed purely as
-configuration of the stock `PromptSendingAttack`:
-
-- A `FlipConverter` reverses the raw objective, then a `TaskFramingConverter` wraps it as
-  `TASK is '...'` (stripping `'`). Framing runs last, so the literal `TASK is` stays readable
-  while the objective is reversed — no token scoping needed.
-- The flip instruction is a system-prompt `seed_technique`
-  (`SeedAttackTechniqueGroup.from_system_prompt(...)`) that merges into each objective's seed
-  group as prepended conversation.
-- `prepended_conversation_config=PrependedConversationConfig(apply_converters_to_roles=["user"])`
-  scopes the request converters to the user turn so the system prompt is not framed or flipped.
