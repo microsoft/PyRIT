@@ -414,22 +414,17 @@ class MemoryInterface(abc.ABC):
         self._validate_persistable_conversation_ids(message_pieces=pieces_to_insert)
         self._add_message_pieces_to_memory(message_pieces=pieces_to_insert)
 
-    @abc.abstractmethod
     def _add_message_pieces_to_memory(self, *, message_pieces: Sequence[MessagePiece]) -> None:
         """
         Persist already-validated message pieces to the backing store.
 
         Called by ``add_message_pieces_to_memory`` after ``not_in_memory`` pieces are
-        filtered out and conversation_ids are validated. Implementations only translate
-        the pieces into storage rows and insert them; they must not re-filter or
-        re-validate.
+        filtered out and conversation_ids are validated.
 
         Args:
             message_pieces (Sequence[MessagePiece]): Persistable pieces (none flagged
                 ``not_in_memory``), each carrying a non-empty ``conversation_id``.
         """
-
-    def _persist_message_pieces(self, *, message_pieces: Sequence[MessagePiece]) -> None:
         entries = [PromptMemoryEntry(entry=piece) for piece in message_pieces]
         with closing(self.get_session()) as session:
             try:
