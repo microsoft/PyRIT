@@ -11,6 +11,8 @@ import pytest
 from pyrit.models import ComponentIdentifier, Message, MessagePiece
 from pyrit.models.parameter import ComponentType
 from pyrit.prompt_target import (
+    CopilotType,
+    PlaywrightCopilotTarget,
     PromptTarget,
     RoundRobinTarget,
     TargetCapabilities,
@@ -53,6 +55,13 @@ class MockPromptChatTarget(PromptTarget):
 
     def _validate_request(self, *, normalized_conversation: list[Message]) -> None:
         pass
+
+
+class _PageStub:
+    """Minimal page object for constructing a Playwright Copilot target."""
+
+    def __init__(self, *, url: str) -> None:
+        self.url = url
 
 
 @pytest.fixture
@@ -271,6 +280,17 @@ class TestCreateInstance:
         registry.instances.register(MockPromptTarget(model_name="m", endpoint="http://a"), name="t1")
         with pytest.raises(ValueError, match="expected a list"):
             registry.create_instance("RoundRobinTarget", targets="t1")
+
+    def test_build_playwright_copilot_coerces_type_string(self, registry: TargetRegistry) -> None:
+        target = registry.create_instance(
+            "PlaywrightCopilotTarget",
+            page=_PageStub(url="https://m365.microsoft.com/copilot"),
+            copilot_type="m365",
+        )
+
+        assert isinstance(target, PlaywrightCopilotTarget)
+        assert target._type is CopilotType.M365
+        assert target.get_identifier().params["copilot_type"] == "m365"
 
     def test_unknown_type_raises(self, registry: TargetRegistry):
         with pytest.raises(KeyError, match="not found"):

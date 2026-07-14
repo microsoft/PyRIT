@@ -34,10 +34,10 @@ class TargetService:
     """
     Service for managing target instances.
 
-    Uses TargetRegistry as the sole source of truth. Class discovery,
-    construction (incl. param coercion and reference resolution), and endpoint
-    validation are all owned by the registry and the target classes; this
-    service only orchestrates the request → registry hand-off.
+    Uses TargetRegistry as the sole source of truth. Class discovery and
+    reference resolution are owned by the registry, scalar coercion is owned by
+    the derived ``Parameter`` contract, and endpoint validation is owned by the
+    target classes; this service orchestrates those pieces for API requests.
     """
 
     def __init__(self) -> None:
@@ -159,12 +159,12 @@ class TargetService:
         resolver turns registry names into live objects; all other targets carry
         their base configuration (``endpoint`` / ``model_name`` / ``api_key``)
         through ``**kwargs``, which is not part of the registry's derived
-        parameter contract, so they are constructed directly from the registry
-        class. Endpoint trust and identity token minting are owned by the target
-        classes themselves. This service only enforces the request-level auth
-        contract: for ``identity`` it confirms the target supports it and omits
-        the api_key so the target validates its own endpoint and authenticates
-        itself.
+        parameter contract, so declared scalar values are coerced before those
+        targets are constructed directly from the registry class. Endpoint trust
+        and identity token minting are owned by the target classes themselves.
+        This service only enforces the request-level auth contract: for
+        ``identity`` it confirms the target supports it and omits the api_key so
+        the target validates its own endpoint and authenticates itself.
 
         Args:
             request: The create target request with type, params, and auth_mode.
@@ -197,12 +197,44 @@ class TargetService:
             # resolver turns into live target objects.
             target_obj = self._registry.create_instance(request.type, **params)
         else:
+            params = self._coerce_direct_params(target_type=request.type, params=params)
             target_obj = target_cls(**params)
 
         self._registry.instances.register(target_obj)
 
         target_registry_name = target_obj.get_identifier().unique_name
         return self._build_instance_from_object(target_registry_name=target_registry_name, target_obj=target_obj)
+
+    def _coerce_direct_params(self, *, target_type: str, params: dict[str, Any]) -> dict[str, Any]:
+        """
+        Coerce declared string parameters while preserving accepted ``**kwargs``.
+
+        Args:
+            target_type (str): The registered target class name.
+            params (dict[str, Any]): Raw request parameters.
+
+        Returns:
+            dict[str, Any]: A copy with declared scalar strings coerced.
+
+        Raises:
+            RuntimeError: If metadata for the registered target is unavailable.
+            ValueError: If a declared string value cannot be coerced.
+        """
+        metadata = self._registry.get_registered_class_metadata(target_type)
+        if metadata is None:
+            raise RuntimeError(f"Target metadata for registered type '{target_type}' is unavailable.")
+
+        declared = {param.name: param for param in metadata.parameters}
+        coerced = dict(params)
+        for name, value in params.items():
+            param = declared.get(name)
+            if param is None or not isinstance(value, str) or not param.is_string_coercible:
+                continue
+            try:
+                coerced[name] = param.coerce_value(value)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"Parameter '{name}' of '{target_type}': {exc}") from exc
+        return coerced
 
     def _has_reference_params(self, *, target_type: str) -> bool:
         """
