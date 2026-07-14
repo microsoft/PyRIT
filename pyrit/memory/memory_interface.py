@@ -21,7 +21,10 @@ if TYPE_CHECKING:
     from pyrit.memory.memory_embedding import MemoryEmbedding
 
 from pyrit.memory.memory_models import (
+    AtomicAttackIdentifierEntry,
+    AttackIdentifierEntry,
     AttackResultEntry,
+    AttackTechniqueIdentifierEntry,
     Base,
     ComponentIdentifierEntry,
     ConversationEntry,
@@ -34,6 +37,7 @@ from pyrit.memory.memory_models import (
     ScoreEntry,
     ScorerIdentifierEntry,
     SeedEntry,
+    SeedIdentifierEntry,
     TargetIdentifierEntry,
 )
 from pyrit.memory.storage import (
@@ -43,7 +47,10 @@ from pyrit.memory.storage import (
     set_seed_sha256_async,
 )
 from pyrit.models import (
+    AtomicAttackIdentifier,
+    AttackIdentifier,
     AttackResult,
+    AttackTechniqueIdentifier,
     ComponentIdentifier,
     Conversation,
     ConversationStats,
@@ -59,6 +66,7 @@ from pyrit.models import (
     Seed,
     SeedDataset,
     SeedGroup,
+    SeedIdentifier,
     SeedType,
     TargetIdentifier,
     group_conversation_message_pieces_by_sequence,
@@ -557,6 +565,14 @@ class MemoryInterface(abc.ABC):
 
     @staticmethod
     def _get_identifier_entry_type(identifier: ComponentIdentifier) -> type[ComponentIdentifierEntry[Any]]:
+        if isinstance(identifier, AtomicAttackIdentifier):
+            return AtomicAttackIdentifierEntry
+        if isinstance(identifier, AttackTechniqueIdentifier):
+            return AttackTechniqueIdentifierEntry
+        if isinstance(identifier, AttackIdentifier):
+            return AttackIdentifierEntry
+        if isinstance(identifier, SeedIdentifier):
+            return SeedIdentifierEntry
         if isinstance(identifier, TargetIdentifier):
             return TargetIdentifierEntry
         if isinstance(identifier, ConverterIdentifier):
@@ -1893,6 +1909,14 @@ class MemoryInterface(abc.ABC):
         entries = [AttackResultEntry(entry=attack_result) for attack_result in attack_results]
         with closing(self.get_session()) as session:
             try:
+                for attack_result in attack_results:
+                    if attack_result.atomic_attack_identifier is not None:
+                        self._persist_identifier(
+                            session=session,
+                            identifier=AtomicAttackIdentifier.from_component_identifier(
+                                attack_result.atomic_attack_identifier
+                            ),
+                        )
                 session.add_all(entries)
                 session.commit()
             except SQLAlchemyError:

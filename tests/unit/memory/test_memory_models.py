@@ -9,9 +9,19 @@ from unittest.mock import MagicMock
 
 import pytest
 from pydantic import ValidationError
+from sqlalchemy import create_engine, select
+from sqlalchemy.orm import Session
 
 from pyrit.memory.memory_models import (
+    AtomicAttackIdentifierEntry,
+    AtomicAttackSeedIdentifierEntry,
+    AttackIdentifierEntry,
+    AttackRequestConverterIdentifierEntry,
+    AttackResponseConverterIdentifierEntry,
     AttackResultEntry,
+    AttackTechniqueIdentifierEntry,
+    AttackTechniqueSeedIdentifierEntry,
+    Base,
     ComponentIdentifierEntry,
     ConversationMessageWithSimilarity,
     ConverterIdentifierEntry,
@@ -23,14 +33,17 @@ from pyrit.memory.memory_models import (
     ScoreEntry,
     ScorerIdentifierEntry,
     SeedEntry,
+    SeedIdentifierEntry,
     TargetIdentifierEntry,
     UTCDateTime,
     _load_identifier,
 )
 from pyrit.models import (
     AtomicAttackIdentifier,
+    AttackIdentifier,
     AttackOutcome,
     AttackResult,
+    AttackTechniqueIdentifier,
     ComponentIdentifier,
     ConversationReference,
     ConversationType,
@@ -40,6 +53,7 @@ from pyrit.models import (
     ScenarioResult,
     Score,
     ScorerIdentifier,
+    SeedIdentifier,
     SeedObjective,
     SeedPrompt,
     SeedSimulatedConversation,
@@ -209,6 +223,10 @@ def test_scorer_identifier_entry_constructs_full_sub_scorer_graph():
         (ConverterIdentifier, ConverterIdentifierEntry),
         (ScorerIdentifier, ScorerIdentifierEntry),
         (ScenarioIdentifier, ScenarioIdentifierEntry),
+        (SeedIdentifier, SeedIdentifierEntry),
+        (AttackIdentifier, AttackIdentifierEntry),
+        (AttackTechniqueIdentifier, AttackTechniqueIdentifierEntry),
+        (AtomicAttackIdentifier, AtomicAttackIdentifierEntry),
     ],
 )
 def test_identifier_entry_maps_promoted_children_by_cardinality(
@@ -225,6 +243,82 @@ def test_identifier_entry_maps_promoted_children_by_cardinality(
 
     assert set(entry_type.CHILD_RELATIONSHIP_SPECS) == collection_children
     assert set(entry_type.CHILD_HASH_COLUMNS) == singular_children
+
+
+def test_atomic_attack_identifier_graph_persists_with_result_link() -> None:
+    target = TargetIdentifier(class_name="Target", class_module="pyrit.prompt_target", model_name="model")
+    scorer = ScorerIdentifier(class_name="Scorer", class_module="pyrit.score", scorer_type="true_false")
+    converter = ConverterIdentifier(
+        class_name="Converter",
+        class_module="pyrit.prompt_converter",
+        supported_input_types=["text"],
+        supported_output_types=["text"],
+    )
+    technique_seed = SeedIdentifier(
+        class_name="Seed",
+        class_module="pyrit.models",
+        value="technique seed",
+        data_type="text",
+    )
+    dataset_seed = SeedIdentifier(
+        class_name="Seed",
+        class_module="pyrit.models",
+        value="dataset seed",
+        data_type="text",
+    )
+    attack = AttackIdentifier(
+        class_name="Attack",
+        class_module="pyrit.executor.attack",
+        objective_target=target,
+        objective_scorer=scorer,
+        request_converters=[converter],
+        response_converters=[converter],
+    )
+    technique = AttackTechniqueIdentifier(
+        class_name="AttackTechnique",
+        class_module="pyrit.scenario.core.attack_technique",
+        attack=attack,
+        technique_seeds=[technique_seed],
+    )
+    atomic = AtomicAttackIdentifier(
+        class_name="AtomicAttack",
+        class_module="pyrit.scenario.core.atomic_attack",
+        attack_technique=technique,
+        seed_identifiers=[technique_seed, dataset_seed],
+    )
+    result = AttackResult(conversation_id="conversation", objective="objective", atomic_attack_identifier=atomic)
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    from pyrit.memory import MemoryInterface
+
+    memory = MagicMock(spec=MemoryInterface)
+    memory.get_session.side_effect = lambda: Session(engine)
+    memory._persist_identifier.side_effect = (
+        lambda *, session, identifier: MemoryInterface._persist_identifier(session=session, identifier=identifier)
+    )
+    MemoryInterface.add_attack_results_to_memory(memory, attack_results=[result])
+
+    with Session(engine) as session:
+        assert session.scalar(select(AttackResultEntry.atomic_attack_identifier_hash)) == atomic.hash
+        assert session.scalar(select(AtomicAttackIdentifierEntry.hash)) == atomic.hash
+        assert session.scalar(select(AttackTechniqueIdentifierEntry.hash)) == technique.hash
+        assert session.scalar(select(AttackIdentifierEntry.hash)) == attack.hash
+        assert len(session.scalars(select(SeedIdentifierEntry)).all()) == 2
+
+        technique_edge = session.scalar(select(AttackTechniqueSeedIdentifierEntry))
+        assert technique_edge is not None
+        assert (technique_edge.position, technique_edge.seed_identifier_hash) == (0, technique_seed.hash)
+        atomic_edges = session.scalars(
+            select(AtomicAttackSeedIdentifierEntry).order_by(AtomicAttackSeedIdentifierEntry.position)
+        ).all()
+        assert [edge.seed_identifier_hash for edge in atomic_edges] == [technique_seed.hash, dataset_seed.hash]
+        request_edge = session.scalar(select(AttackRequestConverterIdentifierEntry))
+        assert request_edge is not None
+        assert (request_edge.position, request_edge.converter_identifier_hash) == (0, converter.hash)
+        response_edge = session.scalar(select(AttackResponseConverterIdentifierEntry))
+        assert response_edge is not None
+        assert (response_edge.position, response_edge.converter_identifier_hash) == (0, converter.hash)
 
 
 # ---------------------------------------------------------------------------

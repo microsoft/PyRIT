@@ -15,6 +15,7 @@ from sqlalchemy import (
     ARRAY,
     INTEGER,
     JSON,
+    Boolean,
     DateTime,
     Float,
     ForeignKey,
@@ -38,8 +39,11 @@ from pyrit.common.utils import to_sha256
 from pyrit.models import (
     SEED_RESPONSE_JSON_SCHEMA_METADATA_KEY,
     AtomicAttackEvaluationIdentifier,
+    AtomicAttackIdentifier,
+    AttackIdentifier,
     AttackOutcome,
     AttackResult,
+    AttackTechniqueIdentifier,
     ChatMessageRole,
     ComponentIdentifier,
     Conversation,
@@ -57,6 +61,7 @@ from pyrit.models import (
     ScorerEvaluationIdentifier,
     ScorerIdentifier,
     Seed,
+    SeedIdentifier,
     SeedObjective,
     SeedPrompt,
     SeedSimulatedConversation,
@@ -430,7 +435,8 @@ class _ChildRelationshipSpec:
 
     relationship_name: str
     edge_factory: Callable[[], Any]
-    edge_child_attr: str
+    edge_child_attr: str | None = None
+    edge_child_hash_attr: str | None = None
     edge_position_attr: str | None = "position"
 
 
@@ -530,10 +536,13 @@ class ComponentIdentifierEntry(DomainBackedEntry[T]):
             for position, child_identifier in enumerate(children):
                 if not isinstance(child_identifier, ComponentIdentifier):
                     continue
-                typed_child_identifier = cast("T", child_identifier)
-                child_entry = cls._from_domain_model_recursive(domain_model=typed_child_identifier, seen=seen)
                 edge_row = spec.edge_factory()
-                setattr(edge_row, spec.edge_child_attr, child_entry)
+                if spec.edge_child_hash_attr is not None:
+                    setattr(edge_row, spec.edge_child_hash_attr, child_identifier.hash)
+                elif spec.edge_child_attr is not None:
+                    typed_child_identifier = cast("T", child_identifier)
+                    child_entry = cls._from_domain_model_recursive(domain_model=typed_child_identifier, seen=seen)
+                    setattr(edge_row, spec.edge_child_attr, child_entry)
                 if spec.edge_position_attr:
                     setattr(edge_row, spec.edge_position_attr, position)
                 edge_rows.append(edge_row)
@@ -772,6 +781,204 @@ class ScenarioIdentifierEntry(ComponentIdentifierEntry[ScenarioIdentifier]):
     objective_scorer: Mapped["ScorerIdentifierEntry | None"] = relationship(
         "ScorerIdentifierEntry",
         foreign_keys=[objective_scorer_hash],
+    )
+
+
+class SeedIdentifierEntry(ComponentIdentifierEntry[SeedIdentifier]):
+    """Content-addressed store of ``SeedIdentifier`` projections."""
+
+    __tablename__ = "SeedIdentifiers"
+    __table_args__ = {"extend_existing": True}
+
+    value: Mapped[str | None] = mapped_column(Unicode, nullable=True)
+    value_sha256: Mapped[str | None] = mapped_column(String, nullable=True)
+    data_type: Mapped[str | None] = mapped_column(String, nullable=True)
+    dataset_name: Mapped[str | None] = mapped_column(String, nullable=True)
+    is_general_technique: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+
+
+class AttackIdentifierEntry(ComponentIdentifierEntry[AttackIdentifier]):
+    """Content-addressed store of ``AttackIdentifier`` projections."""
+
+    __tablename__ = "AttackIdentifiers"
+    __table_args__ = {"extend_existing": True}
+
+    CHILD_RELATIONSHIP_SPECS: ClassVar[dict[str, _ChildRelationshipSpec]] = {
+        "request_converters": _ChildRelationshipSpec(
+            relationship_name="request_converters",
+            edge_factory=lambda: AttackRequestConverterIdentifierEntry(),
+            edge_child_hash_attr="converter_identifier_hash",
+        ),
+        "response_converters": _ChildRelationshipSpec(
+            relationship_name="response_converters",
+            edge_factory=lambda: AttackResponseConverterIdentifierEntry(),
+            edge_child_hash_attr="converter_identifier_hash",
+        ),
+    }
+    CHILD_HASH_COLUMNS: ClassVar[dict[str, str]] = {
+        "objective_target": "objective_target_hash",
+        "adversarial_chat": "adversarial_chat_hash",
+        "objective_scorer": "objective_scorer_hash",
+    }
+
+    adversarial_system_prompt: Mapped[str | None] = mapped_column(Unicode, nullable=True)
+    adversarial_seed_prompt: Mapped[str | None] = mapped_column(Unicode, nullable=True)
+    objective_target_hash: Mapped[str | None] = mapped_column(
+        String(64), ForeignKey(f"{TargetIdentifierEntry.__tablename__}.hash"), nullable=True
+    )
+    adversarial_chat_hash: Mapped[str | None] = mapped_column(
+        String(64), ForeignKey(f"{TargetIdentifierEntry.__tablename__}.hash"), nullable=True
+    )
+    objective_scorer_hash: Mapped[str | None] = mapped_column(
+        String(64), ForeignKey(f"{ScorerIdentifierEntry.__tablename__}.hash"), nullable=True
+    )
+
+    objective_target: Mapped["TargetIdentifierEntry | None"] = relationship(
+        "TargetIdentifierEntry", foreign_keys=[objective_target_hash]
+    )
+    adversarial_chat: Mapped["TargetIdentifierEntry | None"] = relationship(
+        "TargetIdentifierEntry", foreign_keys=[adversarial_chat_hash]
+    )
+    objective_scorer: Mapped["ScorerIdentifierEntry | None"] = relationship(
+        "ScorerIdentifierEntry", foreign_keys=[objective_scorer_hash]
+    )
+    request_converters: Mapped[list["AttackRequestConverterIdentifierEntry"]] = relationship(
+        "AttackRequestConverterIdentifierEntry",
+        order_by="AttackRequestConverterIdentifierEntry.position",
+        cascade="all, delete-orphan",
+    )
+    response_converters: Mapped[list["AttackResponseConverterIdentifierEntry"]] = relationship(
+        "AttackResponseConverterIdentifierEntry",
+        order_by="AttackResponseConverterIdentifierEntry.position",
+        cascade="all, delete-orphan",
+    )
+
+
+class AttackRequestConverterIdentifierEntry(Base):
+    """Ordered request-converter edge for an attack identifier."""
+
+    __tablename__ = "AttackRequestConverterIdentifiers"
+    __table_args__ = {"extend_existing": True}
+
+    attack_identifier_hash: Mapped[str] = mapped_column(
+        String(64), ForeignKey(f"{AttackIdentifierEntry.__tablename__}.hash"), primary_key=True
+    )
+    position: Mapped[int] = mapped_column(INTEGER, primary_key=True)
+    converter_identifier_hash: Mapped[str] = mapped_column(
+        String(64), ForeignKey(f"{ConverterIdentifierEntry.__tablename__}.hash"), nullable=False
+    )
+    converter_identifier: Mapped["ConverterIdentifierEntry"] = relationship(
+        "ConverterIdentifierEntry", foreign_keys=[converter_identifier_hash]
+    )
+
+
+class AttackResponseConverterIdentifierEntry(Base):
+    """Ordered response-converter edge for an attack identifier."""
+
+    __tablename__ = "AttackResponseConverterIdentifiers"
+    __table_args__ = {"extend_existing": True}
+
+    attack_identifier_hash: Mapped[str] = mapped_column(
+        String(64), ForeignKey(f"{AttackIdentifierEntry.__tablename__}.hash"), primary_key=True
+    )
+    position: Mapped[int] = mapped_column(INTEGER, primary_key=True)
+    converter_identifier_hash: Mapped[str] = mapped_column(
+        String(64), ForeignKey(f"{ConverterIdentifierEntry.__tablename__}.hash"), nullable=False
+    )
+    converter_identifier: Mapped["ConverterIdentifierEntry"] = relationship(
+        "ConverterIdentifierEntry", foreign_keys=[converter_identifier_hash]
+    )
+
+
+class AttackTechniqueIdentifierEntry(ComponentIdentifierEntry[AttackTechniqueIdentifier]):
+    """Content-addressed store of ``AttackTechniqueIdentifier`` projections."""
+
+    __tablename__ = "AttackTechniqueIdentifiers"
+    __table_args__ = {"extend_existing": True}
+
+    CHILD_RELATIONSHIP_SPECS: ClassVar[dict[str, _ChildRelationshipSpec]] = {
+        "technique_seeds": _ChildRelationshipSpec(
+            relationship_name="technique_seeds",
+            edge_factory=lambda: AttackTechniqueSeedIdentifierEntry(),
+            edge_child_hash_attr="seed_identifier_hash",
+        )
+    }
+    CHILD_HASH_COLUMNS: ClassVar[dict[str, str]] = {"attack": "attack_identifier_hash"}
+
+    attack_identifier_hash: Mapped[str | None] = mapped_column(
+        String(64), ForeignKey(f"{AttackIdentifierEntry.__tablename__}.hash"), nullable=True
+    )
+    attack: Mapped["AttackIdentifierEntry | None"] = relationship(
+        "AttackIdentifierEntry", foreign_keys=[attack_identifier_hash]
+    )
+    technique_seeds: Mapped[list["AttackTechniqueSeedIdentifierEntry"]] = relationship(
+        "AttackTechniqueSeedIdentifierEntry",
+        order_by="AttackTechniqueSeedIdentifierEntry.position",
+        cascade="all, delete-orphan",
+    )
+
+
+class AttackTechniqueSeedIdentifierEntry(Base):
+    """Ordered seed edge for an attack technique identifier."""
+
+    __tablename__ = "AttackTechniqueSeedIdentifiers"
+    __table_args__ = {"extend_existing": True}
+
+    attack_technique_identifier_hash: Mapped[str] = mapped_column(
+        String(64), ForeignKey(f"{AttackTechniqueIdentifierEntry.__tablename__}.hash"), primary_key=True
+    )
+    position: Mapped[int] = mapped_column(INTEGER, primary_key=True)
+    seed_identifier_hash: Mapped[str] = mapped_column(
+        String(64), ForeignKey(f"{SeedIdentifierEntry.__tablename__}.hash"), nullable=False
+    )
+    seed_identifier: Mapped["SeedIdentifierEntry"] = relationship(
+        "SeedIdentifierEntry", foreign_keys=[seed_identifier_hash]
+    )
+
+
+class AtomicAttackIdentifierEntry(ComponentIdentifierEntry[AtomicAttackIdentifier]):
+    """Content-addressed store of ``AtomicAttackIdentifier`` projections."""
+
+    __tablename__ = "AtomicAttackIdentifiers"
+    __table_args__ = {"extend_existing": True}
+
+    CHILD_RELATIONSHIP_SPECS: ClassVar[dict[str, _ChildRelationshipSpec]] = {
+        "seed_identifiers": _ChildRelationshipSpec(
+            relationship_name="seed_identifiers",
+            edge_factory=lambda: AtomicAttackSeedIdentifierEntry(),
+            edge_child_hash_attr="seed_identifier_hash",
+        )
+    }
+    CHILD_HASH_COLUMNS: ClassVar[dict[str, str]] = {"attack_technique": "attack_technique_identifier_hash"}
+
+    attack_technique_identifier_hash: Mapped[str | None] = mapped_column(
+        String(64), ForeignKey(f"{AttackTechniqueIdentifierEntry.__tablename__}.hash"), nullable=True
+    )
+    attack_technique: Mapped["AttackTechniqueIdentifierEntry | None"] = relationship(
+        "AttackTechniqueIdentifierEntry", foreign_keys=[attack_technique_identifier_hash]
+    )
+    seed_identifiers: Mapped[list["AtomicAttackSeedIdentifierEntry"]] = relationship(
+        "AtomicAttackSeedIdentifierEntry",
+        order_by="AtomicAttackSeedIdentifierEntry.position",
+        cascade="all, delete-orphan",
+    )
+
+
+class AtomicAttackSeedIdentifierEntry(Base):
+    """Ordered seed edge for an atomic attack identifier."""
+
+    __tablename__ = "AtomicAttackSeedIdentifiers"
+    __table_args__ = {"extend_existing": True}
+
+    atomic_attack_identifier_hash: Mapped[str] = mapped_column(
+        String(64), ForeignKey(f"{AtomicAttackIdentifierEntry.__tablename__}.hash"), primary_key=True
+    )
+    position: Mapped[int] = mapped_column(INTEGER, primary_key=True)
+    seed_identifier_hash: Mapped[str] = mapped_column(
+        String(64), ForeignKey(f"{SeedIdentifierEntry.__tablename__}.hash"), nullable=False
+    )
+    seed_identifier: Mapped["SeedIdentifierEntry"] = relationship(
+        "SeedIdentifierEntry", foreign_keys=[seed_identifier_hash]
     )
 
 
@@ -1294,6 +1501,9 @@ class AttackResultEntry(Base):
     conversation_id = mapped_column(String, nullable=False)
     objective = mapped_column(Unicode, nullable=False)
     atomic_attack_identifier: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    atomic_attack_identifier_hash: Mapped[str | None] = mapped_column(
+        String(64), ForeignKey(f"{AtomicAttackIdentifierEntry.__tablename__}.hash"), nullable=True
+    )
     objective_sha256 = mapped_column(String, nullable=True)
     last_response_id: Mapped[uuid.UUID | None] = mapped_column(
         CustomUUID, ForeignKey(f"{PromptMemoryEntry.__tablename__}.id"), nullable=True
@@ -1347,6 +1557,10 @@ class AttackResultEntry(Base):
         "ScoreEntry",
         foreign_keys=[last_score_id],
     )
+    atomic_attack_identifier_entry: Mapped["AtomicAttackIdentifierEntry | None"] = relationship(
+        "AtomicAttackIdentifierEntry",
+        foreign_keys=[atomic_attack_identifier_hash],
+    )
 
     def __init__(self, *, entry: AttackResult) -> None:
         """
@@ -1360,13 +1574,17 @@ class AttackResultEntry(Base):
         self.objective = entry.objective
         # Always recompute eval_hash before dumping so the stored JSON carries the
         # freshly computed value for DB-level filtering (never a value from storage).
+        atomic_attack_identifier = None
         if entry.atomic_attack_identifier:
-            entry.atomic_attack_identifier = entry.atomic_attack_identifier.with_eval_hash(
-                AtomicAttackEvaluationIdentifier(entry.atomic_attack_identifier).eval_hash
+            atomic_attack_identifier = AtomicAttackIdentifier.from_component_identifier(entry.atomic_attack_identifier)
+            atomic_attack_identifier = atomic_attack_identifier.with_eval_hash(
+                AtomicAttackEvaluationIdentifier(atomic_attack_identifier).eval_hash
             )
+            entry.atomic_attack_identifier = atomic_attack_identifier
         self.atomic_attack_identifier = (
-            entry.atomic_attack_identifier.model_dump() if entry.atomic_attack_identifier else None
+            atomic_attack_identifier.model_dump() if atomic_attack_identifier else None
         )
+        self.atomic_attack_identifier_hash = atomic_attack_identifier.hash if atomic_attack_identifier else None
         self.objective_sha256 = to_sha256(entry.objective)
 
         # Use helper method for UUID conversions

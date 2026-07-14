@@ -1040,6 +1040,121 @@ def test_scenario_identifier_migration_backfills_dependencies_and_result_link():
             engine.dispose()
 
 
+# =============================================================================
+# Backfill tests for attack identifier persistence (d9f2a4b6c8e0)
+# =============================================================================
+
+
+def test_attack_identifier_migration_backfills_graph_and_result_link():
+    """Atomic attack JSON is normalized with dependencies and ordered seed links."""
+    from pyrit.models import (
+        AtomicAttackIdentifier,
+        AttackIdentifier,
+        AttackTechniqueIdentifier,
+        ConverterIdentifier,
+        ScorerIdentifier,
+        SeedIdentifier,
+        TargetIdentifier,
+    )
+
+    target = TargetIdentifier(class_name="Target", class_module="pyrit.prompt_target", model_name="model")
+    scorer = ScorerIdentifier(class_name="Scorer", class_module="pyrit.score", scorer_type="true_false")
+    converter = ConverterIdentifier(
+        class_name="Converter",
+        class_module="pyrit.prompt_converter",
+        supported_input_types=["text"],
+        supported_output_types=["text"],
+    )
+    technique_seed = SeedIdentifier(
+        class_name="Seed",
+        class_module="pyrit.models",
+        value="technique seed",
+        data_type="text",
+    )
+    dataset_seed = SeedIdentifier(
+        class_name="Seed",
+        class_module="pyrit.models",
+        value="dataset seed",
+        data_type="text",
+    )
+    attack = AttackIdentifier(
+        class_name="Attack",
+        class_module="pyrit.executor.attack",
+        objective_target=target,
+        objective_scorer=scorer,
+        request_converters=[converter],
+    )
+    technique = AttackTechniqueIdentifier(
+        class_name="AttackTechnique",
+        class_module="pyrit.scenario.core.attack_technique",
+        attack=attack,
+        technique_seeds=[technique_seed],
+    )
+    atomic = AtomicAttackIdentifier(
+        class_name="AtomicAttack",
+        class_module="pyrit.scenario.core.atomic_attack",
+        attack_technique=technique,
+        seed_identifiers=[technique_seed, dataset_seed],
+    )
+    result_id = str(uuid.uuid4())
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        engine = create_engine(f"sqlite:///{os.path.join(temp_dir, 'attack-backfill.db')}")
+        try:
+            with engine.begin() as connection:
+                config = _config_for(connection)
+                command.upgrade(config, "c8e1f3a5b7d9")
+                connection.execute(
+                    text(
+                        'INSERT INTO "AttackResultEntries" '
+                        "(id, conversation_id, objective, atomic_attack_identifier, objective_sha256, "
+                        "executed_turns, execution_time_ms, outcome, timestamp, pyrit_version) "
+                        "VALUES (:id, 'conversation', 'objective', :identifier, 'sha', 1, 0, "
+                        "'success', '2026-07-13', '0.10.0')"
+                    ),
+                    {"id": result_id, "identifier": json.dumps(atomic.model_dump())},
+                )
+
+                command.upgrade(config, "d9f2a4b6c8e0")
+
+                result_hash = connection.execute(
+                    text('SELECT atomic_attack_identifier_hash FROM "AttackResultEntries" WHERE id = :id'),
+                    {"id": result_id},
+                ).scalar_one()
+                atomic_row = connection.execute(
+                    text('SELECT hash, attack_technique_identifier_hash FROM "AtomicAttackIdentifiers"')
+                ).one()
+                technique_row = connection.execute(
+                    text('SELECT hash, attack_identifier_hash FROM "AttackTechniqueIdentifiers"')
+                ).one()
+                attack_row = connection.execute(
+                    text(
+                        "SELECT hash, objective_target_hash, objective_scorer_hash "
+                        'FROM "AttackIdentifiers"'
+                    )
+                ).one()
+                seed_hashes = set(connection.execute(text('SELECT hash FROM "SeedIdentifiers"')).scalars())
+                atomic_seed_hashes = connection.execute(
+                    text(
+                        "SELECT seed_identifier_hash FROM "
+                        '"AtomicAttackSeedIdentifiers" ORDER BY position'
+                    )
+                ).scalars().all()
+                request_converter_hash = connection.execute(
+                    text('SELECT converter_identifier_hash FROM "AttackRequestConverterIdentifiers"')
+                ).scalar_one()
+
+            assert result_hash == atomic.hash
+            assert atomic_row == (atomic.hash, technique.hash)
+            assert technique_row == (technique.hash, attack.hash)
+            assert attack_row == (attack.hash, target.hash, scorer.hash)
+            assert seed_hashes == {technique_seed.hash, dataset_seed.hash}
+            assert atomic_seed_hashes == [technique_seed.hash, dataset_seed.hash]
+            assert request_converter_hash == converter.hash
+        finally:
+            engine.dispose()
+
+
 _STRING_TYPES_REQUIRING_LENGTH = {"String", "VARCHAR", "NVARCHAR", "Unicode"}
 
 
