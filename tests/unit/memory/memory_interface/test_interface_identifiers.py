@@ -54,15 +54,15 @@ def identifier_graph(sqlite_instance: MemoryInterface) -> IdentifierGraph:
     nested_converter = ConverterIdentifier(
         class_name="NestedConverter",
         class_module="tests.unit.memory",
-        supported_input_types=["text"],
-        supported_output_types=["text"],
+        supported_input_types=["text", "image_path"],
+        supported_output_types=["text", "audio_path"],
         converter_target=adversarial_target,
     )
     converter = ConverterIdentifier(
         class_name="CompositeConverter",
         class_module="tests.unit.memory",
-        supported_input_types=["text"],
-        supported_output_types=["text"],
+        supported_input_types=["text", "image_path"],
+        supported_output_types=["text", "audio_path"],
         sub_converter=nested_converter,
     )
     scorer = ScorerIdentifier(
@@ -116,8 +116,8 @@ def identifier_graph(sqlite_instance: MemoryInterface) -> IdentifierGraph:
         class_name="TestScenario",
         class_module="tests.unit.memory",
         version=2,
-        techniques=["TestTechnique"],
-        datasets=["dataset-a"],
+        techniques=["TestTechnique", "OtherTechnique"],
+        datasets=["dataset-a", "dataset-b"],
         objective_target=objective_target,
         objective_scorer=scorer,
     )
@@ -148,7 +148,7 @@ def test_get_target_identifiers_by_hash_and_promoted_field(sqlite_instance: Memo
         class_module="tests.unit.memory",
         endpoint="https://example.test",
         model_name="test-model",
-        supported_auth_modes=["api_key"],
+        supported_auth_modes=["api_key", "identity"],
     )
     sqlite_instance.add_conversation_to_memory(
         conversation=Conversation(conversation_id="identifier-query", target_identifier=target)
@@ -157,11 +157,13 @@ def test_get_target_identifiers_by_hash_and_promoted_field(sqlite_instance: Memo
     identifiers = sqlite_instance.get_target_identifiers(
         identifier_hashes=[target.hash],
         model_name="test-model",
-        supported_auth_modes=["api_key"],
+        supported_auth_modes=["identity", "api_key"],
     )
 
     assert identifiers == [target]
     assert isinstance(identifiers[0], TargetIdentifier)
+    assert sqlite_instance.get_target_identifiers(supported_auth_modes=["api_key"]) == []
+    assert sqlite_instance.get_target_identifiers(supported_auth_modes=["API_KEY", "identity"]) == []
 
 
 def test_get_identifiers_reconstructs_each_typed_graph(
@@ -178,8 +180,8 @@ def test_get_identifiers_reconstructs_each_typed_graph(
         ),
         (
             sqlite_instance.get_converter_identifiers(
-                supported_input_types=["text"],
-                supported_output_types=["text"],
+                supported_input_types=["image_path", "text"],
+                supported_output_types=["audio_path", "text"],
                 sub_converter_hash=identifier_graph.nested_converter.hash,
             ),
             identifier_graph.converter,
@@ -195,8 +197,8 @@ def test_get_identifiers_reconstructs_each_typed_graph(
         (
             sqlite_instance.get_scenario_identifiers(
                 version=2,
-                techniques=["TestTechnique"],
-                datasets=["dataset-a"],
+                techniques=["OtherTechnique", "TestTechnique"],
+                datasets=["dataset-b", "dataset-a"],
                 objective_target_hash=identifier_graph.objective_target.hash,
                 objective_scorer_hash=identifier_graph.scorer.hash,
             ),

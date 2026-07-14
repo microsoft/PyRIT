@@ -604,7 +604,12 @@ class MemoryInterface(abc.ABC):
         if identifier_hashes is not None and not identifier_hashes:
             return []
 
-        conditions = [getattr(entry_type, name) == value for name, value in filters.items() if value is not None]
+        list_filters = {name: value for name, value in filters.items() if isinstance(value, list)}
+        conditions = [
+            getattr(entry_type, name) == value
+            for name, value in filters.items()
+            if value is not None and name not in list_filters
+        ]
         if identifier_hashes is not None:
             entries = self._execute_batched_query(
                 entry_type,
@@ -620,6 +625,14 @@ class MemoryInterface(abc.ABC):
                 order_by=entry_type.hash,
             )
 
+        entries = [
+            entry
+            for entry in entries
+            if all(
+                getattr(entry, name) is not None and sorted(getattr(entry, name)) == sorted(value)
+                for name, value in list_filters.items()
+            )
+        ]
         identifiers: list[IdentifierModel] = []
         seen_hashes: set[str] = set()
         for entry in sorted(entries, key=lambda item: item.hash):
@@ -661,7 +674,7 @@ class MemoryInterface(abc.ABC):
             temperature (float | None): Temperature to match.
             top_p (float | None): Top-p value to match.
             max_requests_per_minute (int | None): Request limit to match.
-            supported_auth_modes (Sequence[str] | None): Ordered authentication modes to match.
+            supported_auth_modes (Sequence[str] | None): Authentication modes to match exactly, in any order.
 
         Returns:
             Sequence[TargetIdentifier]: Matching identifiers ordered by content hash.
@@ -698,8 +711,8 @@ class MemoryInterface(abc.ABC):
         Args:
             identifier_hashes (Sequence[str] | None): Content hashes to include.
             class_name (str | None): Component class name to match.
-            supported_input_types (Sequence[str] | None): Ordered input types to match.
-            supported_output_types (Sequence[str] | None): Ordered output types to match.
+            supported_input_types (Sequence[str] | None): Input types to match exactly, in any order.
+            supported_output_types (Sequence[str] | None): Output types to match exactly, in any order.
             converter_target_hash (str | None): Converter target hash to match.
             sub_converter_hash (str | None): Nested converter hash to match.
 
@@ -773,8 +786,8 @@ class MemoryInterface(abc.ABC):
             identifier_hashes (Sequence[str] | None): Content hashes to include.
             class_name (str | None): Component class name to match.
             version (int | None): Scenario definition version to match.
-            techniques (Sequence[str] | None): Ordered technique names to match.
-            datasets (Sequence[str] | None): Ordered dataset names to match.
+            techniques (Sequence[str] | None): Technique names to match exactly, in any order.
+            datasets (Sequence[str] | None): Dataset names to match exactly, in any order.
             objective_target_hash (str | None): Objective target hash to match.
             objective_scorer_hash (str | None): Objective scorer hash to match.
 
