@@ -284,6 +284,23 @@ def test_identifier_entry_maps_promoted_scalars_to_columns(
     assert mapped_scalars == set(identifier_type.promoted_scalar_field_names())
 
 
+def test_identifier_entry_rejects_missing_promoted_scalar_column() -> None:
+    class IdentifierWithPromotedScalar(ComponentIdentifier):
+        promoted_value: str | None = None
+
+    table_name = "IncompleteIdentifierEntries"
+    try:
+        with pytest.raises(TypeError, match="has no mapped column for promoted scalar field.*promoted_value"):
+
+            class IncompleteIdentifierEntry(ComponentIdentifierEntry[IdentifierWithPromotedScalar]):
+                __tablename__ = table_name
+                __table_args__ = {"extend_existing": True}
+    finally:
+        table = Base.metadata.tables.get(table_name)
+        if table is not None:
+            Base.metadata.remove(table)
+
+
 def test_atomic_attack_identifier_graph_persists_with_result_link() -> None:
     target = TargetIdentifier(class_name="Target", class_module="pyrit.prompt_target", model_name="model")
     scorer = ScorerIdentifier(class_name="Scorer", class_module="pyrit.score", scorer_type="true_false")

@@ -8,7 +8,7 @@ from abc import abstractmethod
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, ClassVar, Generic, Literal, TypeVar, cast
+from typing import Any, ClassVar, Generic, Literal, TypeVar, cast, get_args, get_origin
 
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import (
@@ -476,6 +476,33 @@ class ComponentIdentifierEntry(DomainBackedEntry[T]):
     #: Version that first wrote this content-addressed row. Nullable for backwards
     #: compatibility with existing databases.
     pyrit_version: Mapped[str | None] = mapped_column(String, nullable=True)
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        """
+        Validate that concrete entries persist every promoted scalar field.
+
+        Raises:
+            TypeError: If the entry omits its identifier type or a mapped scalar column.
+        """
+        super().__init_subclass__(**kwargs)
+        if cls.__dict__.get("__abstract__", False):
+            return
+
+        identifier_type = next(
+            (
+                get_args(base)[0]
+                for base in getattr(cls, "__orig_bases__", ())
+                if get_origin(base) is ComponentIdentifierEntry
+            ),
+            None,
+        )
+        if not isinstance(identifier_type, type) or not issubclass(identifier_type, ComponentIdentifier):
+            raise TypeError(f"{cls.__name__} must declare its ComponentIdentifier domain model type.")
+
+        missing_columns = set(identifier_type.promoted_scalar_field_names()) - set(cls.__table__.columns.keys())
+        if missing_columns:
+            names = ", ".join(sorted(missing_columns))
+            raise TypeError(f"{cls.__name__} has no mapped column for promoted scalar field(s): {names}.")
 
     @classmethod
     def from_domain_model(cls, domain_model: T) -> Self:
