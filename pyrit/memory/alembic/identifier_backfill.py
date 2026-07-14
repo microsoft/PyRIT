@@ -300,8 +300,7 @@ class IdentifierGraphInserter:
         values.update(extra or {})
         columns = list(values)
         statement = sa.text(
-            f'INSERT INTO "{table}" ({", ".join(columns)}) '
-            f'VALUES ({", ".join(f":{column}" for column in columns)})'
+            f'INSERT INTO "{table}" ({", ".join(columns)}) VALUES ({", ".join(f":{column}" for column in columns)})'
         )
         self._bind.execute(statement, values)
         self._hashes[table].add(identifier_hash)
@@ -318,7 +317,7 @@ class IdentifierGraphInserter:
     ) -> None:
         statement = sa.text(
             f'INSERT INTO "{table}" ({parent_column}, position, {child_column}) '
-            f'VALUES (:parent_hash, :position, :child_hash)'
+            f"VALUES (:parent_hash, :position, :child_hash)"
         )
         for position, child_hash in enumerate(child_hashes):
             self._bind.execute(

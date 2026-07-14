@@ -827,12 +827,15 @@ def test_identifier_migrations_are_nullable_and_best_effort_with_malformed_json(
                     {"id": "malformed-conversation", "value": "not-json"},
                 )
                 command.upgrade(config, "e5f7a9c1b3d2")
-                assert connection.execute(
-                    text(
-                        'SELECT target_identifier_hash FROM "Conversations" '
-                        "WHERE conversation_id = 'malformed-conversation'"
-                    )
-                ).scalar_one() is None
+                assert (
+                    connection.execute(
+                        text(
+                            'SELECT target_identifier_hash FROM "Conversations" '
+                            "WHERE conversation_id = 'malformed-conversation'"
+                        )
+                    ).scalar_one()
+                    is None
+                )
 
                 score_id = str(uuid.uuid4())
                 connection.execute(
@@ -844,10 +847,13 @@ def test_identifier_migrations_are_nullable_and_best_effort_with_malformed_json(
                     {"id": score_id},
                 )
                 command.upgrade(config, "a6c8e0f2b4d6")
-                assert connection.execute(
-                    text('SELECT scorer_identifier_hash FROM "ScoreEntries" WHERE id = :id'),
-                    {"id": score_id},
-                ).scalar_one() is None
+                assert (
+                    connection.execute(
+                        text('SELECT scorer_identifier_hash FROM "ScoreEntries" WHERE id = :id'),
+                        {"id": score_id},
+                    ).scalar_one()
+                    is None
+                )
 
                 result_id = str(uuid.uuid4())
                 connection.execute(
@@ -861,10 +867,13 @@ def test_identifier_migrations_are_nullable_and_best_effort_with_malformed_json(
                     {"id": result_id},
                 )
                 command.upgrade(config, "b7d9f1a3c5e7")
-                assert connection.execute(
-                    text('SELECT scenario_identifier_hash FROM "ScenarioResultEntries" WHERE id = :id'),
-                    {"id": result_id},
-                ).scalar_one() is None
+                assert (
+                    connection.execute(
+                        text('SELECT scenario_identifier_hash FROM "ScenarioResultEntries" WHERE id = :id'),
+                        {"id": result_id},
+                    ).scalar_one()
+                    is None
+                )
 
                 prompt_id = str(uuid.uuid4())
                 connection.execute(
@@ -891,10 +900,13 @@ def test_identifier_migrations_are_nullable_and_best_effort_with_malformed_json(
                     {"id": attack_result_id},
                 )
                 command.upgrade(config, "d9f2a4b6c8e0")
-                assert connection.execute(
-                    text('SELECT atomic_attack_identifier_hash FROM "AttackResultEntries" WHERE id = :id'),
-                    {"id": attack_result_id},
-                ).scalar_one() is None
+                assert (
+                    connection.execute(
+                        text('SELECT atomic_attack_identifier_hash FROM "AttackResultEntries" WHERE id = :id'),
+                        {"id": attack_result_id},
+                    ).scalar_one()
+                    is None
+                )
 
                 for table_name in (
                     "TargetIdentifiers",
@@ -1246,18 +1258,16 @@ def test_attack_identifier_migration_backfills_graph_and_result_link():
                     text('SELECT hash, attack_identifier_hash FROM "AttackTechniqueIdentifiers"')
                 ).one()
                 attack_row = connection.execute(
-                    text(
-                        "SELECT hash, objective_target_hash, objective_scorer_hash "
-                        'FROM "AttackIdentifiers"'
-                    )
+                    text('SELECT hash, objective_target_hash, objective_scorer_hash FROM "AttackIdentifiers"')
                 ).one()
                 seed_hashes = set(connection.execute(text('SELECT hash FROM "SeedIdentifiers"')).scalars())
-                atomic_seed_hashes = connection.execute(
-                    text(
-                        "SELECT seed_identifier_hash FROM "
-                        '"AtomicAttackSeedIdentifiers" ORDER BY position'
+                atomic_seed_hashes = (
+                    connection.execute(
+                        text('SELECT seed_identifier_hash FROM "AtomicAttackSeedIdentifiers" ORDER BY position')
                     )
-                ).scalars().all()
+                    .scalars()
+                    .all()
+                )
                 request_converter_hash = connection.execute(
                     text('SELECT converter_identifier_hash FROM "AttackRequestConverterIdentifiers"')
                 ).scalar_one()

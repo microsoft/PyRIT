@@ -294,8 +294,8 @@ def test_atomic_attack_identifier_graph_persists_with_result_link() -> None:
 
     memory = MagicMock(spec=MemoryInterface)
     memory.get_session.side_effect = lambda: Session(engine)
-    memory._persist_identifier.side_effect = (
-        lambda *, session, identifier: MemoryInterface._persist_identifier(session=session, identifier=identifier)
+    memory._persist_identifier.side_effect = lambda *, session, identifier: MemoryInterface._persist_identifier(
+        session=session, identifier=identifier
     )
     MemoryInterface.add_attack_results_to_memory(memory, attack_results=[result])
 

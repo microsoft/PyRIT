@@ -162,14 +162,11 @@ def _backfill_attack_identifiers() -> None:
     bind = op.get_bind()
     result_rows = bind.execute(
         sa.text(
-            'SELECT id, atomic_attack_identifier FROM "AttackResultEntries" '
-            "WHERE atomic_attack_identifier IS NOT NULL"
+            'SELECT id, atomic_attack_identifier FROM "AttackResultEntries" WHERE atomic_attack_identifier IS NOT NULL'
         )
     ).fetchall()
     inserter = IdentifierGraphInserter(bind=bind)
-    update_stmt = sa.text(
-        'UPDATE "AttackResultEntries" SET atomic_attack_identifier_hash = :hash WHERE id = :id'
-    )
+    update_stmt = sa.text('UPDATE "AttackResultEntries" SET atomic_attack_identifier_hash = :hash WHERE id = :id')
 
     skipped = 0
     for result_id, raw_identifier in result_rows:

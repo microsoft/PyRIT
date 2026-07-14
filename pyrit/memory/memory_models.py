@@ -1581,9 +1581,7 @@ class AttackResultEntry(Base):
                 AtomicAttackEvaluationIdentifier(atomic_attack_identifier).eval_hash
             )
             entry.atomic_attack_identifier = atomic_attack_identifier
-        self.atomic_attack_identifier = (
-            atomic_attack_identifier.model_dump() if atomic_attack_identifier else None
-        )
+        self.atomic_attack_identifier = atomic_attack_identifier.model_dump() if atomic_attack_identifier else None
         self.atomic_attack_identifier_hash = atomic_attack_identifier.hash if atomic_attack_identifier else None
         self.objective_sha256 = to_sha256(entry.objective)
 
