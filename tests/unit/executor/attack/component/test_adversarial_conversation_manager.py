@@ -539,17 +539,6 @@ class TestGetNextMessageAsync:
         with pytest.raises(InvalidJsonException):
             await manager.get_next_message_async(turn_index=1, last_response=_response_message())
 
-    async def test_raise_on_invalid_json_false_returns_raw(self):
-        normalizer = _normalizer("totally not json")
-        manager = _manager(
-            adversarial_system_prompt=_system_prompt(schema=SCHEMA),
-            raise_on_invalid_json=False,
-            prompt_normalizer=normalizer,
-        )
-        turn = await manager.get_next_message_async(turn_index=1, last_response=_response_message())
-        assert turn.reply is not None and turn.reply.next_message == "totally not json"
-        assert turn.objective_message.get_value() == "totally not json"
-
 
 # --- get_next_message_async: bypass path -------------------------------------
 

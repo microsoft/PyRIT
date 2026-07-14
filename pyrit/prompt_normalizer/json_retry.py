@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, TypeVar
 
-from pyrit.exceptions import InvalidJsonException, pyrit_json_retry
+from pyrit.exceptions import pyrit_json_retry
 from pyrit.models import ConversationRetryReason
 
 if TYPE_CHECKING:
@@ -25,7 +25,6 @@ async def send_json_with_retry_async(
     message: Message,
     conversation_id: str,
     parse: Callable[[Message], T],
-    fallback: Callable[[Message], T] | None = None,
 ) -> T:
     """
     Send a message expecting a JSON response, retrying on a clean conversation history.
@@ -54,30 +53,17 @@ async def send_json_with_retry_async(
         parse (Callable[[Message], T]): Turns the response into the parsed result. Must raise
             ``InvalidJsonException`` on a bad parse to trigger a retry. Other exceptions
             (e.g. blocked/empty) propagate without retrying.
-        fallback (Callable[[Message], T] | None): When provided, the message is sent exactly
-            once and, on ``InvalidJsonException``, this is used to build the result from the
-            raw response instead of retrying. Preserves "do not raise / do not retry"
-            semantics for callers that tolerate invalid JSON. Defaults to None (retry mode).
 
     Returns:
         T: The parsed result.
 
     Raises:
-        InvalidJsonException: In retry mode, when parsing still fails after the retry budget.
+        InvalidJsonException: When parsing still fails after the retry budget is exhausted.
         ValueError: If the target returns no response.
     """
     memory = normalizer.memory
     existing_pieces = memory.get_message_pieces(conversation_id=conversation_id)
     baseline = max((piece.sequence for piece in existing_pieces), default=-1)
-
-    if fallback is not None:
-        response = await normalizer.send_prompt_async(message=message, conversation_id=conversation_id, target=target)
-        if not response:
-            raise ValueError(f"No response received for conversation ID: {conversation_id}")
-        try:
-            return parse(response)
-        except InvalidJsonException:
-            return fallback(response)
 
     @pyrit_json_retry
     async def _attempt_async() -> T:

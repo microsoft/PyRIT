@@ -184,7 +184,6 @@ async def _run_llm_scoring_async(
             message=scorer_llm_request,
             conversation_id=conversation_id,
             parse=_parse,
-            fallback=None,
         )
     except (ScorerLLMResponseBlockedException, EmptyResponseException, InvalidJsonException):
         # Terminal / caller-owned outcomes: propagate unchanged so the calling Scorer can apply
