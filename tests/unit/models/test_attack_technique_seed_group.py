@@ -222,6 +222,33 @@ class TestAttackTechniqueSeedGroupInsertionIndex:
         assert group.insertion_index == 0
 
 
+class TestAttackTechniqueSeedGroupFromSystemPrompt:
+    """Tests for the from_system_prompt classmethod."""
+
+    def test_builds_single_system_general_technique_seed(self):
+        """Test that from_system_prompt yields one system-role general-technique seed."""
+        group = AttackTechniqueSeedGroup.from_system_prompt("Follow these rules.")
+
+        assert len(group.seeds) == 1
+        seed = group.seeds[0]
+        assert isinstance(seed, SeedPrompt)
+        assert seed.value == "Follow these rules."
+        assert seed.role == "system"
+        assert seed.data_type == "text"
+        assert seed.is_general_technique is True
+        assert group.insertion_index is None
+
+    def test_preserves_literal_braces_without_rendering(self):
+        """Test that literal Jinja braces are preserved (is_jinja_template stays False)."""
+        group = AttackTechniqueSeedGroup.from_system_prompt("Decode this: {{ prompt }}")
+        assert group.seeds[0].value == "Decode this: {{ prompt }}"
+
+    def test_respects_insertion_index(self):
+        """Test that insertion_index is forwarded to the group."""
+        group = AttackTechniqueSeedGroup.from_system_prompt("s", insertion_index=0)
+        assert group.insertion_index == 0
+
+
 class TestAttackTechniqueSeedGroupRepr:
     """Tests for AttackTechniqueSeedGroup.__repr__ method."""
 

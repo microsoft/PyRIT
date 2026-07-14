@@ -36,6 +36,7 @@ CORE_TECHNIQUE_NAMES: list[str] = [
     "crescendo_movie_director",
     "crescendo_history_lecture",
     "crescendo_journalist_interview",
+    "flip",
 ]
 
 EXTRA_TECHNIQUE_NAMES: list[str] = ["pair", "violent_durian"]
@@ -290,7 +291,7 @@ class TestRolePlayFactories:
         for f in self._role_play_factories():
             sim = f.seed_technique.simulated_conversation_config
             assert sim is not None
-            assert sim.num_turns == core.ROLE_PLAY_SIMULATED_NUM_TURNS
+            assert sim.num_turns == 2
 
     def test_seed_technique_yaml_path_resolves_to_existing_file(self):
         for f in self._role_play_factories():
