@@ -44,7 +44,6 @@ attack = PromptSendingAttack(objective_target=target)
 
 result = await attack.execute_async(objective="Tell me a joke")  # type: ignore
 await output_attack_async(result)
-await target.cleanup_target_async()
 
 # %% [markdown]
 # ## Reasoning Configuration
@@ -77,7 +76,6 @@ target = OpenAIResponseTarget(
 attack = PromptSendingAttack(objective_target=target)
 result = await attack.execute_async(objective="What are the most dangerous items in a household?")  # type: ignore
 await output_attack_async(result)
-await target.cleanup_target_async()
 
 # %% [markdown]
 # ## JSON Generation
@@ -137,7 +135,6 @@ response = await target.send_prompt_async(message=message)  # type: ignore
 response_json = json.loads(response[0].message_pieces[1].converted_value)
 print(json.dumps(response_json, indent=2))
 jsonschema.validate(instance=response_json, schema=person_schema)
-await target.cleanup_target_async()
 
 # %% [markdown]
 # ## Tool Use with Custom Functions
@@ -218,7 +215,6 @@ response = await target.send_prompt_async(message=message)  # type: ignore
 for response_msg in response:
     for idx, piece in enumerate(response_msg.message_pieces):
         print(f"{idx} | {piece.api_role}: {piece.original_value}")
-await target.cleanup_target_async()
 
 # %% [markdown]
 # ## Using the Built-in Web Search Tool
@@ -267,4 +263,3 @@ response = await target.send_prompt_async(message=message)  # type: ignore
 for response_msg in response:
     for idx, piece in enumerate(response_msg.message_pieces):
         print(f"{idx} | {piece.api_role}: {piece.original_value}")
-await target.cleanup_target_async()

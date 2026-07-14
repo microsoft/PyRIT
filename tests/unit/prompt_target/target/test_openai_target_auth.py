@@ -134,11 +134,11 @@ class TestOpenAITargetAuthResolution:
             first_target = _build_target(api_key=provider)
             second_target = _build_target(api_key=provider)
 
-        await first_target.cleanup_target_async()
+        await first_target._cleanup_target_async()
         clients[0].close.assert_awaited_once()
         credential.close.assert_not_awaited()
 
-        await second_target.cleanup_target_async()
+        await second_target._cleanup_target_async()
         clients[1].close.assert_awaited_once()
         credential.close.assert_awaited_once()
 

@@ -20,7 +20,6 @@
 
 # %%
 from pyrit.output import output_scenario_async
-from pyrit.prompt_target import OpenAITarget
 from pyrit.registry import TargetRegistry
 from pyrit.scenario import DatasetAttackConfiguration
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
@@ -297,11 +296,3 @@ scenario_result = await scenario.run_async()  # type: ignore
 
 # %%
 await output_scenario_async(scenario_result)
-
-# %%
-cleaned_target_ids: set[int] = set()
-for target_entry in target_registry.instances.get_all_instances():
-    target_id = id(target_entry.instance)
-    if isinstance(target_entry.instance, OpenAITarget) and target_id not in cleaned_target_ids:
-        await target_entry.instance.cleanup_target_async()
-        cleaned_target_ids.add(target_id)

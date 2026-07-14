@@ -203,5 +203,3 @@ result = await i2v_target.send_prompt_async(message=Message(message_pieces=[text
 print(f"Text+Image-to-video result: {result[0].message_pieces[0].converted_value}")
 
 Path(image_path).unlink(missing_ok=True)
-for target in [video_target, i2v_target, objective_chat_target, visual_chat_target, audio_chat_target]:
-    await target.cleanup_target_async()

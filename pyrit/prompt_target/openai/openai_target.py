@@ -187,7 +187,7 @@ class OpenAITarget(PromptTarget):
         if self._managed_token_provider:
             self._managed_token_provider.acquire()
 
-    async def cleanup_target_async(self) -> None:
+    async def _cleanup_target_async(self) -> None:
         """Close the OpenAI client and any managed Azure token provider."""
         cleanup_tasks: list[Awaitable[Any]] = []
         if self._async_client:
