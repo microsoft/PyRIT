@@ -32,13 +32,9 @@ class HTTPTarget(PromptTarget):
 
     """
 
-    # Grandfathered: ``http_request`` is part of the public positional API.
-    # TODO: remove this opt-out and insert ``*,`` after ``self`` in 0.16.0
-    # (this will be a BREAKING CHANGE for callers passing arguments positionally).
-    _brick_legacy_init = True
-
     def __init__(
         self,
+        *,
         http_request: str,
         prompt_regex_string: str = "{PROMPT}",
         use_tls: bool = True,
@@ -189,23 +185,22 @@ class HTTPTarget(PromptTarget):
             cleanup_client = True
 
         try:
-            match http_body:
-                case dict():
-                    response = await client.request(
-                        method=http_method,
-                        url=url,
-                        headers=header_dict,
-                        data=http_body,
-                        follow_redirects=True,
-                    )
-                case str():
-                    response = await client.request(
-                        method=http_method,
-                        url=url,
-                        headers=header_dict,
-                        content=http_body,
-                        follow_redirects=True,
-                    )
+            if isinstance(http_body, dict):
+                response = await client.request(
+                    method=http_method,
+                    url=url,
+                    headers=header_dict,
+                    data=http_body,
+                    follow_redirects=True,
+                )
+            else:
+                response = await client.request(
+                    method=http_method,
+                    url=url,
+                    headers=header_dict,
+                    content=http_body,
+                    follow_redirects=True,
+                )
 
             response_content = response.content
 

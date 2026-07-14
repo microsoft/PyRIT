@@ -20,7 +20,6 @@ from sqlalchemy.orm.attributes import InstrumentedAttribute
 if TYPE_CHECKING:
     from pyrit.memory.memory_embedding import MemoryEmbedding
 
-from pyrit.common.deprecation import print_deprecation_message
 from pyrit.memory.memory_models import (
     AttackResultEntry,
     Base,
@@ -885,7 +884,6 @@ class MemoryInterface(abc.ABC):
     def get_prompt_scores(
         self,
         *,
-        attack_id: str | uuid.UUID | None = None,
         role: str | None = None,
         conversation_id: str | uuid.UUID | None = None,
         prompt_ids: Sequence[str | uuid.UUID] | None = None,
@@ -903,7 +901,6 @@ class MemoryInterface(abc.ABC):
         Retrieve scores attached to message pieces based on the specified filters.
 
         Args:
-            attack_id (str | uuid.UUID | None, optional): The ID of the attack. Defaults to None.
             role (str | None, optional): The role of the prompt. Defaults to None.
             conversation_id (str | uuid.UUID | None, optional): The ID of the conversation. Defaults to None.
             prompt_ids (Sequence[str] | Sequence[uuid.UUID] | None, optional): A list of prompt IDs.
@@ -924,7 +921,6 @@ class MemoryInterface(abc.ABC):
             Sequence[Score]: A list of scores extracted from the message pieces.
         """
         message_pieces = self.get_message_pieces(
-            attack_id=attack_id,
             role=role,
             conversation_id=conversation_id,
             prompt_ids=prompt_ids,
@@ -962,31 +958,16 @@ class MemoryInterface(abc.ABC):
 
         Returns:
             MutableSequence[Message]: A list of chat memory entries with the specified conversation ID.
+
+        Raises:
+            ValueError: If conversation_id is empty or None. A falsy id would cause the underlying
+                get_message_pieces filter to be skipped, silently returning pieces from every
+                conversation in memory.
         """
+        if not conversation_id:
+            raise ValueError("get_conversation_messages requires a non-empty conversation_id")
         message_pieces = self.get_message_pieces(conversation_id=conversation_id)
         return group_conversation_message_pieces_by_sequence(message_pieces=message_pieces)
-
-    def get_conversation(self, *, conversation_id: str) -> MutableSequence[Message]:
-        """
-        Retrieve the messages for a conversation (deprecated alias).
-
-        .. deprecated::
-            Use ``get_conversation_messages`` instead. The ``get_conversation`` name is
-            being freed so it can return the conversation entity (currently exposed as
-            ``_get_conversation``) in a future release.
-
-        Args:
-            conversation_id (str): The conversation ID to match.
-
-        Returns:
-            MutableSequence[Message]: A list of chat memory entries with the specified conversation ID.
-        """
-        print_deprecation_message(
-            old_item="MemoryInterface.get_conversation",
-            new_item="MemoryInterface.get_conversation_messages",
-            removed_in="0.17.0",
-        )
-        return self.get_conversation_messages(conversation_id=conversation_id)
 
     def _get_conversation(self, *, conversation_id: str) -> Conversation | None:
         """
@@ -999,11 +980,8 @@ class MemoryInterface(abc.ABC):
             Conversation | None: The conversation metadata (including the target
                 identifier), or ``None`` if no row exists for the conversation.
         """
-        # NOTE: The leading underscore is temporary. This method returns the conversation
-        # entity (metadata) and will be promoted to the public ``get_conversation`` once the
-        # deprecated, messages-returning ``get_conversation`` above is removed in 0.17.0. The
-        # underscore exists only to avoid colliding with that still-public method during the
-        # deprecation window.
+        # NOTE: The leading underscore is retained to distinguish this conversation-entity
+        # accessor from the messages-returning helpers (``get_conversation_messages``).
         entries = self._query_entries(
             ConversationEntry,
             conditions=ConversationEntry.conversation_id == str(conversation_id),
@@ -1032,33 +1010,6 @@ class MemoryInterface(abc.ABC):
 
         conversation = self.get_conversation_messages(conversation_id=response.conversation_id)
         return conversation[response.sequence - 1]
-
-    def _resolve_attack_id_to_conversation_condition(self, *, attack_id: str | uuid.UUID) -> Any:
-        """
-        Build a deprecated ``attack_id`` filter condition for ``get_message_pieces``.
-
-        The attack identifier is no longer stamped on every piece. Instead, resolve the
-        raw attack-strategy hash against persisted ``AttackResult`` rows and constrain
-        the query to those attacks' main conversations.
-
-        Args:
-            attack_id (str | uuid.UUID): The raw attack-strategy identifier hash.
-
-        Returns:
-            Any: A SQLAlchemy condition restricting pieces to the matching attacks'
-                main conversation ids (matches nothing when no attack matches).
-        """
-        print_deprecation_message(
-            old_item="get_message_pieces(attack_id=...) / get_prompt_scores(attack_id=...)",
-            new_item="get_message_pieces(conversation_id=...) resolved via get_attack_results(...)",
-            removed_in="0.17.0",
-        )
-        matching_conversation_ids = {
-            result.conversation_id
-            for result in self.get_attack_results()
-            if (strategy := result.get_attack_strategy_identifier()) is not None and strategy.hash == str(attack_id)
-        }
-        return PromptMemoryEntry.conversation_id.in_(matching_conversation_ids)
 
     def _build_message_piece_identifier_conditions(
         self, *, identifier_filters: Sequence[IdentifierFilter]
@@ -1110,7 +1061,6 @@ class MemoryInterface(abc.ABC):
     def get_message_pieces(
         self,
         *,
-        attack_id: str | uuid.UUID | None = None,
         role: str | None = None,
         conversation_id: str | uuid.UUID | None = None,
         prompt_ids: Sequence[str | uuid.UUID] | None = None,
@@ -1129,7 +1079,6 @@ class MemoryInterface(abc.ABC):
         Retrieve a list of MessagePiece objects based on the specified filters.
 
         Args:
-            attack_id (str | uuid.UUID | None, optional): The ID of the attack. Defaults to None.
             role (str | None, optional): The role of the prompt. Defaults to None.
             conversation_id (str | uuid.UUID | None, optional): The ID of the conversation. Defaults to None.
             prompt_ids (Sequence[str] | Sequence[uuid.UUID] | None, optional): A list of prompt IDs.
@@ -1161,8 +1110,6 @@ class MemoryInterface(abc.ABC):
 
         try:
             conditions: list[Any] = []
-            if attack_id:
-                conditions.append(self._resolve_attack_id_to_conversation_condition(attack_id=attack_id))
             if role:
                 conditions.append(PromptMemoryEntry.role == role)
             if conversation_id:
@@ -1432,6 +1379,24 @@ class MemoryInterface(abc.ABC):
         if self.engine is None:
             raise RuntimeError("Engine must be initialized to run schema migrations.")
         run_schema_migrations(engine=self.engine, silent=silent)
+        check_schema_migrations(engine=self.engine, silent=silent)
+
+    def _check_schema_migration(self, *, silent: bool = False) -> None:
+        """
+        Verify that the current database schema matches the models without modifying the database.
+
+        Args:
+            silent (bool): If True, suppresses Alembic console output. Defaults to False.
+
+        Raises:
+            RuntimeError: If the engine is not initialized.
+            AutogenerateDiffsDetected: If the schema does not match the models.
+        """
+        from pyrit.memory.migration import check_schema_migrations
+
+        logger.info("Checking schema migration compatibility.")
+        if self.engine is None:
+            raise RuntimeError("Engine must be initialized to check schema migrations.")
         check_schema_migrations(engine=self.engine, silent=silent)
 
     def reset_database(self) -> None:

@@ -58,7 +58,7 @@ jobs:
       stable: ${{ steps.matrix.outputs.stable }}
       versions_json: ${{ steps.matrix.outputs.versions_json }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           sparse-checkout: |
             .github/docs-versions.yml
@@ -66,7 +66,7 @@ jobs:
           sparse-checkout-cone-mode: false
 
       - name: Set up Python 3.13
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: "3.13"
 
@@ -94,7 +94,7 @@ jobs:
       BASE_URL: ${{ format('/{0}/{1}', github.event.repository.name, matrix.slug) }}
     steps:
       - name: Checkout ${{ matrix.ref }}
-        uses: actions/checkout@v7
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           ref: ${{ matrix.ref }}
 
@@ -113,20 +113,20 @@ jobs:
         # miss -> we do a fresh build and actions/cache saves the result on
         # job success, so the next run with the same SHA hits.
         id: cache
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: doc/_build/html
           key: docs-${{ env.CACHE_VERSION }}-${{ matrix.slug }}-${{ steps.sha.outputs.sha }}
 
       - name: Set up Python 3.13
         if: steps.cache.outputs.cache-hit != 'true'
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: "3.13"
 
       - name: Install uv
         if: steps.cache.outputs.cache-hit != 'true'
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
         with:
           version: "0.9.17"
           enable-cache: true
@@ -180,7 +180,7 @@ jobs:
           jupyter-book build --all --html
 
       - name: Upload built site
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: site-${{ matrix.slug }}
           path: doc/_build/html
@@ -204,7 +204,7 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           sparse-checkout: |
             .github/docs-versions.yml
@@ -215,7 +215,7 @@ jobs:
           sparse-checkout-cone-mode: false
 
       - name: Set up Python 3.13
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: "3.13"
 
@@ -223,7 +223,7 @@ jobs:
         run: pip install --quiet "pyyaml>=6.0"
 
       - name: Download all version artifacts
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           path: artifacts
           pattern: site-*
@@ -248,10 +248,10 @@ jobs:
             --base "${DOCS_BASE}"
 
       - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v5
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
           path: dist
 
       - name: Deploy to GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@v5
+        uses: actions/deploy-pages@cd2ce8fcbc39b97be8ca5fce6e763baed58fa128 # v5.0.0

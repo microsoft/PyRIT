@@ -6,6 +6,7 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { FluentProvider, webLightTheme } from "@fluentui/react-components";
+import { makeTarget } from "@/test-utils/targetFixtures";
 import Home from "./Home";
 import { attacksApi } from "../../services/api";
 import type { AttackSummary, TargetInstance } from "../../types";
@@ -75,12 +76,12 @@ describe("Home", () => {
   });
 
   it("renders active target summary and 'Manage targets' button when a target is set", async () => {
-    const target: TargetInstance = {
+    const target: TargetInstance = makeTarget({
       target_registry_name: "my_target",
       target_type: "OpenAIChatTarget",
       endpoint: "https://example.com",
       model_name: "gpt-test",
-    };
+    });
     render(<TestWrapper><Home {...defaultProps} activeTarget={target} /></TestWrapper>);
     expect(screen.getByTestId("home-target-active")).toHaveTextContent("gpt-test");
     expect(screen.getByRole("button", { name: /manage targets/i })).toBeInTheDocument();

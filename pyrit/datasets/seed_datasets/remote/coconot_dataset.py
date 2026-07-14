@@ -279,7 +279,7 @@ class _CoCoNotRefusalDataset(_CoCoNotBaseDataset):
     @property
     @override
     def dataset_name(self) -> str:
-        """Return the dataset name."""
+        """The dataset name."""
         return "coconot_refusal"
 
 
@@ -308,5 +308,5 @@ class _CoCoNotContrastDataset(_CoCoNotBaseDataset):
     @property
     @override
     def dataset_name(self) -> str:
-        """Return the dataset name."""
+        """The dataset name."""
         return "coconot_contrast"

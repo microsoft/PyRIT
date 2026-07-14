@@ -85,13 +85,13 @@ class _GarakRemoteDataset(_RemoteDatasetLoader, ABC):
 
     @property
     def _source_url(self) -> str:
-        """Return the canonical HuggingFace URL for this dataset."""
+        """The canonical HuggingFace URL for this dataset."""
         return f"https://huggingface.co/datasets/{self.HF_DATASET_NAME}"
 
     @property
     @override
     def dataset_name(self) -> str:
-        """Return the short garak dataset name."""
+        """The short garak dataset name."""
         return self._DATASET_NAME
 
     def _extract_metadata(self, item: dict[str, Any]) -> dict[str, Any]:

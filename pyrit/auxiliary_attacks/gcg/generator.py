@@ -38,6 +38,7 @@ import json
 import logging
 import time
 from dataclasses import dataclass, field
+from functools import partial
 from typing import Any, overload
 
 import numpy as np
@@ -212,6 +213,18 @@ class GCGGenerator(
                 "topk": self._algorithm.topk,
                 "target_weight": self._algorithm.target_weight,
                 "control_weight": self._algorithm.control_weight,
+                "sampling_impl": (
+                    type(self._algorithm.sampling).__name__ if self._algorithm.sampling is not None else "default"
+                ),
+                "loss_impl": type(self._algorithm.loss).__name__ if self._algorithm.loss is not None else "default",
+                "candidate_filter_impl": (
+                    type(self._algorithm.candidate_filter).__name__
+                    if self._algorithm.candidate_filter is not None
+                    else "default"
+                ),
+                "suffix_init_impl": (
+                    type(self._algorithm.suffix_init).__name__ if self._algorithm.suffix_init is not None else "default"
+                ),
                 "transfer": self._strategy.transfer,
                 "progressive_goals": self._strategy.progressive_goals,
                 "progressive_models": self._strategy.progressive_models,
@@ -257,7 +270,12 @@ class GCGGenerator(
         managers = {
             "AP": attack_lib.GCGAttackPrompt,
             "PM": attack_lib.GCGPromptManager,
-            "MPA": attack_lib.GCGMultiPromptAttack,
+            "MPA": partial(
+                attack_lib.GCGMultiPromptAttack,
+                sampling=self._algorithm.sampling,
+                loss=self._algorithm.loss,
+                candidate_filter=self._algorithm.candidate_filter,
+            ),
         }
         context.attack = self._create_attack(
             params=params,
@@ -400,6 +418,7 @@ class GCGGenerator(
         logfile_path: str,
     ) -> Any:
         """Build the right attack object based on the strategy flags."""
+        control_init = self._resolve_control_init(workers=workers)
         if self._strategy.transfer:
             return ProgressiveMultiPromptAttack(
                 train_goals,
@@ -407,7 +426,7 @@ class GCGGenerator(
                 workers,
                 progressive_models=self._strategy.progressive_models,
                 progressive_goals=self._strategy.progressive_goals,
-                control_init=self._algorithm.control_init,
+                control_init=control_init,
                 logfile=logfile_path,
                 managers=managers,
                 test_goals=test_goals,
@@ -421,7 +440,7 @@ class GCGGenerator(
             train_goals,
             train_targets,
             workers,
-            control_init=self._algorithm.control_init,
+            control_init=control_init,
             logfile=logfile_path,
             managers=managers,
             test_goals=test_goals,
@@ -431,6 +450,18 @@ class GCGGenerator(
             mpa_batch_size=self._algorithm.batch_size,
             mpa_n_steps=self._algorithm.n_steps,
         )
+
+    def _resolve_control_init(self, *, workers: list[Any]) -> str:
+        """Resolve the initial suffix string for a run.
+
+        Uses the configured ``suffix_init`` extension when provided; otherwise
+        falls back to the legacy literal ``control_init`` value.
+        """
+        if self._algorithm.suffix_init is None:
+            return self._algorithm.control_init
+        if not workers:
+            raise ValueError("Cannot resolve suffix_init without at least one worker tokenizer.")
+        return self._algorithm.suffix_init.make_initial_suffix(tokenizer=workers[0].tokenizer)
 
     @staticmethod
     def _read_result(*, logfile_path: str, memory_labels: dict[str, str]) -> GCGResult:

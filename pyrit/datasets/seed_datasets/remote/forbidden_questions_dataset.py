@@ -2,7 +2,6 @@
 # Licensed under the MIT license.
 
 import logging
-import warnings
 
 from typing_extensions import override
 
@@ -37,33 +36,19 @@ class _ForbiddenQuestionsDataset(_RemoteDatasetLoader):
         self,
         *,
         source: str = "TrustAIRLab/forbidden_question_set",
-        split: str | None = None,
     ) -> None:
         """
         Initialize the Forbidden Questions dataset loader.
 
         Args:
             source: HuggingFace dataset identifier. Defaults to "TrustAIRLab/forbidden_question_set".
-            split: **Deprecated.** This kwarg was misforwarded to HuggingFace as ``config``,
-                and ``TrustAIRLab/forbidden_question_set`` publishes only one config
-                (``"default"``) with one split (``"train"``), so it never did anything
-                useful. It will be removed in v0.16.0.
         """
-        if split is not None:
-            warnings.warn(
-                "'split' is deprecated and will be removed in v0.16.0. "
-                "It was misforwarded to HuggingFace as 'config', and "
-                "TrustAIRLab/forbidden_question_set publishes only one config ('default') "
-                "with one split ('train'), so this kwarg has no effect.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
         self.source = source
 
     @property
     @override
     def dataset_name(self) -> str:
-        """Return the dataset name."""
+        """The dataset name."""
         return "forbidden_questions"
 
     @override

@@ -5,7 +5,12 @@ import itertools
 import logging
 from typing import Any
 
-from pyrit.models import TARGET_EVAL_PARAM_FALLBACKS, TARGET_EVAL_PARAMS, ComponentIdentifier, Message
+from pyrit.models import (
+    TARGET_EVAL_PARAM_FALLBACKS,
+    TARGET_EVAL_PARAMS,
+    ComponentIdentifier,
+    Message,
+)
 from pyrit.prompt_target.common.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_requirements import CHAT_TARGET_REQUIREMENTS
 
@@ -65,17 +70,28 @@ class RoundRobinTarget(PromptTarget):
                 requests to the first target. Defaults to equal weight.
 
         Raises:
-            ValueError: If fewer than 2 targets are provided, targets are
-                different classes, a nested RoundRobinTarget is detected,
-                weights length doesn't match, weights contain non-positive
-                values, inner targets have different configurations, or
-                targets lack required capabilities.
+            ValueError: If fewer than 2 targets are provided, the same target instance is
+                passed more than once, targets are different classes, a nested
+                RoundRobinTarget is detected, weights length doesn't match, weights contain
+                non-positive values, inner targets have different configurations, or targets
+                lack required capabilities.
         """
         if len(targets) < 2:
             raise ValueError(f"RoundRobinTarget requires at least 2 targets, got {len(targets)}.")
 
         if any(isinstance(t, RoundRobinTarget) for t in targets):
             raise ValueError("Nesting RoundRobinTarget inside another RoundRobinTarget is not supported.")
+
+        # Reject the same target *instance* referenced more than once. We compare by object
+        # identity, not ComponentIdentifier hash: the hash excludes credentials (api_key),
+        # so two distinct targets that share an endpoint/model but use different keys (e.g.
+        # round-robining across accounts to spread rate limits) are legitimately different
+        # and must be allowed.
+        if len({id(t) for t in targets}) != len(targets):
+            raise ValueError("RoundRobinTarget received the same target instance more than once.")
+
+        if weights is not None and len(weights) != len(targets):
+            raise ValueError(f"weights length ({len(weights)}) must match targets length ({len(targets)}).")
 
         first_type = type(targets[0])
         mismatched = [(i, type(t).__name__) for i, t in enumerate(targets[1:], start=1) if type(t) is not first_type]
@@ -86,8 +102,6 @@ class RoundRobinTarget(PromptTarget):
             )
 
         weights = weights or [1] * len(targets)
-        if len(weights) != len(targets):
-            raise ValueError(f"weights length ({len(weights)}) must match targets length ({len(targets)}).")
         if any(w <= 0 for w in weights):
             raise ValueError("All weights must be positive integers.")
 
@@ -116,6 +130,20 @@ class RoundRobinTarget(PromptTarget):
         self._rotation: list[int] = list(itertools.chain.from_iterable([i] * w for i, w in enumerate(weights)))
 
         self._counter: int = 0
+
+    @property
+    def inner_targets(self) -> list[PromptTarget]:
+        """
+        The inner targets this round-robin distributes requests across.
+
+        Exposed so composition-aware consumers (e.g. DTO mappers) can read the
+        children without knowing this concrete type or reaching into private
+        state.
+
+        Returns:
+            list[PromptTarget]: A copy of the inner targets.
+        """
+        return list(self._targets)
 
     def _next_target(self) -> PromptTarget:
         """

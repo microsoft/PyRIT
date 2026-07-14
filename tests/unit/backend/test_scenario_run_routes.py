@@ -14,11 +14,10 @@ from fastapi.testclient import TestClient
 
 import pyrit.backend.services.scenario_run_service as _svc_mod
 from pyrit.backend.main import app
-from pyrit.backend.models.scenarios import (
-    ScenarioRunListResponse,
-    ScenarioRunStatus,
-    ScenarioRunSummary,
-)
+from pyrit.backend.models.scenarios import ScenarioRunListResponse
+from pyrit.models import ScenarioRunState
+from pyrit.models.catalog.scenario import ScenarioRunSummary
+from unit.mocks import make_scenario_result
 
 
 @pytest.fixture
@@ -39,7 +38,7 @@ def _mock_run_response(
     *,
     run_id: str = "test-run-id",
     scenario_name: str = "foundry.red_team_agent",
-    run_status: ScenarioRunStatus = ScenarioRunStatus.CREATED,
+    run_status: ScenarioRunState = ScenarioRunState.CREATED,
 ) -> ScenarioRunSummary:
     """Create a mock ScenarioRunResponse."""
     return ScenarioRunSummary(
@@ -92,7 +91,7 @@ class TestStartScenarioRunRoute:
     def test_start_run_missing_required_fields_returns_422(self, client: TestClient) -> None:
         """Test that missing required fields returns 422."""
         response = client.post("/api/scenarios/runs", json={})
-        assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
     def test_start_run_with_all_options(self, client: TestClient) -> None:
         """Test that all optional fields are accepted."""
@@ -109,7 +108,7 @@ class TestStartScenarioRunRoute:
                     "scenario_name": "foundry.red_team_agent",
                     "target_name": "my_target",
                     "initializers": ["target", "load_default_datasets"],
-                    "strategies": ["base64", "rot13"],
+                    "techniques": ["base64", "rot13"],
                     "dataset_names": ["harmful_content"],
                     "max_dataset_size": 50,
                     "max_concurrency": 5,
@@ -142,7 +141,7 @@ class TestListScenarioRunsRoute:
         """Test that list runs returns all tracked runs."""
         runs = [
             _mock_run_response(run_id="run-1"),
-            _mock_run_response(run_id="run-2", run_status=ScenarioRunStatus.IN_PROGRESS),
+            _mock_run_response(run_id="run-2", run_status=ScenarioRunState.IN_PROGRESS),
         ]
 
         with patch("pyrit.backend.routes.scenarios.get_scenario_run_service") as mock_get:
@@ -161,7 +160,7 @@ class TestGetScenarioRunRoute:
 
     def test_get_run_returns_200(self, client: TestClient) -> None:
         """Test that getting an existing run returns 200."""
-        mock_response = _mock_run_response(run_status=ScenarioRunStatus.IN_PROGRESS)
+        mock_response = _mock_run_response(run_status=ScenarioRunState.IN_PROGRESS)
 
         with patch("pyrit.backend.routes.scenarios.get_scenario_run_service") as mock_get:
             mock_service = MagicMock()
@@ -190,7 +189,7 @@ class TestCancelScenarioRunRoute:
 
     def test_cancel_run_returns_200(self, client: TestClient) -> None:
         """Test that cancelling a running scenario returns 200."""
-        mock_response = _mock_run_response(run_status=ScenarioRunStatus.CANCELLED)
+        mock_response = _mock_run_response(run_status=ScenarioRunState.CANCELLED)
 
         with patch("pyrit.backend.routes.scenarios.get_scenario_run_service") as mock_get:
             mock_service = MagicMock()
@@ -231,7 +230,7 @@ class TestGetScenarioRunResultsRoute:
 
     def test_get_results_returns_200(self, client: TestClient) -> None:
         """Test that getting results of a completed run returns 200."""
-        from pyrit.models import AttackOutcome, AttackResult, ComponentIdentifier, ScenarioIdentifier, ScenarioResult
+        from pyrit.models import AttackOutcome, AttackResult, ComponentIdentifier
 
         attack = AttackResult(
             conversation_id="conv-1",
@@ -241,9 +240,10 @@ class TestGetScenarioRunResultsRoute:
             execution_time_ms=100,
             timestamp=datetime(2025, 1, 1, tzinfo=timezone.utc),
         )
-        scenario_result = ScenarioResult(
-            scenario_identifier=ScenarioIdentifier(name="foundry.red_team_agent", description="Foundry red-team agent"),
-            objective_target_identifier=ComponentIdentifier.from_dict(
+        scenario_result = make_scenario_result(
+            scenario_name="foundry.red_team_agent",
+            scenario_description="Foundry red-team agent",
+            objective_target_identifier=ComponentIdentifier.model_validate(
                 {"__type__": "FakeTarget", "__module__": "test.mod", "params": {}}
             ),
             objective_scorer_identifier=None,
@@ -260,7 +260,7 @@ class TestGetScenarioRunResultsRoute:
 
         assert response.status_code == status.HTTP_200_OK
         data = response.json()
-        assert data["scenario_identifier"]["name"] == "foundry.red_team_agent"
+        assert data["scenario_name"] == "foundry.red_team_agent"
         assert "base64_attack" in data["attack_results"]
 
     def test_get_results_not_found_returns_404(self, client: TestClient) -> None:

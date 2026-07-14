@@ -2,12 +2,15 @@
 # Licensed under the MIT license.
 
 import enum
+from collections.abc import Sequence
 from pathlib import Path
 from typing import ClassVar
 
 from pyrit.common.path import SCORER_SEED_PROMPT_PATH
-from pyrit.models import ComponentIdentifier, MessagePiece, Score, SeedPrompt, UnvalidatedScore
+from pyrit.models import ComponentIdentifier, JsonSchemaDefinition, MessagePiece, Score, SeedPrompt
 from pyrit.prompt_target import CHAT_TARGET_REQUIREMENTS, PromptTarget
+from pyrit.score.llm_scoring import _run_llm_scoring_async
+from pyrit.score.response_handler import JsonSchemaResponseHandler, ResponseHandler
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.true_false.true_false_score_aggregator import (
     TrueFalseAggregatorFunc,
@@ -68,8 +71,10 @@ class SelfAskRefusalScorer(TrueFalseScorer):
     def __init__(
         self,
         *,
-        chat_target: PromptTarget,
-        refusal_system_prompt_path: RefusalScorerPaths | Path | str = RefusalScorerPaths.OBJECTIVE_STRICT,
+        chat_target: PromptTarget | None = None,
+        system_prompt: SeedPrompt | str | None = None,
+        response_handler: ResponseHandler | None = None,
+        score_category: Sequence[str] | str | None = None,
         prompt_format_string: str | None = None,
         validator: ScorerPromptValidator | None = None,
         score_aggregator: TrueFalseAggregatorFunc = TrueFalseScoreAggregator.OR,
@@ -78,20 +83,30 @@ class SelfAskRefusalScorer(TrueFalseScorer):
         Initialize the SelfAskRefusalScorer.
 
         Args:
-            chat_target (PromptTarget): The chat target to use for the scorer. Must satisfy
-                CHAT_TARGET_REQUIREMENTS (multi-turn + editable history capabilities,
-                possibly via normalization-pipeline adaptation).
-            refusal_system_prompt_path (RefusalScorerPaths | Path | str): The path to the system prompt
-                to use for refusal detection. Can be a RefusalScorerPaths enum value, a Path, or a string path.
-                Defaults to RefusalScorerPaths.OBJECTIVE_STRICT.
-            prompt_format_string (str | None): The format string for the prompt with placeholders.
-                Use ``{objective}`` for the conversation objective and ``{response}`` for the response
-                to evaluate. Defaults to "conversation_objective: {objective}\\nresponse_to_evaluate_input:
-                {response}".
+            chat_target (PromptTarget | None): The chat target used for scoring. Must satisfy
+                CHAT_TARGET_REQUIREMENTS.
+            system_prompt (SeedPrompt | str | None): The refusal-detection system prompt. A
+                ``SeedPrompt`` (e.g. loaded from a ``RefusalScorerPaths`` YAML) is used verbatim and
+                may carry a ``response_json_schema``; a ``str`` is used as-is; ``None`` falls back to
+                the OBJECTIVE_STRICT rubric. Defaults to None.
+            response_handler (ResponseHandler | None): Parser for the target's raw output. Defaults
+                to ``JsonSchemaResponseHandler``.
+            score_category (Sequence[str] | str | None): The category to attach to scores. Defaults
+                to ["refusal"].
+            prompt_format_string (str | None): The format string for the user prompt with
+                placeholders. Use ``{objective}`` for the conversation objective and ``{response}``
+                for the response to evaluate. Defaults to
+                "conversation_objective: {objective}\\nresponse_to_evaluate_input: {response}".
             validator (ScorerPromptValidator | None): Custom validator. Defaults to None.
             score_aggregator (TrueFalseAggregatorFunc): The aggregator function to use.
                 Defaults to TrueFalseScoreAggregator.OR.
+
+        Raises:
+            ValueError: If ``chat_target`` is not provided.
         """
+        if chat_target is None:
+            raise ValueError("A chat_target must be provided.")
+
         # Set refusal-specific evaluation file mapping before calling super().__init__
         from pyrit.score.scorer_evaluation.scorer_evaluator import (
             ScorerEvalDatasetFiles,
@@ -109,20 +124,36 @@ class SelfAskRefusalScorer(TrueFalseScorer):
         )
 
         self._prompt_target = chat_target
-
-        # Resolve the system prompt path
-        if isinstance(refusal_system_prompt_path, RefusalScorerPaths):
-            prompt_path = refusal_system_prompt_path.value
-        else:
-            prompt_path = Path(refusal_system_prompt_path)
-
         self._prompt_format_string = prompt_format_string or self.DEFAULT_REFUSAL_PROMPT_FORMAT
-        seed_prompt = SeedPrompt.from_yaml_file(prompt_path)
-        self._system_prompt = seed_prompt.value
-        # Optional JSON schema embedded in the seed prompt YAML. Forwarded to the scoring
-        # target, which enforces it natively when supported or omits it via normalization.
-        self._response_json_schema = seed_prompt.response_json_schema
-        self._score_category = ["refusal"]
+        self._system_prompt, schema = self._resolve_system_prompt(system_prompt)
+        # When the caller does not supply a response handler, the default JSON handler carries the
+        # schema (if any) declared by the system prompt, so the round-trip forwards it to the scoring
+        # target. A caller-supplied handler owns its own response contract.
+        self._response_handler = response_handler or JsonSchemaResponseHandler(response_schema=schema)
+        # Normalize to a list so scores built directly (blocked / non-text early returns) satisfy
+        # Score.score_category (list[str] | None).
+        if score_category is None:
+            self._score_category: list[str] = ["refusal"]
+        elif isinstance(score_category, str):
+            self._score_category = [score_category]
+        else:
+            self._score_category = list(score_category)
+
+    @classmethod
+    def _resolve_system_prompt(
+        cls,
+        system_prompt: SeedPrompt | str | None,
+    ) -> tuple[str, JsonSchemaDefinition | None]:
+        if system_prompt is None:
+            # Optional JSON schema embedded in the seed prompt YAML. Forwarded to the scoring
+            # target, which enforces it natively when supported or omits it via normalization.
+            seed_prompt = SeedPrompt.from_yaml_file(RefusalScorerPaths.OBJECTIVE_STRICT.value)
+            return seed_prompt.value, seed_prompt.response_json_schema
+        if isinstance(system_prompt, SeedPrompt):
+            return system_prompt.value, system_prompt.response_json_schema
+        if isinstance(system_prompt, str):
+            return system_prompt, None
+        raise TypeError("system_prompt must be a SeedPrompt, str, or None.")
 
     def _build_identifier(self) -> ComponentIdentifier:
         """
@@ -135,7 +166,7 @@ class SelfAskRefusalScorer(TrueFalseScorer):
             params={
                 "system_prompt_template": self._system_prompt,
                 "user_prompt_template": self._prompt_format_string,
-                "response_json_schema": self._response_json_schema,
+                "response_json_schema": self._response_handler.response_schema,
             },
             score_aggregator=self._score_aggregator.__name__,  # type: ignore[ty:unresolved-attribute]
             prompt_target=self._prompt_target.get_identifier(),
@@ -190,15 +221,16 @@ class SelfAskRefusalScorer(TrueFalseScorer):
             response=message_piece.converted_value,
         )
 
-        unvalidated_score: UnvalidatedScore = await self._score_value_with_llm_async(
-            prompt_target=self._prompt_target,
+        unvalidated_score = await _run_llm_scoring_async(
+            chat_target=self._prompt_target,
             system_prompt=self._system_prompt,
-            message_value=prompt_value,
-            message_data_type=message_piece.converted_value_data_type,
+            response_handler=self._response_handler,
+            value=prompt_value,
+            data_type=message_piece.converted_value_data_type,
             scored_prompt_id=message_piece.id,
+            scorer_identifier=self.get_identifier(),
             category=self._score_category,
             objective=objective,
-            response_json_schema=self._response_json_schema,
         )
         score = unvalidated_score.to_score(score_value=unvalidated_score.raw_score_value, score_type="true_false")
 

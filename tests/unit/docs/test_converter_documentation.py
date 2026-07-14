@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from pyrit.prompt_converter.prompt_converter import get_converter_modalities
+from pyrit.converter.converter import get_converter_modalities
 
 
 def get_all_converter_classes():
@@ -35,11 +35,11 @@ def get_converters_mentioned_in_notebooks():
         content = notebook_file.read_text(encoding="utf-8")
 
         # Look for converter imports and class names
-        # Pattern 1: from pyrit.prompt_converter import ConverterName
+        # Pattern 1: from pyrit.converter import ConverterName
         # Pattern 2: ConverterName() in code
         for line in content.split("\n"):
             # Find imports
-            if "from pyrit.prompt_converter import" in line:
+            if "from pyrit.converter import" in line:
                 # Extract converter names from import
                 import_part = line.split("import")[1]
                 for part in import_part.split(","):
@@ -71,7 +71,7 @@ def test_all_converters_are_documented():
     # Some converters might be intentionally not documented (abstract base classes, etc.)
     # We can add exceptions here if needed
     exceptions = {
-        "PromptConverter",  # Base class
+        "Converter",  # Base class
         "LLMGenericTextConverter",  # Base class
         "WordLevelConverter",  # Base class
         "SmugglerConverter",  # Base class (in subdirectory)

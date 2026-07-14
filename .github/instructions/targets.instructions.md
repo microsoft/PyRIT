@@ -4,6 +4,10 @@ applyTo: "pyrit/prompt_target/**"
 
 # Prompt Target Development Guidelines
 
+**Responsibility**: A prompt target is "the thing we're sending the prompt to" — often an LLM, but it can be any endpoint (e.g. a storage account for cross-domain prompt injection). Targets use `message_normalizer` together with `TargetConfiguration` to transform `Message`s into the format the target supports.
+
+**Does not own** (see [framework.md](../../doc/code/framework.md)): what to send or what to do with the response. A target sends a prepared `Message` and returns a response; it must not convert prompts (converters), score (scorers), or manage the conversation / decide the next turn (attacks). Flag such bleed in review.
+
 ## Base Class Contract
 
 All targets MUST inherit from ``PromptTarget`` (or one of its public
@@ -61,23 +65,9 @@ def __init__(self, endpoint: str, api_key: str) -> None: ...    # missing *
 ```
 
 > [!NOTE]
-> ``PromptTarget.__init__`` *itself* still accepts positional parameters and
-> is not currently keyword-only. The ``__init_subclass__`` hook only runs for
-> subclasses, so the base class non-compliance is tolerated during the warn-
-> first phase. The base ``__init__`` will be reshaped to be keyword-only in
-> 0.16.0 as a BREAKING CHANGE.
-
-## Temporary opt-out: ``_brick_legacy_init``
-
-A handful of legacy targets whose positional ``__init__`` is part of the
-public API are grandfathered with ``_brick_legacy_init = True``. They
-emit a ``DeprecationWarning`` at import time and the opt-out is scheduled
-for removal in **0.16.0**. Do not set this flag on new targets; new
-targets MUST follow the keyword-only contract.
-
-Currently grandfathered (slated for cleanup in 0.16.0):
-``HTTPTarget``, ``OpenAICompletionTarget``, ``OpenAIImageTarget``,
-``PromptShieldTarget``.
+> ``PromptTarget.__init__`` *itself* is now keyword-only as well (``*`` after
+> ``self``), so both the base class and its subclasses enforce the same
+> contract.
 
 ## Configuration and Capabilities
 

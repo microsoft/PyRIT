@@ -1,5 +1,6 @@
 import { Badge, Text, Tooltip } from '@fluentui/react-components'
 import type { TargetInstance } from '../../types'
+import { targetEndpoint, targetModelName, targetType, targetUnderlyingModelName } from '../../utils/targetIdentity'
 import { useTargetBadgeStyles } from './TargetBadge.styles'
 
 interface TargetBadgeProps {
@@ -36,24 +37,29 @@ export default function TargetBadge({ target }: TargetBadgeProps) {
   const innerTargets = target.inner_targets ?? []
   const isRoundRobin = innerTargets.length > 0
 
+  const targetTypeName = targetType(target)
+  const modelName = targetModelName(target)
+  const underlyingModelName = targetUnderlyingModelName(target)
+  const endpoint = targetEndpoint(target)
+
   // For RoundRobinTarget, prefer underlying_model_name because inner targets share
   // the same underlying model but may have different deployment names (model_name).
   // For regular targets, use model_name as before.
   const badgeModel = isRoundRobin
-    ? (target.underlying_model_name ?? target.model_name)
-    : target.model_name
+    ? (underlyingModelName ?? modelName)
+    : modelName
   const displayName = isRoundRobin
     ? badgeModel
-      ? `${target.target_type} (${badgeModel} ×${innerTargets.length})`
-      : `${target.target_type} (×${innerTargets.length})`
-    : target.model_name
-      ? `${target.target_type} (${target.model_name})`
-      : target.target_type
+      ? `${targetTypeName} (${badgeModel} ×${innerTargets.length})`
+      : `${targetTypeName} (×${innerTargets.length})`
+    : modelName
+      ? `${targetTypeName} (${modelName})`
+      : targetTypeName
 
   const showUnderlying =
-    target.underlying_model_name &&
-    target.model_name &&
-    target.underlying_model_name !== target.model_name
+    underlyingModelName &&
+    modelName &&
+    underlyingModelName !== modelName
   const supportedCaps = target.capabilities
     ? CAPABILITY_LABELS.filter(c => target.capabilities?.[c.key]).map(c => c.label)
     : []
@@ -71,14 +77,14 @@ export default function TargetBadge({ target }: TargetBadgeProps) {
         <Text size={200}>{displayName}</Text>
         {showUnderlying && (
           <Text size={200} italic>
-            Underlying model: {target.underlying_model_name}
+            Underlying model: {underlyingModelName}
           </Text>
         )}
       </div>
-      {target.endpoint && (
+      {endpoint && (
         <div className={styles.tooltipSection}>
           <span className={styles.sectionLabel}>Endpoint</span>
-          <Text className={styles.endpointText}>{target.endpoint}</Text>
+          <Text className={styles.endpointText}>{endpoint}</Text>
         </div>
       )}
       {(inputModalities.length > 0 || outputModalities.length > 0) && (
@@ -118,12 +124,12 @@ export default function TargetBadge({ target }: TargetBadgeProps) {
                 #{idx + 1}{weights?.[idx] != null ? ` (weight: ${weights[idx]})` : ''}
               </Text>
               <Text size={200}>
-                {inner.target_type}
-                {inner.model_name ? ` — ${inner.model_name}` : ''}
+                {targetType(inner)}
+                {targetModelName(inner) ? ` — ${targetModelName(inner)}` : ''}
               </Text>
-              {inner.endpoint && (
+              {targetEndpoint(inner) && (
                 <Text className={styles.endpointText} size={200}>
-                  {inner.endpoint}
+                  {targetEndpoint(inner)}
                 </Text>
               )}
             </div>

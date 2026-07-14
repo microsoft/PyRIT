@@ -26,27 +26,31 @@ registry singleton.
 
 from __future__ import annotations
 
+import inspect
+import logging
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Any, Generic, TypeVar
+from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar
 
-from pyrit.models import class_name_to_snake_case
-from pyrit.registry.base import ClassRegistryEntry
+from pyrit.registry.registry_metadata import RegistryMetadata
 from pyrit.registry.resolution import (
     derive_parameters,
-    is_component_type_resolvable,
     resolve_constructor_args,
 )
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Mapping
+    from types import ModuleType
 
     from typing_extensions import Self
 
     from pyrit.models.identifiers.component_identifier import ComponentIdentifier
-    from pyrit.models.parameter import Parameter
+    from pyrit.models.parameter import ComponentType, Parameter
+
+logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
-MetadataT = TypeVar("MetadataT", bound=ClassRegistryEntry)
+MetadataT = TypeVar("MetadataT", bound=RegistryMetadata)
+ConfigurableT = TypeVar("ConfigurableT", bound="SupportsParamBag")
 
 
 def _get_metadata_value(metadata: Any, key: str) -> tuple[bool, Any]:
@@ -124,6 +128,14 @@ def _matches_filters(
     return True
 
 
+class SupportsParamBag(Protocol):
+    """Instances that can populate their parameter bag from a flat argument dict."""
+
+    def set_params_from_args(self, *, args: dict[str, Any]) -> None:
+        """Populate the instance's parameter bag from a flat argument dict."""
+        ...
+
+
 class Registry(ABC, Generic[T, MetadataT]):
     """
     Standalone base for PyRIT registries: a validated class catalog that builds instances.
@@ -138,13 +150,21 @@ class Registry(ABC, Generic[T, MetadataT]):
       registry-reference parameters are resolved by name from the owning domain.
     - Singleton support via ``get_registry_singleton()``.
 
-    Subclasses must implement:
+    Subclasses provide the domain specifics:
 
-    - ``_discover()`` — populate the catalog by calling ``register_class`` for each class.
+    - ``_base_type()`` — the base class to discover (and the type the optional
+      ``instances`` container is constrained to), imported lazily.
+    - ``_discovery_package()`` — the package whose ``__all__`` is scanned for
+      concrete subclasses of ``_base_type()``.
     - ``_metadata_class()`` — return the concrete metadata dataclass the base builds.
 
+    The default ``_discover()`` scans ``_discovery_package().__all__`` for concrete
+    ``_base_type()`` subclasses and registers each by class name. A registry whose
+    discovery is genuinely different (e.g. a directory or filesystem scan) overrides
+    ``_discover()`` instead of supplying the two hooks.
+
     Type Parameters:
-        T: The type of classes being registered (e.g. ``PromptConverter``).
+        T: The type of classes being registered (e.g. ``Converter``).
         MetadataT: The metadata dataclass type (e.g. ``ConverterMetadata``).
     """
 
@@ -179,7 +199,7 @@ class Registry(ABC, Generic[T, MetadataT]):
             The singleton instance of this registry class.
         """
         if cls not in cls._singletons:
-            cls._singletons[cls] = cls()  # type: ignore[ty:invalid-assignment]
+            cls._singletons[cls] = cls()
         return cls._singletons[cls]  # type: ignore[ty:invalid-return-type]
 
     @classmethod
@@ -198,14 +218,115 @@ class Registry(ABC, Generic[T, MetadataT]):
             self._discover()
             self._discovered = True
 
-    @abstractmethod
+    def _base_type(self) -> type[T]:
+        """
+        Return the domain base class to discover (e.g. ``PromptTarget``), imported lazily.
+
+        Used by the default ``_discover`` to enumerate the base's concrete subclasses,
+        and by instance-holding registries to constrain their ``instances`` container.
+        Importing lazily keeps the heavy domain package out of module load so the
+        registry's lazy discovery is preserved.
+
+        Returns:
+            type[T]: The domain base class.
+
+        Raises:
+            NotImplementedError: If neither ``_base_type`` nor ``_discover`` is overridden.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} must implement _base_type()/_discovery_package() or override _discover()."
+        )
+
+    def _discovery_package(self) -> ModuleType:
+        """
+        Return the package whose concrete subclasses the default ``_discover`` registers.
+
+        Importing this package must load its component modules so the base type's
+        subclasses exist in memory for enumeration.
+
+        Returns:
+            ModuleType: The domain package (e.g. ``pyrit.prompt_target``).
+
+        Raises:
+            NotImplementedError: If neither ``_discovery_package`` nor ``_discover`` is overridden.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} must implement _base_type()/_discovery_package() or override _discover()."
+        )
+
     def _discover(self) -> None:
         """
-        Perform discovery of registry classes.
+        Populate the catalog with every concrete subclass of the domain base.
 
-        Subclasses implement this to populate the catalog by calling
-        ``self.register_class(cls)`` for each discovered class.
+        Imports ``_discovery_package()`` and enumerates the recursive subclasses of
+        ``_base_type()`` in memory, registering every concrete (non-abstract) one
+        whose module lives under the discovery package. This finds classes by *type*
+        rather than by walking the filesystem, so it is unaffected by packages that
+        omit ``__init__.py``. Any names the package exports lazily (PEP 562
+        ``__getattr__``) are materialized first so their classes are loaded before
+        enumeration; packages without ``__all__`` (e.g. scenarios) are already fully
+        imported, so that step is a no-op for them. Deprecated alias classes
+        (docstring starting with ``"Deprecated alias"``) are skipped. Names come from
+        ``_get_registry_name`` (class name by default; dotted paths for scenarios).
+        Registries with bespoke discovery override this method instead of supplying
+        ``_base_type``/``_discovery_package``.
         """
+        package = self._discovery_package()
+        base = self._base_type()
+        package_name = package.__name__
+        package_prefix = f"{package_name}."
+        # Materialize lazily-exported classes so they are loaded before enumeration.
+        # A lazy import backed by an optional dependency may fail; skip it rather
+        # than fail the whole discovery (the class cannot be built without the dep).
+        for exported_name in getattr(package, "__all__", ()):
+            try:
+                getattr(package, exported_name)
+            except Exception as exc:
+                logger.debug(f"Skipping lazily-exported '{exported_name}': {exc}")
+        for cls in self._iter_concrete_subclasses(base):
+            module = cls.__module__ or ""
+            if module != package_name and not module.startswith(package_prefix):
+                continue
+            if (cls.__doc__ or "").strip().startswith("Deprecated alias"):
+                logger.debug(f"Skipping deprecated alias: {cls.__name__}")
+                continue
+            name = self._get_registry_name(cls)
+            existing = self._classes.get(name)
+            if existing is not None and existing is not cls:
+                logger.warning(
+                    f"{base.__name__} registry name collision: '{name}' conflicts with an "
+                    f"already-registered class. Keeping {existing.__name__}, skipping {cls.__name__}."
+                )
+                continue
+            self.register_class(cls, name=name)
+            logger.debug(f"Registered {base.__name__} class: {name} ({cls.__name__})")
+
+    @staticmethod
+    def _iter_concrete_subclasses(base: type[T]) -> list[type[T]]:
+        """
+        Return every non-abstract subclass of ``base`` currently loaded in memory.
+
+        Walks ``__subclasses__()`` recursively (deduplicating) and drops abstract
+        classes. Results are sorted by ``(module, qualified name)`` for deterministic
+        registration order.
+
+        Args:
+            base (type[T]): The domain base class to enumerate subclasses of.
+
+        Returns:
+            list[type[T]]: The concrete subclasses, in a stable order.
+        """
+        discovered: dict[int, type[T]] = {}
+        stack = list(base.__subclasses__())
+        while stack:
+            cls = stack.pop()
+            if id(cls) in discovered:
+                continue
+            discovered[id(cls)] = cls
+            stack.extend(cls.__subclasses__())
+        concrete = [cls for cls in discovered.values() if not inspect.isabstract(cls)]
+        concrete.sort(key=lambda c: (c.__module__ or "", c.__qualname__))
+        return concrete
 
     @abstractmethod
     def _metadata_class(self) -> type[MetadataT]:
@@ -213,7 +334,7 @@ class Registry(ABC, Generic[T, MetadataT]):
         Return the concrete metadata dataclass this registry builds.
 
         The base ``_build_metadata`` constructs this type from the common
-        ``ClassRegistryEntry`` fields. Subclasses whose metadata carries extra
+        ``RegistryMetadata`` fields. Subclasses whose metadata carries extra
         fields beyond the common shape override ``_build_metadata`` instead.
 
         Returns:
@@ -224,7 +345,7 @@ class Registry(ABC, Generic[T, MetadataT]):
         """
         Build the metadata descriptor for a registered class.
 
-        Populates the common ``ClassRegistryEntry`` fields — name/module, a
+        Populates the common ``RegistryMetadata`` fields — name/module, a
         first-paragraph description, the derived ``Parameter`` build contract, and
         any ``Param.ClassAttr`` class attributes — into the registry's
         ``_metadata_class``. Subclasses needing extra fields override this.
@@ -292,16 +413,17 @@ class Registry(ABC, Generic[T, MetadataT]):
         """
         Get the catalog name for a class.
 
-        Subclasses can override this to customize name derivation. The default
-        converts CamelCase to snake_case.
+        Component classes are referenced by their exact class name (e.g.
+        ``"OpenAIChatTarget"``). Registries whose names follow a different scheme
+        (e.g. snake_case filenames or dotted paths) override this.
 
         Args:
             cls (type[T]): The class to get a name for.
 
         Returns:
-            str: The catalog name (snake_case identifier by default).
+            str: The class name.
         """
-        return class_name_to_snake_case(cls.__name__)
+        return cls.__name__
 
     def _validate_class(self, cls: type[T]) -> None:
         """
@@ -326,11 +448,30 @@ class Registry(ABC, Generic[T, MetadataT]):
         # cheap, so the small duplication is deliberate rather than worth caching.
         parameters = self._derive_parameters(cls)
         for param in parameters:
-            if param.reference is not None and not is_component_type_resolvable(param.reference.component_type):
+            if param.reference is not None and not self._is_component_type_resolvable(param.reference.component_type):
                 raise ValueError(
                     f"{cls.__name__}: reference parameter '{param.name}' has no registry wired for component type "
                     f"'{param.reference.component_type}'."
                 )
+
+    @staticmethod
+    def _is_component_type_resolvable(component_type: ComponentType) -> bool:
+        """
+        Return whether a registry is wired to resolve references of ``component_type``.
+
+        This is the registration-time gate: a reference parameter whose component
+        type has no paired registry can never be resolved by name and should fail
+        fast at ``register_class`` time instead of erroring only at build time.
+
+        Args:
+            component_type (ComponentType): The referenced component family.
+
+        Returns:
+            bool: True when references of ``component_type`` can be resolved by name.
+        """
+        from pyrit.registry.resolution import _registry_getter_for_component_type
+
+        return _registry_getter_for_component_type(component_type) is not None
 
     def register_class(self, cls: type[T], *, name: str | None = None) -> None:
         """
@@ -514,3 +655,53 @@ class Registry(ABC, Generic[T, MetadataT]):
             Iterator[str]: An iterator over sorted registered names.
         """
         return iter(self.get_class_names())
+
+
+class ParamBagRegistry(Registry[ConfigurableT, MetadataT]):
+    """
+    Registry whose components carry a parameter bag populated post-construction.
+
+    Extends the base ``Registry`` (catalog + ``create_instance`` from a flat arg
+    dict) with the shared ``create → set-parameters`` lifecycle prefix used by the
+    registries whose component type supports ``set_params_from_args`` (``Scenario``,
+    ``PyRITInitializer``). The component type parameter is bound to
+    ``SupportsParamBag``, so ``_create_and_configure`` is type-safe without a cast.
+
+    Subclasses layer the diverging *post*-configure step on top:
+    ``ScenarioRegistry`` initializes, ``InitializerRegistry`` validates.
+    """
+
+    def _create_and_configure(
+        self,
+        name: str,
+        *,
+        params: dict[str, Any] | None = None,
+        constructor_kwargs: dict[str, Any] | None = None,
+    ) -> ConfigurableT:
+        """
+        Build an instance and, when params are supplied, populate its parameter bag.
+
+        Shared ``create → set-parameters`` prefix behind the domain registries'
+        public lifecycle methods (``ScenarioRegistry.create_and_initialize_async``
+        and ``InitializerRegistry.create_and_configure``): both construct the
+        instance, then route parameters through the same
+        ``set_params_from_args(args=...)`` entry point. They differ only in what
+        happens *after* — initialize vs validate — which stays in the subclass.
+
+        Args:
+            name (str): The registry name of the class to build.
+            params (dict[str, Any] | None): Parameters to set via
+                ``set_params_from_args``. When ``None`` the step is skipped and the
+                instance keeps its constructor defaults; an empty dict still calls
+                ``set_params_from_args`` so declared defaults are injected.
+            constructor_kwargs (dict[str, Any] | None): Extra constructor arguments
+                forwarded to ``create_instance`` (e.g. ``scenario_result_id``).
+
+        Returns:
+            ConfigurableT: The constructed, parameterized instance. The caller owns
+            any further lifecycle steps (initialize / validate).
+        """
+        instance = self.create_instance(name, **(constructor_kwargs or {}))
+        if params is not None:
+            instance.set_params_from_args(args=params)
+        return instance

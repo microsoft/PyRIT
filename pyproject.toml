@@ -130,6 +130,14 @@ speech = [
     "azure-cognitiveservices-speech>=1.44.0",
 ]
 
+litellm = [
+    # Cap below 1.92.0: 1.92.0+ replaced the universal py3-none-any wheel with
+    # manylinux-only wheels backed by a Rust (PyO3) extension, which has no
+    # Windows/macOS wheels and fails to build on Python 3.14 (PyO3 <=3.13). 1.91.x
+    # is the last pure-Python line that installs on every OS and Python version.
+    "litellm>=1.83.0,<1.92.0",
+]
+
 # all includes all functional dependencies excluding the ones from the "dev" dependency group
 all = [
     "accelerate>=1.7.0",
@@ -138,6 +146,7 @@ all = [
     "flask>=3.1.3",
     "ipykernel>=6.29.5",
     "jupyter>=1.1.1",
+    "litellm>=1.83.0,<1.92.0",  # <1.92.0: 1.92.0+ is manylinux-only Rust wheels (no win/mac, no py3.14)
     "ollama>=0.5.1",
     "opencv-python>=4.11.0.86",
     "playwright>=1.49.0",
@@ -162,29 +171,30 @@ asyncio_mode = "auto"
 [tool.ty]
 [tool.ty.rules]
 all = "error"
-# The baseline repository contains many dynamic typing patterns that ty flags
-# as false positives (optional runtime deps, pandas/NumPy generics, and
-# Pydantic/OpenAI wrappers). Keep the type check useful without turning every
-# existing file into a blocker.
-possibly-missing-attribute = "ignore"
-invalid-argument-type = "ignore"
-invalid-method-override = "ignore"
-invalid-return-type = "ignore"
+# Most rules under `all = "error"` are already clean for pyrit/. A few remain
+# suppressed below; the remaining finding counts are noted so they can be
+# re-enabled as the code is cleaned up.
+# missing-type-argument is clean under numpy>=2.4 (Python 3.14) but flags 38
+# bare `np.ndarray` generics under numpy 2.2.6 -- the version the lock pins for
+# Python 3.10-3.13, i.e. CI's 3.11 -- across 5 files (analytics/conversation_analytics,
+# converter/transparency_attack_converter, score/scorer_evaluation/*).
+# Annotating those generics is real code work, so keep the rule deferred until
+# that numpy-generics debt is addressed.
 missing-type-argument = "ignore"
-no-matching-overload = "ignore"
-possibly-missing-import = "ignore"
-unresolved-attribute = "ignore"
-unresolved-import = "ignore"
-# Allow existing type: ignore comments without matching errors
-unused-ignore-comment = "ignore"
+# unused-type-ignore-comment is environment-dependent: a `# type: ignore`
+# on an optional-dependency import (torch, playwright, etc.) is "used" when the
+# extra is not installed but "unused" once it is. CI installs `--extra all`, so
+# enabling this rule flags such directives across several unrelated modules
+# (auth/copilot_authenticator, executor/benchmark/fairness_bias,
+# prompt_target/playwright_*; the incremental PR check only sees changed files,
+# but the on-main `--all-files` run would fail). Cleanly enabling it requires
+# refactoring those optional imports repo-wide, so keep the rule deferred.
 unused-type-ignore-comment = "ignore"
-# Allow empty function bodies during development
-empty-body = "ignore"
 # ty 0.0.43 (bumped from 0.0.32 in #1919) activated this rule under
-# [tool.ty.rules] all = "error". Adopting @override across pyrit/ would require
-# the typing_extensions backport on Python 3.10/3.11 (typing.override is 3.12+),
-# which adds a direct dep and ongoing import-path friction. Suppressing the
-# rule keeps the codebase consistent with the existing pragmatic ignores above.
+# [tool.ty.rules] all = "error". Adopting @override across pyrit/ (~695 methods)
+# would require the typing_extensions backport on Python 3.10/3.11
+# (typing.override is 3.12+), which adds a direct dep and ongoing import-path
+# friction. Suppressing the rule keeps the codebase consistent for now.
 missing-override-decorator = "ignore"
 
 [tool.ty.analysis]
@@ -208,6 +218,30 @@ exclude = ["doc/code/", "pyrit/auxiliary_attacks/"]
 include = ["pyrit/prompt_target/hugging_face/**"]
 [tool.ty.overrides.rules]
 invalid-argument-type = "ignore"
+
+# Unit tests intentionally exercise runtime validation failures, mutable test doubles,
+# and optional fields after fixtures have populated them. Keep library code strict while
+# avoiding hundreds of per-assertion ignores in tests.
+[[tool.ty.overrides]]
+include = ["tests/unit/**"]
+[tool.ty.overrides.rules]
+call-non-callable = "ignore"
+invalid-assignment = "ignore"
+invalid-await = "ignore"
+invalid-parameter-default = "ignore"
+invalid-type-arguments = "ignore"
+invalid-yield = "ignore"
+missing-argument = "ignore"
+not-subscriptable = "ignore"
+unknown-argument = "ignore"
+unsupported-operator = "ignore"
+# Re-enabled repo-wide so pyrit/ is checked (production is clean) but still
+# relaxed here: tests read private/mock attributes and subclass library types
+# with loosened signatures / runtime-validation-failure arguments.
+invalid-argument-type = "ignore"
+invalid-method-override = "ignore"
+no-matching-overload = "ignore"
+unresolved-attribute = "ignore"
 
 [tool.uv]
 constraint-dependencies = [
@@ -307,6 +341,9 @@ select = [
     "B",  # https://docs.astral.sh/ruff/rules/#flake8-bugbear-b
     "C4",  # https://docs.astral.sh/ruff/rules/#flake8-comprehensions-c4
     "CPY001",  # missing-copyright-notice
+    # "D" + preview=true enables D421 (property-docstring-starts-with-verb):
+    # property docstrings must be noun phrases ("""The display name."""), not
+    # verb phrases ("""Return the display name."""). Keep "D" selected, not ignored.
     "D",  # https://docs.astral.sh/ruff/rules/#pydocstyle-d
     "DOC",  # https://docs.astral.sh/ruff/rules/#pydoclint-doc
     "DTZ",  # https://docs.astral.sh/ruff/rules/#flake8-datetimez-dtz
@@ -360,6 +397,16 @@ extend-select = [
 [tool.ruff.lint.isort]
 known-first-party = ["pyrit"]
 
+[tool.ruff.lint.flake8-type-checking]
+# Pydantic resolves model field annotations at runtime (the models use
+# ``from __future__ import annotations``), so imports used only as field types
+# must stay at module level. Ruff auto-detects direct ``pydantic.BaseModel``
+# subclasses, but not models whose base is an intermediate PyRIT class, so we
+# enumerate those bases here to keep their field imports runtime-evaluated.
+runtime-evaluated-base-classes = [
+    "pyrit.models.results.strategy_result.StrategyResult",
+]
+
 [tool.ruff.lint.flake8-copyright]
 min-file-size = 1
 notice-rgx = "Copyright \\(c\\) Microsoft Corporation\\.\\s*\\n.*Licensed under the MIT license"
@@ -376,13 +423,10 @@ notice-rgx = "Copyright \\(c\\) Microsoft Corporation\\.\\s*\\n.*Licensed under 
 # LOG: notebooks use root logger for convenience
 # PLE1142: top-level await is valid in Jupyter notebooks
 "doc/**" = ["ANN", "CPY001", "TCH", "E402", "E501", "PGH003", "A", "ERA001", "LOG", "PLE1142"]
-"pyrit/{auxiliary_attacks,ui}/**/*.py" = ["B905", "D101", "D102", "D103", "D104", "D105", "D106", "D107", "D401", "D404", "D417", "D418", "DOC102", "DOC201", "DOC202", "DOC402", "DOC501", "N", "PERF", "SIM101", "SIM108"]
 # Backend API routes raise HTTPException handled by FastAPI, not true exceptions
 "pyrit/backend/**/*.py" = ["DOC501", "B008"]
 # Vendored GCG attack code — external project with its own style
-"pyrit/auxiliary_attacks/**/*.py" = ["A", "B905", "D", "DOC", "SIM101", "SIM108"]
-# UI code has incomplete docstrings (external contributor code)
-"pyrit/ui/**/*.py" = ["D", "DOC201", "DOC501"]
+"pyrit/auxiliary_attacks/**/*.py" = ["A", "B905", "D", "DOC", "N", "PERF", "SIM101", "SIM108"]
 "pyrit/__init__.py" = ["D104"]
 # Allow broad pytest.raises(Exception) in tests
 "tests/**/*.py" = ["ANN", "B017"]

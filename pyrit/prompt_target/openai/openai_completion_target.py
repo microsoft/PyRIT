@@ -21,15 +21,9 @@ class OpenAICompletionTarget(OpenAITarget):
 
     _DEFAULT_CONFIGURATION: TargetConfiguration = TargetConfiguration(capabilities=TargetCapabilities())
 
-    # Grandfathered: positional params predate the kwargs-only contract; the
-    # sandwiched ``*args``/``**kwargs`` shape forwards extras to ``OpenAITarget``.
-    # TODO: remove this opt-out and move ``*args`` up to immediately after
-    # ``self`` (or insert ``*,`` and drop ``*args`` entirely) in 0.16.0
-    # (this will be a BREAKING CHANGE for callers passing arguments positionally).
-    _brick_legacy_init = True
-
     def __init__(
         self,
+        *,
         max_tokens: int | None = None,
         temperature: float | None = None,
         top_p: float | None = None,
@@ -37,7 +31,6 @@ class OpenAICompletionTarget(OpenAITarget):
         frequency_penalty: float | None = None,
         n: int | None = None,
         custom_configuration: TargetConfiguration | None = None,
-        *args: Any,
         **kwargs: Any,
     ) -> None:
         """
@@ -72,12 +65,11 @@ class OpenAICompletionTarget(OpenAITarget):
             n (int, Optional): How many completions to generate for each prompt.
             custom_configuration (TargetConfiguration, Optional): Override the default configuration for
                 this target instance. Defaults to None.
-            *args: Variable length argument list passed to the parent class.
             **kwargs: Additional keyword arguments passed to the parent OpenAITarget class.
             httpx_client_kwargs (dict, Optional): Additional kwargs to be passed to the ``httpx.AsyncClient()``
                 constructor. For example, to specify a 3 minute timeout: ``httpx_client_kwargs={"timeout": 180}``
         """
-        super().__init__(*args, custom_configuration=custom_configuration, **kwargs)
+        super().__init__(custom_configuration=custom_configuration, **kwargs)
 
         self._max_tokens = max_tokens
         self._temperature = temperature

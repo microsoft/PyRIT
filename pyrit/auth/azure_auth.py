@@ -7,6 +7,7 @@ import inspect
 import logging
 import time
 from typing import TYPE_CHECKING, Any, cast
+from urllib.parse import urlparse
 
 import msal
 from azure.core.credentials import AccessToken
@@ -31,6 +32,54 @@ from pyrit.auth.auth_config import REFRESH_TOKEN_BEFORE_MSEC
 from pyrit.auth.authenticator import Authenticator
 
 logger = logging.getLogger(__name__)
+
+# Recognised Azure OpenAI / AI Foundry hostname suffixes. Used for strict
+# endpoint validation before an Entra ID bearer token is minted, so a token is
+# only ever issued for a known Microsoft-operated endpoint (a substring check
+# such as ``"azure" in endpoint`` is not sufficient — anyone can host a domain
+# that merely contains "azure").
+_AZURE_OPENAI_HOSTNAME_SUFFIXES = (
+    ".openai.azure.com",
+    ".ai.azure.com",
+    ".services.ai.azure.com",
+    ".cognitiveservices.azure.com",
+)
+
+# Recognised Azure Machine Learning managed online endpoint hostname suffixes.
+_AZURE_ML_HOSTNAME_SUFFIXES = (".inference.ml.azure.com",)
+
+
+def is_azure_openai_endpoint(endpoint: str | None) -> bool:
+    """
+    Return True if ``endpoint`` resolves to a known Azure OpenAI / AI Foundry host.
+
+    Uses a strict hostname-suffix check (not a substring search) so an Entra ID
+    token is only minted for a Microsoft-operated endpoint.
+
+    Args:
+        endpoint (str | None): The endpoint URL to validate.
+
+    Returns:
+        bool: True if the endpoint's hostname ends with a recognised Azure suffix.
+    """
+    hostname = (urlparse(endpoint or "").hostname or "").lower()
+    return any(hostname.endswith(suffix) for suffix in _AZURE_OPENAI_HOSTNAME_SUFFIXES)
+
+
+def is_azure_ml_endpoint(endpoint: str | None) -> bool:
+    """
+    Return True if ``endpoint`` resolves to a known AML managed online host.
+
+    Uses a strict hostname-suffix check (not a substring search).
+
+    Args:
+        endpoint (str | None): The endpoint URL to validate.
+
+    Returns:
+        bool: True if the endpoint's hostname ends with a recognised AML suffix.
+    """
+    hostname = (urlparse(endpoint or "").hostname or "").lower()
+    return any(hostname.endswith(suffix) for suffix in _AZURE_ML_HOSTNAME_SUFFIXES)
 
 
 class TokenProviderCredential:

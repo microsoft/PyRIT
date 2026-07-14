@@ -37,7 +37,6 @@ from pydantic import (
 from typing_extensions import Self, TypeAliasType
 
 import pyrit
-from pyrit.common.deprecation import print_deprecation_message
 
 if TYPE_CHECKING:
     from pyrit.models.parameter import ComponentType
@@ -855,42 +854,6 @@ class ComponentIdentifier(BaseModel):
                     hashes.add(child.eval_hash)
                 hashes.update(child._collect_child_eval_hashes())
         return hashes
-
-    # ------------------------------------------------------------------
-    # Deprecated shims — kept for one release cycle
-    # ------------------------------------------------------------------
-
-    def to_dict(self) -> dict[str, Any]:
-        """
-        Return the flat storage dict (deprecated; use ``model_dump`` instead).
-
-        Returns:
-            The flat dict representation.
-        """
-        print_deprecation_message(
-            old_item="ComponentIdentifier.to_dict",
-            new_item="ComponentIdentifier.model_dump",
-            removed_in="0.16.0",
-        )
-        return self.model_dump()
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> ComponentIdentifier:
-        """
-        Reconstruct from a flat dict (deprecated; use ``model_validate`` instead).
-
-        Args:
-            data: The flat storage dict.
-
-        Returns:
-            A new ComponentIdentifier.
-        """
-        print_deprecation_message(
-            old_item="ComponentIdentifier.from_dict",
-            new_item="ComponentIdentifier.model_validate",
-            removed_in="0.16.0",
-        )
-        return cls.model_validate(data)
 
 
 class Identifiable(ABC):

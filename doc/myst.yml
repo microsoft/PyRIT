@@ -107,6 +107,7 @@ project:
             - file: code/executor/5_workflow.ipynb
             - file: code/executor/6_benchmark.ipynb
             - file: code/executor/7_promptgen.ipynb
+            - file: code/executor/8_modality_feedback.ipynb
         - file: code/targets/0_prompt_targets.md
           children:
             - file: code/targets/1_openai_chat_target.ipynb
@@ -192,12 +193,11 @@ project:
         - file: api/pyrit_executor_core.md
         - file: api/pyrit_executor_promptgen.md
         - file: api/pyrit_executor_workflow.md
-        - file: api/pyrit_identifiers.md
         - file: api/pyrit_memory.md
         - file: api/pyrit_message_normalizer.md
         - file: api/pyrit_models.md
         - file: api/pyrit_output.md
-        - file: api/pyrit_prompt_converter.md
+        - file: api/pyrit_converter.md
         - file: api/pyrit_prompt_normalizer.md
         - file: api/pyrit_prompt_target.md
         - file: api/pyrit_registry.md
@@ -207,6 +207,7 @@ project:
         - file: api/pyrit_show_versions.md
     - file: blog/README.md
       children:
+        - file: blog/2026_07_09_scenarios.md
         - file: blog/2026_04_14_scoring_scorers.md
         - file: blog/2025_06_06.md
         - file: blog/2025_03_03.md

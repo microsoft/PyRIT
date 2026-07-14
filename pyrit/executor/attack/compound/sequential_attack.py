@@ -33,7 +33,7 @@ from pydantic import Field
 from pyrit.executor.attack.core.attack_executor import AttackExecutor
 from pyrit.executor.attack.core.attack_parameters import AttackParameters
 from pyrit.executor.attack.core.attack_strategy import AttackContext, AttackStrategy
-from pyrit.models import AttackOutcome, AttackResult, SeedAttackGroup
+from pyrit.models import AttackOutcome, AttackResult, AttackSeedGroup
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -87,13 +87,13 @@ class SequentialChildAttack:
     Each entry bundles an ``AttackStrategy`` with the inputs that the
     compound forwards to ``AttackExecutor`` when dispatching it.
     ``seed_group`` is required per entry so callers compose seed groups up
-    front (e.g. merging per-technique ``SeedAttackTechniqueGroup`` objects
+    front (e.g. merging per-technique ``AttackTechniqueSeedGroup`` objects
     into a shared base) without any implicit fallback at the compound
     layer.
 
     Attributes:
         strategy (AttackStrategy): The inner attack to run for this entry.
-        seed_group (SeedAttackGroup): The seed group dispatched to the
+        seed_group (AttackSeedGroup): The seed group dispatched to the
             inner attack. Must carry the objective.
         adversarial_chat (PromptTarget | None): Forwarded to the executor
             for inner attacks that need an adversarial chat target (e.g.
@@ -106,7 +106,7 @@ class SequentialChildAttack:
     """
 
     strategy: AttackStrategy[Any, AttackResult]
-    seed_group: SeedAttackGroup
+    seed_group: AttackSeedGroup
     adversarial_chat: PromptTarget | None = None
     objective_scorer: TrueFalseScorer | None = None
     memory_labels: Mapping[str, str] = field(default_factory=dict)

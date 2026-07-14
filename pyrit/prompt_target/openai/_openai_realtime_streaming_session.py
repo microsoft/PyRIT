@@ -30,7 +30,7 @@ except ImportError:  # pragma: no cover - openai is a hard dependency for this m
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
-    from pyrit.prompt_normalizer import PromptConverterConfiguration, PromptNormalizer
+    from pyrit.prompt_normalizer import ConverterConfiguration, PromptNormalizer
     from pyrit.prompt_target.common.realtime_audio import CommittedEvent
 
     # Keep this type-only: openai_realtime_target imports this module at runtime, so a
@@ -122,8 +122,8 @@ class _OpenAIRealtimeStreamingSession:
         audio_chunks: AsyncIterator[bytes],
         prompt_normalizer: PromptNormalizer,
         conversation_id: str | None = None,
-        request_converter_configurations: list[PromptConverterConfiguration] | None = None,
-        response_converter_configurations: list[PromptConverterConfiguration] | None = None,
+        request_converter_configurations: list[ConverterConfiguration] | None = None,
+        response_converter_configurations: list[ConverterConfiguration] | None = None,
         prepended_conversation: list[Message] | None = None,
         server_vad: bool | ServerVadConfig = True,
         persist_prepended_conversation: bool = True,
@@ -199,7 +199,7 @@ class _OpenAIRealtimeStreamingSession:
         try:
             await self._send_streaming_session_config_async()
             if self._persist_prepended_conversation:
-                await self._prompt_normalizer.add_prepended_conversation_to_memory(
+                await self._prompt_normalizer.add_prepended_conversation_to_memory_async(
                     conversation_id=self._conversation_id,
                     should_convert=False,
                     prepended_conversation=self._prepended_conversation,
@@ -435,7 +435,7 @@ class _OpenAIRealtimeStreamingSession:
         assistant_message = Message(message_pieces=[assistant_text_piece, assistant_audio_piece])
 
         if self._response_converter_configurations:
-            await self._prompt_normalizer.convert_values(
+            await self._prompt_normalizer.convert_values_async(
                 converter_configurations=self._response_converter_configurations,
                 message=assistant_message,
             )

@@ -12,11 +12,12 @@ import pytest
 from pyrit.common import REQUIRED_VALUE
 from pyrit.common.apply_defaults import _RequiredValueSentinel
 from pyrit.models import Message, MessagePiece
-from pyrit.models.identifiers import ConverterIdentifier
+from pyrit.models.identifiers import ConverterIdentifier, TargetIdentifier
 from pyrit.models.parameter import ComponentType
 from pyrit.prompt_target import PromptTarget
-from pyrit.registry.object_registries import TargetRegistry
+from pyrit.registry.components import ConverterRegistry, ScorerRegistry, TargetRegistry
 from pyrit.registry.resolution import (
+    _registry_getter_for_component_type,
     derive_parameters,
     display_choices,
     resolve_constructor_args,
@@ -92,6 +93,13 @@ class _StrTargetArg:
         self.converter_target = converter_target
 
 
+class _NeedsTargets:
+    """Helper whose constructor takes a list-typed registry reference."""
+
+    def __init__(self, *, targets: list[PromptTarget]) -> None:
+        self.targets = targets
+
+
 def _resolve(cls: type, raw_args: dict[str, object], *, identifier_type: type | None = None) -> dict[str, object]:
     """Resolve ``raw_args`` against the derived parameter contract for ``cls``."""
     return resolve_constructor_args(cls=cls, raw_args=raw_args, identifier_type=identifier_type)
@@ -100,20 +108,20 @@ def _resolve(cls: type, raw_args: dict[str, object], *, identifier_type: type | 
 @pytest.fixture
 def target_registry():
     """Provide a fresh TargetRegistry singleton with one registered target."""
-    TargetRegistry.reset_instance()
+    TargetRegistry.reset_registry_singleton()
     registry = TargetRegistry.get_registry_singleton()
-    registry.register_instance(MockPromptTarget(), name="my_target")
+    registry.instances.register(MockPromptTarget(), name="my_target")
     yield registry
-    TargetRegistry.reset_instance()
+    TargetRegistry.reset_registry_singleton()
 
 
 @pytest.fixture
 def empty_target_registry():
     """Provide a fresh, empty TargetRegistry singleton."""
-    TargetRegistry.reset_instance()
+    TargetRegistry.reset_registry_singleton()
     registry = TargetRegistry.get_registry_singleton()
     yield registry
-    TargetRegistry.reset_instance()
+    TargetRegistry.reset_registry_singleton()
 
 
 class TestDisplayChoices:
@@ -161,8 +169,32 @@ class TestResolveConstructorArgs:
         resolved = _resolve(
             _NeedsTarget, {"converter_target": "my_target", "offset": "5"}, identifier_type=ConverterIdentifier
         )
-        assert resolved["converter_target"] is target_registry.get_instance_by_name("my_target")
+        assert resolved["converter_target"] is target_registry.instances.get("my_target")
         assert resolved["offset"] == 5
+
+    def test_resolves_list_registry_reference_by_name(self, target_registry: TargetRegistry) -> None:
+        # A ``list[...]`` reference resolves each element by name (the list-aware path
+        # used by RoundRobinTarget and composite scorers).
+        target_registry.instances.register(MockPromptTarget(), name="second_target")
+        resolved = _resolve(
+            _NeedsTargets, {"targets": ["my_target", "second_target"]}, identifier_type=TargetIdentifier
+        )
+        assert resolved["targets"] == [
+            target_registry.instances.get("my_target"),
+            target_registry.instances.get("second_target"),
+        ]
+
+    def test_list_registry_reference_instance_passthrough(self, target_registry: TargetRegistry) -> None:
+        # Non-string elements (already-built instances) pass through unchanged,
+        # interleaved with names that are looked up.
+        instance = MockPromptTarget()
+        resolved = _resolve(_NeedsTargets, {"targets": ["my_target", instance]}, identifier_type=TargetIdentifier)
+        assert resolved["targets"][0] is target_registry.instances.get("my_target")
+        assert resolved["targets"][1] is instance
+
+    def test_list_registry_reference_unknown_name_raises(self, target_registry: TargetRegistry) -> None:
+        with pytest.raises(ValueError, match="missing"):
+            _resolve(_NeedsTargets, {"targets": ["my_target", "missing"]}, identifier_type=TargetIdentifier)
 
     def test_registry_reference_instance_passthrough(self, target_registry: TargetRegistry) -> None:
         instance = MockPromptTarget()
@@ -245,3 +277,37 @@ def test_module_has_no_backend_dependency() -> None:
         elif isinstance(node, ast.ImportFrom) and node.module:
             imported_modules.append(node.module)
     assert not any(name.startswith("pyrit.backend") for name in imported_modules)
+
+
+# Component families whose references resolve by name, and the registry each maps to.
+# Kept in the test (not imported from resolution.py) so it is an independent spec:
+# the test fails if the production mapping drifts from this expectation.
+_RESOLVABLE_COMPONENT_REGISTRIES = {
+    ComponentType.TARGET: TargetRegistry,
+    ComponentType.CONVERTER: ConverterRegistry,
+    ComponentType.SCORER: ScorerRegistry,
+}
+# Scenarios are created by name, never referenced by name inside another component,
+# so they are deliberately not wired for reference resolution.
+_NON_RESOLVABLE_COMPONENT_TYPES = {ComponentType.SCENARIO}
+
+
+def test_every_component_type_is_classified() -> None:
+    # Guard against silently adding a ComponentType without deciding whether its
+    # references resolve by name. A new member forces an update here (and to the
+    # resolution map), rather than failing only at build time.
+    classified = set(_RESOLVABLE_COMPONENT_REGISTRIES) | _NON_RESOLVABLE_COMPONENT_TYPES
+    assert set(ComponentType) == classified
+
+
+@pytest.mark.parametrize("component_type", list(_RESOLVABLE_COMPONENT_REGISTRIES))
+def test_resolvable_component_type_maps_to_its_registry(component_type: ComponentType) -> None:
+    getter = _registry_getter_for_component_type(component_type)
+    assert getter is not None
+    expected_registry = _RESOLVABLE_COMPONENT_REGISTRIES[component_type]
+    assert getter() is expected_registry.get_registry_singleton().instances
+
+
+@pytest.mark.parametrize("component_type", sorted(_NON_RESOLVABLE_COMPONENT_TYPES))
+def test_non_resolvable_component_type_has_no_registry(component_type: ComponentType) -> None:
+    assert _registry_getter_for_component_type(component_type) is None

@@ -167,6 +167,7 @@ jest.mock("./components/Chat/ChatWindow", () => {
 });
 
 jest.mock("./components/Config/TargetConfig", () => {
+  const { makeTarget } = jest.requireActual("@/test-utils/targetFixtures") as typeof import("@/test-utils/targetFixtures");
   const MockTargetConfig = ({
     activeTarget,
     onSetActiveTarget,
@@ -181,12 +182,10 @@ jest.mock("./components/Config/TargetConfig", () => {
         </span>
         <button
           onClick={() =>
-            onSetActiveTarget({
-              target_id: "t1",
+            onSetActiveTarget(makeTarget({
               target_registry_name: "test_target",
               target_type: "OpenAIChatTarget",
-              status: "active",
-            })
+            }))
           }
           data-testid="set-target"
         >

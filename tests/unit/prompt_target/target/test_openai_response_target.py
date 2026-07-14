@@ -23,7 +23,7 @@ from pyrit.exceptions.exception_classes import (
     RateLimitException,
 )
 from pyrit.memory.memory_interface import MemoryInterface
-from pyrit.models import Message, MessagePiece
+from pyrit.models import Message, MessagePiece, flatten_to_message_pieces
 from pyrit.prompt_target import OpenAIResponseTarget, PromptTarget
 from pyrit.prompt_target.common.json_response_config import _JsonResponseConfig
 
@@ -87,7 +87,7 @@ def fake_construct_response_from_request(request, response_text_pieces):
 @pytest.fixture
 def sample_conversations() -> MutableSequence[MessagePiece]:
     conversations = get_sample_conversations()
-    return Message.flatten_to_message_pieces(conversations)
+    return flatten_to_message_pieces(conversations)
 
 
 @pytest.fixture
@@ -671,7 +671,8 @@ async def test_build_input_for_multi_modal_async_image_and_text(target: OpenAIRe
     assert result[0]["role"] == "user"
     assert result[0]["content"][0]["type"] == "input_text"
     assert result[0]["content"][1]["type"] == "input_image"
-    assert result[0]["content"][1]["image_url"]["url"].startswith("data:image/jpeg;base64,")
+    assert result[0]["content"][1]["detail"] == "auto"
+    assert result[0]["content"][1]["image_url"].startswith("data:image/jpeg;base64,")
 
 
 async def test_construct_request_body_filters_none(

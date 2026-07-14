@@ -11,27 +11,25 @@ from typing import Literal
 import pytest
 
 from pyrit.common import REQUIRED_VALUE
-from pyrit.models import ComponentIdentifier, Message, MessagePiece, PromptDataType
-from pyrit.models.parameter import ComponentType
-from pyrit.prompt_converter import (
+from pyrit.converter import (
     Base64Converter,
     CaesarConverter,
+    Converter,
     ConverterResult,
     LLMGenericTextConverter,
     NoiseConverter,
     PersuasionConverter,
-    PromptConverter,
     TenseConverter,
     ToneConverter,
     TranslationConverter,
     VariationConverter,
 )
+from pyrit.models import ComponentIdentifier, Message, MessagePiece, PromptDataType
+from pyrit.models.parameter import ComponentType
 from pyrit.prompt_target import PromptTarget, TargetCapabilities, TargetConfiguration
 from pyrit.registry.components import (
     ConverterMetadata,
     ConverterRegistry,
-)
-from pyrit.registry.object_registries import (
     TargetRegistry,
 )
 from pyrit.registry.resolution import derive_parameters
@@ -59,7 +57,7 @@ class MockPromptTarget(PromptTarget):
         pass
 
 
-class MockTextConverter(PromptConverter):
+class MockTextConverter(Converter):
     """Mock text-to-text converter for testing."""
 
     SUPPORTED_INPUT_TYPES = ("text",)
@@ -74,7 +72,7 @@ class MockTextConverter(PromptConverter):
         return ConverterResult(output_text=prompt, output_type="text")
 
 
-class MockImageConverter(PromptConverter):
+class MockImageConverter(Converter):
     """Mock image-to-text converter for testing."""
 
     SUPPORTED_INPUT_TYPES = ("image_path",)
@@ -89,7 +87,7 @@ class MockImageConverter(PromptConverter):
         return ConverterResult(output_text=prompt, output_type="text")
 
 
-class MockMultiModalConverter(PromptConverter):
+class MockMultiModalConverter(Converter):
     """Mock multi-modal converter accepting text and image input for testing."""
 
     SUPPORTED_INPUT_TYPES = ("text", "image_path")
@@ -177,7 +175,7 @@ class TestConverterRegistryRegisterInstance:
         class NotAConverter:
             pass
 
-        with pytest.raises(TypeError, match="PromptConverter"):
+        with pytest.raises(TypeError, match="Converter"):
             registry.instances.register(NotAConverter())  # type: ignore[arg-type]
 
         assert len(registry.instances) == 0
@@ -262,7 +260,7 @@ class TestDiscovery:
         assert "SelectiveTextConverter" in registry.get_class_names()
 
     def test_does_not_register_base_class(self, registry: ConverterRegistry):
-        assert "PromptConverter" not in registry.get_class_names()
+        assert "Converter" not in registry.get_class_names()
 
     def test_keyed_by_exact_class_name(self, registry: ConverterRegistry):
         names = registry.get_class_names()
@@ -281,7 +279,7 @@ class TestGetClass:
             registry.get_class("NotARealConverter")
 
     def test_is_subclass_relationship(self, registry: ConverterRegistry):
-        assert issubclass(registry.get_class("Base64Converter"), PromptConverter)
+        assert issubclass(registry.get_class("Base64Converter"), Converter)
 
 
 class TestCreateInstance:
@@ -314,22 +312,22 @@ class TestCreateLLMConverter:
 
     def test_build_llm_converter_resolves_target_by_name(self, registry: ConverterRegistry):
         target = MockPromptTarget()
-        TargetRegistry.reset_instance()
-        TargetRegistry.get_registry_singleton().register_instance(target, name="my_target")
+        TargetRegistry.reset_registry_singleton()
+        TargetRegistry.get_registry_singleton().instances.register(target, name="my_target")
         try:
             converter = registry.create_instance("TenseConverter", converter_target="my_target", tense="past")
             assert isinstance(converter, TenseConverter)
             assert converter._converter_target is target
         finally:
-            TargetRegistry.reset_instance()
+            TargetRegistry.reset_registry_singleton()
 
     def test_build_llm_converter_unknown_target_raises(self, registry: ConverterRegistry):
-        TargetRegistry.reset_instance()
+        TargetRegistry.reset_registry_singleton()
         try:
             with pytest.raises(ValueError, match="not found"):
                 registry.create_instance("TenseConverter", converter_target="missing", tense="past")
         finally:
-            TargetRegistry.reset_instance()
+            TargetRegistry.reset_registry_singleton()
 
 
 class TestClassMetadata:

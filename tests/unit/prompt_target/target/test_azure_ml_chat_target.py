@@ -11,14 +11,14 @@ from openai import RateLimitError
 from unit.mocks import get_sample_conversations
 
 from pyrit.exceptions import EmptyResponseException, RateLimitException
-from pyrit.models import Message, MessagePiece
+from pyrit.models import Message, MessagePiece, flatten_to_message_pieces
 from pyrit.prompt_target import AzureMLChatTarget
 
 
 @pytest.fixture
 def sample_conversations() -> MutableSequence[MessagePiece]:
     conversations = get_sample_conversations()
-    return Message.flatten_to_message_pieces(conversations)
+    return flatten_to_message_pieces(conversations)
 
 
 @pytest.fixture
@@ -52,6 +52,35 @@ def test_initialization_with_no_api_raises():
     os.environ[AzureMLChatTarget.endpoint_uri_environment_variable] = ""
     with pytest.raises(ValueError):
         AzureMLChatTarget(api_key="xxxxx")
+
+
+def test_no_key_recognized_aml_endpoint_auto_mints_entra(patch_central_database):
+    """With no key and a recognized *.inference.ml.azure.com endpoint, the target
+    auto-mints an Entra token provider for the AML scope."""
+
+    async def _provider() -> str:
+        return "aml-entra-token"
+
+    with (
+        patch.dict(os.environ, {AzureMLChatTarget.api_key_environment_variable: ""}),
+        patch(
+            "pyrit.prompt_target.azure_ml_chat_target.get_azure_async_token_provider",
+            return_value=_provider,
+        ) as mock_provider,
+    ):
+        target = AzureMLChatTarget(endpoint="https://my-aml.region.inference.ml.azure.com/score")
+
+    mock_provider.assert_called_once_with(AzureMLChatTarget._AZURE_ML_SCOPE)
+    assert target._api_key_provider is _provider
+    assert target._api_key == ""
+
+
+def test_no_key_non_aml_endpoint_raises(patch_central_database):
+    """With no key and an endpoint that is not a recognized AML host, the target
+    refuses to mint a bearer token."""
+    with patch.dict(os.environ, {AzureMLChatTarget.api_key_environment_variable: ""}):
+        with pytest.raises(ValueError, match="recognized Azure ML"):
+            AzureMLChatTarget(endpoint="https://example.com/score")
 
 
 async def test_complete_chat_async(aml_online_chat: AzureMLChatTarget):

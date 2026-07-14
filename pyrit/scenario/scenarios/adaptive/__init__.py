@@ -9,11 +9,7 @@ from pyrit.scenario.scenarios.adaptive.dispatcher import (
     AdaptiveTechniqueDispatcher,
     TechniqueBundle,
 )
-from pyrit.scenario.scenarios.adaptive.selectors import (
-    EpsilonGreedyTechniqueSelector,
-    SelectorScope,
-    TechniqueSelector,
-)
+from pyrit.scenario.scenarios.adaptive.selectors import EpsilonGreedyTechniqueSelector, SelectorScope, TechniqueSelector
 from pyrit.scenario.scenarios.adaptive.text_adaptive import TextAdaptive
 
 __all__ = [

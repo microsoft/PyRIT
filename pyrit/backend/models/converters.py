@@ -11,14 +11,13 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from pyrit.models import PromptDataType
+from pyrit.models import ConverterIdentifier, Parameter, PromptDataType
 
 __all__ = [
     "ConverterCatalogEntry",
     "ConverterCatalogResponse",
     "ConverterInstance",
     "ConverterInstanceListResponse",
-    "ConverterParameterSchema",
     "CreateConverterRequest",
     "CreateConverterResponse",
     "ConverterPreviewRequest",
@@ -32,17 +31,6 @@ __all__ = [
 # ============================================================================
 
 
-class ConverterParameterSchema(BaseModel):
-    """Schema for a single converter constructor parameter."""
-
-    name: str = Field(..., description="Parameter name")
-    type_name: str = Field(..., description="Human-readable type (e.g. 'str', 'int', 'Literal[...]')")
-    required: bool = Field(..., description="Whether the parameter must be provided")
-    default_value: str | None = Field(None, description="String representation of default value, if any")
-    choices: list[str] | None = Field(None, description="Allowed values for Literal types")
-    description: str | None = Field(None, description="Parameter description from docstring")
-
-
 class ConverterCatalogEntry(BaseModel):
     """A converter type available from the backend registry."""
 
@@ -53,7 +41,7 @@ class ConverterCatalogEntry(BaseModel):
     supported_output_types: list[str] = Field(
         default_factory=list, description="Output data types produced by this converter type"
     )
-    parameters: list[ConverterParameterSchema] = Field(
+    parameters: list[Parameter] = Field(
         default_factory=list, description="Constructor parameters for dynamic form generation"
     )
     is_llm_based: bool = Field(False, description="Whether this converter requires an LLM target")
@@ -72,23 +60,16 @@ class ConverterCatalogResponse(BaseModel):
 
 
 class ConverterInstance(BaseModel):
-    """A registered converter instance."""
+    """
+    A registered converter instance.
+
+    Pairs the registry instance id with the converter's ``ConverterIdentifier`` —
+    the typed identity/configuration projection that is the single source of truth
+    for the converter's class, supported data types, and constructor params.
+    """
 
     converter_id: str = Field(..., description="Unique converter instance identifier")
-    converter_type: str = Field(..., description="Converter class name (e.g., 'Base64Converter')")
-    display_name: str | None = Field(None, description="Human-readable display name")
-    supported_input_types: list[str] = Field(
-        default_factory=list, description="Input data types supported by this converter"
-    )
-    supported_output_types: list[str] = Field(
-        default_factory=list, description="Output data types produced by this converter"
-    )
-    converter_specific_params: dict[str, Any] | None = Field(
-        None, description="Additional converter-specific parameters"
-    )
-    sub_converter_ids: list[str] | None = Field(
-        None, description="Converter IDs of sub-converters (for pipelines/composites)"
-    )
+    identifier: ConverterIdentifier = Field(..., description="The converter's identity/configuration projection")
 
 
 class ConverterInstanceListResponse(BaseModel):

@@ -34,7 +34,7 @@ DEFAULT_INITIALIZERS: list[str] = ["target", "load_default_datasets"]
 
 #: Per-scenario override map for initializers. A scenario absent here falls back
 #: to ``DEFAULT_INITIALIZERS``. Keys use the dotted registry name
-#: (``<module>.<scenario>``) returned by ``ScenarioRegistry.get_names()``.
+#: (``<module>.<scenario>``) returned by ``ScenarioRegistry.get_class_names()``.
 SCENARIO_INITIALIZERS: dict[str, list[str]] = {}
 
 #: Per-scenario extra CLI args appended after the standard flag block. Keys use
@@ -56,7 +56,7 @@ def get_all_scenarios():
         list[str]: Sorted list of scenario names.
     """
     registry = ScenarioRegistry.get_registry_singleton()
-    return registry.get_names()
+    return registry.get_class_names()
 
 
 def _initializers_for(scenario_name: str) -> list[str]:

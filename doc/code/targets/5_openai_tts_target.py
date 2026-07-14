@@ -12,13 +12,13 @@
 #
 # This example shows how to use the TTS (audio) target to convert text to speech.
 # %%
+from pyrit.converter import TranslationConverter
 from pyrit.executor.attack import (
     AttackConverterConfig,
     PromptSendingAttack,
 )
 from pyrit.output import output_attack_async
-from pyrit.prompt_converter import TranslationConverter
-from pyrit.prompt_normalizer import PromptConverterConfiguration
+from pyrit.prompt_normalizer import ConverterConfiguration
 from pyrit.prompt_target import OpenAIChatTarget, OpenAITTSTarget
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 
@@ -28,7 +28,7 @@ converter_target = OpenAIChatTarget()
 tts_prompt_target = OpenAITTSTarget()
 saved_audio_path = None
 
-converters = PromptConverterConfiguration.from_converters(
+converters = ConverterConfiguration.from_converters(
     converters=[TranslationConverter(converter_target=converter_target, language="spanish")]
 )
 

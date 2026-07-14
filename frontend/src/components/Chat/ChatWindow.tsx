@@ -6,6 +6,7 @@ import {
 } from '@fluentui/react-components'
 import { AddRegular, PanelRightRegular } from '@fluentui/react-icons'
 import MessageList from './MessageList'
+import SystemPromptBanner from './SystemPromptBanner'
 import ChatInputArea from './ChatInputArea'
 import ConversationPanel from './ConversationPanel'
 import ConverterPanel from './ConverterPanel'
@@ -18,6 +19,7 @@ import { attacksApi } from '../../services/api'
 import { toApiError } from '../../services/errors'
 import { buildMessagePieces, backendMessagesToFrontend } from '../../utils/messageMapper'
 import type { Message, MessageAttachment, TargetInstance, TargetInfo } from '../../types'
+import { targetEndpoint, targetModelName, targetType } from '../../utils/targetIdentity'
 import type { ViewName } from '../Sidebar/Navigation'
 import { useChatWindowStyles } from './ChatWindow.styles'
 
@@ -70,6 +72,7 @@ export default function ChatWindow({
   const [isPanelOpen, setIsPanelOpen] = useState(false)
   const [isConverterPanelOpen, setIsConverterPanelOpen] = useState(false)
   const [chatInputText, setChatInputText] = useState('')
+  const [systemPrompt, setSystemPrompt] = useState('')
   const [attachmentTypes, setAttachmentTypes] = useState<string[]>([])
   const [attachmentData, setAttachmentData] = useState<Record<string, string>>({})
   const [pieceConversions, setPieceConversions] = useState<Record<string, PieceConversion>>({})
@@ -132,6 +135,8 @@ export default function ChatWindow({
   // Used to restore the user's input when switching back to an in-flight conversation.
   const pendingUserMessagesRef = useRef<Map<string, Message[]>>(new Map())
 
+  const supportsSystemPrompt = activeTarget?.capabilities?.supports_system_prompt === true
+
   // Clear internal messages when attack state is reset (e.g. New Attack).
   // Uses the "adjust state during render" pattern (see React docs:
   // https://react.dev/reference/react/useState#storing-information-from-previous-renders)
@@ -142,6 +147,18 @@ export default function ChatWindow({
     if (!attackResultId) {
       setMessages([])
       setLoadedConversationId(null)
+      setSystemPrompt('')
+    }
+  }
+
+  // Clear a retained system prompt when switching to a target that can't use it,
+  // so it isn't silently dropped on send. Preserved across supporting targets to
+  // keep the A/B-testing workflow intact.
+  const [prevTargetName, setPrevTargetName] = useState(activeTarget?.target_registry_name)
+  if (activeTarget?.target_registry_name !== prevTargetName) {
+    setPrevTargetName(activeTarget?.target_registry_name)
+    if (!supportsSystemPrompt) {
+      setSystemPrompt('')
     }
   }
 
@@ -289,6 +306,7 @@ export default function ChatWindow({
         const createResponse = await attacksApi.createAttack({
           target_registry_name: activeTarget.target_registry_name,
           labels: labels,
+          system_prompt: supportsSystemPrompt ? systemPrompt.trim() || undefined : undefined,
         })
         currentAttackResultId = createResponse.attack_result_id
         currentConversationId = createResponse.conversation_id
@@ -347,8 +365,21 @@ export default function ChatWindow({
         setLoadedConversationId(effectiveConvId!)
       }
     } catch (err) {
+      const viewedConversationId = viewedConvRef.current
+      const isViewingFailedConversation = viewedConversationId === sendConvId
+        || viewedConversationId === (activeConversationId ?? conversationId)
+        || (viewedConversationId == null && sendConvId !== '__pending__')
+
       // Only show error in UI if user is still on this conversation
-      if (viewedConvRef.current === sendConvId || viewedConvRef.current === (activeConversationId ?? conversationId)) {
+      if (isViewingFailedConversation) {
+        // Mark the viewed conversation as loaded so first-send failures do not
+        // get stuck behind the "Loading conversation..." placeholder.
+        if (viewedConversationId) {
+          setLoadedConversationId(viewedConversationId)
+        } else if (sendConvId !== '__pending__') {
+          setLoadedConversationId(sendConvId)
+        }
+
         const apiError = toApiError(err)
         let description: string
         if (apiError.isNetworkError) {
@@ -513,9 +544,9 @@ export default function ChatWindow({
   // The user can "Continue with your target" to branch into a new attack with their target.
   const isCrossTargetLocked = Boolean(
     attackResultId && attackTarget && activeTarget && (
-      attackTarget.target_type !== activeTarget.target_type ||
-      (attackTarget.endpoint ?? '') !== (activeTarget.endpoint ?? '') ||
-      (attackTarget.model_name ?? '') !== (activeTarget.model_name ?? '')
+      attackTarget.target_type !== targetType(activeTarget) ||
+      (attackTarget.endpoint ?? '') !== (targetEndpoint(activeTarget) ?? '') ||
+      (attackTarget.model_name ?? '') !== (targetModelName(activeTarget) ?? '')
     )
   )
 
@@ -548,6 +579,8 @@ export default function ChatWindow({
       console.error('Failed to use as template:', err)
     }
   }, [attackResultId, activeTarget, activeConversationId, messages, labels, onConversationCreated])
+
+  const systemMessage = messages.find(message => message.role === 'system')
 
   return (
     <div className={styles.root}>
@@ -602,6 +635,7 @@ export default function ChatWindow({
             </Tooltip>
           </div>
         </div>
+        {systemMessage && <SystemPromptBanner content={systemMessage.content} />}
         <MessageList
           messages={messages}
           onCopyToInput={handleCopyToInput}
@@ -617,6 +651,10 @@ export default function ChatWindow({
         <ChatInputArea
           ref={inputBoxRef}
           onSend={handleSend}
+          showSystemPrompt={!attackResultId}
+          supportsSystemPrompt={supportsSystemPrompt}
+          systemPrompt={systemPrompt}
+          onSystemPromptChange={setSystemPrompt}
           disabled={isSending || !activeTarget || singleTurnLimitReached || isOperatorLocked || isCrossTargetLocked}
           activeTarget={activeTarget}
           singleTurnLimitReached={singleTurnLimitReached}

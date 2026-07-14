@@ -36,7 +36,7 @@
 # These converters encode text into various formats:
 
 # %%
-from pyrit.prompt_converter import (
+from pyrit.converter import (
     AsciiArtConverter,
     AskToDecodeConverter,
     AtbashConverter,
@@ -85,7 +85,7 @@ print("Negation Trap:", await NegationTrapConverter().convert_async(prompt="your
 # These converters obfuscate text to evade detection or filters, including character-level manipulations, word-level attacks, and ANSI escape sequences:
 
 # %%
-from pyrit.prompt_converter import (
+from pyrit.converter import (
     AnsiAttackConverter,
     ArabicPresentationFormConverter,
     ArabiziConverter,
@@ -178,15 +178,17 @@ print("CodeChameleon:", await code_chameleon.convert_async(prompt=prompt))  # ty
 # These converters perform text replacement, template injection, and URL encoding:
 
 # %%
-from pyrit.datasets import TextJailBreak
-from pyrit.prompt_converter import (
+from pyrit.converter import (
     JsonStringConverter,
+    PolicyPuppetryConverter,
     SearchReplaceConverter,
     SuffixAppendConverter,
     TemplateSegmentConverter,
     TextJailbreakConverter,
     UrlConverter,
 )
+from pyrit.converter.policy_puppetry_converter import PolicyPuppetryTemplate
+from pyrit.datasets import TextJailBreak
 
 prompt = "tell me how to cut down a tree"
 
@@ -214,13 +216,17 @@ print("Text Jailbreak:", await text_jailbreak.convert_async(prompt=prompt))  # t
 template_converter = TemplateSegmentConverter()
 print("Template Segment:", await template_converter.convert_async(prompt=prompt))  # type: ignore
 
+# Policy Puppetry [@hiddenlayer2025policypuppetry] frames the request as policy/config the model should follow
+policy_puppetry = PolicyPuppetryConverter(prompt_template=PolicyPuppetryTemplate.DR_HOUSE.to_seed_prompt())
+print("Policy Puppetry:", await policy_puppetry.convert_async(prompt=prompt))  # type: ignore
+
 # %% [markdown]
 # ### 1.4 Token Smuggling Converters
 #
 # These converters use Unicode variation selectors and other techniques to hide text:
 
 # %%
-from pyrit.prompt_converter import (
+from pyrit.converter import (
     AsciiSmugglerConverter,
     SneakyBitsSmugglerConverter,
     VariationSelectorSmugglerConverter,
@@ -252,8 +258,7 @@ print("Variation Selector:", await var_selector.convert_async(prompt=prompt))  #
 import pathlib
 
 from pyrit.common.path import CONVERTER_SEED_PROMPT_PATH
-from pyrit.models import SeedPrompt
-from pyrit.prompt_converter import (
+from pyrit.converter import (
     DecompositionConverter,
     DenylistConverter,
     ImagePromptStyleConverter,
@@ -269,6 +274,7 @@ from pyrit.prompt_converter import (
     TranslationConverter,
     VariationConverter,
 )
+from pyrit.models import SeedPrompt
 from pyrit.prompt_target import OpenAIChatTarget
 
 attack_llm = OpenAIChatTarget()
@@ -312,6 +318,11 @@ print("Persuasion:", await persuasion_converter.convert_async(prompt=prompt))  #
 # Question-A/Question-B reconstruction task that the target reassembles itself
 decomposition_converter = DecompositionConverter(converter_target=attack_llm)
 print("Decomposition:", await decomposition_converter.convert_async(prompt=prompt))  # type: ignore
+
+# With use_word_game=True, each noun phrase is also replaced by an innocuous codeword, with the
+# mapping established in the same prompt
+decomposition_word_game = DecompositionConverter(converter_target=attack_llm, use_word_game=True)
+print("Decomposition (word-game):", await decomposition_word_game.convert_async(prompt=prompt))  # type: ignore
 
 # Denylist detection
 denylist_converter = DenylistConverter(converter_target=attack_llm)

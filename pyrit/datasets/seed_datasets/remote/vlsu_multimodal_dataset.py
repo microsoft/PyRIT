@@ -119,7 +119,7 @@ class _VLSUMultimodalDataset(_RemoteDatasetLoader):
     @property
     @override
     def dataset_name(self) -> str:
-        """Return the dataset name."""
+        """The dataset name."""
         return "ml_vlsu"
 
     @override

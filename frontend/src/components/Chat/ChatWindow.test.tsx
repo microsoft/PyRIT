@@ -2,13 +2,14 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { FluentProvider, webLightTheme } from "@fluentui/react-components";
 import ChatWindow from "./ChatWindow";
-import { Message, TargetCapabilitiesInfo, TargetInfo, TargetInstance } from "../../types";
+import { makeTarget } from "@/test-utils/targetFixtures";
+import { Message, TargetCapabilities, TargetInfo, TargetInstance } from "../../types";
 import { attacksApi, convertersApi } from "../../services/api";
 import * as messageMapper from "../../utils/messageMapper";
 
 const buildCapabilities = (
-  overrides: Partial<TargetCapabilitiesInfo> = {}
-): TargetCapabilitiesInfo => ({
+  overrides: Partial<TargetCapabilities> = {}
+): TargetCapabilities => ({
   supports_multi_turn: true,
   supports_multi_message_pieces: false,
   supports_json_schema: false,
@@ -58,12 +59,12 @@ const TestWrapper: React.FC<{ children: React.ReactNode }> = ({
   children,
 }) => <FluentProvider theme={webLightTheme}>{children}</FluentProvider>;
 
-const mockTarget: TargetInstance = {
+const mockTarget: TargetInstance = makeTarget({
   target_registry_name: "openai_chat_1",
   target_type: "OpenAIChatTarget",
   endpoint: "https://api.openai.com",
   model_name: "gpt-4",
-};
+});
 
 // ---------------------------------------------------------------------------
 // Helpers to build mock backend responses
@@ -388,7 +389,7 @@ describe("ChatWindow Integration", () => {
   it("should display target without model name", () => {
     const targetNoModel: TargetInstance = {
       ...mockTarget,
-      model_name: null,
+      identifier: { ...mockTarget.identifier, model_name: null },
     };
 
     render(
@@ -465,6 +466,285 @@ describe("ChatWindow Integration", () => {
     // Messages should appear in the DOM
     await waitFor(() => {
       expect(screen.getByText("Hello back!")).toBeInTheDocument();
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // System prompt (system_prompt) wiring
+  // -----------------------------------------------------------------------
+
+  describe("system prompt", () => {
+    const supportedTarget: TargetInstance = {
+      ...mockTarget,
+      capabilities: buildCapabilities({ supports_system_prompt: true }),
+    };
+
+    function primeSendMocks() {
+      mockedMapper.buildMessagePieces.mockResolvedValue([
+        { data_type: "text", original_value: "Hello" },
+      ]);
+      mockedAttacksApi.createAttack.mockResolvedValue({
+        attack_result_id: "ar-sys",
+        conversation_id: "conv-sys",
+        created_at: "2026-01-01T00:00:00Z",
+      });
+      mockedAttacksApi.addMessage.mockResolvedValue(
+        makeTextResponse("Hi") as never
+      );
+      mockedMapper.backendMessagesToFrontend.mockReturnValue([
+        { role: "assistant", content: "Hi", timestamp: "2026-01-01T00:00:01Z" },
+      ]);
+    }
+
+    it("renders the system prompt toggle for a new conversation", () => {
+      render(
+        <TestWrapper>
+          <ChatWindow {...defaultProps} activeTarget={supportedTarget} />
+        </TestWrapper>
+      );
+
+      expect(
+        screen.getByRole("button", { name: /system prompt/i })
+      ).toBeInTheDocument();
+    });
+
+    it("hides the system prompt toggle once an attack exists", async () => {
+      mockedAttacksApi.getMessages.mockResolvedValue({ messages: [] });
+      mockedMapper.backendMessagesToFrontend.mockReturnValue([]);
+
+      render(
+        <TestWrapper>
+          <ChatWindow
+            {...defaultProps}
+            activeTarget={supportedTarget}
+            attackResultId="ar-existing"
+            conversationId="conv-existing"
+            activeConversationId="conv-existing"
+          />
+        </TestWrapper>
+      );
+
+      await waitFor(() => {
+        expect(screen.queryByTestId("loading-state")).not.toBeInTheDocument();
+      });
+      expect(
+        screen.queryByRole("button", { name: /system prompt/i })
+      ).not.toBeInTheDocument();
+    });
+
+    it("renders a system prompt banner when the loaded conversation has a system message", async () => {
+      mockedAttacksApi.getMessages.mockResolvedValue({ messages: [] });
+      mockedMapper.backendMessagesToFrontend.mockReturnValue([
+        { role: "system", content: "You are a pirate.", timestamp: "2026-01-01T00:00:00Z" },
+        { role: "user", content: "Ahoy", timestamp: "2026-01-01T00:00:01Z" },
+      ]);
+
+      render(
+        <TestWrapper>
+          <ChatWindow
+            {...defaultProps}
+            activeTarget={supportedTarget}
+            attackResultId="ar-existing"
+            conversationId="conv-existing"
+            activeConversationId="conv-existing"
+          />
+        </TestWrapper>
+      );
+
+      expect(await screen.findByTestId("system-prompt-banner")).toBeInTheDocument();
+      expect(screen.getByText("You are a pirate.")).toBeInTheDocument();
+    });
+
+    it("forwards the typed system prompt when the target supports it", async () => {
+      const user = userEvent.setup();
+      primeSendMocks();
+
+      render(
+        <TestWrapper>
+          <ChatWindow {...defaultProps} activeTarget={supportedTarget} />
+        </TestWrapper>
+      );
+
+      await user.click(screen.getByRole("button", { name: /system prompt/i }));
+      await user.type(
+        screen.getByRole("textbox", { name: /system prompt/i }),
+        "You are helpful"
+      );
+      await user.type(screen.getByPlaceholderText("Type prompt here"), "Hello");
+      await user.click(screen.getByRole("button", { name: /send/i }));
+
+      await waitFor(() => {
+        expect(mockedAttacksApi.createAttack).toHaveBeenCalledWith(
+          expect.objectContaining({ system_prompt: "You are helpful" })
+        );
+      });
+    });
+
+    it("omits the system prompt when the target does not support it", async () => {
+      const user = userEvent.setup();
+      primeSendMocks();
+
+      render(
+        <TestWrapper>
+          <ChatWindow {...defaultProps} activeTarget={mockTarget} />
+        </TestWrapper>
+      );
+
+      await user.type(screen.getByPlaceholderText("Type prompt here"), "Hello");
+      await user.click(screen.getByRole("button", { name: /send/i }));
+
+      await waitFor(() => {
+        expect(mockedAttacksApi.createAttack).toHaveBeenCalled();
+      });
+      const createArgs = mockedAttacksApi.createAttack.mock.calls[0][0];
+      expect(createArgs.system_prompt).toBeUndefined();
+    });
+
+    it("disables the toggle and drops the prompt for an explicitly unsupported target", async () => {
+      const user = userEvent.setup();
+      primeSendMocks();
+
+      const unsupportedTarget: TargetInstance = {
+        ...mockTarget,
+        capabilities: buildCapabilities({ supports_system_prompt: false }),
+      };
+
+      render(
+        <TestWrapper>
+          <ChatWindow {...defaultProps} activeTarget={unsupportedTarget} />
+        </TestWrapper>
+      );
+
+      expect(
+        screen.getByRole("button", { name: /system prompt/i })
+      ).toBeDisabled();
+
+      await user.type(screen.getByPlaceholderText("Type prompt here"), "Hello");
+      await user.click(screen.getByRole("button", { name: /send/i }));
+
+      await waitFor(() => {
+        expect(mockedAttacksApi.createAttack).toHaveBeenCalled();
+      });
+      const createArgs = mockedAttacksApi.createAttack.mock.calls[0][0];
+      expect(createArgs.system_prompt).toBeUndefined();
+    });
+
+    it("omits the system prompt when left blank on a supporting target", async () => {
+      const user = userEvent.setup();
+      primeSendMocks();
+
+      render(
+        <TestWrapper>
+          <ChatWindow {...defaultProps} activeTarget={supportedTarget} />
+        </TestWrapper>
+      );
+
+      await user.type(screen.getByPlaceholderText("Type prompt here"), "Hello");
+      await user.click(screen.getByRole("button", { name: /send/i }));
+
+      await waitFor(() => {
+        expect(mockedAttacksApi.createAttack).toHaveBeenCalled();
+      });
+      const createArgs = mockedAttacksApi.createAttack.mock.calls[0][0];
+      expect(createArgs.system_prompt).toBeUndefined();
+    });
+
+    it("clears a retained system prompt when switching to an unsupported target", async () => {
+      const user = userEvent.setup();
+      primeSendMocks();
+
+      const supportedA: TargetInstance = {
+        ...mockTarget,
+        target_registry_name: "supports_a",
+        capabilities: buildCapabilities({ supports_system_prompt: true }),
+      };
+      const unsupportedB: TargetInstance = {
+        ...mockTarget,
+        target_registry_name: "no_support_b",
+        capabilities: buildCapabilities({ supports_system_prompt: false }),
+      };
+      const supportedC: TargetInstance = {
+        ...mockTarget,
+        target_registry_name: "supports_c",
+        capabilities: buildCapabilities({ supports_system_prompt: true }),
+      };
+
+      const { rerender } = render(
+        <TestWrapper>
+          <ChatWindow {...defaultProps} activeTarget={supportedA} />
+        </TestWrapper>
+      );
+
+      await user.click(screen.getByRole("button", { name: /system prompt/i }));
+      await user.type(
+        screen.getByRole("textbox", { name: /system prompt/i }),
+        "You are helpful"
+      );
+
+      // Switch to an unsupported target (should clear), then to another
+      // supporting one so the cleared value is observable on send.
+      rerender(
+        <TestWrapper>
+          <ChatWindow {...defaultProps} activeTarget={unsupportedB} />
+        </TestWrapper>
+      );
+      rerender(
+        <TestWrapper>
+          <ChatWindow {...defaultProps} activeTarget={supportedC} />
+        </TestWrapper>
+      );
+
+      await user.type(screen.getByPlaceholderText("Type prompt here"), "Hello");
+      await user.click(screen.getByRole("button", { name: /send/i }));
+
+      await waitFor(() => {
+        expect(mockedAttacksApi.createAttack).toHaveBeenCalled();
+      });
+      const createArgs = mockedAttacksApi.createAttack.mock.calls[0][0];
+      expect(createArgs.system_prompt).toBeUndefined();
+    });
+
+    it("preserves the system prompt across supporting targets", async () => {
+      const user = userEvent.setup();
+      primeSendMocks();
+
+      const supportedA: TargetInstance = {
+        ...mockTarget,
+        target_registry_name: "supports_a",
+        capabilities: buildCapabilities({ supports_system_prompt: true }),
+      };
+      const supportedB: TargetInstance = {
+        ...mockTarget,
+        target_registry_name: "supports_b",
+        capabilities: buildCapabilities({ supports_system_prompt: true }),
+      };
+
+      const { rerender } = render(
+        <TestWrapper>
+          <ChatWindow {...defaultProps} activeTarget={supportedA} />
+        </TestWrapper>
+      );
+
+      await user.click(screen.getByRole("button", { name: /system prompt/i }));
+      await user.type(
+        screen.getByRole("textbox", { name: /system prompt/i }),
+        "You are helpful"
+      );
+
+      rerender(
+        <TestWrapper>
+          <ChatWindow {...defaultProps} activeTarget={supportedB} />
+        </TestWrapper>
+      );
+
+      await user.type(screen.getByPlaceholderText("Type prompt here"), "Hello");
+      await user.click(screen.getByRole("button", { name: /send/i }));
+
+      await waitFor(() => {
+        expect(mockedAttacksApi.createAttack).toHaveBeenCalledWith(
+          expect.objectContaining({ system_prompt: "You are helpful" })
+        );
+      });
     });
   });
 
@@ -1247,11 +1527,11 @@ describe("ChatWindow Integration", () => {
   // -----------------------------------------------------------------------
 
   it("should show single-turn banner for single-turn target with existing user messages", async () => {
-    const singleTurnTarget: TargetInstance = {
+    const singleTurnTarget: TargetInstance = makeTarget({
       target_registry_name: "openai_image_1",
       target_type: "OpenAIImageTarget",
       capabilities: buildCapabilities({ supports_multi_turn: false }),
-    };
+    });
 
     const messagesWithUser: Message[] = [
       { role: "user", content: "Generate an image", timestamp: "2026-01-01T00:00:00Z" },
@@ -1281,11 +1561,11 @@ describe("ChatWindow Integration", () => {
   });
 
   it("should not show single-turn banner for single-turn target with no messages", () => {
-    const singleTurnTarget: TargetInstance = {
+    const singleTurnTarget: TargetInstance = makeTarget({
       target_registry_name: "openai_image_1",
       target_type: "OpenAIImageTarget",
       capabilities: buildCapabilities({ supports_multi_turn: false }),
-    };
+    });
 
     render(
       <TestWrapper>
@@ -1330,11 +1610,11 @@ describe("ChatWindow Integration", () => {
   });
 
   it("should show New Conversation button in single-turn banner when conversation exists", async () => {
-    const singleTurnTarget: TargetInstance = {
+    const singleTurnTarget: TargetInstance = makeTarget({
       target_registry_name: "openai_tts_1",
       target_type: "OpenAITTSTarget",
       capabilities: buildCapabilities({ supports_multi_turn: false }),
-    };
+    });
 
     const messagesWithUser: Message[] = [
       { role: "user", content: "Say hello", timestamp: "2026-01-01T00:00:00Z" },
@@ -1384,9 +1664,9 @@ describe("ChatWindow Integration", () => {
 
   it("should not show cross-target banner when attackTarget matches activeTarget", () => {
     const sameTarget: TargetInfo = {
-      target_type: mockTarget.target_type,
-      endpoint: mockTarget.endpoint,
-      model_name: mockTarget.model_name,
+      target_type: mockTarget.identifier.class_name,
+      endpoint: mockTarget.identifier.endpoint,
+      model_name: mockTarget.identifier.model_name,
     };
 
     render(
@@ -1543,11 +1823,11 @@ describe("ChatWindow Integration", () => {
       conversation_id: "new-conv-from-new",
     });
 
-    const singleTurnTarget: TargetInstance = {
+    const singleTurnTarget: TargetInstance = makeTarget({
       target_registry_name: "openai_image_1",
       target_type: "OpenAIImageTarget",
       capabilities: buildCapabilities({ supports_multi_turn: false }),
-    };
+    });
 
     const messagesWithUser: Message[] = [
       { role: "user", content: "Generate an image", timestamp: "2026-01-01T00:00:00Z" },
@@ -2247,9 +2527,9 @@ describe("ChatWindow Integration", () => {
           parameters: [
             {
               name: "encoding_func",
-              type_name: "Literal['b64encode', 'urlsafe_b64encode']",
+              type_name: "str",
               required: false,
-              default_value: "b64encode",
+              default: "b64encode",
               choices: ["b64encode", "urlsafe_b64encode"],
             },
           ],

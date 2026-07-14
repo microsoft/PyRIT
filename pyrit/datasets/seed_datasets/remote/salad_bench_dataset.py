@@ -56,7 +56,7 @@ class _SaladBenchDataset(_RemoteDatasetLoader):
 
     @property
     def dataset_name(self) -> str:
-        """Return the dataset name."""
+        """The dataset name."""
         return "salad_bench"
 
     @staticmethod

@@ -118,7 +118,7 @@ class XPIAResult(WorkflowResult):
     @property
     def status(self) -> XPIAStatus:
         """
-        Get the status of the attack result.
+        The status of the attack result.
 
         Returns:
             XPIAStatus: The status of the attack result.
@@ -137,7 +137,7 @@ class XPIAWorkflow(WorkflowStrategy[XPIAContext, XPIAResult], Identifiable):
     2. The processing_callback is executed to trigger the target's processing
     3. The response is optionally scored to determine success
 
-    The workflow supports customization through prompt converters and scorers,
+    The workflow supports customization through converters and scorers,
     allowing for various attack techniques and evaluation methods.
     """
 
@@ -329,12 +329,14 @@ class XPIAWorkflow(WorkflowStrategy[XPIAContext, XPIAResult], Identifiable):
             f'converter operations) "{attack_content_value}"',
         )
 
+        if context.memory_labels:
+            for piece in context.attack_content.message_pieces:
+                piece.labels = context.memory_labels
         setup_response = await self._prompt_normalizer.send_prompt_async(
             message=context.attack_content,
             request_converter_configurations=self._request_converters,
             response_converter_configurations=self._response_converters,
             target=self._attack_setup_target,
-            labels=context.memory_labels,
             conversation_id=context.attack_setup_target_conversation_id,
         )
 
@@ -568,12 +570,14 @@ class XPIATestWorkflow(XPIAWorkflow):
             # processing_prompt is validated to be non-None in _validate_context
             if context.processing_prompt is None:
                 raise RuntimeError("context.processing_prompt is not initialized")
+            if context.memory_labels:
+                for piece in context.processing_prompt.message_pieces:
+                    piece.labels = context.memory_labels
             response = await self._prompt_normalizer.send_prompt_async(
                 message=context.processing_prompt,
                 target=self._processing_target,
                 request_converter_configurations=self._request_converters,
                 response_converter_configurations=self._response_converters,
-                labels=context.memory_labels,
                 conversation_id=context.processing_conversation_id,
             )
 
