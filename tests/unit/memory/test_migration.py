@@ -810,7 +810,7 @@ def test_conversations_migration_downgrade_restores_columns():
 
 
 # =============================================================================
-# Backfill tests for scorer identifier persistence (a6c8e0f2b4d6)
+# Backfill tests for identifier persistence (e5f7a9c1b3d2)
 # =============================================================================
 
 
@@ -826,17 +826,6 @@ def test_identifier_migrations_are_nullable_and_best_effort_with_malformed_json(
                     text('INSERT INTO "Conversations" (conversation_id, target_identifier) VALUES (:id, :value)'),
                     {"id": "malformed-conversation", "value": "not-json"},
                 )
-                command.upgrade(config, "e5f7a9c1b3d2")
-                assert (
-                    connection.execute(
-                        text(
-                            'SELECT target_identifier_hash FROM "Conversations" '
-                            "WHERE conversation_id = 'malformed-conversation'"
-                        )
-                    ).scalar_one()
-                    is None
-                )
-
                 score_id = str(uuid.uuid4())
                 connection.execute(
                     text(
@@ -846,15 +835,6 @@ def test_identifier_migrations_are_nullable_and_best_effort_with_malformed_json(
                     ),
                     {"id": score_id},
                 )
-                command.upgrade(config, "a6c8e0f2b4d6")
-                assert (
-                    connection.execute(
-                        text('SELECT scorer_identifier_hash FROM "ScoreEntries" WHERE id = :id'),
-                        {"id": score_id},
-                    ).scalar_one()
-                    is None
-                )
-
                 result_id = str(uuid.uuid4())
                 connection.execute(
                     text(
@@ -866,15 +846,6 @@ def test_identifier_migrations_are_nullable_and_best_effort_with_malformed_json(
                     ),
                     {"id": result_id},
                 )
-                command.upgrade(config, "b7d9f1a3c5e7")
-                assert (
-                    connection.execute(
-                        text('SELECT scenario_identifier_hash FROM "ScenarioResultEntries" WHERE id = :id'),
-                        {"id": result_id},
-                    ).scalar_one()
-                    is None
-                )
-
                 prompt_id = str(uuid.uuid4())
                 connection.execute(
                     text(
@@ -886,9 +857,6 @@ def test_identifier_migrations_are_nullable_and_best_effort_with_malformed_json(
                     ),
                     {"id": prompt_id},
                 )
-                command.upgrade(config, "c8e1f3a5b7d9")
-                assert connection.execute(text('SELECT COUNT(*) FROM "PromptConverterIdentifiers"')).scalar_one() == 0
-
                 attack_result_id = str(uuid.uuid4())
                 connection.execute(
                     text(
@@ -899,7 +867,33 @@ def test_identifier_migrations_are_nullable_and_best_effort_with_malformed_json(
                     ),
                     {"id": attack_result_id},
                 )
-                command.upgrade(config, "d9f2a4b6c8e0")
+
+                command.upgrade(config, "e5f7a9c1b3d2")
+
+                assert (
+                    connection.execute(
+                        text(
+                            'SELECT target_identifier_hash FROM "Conversations" '
+                            "WHERE conversation_id = 'malformed-conversation'"
+                        )
+                    ).scalar_one()
+                    is None
+                )
+                assert (
+                    connection.execute(
+                        text('SELECT scorer_identifier_hash FROM "ScoreEntries" WHERE id = :id'),
+                        {"id": score_id},
+                    ).scalar_one()
+                    is None
+                )
+                assert (
+                    connection.execute(
+                        text('SELECT scenario_identifier_hash FROM "ScenarioResultEntries" WHERE id = :id'),
+                        {"id": result_id},
+                    ).scalar_one()
+                    is None
+                )
+                assert connection.execute(text('SELECT COUNT(*) FROM "PromptConverterIdentifiers"')).scalar_one() == 0
                 assert (
                     connection.execute(
                         text('SELECT atomic_attack_identifier_hash FROM "AttackResultEntries" WHERE id = :id'),
@@ -930,13 +924,7 @@ def test_identifier_migrations_are_nullable_and_best_effort_with_malformed_json(
 def test_identifier_migrations_do_not_import_domain_models():
     """Frozen identifier migrations operate on retained JSON rather than current domain models."""
     versions_dir = Path(__file__).resolve().parents[3] / "pyrit" / "memory" / "alembic" / "versions"
-    revision_names = (
-        "e5f7a9c1b3d2_add_target_identifiers_table.py",
-        "a6c8e0f2b4d6_add_scorer_identifiers_table.py",
-        "b7d9f1a3c5e7_add_scenario_identifiers_table.py",
-        "c8e1f3a5b7d9_add_converter_identifiers_table.py",
-        "d9f2a4b6c8e0_add_attack_identifiers_tables.py",
-    )
+    revision_names = ("e5f7a9c1b3d2_add_identifiers_tables.py",)
 
     for revision_name in revision_names:
         source = (versions_dir / revision_name).read_text(encoding="utf-8")
@@ -971,7 +959,7 @@ def test_scorer_identifier_migration_backfills_graph_and_score_link():
         try:
             with engine.begin() as connection:
                 config = _config_for(connection)
-                command.upgrade(config, "e5f7a9c1b3d2")
+                command.upgrade(config, "d4e6f8a0b2c4")
                 connection.execute(
                     text(
                         'INSERT INTO "ScoreEntries" '
@@ -981,7 +969,7 @@ def test_scorer_identifier_migration_backfills_graph_and_score_link():
                     {"id": score_id, "identifier": json.dumps(composite.model_dump())},
                 )
 
-                command.upgrade(config, "a6c8e0f2b4d6")
+                command.upgrade(config, "e5f7a9c1b3d2")
 
                 score_hash = connection.execute(
                     text('SELECT scorer_identifier_hash FROM "ScoreEntries" WHERE id = :id'),
@@ -1008,7 +996,7 @@ def test_scorer_identifier_migration_backfills_graph_and_score_link():
 
 
 # =============================================================================
-# Backfill tests for converter identifier persistence (c8e1f3a5b7d9)
+# Backfill tests for converter identifier persistence
 # =============================================================================
 
 
@@ -1042,7 +1030,7 @@ def test_converter_identifier_migration_backfills_graph_and_prompt_links():
         try:
             with engine.begin() as connection:
                 config = _config_for(connection)
-                command.upgrade(config, "b7d9f1a3c5e7")
+                command.upgrade(config, "d4e6f8a0b2c4")
                 connection.execute(
                     text(
                         'INSERT INTO "PromptMemoryEntries" '
@@ -1058,7 +1046,7 @@ def test_converter_identifier_migration_backfills_graph_and_prompt_links():
                     },
                 )
 
-                command.upgrade(config, "c8e1f3a5b7d9")
+                command.upgrade(config, "e5f7a9c1b3d2")
 
                 converter_rows = connection.execute(
                     text('SELECT hash, converter_target_hash, sub_converter_hash FROM "ConverterIdentifiers"')
@@ -1082,7 +1070,7 @@ def test_converter_identifier_migration_backfills_graph_and_prompt_links():
 
 
 # =============================================================================
-# Backfill tests for scenario identifier persistence (b7d9f1a3c5e7)
+# Backfill tests for scenario identifier persistence
 # =============================================================================
 
 
@@ -1122,7 +1110,7 @@ def test_scenario_identifier_migration_backfills_dependencies_and_result_link():
         try:
             with engine.begin() as connection:
                 config = _config_for(connection)
-                command.upgrade(config, "a6c8e0f2b4d6")
+                command.upgrade(config, "d4e6f8a0b2c4")
                 connection.execute(
                     text(
                         'INSERT INTO "ScenarioResultEntries" '
@@ -1140,7 +1128,7 @@ def test_scenario_identifier_migration_backfills_dependencies_and_result_link():
                     },
                 )
 
-                command.upgrade(config, "b7d9f1a3c5e7")
+                command.upgrade(config, "e5f7a9c1b3d2")
 
                 result_hash = connection.execute(
                     text('SELECT scenario_identifier_hash FROM "ScenarioResultEntries" WHERE id = :id'),
@@ -1171,7 +1159,7 @@ def test_scenario_identifier_migration_backfills_dependencies_and_result_link():
 
 
 # =============================================================================
-# Backfill tests for attack identifier persistence (d9f2a4b6c8e0)
+# Backfill tests for attack identifier persistence
 # =============================================================================
 
 
@@ -1233,7 +1221,7 @@ def test_attack_identifier_migration_backfills_graph_and_result_link():
         try:
             with engine.begin() as connection:
                 config = _config_for(connection)
-                command.upgrade(config, "c8e1f3a5b7d9")
+                command.upgrade(config, "d4e6f8a0b2c4")
                 connection.execute(
                     text(
                         'INSERT INTO "AttackResultEntries" '
@@ -1245,7 +1233,7 @@ def test_attack_identifier_migration_backfills_graph_and_result_link():
                     {"id": result_id, "identifier": json.dumps(atomic.model_dump())},
                 )
 
-                command.upgrade(config, "d9f2a4b6c8e0")
+                command.upgrade(config, "e5f7a9c1b3d2")
 
                 result_hash = connection.execute(
                     text('SELECT atomic_attack_identifier_hash FROM "AttackResultEntries" WHERE id = :id'),
