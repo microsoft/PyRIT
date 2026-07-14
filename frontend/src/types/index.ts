@@ -172,14 +172,30 @@ export interface TargetInfo {
   model_name?: string | null
 }
 
+export type AttackOutcome = 'undetermined' | 'success' | 'failure' | 'error'
+
+// Attack-level verdict score (backend `ScoreView`). Mirrors the display fields
+// the API exposes on `AttackSummary.last_score`.
+export interface ScoreView {
+  id: string
+  scorer_type: string
+  score_type: string
+  score_value: string
+  score_category?: string[] | null
+  score_rationale?: string | null
+  timestamp: string
+}
+
 export interface AttackSummary {
   attack_result_id: string
   conversation_id: string
   attack_type: string
   attack_specific_params?: Record<string, unknown> | null
+  objective: string
   target?: TargetInfo | null
   converters: string[]
-  outcome?: 'undetermined' | 'success' | 'failure' | 'error' | null
+  outcome?: AttackOutcome | null
+  last_score?: ScoreView | null
   last_message_preview?: string | null
   message_count: number
   related_conversation_ids: string[]

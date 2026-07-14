@@ -17,7 +17,7 @@ import { ConnectionHealthProvider, useConnectionHealth } from './hooks/useConnec
 import { DEFAULT_GLOBAL_LABELS } from './components/Labels/labelDefaults'
 import { filtersFromSearchParams, filtersToSearchParams } from './components/History/historyFilters'
 import type { ViewName } from './components/Sidebar/Navigation'
-import type { TargetInstance, TargetInfo } from './types'
+import type { TargetInstance, TargetInfo, AttackOutcome, ScoreView } from './types'
 import { targetEndpoint, targetModelName, targetType } from './utils/targetIdentity'
 import { attacksApi, versionApi } from './services/api'
 import { toApiError } from './services/errors'
@@ -51,6 +51,9 @@ interface LoadedAttack {
   labels: Record<string, string> | null
   target: TargetInfo | null
   relatedConversationIds: string[]
+  objective: string
+  outcome: AttackOutcome | null
+  lastScore: ScoreView | null
   status: AttackLoadStatus
 }
 
@@ -201,6 +204,9 @@ function App() {
       labels: null,
       target: null,
       relatedConversationIds: [],
+      objective: '',
+      outcome: null,
+      lastScore: null,
     })
     attacksApi
       .getAttack(routeAttackId)
@@ -212,6 +218,9 @@ function App() {
           labels: attack.labels ?? {},
           target: attack.target ?? null,
           relatedConversationIds: attack.related_conversation_ids ?? [],
+          objective: attack.objective,
+          outcome: attack.outcome ?? null,
+          lastScore: attack.last_score ?? null,
           status: 'success',
         })
       })
@@ -228,6 +237,9 @@ function App() {
           labels: null,
           target: null,
           relatedConversationIds: [],
+          objective: '',
+          outcome: null,
+          lastScore: null,
         })
       })
     // Drop a stale response once the route has moved on to another attack.
@@ -294,6 +306,9 @@ function App() {
       labels: null,
       target,
       relatedConversationIds: [],
+      objective: '',
+      outcome: null,
+      lastScore: null,
       status: 'success',
     })
     // Replace when promoting an empty /chat to its attack url (first message);
@@ -333,6 +348,9 @@ function App() {
       attackTarget={readyAttack ? readyAttack.target : null}
       isLoadingAttack={isLoadingAttack}
       relatedConversationCount={readyAttack ? readyAttack.relatedConversationIds.length : 0}
+      objective={readyAttack ? readyAttack.objective : ''}
+      outcome={readyAttack ? readyAttack.outcome : null}
+      lastScore={readyAttack ? readyAttack.lastScore : null}
     />
   )
 

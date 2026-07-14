@@ -11,6 +11,8 @@ import ChatInputArea from './ChatInputArea'
 import ConversationPanel from './ConversationPanel'
 import ConverterPanel from './ConverterPanel'
 import TargetBadge from './TargetBadge'
+import ObjectiveHeader from './ObjectiveHeader'
+import AttackVerdictChip from './AttackVerdictChip'
 import type { PieceConversion } from './converterTypes'
 import { PIECE_TYPE_TO_DATA_TYPE, basenameFromValue, buildMediaUrl, dataTypeToAttachmentKind, isPathDataType } from './converterTypes'
 import LabelsBar from '../Labels/LabelsBar'
@@ -18,7 +20,7 @@ import type { ChatInputAreaHandle } from './ChatInputArea'
 import { attacksApi } from '../../services/api'
 import { toApiError } from '../../services/errors'
 import { buildMessagePieces, backendMessagesToFrontend } from '../../utils/messageMapper'
-import type { Message, MessageAttachment, TargetInstance, TargetInfo } from '../../types'
+import type { Message, MessageAttachment, TargetInstance, TargetInfo, AttackOutcome, ScoreView } from '../../types'
 import { targetEndpoint, targetModelName, targetType } from '../../utils/targetIdentity'
 import type { ViewName } from '../Sidebar/Navigation'
 import { useChatWindowStyles } from './ChatWindow.styles'
@@ -42,6 +44,12 @@ interface ChatWindowProps {
   isLoadingAttack?: boolean
   /** Number of related (non-main) conversations in the loaded attack. */
   relatedConversationCount?: number
+  /** The loaded attack's objective (empty for new/manual attacks). */
+  objective?: string
+  /** The loaded attack's outcome verdict. */
+  outcome?: AttackOutcome | null
+  /** The loaded attack's final score, if any. */
+  lastScore?: ScoreView | null
 }
 
 export default function ChatWindow({
@@ -59,6 +67,9 @@ export default function ChatWindow({
   attackTarget,
   isLoadingAttack,
   relatedConversationCount,
+  objective = '',
+  outcome,
+  lastScore,
 }: ChatWindowProps) {
   const styles = useChatWindowStyles()
   const [messages, setMessages] = useState<Message[]>([])
@@ -610,6 +621,7 @@ export default function ChatWindow({
             )}
           </div>
           <div className={styles.ribbonActions}>
+            <AttackVerdictChip outcome={outcome} score={lastScore} />
             <Tooltip content="Toggle conversations panel" relationship="label">
               <Button
                 appearance="subtle"
@@ -635,6 +647,7 @@ export default function ChatWindow({
             </Tooltip>
           </div>
         </div>
+        <ObjectiveHeader objective={objective} />
         {systemMessage && <SystemPromptBanner content={systemMessage.content} />}
         <MessageList
           messages={messages}
