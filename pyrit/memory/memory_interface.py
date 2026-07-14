@@ -536,10 +536,9 @@ class MemoryInterface(abc.ABC):
 
         If the row already exists it was fully persisted before (children and edges
         included, since rows are immutable), so this returns early. Otherwise the row and
-        its child edges are inserted inside a savepoint: a concurrent writer that inserts
-        the same hash first surfaces as an ``IntegrityError`` that rolls back only this
-        insert (not the surrounding write) and is then treated as a no-op -- the row
-        exists either way.
+        its child edges are inserted inside a savepoint. If an ``IntegrityError`` occurs,
+        it is treated as a concurrent duplicate only when a fresh lookup confirms that
+        the identifier hash now exists; all other integrity failures are re-raised.
 
         Args:
             session (Any): The active SQLAlchemy session (the caller's transaction).
@@ -561,7 +560,10 @@ class MemoryInterface(abc.ABC):
                 session.merge(entry_type.from_domain_model(identifier))
                 session.flush()
         except IntegrityError:
-            pass
+            with session.no_autoflush:
+                existing_entry = session.get(entry_type, identifier.hash, populate_existing=True)
+            if existing_entry is None:
+                raise
 
     @staticmethod
     def _get_identifier_entry_type(identifier: ComponentIdentifier) -> type[ComponentIdentifierEntry[Any]]:
