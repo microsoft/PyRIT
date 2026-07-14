@@ -445,12 +445,12 @@ class ComponentIdentifierEntry(DomainBackedEntry[T]):
     Abstract base for tables that persist a ``ComponentIdentifier`` projection.
 
     Mirrors the identifier class hierarchy: concrete identifier tables inherit the
-    shared, always-populated columns the way ``TargetIdentifier`` inherits
+    shared projection columns the way ``TargetIdentifier`` inherits
     ``ComponentIdentifier``. The content ``hash`` is the natural, dedupable primary
-    key, and ``identifier_json`` holds the full flat dump for lossless
-    reconstruction (children stay inline). Rows are immutable — the same content
-    always maps to the same hash, so a given identifier reused across rows is
-    stored once.
+    key. Runtime writes populate the descriptive fields and full ``identifier_json``;
+    they remain nullable so best-effort migration backfills can preserve partial
+    legacy identifiers. Rows are immutable — the same content always maps to the
+    same hash, so a given identifier reused across rows is stored once.
 
     Subclasses declare their promoted query columns and implement the
     ``DomainBackedEntry.from_domain_model`` seam to map their strongly-typed identifier
@@ -469,10 +469,10 @@ class ComponentIdentifierEntry(DomainBackedEntry[T]):
     #: Content-addressed identity — the same value as ``ComponentIdentifier.hash``.
     #: SHA256 hex digest is 64 chars; bounded for SQL Server key/index compatibility.
     hash: Mapped[str] = mapped_column(String(64), primary_key=True)
-    class_name: Mapped[str] = mapped_column(String, nullable=False)
-    class_module: Mapped[str] = mapped_column(String, nullable=False)
+    class_name: Mapped[str | None] = mapped_column(String, nullable=True)
+    class_module: Mapped[str | None] = mapped_column(String, nullable=True)
     #: Full flat ``model_dump()`` of the identifier. Source of truth on reload.
-    identifier_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    identifier_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     #: Version that first wrote this content-addressed row. Nullable for backwards
     #: compatibility with existing databases.
     pyrit_version: Mapped[str | None] = mapped_column(String, nullable=True)

@@ -814,6 +814,124 @@ def test_conversations_migration_downgrade_restores_columns():
 # =============================================================================
 
 
+def test_identifier_migrations_are_nullable_and_best_effort_with_malformed_json():
+    """Malformed retained identifiers do not block upgrades and leave nullable links unset."""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        engine = create_engine(f"sqlite:///{os.path.join(temp_dir, 'identifier-best-effort.db')}")
+        try:
+            with engine.begin() as connection:
+                config = _config_for(connection)
+                command.upgrade(config, "d4e6f8a0b2c4")
+                connection.execute(
+                    text('INSERT INTO "Conversations" (conversation_id, target_identifier) VALUES (:id, :value)'),
+                    {"id": "malformed-conversation", "value": "not-json"},
+                )
+                command.upgrade(config, "e5f7a9c1b3d2")
+                assert connection.execute(
+                    text(
+                        'SELECT target_identifier_hash FROM "Conversations" '
+                        "WHERE conversation_id = 'malformed-conversation'"
+                    )
+                ).scalar_one() is None
+
+                score_id = str(uuid.uuid4())
+                connection.execute(
+                    text(
+                        'INSERT INTO "ScoreEntries" '
+                        "(id, score_value, score_type, score_metadata, scorer_class_identifier, timestamp) "
+                        "VALUES (:id, 'True', 'true_false', '{}', 'not-json', '2026-07-13')"
+                    ),
+                    {"id": score_id},
+                )
+                command.upgrade(config, "a6c8e0f2b4d6")
+                assert connection.execute(
+                    text('SELECT scorer_identifier_hash FROM "ScoreEntries" WHERE id = :id'),
+                    {"id": score_id},
+                ).scalar_one() is None
+
+                result_id = str(uuid.uuid4())
+                connection.execute(
+                    text(
+                        'INSERT INTO "ScenarioResultEntries" '
+                        "(id, scenario_name, scenario_version, pyrit_version, scenario_identifier, "
+                        "objective_target_identifier, scenario_run_state, attack_results_json, number_tries, "
+                        "completion_time, timestamp) VALUES (:id, 'Scenario', 1, '0.10.0', 'not-json', '{}', "
+                        "'COMPLETED', '{}', 1, '2026-07-13', '2026-07-13')"
+                    ),
+                    {"id": result_id},
+                )
+                command.upgrade(config, "b7d9f1a3c5e7")
+                assert connection.execute(
+                    text('SELECT scenario_identifier_hash FROM "ScenarioResultEntries" WHERE id = :id'),
+                    {"id": result_id},
+                ).scalar_one() is None
+
+                prompt_id = str(uuid.uuid4())
+                connection.execute(
+                    text(
+                        'INSERT INTO "PromptMemoryEntries" '
+                        "(id, role, conversation_id, sequence, timestamp, labels, prompt_metadata, "
+                        "converter_identifiers, original_value_data_type, original_value, converted_value_data_type, "
+                        "original_prompt_id) VALUES (:id, 'user', 'conversation', 0, '2026-07-13', '{}', '{}', "
+                        "'not-json', 'text', 'prompt', 'text', :id)"
+                    ),
+                    {"id": prompt_id},
+                )
+                command.upgrade(config, "c8e1f3a5b7d9")
+                assert connection.execute(text('SELECT COUNT(*) FROM "PromptConverterIdentifiers"')).scalar_one() == 0
+
+                attack_result_id = str(uuid.uuid4())
+                connection.execute(
+                    text(
+                        'INSERT INTO "AttackResultEntries" '
+                        "(id, conversation_id, objective, atomic_attack_identifier, executed_turns, execution_time_ms, "
+                        "outcome, timestamp) VALUES (:id, 'conversation', 'objective', 'not-json', 0, 0, "
+                        "'undetermined', '2026-07-13')"
+                    ),
+                    {"id": attack_result_id},
+                )
+                command.upgrade(config, "d9f2a4b6c8e0")
+                assert connection.execute(
+                    text('SELECT atomic_attack_identifier_hash FROM "AttackResultEntries" WHERE id = :id'),
+                    {"id": attack_result_id},
+                ).scalar_one() is None
+
+                for table_name in (
+                    "TargetIdentifiers",
+                    "ScorerIdentifiers",
+                    "ScenarioIdentifiers",
+                    "ConverterIdentifiers",
+                    "SeedIdentifiers",
+                    "AttackIdentifiers",
+                    "AttackTechniqueIdentifiers",
+                    "AtomicAttackIdentifiers",
+                ):
+                    columns = {column["name"]: column for column in inspect(connection).get_columns(table_name)}
+                    assert columns["hash"]["nullable"] is False
+                    assert columns["class_name"]["nullable"] is True
+                    assert columns["class_module"]["nullable"] is True
+                    assert columns["identifier_json"]["nullable"] is True
+        finally:
+            engine.dispose()
+
+
+def test_identifier_migrations_do_not_import_domain_models():
+    """Frozen identifier migrations operate on retained JSON rather than current domain models."""
+    versions_dir = Path(__file__).resolve().parents[3] / "pyrit" / "memory" / "alembic" / "versions"
+    revision_names = (
+        "e5f7a9c1b3d2_add_target_identifiers_table.py",
+        "a6c8e0f2b4d6_add_scorer_identifiers_table.py",
+        "b7d9f1a3c5e7_add_scenario_identifiers_table.py",
+        "c8e1f3a5b7d9_add_converter_identifiers_table.py",
+        "d9f2a4b6c8e0_add_attack_identifiers_tables.py",
+    )
+
+    for revision_name in revision_names:
+        source = (versions_dir / revision_name).read_text(encoding="utf-8")
+        assert "from pyrit.models" not in source
+        assert "import pyrit.models" not in source
+
+
 def test_scorer_identifier_migration_backfills_graph_and_score_link():
     """Existing scorer JSON is materialized and linked without changing its content identity."""
     from pyrit.models import ComponentIdentifier
