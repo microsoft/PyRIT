@@ -43,7 +43,6 @@ def _build_rapid_response_technique() -> type[ScenarioTechnique]:
         type[ScenarioTechnique]: The dynamically generated technique enum class.
     """
     from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
-    from pyrit.registry.tag_query import TagQuery
 
     registry = AttackTechniqueRegistry.get_registry_singleton()
     factories = list(registry.get_factories_or_raise().values())
@@ -51,10 +50,6 @@ def _build_rapid_response_technique() -> type[ScenarioTechnique]:
     return AttackTechniqueRegistry.build_technique_class_from_factories(  # type: ignore[ty:invalid-return-type]
         class_name="RapidResponseTechnique",
         factories=factories,
-        aggregate_tags={
-            "single_turn": TagQuery.any_of("single_turn"),
-            "multi_turn": TagQuery.any_of("multi_turn"),
-        },
         default_technique_names={"role_play_movie_script", "many_shot"},
     )
 

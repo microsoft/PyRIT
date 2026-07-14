@@ -14,7 +14,6 @@ from pyrit.common import apply_defaults
 from pyrit.models import AttackOutcome, AttackResult, ObjectiveTargetEvaluationIdentifier, ScenarioResult
 from pyrit.models.parameter import Parameter
 from pyrit.registry import AttackTechniqueRegistry, TargetRegistry
-from pyrit.registry.tag_query import TagQuery
 from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
 from pyrit.scenario.core.matrix_atomic_attack_builder import MatrixAtomicAttackBuilder, resolve_technique_factories
 from pyrit.scenario.core.scenario import BaselineAttackPolicy, Scenario
@@ -44,8 +43,9 @@ def _build_benchmark_technique() -> type[ScenarioTechnique]:
     decided by the active initializer (the registration gate); this scenario
     does not narrow the pool further by group. The resulting enum has one
     concrete member per factory (e.g. ``red_teaming``, ``tap``,
-    ``crescendo_simulated``) plus ``default`` / ``light`` / ``single_turn``
-    / ``multi_turn`` aggregates derived from each factory's ``technique_tags``.
+    ``crescendo_simulated``), a ``light`` / ``single_turn`` / ``multi_turn``
+    aggregate for each catalog tag, and a ``default`` aggregate for the
+    scenario's default run.
 
     The (technique × target) cross-product is materialized lazily in
     ``AdversarialBenchmark._build_atomic_attacks_async`` from the
@@ -63,11 +63,6 @@ def _build_benchmark_technique() -> type[ScenarioTechnique]:
     return AttackTechniqueRegistry.build_technique_class_from_factories(  # type: ignore[ty:invalid-return-type]
         class_name="BenchmarkTechnique",
         factories=factories,
-        aggregate_tags={
-            "light": TagQuery.any_of("light"),
-            "single_turn": TagQuery.any_of("single_turn"),
-            "multi_turn": TagQuery.any_of("multi_turn"),
-        },
         default_technique_names={"role_play_movie_script", "many_shot"},
     )
 

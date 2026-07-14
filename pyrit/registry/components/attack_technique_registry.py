@@ -177,7 +177,7 @@ class AttackTechniqueRegistry(Registry["AttackTechniqueFactory", AttackTechnique
         *,
         class_name: str,
         factories: list[AttackTechniqueFactory],
-        aggregate_tags: dict[str, TagQuery],
+        aggregate_tags: dict[str, TagQuery] | None = None,
         available: TagQuery | None = None,
         default: TagQuery | None = None,
         default_technique_names: set[str] | None = None,
@@ -189,6 +189,9 @@ class AttackTechniqueRegistry(Registry["AttackTechniqueFactory", AttackTechnique
         - An ``ALL`` aggregate member (always included).
         - A ``DEFAULT`` aggregate member when a default selection is provided.
         - Additional aggregate members from ``aggregate_tags`` keys.
+        - An aggregate member for every other catalog tag present in the pool, so
+            tags and aggregates are synonymous: selecting a tag (e.g. ``core`` or a
+            custom ``airt_internal``) expands to every technique carrying it.
         - One technique member per *available* factory, with tags from the factory.
 
         The three selection roles are all expressed the same way — as tag queries
@@ -197,25 +200,29 @@ class AttackTechniqueRegistry(Registry["AttackTechniqueFactory", AttackTechnique
         - **available** (the pool): ``available`` filters ``factories`` to the
             techniques this scenario exposes. When ``None`` the whole ``factories``
             list is the pool (back-compatible).
-        - **aggregates**: named ``TagQuery`` presets (e.g. ``single_turn``); each is
-            evaluated only over the pool, so every aggregate is a subset of available.
+        - **aggregates**: selectable tag groups. Every catalog tag present in the
+            pool becomes one automatically; ``aggregate_tags`` adds explicit ones for
+            queries a single tag can't express. Each is evaluated only over the pool,
+            so every aggregate is a subset of available.
         - **default**: what runs when the caller selects nothing. Given as a
             ``TagQuery`` (``default``) and/or explicit ``default_technique_names``;
             both are intersected with the pool, so ``DEFAULT`` is always a subset of
             available.
 
-        ``default`` is deliberately **not** an intrinsic technique tag: what runs by
-        default differs per scenario. A scenario selects its default set via a query
-        or by name so the same technique can be default for one scenario and not
-        another, without a catalog-wide tag.
+        ``default`` is chosen per-scenario: a scenario picks its default set by query
+        or by name, so the same technique can be the default for one scenario and not
+        another.
 
         Args:
             class_name (str): Name for the generated enum class.
             factories (list[AttackTechniqueFactory]): Candidate technique factories.
                 Filtered by ``available`` to form the pool of enum members.
-            aggregate_tags (dict[str, TagQuery]): Maps aggregate member names to a
-                ``TagQuery`` that selects which pool techniques belong to the aggregate.
-                An ``ALL`` aggregate (expanding to all pool techniques) is always added.
+            aggregate_tags (dict[str, TagQuery] | None): Optional explicit aggregate
+                definitions, mapping an aggregate member name to a ``TagQuery`` over the
+                pool. Only needed for aggregates a single tag can't express — a compound
+                query (AND/OR/NOT) or an aggregate whose name is not itself a tag. Simple
+                one-to-one tag aggregates are auto-derived (see above), so this can be
+                omitted. An ``ALL`` aggregate is always added.
             available (TagQuery | None): Query selecting which of ``factories`` are
                 available for this scenario (the pool). ``None`` means all of them.
             default (TagQuery | None): Query selecting the pool techniques that form
@@ -233,6 +240,8 @@ class AttackTechniqueRegistry(Registry["AttackTechniqueFactory", AttackTechnique
         """
         from pyrit.scenario import ScenarioTechnique
 
+        aggregate_tags = aggregate_tags or {}
+
         # available (the pool): filter the candidate factories by the availability query.
         pool = available.filter(factories) if available is not None else list(factories)
 
@@ -244,7 +253,18 @@ class AttackTechniqueRegistry(Registry["AttackTechniqueFactory", AttackTechnique
         if default is not None:
             default_names |= {f.name for f in pool if default.matches(set(f.technique_tags))}
 
-        all_aggregate_tag_names = {"all"} | set(aggregate_tags.keys())
+        # Auto-promote every catalog tag present in the pool into a selectable
+        # aggregate, so tags and aggregates are synonymous: selecting a tag expands to
+        # every technique carrying it. "all" and "default" are reserved synthetic
+        # aggregates (see above) and are never derived from tags. A tag that collides
+        # with a technique name stays a concrete technique (name selection wins), and
+        # tags already declared in aggregate_tags keep their explicit TagQuery.
+        reserved_aggregate_tags = {"all", "default"}
+        pool_technique_names = {f.name for f in pool}
+        pool_tags = {tag for f in pool for tag in f.technique_tags}
+        auto_aggregate_tags = pool_tags - reserved_aggregate_tags - pool_technique_names - set(aggregate_tags)
+
+        all_aggregate_tag_names = {"all"} | set(aggregate_tags.keys()) | auto_aggregate_tags
         if default_names:
             all_aggregate_tag_names.add("default")
 
@@ -255,6 +275,8 @@ class AttackTechniqueRegistry(Registry["AttackTechniqueFactory", AttackTechnique
         if default_names:
             members["DEFAULT"] = ("default", {"default"})
         for agg_name in aggregate_tags:
+            members[agg_name.upper()] = (agg_name, {agg_name})
+        for agg_name in sorted(auto_aggregate_tags):
             members[agg_name.upper()] = (agg_name, {agg_name})
 
         # Technique members from the pool — assign aggregate tags based on TagQuery matching

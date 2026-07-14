@@ -126,6 +126,7 @@ def _register_mock_factory(*, name: str, tags: list[str] | None = None, seed_tec
     factory = MagicMock(spec=AttackTechniqueFactory)
     factory.name = name
     factory.uses_adversarial = True
+    factory.adversarial_chat = None
     factory.technique_tags = tags if tags is not None else ["core", "light"]
     factory.seed_technique = seed_technique
     technique_instance = MagicMock(name="AttackTechnique")
