@@ -18,23 +18,22 @@
 #
 # 1. Set up environment variables (recommended)
 # 2. Pick a database (required)
-# 3. Set initializers and initialization scripts (recommended)
+# 3. Set initialization scripts and defaults (recommended)
 #
 # Alternatively, you can write a config file (`~/.pyrit/.pyrit_conf`) to parameterize this for you.
 # %% [markdown]
 # ## From a Config File
 # If you don't want to explicitly set up PyRIT, but do have a configuration you would like to persist, use `~/.pyrit/.pyrit_conf`. See the [PyRIT Configuration Guide](../../getting_started/pyrit_conf.md) for more details. Note that changes to the config file do not auto-update at runtime, so you will need to run `initialize_from_config_async` after each change to the file.
 # %%
-from pathlib import Path
-
+# You can specify your own path for the config file using config_path
 from pyrit.setup.configuration_loader import initialize_from_config_async
 
-await initialize_from_config_async(config_path=Path("../../scanner/pyrit_conf.yaml"))  # type: ignore
+await initialize_from_config_async()  # type: ignore
 
 # %% [markdown]
 # ## Simple Example
 #
-# This section goes into each of the three steps mentioned earlier. But first, the easiest way; this registers configured targets and scorers using `TargetInitializer` and `ScorerInitializer` and stores results in memory.
+# This section goes into each of the three steps mentioned earlier. But first, the easiest way; this sets up reasonable defaults using `TargetInitializer` and `ScorerInitializer` and stores the results in memory.
 
 # %%
 # Set OPENAI_CHAT_ENDPOINT, OPENAI_CHAT_MODEL, and OPENAI_CHAT_KEY environment variables before running this code
@@ -116,13 +115,17 @@ target3 = OpenAIChatTarget(
 # The next required step is to pick a database. PyRIT supports three types of databases; InMemory, sqlite, and SQL Azure. These are detailed in the [memory](../memory/0_memory.md) section of documentation. InMemory and sqlite are local so require no configuration, but SQL Azure will need the appropriate environment variables set. This configuration is all specified in `memory_db_type` parameter to `initialize_pyrit_async`.
 
 # %% [markdown]
-# ## Setting up Initialization Scripts and Registries
+# ## Setting up Initialization Scripts and Defaults
 #
-# When you call `initialize_pyrit_async`, you can pass it `initialization_scripts` and/or `initializers`. Built-in initializers register configured components so they can be selected by name or tag. Custom initializers can also set constructor defaults and convenience variables.
+# When you call initialize_pyrit_async, you can pass it initialization_scripts and/or initializers. An initializer is a discrete, ordered unit of startup configuration: it runs once at init time and **prepares PyRIT's shared state** — registering targets/scorers/techniques into their registries, seeding datasets into memory, or setting default values — so downstream consumers (scenarios, attacks, the CLI, the GUI) find what they need without wiring it up by hand. It is recommended to always use an initializer.
+#
+# For a tour of the built-in initializers and how to write your own, see the [initializers](./pyrit_initializer.ipynb) notebook. Here we focus on how that shared state is consumed.
 #
 # ### Using Built-In Initializers
 #
-# An `OpenAIChatTarget` may represent GPT-5, Llama, or another compatible model. Different roles may also need different settings. Instead of choosing one process-wide default, the built-in initializers register every configured component. The following example retrieves the configured `openai_chat` target and fallback scorer explicitly.
+# Registering a component is only half the loop — the payoff is that any consumer can later ask a singleton registry for an instance by **name** or **tag** and use it. Importantly, nothing is auto-injected into a hand-built attack: you pull the registered instances back out yourself and wire them in. (Scenarios do this pull for you, which is why a scenario "just works" after these initializers run.)
+#
+# The following example runs the built-in `TargetInitializer` and `ScorerInitializer`, then demonstrates the register-then-retrieve loop by pulling a target and a scorer out of their registries and wiring them into an attack.
 
 # %%
 from pyrit.common.path import PYRIT_PATH
@@ -138,11 +141,12 @@ from pyrit.prompt_normalizer.converter_configuration import (
     ConverterConfiguration,
 )
 from pyrit.registry import ScorerRegistry, TargetRegistry
-from pyrit.score import TrueFalseScorer
 from pyrit.setup import initialize_pyrit_async
 from pyrit.setup.initializers import ScorerInitializer, TargetInitializer
+from pyrit.setup.initializers.scorers import ScorerInitializerTags
 
-# This is a way to include the initializer classes directly
+# Run the built-in initializers. ScorerInitializer pulls its chat targets
+# out of the TargetRegistry.
 await initialize_pyrit_async(memory_db_type="InMemory", initializers=[TargetInitializer(), ScorerInitializer()])  # type: ignore
 
 # Alternative approach - you can pass the path to a file that defines PyRITInitializer classes.
@@ -152,9 +156,10 @@ await initialize_pyrit_async(
     memory_db_type="InMemory", initialization_scripts=[f"{PYRIT_PATH}/setup/initializers/targets.py"]
 )  # type: ignore
 
-# TargetInitializer registers targets for the endpoints it finds in the environment.
-# It can be combined with other PyRITInitializers, such as ScorerInitializer, for a fuller setup.
-# get_info_async() describes the initializer and the components it registers.
+# TargetInitializer registers sensible default targets for someone who only has OPENAI_CHAT_ENDPOINT,
+# OPENAI_CHAT_MODEL, and OPENAI_CHAT_KEY configured. It is easily combined with other PyRITInitializers
+# (like ScorerInitializer) for a fuller setup.
+# get_info_async() is a class method describing what an initializer sets up.
 info = await TargetInitializer.get_info_async()  # type: ignore
 for key, value in info.items():
     print(f"{key}: {value}")
@@ -164,29 +169,34 @@ objectives = [
     "Explain the theory of relativity in simple terms",
 ]
 
-# This is similar to the "Baseline-Only Execution" scenario but uses registered components.
+# The initializers registered instances into shared registries; now we consume them by
+# pulling them back out.
 
-# Retrieve the target and scorer registered from the OPENAI_CHAT_* environment variables.
-objective_target = TargetRegistry.get_registry_singleton().instances.get("openai_chat")
-objective_scorer = ScorerRegistry.get_registry_singleton().instances.get(ScorerInitializer.FALLBACK)
-if objective_target is None:
-    raise ValueError("The openai_chat target was not registered. Configure the OPENAI_CHAT_* environment variables.")
-if not isinstance(objective_scorer, TrueFalseScorer):
-    raise ValueError("The fallback objective scorer was not registered.")
+# Pull a registered target from the TargetRegistry by its registry name. "openai_chat" is
+# the name TargetInitializer registers the OPENAI_CHAT_* endpoint under.
+target_registry = TargetRegistry.get_registry_singleton()
+objective_target = target_registry.instances.get("openai_chat")
 
-# Reuse the registered chat target for conversion.
+# Pull a task-achieved objective scorer from the ScorerRegistry by tag. TASK_ACHIEVED marks
+# scorers that judge whether the objective was accomplished; we take the first match.
+scorer_registry = ScorerRegistry.get_registry_singleton()
+objective_scorer = scorer_registry.instances.get_by_tag(tag=ScorerInitializerTags.TASK_ACHIEVED)[0].instance
+
+# TenseConverter is an LLM converter, so it needs a chat target - pass one from the registry.
 converters = ConverterConfiguration.from_converters(
-    converters=[TenseConverter(tense="past", converter_target=objective_target)]
+    converters=[TenseConverter(tense="past", converter_target=objective_target)]  # type: ignore
 )
 converter_config = AttackConverterConfig(request_converters=converters)
 
+# Wire the registered scorer into the attack explicitly
+scoring_config = AttackScoringConfig(objective_scorer=objective_scorer)  # type: ignore
+
 attack = PromptSendingAttack(
-    objective_target=objective_target,
+    objective_target=objective_target,  # type: ignore
     attack_converter_config=converter_config,
-    attack_scoring_config=AttackScoringConfig(objective_scorer=objective_scorer),
+    attack_scoring_config=scoring_config,
 )
 
-# Execute the attack with the selected registered components.
 results = await AttackExecutor().execute_attack_async(attack=attack, objectives=objectives)  # type: ignore
 
 for result in results:

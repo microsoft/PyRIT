@@ -7,6 +7,10 @@ if (!Number.isInteger(frontendPort) || frontendPort < 1 || frontendPort > 65535)
 
 const frontendOrigin = `http://localhost:${frontendPort}`;
 const useDedicatedVite = Boolean(process.env.CI) || process.env.E2E_FRONTEND_PORT !== undefined;
+const CI_SEEDED_MODE =
+  !!process.env.CI && process.env.E2E_SEEDED_MODE === "true";
+const E2E_BACKEND_PORT = process.env.PYRIT_E2E_BACKEND_PORT ?? "18000";
+const E2E_BACKEND_URL = `http://127.0.0.1:${E2E_BACKEND_PORT}`;
 
 export default defineConfig({
   testDir: "./e2e",
@@ -14,7 +18,11 @@ export default defineConfig({
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
   workers: process.env.CI ? 1 : undefined,
-  reporter: [["html", { open: "never" }], ["list"]],
+  reporter: [
+    ["html", { open: "never" }],
+    ["list"],
+    ["./e2e/noSkippedTestsReporter.ts"],
+  ],
   timeout: 30000,
 
   use: {
@@ -64,16 +72,34 @@ export default defineConfig({
   ],
 
   /* Automatically start servers before running tests */
-  webServer: {
-    // CI runs only the mock project (no backend needed) — start Vite directly.
-    // Locally, dev.py starts both backend + frontend for seeded/live tests.
-    command: useDedicatedVite
-      ? `npx vite --host 127.0.0.1 --port ${frontendPort} --strictPort`
-      : "python dev.py",
-    // Use 127.0.0.1 to avoid Node.js 17+ resolving localhost to IPv6 ::1
-    url: `http://127.0.0.1:${frontendPort}`,
-    reuseExistingServer: !useDedicatedVite,
-    // CI needs extra time for uv sync + backend startup
-    timeout: 120_000,
-  },
+  webServer: CI_SEEDED_MODE
+    ? [
+        {
+          command:
+            `cd .. && uv run python -m pyrit.backend.pyrit_backend ` +
+            `--host 127.0.0.1 --port ${E2E_BACKEND_PORT} --log-level warning ` +
+            "--config-file tests/end_to_end/test_config.yaml",
+          env: { PYRIT_DEV_MODE: "true" },
+          url: `${E2E_BACKEND_URL}/api/health`,
+          reuseExistingServer: false,
+          timeout: 120_000,
+        },
+        {
+          command: `npx vite --host 127.0.0.1 --port ${frontendPort} --strictPort`,
+          env: { PYRIT_BACKEND_URL: E2E_BACKEND_URL },
+          // Use 127.0.0.1 to avoid Node.js 17+ resolving localhost to IPv6 ::1
+          url: `http://127.0.0.1:${frontendPort}`,
+          reuseExistingServer: false,
+          timeout: 120_000,
+        },
+      ]
+    : {
+        // Mock CI needs only Vite. Local seeded/live runs use dev.py.
+        command: useDedicatedVite
+          ? `npx vite --host 127.0.0.1 --port ${frontendPort} --strictPort`
+          : "python dev.py",
+        url: `http://127.0.0.1:${frontendPort}`,
+        reuseExistingServer: !useDedicatedVite,
+        timeout: 120_000,
+      },
 });

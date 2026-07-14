@@ -357,6 +357,11 @@ class CreateAttackRequest(BaseModel):
         None, description="Conversation to branch from (clone messages into the new attack)"
     )
     cutoff_index: int | None = Field(None, description="Include messages up to and including this turn index (0-based)")
+    system_prompt: str | None = Field(
+        None,
+        description="System prompt lowered to a single system-role message at the front of the conversation. "
+        "Composes with prepended_conversation (the system message is inserted first).",
+    )
     prepended_conversation: list[PrependedMessageRequest] | None = Field(
         None, description="Messages to prepend (system prompts, branching context)", max_length=200
     )

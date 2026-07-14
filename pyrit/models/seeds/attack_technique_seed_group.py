@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 """
-SeedAttackTechniqueGroup - A group of seeds representing a general attack technique.
+AttackTechniqueSeedGroup - A group of seeds representing a general attack technique.
 For example, this includes jailbreaks, roleplays, or other reusable techniques that
 can be applied to multiple objectives.
 
@@ -15,7 +15,7 @@ from pyrit.models.seeds.seed_group import SeedGroup
 from pyrit.models.seeds.seed_objective import SeedObjective
 
 
-class SeedAttackTechniqueGroup(SeedGroup):
+class AttackTechniqueSeedGroup(SeedGroup):
     """
     A group of seeds representing a general attack technique.
 
@@ -26,7 +26,7 @@ class SeedAttackTechniqueGroup(SeedGroup):
     next_message, etc.) is inherited from SeedGroup.
     """
 
-    # Where to insert technique seeds when merging into a SeedAttackGroup via ``with_technique()``.
+    # Where to insert technique seeds when merging into a AttackSeedGroup via ``with_technique()``.
     # ``None`` (default) appends at the end; an integer inserts before that position.
     insertion_index: int | None = None
 
@@ -55,7 +55,7 @@ class SeedAttackTechniqueGroup(SeedGroup):
         if non_general:
             non_general_types = [type(s).__name__ for s in non_general]
             raise ValueError(
-                f"All seeds in SeedAttackTechniqueGroup must have is_general_technique=True. "
+                f"All seeds in AttackTechniqueSeedGroup must have is_general_technique=True. "
                 f"Found {len(non_general)} seed(s) without it: {non_general_types}"
             )
 
@@ -69,5 +69,5 @@ class SeedAttackTechniqueGroup(SeedGroup):
         objectives = [seed for seed in self.seeds if isinstance(seed, SeedObjective)]
         if objectives:
             raise ValueError(
-                f"SeedAttackTechniqueGroup must not contain objectives. Found {len(objectives)} SeedObjective(s)."
+                f"AttackTechniqueSeedGroup must not contain objectives. Found {len(objectives)} SeedObjective(s)."
             )

@@ -820,6 +820,11 @@ class TestIsAzureBlobUrl:
     def test_local_path_not_detected(self) -> None:
         assert _is_azure_blob_url("/tmp/test.png") is False
 
+    def test_userinfo_spoofed_host_not_detected(self) -> None:
+        # The real host is 127.0.0.1; the blob-looking segment is userinfo and must
+        # not be treated as the host (SSRF bypass regression test).
+        assert _is_azure_blob_url("https://a.blob.core.windows.net:80@127.0.0.1:6666") is False
+
 
 class TestSignBlobUrlAsync:
     """Tests for _sign_blob_url_async helper."""

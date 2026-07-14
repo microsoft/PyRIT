@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from pyrit.models import SeedAttackGroup, SeedObjective
+from pyrit.models import AttackSeedGroup, SeedObjective
 from pyrit.models.identifiers import ComponentIdentifier
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
@@ -78,8 +78,8 @@ def mock_runtime_env():
         yield
 
 
-def _make_seed_group(*, value: str, harm_categories: list[str] | None = None) -> SeedAttackGroup:
-    return SeedAttackGroup(seeds=[SeedObjective(value=value, harm_categories=harm_categories)])
+def _make_seed_group(*, value: str, harm_categories: list[str] | None = None) -> AttackSeedGroup:
+    return AttackSeedGroup(seeds=[SeedObjective(value=value, harm_categories=harm_categories)])
 
 
 def _make_fake_factory(*, seed_technique=None, adversarial_chat=None, scoring_config_type=None) -> MagicMock:
@@ -160,7 +160,7 @@ class TestTextAdaptiveAtomicAttacks:
         *,
         mock_objective_target,
         mock_objective_scorer,
-        seed_groups: dict[str, list[SeedAttackGroup]],
+        seed_groups: dict[str, list[AttackSeedGroup]],
         **scenario_kwargs,
     ):
         with patch.object(
@@ -304,7 +304,7 @@ class TestTextAdaptiveAtomicAttacks:
                 new_callable=AsyncMock,
                 return_value=groups,
             ),
-            patch.object(SeedAttackGroup, "is_compatible_with_technique", return_value=True),
+            patch.object(AttackSeedGroup, "is_compatible_with_technique", return_value=True),
         ):
             scenario = TextAdaptive(objective_scorer=mock_objective_scorer)
             technique_class = scenario.get_technique_class()
@@ -351,7 +351,7 @@ class TestTextAdaptiveAtomicAttacks:
                 new_callable=AsyncMock,
                 return_value=groups,
             ),
-            patch.object(SeedAttackGroup, "is_compatible_with_technique", return_value=False),
+            patch.object(AttackSeedGroup, "is_compatible_with_technique", return_value=False),
         ):
             scenario = TextAdaptive(objective_scorer=mock_objective_scorer)
             technique_class = scenario.get_technique_class()
@@ -405,7 +405,7 @@ class TestTextAdaptiveAtomicAttacks:
                 new_callable=AsyncMock,
                 return_value=groups,
             ),
-            patch.object(SeedAttackGroup, "is_compatible_with_technique", _selective_compat),
+            patch.object(AttackSeedGroup, "is_compatible_with_technique", _selective_compat),
         ):
             scenario = TextAdaptive(objective_scorer=mock_objective_scorer)
             technique_class = scenario.get_technique_class()
@@ -451,7 +451,7 @@ class TestTextAdaptiveAtomicAttacks:
                 new_callable=AsyncMock,
                 return_value=groups,
             ),
-            patch.object(SeedAttackGroup, "is_compatible_with_technique", return_value=True),
+            patch.object(AttackSeedGroup, "is_compatible_with_technique", return_value=True),
         ):
             scenario = TextAdaptive(objective_scorer=mock_objective_scorer)
             technique_class = scenario.get_technique_class()
@@ -501,7 +501,7 @@ class TestTextAdaptiveAtomicAttacks:
                 new_callable=AsyncMock,
                 return_value=groups,
             ),
-            patch.object(SeedAttackGroup, "is_compatible_with_technique", return_value=True),
+            patch.object(AttackSeedGroup, "is_compatible_with_technique", return_value=True),
         ):
             scenario = TextAdaptive(objective_scorer=mock_objective_scorer)
             technique_class = scenario.get_technique_class()
@@ -547,7 +547,7 @@ class TestTextAdaptiveAtomicAttacks:
                 new_callable=AsyncMock,
                 return_value=groups,
             ),
-            patch.object(SeedAttackGroup, "is_compatible_with_technique", return_value=True),
+            patch.object(AttackSeedGroup, "is_compatible_with_technique", return_value=True),
         ):
             scenario = TextAdaptive(objective_scorer=mock_objective_scorer)
             technique_class = scenario.get_technique_class()
@@ -584,7 +584,7 @@ class TestTextAdaptiveAtomicAttacks:
                 new_callable=AsyncMock,
                 return_value=groups,
             ),
-            patch.object(SeedAttackGroup, "is_compatible_with_technique", return_value=True),
+            patch.object(AttackSeedGroup, "is_compatible_with_technique", return_value=True),
         ):
             scenario = TextAdaptive(objective_scorer=mock_objective_scorer)
             technique_class = scenario.get_technique_class()

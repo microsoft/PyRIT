@@ -34,11 +34,11 @@ from pyrit.memory.memory_models import ScenarioResultEntry
 from pyrit.models import (
     AttackOutcome,
     AttackResult,
+    AttackSeedGroup,
     ScenarioEvaluationIdentifier,
     ScenarioIdentifier,
     ScenarioResult,
     ScenarioRunState,
-    SeedAttackGroup,
 )
 from pyrit.models.parameter import ComponentType, Parameter, RegistryReference
 from pyrit.prompt_target import PromptTarget
@@ -745,7 +745,7 @@ class Scenario(ABC):
 
         self._atomic_attacks = retained_attacks
 
-    def _build_baseline_atomic_attack(self, *, seed_groups: list[SeedAttackGroup]) -> AtomicAttack:
+    def _build_baseline_atomic_attack(self, *, seed_groups: list[AttackSeedGroup]) -> AtomicAttack:
         """
         Build the baseline AtomicAttack from pre-resolved seed groups.
 
@@ -943,7 +943,7 @@ class Scenario(ABC):
 
     async def _resolve_seed_groups_by_dataset_async(
         self, *, apply_sampling: bool = True
-    ) -> dict[str, list[SeedAttackGroup]]:
+    ) -> dict[str, list[AttackSeedGroup]]:
         """
         Resolve the seed groups this scenario attacks, keyed by originating dataset.
 
@@ -963,11 +963,11 @@ class Scenario(ABC):
                 divergent ``random.sample`` draw.
 
         Returns:
-            dict[str, list[SeedAttackGroup]]: Seed groups keyed by dataset name.
+            dict[str, list[AttackSeedGroup]]: Seed groups keyed by dataset name.
         """
         return await self._dataset_config.get_attack_groups_by_dataset_async(apply_sampling=apply_sampling)
 
-    def _build_scenario_context(self, *, seed_groups_by_dataset: dict[str, list[SeedAttackGroup]]) -> ScenarioContext:
+    def _build_scenario_context(self, *, seed_groups_by_dataset: dict[str, list[AttackSeedGroup]]) -> ScenarioContext:
         """
         Snapshot the resolved runtime inputs into a ``ScenarioContext``.
 
@@ -977,7 +977,7 @@ class Scenario(ABC):
         half-initialized ``self._*`` state to build attacks.
 
         Args:
-            seed_groups_by_dataset (dict[str, list[SeedAttackGroup]]): Seed groups already
+            seed_groups_by_dataset (dict[str, list[AttackSeedGroup]]): Seed groups already
                 resolved once (see ``_resolve_seed_groups_by_dataset_async``). The flat
                 ``context.seed_groups`` is derived from these so both views share one sample.
 

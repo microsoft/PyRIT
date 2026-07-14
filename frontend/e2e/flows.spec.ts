@@ -1,6 +1,14 @@
 import { readFileSync } from "node:fs";
 
-import { test, expect, type Page, type APIRequestContext } from "@playwright/test";
+import {
+  test,
+  expect,
+  type APIRequestContext,
+  type Locator,
+  type Page,
+} from "@playwright/test";
+
+import type { AddMessageResponse } from "@/types";
 
 // ---------------------------------------------------------------------------
 // Mode detection
@@ -16,7 +24,20 @@ const AZURE_OPENAI_HOSTNAME_SUFFIXES = [
   ".ai.azure.com",
   ".services.ai.azure.com",
   ".cognitiveservices.azure.com",
-] as const;
+];
+
+type AuthMode = "api_key" | "identity";
+
+function isAzureOpenAiEndpoint(endpoint: string): boolean {
+  try {
+    const hostname = new URL(endpoint).hostname.toLowerCase();
+    return AZURE_OPENAI_HOSTNAME_SUFFIXES.some((suffix) =>
+      hostname.endsWith(suffix),
+    );
+  } catch {
+    return false;
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Helpers - shared between seeded and live modes
@@ -44,9 +65,10 @@ async function createTarget(
   request: APIRequestContext,
   targetType: string,
   params: Record<string, unknown> = {},
+  authMode: AuthMode = "api_key",
 ): Promise<string> {
   const resp = await request.post("/api/targets", {
-    data: { type: targetType, params },
+    data: { type: targetType, params, auth_mode: authMode },
   });
   expect(resp.ok()).toBeTruthy();
   const body = await resp.json();
@@ -78,16 +100,6 @@ interface MessagePiece {
   data_type: string;
   original_value: string;
   mime_type?: string;
-}
-
-interface MessagePieceResponse {
-  response_error: string;
-  response_error_description?: string | null;
-}
-
-interface MessageResponse {
-  role: string;
-  message_pieces: MessagePieceResponse[];
 }
 
 /** Store a message without calling the target (send=false). */
@@ -131,16 +143,19 @@ async function sendMessage(
     { data },
   );
   expect(resp.ok()).toBeTruthy();
-  const body: { messages: { messages: MessageResponse[] } } = await resp.json();
-  const assistantMessage = [...body.messages.messages].reverse().find(
-    (message) => message.role === "assistant",
-  );
-  expect(assistantMessage, "Target did not return an assistant message").toBeDefined();
-  for (const piece of assistantMessage?.message_pieces ?? []) {
-    expect(
-      piece.response_error,
-      piece.response_error_description ?? "Target returned an error response",
-    ).toBe("none");
+  const body: AddMessageResponse = await resp.json();
+  const messages = body.messages.messages;
+  const assistantMessage = messages[messages.length - 1];
+  if (!assistantMessage || assistantMessage.role !== "assistant") {
+    throw new Error("Target response did not include an assistant message");
+  }
+  const responseErrors = assistantMessage.message_pieces
+    .map((piece) => piece.response_error)
+    .filter((errorType) => errorType !== "none");
+  if (responseErrors.length > 0) {
+    throw new Error(
+      `Target returned response errors: ${responseErrors.join(", ")}`,
+    );
   }
 }
 
@@ -181,13 +196,19 @@ async function createConversation(
   return body.conversation_id;
 }
 
-/** Activate a target via the Configuration view so the chat UI is unlocked. */
-async function activateTarget(page: Page, targetRegistryName: string): Promise<void> {
+/** Activate an exact target instance via the Configuration view. */
+async function activateTarget(
+  page: Page,
+  targetRegistryName: string,
+): Promise<void> {
   await page.getByTitle("Configuration").click();
   await expect(page.getByText("Target Configuration")).toBeVisible({ timeout: 10_000 });
   const row = page.getByTestId(`target-row-${targetRegistryName}`);
   await expect(row).toBeVisible({ timeout: 10_000 });
-  await row.getByRole("button", { name: /set active/i }).click();
+  const setActiveButton = row.getByRole("button", { name: /set active/i });
+  if (await setActiveButton.isVisible()) {
+    await setActiveButton.click();
+  }
   await page.getByTitle("Chat").click();
   await expect(page.getByTestId("new-attack-btn")).toBeVisible({ timeout: 5_000 });
 }
@@ -205,6 +226,13 @@ async function openAttackInHistory(
   const row = page.getByTestId(`attack-row-${attackResultId}`);
   await expect(row).toBeVisible({ timeout: 10_000 });
   await row.click();
+  await expect(page).toHaveURL(new RegExp(`/attacks/${attackResultId}$`));
+  await expect(page.getByTestId("toggle-panel-btn")).toBeEnabled({
+    timeout: 10_000,
+  });
+  await expect(page.getByTestId("loading-state")).not.toBeVisible({
+    timeout: 10_000,
+  });
 }
 
 /** Open the conversation side-panel (idempotent — does nothing if already open). */
@@ -215,12 +243,19 @@ async function openConversationPanel(page: Page): Promise<void> {
   await expect(panel).toBeVisible({ timeout: 5_000 });
 }
 
+/** Locate text only within rendered chat messages, excluding history previews. */
+function getMessageText(page: Page, text: string): Locator {
+  return page
+    .locator('[data-testid^="message-bubble-"]')
+    .getByText(text, { exact: true });
+}
+
 // ---------------------------------------------------------------------------
 // Target variant configurations
 // ---------------------------------------------------------------------------
 
-const TEST_PNG = readFileSync(
-  new URL("../../assets/gandalf-demo-setup.png", import.meta.url),
+const INPUT_IMAGE_BASE64 = readFileSync(
+  new URL("../public/roakey.png", import.meta.url),
 ).toString("base64");
 
 const DUMMY_OPENAI_PARAMS = {
@@ -237,11 +272,12 @@ interface TargetVariant {
   targetType: string;
   /** Constructor kwargs for seeded mode (dummy credentials). */
   targetParams: Record<string, unknown>;
-  /**
-   * Environment variables that must ALL be set for live mode.
-   * If any is missing, the live test is skipped for this variant.
-   */
-  liveEnvVars: readonly [endpoint: string, apiKey: string, model: string];
+  /** Environment variables used to configure the target in live mode. */
+  liveEnvironment: {
+    endpoint: string;
+    apiKey: string;
+    model: string;
+  };
   /** Whether the target supports multi-turn conversations. */
   multiTurn: boolean;
   /** User turn pieces (seeded mode uses these directly). */
@@ -272,11 +308,11 @@ const TARGET_VARIANTS: TargetVariant[] = [
     targetType: "OpenAIChatTarget",
     targetParams: DUMMY_OPENAI_PARAMS,
     multiTurn: true,
-    liveEnvVars: [
-      "OPENAI_CHAT_ENDPOINT",
-      "OPENAI_CHAT_KEY",
-      "OPENAI_CHAT_MODEL",
-    ],
+    liveEnvironment: {
+      endpoint: "OPENAI_CHAT_ENDPOINT",
+      apiKey: "OPENAI_CHAT_KEY",
+      model: "OPENAI_CHAT_MODEL",
+    },
     userPieces: [{ data_type: "text", original_value: "Hello chat" }],
     assistantPieces: [
       { data_type: "text", original_value: "Chat text response" },
@@ -289,16 +325,16 @@ const TARGET_VARIANTS: TargetVariant[] = [
     targetType: "OpenAIChatTarget",
     targetParams: DUMMY_OPENAI_PARAMS,
     multiTurn: true,
-    liveEnvVars: [
-      "OPENAI_CHAT_ENDPOINT",
-      "OPENAI_CHAT_KEY",
-      "OPENAI_CHAT_MODEL",
-    ],
+    liveEnvironment: {
+      endpoint: "OPENAI_CHAT_ENDPOINT",
+      apiKey: "OPENAI_CHAT_KEY",
+      model: "OPENAI_CHAT_MODEL",
+    },
     userPieces: [
       { data_type: "text", original_value: "Describe this image" },
       {
         data_type: "image_path",
-        original_value: TEST_PNG,
+        original_value: INPUT_IMAGE_BASE64,
         mime_type: "image/png",
       },
     ],
@@ -313,18 +349,18 @@ const TARGET_VARIANTS: TargetVariant[] = [
     targetType: "OpenAIImageTarget",
     targetParams: DUMMY_OPENAI_PARAMS,
     multiTurn: false,
-    liveEnvVars: [
-      "OPENAI_IMAGE_ENDPOINT",
-      "OPENAI_IMAGE_API_KEY",
-      "OPENAI_IMAGE_MODEL",
-    ],
+    liveEnvironment: {
+      endpoint: "OPENAI_IMAGE_ENDPOINT",
+      apiKey: "OPENAI_IMAGE_API_KEY",
+      model: "OPENAI_IMAGE_MODEL",
+    },
     userPieces: [
       { data_type: "text", original_value: "Generate a red dot" },
     ],
     assistantPieces: [
       {
         data_type: "image_path",
-        original_value: TEST_PNG,
+        original_value: INPUT_IMAGE_BASE64,
         mime_type: "image/png",
       },
     ],
@@ -336,23 +372,23 @@ const TARGET_VARIANTS: TargetVariant[] = [
     targetType: "OpenAIImageTarget",
     targetParams: DUMMY_OPENAI_PARAMS,
     multiTurn: false,
-    liveEnvVars: [
-      "OPENAI_IMAGE_ENDPOINT",
-      "OPENAI_IMAGE_API_KEY",
-      "OPENAI_IMAGE_MODEL",
-    ],
+    liveEnvironment: {
+      endpoint: "OPENAI_IMAGE_ENDPOINT",
+      apiKey: "OPENAI_IMAGE_API_KEY",
+      model: "OPENAI_IMAGE_MODEL",
+    },
     userPieces: [
       { data_type: "text", original_value: "Edit this image" },
       {
         data_type: "image_path",
-        original_value: TEST_PNG,
+        original_value: INPUT_IMAGE_BASE64,
         mime_type: "image/png",
       },
     ],
     assistantPieces: [
       {
         data_type: "image_path",
-        original_value: TEST_PNG,
+        original_value: INPUT_IMAGE_BASE64,
         mime_type: "image/png",
       },
     ],
@@ -364,11 +400,11 @@ const TARGET_VARIANTS: TargetVariant[] = [
     targetType: "OpenAIVideoTarget",
     targetParams: DUMMY_OPENAI_PARAMS,
     multiTurn: false,
-    liveEnvVars: [
-      "OPENAI_VIDEO_ENDPOINT",
-      "OPENAI_VIDEO_KEY",
-      "OPENAI_VIDEO_MODEL",
-    ],
+    liveEnvironment: {
+      endpoint: "OPENAI_VIDEO_ENDPOINT",
+      apiKey: "OPENAI_VIDEO_KEY",
+      model: "OPENAI_VIDEO_MODEL",
+    },
     userPieces: [
       { data_type: "text", original_value: "Generate a video" },
     ],
@@ -387,11 +423,11 @@ const TARGET_VARIANTS: TargetVariant[] = [
     targetType: "OpenAITTSTarget",
     targetParams: DUMMY_OPENAI_PARAMS,
     multiTurn: false,
-    liveEnvVars: [
-      "OPENAI_TTS_ENDPOINT",
-      "OPENAI_TTS_KEY",
-      "OPENAI_TTS_MODEL",
-    ],
+    liveEnvironment: {
+      endpoint: "OPENAI_TTS_ENDPOINT",
+      apiKey: "OPENAI_TTS_KEY",
+      model: "OPENAI_TTS_MODEL",
+    },
     userPieces: [{ data_type: "text", original_value: "Say hello" }],
     assistantPieces: [
       {
@@ -408,11 +444,11 @@ const TARGET_VARIANTS: TargetVariant[] = [
     targetType: "OpenAIResponseTarget",
     targetParams: DUMMY_OPENAI_PARAMS,
     multiTurn: true,
-    liveEnvVars: [
-      "OPENAI_RESPONSES_ENDPOINT",
-      "OPENAI_RESPONSES_KEY",
-      "OPENAI_RESPONSES_MODEL",
-    ],
+    liveEnvironment: {
+      endpoint: "OPENAI_RESPONSES_ENDPOINT",
+      apiKey: "OPENAI_RESPONSES_KEY",
+      model: "OPENAI_RESPONSES_MODEL",
+    },
     userPieces: [
       { data_type: "text", original_value: "Hello responses API" },
     ],
@@ -427,11 +463,11 @@ const TARGET_VARIANTS: TargetVariant[] = [
     targetType: "OpenAIResponseTarget",
     targetParams: DUMMY_OPENAI_PARAMS,
     multiTurn: true,
-    liveEnvVars: [
-      "OPENAI_RESPONSES_ENDPOINT",
-      "OPENAI_RESPONSES_KEY",
-      "OPENAI_RESPONSES_MODEL",
-    ],
+    liveEnvironment: {
+      endpoint: "OPENAI_RESPONSES_ENDPOINT",
+      apiKey: "OPENAI_RESPONSES_KEY",
+      model: "OPENAI_RESPONSES_MODEL",
+    },
     userPieces: [
       {
         data_type: "text",
@@ -439,7 +475,7 @@ const TARGET_VARIANTS: TargetVariant[] = [
       },
       {
         data_type: "image_path",
-        original_value: TEST_PNG,
+        original_value: INPUT_IMAGE_BASE64,
         mime_type: "image/png",
       },
     ],
@@ -461,7 +497,7 @@ async function assertSeededAssistant(
   exp: TargetVariant["expectAssistantSeeded"],
 ): Promise<void> {
   if (exp.text) {
-    await expect(page.getByText(exp.text)).toBeVisible({
+    await expect(getMessageText(page, exp.text)).toBeVisible({
       timeout: 10_000,
     });
   }
@@ -544,23 +580,18 @@ async function seedFullTurn(
   return attack;
 }
 
-/** Check if all required env vars for a live variant are present. */
-function hasLiveCredentials(variant: TargetVariant): boolean {
-  const [endpointVariable, apiKeyVariable, modelVariable] = variant.liveEnvVars;
-  const endpoint = process.env[endpointVariable];
-  if (!endpoint || !process.env[modelVariable]) {
+/** Check whether live mode can use an API key or Azure identity. */
+function hasLiveConfiguration(variant: TargetVariant): boolean {
+  const { endpoint, apiKey, model } = variant.liveEnvironment;
+  const endpointValue = process.env[endpoint];
+  if (!endpointValue || !process.env[model]) {
     return false;
   }
+  return !!process.env[apiKey] || isAzureOpenAiEndpoint(endpointValue);
+}
 
-  try {
-    const hostname = new URL(endpoint).hostname.toLowerCase();
-    const supportsIdentity = AZURE_OPENAI_HOSTNAME_SUFFIXES.some((suffix) =>
-      hostname.endsWith(suffix),
-    );
-    return supportsIdentity || Boolean(process.env[apiKeyVariable]);
-  } catch {
-    return false;
-  }
+function getLiveAuthMode(variant: TargetVariant): AuthMode {
+  return process.env[variant.liveEnvironment.apiKey] ? "api_key" : "identity";
 }
 
 // ---------------------------------------------------------------------------
@@ -606,15 +637,18 @@ for (const variant of TARGET_VARIANTS) {
       );
       if (userText) {
         await expect(
-          page.getByText(userText.original_value),
+          getMessageText(page, userText.original_value),
         ).toBeVisible({ timeout: 10_000 });
       }
 
       // Assert user image
       if (variant.userPieces.some((p) => p.data_type === "image_path")) {
-        await expect(page.locator("img").first()).toBeVisible({
-          timeout: 10_000,
-        });
+        await expect(
+          page
+            .locator('[data-testid^="message-bubble-"]')
+            .locator("img")
+            .first(),
+        ).toBeVisible({ timeout: 10_000 });
       }
 
       // Assert assistant response
@@ -637,7 +671,7 @@ for (const variant of TARGET_VARIANTS) {
       );
       if (userText) {
         await expect(
-          page.getByText(userText.original_value),
+          getMessageText(page, userText.original_value),
         ).toBeVisible({ timeout: 10_000 });
       }
 
@@ -651,7 +685,7 @@ for (const variant of TARGET_VARIANTS) {
 
       if (userText) {
         await expect(
-          page.getByText(userText.original_value),
+          getMessageText(page, userText.original_value),
         ).not.toBeVisible({ timeout: 5_000 });
       }
     });
@@ -681,7 +715,7 @@ for (const variant of TARGET_VARIANTS) {
       );
       if (userText) {
         await expect(
-          page.getByText(userText.original_value),
+          getMessageText(page, userText.original_value),
         ).toBeVisible({ timeout: 10_000 });
       }
       // Deterministically ensure main conversation is active: open the
@@ -691,23 +725,23 @@ for (const variant of TARGET_VARIANTS) {
       await page.getByTestId(`conversation-item-${conversationId}`).click();
       if (userText) {
         await expect(
-          page.getByText(userText.original_value),
+          getMessageText(page, userText.original_value),
         ).toBeVisible({ timeout: 5_000 });
       }
       await page.getByTestId("toggle-panel-btn").click();
       await expect(page.getByTestId("conversation-panel")).not.toBeVisible({ timeout: 3_000 });
       await expect(
-        page.getByText("Branch-only text message"),
+        getMessageText(page, "Branch-only text message"),
       ).not.toBeVisible();
 
       await openConversationPanel(page);
       await page.getByTestId(`conversation-item-${newConversationId}`).click();
       await expect(
-        page.getByText("Branch-only text message").first(),
+        getMessageText(page, "Branch-only text message"),
       ).toBeVisible({ timeout: 5_000 });
       if (userText) {
         await expect(
-          page.getByText(userText.original_value),
+          getMessageText(page, userText.original_value),
         ).not.toBeVisible();
       }
 
@@ -716,7 +750,7 @@ for (const variant of TARGET_VARIANTS) {
         .click();
       if (userText) {
         await expect(
-          page.getByText(userText.original_value),
+          getMessageText(page, userText.original_value),
         ).toBeVisible({ timeout: 5_000 });
       }
     });
@@ -740,7 +774,7 @@ for (const variant of TARGET_VARIANTS) {
       );
       if (userText) {
         await expect(
-          page.getByText(userText.original_value),
+          getMessageText(page, userText.original_value),
         ).toBeVisible({ timeout: 10_000 });
       } else {
         await page.waitForTimeout(3_000);
@@ -798,7 +832,7 @@ for (const variant of TARGET_VARIANTS) {
 
         const expText = variant.expectAssistantSeeded.text;
         if (expText) {
-          await expect(page.getByTestId("message-bubble-1").getByText(expText)).toBeVisible({
+          await expect(getMessageText(page, expText)).toBeVisible({
             timeout: 10_000,
           });
         } else {
@@ -898,7 +932,7 @@ for (const variant of TARGET_VARIANTS) {
       // Wait for the chat view to fully load
       const expText = variant.expectAssistantSeeded.text;
       if (expText) {
-        await expect(page.getByTestId("message-bubble-1").getByText(expText)).toBeVisible({
+        await expect(getMessageText(page, expText)).toBeVisible({
           timeout: 10_000,
         });
       } else {
@@ -920,7 +954,7 @@ for (const variant of TARGET_VARIANTS) {
         .getByTestId(`conversation-item-${branchConversationId}`)
         .click();
 
-      await expect(page.getByText("Second turn")).not.toBeVisible({
+      await expect(getMessageText(page, "Second turn")).not.toBeVisible({
         timeout: 5_000,
       });
 
@@ -955,17 +989,21 @@ for (const variant of TARGET_VARIANTS) {
 
     test.beforeAll(async ({ request }, testInfo) => {
       testInfo.setTimeout(120_000);
-      if (!hasLiveCredentials(variant)) return;
+      if (!hasLiveConfiguration(variant)) return;
       await waitForBackend(request);
-      // In live mode, create target without explicit creds - the backend
-      // picks them up from environment variables automatically.
-      targetRegistryName = await createTarget(request, variant.targetType);
+      targetRegistryName = await createTarget(
+        request,
+        variant.targetType,
+        {},
+        getLiveAuthMode(variant),
+      );
     });
 
     test.beforeEach(async ({ page }) => {
       test.skip(
-        !hasLiveCredentials(variant),
-        "Missing required env vars for " + variant.label,
+        !hasLiveConfiguration(variant),
+        "Missing endpoint/model and API key or Azure identity configuration for " +
+          variant.label,
       );
       await page.goto("/");
       await activateTarget(page, targetRegistryName);
@@ -1097,35 +1135,19 @@ for (const variant of TARGET_VARIANTS) {
       await openAttackInHistory(page, attackResultId);
       await assertLiveAssistant(page, variant.expectAssistantLive);
 
-      if (variant.multiTurn) {
-        const branchBtn = page.getByTestId("branch-conv-btn-1");
-        await expect(branchBtn).toBeVisible({ timeout: 10_000 });
-        await branchBtn.click();
-        await expect(page.getByTestId("conversation-panel")).toBeVisible({
-          timeout: 15_000,
-        });
-      } else {
-        await createConversation(request, attackResultId, {
-          sourceConversationId: conversationId,
-          cutoffIndex: 1,
-        });
-        await openConversationPanel(page);
-      }
+      const branchConversationId = await createConversation(
+        request,
+        attackResultId,
+        { sourceConversationId: conversationId, cutoffIndex: 1 },
+      );
 
+      await openConversationPanel(page);
       const items = page.locator('[data-testid^="conversation-item-"]');
       await expect(items).toHaveCount(2, { timeout: 15_000 });
 
       // 5. Switch to branch
-      const convResp = await request.get(
-        `/api/attacks/${encodeURIComponent(attackResultId)}/conversations`,
-      );
-      const convData = await convResp.json();
-      const branchConv = convData.conversations.find(
-        (c: { conversation_id: string }) => c.conversation_id !== convData.main_conversation_id,
-      );
-      expect(branchConv).toBeDefined();
       await page
-        .getByTestId(`conversation-item-${branchConv.conversation_id}`)
+        .getByTestId(`conversation-item-${branchConversationId}`)
         .click();
 
       // Second-turn messages should not be in branch
@@ -1135,7 +1157,7 @@ for (const variant of TARGET_VARIANTS) {
 
       // 6. Promote
       await page
-        .getByTestId(`star-btn-${branchConv.conversation_id}`)
+        .getByTestId(`star-btn-${branchConversationId}`)
         .click();
 
       await expect
@@ -1149,7 +1171,7 @@ for (const variant of TARGET_VARIANTS) {
           },
           { timeout: 10_000 },
         )
-        .toBe(branchConv.conversation_id);
+        .toBe(branchConversationId);
     });
   });
 }

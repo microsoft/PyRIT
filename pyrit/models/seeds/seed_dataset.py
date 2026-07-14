@@ -17,11 +17,11 @@ from typing import TYPE_CHECKING, Any, cast
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from pyrit.models.literals import SeedType  # noqa: TC001  (runtime-required by Pydantic field annotations)
+from pyrit.models.seeds.attack_seed_group import AttackSeedGroup
 from pyrit.models.seeds.seed import (  # AwareDatetimeUTC is runtime-required by Pydantic
     AwareDatetimeUTC,
     Seed,
 )
-from pyrit.models.seeds.seed_attack_group import SeedAttackGroup
 from pyrit.models.seeds.seed_group import (  # runtime-required by Pydantic field annotations
     PROMPT_ONLY_SEED_KEYS,
     SeedGroup,
@@ -330,9 +330,9 @@ class SeedDataset(BaseModel):
     def group_seed_prompts_by_prompt_group_id(seeds: Sequence[Seed]) -> Sequence[SeedGroup]:
         """
         Group the given list of seeds by prompt_group_id and create
-        SeedGroup or SeedAttackGroup instances.
+        SeedGroup or AttackSeedGroup instances.
 
-        For each group, this method first attempts to create a SeedAttackGroup
+        For each group, this method first attempts to create a AttackSeedGroup
         (which has attack-specific properties like objective). If validation fails,
         it falls back to a basic SeedGroup.
 
@@ -340,7 +340,7 @@ class SeedDataset(BaseModel):
             seeds: A list of Seed objects.
 
         Returns:
-            A list of SeedGroup or SeedAttackGroup objects, with seeds grouped by
+            A list of SeedGroup or AttackSeedGroup objects, with seeds grouped by
             prompt_group_id. Each group will be ordered by the sequence number of
             the seeds, if available.
 
@@ -353,15 +353,15 @@ class SeedDataset(BaseModel):
             else:
                 grouped_seeds[uuid.uuid4()].append(seed)
 
-        # Create SeedGroup or SeedAttackGroup instances from grouped seeds
+        # Create SeedGroup or AttackSeedGroup instances from grouped seeds
         seed_groups: list[SeedGroup] = []
         for group_seeds in grouped_seeds.values():
             if len(group_seeds) > 1:
                 group_seeds.sort(key=lambda s: s.sequence if hasattr(s, "sequence") else 0)
 
-            # Try to create a SeedAttackGroup first; fall back to SeedGroup if validation fails
+            # Try to create a AttackSeedGroup first; fall back to SeedGroup if validation fails
             try:
-                attack_group = SeedAttackGroup(seeds=cast("list[SeedUnion]", group_seeds))
+                attack_group = AttackSeedGroup(seeds=cast("list[SeedUnion]", group_seeds))
                 seed_groups.append(attack_group)
             except ValueError:
                 seed_groups.append(SeedGroup(seeds=cast("list[SeedUnion]", group_seeds)))

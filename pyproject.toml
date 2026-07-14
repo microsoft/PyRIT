@@ -130,6 +130,14 @@ speech = [
     "azure-cognitiveservices-speech>=1.44.0",
 ]
 
+litellm = [
+    # Cap below 1.92.0: 1.92.0+ replaced the universal py3-none-any wheel with
+    # manylinux-only wheels backed by a Rust (PyO3) extension, which has no
+    # Windows/macOS wheels and fails to build on Python 3.14 (PyO3 <=3.13). 1.91.x
+    # is the last pure-Python line that installs on every OS and Python version.
+    "litellm>=1.83.0,<1.92.0",
+]
+
 # all includes all functional dependencies excluding the ones from the "dev" dependency group
 all = [
     "accelerate>=1.7.0",
@@ -138,6 +146,7 @@ all = [
     "flask>=3.1.3",
     "ipykernel>=6.29.5",
     "jupyter>=1.1.1",
+    "litellm>=1.83.0,<1.92.0",  # <1.92.0: 1.92.0+ is manylinux-only Rust wheels (no win/mac, no py3.14)
     "ollama>=0.5.1",
     "opencv-python>=4.11.0.86",
     "playwright>=1.49.0",

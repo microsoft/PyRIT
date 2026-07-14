@@ -2,17 +2,16 @@ import { createLogger, defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import path from 'path'
 
-const backendUrl = process.env.E2E_BACKEND_URL ?? 'http://127.0.0.1:8000'
-
 // Suppress noisy ECONNREFUSED proxy errors while the backend is starting.
 // Without this, Vite logs dozens of "http proxy error" stack traces.
 const logger = createLogger()
 const originalError = logger.error
+const backendUrl = process.env.PYRIT_BACKEND_URL ?? 'http://127.0.0.1:8000'
 let proxyWarned = false
 logger.error = (msg, options) => {
   if (typeof msg === 'string' && msg.includes('http proxy error')) {
     if (!proxyWarned) {
-      console.log('[vite] Waiting for backend on port 8000...')
+      console.log(`[vite] Waiting for backend at ${backendUrl}...`)
       proxyWarned = true
     }
     return

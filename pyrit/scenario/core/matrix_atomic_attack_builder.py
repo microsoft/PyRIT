@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING, cast
 
 from pyrit.executor.attack import AttackScoringConfig
 from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
-from pyrit.models import SeedAttackGroup
+from pyrit.models import AttackSeedGroup
 from pyrit.prompt_normalizer import ConverterConfiguration
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
@@ -92,7 +92,7 @@ def build_baseline_atomic_attack(
     *,
     objective_target: PromptTarget,
     objective_scorer: Scorer,
-    seed_groups: list[SeedAttackGroup],
+    seed_groups: list[AttackSeedGroup],
     memory_labels: dict[str, str] | None = None,
 ) -> AtomicAttack:
     """
@@ -106,7 +106,7 @@ def build_baseline_atomic_attack(
     Args:
         objective_target (PromptTarget): The target to attack.
         objective_scorer (Scorer): The scorer used to evaluate the baseline.
-        seed_groups (list[SeedAttackGroup]): Seed groups to attack. Used as-is.
+        seed_groups (list[AttackSeedGroup]): Seed groups to attack. Used as-is.
         memory_labels (dict[str, str] | None): Labels applied to the baseline's prompts.
 
     Returns:
@@ -216,7 +216,7 @@ class MatrixAtomicAttackBuilder:
     Construct once with the shared run inputs (target, scorer, labels), then call
     ``build`` with the per-run grid. The builder owns:
 
-    - seed-technique compatibility filtering (``SeedAttackGroup.filter_compatible``),
+    - seed-technique compatibility filtering (``AttackSeedGroup.filter_compatible``),
     - adversarial-target resolution and the ``factory.create(...)`` call,
     - ``AtomicAttack`` construction with naming and display-group stamping, and
     - optional baseline emission using the same resolved seed groups.
@@ -259,7 +259,7 @@ class MatrixAtomicAttackBuilder:
         self,
         *,
         technique_factories: dict[str, AttackTechniqueFactory],
-        dataset_groups: Mapping[str, list[SeedAttackGroup]],
+        dataset_groups: Mapping[str, list[AttackSeedGroup]],
         adversarial_targets: Sequence[tuple[str, PromptTarget]] | None = None,
         name_fn: Callable[[MatrixCombo], str] | None = None,
         display_group_fn: Callable[[MatrixCombo], str] | None = None,
@@ -277,7 +277,7 @@ class MatrixAtomicAttackBuilder:
         Args:
             technique_factories (dict[str, AttackTechniqueFactory]): Mapping of technique
                 name to the factory that produces it. Only these techniques are built.
-            dataset_groups (Mapping[str, list[SeedAttackGroup]]): Mapping of dataset name to
+            dataset_groups (Mapping[str, list[AttackSeedGroup]]): Mapping of dataset name to
                 its seed groups (e.g. ``await DatasetAttackConfiguration.get_attack_groups_by_dataset_async()``).
             adversarial_targets (Sequence[tuple[str, PromptTarget]] | None): Optional
                 ``(name, instance)`` pairs adding an adversarial-target axis. When set,
@@ -385,28 +385,28 @@ class MatrixAtomicAttackBuilder:
         self,
         *,
         factory: AttackTechniqueFactory,
-        seed_groups: list[SeedAttackGroup],
+        seed_groups: list[AttackSeedGroup],
         technique_name: str,
         dataset_name: str,
-    ) -> list[SeedAttackGroup] | None:
+    ) -> list[AttackSeedGroup] | None:
         """
         Filter seed groups to those compatible with the factory's seed technique.
 
         Args:
             factory (AttackTechniqueFactory): The factory whose ``seed_technique`` gates
                 compatibility.
-            seed_groups (list[SeedAttackGroup]): Candidate seed groups for one dataset.
+            seed_groups (list[AttackSeedGroup]): Candidate seed groups for one dataset.
             technique_name (str): Technique name, used only for log messages.
             dataset_name (str): Dataset name, used only for log messages.
 
         Returns:
-            list[SeedAttackGroup] | None: The compatible groups, or ``None`` when the
+            list[AttackSeedGroup] | None: The compatible groups, or ``None`` when the
             ``(technique, dataset)`` pair has no compatible groups and should be skipped.
         """
         if factory.seed_technique is None:
             return list(seed_groups)
 
-        compatible_groups = SeedAttackGroup.filter_compatible(
+        compatible_groups = AttackSeedGroup.filter_compatible(
             seed_groups=seed_groups,
             technique=factory.seed_technique,
         )
