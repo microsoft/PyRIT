@@ -562,9 +562,15 @@ def standardize_harm_categories(
     HarmCategory._initialize_aliases()
     standardized: list[str] = []
     for raw_cat in categories_list:
-        if raw_cat:  # Skip empty strings
-            parsed_categories = HarmCategory.parse_many(raw_cat, alias_overrides=normalized_overrides)
-            standardized.extend(parsed.name for parsed in parsed_categories)
+        if not raw_cat:
+            continue
+
+        raw_cat = raw_cat.strip()
+        if not raw_cat:
+            continue
+
+        parsed_categories = HarmCategory.parse_many(raw_cat, alias_overrides=normalized_overrides)
+        standardized.extend(parsed.name for parsed in parsed_categories)
 
     # De-duplicate while preserving order: overlapping n:1 / 1:many mappings
     # (e.g. "racism" + "sexism" -> REPRESENTATIONAL) must not repeat a category.

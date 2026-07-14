@@ -35,6 +35,10 @@ def test_standardize_single_string_input() -> None:
     assert standardize_harm_categories("violence") == ["VIOLENT_CONTENT"]
 
 
+def test_standardize_strips_whitespace() -> None:
+    assert standardize_harm_categories([" violence ", "  "]) == ["VIOLENT_CONTENT"]
+
+
 def test_standardize_deduplicates_many_to_one() -> None:
     # "violence" and "physical harm" both canonicalize to VIOLENT_CONTENT.
     assert standardize_harm_categories(["violence", "physical harm"]) == ["VIOLENT_CONTENT"]
