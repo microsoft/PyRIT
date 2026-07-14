@@ -5,7 +5,7 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.19.1
+#       jupytext_version: 1.19.4
 # ---
 
 # %% [markdown]
@@ -197,7 +197,7 @@ await output_attack_async(result)
 
 # %%
 from pyrit.executor.attack import AttackExecutor, PromptSendingAttack
-from pyrit.score import ContentClassifierPaths, SelfAskCategoryScorer
+from pyrit.score import ContentClassifier, ContentClassifierPaths, SelfAskCategoryScorer
 
 await initialize_pyrit_async(memory_db_type=IN_MEMORY)  # type: ignore
 
@@ -238,9 +238,9 @@ scorer_target_b = OpenAIChatTarget(
 )
 rr_scorer_target = RoundRobinTarget(targets=[scorer_target_a, scorer_target_b], weights=[2, 1])
 
-scorer = SelfAskCategoryScorer(
+scorer = SelfAskCategoryScorer.from_content_classifier(
     chat_target=rr_scorer_target,
-    content_classifier_path=ContentClassifierPaths.HARMFUL_CONTENT_CLASSIFIER.value,
+    content_classifier=ContentClassifier.from_yaml(ContentClassifierPaths.HARMFUL_CONTENT_CLASSIFIER.value),
 )
 
 # Collect response messages for scoring

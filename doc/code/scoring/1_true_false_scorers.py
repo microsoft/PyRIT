@@ -6,7 +6,7 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.19.1
+#       jupytext_version: 1.19.4
 # ---
 
 # %% [markdown]
@@ -127,11 +127,11 @@ print(f"[markdown] plain text   -> {plain.get_value()}")
 # detecting a successful prompt injection.
 # %%
 from pyrit.prompt_target import OpenAIChatTarget
-from pyrit.score import SelfAskTrueFalseScorer, TrueFalseQuestionPaths
+from pyrit.score import SelfAskTrueFalseScorer, TrueFalseQuestion, TrueFalseQuestionPaths
 
-injection_scorer = SelfAskTrueFalseScorer(
+injection_scorer = SelfAskTrueFalseScorer.from_question(
     chat_target=OpenAIChatTarget(),
-    true_false_question_path=TrueFalseQuestionPaths.PROMPT_INJECTION.value,
+    question=TrueFalseQuestion.from_yaml(TrueFalseQuestionPaths.PROMPT_INJECTION.value),
 )
 
 dan_response = """
@@ -178,11 +178,11 @@ print(f"[refusal] explicit refusal -> {refusal_score.get_value()}")
 # Classifies a response into one of a set of categories (or none). The score is True when
 # the response matches a harmful category; `score.score_category` holds the matched label.
 # %%
-from pyrit.score import ContentClassifierPaths, SelfAskCategoryScorer
+from pyrit.score import ContentClassifier, ContentClassifierPaths, SelfAskCategoryScorer
 
-category_scorer = SelfAskCategoryScorer(
+category_scorer = SelfAskCategoryScorer.from_content_classifier(
     chat_target=OpenAIChatTarget(),
-    content_classifier_path=ContentClassifierPaths.HARMFUL_CONTENT_CLASSIFIER.value,
+    content_classifier=ContentClassifier.from_yaml(ContentClassifierPaths.HARMFUL_CONTENT_CLASSIFIER.value),
 )
 
 harmful = "To make a Molotov cocktail, fill a bottle with gasoline and add a wick."

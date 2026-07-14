@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from pyrit.models import SeedAttackGroup, SeedGroup, SeedObjective, SeedPrompt
+from pyrit.models import AttackSeedGroup, SeedGroup, SeedObjective, SeedPrompt
 from pyrit.scenario.core.dataset_configuration import (
     INLINE_DATASET_NAME,
     CompoundDatasetAttackConfiguration,
@@ -177,62 +177,62 @@ class TestResolutionErrors:
     async def test_empty_inline_raises(self) -> None:
         config = DatasetAttackConfiguration(seeds=[])
         with pytest.raises(DatasetConstraintError, match="empty"):
-            await config.get_seed_attack_groups_async()
+            await config.get_attack_seed_groups_async()
 
     async def test_raises_loudly_when_still_empty_after_fetch(self) -> None:
         config = DatasetAttackConfiguration(dataset_names=["d1"])
         with patch.object(config, "_fetch_dataset_async", new=AsyncMock()):
             with pytest.raises(DatasetConstraintError, match="could not be loaded"):
-                await config.get_seed_attack_groups_async()
+                await config.get_attack_seed_groups_async()
 
     async def test_raises_when_empty_and_auto_fetch_disabled(self) -> None:
         config = DatasetAttackConfiguration(dataset_names=["d1"], auto_fetch=False)
         with pytest.raises(DatasetConstraintError, match="auto_fetch is disabled"):
-            await config.get_seed_attack_groups_async()
+            await config.get_attack_seed_groups_async()
 
     async def test_dataset_constraint_error_is_value_error(self) -> None:
         config = DatasetAttackConfiguration(dataset_names=["d1"], auto_fetch=False)
         with pytest.raises(ValueError):
-            await config.get_seed_attack_groups_async()
+            await config.get_attack_seed_groups_async()
 
 
-class TestGetSeedAttackGroupsAsync:
-    """``DatasetAttackConfiguration.get_seed_attack_groups_async`` (flat, global sample)."""
+class TestGetAttackSeedGroupsAsync:
+    """``DatasetAttackConfiguration.get_attack_seed_groups_async`` (flat, global sample)."""
 
     async def test_inline_seed_groups_to_attack_groups(self, sample_seed_groups: list[SeedGroup]) -> None:
         config = DatasetAttackConfiguration(seed_groups=sample_seed_groups)
-        groups = await config.get_seed_attack_groups_async()
+        groups = await config.get_attack_seed_groups_async()
         assert len(groups) == 3
-        assert all(isinstance(g, SeedAttackGroup) for g in groups)
+        assert all(isinstance(g, AttackSeedGroup) for g in groups)
 
     async def test_inline_seeds_built_into_groups(self) -> None:
         config = DatasetAttackConfiguration(seeds=make_objectives("a", "b"))
-        groups = await config.get_seed_attack_groups_async()
+        groups = await config.get_attack_seed_groups_async()
         assert len(groups) == 2
-        assert all(isinstance(g, SeedAttackGroup) for g in groups)
+        assert all(isinstance(g, AttackSeedGroup) for g in groups)
 
     async def test_from_memory(self, mock_memory: MagicMock) -> None:
         mock_memory.get_seeds.return_value = make_objectives("a", "b", "c")
         config = DatasetAttackConfiguration(dataset_names=["d1"])
-        groups = await config.get_seed_attack_groups_async()
+        groups = await config.get_attack_seed_groups_async()
         assert len(groups) == 3
 
     async def test_applies_max_dataset_size_globally(self, mock_memory: MagicMock) -> None:
         mock_memory.get_seeds.return_value = make_objectives("a", "b", "c", "d")
         config = DatasetAttackConfiguration(dataset_names=["d1"], max_dataset_size=2)
-        groups = await config.get_seed_attack_groups_async()
+        groups = await config.get_attack_seed_groups_async()
         assert len(groups) == 2
 
     async def test_empty_raises(self) -> None:
         config = DatasetAttackConfiguration(dataset_names=["d1"], auto_fetch=False)
         with pytest.raises(DatasetConstraintError):
-            await config.get_seed_attack_groups_async()
+            await config.get_attack_seed_groups_async()
 
     async def test_auto_fetch_when_memory_empty(self, mock_memory: MagicMock) -> None:
         mock_memory.get_seeds.side_effect = [[], make_objectives("a")]
         config = DatasetAttackConfiguration(dataset_names=["d1"])
         with patch.object(config, "_fetch_dataset_async", new=AsyncMock()) as mock_fetch:
-            groups = await config.get_seed_attack_groups_async()
+            groups = await config.get_attack_seed_groups_async()
         assert len(groups) == 1
         mock_fetch.assert_awaited_once_with(dataset_name="d1")
 
@@ -275,18 +275,18 @@ class TestBuildAttackGroups:
         config = DatasetAttackConfiguration(dataset_names=["d1"])
         groups = config._build_attack_groups(make_objectives("a", "b"))
         assert len(groups) == 2
-        assert all(isinstance(g, SeedAttackGroup) for g in groups)
+        assert all(isinstance(g, AttackSeedGroup) for g in groups)
 
     async def test_override_is_used(self, mock_memory: MagicMock) -> None:
         mock_memory.get_seeds.return_value = make_objectives("a", "b", "c")
-        sentinel = [SeedAttackGroup(seeds=[SeedObjective(value="custom")])]
+        sentinel = [AttackSeedGroup(seeds=[SeedObjective(value="custom")])]
 
         class CustomConfig(DatasetAttackConfiguration):
             def _build_attack_groups(self, seeds):
                 return sentinel
 
         config = CustomConfig(dataset_names=["d1"])
-        assert await config.get_seed_attack_groups_async() == sentinel
+        assert await config.get_attack_seed_groups_async() == sentinel
 
 
 class TestFetchDatasetAsync:
@@ -324,7 +324,7 @@ class TestFetchDatasetAsync:
         with patch(PROVIDER_PATCH_TARGET) as provider:
             provider.get_all_dataset_names_async = AsyncMock(side_effect=RuntimeError("boom"))
             with pytest.raises(DatasetConstraintError, match="auto-fetch") as exc_info:
-                await config.get_seed_attack_groups_async()
+                await config.get_attack_seed_groups_async()
         assert isinstance(exc_info.value.__cause__, RuntimeError)
 
 
@@ -424,17 +424,17 @@ class TestSourceValidatorsEndToEnd:
         mock_memory.get_seeds.return_value = make_objectives("a")
         config = DatasetAttackConfiguration(dataset_names=["d1"], validators=[require_inline_seeds()])
         with pytest.raises(DatasetConstraintError, match="inline"):
-            await config.get_seed_attack_groups_async()
+            await config.get_attack_seed_groups_async()
 
     async def test_require_inline_seeds_passes_for_inline(self) -> None:
         seeds = make_objectives("a", "b")
         config = DatasetAttackConfiguration(seeds=seeds, validators=[require_inline_seeds()])
-        assert len(await config.get_seed_attack_groups_async()) == 2
+        assert len(await config.get_attack_seed_groups_async()) == 2
 
     async def test_forbid_inline_seeds_raises_for_inline(self) -> None:
         config = DatasetAttackConfiguration(seeds=make_objectives("a"), validators=[forbid_inline_seeds()])
         with pytest.raises(DatasetConstraintError, match="inline"):
-            await config.get_seed_attack_groups_async()
+            await config.get_attack_seed_groups_async()
 
 
 class TestResolvedDatasetNames:
@@ -444,13 +444,13 @@ class TestResolvedDatasetNames:
         mock_memory.get_seeds.side_effect = [make_objectives("a"), make_objectives("b")]
         seen: list[ResolvedDataset] = []
         config = DatasetAttackConfiguration(dataset_names=["d1", "d2"], validators=[seen.append])
-        await config.get_seed_attack_groups_async()
+        await config.get_attack_seed_groups_async()
         assert seen[0].dataset_names == ("d1", "d2")
 
     async def test_inline_reports_no_dataset_names(self) -> None:
         seen: list[ResolvedDataset] = []
         config = DatasetAttackConfiguration(seeds=make_objectives("a"), validators=[seen.append])
-        await config.get_seed_attack_groups_async()
+        await config.get_attack_seed_groups_async()
         assert seen[0].dataset_names == ()
 
     async def test_attack_groups_by_dataset_exposes_contributing_names(self, mock_memory: MagicMock) -> None:
@@ -464,12 +464,12 @@ class TestResolvedDatasetNames:
         mock_memory.get_seeds.return_value = make_objectives("a")
         config = DatasetAttackConfiguration(dataset_names=["rogue"], validators=[restrict_dataset_names({"d1", "d2"})])
         with pytest.raises(DatasetConstraintError, match="not allowed"):
-            await config.get_seed_attack_groups_async()
+            await config.get_attack_seed_groups_async()
 
     async def test_restrict_dataset_names_passes_for_allowed_dataset(self, mock_memory: MagicMock) -> None:
         mock_memory.get_seeds.return_value = make_objectives("a")
         config = DatasetAttackConfiguration(dataset_names=["d1"], validators=[restrict_dataset_names({"d1", "d2"})])
-        groups = await config.get_seed_attack_groups_async()
+        groups = await config.get_attack_seed_groups_async()
         assert [g.objective.value for g in groups] == ["a"]
 
 
@@ -520,7 +520,7 @@ class TestCompoundDatasetAttackConfiguration:
     async def test_flat_concatenates_children_with_per_child_budget(self, mock_memory: MagicMock) -> None:
         mock_memory.get_seeds.side_effect = [make_objectives("a", "b", "c", "d"), make_objectives("e", "f", "g", "h")]
         config = CompoundDatasetAttackConfiguration.per_dataset(dataset_names=["d1", "d2"], max_dataset_size=3)
-        groups = await config.get_seed_attack_groups_async()
+        groups = await config.get_attack_seed_groups_async()
         assert len(groups) == 6
 
     async def test_by_dataset_merges_children(self, mock_memory: MagicMock) -> None:
@@ -538,7 +538,7 @@ class TestCompoundDatasetAttackConfiguration:
             ],
             max_dataset_size=2,
         )
-        groups = await config.get_seed_attack_groups_async()
+        groups = await config.get_attack_seed_groups_async()
         assert len(groups) == 2
 
     async def test_inline_children_combine(self) -> None:
@@ -548,7 +548,7 @@ class TestCompoundDatasetAttackConfiguration:
                 DatasetAttackConfiguration(seeds=make_objectives("b")),
             ]
         )
-        groups = await config.get_seed_attack_groups_async()
+        groups = await config.get_attack_seed_groups_async()
         assert sorted(g.objective.value for g in groups) == ["a", "b"]
 
 
@@ -558,7 +558,7 @@ class TestDatasetConfigurationFilters:
     async def test_filters_passed_to_get_seeds(self, mock_memory: MagicMock) -> None:
         mock_memory.get_seeds.return_value = make_objectives("a", "b")
         config = DatasetAttackConfiguration(dataset_names=["d1"], filters={"harm_categories": ["cyber"]})
-        await config.get_seed_attack_groups_async()
+        await config.get_attack_seed_groups_async()
         mock_memory.get_seeds.assert_called_with(dataset_name="d1", harm_categories=["cyber"])
 
     async def test_filter_removing_all_seeds_raises_specific_error(self, mock_memory: MagicMock) -> None:
@@ -570,13 +570,13 @@ class TestDatasetConfigurationFilters:
             dataset_names=["d1"], filters={"harm_categories": ["missing"]}, auto_fetch=False
         )
         with pytest.raises(DatasetConstraintError, match="none match the configured filters"):
-            await config.get_seed_attack_groups_async()
+            await config.get_attack_seed_groups_async()
 
     async def test_update_filters_merges(self, mock_memory: MagicMock) -> None:
         mock_memory.get_seeds.return_value = make_objectives("a")
         config = DatasetAttackConfiguration(dataset_names=["d1"], filters={"harm_categories": ["a"]})
         config.update_filters(filters={"authors": ["jones"]})
-        await config.get_seed_attack_groups_async()
+        await config.get_attack_seed_groups_async()
         mock_memory.get_seeds.assert_called_with(dataset_name="d1", harm_categories=["a"], authors=["jones"])
 
     def test_filters_property_returns_copy(self) -> None:
@@ -589,12 +589,12 @@ class TestDatasetConfigurationFilters:
         config = CompoundDatasetAttackConfiguration.per_dataset(
             dataset_names=["d1"], filters={"harm_categories": ["cyber"]}
         )
-        await config.get_seed_attack_groups_async()
+        await config.get_attack_seed_groups_async()
         mock_memory.get_seeds.assert_called_with(dataset_name="d1", harm_categories=["cyber"])
 
     async def test_compound_update_filters_propagates_to_children(self, mock_memory: MagicMock) -> None:
         mock_memory.get_seeds.return_value = make_objectives("a")
         config = CompoundDatasetAttackConfiguration.per_dataset(dataset_names=["d1"])
         config.update_filters(filters={"harm_categories": ["cyber"]})
-        await config.get_seed_attack_groups_async()
+        await config.get_attack_seed_groups_async()
         mock_memory.get_seeds.assert_called_with(dataset_name="d1", harm_categories=["cyber"])

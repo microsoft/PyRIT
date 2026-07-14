@@ -12,10 +12,9 @@ from pyrit.common.path import DATASETS_PATH
 from pyrit.executor.attack import (
     ManyShotJailbreakAttack,
     PromptSendingAttack,
-    RolePlayAttack,
     TreeOfAttacksWithPruningAttack,
 )
-from pyrit.models import ComponentIdentifier, SeedAttackGroup, SeedObjective
+from pyrit.models import AttackSeedGroup, ComponentIdentifier, SeedObjective
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry import TargetRegistry
 from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
@@ -125,16 +124,17 @@ def mock_runtime_env():
         yield
 
 
-def _make_seed_groups(name: str) -> list[SeedAttackGroup]:
+def _make_seed_groups(name: str) -> list[AttackSeedGroup]:
     """Create two seed attack groups for a given category.
 
     Groups are objective-only so they stay compatible with simulated-conversation
-    techniques (e.g. context_compliance), which generate their own prepended
-    conversation and reject seed groups that already carry a prompt at sequence 0.
+    techniques (e.g. context_compliance, role_play_*), which generate their own
+    prepended conversation and reject seed groups that already carry a prompt at
+    sequence 0.
     """
     return [
-        SeedAttackGroup(seeds=[SeedObjective(value=f"{name} objective 1")]),
-        SeedAttackGroup(seeds=[SeedObjective(value=f"{name} objective 2")]),
+        AttackSeedGroup(seeds=[SeedObjective(value=f"{name} objective 1")]),
+        AttackSeedGroup(seeds=[SeedObjective(value=f"{name} objective 2")]),
     ]
 
 
@@ -286,7 +286,7 @@ class TestRapidResponseAttackGeneration:
         mock_objective_target,
         mock_objective_scorer,
         techniques=None,
-        seed_groups: dict[str, list[SeedAttackGroup]] | None = None,
+        seed_groups: dict[str, list[AttackSeedGroup]] | None = None,
     ):
         """Helper: initialize scenario and return atomic attacks."""
         groups = seed_groups or {"hate": _make_seed_groups("hate")}
@@ -314,7 +314,13 @@ class TestRapidResponseAttackGeneration:
             mock_objective_scorer=mock_objective_scorer,
         )
         technique_classes = {type(a.attack_technique.attack) for a in attacks}
-        assert technique_classes == {RolePlayAttack, ManyShotJailbreakAttack}
+        # role_play_movie_script is now a simulated-conversation PromptSendingAttack.
+        assert ManyShotJailbreakAttack in technique_classes
+        assert any(
+            a.attack_technique.seed_technique is not None
+            and a.attack_technique.seed_technique.has_simulated_conversation
+            for a in attacks
+        )
 
     async def test_single_turn_technique_produces_single_turn_attacks(
         self, mock_objective_target, mock_objective_scorer
@@ -326,9 +332,9 @@ class TestRapidResponseAttackGeneration:
         )
         technique_classes = {type(a.attack_technique.attack) for a in attacks}
         # Every core technique tagged ``single_turn`` in the scenario-technique catalog must appear.
-        # context_compliance is now a simulated-conversation PromptSendingAttack, so assert on the
-        # simulated-conversation seed rather than a dedicated class. RolePlay remains its own class.
-        assert RolePlayAttack in technique_classes
+        # context_compliance and role_play_* are now simulated-conversation PromptSendingAttacks,
+        # so assert on the simulated-conversation seed rather than a dedicated class.
+        assert PromptSendingAttack in technique_classes
         assert any(
             a.attack_technique.seed_technique is not None
             and a.attack_technique.seed_technique.has_simulated_conversation
@@ -357,10 +363,9 @@ class TestRapidResponseAttackGeneration:
             techniques=[_technique_class().ALL],
         )
         technique_classes = {type(a.attack_technique.attack) for a in attacks}
-        # Should include all known core techniques. context_compliance is now a
-        # simulated-conversation PromptSendingAttack, asserted via the seed technique.
+        # Should include all known core techniques. context_compliance and role_play_* variants
+        # are simulated-conversation PromptSendingAttacks, asserted via the seed technique.
         assert {
-            RolePlayAttack,
             ManyShotJailbreakAttack,
             TreeOfAttacksWithPruningAttack,
         } <= technique_classes
@@ -374,11 +379,13 @@ class TestRapidResponseAttackGeneration:
         attacks = await self._init_and_get_attacks(
             mock_objective_target=mock_objective_target,
             mock_objective_scorer=mock_objective_scorer,
-            techniques=[_technique_class()("role_play")],
+            techniques=[_technique_class()("role_play_movie_script")],
         )
         assert len(attacks) > 0
         for a in attacks:
-            assert isinstance(a.attack_technique.attack, RolePlayAttack)
+            assert isinstance(a.attack_technique.attack, PromptSendingAttack)
+            assert a.attack_technique.seed_technique is not None
+            assert a.attack_technique.seed_technique.has_simulated_conversation
 
     async def test_technique_converters_are_threaded_to_factory_create(
         self, mock_objective_target, mock_objective_scorer
@@ -387,7 +394,7 @@ class TestRapidResponseAttackGeneration:
         from pyrit.converter import Base64Converter
 
         strat = _technique_class()
-        role_play = strat("role_play")
+        role_play = strat("role_play_movie_script")
         converter = Base64Converter()
         captured: list[object] = []
         original_create = AttackTechniqueFactory.create
@@ -524,7 +531,7 @@ class TestRapidResponseAttackGeneration:
         attacks = await self._init_and_get_attacks(
             mock_objective_target=mock_objective_target,
             mock_objective_scorer=mock_objective_scorer,
-            techniques=[_technique_class()("role_play")],
+            techniques=[_technique_class()("role_play_movie_script")],
         )
         for a in attacks:
             assert len(a.objectives) > 0
@@ -542,8 +549,8 @@ class TestCoreTechniques:
     def test_instance_returns_all_factories(self, mock_objective_scorer):
         registry = AttackTechniqueRegistry.get_registry_singleton()
         factories = registry.get_factories()
-        assert {"role_play", "many_shot", "tap"} <= set(factories.keys())
-        assert factories["role_play"].attack_class is RolePlayAttack
+        assert {"role_play_movie_script", "many_shot", "tap"} <= set(factories.keys())
+        assert factories["role_play_movie_script"].attack_class is PromptSendingAttack
         assert factories["many_shot"].attack_class is ManyShotJailbreakAttack
         assert factories["tap"].attack_class is TreeOfAttacksWithPruningAttack
 
@@ -555,9 +562,9 @@ class TestCoreTechniques:
         """
         registry = AttackTechniqueRegistry.get_registry_singleton()
         factories = registry.get_factories()
-        assert factories["role_play"].uses_adversarial is True
+        assert factories["role_play_movie_script"].uses_adversarial is True
         assert factories["tap"].uses_adversarial is True
-        assert factories["role_play"]._adversarial_chat is None
+        assert factories["role_play_movie_script"]._adversarial_chat is None
         assert factories["tap"]._adversarial_chat is None
 
     def test_factories_always_use_default_adversarial(self, mock_objective_scorer):
@@ -565,7 +572,7 @@ class TestCoreTechniques:
         registry = AttackTechniqueRegistry.get_registry_singleton()
         factories = registry.get_factories()
 
-        assert factories["role_play"]._adversarial_chat is None
+        assert factories["role_play_movie_script"]._adversarial_chat is None
         assert factories["tap"]._adversarial_chat is None
 
 
@@ -583,7 +590,7 @@ class TestRegistryIntegration:
         """The autouse fixture registers all canonical scenario techniques."""
         registry = AttackTechniqueRegistry.get_registry_singleton()
         names = set(registry.instances.get_names())
-        assert {"role_play", "many_shot", "tap"} <= names
+        assert {"role_play_movie_script", "many_shot", "tap"} <= names
 
     def test_register_from_factories_idempotent(self):
         """Calling register_from_factories twice does not duplicate entries."""
@@ -595,24 +602,24 @@ class TestRegistryIntegration:
     def test_register_preserves_custom_preregistered(self):
         """Pre-registered custom techniques are not overwritten by re-registration."""
         registry = AttackTechniqueRegistry.get_registry_singleton()
-        custom_factory = AttackTechniqueFactory(name="role_play", attack_class=PromptSendingAttack)
-        registry.register_technique(name="role_play", factory=custom_factory, tags=["custom"])
+        custom_factory = AttackTechniqueFactory(name="role_play_movie_script", attack_class=PromptSendingAttack)
+        registry.register_technique(name="role_play_movie_script", factory=custom_factory, tags=["custom"])
 
         registry.register_from_factories(build_technique_factories())
-        assert registry.get_factories()["role_play"] is custom_factory
+        assert registry.get_factories()["role_play_movie_script"] is custom_factory
 
     def test_get_factories_returns_dict(self):
         registry = AttackTechniqueRegistry.get_registry_singleton()
         factories = registry.get_factories()
         assert isinstance(factories, dict)
-        assert {"role_play", "many_shot", "tap"} <= set(factories.keys())
-        assert factories["role_play"].attack_class is RolePlayAttack
+        assert {"role_play_movie_script", "many_shot", "tap"} <= set(factories.keys())
+        assert factories["role_play_movie_script"].attack_class is PromptSendingAttack
 
     def test_tags_assigned_correctly(self):
         registry = AttackTechniqueRegistry.get_registry_singleton()
         single_turn = {e.name for e in registry.instances.get_by_tag(tag="single_turn")}
         multi_turn = {e.name for e in registry.instances.get_by_tag(tag="multi_turn")}
-        assert {"role_play"} <= single_turn
+        assert {"role_play_movie_script"} <= single_turn
         assert {"many_shot", "tap"} <= multi_turn
 
 
@@ -637,9 +644,9 @@ class TestBuildScenarioTechniqueFactories:
         The config itself is resolved lazily at create()-time.
         """
         by_name = {f.name: f for f in build_technique_factories()}
-        assert by_name["role_play"].uses_adversarial is True
+        assert by_name["role_play_movie_script"].uses_adversarial is True
         assert by_name["tap"].uses_adversarial is True
-        assert by_name["role_play"]._adversarial_chat is None
+        assert by_name["role_play_movie_script"]._adversarial_chat is None
         assert by_name["tap"]._adversarial_chat is None
 
     def test_non_adversarial_factories_have_no_adversarial_config(self):
@@ -654,9 +661,11 @@ class TestBuildScenarioTechniqueFactories:
         by_name = {f.name: f for f in build_technique_factories()}
         assert by_name["crescendo_simulated"].uses_adversarial is True
 
-    def test_extra_kwargs_preserved_on_role_play(self):
+    def test_role_play_movie_script_has_simulated_conversation(self):
         by_name = {f.name: f for f in build_technique_factories()}
-        assert "role_play_definition_path" in (by_name["role_play"]._attack_kwargs or {})
+        seed_technique = by_name["role_play_movie_script"].seed_technique
+        assert seed_technique is not None
+        assert seed_technique.has_simulated_conversation
 
 
 # ===========================================================================
@@ -680,6 +689,6 @@ class TestAttackTechniqueFactoryBasics:
         with pytest.raises(ValueError, match="attack_adversarial_config"):
             AttackTechniqueFactory(
                 name="bad",
-                attack_class=RolePlayAttack,
+                attack_class=PromptSendingAttack,
                 attack_kwargs={"attack_adversarial_config": "oops"},
             )

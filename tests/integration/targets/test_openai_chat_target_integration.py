@@ -16,7 +16,7 @@ import uuid
 import pytest
 
 from pyrit.common.path import HOME_PATH
-from pyrit.models import MessagePiece
+from pyrit.models import MessagePiece, TokenUsage
 from pyrit.prompt_target import OpenAIChatAudioConfig, OpenAIChatTarget, TargetCapabilities, TargetConfiguration
 
 # Path to sample audio file for testing
@@ -41,29 +41,44 @@ def platform_openai_audio_args():
     return {
         "endpoint": endpoint,
         "api_key": api_key,
-        "model_name": "gpt-audio",
+        "model_name": os.environ.get("PLATFORM_OPENAI_AUDIO_MODEL", "gpt-audio"),
     }
 
 
-@pytest.fixture()
-def platform_openai_chat_args():
+def _azure_gpt5_credential():
     """
-    Fixture for OpenAI platform chat model (non-audio).
+    Return the auth credential for the Azure GPT-5.4 deployment.
+
+    Uses the API key when ``AZURE_OPENAI_GPT5_4_KEY`` is set; otherwise falls back to an Entra ID
+    (Azure AD) bearer-token provider, which both targets accept and auto-wrap.
+    """
+    key = os.environ.get("AZURE_OPENAI_GPT5_4_KEY")
+    if key:
+        return key
+
+    from azure.identity import DefaultAzureCredential, get_bearer_token_provider
+
+    return get_bearer_token_provider(DefaultAzureCredential(), "https://cognitiveservices.azure.com/.default")
+
+
+@pytest.fixture()
+def azure_gpt5_chat_args():
+    """
+    Fixture for the Azure OpenAI GPT-5.4 chat deployment (non-audio).
 
     Requires:
-        - PLATFORM_OPENAI_CHAT_ENDPOINT: The OpenAI API endpoint
-        - PLATFORM_OPENAI_CHAT_KEY: The OpenAI API key
+        - AZURE_OPENAI_GPT5_4_ENDPOINT: The Azure OpenAI endpoint (OpenAI-compatible /openai/v1)
+        - AZURE_OPENAI_GPT5_4_KEY (optional): The API key; if unset, Entra ID auth is used
     """
-    endpoint = os.environ.get("PLATFORM_OPENAI_CHAT_ENDPOINT")
-    api_key = os.environ.get("PLATFORM_OPENAI_CHAT_KEY")
+    endpoint = os.environ.get("AZURE_OPENAI_GPT5_4_ENDPOINT")
 
-    if not endpoint or not api_key:
-        pytest.skip("PLATFORM_OPENAI_CHAT_ENDPOINT and PLATFORM_OPENAI_CHAT_KEY must be set")
+    if not endpoint:
+        pytest.skip("AZURE_OPENAI_GPT5_4_ENDPOINT must be set")
 
     return {
         "endpoint": endpoint,
-        "api_key": api_key,
-        "model_name": "gpt-4o",
+        "api_key": _azure_gpt5_credential(),
+        "model_name": os.environ.get("AZURE_OPENAI_GPT5_4_MODEL", "gpt-5.4"),
     }
 
 
@@ -135,7 +150,7 @@ async def test_openai_chat_target_audio_multi_turn(sqlite_instance, platform_ope
 # ============================================================================
 
 
-async def test_openai_chat_target_tool_calling_multiple_tools(sqlite_instance, platform_openai_chat_args):
+async def test_openai_chat_target_tool_calling_multiple_tools(sqlite_instance, azure_gpt5_chat_args):
     """
     Test that OpenAIChatTarget can handle multiple tool definitions.
 
@@ -176,7 +191,7 @@ async def test_openai_chat_target_tool_calling_multiple_tools(sqlite_instance, p
     ]
 
     target = OpenAIChatTarget(
-        **platform_openai_chat_args,
+        **azure_gpt5_chat_args,
         extra_body_parameters={"tools": tools, "tool_choice": "auto"},
     )
 
@@ -211,16 +226,16 @@ async def test_openai_chat_target_tool_calling_multiple_tools(sqlite_instance, p
 # ============================================================================
 
 
-async def test_openai_chat_target_token_usage_in_metadata(sqlite_instance, platform_openai_chat_args):
+async def test_openai_chat_target_token_usage_in_metadata(sqlite_instance, azure_gpt5_chat_args):
     """
     Test that token usage metadata is captured from a real API response.
 
     This test verifies that:
-    1. Token usage keys are present in prompt_metadata of the response
-    2. Token counts are non-negative integers
-    3. Model name is a non-empty string
+    1. Token usage is recoverable via ``TokenUsage.from_metadata``
+    2. Token counts are positive integers
+    3. The total equals input + output
     """
-    target = OpenAIChatTarget(**platform_openai_chat_args)
+    target = OpenAIChatTarget(**azure_gpt5_chat_args)
 
     conv_id = str(uuid.uuid4())
 
@@ -236,20 +251,10 @@ async def test_openai_chat_target_token_usage_in_metadata(sqlite_instance, platf
     assert len(result) >= 1
 
     first_piece = result[0].message_pieces[0]
-    metadata = first_piece.prompt_metadata
+    usage = TokenUsage.from_metadata(first_piece.prompt_metadata)
 
-    # Verify token usage keys are present
-    assert "token_usage_model_name" in metadata, "Response should contain token_usage_model_name in metadata"
-    assert "token_usage_prompt_tokens" in metadata, "Response should contain token_usage_prompt_tokens in metadata"
-    assert "token_usage_completion_tokens" in metadata
-    assert "token_usage_total_tokens" in metadata
-
-    # Verify values are reasonable
-    assert isinstance(metadata["token_usage_model_name"], str)
-    assert len(metadata["token_usage_model_name"]) > 0
-    assert metadata["token_usage_prompt_tokens"] > 0
-    assert metadata["token_usage_completion_tokens"] > 0
-    assert metadata["token_usage_total_tokens"] > 0
-    assert metadata["token_usage_total_tokens"] == (
-        metadata["token_usage_prompt_tokens"] + metadata["token_usage_completion_tokens"]
-    )
+    assert usage is not None, "Response should contain token-usage metadata"
+    assert usage.input_tokens is not None and usage.input_tokens > 0
+    assert usage.output_tokens is not None and usage.output_tokens > 0
+    assert usage.total_tokens is not None and usage.total_tokens > 0
+    assert usage.total_tokens == usage.input_tokens + usage.output_tokens

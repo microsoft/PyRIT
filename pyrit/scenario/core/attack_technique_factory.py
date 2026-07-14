@@ -29,9 +29,9 @@ from pyrit.common.path import EXECUTOR_SEED_PROMPT_PATH
 from pyrit.executor.attack import PromptSendingAttack
 from pyrit.executor.attack.core.attack_config import AttackAdversarialConfig, AttackConverterConfig, AttackScoringConfig
 from pyrit.models import (
+    AttackTechniqueSeedGroup,
     ComponentIdentifier,
     Identifiable,
-    SeedAttackTechniqueGroup,
     SeedIdentifier,
     SeedPrompt,
     SeedSimulatedConversation,
@@ -79,7 +79,7 @@ class AttackTechniqueFactory(Identifiable):
         adversarial_chat: PromptTarget | None = None,
         adversarial_system_prompt: str | SeedPrompt | None = None,
         adversarial_seed_prompt: SeedPrompt | str | None = None,
-        seed_technique: SeedAttackTechniqueGroup | None = None,
+        seed_technique: AttackTechniqueSeedGroup | None = None,
         uses_adversarial: bool | None = None,
         scorer_override_policy: ScorerOverridePolicy = ScorerOverridePolicy.WARN,
     ) -> None:
@@ -165,7 +165,7 @@ class AttackTechniqueFactory(Identifiable):
         """
         Alternative constructor that builds a ``SeedSimulatedConversation`` inline.
 
-        Wraps a single ``SeedSimulatedConversation`` in a ``SeedAttackTechniqueGroup``
+        Wraps a single ``SeedSimulatedConversation`` in a ``AttackTechniqueSeedGroup``
         and assigns it as ``seed_technique`` so callers don't have to construct
         both manually. All other parameters are forwarded to ``__init__``.
 
@@ -259,7 +259,7 @@ class AttackTechniqueFactory(Identifiable):
                 )
             )
 
-        seed_technique = SeedAttackTechniqueGroup(seeds=seeds)
+        seed_technique = AttackTechniqueSeedGroup(seeds=seeds)
         return cls(
             name=name,
             attack_class=attack_class,
@@ -386,7 +386,7 @@ class AttackTechniqueFactory(Identifiable):
         return self._attack_class
 
     @property
-    def seed_technique(self) -> SeedAttackTechniqueGroup | None:
+    def seed_technique(self) -> AttackTechniqueSeedGroup | None:
         """The optional technique seed group."""
         return self._seed_technique
 
@@ -562,7 +562,7 @@ class AttackTechniqueFactory(Identifiable):
         if system_prompt is not None:
             config_kwargs["system_prompt"] = system_prompt
         if seed_prompt is not None:
-            config_kwargs["seed_prompt"] = seed_prompt
+            config_kwargs["first_message"] = seed_prompt
         return AttackAdversarialConfig(**config_kwargs)
 
     def _get_accepted_params(self) -> set[str]:

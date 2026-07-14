@@ -5,8 +5,9 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.19.0
+#       jupytext_version: 1.19.4
 # ---
+
 # %% [markdown]
 # # 10. HTTP Target
 # This notebook shows how to interact with the HTTP Target:
@@ -34,7 +35,7 @@ from pyrit.prompt_target import (
     get_http_target_json_response_callback_function,
     get_http_target_regex_matching_callback_function,
 )
-from pyrit.score import SelfAskTrueFalseScorer
+from pyrit.score import SelfAskTrueFalseScorer, TrueFalseQuestion
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 
 await initialize_pyrit_async(memory_db_type=IN_MEMORY)  # type: ignore
@@ -102,9 +103,9 @@ adversarial_config = AttackAdversarialConfig(
     target=red_teaming_chat,
 )
 
-scorer = SelfAskTrueFalseScorer(
+scorer = SelfAskTrueFalseScorer.from_question(
     chat_target=OpenAIChatTarget(),
-    true_false_question_path=Path("../../../assets/demo_scorer_definitions/check_fraud_classifier.yaml"),
+    question=TrueFalseQuestion.from_yaml(Path("../../../assets/demo_scorer_definitions/check_fraud_classifier.yaml")),
 )
 scoring_config = AttackScoringConfig(
     objective_scorer=scorer,

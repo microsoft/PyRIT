@@ -20,23 +20,17 @@ from pyrit.models import (
     ChatMessageRole,
     ComponentIdentifier,
     Identifiable,
-    JsonSchemaDefinition,
     Message,
     MessagePiece,
-    PromptDataType,
     Score,
     ScorerEvaluationIdentifier,
     ScorerIdentifier,
     ScoreType,
-    UnvalidatedScore,
 )
 from pyrit.prompt_target.batch_helper import batch_task_async
 from pyrit.prompt_target.common.target_requirements import TargetRequirements
-from pyrit.score.llm_scoring import _run_llm_scoring_async
-from pyrit.score.response_handler import JsonSchemaResponseHandler
 
 if TYPE_CHECKING:
-    import uuid
     from collections.abc import Sequence
 
     from pyrit.prompt_target import PromptTarget
@@ -697,100 +691,6 @@ class Scorer(Identifiable, abc.ABC):
             return 0.0
 
         return (value - min_value) / (max_value - min_value)
-
-    async def _score_value_with_llm_async(
-        self,
-        *,
-        prompt_target: PromptTarget,
-        system_prompt: str,
-        message_value: str,
-        message_data_type: PromptDataType,
-        scored_prompt_id: str | uuid.UUID,
-        prepended_text_message_piece: str | None = None,
-        category: Sequence[str] | str | None = None,
-        objective: str | None = None,
-        score_value_output_key: str = "score_value",
-        rationale_output_key: str = "rationale",
-        description_output_key: str = "description",
-        metadata_output_key: str = "metadata",
-        category_output_key: str = "category",
-        response_json_schema: JsonSchemaDefinition | None = None,
-        numeric_value: bool = False,
-    ) -> UnvalidatedScore:
-        """
-        Send a request to a target, and take care of retries.
-
-        This is a thin internal forwarder to ``_run_llm_scoring_async``. It remains only so that
-        scorers that have not yet been migrated to compose the helper directly keep working.
-
-        The scorer target response should be JSON with value, rationale, and optional metadata and
-        description fields.
-
-        Args:
-            prompt_target (PromptTarget): The target LLM to send the message to.
-            system_prompt (str): The system-level prompt that guides the behavior of the target LLM.
-            message_value (str): The actual value or content to be scored by the LLM (e.g., text, image path,
-                audio path).
-            message_data_type (PromptDataType): The type of the data being sent in the message (e.g., "text",
-                "image_path", "audio_path").
-            scored_prompt_id (str | uuid.UUID): The ID of the scored prompt.
-            prepended_text_message_piece (str | None): Text context to prepend before the main
-                message_value. When provided, creates a multi-piece message with this text first, followed
-                by the message_value. Useful for adding objective/context when scoring non-text content.
-                Defaults to None.
-            category (Sequence[str] | str | None): The category of the score. Can also be parsed from
-                the JSON response if not provided. Defaults to None.
-            objective (str | None): A description of the objective that is associated with the score,
-                used for contextualizing the result. Defaults to None.
-            score_value_output_key (str): The key in the JSON response that contains the score value.
-                Defaults to "score_value".
-            rationale_output_key (str): The key in the JSON response that contains the rationale.
-                Defaults to "rationale".
-            description_output_key (str): The key in the JSON response that contains the description.
-                Defaults to "description".
-            metadata_output_key (str): The key in the JSON response that contains the metadata.
-                Defaults to "metadata".
-            category_output_key (str): The key in the JSON response that contains the category.
-                Defaults to "category".
-            response_json_schema (JsonSchemaDefinition | None): An optional JSON schema constraining
-                the scoring response. When provided, it is written to the request metadata; targets
-                that natively support JSON schemas enforce it, while others have it omitted by the
-                normalization pipeline. Defaults to None.
-            numeric_value (bool): When True, the response handler requires the parsed score value to
-                be parsable as a float and raises ``InvalidJsonException`` otherwise. Float-scale
-                scorers pass True. Defaults to False.
-
-        Returns:
-            UnvalidatedScore: The score object containing the response from the target LLM.
-                score_value still needs to be normalized and validated.
-
-        Raises:
-            ValueError: If required keys are missing from the response or if the response format is invalid.
-            InvalidJsonException: If the response is not valid JSON.
-            Exception: For other unexpected errors during scoring.
-        """
-        response_handler = JsonSchemaResponseHandler(
-            score_value_output_key=score_value_output_key,
-            rationale_output_key=rationale_output_key,
-            description_output_key=description_output_key,
-            metadata_output_key=metadata_output_key,
-            category_output_key=category_output_key,
-            response_schema=response_json_schema,
-            numeric_value=numeric_value,
-        )
-
-        return await _run_llm_scoring_async(
-            chat_target=prompt_target,
-            system_prompt=system_prompt,
-            response_handler=response_handler,
-            value=message_value,
-            data_type=message_data_type,
-            scored_prompt_id=scored_prompt_id,
-            scorer_identifier=self.get_identifier(),
-            prepended_text=prepended_text_message_piece,
-            category=category,
-            objective=objective,
-        )
 
     def _extract_objective_from_response(self, response: Message) -> str:
         """

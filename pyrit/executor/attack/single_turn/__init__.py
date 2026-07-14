@@ -3,10 +3,8 @@
 
 """Singe turn attack strategies module."""
 
-from pyrit.executor.attack.single_turn.flip_attack import FlipAttack
 from pyrit.executor.attack.single_turn.many_shot_jailbreak import ManyShotJailbreakAttack
 from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
-from pyrit.executor.attack.single_turn.role_play import RolePlayAttack, RolePlayPaths
 from pyrit.executor.attack.single_turn.single_turn_attack_strategy import (
     SingleTurnAttackContext,
     SingleTurnAttackStrategy,
@@ -17,9 +15,6 @@ __all__ = [
     "SingleTurnAttackStrategy",
     "SingleTurnAttackContext",
     "PromptSendingAttack",
-    "FlipAttack",
     "ManyShotJailbreakAttack",
-    "RolePlayAttack",
-    "RolePlayPaths",
     "SkeletonKeyAttack",
 ]

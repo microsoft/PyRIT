@@ -46,11 +46,8 @@ from pyrit.executor.attack.multi_turn import (
     generate_simulated_conversation_async,
 )
 from pyrit.executor.attack.single_turn import (
-    FlipAttack,
     ManyShotJailbreakAttack,
     PromptSendingAttack,
-    RolePlayAttack,
-    RolePlayPaths,
     SingleTurnAttackContext,
     SingleTurnAttackStrategy,
     SkeletonKeyAttack,
@@ -76,7 +73,6 @@ __all__ = [
     "CrescendoAttack",
     "CrescendoAttackContext",
     "CrescendoAttackResult",
-    "FlipAttack",
     "ManyShotJailbreakAttack",
     "MultiPromptSendingAttack",
     "MultiPromptSendingAttackParameters",
@@ -87,8 +83,6 @@ __all__ = [
     "PromptSendingAttack",
     "RTASystemPromptPaths",
     "RedTeamingAttack",
-    "RolePlayAttack",
-    "RolePlayPaths",
     "SequenceCompletionPolicy",
     "SequentialAttack",
     "SequentialAttackResult",

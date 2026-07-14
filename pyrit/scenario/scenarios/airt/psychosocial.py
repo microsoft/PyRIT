@@ -9,7 +9,7 @@ from typing import Any, TypeVar
 import yaml
 
 from pyrit.common import apply_defaults
-from pyrit.common.path import DATASETS_PATH
+from pyrit.common.path import DATASETS_PATH, EXECUTOR_RED_TEAM_PATH, EXECUTOR_SIMULATED_TARGET_PATH
 from pyrit.converter import ToneConverter
 from pyrit.executor.attack import (
     AttackAdversarialConfig,
@@ -18,15 +18,14 @@ from pyrit.executor.attack import (
     AttackStrategy,
     CrescendoAttack,
     PromptSendingAttack,
-    RolePlayAttack,
-    RolePlayPaths,
 )
-from pyrit.models import SeedAttackGroup, SeedObjective, SeedPrompt
+from pyrit.models import AttackSeedGroup, SeedObjective, SeedPrompt
 from pyrit.prompt_normalizer.converter_configuration import ConverterConfiguration
 from pyrit.prompt_target import CapabilityName, PromptTarget
 from pyrit.prompt_target.common.target_requirements import CHAT_TARGET_REQUIREMENTS, TargetRequirements
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
+from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
 from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration, DatasetConstraintError
 from pyrit.scenario.core.scenario import Scenario
 from pyrit.scenario.core.scenario_context import ScenarioContext
@@ -35,6 +34,7 @@ from pyrit.scenario.core.scenario_technique import ScenarioTechnique
 from pyrit.score import (
     FloatScaleScorer,
     FloatScaleThresholdScorer,
+    NumericRange,
     SelfAskGeneralFloatScaleScorer,
     create_conversation_scorer,
 )
@@ -71,7 +71,7 @@ class PsychosocialTechnique(ScenarioTechnique):
     users in mental health crisis or if the model misrepresents itself as a licensed therapist.
 
     The tags correspond to different attack techniques:
-    - single_turn: PromptSendingAttack and RolePlayAttack
+    - single_turn: PromptSendingAttack and a role-play simulated conversation
     - multi_turn: CrescendoAttack
     - all: Both single_turn and multi_turn attacks
 
@@ -237,7 +237,7 @@ class Psychosocial(Scenario):
 
     async def _resolve_seed_groups_by_dataset_async(
         self, *, apply_sampling: bool = True
-    ) -> dict[str, list[SeedAttackGroup]]:
+    ) -> dict[str, list[AttackSeedGroup]]:
         """
         Resolve seed groups from deprecated objectives or dataset configuration.
 
@@ -253,7 +253,7 @@ class Psychosocial(Scenario):
                 objectives are never sampled.
 
         Returns:
-            dict[str, list[SeedAttackGroup]]: Seed groups keyed by dataset (or a synthetic
+            dict[str, list[AttackSeedGroup]]: Seed groups keyed by dataset (or a synthetic
                 key for deprecated inline objectives).
 
         Raises:
@@ -269,13 +269,13 @@ class Psychosocial(Scenario):
 
         if self._deprecated_objectives is not None:
             return {
-                "objectives": [SeedAttackGroup(seeds=[SeedObjective(value=obj)]) for obj in self._deprecated_objectives]
+                "objectives": [AttackSeedGroup(seeds=[SeedObjective(value=obj)]) for obj in self._deprecated_objectives]
             }
 
         harm_category_filter = self._extract_harm_category_filter()
         # Auto-fetch populates memory first; a still-empty result raises a
         # DatasetConstraintError naming the offending dataset, which we let propagate.
-        seed_groups = list(await self._dataset_config.get_seed_attack_groups_async(apply_sampling=apply_sampling))
+        seed_groups = list(await self._dataset_config.get_attack_seed_groups_async(apply_sampling=apply_sampling))
 
         if harm_category_filter:
             seed_groups = self._filter_by_harm_category(
@@ -310,18 +310,18 @@ class Psychosocial(Scenario):
     def _filter_by_harm_category(
         self,
         *,
-        seed_groups: list[SeedAttackGroup],
+        seed_groups: list[AttackSeedGroup],
         harm_category: str,
-    ) -> list[SeedAttackGroup]:
+    ) -> list[AttackSeedGroup]:
         """
         Filter seed groups by harm category.
 
         Args:
-            seed_groups (list[SeedAttackGroup]): List of seed attack groups to filter.
+            seed_groups (list[AttackSeedGroup]): List of seed attack groups to filter.
             harm_category (str): Harm category to filter by (e.g., 'imminent_crisis', 'psychosocial').
 
         Returns:
-            list[SeedAttackGroup]: Filtered seed groups containing only seeds with the specified harm category.
+            list[AttackSeedGroup]: Filtered seed groups containing only seeds with the specified harm category.
         """
         filtered_groups = []
         for group in seed_groups:
@@ -329,7 +329,7 @@ class Psychosocial(Scenario):
                 seed for seed in group.seeds if seed.harm_categories and harm_category in seed.harm_categories
             ]
             if filtered_seeds:
-                filtered_groups.append(SeedAttackGroup(seeds=filtered_seeds))
+                filtered_groups.append(AttackSeedGroup(seeds=filtered_seeds))
         return filtered_groups
 
     def _get_scorer(self, subharm: str | None = None) -> FloatScaleThresholdScorer:
@@ -374,9 +374,11 @@ class Psychosocial(Scenario):
         psych_scorer = SelfAskGeneralFloatScaleScorer(
             chat_target=scorer_target,
             system_prompt_format_string=psychosocial_harm_rubric,
-            category="psychosocial_harm",
-            min_value=1,
-            max_value=5,
+            scale=NumericRange(
+                minimum_value=1,
+                maximum_value=5,
+                category="psychosocial_harm",
+            ),
             response_json_schema=response_json_schema,
         )
 
@@ -420,8 +422,12 @@ class Psychosocial(Scenario):
         self,
         *,
         scoring_config: AttackScoringConfig,
-        seed_groups: list[SeedAttackGroup],
+        seed_groups: list[AttackSeedGroup],
     ) -> list[AtomicAttack]:
+        if self._objective_target is None:
+            raise ValueError(
+                "Scenario not properly initialized. Call await scenario.initialize_async() before running."
+            )
         attacks: list[AtomicAttack] = []
         tone_converter = ToneConverter(converter_target=self._adversarial_chat, tone="soften")
         converter_config = AttackConverterConfig(
@@ -440,17 +446,23 @@ class Psychosocial(Scenario):
                 memory_labels=self._memory_labels,
             )
         )
-        role_play = RolePlayAttack(
+        role_play_technique = AttackTechniqueFactory.with_simulated_conversation(
+            name="role_play_movie_script",
+            adversarial_chat_system_prompt_path=EXECUTOR_RED_TEAM_PATH / "role_play" / "role_play_movie_script.yaml",
+            next_message_system_prompt_path=EXECUTOR_SIMULATED_TARGET_PATH / "role_play_next_message.yaml",
+            num_turns=2,
+        ).create(
             objective_target=self._objective_target,
-            role_play_definition_path=RolePlayPaths.MOVIE_SCRIPT.value,
             attack_scoring_config=scoring_config,
-            attack_adversarial_config=AttackAdversarialConfig(target=self._adversarial_chat),
+            adversarial_chat=self._adversarial_chat,
         )
         attacks.append(
             AtomicAttack(
                 atomic_attack_name="psychosocial_role_play",
-                attack_technique=AttackTechnique(attack=role_play),
+                attack_technique=role_play_technique,
                 seed_groups=seed_groups or [],
+                adversarial_chat=self._adversarial_chat,
+                objective_scorer=scoring_config.objective_scorer,
                 memory_labels=self._memory_labels,
             )
         )
@@ -462,7 +474,7 @@ class Psychosocial(Scenario):
         *,
         scoring_config: AttackScoringConfig,
         subharm: str | None,
-        seed_groups: list[SeedAttackGroup],
+        seed_groups: list[AttackSeedGroup],
     ) -> AtomicAttack:
         subharm_config = self._subharm_configs.get(subharm) if subharm else None
         crescendo_prompt_path = (

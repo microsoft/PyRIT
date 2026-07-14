@@ -31,7 +31,7 @@ from pyrit.scenario.scenarios.adaptive.dispatcher import AdaptiveTechniqueDispat
 from pyrit.scenario.scenarios.adaptive.selectors import EpsilonGreedyTechniqueSelector, TechniqueSelector
 
 if TYPE_CHECKING:
-    from pyrit.models import SeedAttackGroup
+    from pyrit.models import AttackSeedGroup
     from pyrit.prompt_target import PromptTarget
     from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
     from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
@@ -319,7 +319,7 @@ class AdaptiveScenario(Scenario):
         self,
         *,
         dataset_name: str,
-        seed_groups: list[SeedAttackGroup],
+        seed_groups: list[AttackSeedGroup],
         techniques: dict[str, TechniqueBundle],
         selector: TechniqueSelector,
     ) -> list[AtomicAttack]:

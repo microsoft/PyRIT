@@ -20,7 +20,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from pyrit.models import SeedAttackGroup, SeedObjective
+from pyrit.models import AttackSeedGroup, SeedObjective
 from pyrit.prompt_target import PromptTarget
 from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
 from pyrit.scenario.core.matrix_atomic_attack_builder import (
@@ -48,8 +48,8 @@ def _mock_factory(*, name: str, seed_technique=None, adversarial_chat=None) -> M
     return factory
 
 
-def _seed_group(*, objective: str) -> SeedAttackGroup:
-    return SeedAttackGroup(seeds=[SeedObjective(value=objective)])
+def _seed_group(*, objective: str) -> AttackSeedGroup:
+    return AttackSeedGroup(seeds=[SeedObjective(value=objective)])
 
 
 def _builder() -> MatrixAtomicAttackBuilder:
@@ -206,7 +206,7 @@ class TestMatrixSeedTechniqueFiltering:
     def test_incompatible_pair_is_skipped(self):
         builder = _builder()
         factory = _mock_factory(name="tech", seed_technique=MagicMock())
-        with patch.object(SeedAttackGroup, "filter_compatible", return_value=[]):
+        with patch.object(AttackSeedGroup, "filter_compatible", return_value=[]):
             result = builder.build(
                 technique_factories={"tech": factory},
                 dataset_groups={"ds": [_seed_group(objective="o1")]},
@@ -219,7 +219,7 @@ class TestMatrixSeedTechniqueFiltering:
         factory = _mock_factory(name="tech", seed_technique=MagicMock())
         kept = _seed_group(objective="keep")
         dropped = _seed_group(objective="drop")
-        with patch.object(SeedAttackGroup, "filter_compatible", return_value=[kept]):
+        with patch.object(AttackSeedGroup, "filter_compatible", return_value=[kept]):
             result = builder.build(
                 technique_factories={"tech": factory},
                 dataset_groups={"ds": [kept, dropped]},

@@ -74,11 +74,11 @@ the technique produces, on top of any converters the technique already bakes in.
 `list-converters` to discover the registered converter names:
 
 ```bash
-# Add the registered "translation_spanish" converter to role_play only
-pyrit> run airt.rapid_response --target my_target --initializers target load_default_datasets -t role_play:converter.translation_spanish
+# Add the registered "translation_spanish" converter to role_play_movie_script only
+pyrit> run airt.rapid_response --target my_target --initializers target load_default_datasets -t role_play_movie_script:converter.translation_spanish
 
 # Chain multiple converters (applied in order) and combine with plain techniques
-pyrit> run airt.rapid_response --target my_target --initializers target load_default_datasets -t role_play:converter.translation_spanish:converter.base64 many_shot
+pyrit> run airt.rapid_response --target my_target --initializers target load_default_datasets -t role_play_movie_script:converter.translation_spanish:converter.base64 many_shot
 ```
 
 ### With Runtime Parameters

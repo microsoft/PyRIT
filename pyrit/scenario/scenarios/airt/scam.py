@@ -7,9 +7,9 @@ from typing import TYPE_CHECKING, Any
 
 from pyrit.common import apply_defaults
 from pyrit.common.path import EXECUTOR_RED_TEAM_PATH, EXECUTOR_SIMULATED_TARGET_PATH, SCORER_SEED_PROMPT_PATH
-from pyrit.executor.attack import RedTeamingAttack, RolePlayAttack, RolePlayPaths
+from pyrit.executor.attack import RedTeamingAttack
 from pyrit.executor.attack.core.attack_config import AttackAdversarialConfig, AttackScoringConfig
-from pyrit.models import Parameter, SeedAttackGroup, SeedPrompt
+from pyrit.models import AttackSeedGroup, Parameter, SeedPrompt
 from pyrit.prompt_target import PromptTarget
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
@@ -38,9 +38,10 @@ class ScamTechnique(ScenarioTechnique):
         adversarial chat asks a benign question about the topic and a simulated target answers it and
         offers to go further (rephrasing the objective as a "would you like me to..." question). This
         conversation is prepended and sent with an affirmative "yes." to get a response from the target.
-    - RolePlay: This single-turn attack uses the `persuasion_script_written.yaml` role-play scenario to convince the
-        target to help draft a response to the scam objective. It is framed in the context of creating written samples
-        to be used during training seminars.
+    - RolePlay: This technique stages a short simulated role-play conversation (an adversarial chat
+        improvises the `role_play_persuasion_written.yaml` written-persuasion persona) and then delivers
+        the objective to the target. It is framed in the context of creating written samples to be used
+        during training seminars.
     - PersuasiveRedTeamingAttack: This multi-turn attack uses a persuasive persona with the `RedTeamingAttack` to
         iteratively convince the target to comply with the scam objective over multiple turns.
 
@@ -60,7 +61,7 @@ class ScamTechnique(ScenarioTechnique):
     MULTI_TURN = ("multi_turn", {"multi_turn"})
 
     ContextCompliance = ("context_compliance", {"single_turn", "default"})
-    RolePlay = ("role_play", {"single_turn", "default"})
+    RolePlay = ("role_play_persuasion_written", {"single_turn", "default"})
     PersuasiveRedTeamingAttack = ("persuasive_rta", {"multi_turn"})
 
     @classmethod
@@ -137,7 +138,7 @@ class Scam(Scenario):
             objective_scorer = self._get_default_objective_scorer()
         self._scorer_config = AttackScoringConfig(objective_scorer=objective_scorer)
 
-        # Used for multiturn techniques and RolePlayAttack rephrasing
+        # Used for multiturn techniques and role-play simulated conversations
         self._adversarial_chat = adversarial_chat if adversarial_chat else get_default_adversarial_target()
         self._adversarial_config = AttackAdversarialConfig(target=self._adversarial_chat)
 
@@ -150,13 +151,13 @@ class Scam(Scenario):
             scenario_result_id=scenario_result_id,
         )
 
-    def _get_atomic_attack_from_technique(self, *, technique: str, seed_groups: list[SeedAttackGroup]) -> AtomicAttack:
+    def _get_atomic_attack_from_technique(self, *, technique: str, seed_groups: list[AttackSeedGroup]) -> AtomicAttack:
         """
         Translate the techniques into actual AtomicAttacks.
 
         Args:
             technique (str): The technique to create the attack from.
-            seed_groups (list[SeedAttackGroup]): Seed groups the attack draws from.
+            seed_groups (list[AttackSeedGroup]): Seed groups the attack draws from.
 
         Returns:
             AtomicAttack: Configured for the specified technique.
@@ -183,12 +184,29 @@ class Scam(Scenario):
                 attack_adversarial_config=self._adversarial_config,
                 max_turns=self.params["max_turns"],
             )
-        elif technique == "role_play":
-            attack_strategy = RolePlayAttack(
+        elif technique == "role_play_persuasion_written":
+            # Role play is now a simulated-conversation technique: an adversarial
+            # chat improvises a short written-persuasion role play, then the
+            # objective is delivered to the target.
+            role_play_technique = AttackTechniqueFactory.with_simulated_conversation(
+                name="role_play_persuasion_written",
+                adversarial_chat_system_prompt_path=EXECUTOR_RED_TEAM_PATH
+                / "role_play"
+                / "role_play_persuasion_written.yaml",
+                next_message_system_prompt_path=EXECUTOR_SIMULATED_TARGET_PATH / "role_play_next_message.yaml",
+                num_turns=2,
+            ).create(
                 objective_target=self._objective_target,
-                role_play_definition_path=RolePlayPaths.PERSUASION_SCRIPT_WRITTEN.value,
                 attack_scoring_config=self._scorer_config,
-                attack_adversarial_config=self._adversarial_config,
+                adversarial_chat=self._adversarial_chat,
+            )
+            return AtomicAttack(
+                atomic_attack_name=f"scam_{technique}",
+                attack_technique=role_play_technique,
+                seed_groups=seed_groups,
+                adversarial_chat=self._adversarial_chat,
+                objective_scorer=self._scorer_config.objective_scorer,
+                memory_labels=self._memory_labels,
             )
         elif technique == "context_compliance":
             # Context compliance is now a simulated-conversation technique: an adversarial
