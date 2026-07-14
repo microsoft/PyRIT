@@ -51,6 +51,10 @@ async def test_fetch_dataset(mock_harmbench_mm_data):
     assert image_prompt.data_type == "image_path"
     assert text_prompt.data_type == "text"
     assert text_prompt.value == "Describe harmful content in this image"
+    assert image_prompt.harm_categories == ["COORDINATION_HARM", "MALWARE"]
+    assert text_prompt.harm_categories == ["COORDINATION_HARM", "MALWARE"]
+    assert image_prompt.metadata["semantic_category"] == "cybercrime_intrusion"
+    assert text_prompt.metadata["semantic_category"] == "cybercrime_intrusion"
 
 
 async def test_fetch_dataset_skips_failed_images():
@@ -113,7 +117,41 @@ async def test_fetch_dataset_filters_by_category():
 
     # Only "illegal" category matched => 2 prompts (image + text)
     assert len(dataset.seeds) == 2
-    assert all(p.harm_categories == ["illegal"] for p in dataset.seeds)
+    assert all(p.harm_categories == ["COORDINATION_HARM"] for p in dataset.seeds)
+
+
+async def test_fetch_dataset_standardizes_all_semantic_categories():
+    expected_categories = {
+        "chemical_biological": ["CBRN"],
+        "cybercrime_intrusion": ["COORDINATION_HARM", "MALWARE"],
+        "harassment_bullying": ["HARASSMENT", "HATE_SPEECH", "REPRESENTATIONAL"],
+        "illegal": ["COORDINATION_HARM"],
+        "misinformation_disinformation": ["INFO_INTEGRITY"],
+        "copyright": ["COPYRIGHT"],
+        "harmful": ["OTHER"],
+    }
+    data = [
+        {
+            "Behavior": f"Behavior for {category}",
+            "BehaviorID": f"b{index}",
+            "FunctionalCategory": "multimodal",
+            "SemanticCategory": category,
+            "ImageFileName": f"img{index}.jpg",
+        }
+        for index, category in enumerate(expected_categories)
+    ]
+    loader = _HarmBenchMultimodalDataset()
+
+    with (
+        patch.object(loader, "_fetch_from_url", return_value=data),
+        patch.object(loader, "_fetch_and_save_image_async", new=AsyncMock(return_value="/path/to/image.png")),
+    ):
+        dataset = await loader.fetch_dataset_async()
+
+    for category, expected in expected_categories.items():
+        seeds = [seed for seed in dataset.seeds if seed.metadata["semantic_category"] == category]
+        assert len(seeds) == 2
+        assert all(seed.harm_categories == expected for seed in seeds)
 
 
 async def test_fetch_dataset_missing_keys_raises():
