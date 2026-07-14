@@ -424,6 +424,9 @@ class MemoryInterface(abc.ABC):
         Args:
             message_pieces (Sequence[MessagePiece]): Persistable pieces (none flagged
                 ``not_in_memory``), each carrying a non-empty ``conversation_id``.
+
+        Raises:
+            SQLAlchemyError: If the message pieces or converter identifiers cannot be persisted.
         """
         entries = [PromptMemoryEntry(entry=piece) for piece in message_pieces]
         with closing(self.get_session()) as session:
