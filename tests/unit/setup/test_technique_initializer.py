@@ -9,7 +9,13 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from pyrit.common.path import EXECUTOR_RED_TEAM_PATH, EXECUTOR_SEED_PROMPT_PATH
-from pyrit.executor.attack import PAIRAttack, PromptSendingAttack, RedTeamingAttack, SkeletonKeyAttack
+from pyrit.executor.attack import (
+    CrescendoAttack,
+    PAIRAttack,
+    PromptSendingAttack,
+    RedTeamingAttack,
+    SkeletonKeyAttack,
+)
 from pyrit.models import SeedPrompt
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry import TargetRegistry
@@ -39,7 +45,7 @@ CORE_TECHNIQUE_NAMES: list[str] = [
     "flip",
 ]
 
-EXTRA_TECHNIQUE_NAMES: list[str] = ["pair", "skeleton_key", "violent_durian"]
+EXTRA_TECHNIQUE_NAMES: list[str] = ["pair", "skeleton_key", "violent_durian", "split_payload"]
 
 PERSONA_CRESCENDO_TECHNIQUE_NAMES: list[str] = [
     "crescendo_movie_director",
@@ -131,6 +137,10 @@ class TestExtraGroupCatalog:
     def test_skeleton_key_is_non_adversarial(self):
         factory = next(f for f in extra.get_technique_factories() if f.name == "skeleton_key")
         assert factory.uses_adversarial is False
+
+    def test_split_payload_uses_crescendo_attack(self):
+        factory = next(f for f in extra.get_technique_factories() if f.name == "split_payload")
+        assert factory.attack_class is CrescendoAttack
 
 
 # ---------------------------------------------------------------------------
@@ -450,6 +460,7 @@ class TestTechniqueInitializerRegistration:
         assert "skeleton_key" not in names
         assert "pair" not in names
         assert "violent_durian" not in names
+        assert "split_payload" not in names
 
     async def test_registered_core_factory_carries_core_tag(self, mock_adversarial_target):
         init = TechniqueInitializer()
@@ -464,7 +475,7 @@ class TestTechniqueInitializerRegistration:
         await init.initialize_async()
 
         names = set(AttackTechniqueRegistry.get_registry_singleton().instances.get_names())
-        assert {"skeleton_key", "pair", "violent_durian"} <= names
+        assert set(EXTRA_TECHNIQUE_NAMES) <= names
 
     async def test_all_tag_registers_everything(self, mock_adversarial_target):
         init = TechniqueInitializer()
