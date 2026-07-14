@@ -53,7 +53,7 @@ def get_technique_factories() -> list[AttackTechniqueFactory]:
     return [
         AttackTechniqueFactory.with_simulated_conversation(
             name="role_play_movie_script",
-            description="Casts the adversarial chat as a screenwriter so the objective is delivered as a movie beat.",
+            description="Frames the objective as a movie beat by casting the adversarial chat as a screenwriter.",
             adversarial_chat_system_prompt_path=(
                 EXECUTOR_SEED_PROMPT_PATH / "red_teaming" / "role_play" / "role_play_movie_script.yaml"
             ),
@@ -63,7 +63,7 @@ def get_technique_factories() -> list[AttackTechniqueFactory]:
         ),
         AttackTechniqueFactory.with_simulated_conversation(
             name="role_play_video_game",
-            description="Casts the adversarial chat as a game designer so the objective becomes an in-game mechanic.",
+            description="Frames the objective as an in-game mechanic by casting the adversarial chat as a designer.",
             adversarial_chat_system_prompt_path=(
                 EXECUTOR_SEED_PROMPT_PATH / "red_teaming" / "role_play" / "role_play_video_game.yaml"
             ),
@@ -73,7 +73,7 @@ def get_technique_factories() -> list[AttackTechniqueFactory]:
         ),
         AttackTechniqueFactory.with_simulated_conversation(
             name="role_play_trivia_game",
-            description="Casts the adversarial chat as a trivia host so the objective is answered as a quiz question.",
+            description="Frames the objective as a quiz answer by casting the adversarial chat as a trivia host.",
             adversarial_chat_system_prompt_path=(
                 EXECUTOR_SEED_PROMPT_PATH / "red_teaming" / "role_play" / "role_play_trivia_game.yaml"
             ),
@@ -83,7 +83,7 @@ def get_technique_factories() -> list[AttackTechniqueFactory]:
         ),
         AttackTechniqueFactory.with_simulated_conversation(
             name="role_play_persuasion",
-            description="Stages a persuasion-resistance test so the target drafts a persuasive spoken script.",
+            description="Frames a persuasion-resistance test so the target drafts a persuasive spoken script.",
             adversarial_chat_system_prompt_path=(
                 EXECUTOR_SEED_PROMPT_PATH / "red_teaming" / "role_play" / "role_play_persuasion.yaml"
             ),
@@ -93,7 +93,7 @@ def get_technique_factories() -> list[AttackTechniqueFactory]:
         ),
         AttackTechniqueFactory.with_simulated_conversation(
             name="role_play_persuasion_written",
-            description="Stages a persuasion-resistance test so the target drafts written material for the objective.",
+            description="Frames a persuasion-resistance test so the target drafts written persuasive material.",
             adversarial_chat_system_prompt_path=(
                 EXECUTOR_SEED_PROMPT_PATH / "red_teaming" / "role_play" / "role_play_persuasion_written.yaml"
             ),
@@ -120,17 +120,17 @@ def get_technique_factories() -> list[AttackTechniqueFactory]:
         ),
         AttackTechniqueFactory.with_simulated_conversation(
             name="crescendo_movie_director",
-            description="Crescendo escalation cast as a movie-director persona coaxing the target scene by scene.",
+            description="Escalates gradually while posing as a movie director coaxing the target scene by scene.",
             technique_tags=["single_turn"],
         ),
         AttackTechniqueFactory.with_simulated_conversation(
             name="crescendo_history_lecture",
-            description="Crescendo escalation framed as an academic history lecture to normalize the objective.",
+            description="Escalates gradually while framing the ask as an academic history lecture.",
             technique_tags=["single_turn"],
         ),
         AttackTechniqueFactory.with_simulated_conversation(
             name="crescendo_journalist_interview",
-            description="Crescendo escalation staged as a journalist interview drawing the target out.",
+            description="Escalates gradually while posing as a journalist drawing the target out.",
             technique_tags=["single_turn"],
         ),
         AttackTechniqueFactory(
