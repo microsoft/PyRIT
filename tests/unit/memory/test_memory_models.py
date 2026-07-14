@@ -187,7 +187,7 @@ def test_load_identifier_injects_pyrit_version():
     assert loaded.pyrit_version == "9.9.9"
 
 
-def test_scorer_identifier_entry_constructs_full_sub_scorer_graph():
+def test_scorer_identifier_entry_constructs_hash_only_sub_scorer_edges():
     leaf = ScorerIdentifier(
         class_name="LeafScorer",
         class_module="pyrit.score",
@@ -209,11 +209,8 @@ def test_scorer_identifier_entry_constructs_full_sub_scorer_graph():
     entry = ScorerIdentifierEntry.from_domain_model(domain_model=root)
 
     assert [edge.position for edge in entry.sub_scorers] == [0, 1]
-    assert entry.sub_scorers[0].child.hash == nested.hash
-    assert entry.sub_scorers[1].child.hash == leaf.hash
-    nested_entry = entry.sub_scorers[0].child
-    assert len(nested_entry.sub_scorers) == 1
-    assert nested_entry.sub_scorers[0].child is entry.sub_scorers[1].child
+    assert [edge.child_hash for edge in entry.sub_scorers] == [nested.hash, leaf.hash]
+    assert all(edge.child is None for edge in entry.sub_scorers)
 
 
 @pytest.mark.parametrize(
@@ -243,6 +240,7 @@ def test_identifier_entry_maps_promoted_children_by_cardinality(
 
     assert set(entry_type.CHILD_RELATIONSHIP_SPECS) == collection_children
     assert set(entry_type.CHILD_HASH_COLUMNS) == singular_children
+    assert all(spec.edge_child_hash_attr for spec in entry_type.CHILD_RELATIONSHIP_SPECS.values())
 
 
 def test_identifier_child_relationships_delete_orphans() -> None:

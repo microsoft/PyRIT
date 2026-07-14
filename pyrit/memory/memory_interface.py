@@ -527,11 +527,10 @@ class MemoryInterface(abc.ABC):
         """
         Persist ``target_identifier`` and its inner targets as content-addressed rows.
 
-        The complete ORM graph is constructed from the domain model and merged into the
-        caller's session. SQLAlchemy reconciles shared child targets by primary key and
-        cascades the merge through ordered child edges. Identifier rows are immutable
-        and keyed by their content hash, so an identical target reused across many
-        conversations maps to a single row.
+        Dependencies are persisted before the target row, whose ordered child edges
+        reference those rows by content hash. Identifier rows are immutable and keyed
+        by their content hash, so an identical target reused across many conversations
+        maps to a single row.
 
         If the row already exists it was fully persisted before (children and edges
         included, since rows are immutable), so this returns early. Otherwise the row and
@@ -556,7 +555,7 @@ class MemoryInterface(abc.ABC):
 
         try:
             with session.begin_nested():
-                session.merge(entry_type.from_domain_model(identifier))
+                session.add(entry_type.from_domain_model(identifier))
                 session.flush()
         except IntegrityError:
             with session.no_autoflush:

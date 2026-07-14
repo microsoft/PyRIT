@@ -8,7 +8,7 @@ from abc import abstractmethod
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, ClassVar, Generic, Literal, TypeVar, cast, get_args, get_origin
+from typing import Any, ClassVar, Generic, Literal, TypeVar, get_args, get_origin
 
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import (
@@ -435,8 +435,7 @@ class _ChildRelationshipSpec:
 
     relationship_name: str
     edge_factory: Callable[[], Any]
-    edge_child_attr: str | None = None
-    edge_child_hash_attr: str | None = None
+    edge_child_hash_attr: str
     edge_position_attr: str | None = "position"
 
 
@@ -515,21 +514,6 @@ class ComponentIdentifierEntry(DomainBackedEntry[T]):
         Returns:
             Self: A new, unsaved row.
         """
-        return cls._from_domain_model_recursive(domain_model=domain_model, seen={})
-
-    @classmethod
-    def _from_domain_model_recursive(cls, *, domain_model: T, seen: dict[str, Self]) -> Self:
-        existing = seen.get(domain_model.hash)
-        if existing is not None:
-            return existing
-
-        entry = cls._from_domain_model_shallow(domain_model=domain_model)
-        seen[domain_model.hash] = entry
-        cls._attach_child_relationship_rows(entry=entry, domain_model=domain_model, seen=seen)
-        return entry
-
-    @classmethod
-    def _from_domain_model_shallow(cls, *, domain_model: T) -> Self:
         entry = cls(
             hash=domain_model.hash,
             class_name=domain_model.class_name,
@@ -540,6 +524,7 @@ class ComponentIdentifierEntry(DomainBackedEntry[T]):
         for name, value in domain_model.promoted_scalar_values().items():
             setattr(entry, name, value)  # each promoted scalar → its mapped column
         cls._populate_child_hashes(entry=entry, domain_model=domain_model)
+        cls._attach_child_relationship_rows(entry=entry, domain_model=domain_model)
         return entry
 
     @classmethod
@@ -549,7 +534,7 @@ class ComponentIdentifierEntry(DomainBackedEntry[T]):
             setattr(entry, hash_column, child.hash if child is not None else None)
 
     @classmethod
-    def _attach_child_relationship_rows(cls, *, entry: Self, domain_model: T, seen: dict[str, Self]) -> None:
+    def _attach_child_relationship_rows(cls, *, entry: Self, domain_model: T) -> None:
         for field_name in domain_model.promoted_child_field_names():
             spec = cls.CHILD_RELATIONSHIP_SPECS.get(field_name)
             if spec is None:
@@ -564,12 +549,7 @@ class ComponentIdentifierEntry(DomainBackedEntry[T]):
                 if not isinstance(child_identifier, ComponentIdentifier):
                     continue
                 edge_row = spec.edge_factory()
-                if spec.edge_child_hash_attr is not None:
-                    setattr(edge_row, spec.edge_child_hash_attr, child_identifier.hash)
-                elif spec.edge_child_attr is not None:
-                    typed_child_identifier = cast("T", child_identifier)
-                    child_entry = cls._from_domain_model_recursive(domain_model=typed_child_identifier, seen=seen)
-                    setattr(edge_row, spec.edge_child_attr, child_entry)
+                setattr(edge_row, spec.edge_child_hash_attr, child_identifier.hash)
                 if spec.edge_position_attr:
                     setattr(edge_row, spec.edge_position_attr, position)
                 edge_rows.append(edge_row)
@@ -596,7 +576,7 @@ class TargetIdentifierEntry(ComponentIdentifierEntry[TargetIdentifier]):
         "targets": _ChildRelationshipSpec(
             relationship_name="targets",
             edge_factory=lambda: TargetIdentifierChildEntry(),
-            edge_child_attr="child",
+            edge_child_hash_attr="child_hash",
             edge_position_attr="position",
         )
     }
@@ -636,10 +616,10 @@ class TargetIdentifierChildEntry(Base):
     ``TargetIdentifierEntry.identifier_json`` remains the source of truth for
     reconstruction (inner targets are stored inline there too).
 
-    Constructed as part of the complete graph returned by
-    ``TargetIdentifierEntry.from_domain_model`` and persisted by
-    ``MemoryInterface._persist_target_identifier``. It is a plain ``Base`` row rather
-    than a ``DomainBackedEntry`` because an edge has no standalone domain model.
+    Constructed with its child hash by ``TargetIdentifierEntry.from_domain_model``
+    after ``MemoryInterface._persist_target_identifier`` has persisted the child row.
+    It is a plain ``Base`` row rather than a ``DomainBackedEntry`` because an edge has
+    no standalone domain model.
     """
 
     __tablename__ = "TargetIdentifierChildren"
@@ -731,7 +711,7 @@ class ScorerIdentifierEntry(ComponentIdentifierEntry[ScorerIdentifier]):
         "sub_scorers": _ChildRelationshipSpec(
             relationship_name="sub_scorers",
             edge_factory=lambda: ScorerIdentifierChildEntry(),
-            edge_child_attr="child",
+            edge_child_hash_attr="child_hash",
             edge_position_attr="position",
         )
     }
