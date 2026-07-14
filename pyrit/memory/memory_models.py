@@ -591,6 +591,7 @@ class TargetIdentifierEntry(ComponentIdentifierEntry[TargetIdentifier]):
         foreign_keys="TargetIdentifierChildEntry.parent_hash",
         order_by="TargetIdentifierChildEntry.position",
         back_populates="parent",
+        cascade="all, delete-orphan",
     )
 
 
@@ -725,6 +726,7 @@ class ScorerIdentifierEntry(ComponentIdentifierEntry[ScorerIdentifier]):
         foreign_keys="ScorerIdentifierChildEntry.parent_hash",
         order_by="ScorerIdentifierChildEntry.position",
         back_populates="parent",
+        cascade="all, delete-orphan",
     )
 
 

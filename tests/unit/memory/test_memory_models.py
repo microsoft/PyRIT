@@ -245,6 +245,20 @@ def test_identifier_entry_maps_promoted_children_by_cardinality(
     assert set(entry_type.CHILD_HASH_COLUMNS) == singular_children
 
 
+def test_identifier_child_relationships_delete_orphans() -> None:
+    for mapper in Base.registry.mappers:
+        entry_type = mapper.class_
+        if not issubclass(entry_type, ComponentIdentifierEntry):
+            continue
+
+        for field_name, spec in entry_type.CHILD_RELATIONSHIP_SPECS.items():
+            child_relationship = mapper.relationships[spec.relationship_name]
+            assert child_relationship.uselist, f"{entry_type.__name__}.{field_name} must be a collection"
+            assert "delete-orphan" in child_relationship.cascade, (
+                f"{entry_type.__name__}.{spec.relationship_name} must use cascade='all, delete-orphan'"
+            )
+
+
 @pytest.mark.parametrize(
     ("identifier_type", "entry_type"),
     [
