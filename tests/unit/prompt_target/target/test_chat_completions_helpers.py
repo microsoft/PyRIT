@@ -21,10 +21,9 @@ from pyrit.prompt_target.common.chat_completions_message_builder import (
     should_skip_audio_piece,
 )
 from pyrit.prompt_target.common.chat_completions_response_parser import (
-    build_audio_pieces_async,
+    _build_audio_pieces_async,
     build_content_filter_message,
     build_response_pieces_async,
-    build_text_and_tool_pieces,
     capture_token_usage,
     extract_partial_content,
     is_content_filter_response,
@@ -136,26 +135,6 @@ def test_validate_response_accepts_valid():
         validate_chat_completion_response(response=_mock_response(finish_reason=reason))
 
 
-def test_build_text_and_tool_pieces_text():
-    pieces = build_text_and_tool_pieces(response=_mock_response("answer"), request=_request_piece())
-    assert len(pieces) == 1
-    assert pieces[0].converted_value == "answer"
-    assert pieces[0].converted_value_data_type == "text"
-
-
-def test_build_text_and_tool_pieces_tool_call():
-    tool_call = MagicMock()
-    tool_call.id = "call_1"
-    tool_call.function.name = "get_weather"
-    tool_call.function.arguments = '{"loc": "SF"}'
-    resp = _mock_response(content=None, tool_calls=[tool_call])
-    pieces = build_text_and_tool_pieces(response=resp, request=_request_piece())
-    assert len(pieces) == 1
-    assert pieces[0].converted_value_data_type == "function_call"
-    parsed = json.loads(pieces[0].converted_value)
-    assert parsed["function"]["name"] == "get_weather"
-
-
 def test_capture_token_usage_populates_metadata():
     resp = _mock_response("ok")
     resp.usage.prompt_tokens = 3
@@ -163,7 +142,7 @@ def test_capture_token_usage_populates_metadata():
     resp.usage.total_tokens = 7
     resp.usage.prompt_tokens_details.cached_tokens = 1
     resp.usage.completion_tokens_details.reasoning_tokens = 2
-    pieces = build_text_and_tool_pieces(response=resp, request=_request_piece())
+    pieces = [_request_piece("ok")]
     capture_token_usage(pieces=pieces, response=resp)
     metadata = pieces[0].prompt_metadata
     assert metadata["token_usage_input_tokens"] == 3
@@ -177,7 +156,7 @@ def test_capture_token_usage_populates_metadata():
 def test_capture_token_usage_noop_without_usage():
     resp = _mock_response("ok")
     resp.usage = None
-    pieces = build_text_and_tool_pieces(response=resp, request=_request_piece())
+    pieces = [_request_piece("ok")]
     capture_token_usage(pieces=pieces, response=resp)
     assert "token_usage_total_tokens" not in pieces[0].prompt_metadata
 
@@ -434,7 +413,7 @@ async def test_build_audio_pieces_async_transcript_and_file():
         serializer.save_data_async = AsyncMock()
         mock_factory.return_value = serializer
 
-        pieces = await build_audio_pieces_async(message=message, request=_request_piece(), audio_format="wav")
+        pieces = await _build_audio_pieces_async(message=message, request=_request_piece(), audio_format="wav")
 
     assert [p.converted_value_data_type for p in pieces] == ["text", "audio_path"]
     assert pieces[0].converted_value == "the transcript"

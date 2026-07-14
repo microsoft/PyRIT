@@ -35,6 +35,7 @@ from pyrit.prompt_target.common.chat_completions_response_parser import (
     is_content_filter_response,
     validate_chat_completion_response,
 )
+from pyrit.prompt_target.common.json_response_config import _JsonResponseConfig
 from pyrit.prompt_target.common.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_capabilities import (
     TargetCapabilities,
@@ -380,6 +381,7 @@ class LiteLLMChatTarget(PromptTarget):
         # Content filtering is red-team critical: surface it as an error Message (not an
         # exception) so attacks can continue and blocked-content scorers can still score.
         if is_content_filter_response(response):
+            logger.warning("Output content filtered by content policy.")
             return [
                 build_content_filter_message(
                     response=response,
@@ -424,7 +426,7 @@ class LiteLLMChatTarget(PromptTarget):
         self,
         *,
         messages: list[dict[str, Any]],
-        json_config: Any,
+        json_config: _JsonResponseConfig,
         api_key: str | None = None,
     ) -> dict[str, Any]:
         body: dict[str, Any] = {

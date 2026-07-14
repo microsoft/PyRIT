@@ -141,31 +141,6 @@ def _build_tool_pieces(*, message: Any, request: MessagePiece) -> list[MessagePi
     return pieces
 
 
-def build_text_and_tool_pieces(*, response: Any, request: MessagePiece) -> list[MessagePiece]:
-    """
-    Build response pieces for text content and tool/function calls.
-
-    Audio and other modality-specific parsing is intentionally left to the caller so that
-    provider-specific handling (e.g. saving audio files) stays out of this shared helper.
-
-    Args:
-        response (Any): The Chat Completions response object.
-        request (MessagePiece): The originating request piece (for lineage propagation).
-
-    Returns:
-        list[MessagePiece]: Text and function_call pieces (may be empty).
-    """
-    message = response.choices[0].message
-    pieces: list[MessagePiece] = []
-
-    content = getattr(message, "content", None)
-    if content:
-        pieces.append(_build_text_piece(content=content, request=request))
-
-    pieces.extend(_build_tool_pieces(message=message, request=request))
-    return pieces
-
-
 async def save_audio_response_async(*, audio_data_base64: str, audio_format: str = "wav") -> str:
     """
     Decode and persist base64 audio from a Chat Completions response to a file.
@@ -201,7 +176,7 @@ async def save_audio_response_async(*, audio_data_base64: str, audio_format: str
     return audio_serializer.value
 
 
-async def build_audio_pieces_async(
+async def _build_audio_pieces_async(
     *, message: Any, request: MessagePiece, audio_format: str = "wav"
 ) -> list[MessagePiece]:
     """
@@ -268,7 +243,7 @@ async def build_response_pieces_async(
     if content:
         pieces.append(_build_text_piece(content=content, request=request))
 
-    pieces.extend(await build_audio_pieces_async(message=message, request=request, audio_format=audio_format))
+    pieces.extend(await _build_audio_pieces_async(message=message, request=request, audio_format=audio_format))
     pieces.extend(_build_tool_pieces(message=message, request=request))
     return pieces
 
@@ -455,8 +430,6 @@ def build_content_filter_message(
     Returns:
         Message: The constructed error Message with ``error="blocked"``.
     """
-    logger.warning("Output content filtered by content policy.")
-
     response_text = response.model_dump_json() if hasattr(response, "model_dump_json") else str(response)
     error_message = handle_bad_request_exception(
         response_text=response_text,
