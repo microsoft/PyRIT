@@ -394,8 +394,7 @@ class IdentifierGraphInserter:
         child_hashes: Sequence[str],
     ) -> None:
         select_statement = sa.text(
-            f'SELECT "{child_column}" FROM "{table}" '
-            f'WHERE "{parent_column}" = :parent_hash AND position = :position'
+            f'SELECT "{child_column}" FROM "{table}" WHERE "{parent_column}" = :parent_hash AND position = :position'
         )
         statement = sa.text(
             f'INSERT INTO "{table}" ("{parent_column}", position, "{child_column}") '

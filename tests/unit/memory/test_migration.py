@@ -936,9 +936,7 @@ def test_identifier_migration_reuses_edges_and_rolls_back_conflicting_row():
     }
     conflicting_parent = {
         **parent,
-        "children": {
-            "targets": [{"hash": conflicting_child_hash, "class_name": "OtherChild", "class_module": "test"}]
-        },
+        "children": {"targets": [{"hash": conflicting_child_hash, "class_name": "OtherChild", "class_module": "test"}]},
     }
     healthy = {"hash": healthy_hash, "class_name": "Healthy", "class_module": "test"}
 
@@ -965,10 +963,7 @@ def test_identifier_migration_reuses_edges_and_rolls_back_conflicting_row():
                 command.upgrade(config, "e5f7a9c1b3d2")
 
                 links = connection.execute(
-                    text(
-                        'SELECT conversation_id, target_identifier_hash FROM "Conversations" '
-                        "ORDER BY conversation_id"
-                    )
+                    text('SELECT conversation_id, target_identifier_hash FROM "Conversations" ORDER BY conversation_id')
                 ).fetchall()
                 target_hashes = set(connection.execute(text('SELECT hash FROM "TargetIdentifiers"')).scalars())
                 edges = connection.execute(
