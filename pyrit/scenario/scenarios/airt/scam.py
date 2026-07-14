@@ -9,7 +9,7 @@ from pyrit.common import apply_defaults
 from pyrit.common.path import EXECUTOR_RED_TEAM_PATH, EXECUTOR_SIMULATED_TARGET_PATH, SCORER_SEED_PROMPT_PATH
 from pyrit.executor.attack import ContextComplianceAttack, RedTeamingAttack
 from pyrit.executor.attack.core.attack_config import AttackAdversarialConfig, AttackScoringConfig
-from pyrit.models import Parameter, SeedAttackGroup, SeedPrompt
+from pyrit.models import AttackSeedGroup, Parameter, SeedPrompt
 from pyrit.prompt_target import PromptTarget
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
@@ -153,13 +153,13 @@ class Scam(Scenario):
             scenario_result_id=scenario_result_id,
         )
 
-    def _get_atomic_attack_from_technique(self, *, technique: str, seed_groups: list[SeedAttackGroup]) -> AtomicAttack:
+    def _get_atomic_attack_from_technique(self, *, technique: str, seed_groups: list[AttackSeedGroup]) -> AtomicAttack:
         """
         Translate the techniques into actual AtomicAttacks.
 
         Args:
             technique (str): The technique to create the attack from.
-            seed_groups (list[SeedAttackGroup]): Seed groups the attack draws from.
+            seed_groups (list[AttackSeedGroup]): Seed groups the attack draws from.
 
         Returns:
             AtomicAttack: Configured for the specified technique.

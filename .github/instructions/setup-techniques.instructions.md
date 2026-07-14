@@ -34,7 +34,7 @@ stop — put the value back inline.
 
 - If an entry needs a few lines of setup (a `seed_technique`, a converter stack), prefer a
   reusable model/config constructor over a bespoke module-level builder — e.g.
-  `SeedAttackTechniqueGroup.from_system_prompt(...)` for a system-prompt technique. If you find
+  `AttackTechniqueSeedGroup.from_system_prompt(...)` for a system-prompt technique. If you find
   yourself writing a builder, consider whether the reusable piece belongs on the model instead.
 - Reach for a helper function **only** when construction is genuinely dynamic (e.g. a
   `@cache`-decorated builder for a dynamically-enumerated set of techniques). A helper that just

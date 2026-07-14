@@ -11,7 +11,7 @@ import pytest
 from pyrit.common.path import DATASETS_PATH
 from pyrit.executor.attack import ContextComplianceAttack, PromptSendingAttack, RedTeamingAttack
 from pyrit.executor.attack.core.attack_config import AttackScoringConfig
-from pyrit.models import ComponentIdentifier, SeedAttackGroup, SeedDataset, SeedObjective
+from pyrit.models import AttackSeedGroup, ComponentIdentifier, SeedDataset, SeedObjective
 from pyrit.prompt_target import OpenAIChatTarget, PromptTarget
 from pyrit.scenario import DatasetAttackConfiguration, DatasetConfiguration
 from pyrit.scenario.scenarios.airt.scam import Scam, ScamTechnique
@@ -38,9 +38,9 @@ def _mock_target_id(name: str = "MockTarget") -> ComponentIdentifier:
 
 
 @pytest.fixture
-def mock_memory_seed_groups() -> list[SeedAttackGroup]:
+def mock_memory_seed_groups() -> list[AttackSeedGroup]:
     """Create mock seed groups that _get_default_seed_groups() would return."""
-    return [SeedAttackGroup(seeds=[SeedObjective(value=prompt)]) for prompt in SEED_PROMPT_LIST]
+    return [AttackSeedGroup(seeds=[SeedObjective(value=prompt)]) for prompt in SEED_PROMPT_LIST]
 
 
 @pytest.fixture
@@ -52,10 +52,10 @@ def mock_memory_seeds():
 @pytest.fixture
 def mock_dataset_config(mock_memory_seed_groups):
     """Create a mock dataset config that returns the seed groups."""
-    seed_attack_groups = list(mock_memory_seed_groups)
+    attack_seed_groups = list(mock_memory_seed_groups)
     mock_config = MagicMock(spec=DatasetAttackConfiguration)
-    mock_config.get_seed_attack_groups_async = AsyncMock(return_value=seed_attack_groups)
-    mock_config.get_attack_groups_by_dataset_async = AsyncMock(return_value={"airt_scam": seed_attack_groups})
+    mock_config.get_attack_seed_groups_async = AsyncMock(return_value=attack_seed_groups)
+    mock_config.get_attack_groups_by_dataset_async = AsyncMock(return_value={"airt_scam": attack_seed_groups})
     mock_config.dataset_names = ["airt_scam"]
     return mock_config
 
@@ -143,7 +143,7 @@ class TestScamInitialization:
         self,
         *,
         mock_objective_scorer: TrueFalseCompositeScorer,
-        mock_memory_seed_groups: list[SeedAttackGroup],
+        mock_memory_seed_groups: list[AttackSeedGroup],
     ) -> None:
         with patch.object(
             Scam,
@@ -171,7 +171,7 @@ class TestScamInitialization:
             scenario = Scam()
             assert scenario._objective_scorer_identifier
 
-    def test_init_with_custom_scorer(self, *, mock_memory_seed_groups: list[SeedAttackGroup]) -> None:
+    def test_init_with_custom_scorer(self, *, mock_memory_seed_groups: list[AttackSeedGroup]) -> None:
         """Test initialization with custom scorer."""
         scorer = MagicMock(spec=TrueFalseCompositeScorer)
 
@@ -185,7 +185,7 @@ class TestScamInitialization:
             assert isinstance(scenario._scorer_config, AttackScoringConfig)
 
     def test_init_default_adversarial_chat(
-        self, *, mock_objective_scorer: TrueFalseCompositeScorer, mock_memory_seed_groups: list[SeedAttackGroup]
+        self, *, mock_objective_scorer: TrueFalseCompositeScorer, mock_memory_seed_groups: list[AttackSeedGroup]
     ) -> None:
         with patch.object(
             Scam,
@@ -199,7 +199,7 @@ class TestScamInitialization:
             assert scenario._adversarial_chat._temperature == 1.2
 
     def test_init_with_adversarial_chat(
-        self, *, mock_objective_scorer: TrueFalseCompositeScorer, mock_memory_seed_groups: list[SeedAttackGroup]
+        self, *, mock_objective_scorer: TrueFalseCompositeScorer, mock_memory_seed_groups: list[AttackSeedGroup]
     ) -> None:
         adversarial_chat = MagicMock(OpenAIChatTarget)
         adversarial_chat.get_identifier.return_value = _mock_target_id("CustomAdversary")
@@ -459,7 +459,7 @@ class TestScamLifecycle:
         *,
         mock_objective_target: PromptTarget,
         mock_objective_scorer: TrueFalseCompositeScorer,
-        mock_memory_seed_groups: list[SeedAttackGroup],
+        mock_memory_seed_groups: list[AttackSeedGroup],
         mock_dataset_config,
     ) -> None:
         """Test initialization with custom max_concurrency."""
@@ -485,7 +485,7 @@ class TestScamLifecycle:
         *,
         mock_objective_target: PromptTarget,
         mock_objective_scorer: TrueFalseCompositeScorer,
-        mock_memory_seed_groups: list[SeedAttackGroup],
+        mock_memory_seed_groups: list[AttackSeedGroup],
         mock_dataset_config,
     ) -> None:
         """Test initialization with memory labels."""
@@ -529,7 +529,7 @@ class TestScamProperties:
         self,
         *,
         mock_objective_target: PromptTarget,
-        mock_memory_seed_groups: list[SeedAttackGroup],
+        mock_memory_seed_groups: list[AttackSeedGroup],
         mock_dataset_config,
     ) -> None:
         """Test that all three targets (adversarial, object, scorer) are distinct."""
@@ -564,9 +564,9 @@ class TestScamBaselineUniformity:
     async def test_one_resolution_call_baseline_matches_techniques(
         self, mock_objective_target, mock_objective_scorer, single_turn_technique
     ):
-        from pyrit.models import SeedAttackGroup, SeedObjective
+        from pyrit.models import AttackSeedGroup, SeedObjective
 
-        seed_groups = [SeedAttackGroup(seeds=[SeedObjective(value=f"obj{i}")]) for i in range(10)]
+        seed_groups = [AttackSeedGroup(seeds=[SeedObjective(value=f"obj{i}")]) for i in range(10)]
         config = DatasetAttackConfiguration(seed_groups=seed_groups, max_dataset_size=3)
 
         first_sample = [("inline", group) for group in seed_groups[:3]]

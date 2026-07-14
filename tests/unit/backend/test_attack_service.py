@@ -684,6 +684,80 @@ class TestCreateAttack:
             mock_memory.add_attack_results_to_memory.assert_called_once()
             mock_memory.add_message_pieces_to_memory.assert_called()
 
+    async def test_create_attack_lowers_system_prompt_to_system_message(self, attack_service, mock_memory) -> None:
+        """Test that system_prompt is lowered to a single system-role message at sequence 0."""
+        with patch("pyrit.backend.services.attack_service.get_target_service") as mock_get_target_service:
+            mock_target_obj = MagicMock()
+            mock_target_obj.get_identifier.return_value = ComponentIdentifier(
+                class_name="TextTarget", class_module="pyrit.prompt_target"
+            )
+            mock_target_service = MagicMock()
+            mock_target_service.get_target_async = AsyncMock(return_value=MagicMock(type="TextTarget"))
+            mock_target_service.get_target_object.return_value = mock_target_obj
+            mock_get_target_service.return_value = mock_target_service
+
+            await attack_service.create_attack_async(
+                request=CreateAttackRequest(target_registry_name="target-1", system_prompt="You are Bob.")
+            )
+
+            calls = mock_memory.add_message_pieces_to_memory.call_args_list
+            assert len(calls) == 1
+            piece = calls[0][1]["message_pieces"][0]
+            assert piece.api_role == "system"
+            assert piece.sequence == 0
+            assert piece.original_value == "You are Bob."
+
+    async def test_create_attack_blank_system_prompt_is_noop(self, attack_service, mock_memory) -> None:
+        """Test that an empty system_prompt stores no prepended message."""
+        with patch("pyrit.backend.services.attack_service.get_target_service") as mock_get_target_service:
+            mock_target_obj = MagicMock()
+            mock_target_obj.get_identifier.return_value = ComponentIdentifier(
+                class_name="TextTarget", class_module="pyrit.prompt_target"
+            )
+            mock_target_service = MagicMock()
+            mock_target_service.get_target_async = AsyncMock(return_value=MagicMock(type="TextTarget"))
+            mock_target_service.get_target_object.return_value = mock_target_obj
+            mock_get_target_service.return_value = mock_target_service
+
+            await attack_service.create_attack_async(
+                request=CreateAttackRequest(target_registry_name="target-1", system_prompt="")
+            )
+
+            mock_memory.add_message_pieces_to_memory.assert_not_called()
+
+    async def test_create_attack_system_prompt_prepends_before_prepended_conversation(
+        self, attack_service, mock_memory
+    ) -> None:
+        """Test that system_prompt is inserted at sequence 0, ahead of prepended_conversation messages."""
+        with patch("pyrit.backend.services.attack_service.get_target_service") as mock_get_target_service:
+            mock_target_obj = MagicMock()
+            mock_target_obj.get_identifier.return_value = ComponentIdentifier(
+                class_name="TextTarget", class_module="pyrit.prompt_target"
+            )
+            mock_target_service = MagicMock()
+            mock_target_service.get_target_async = AsyncMock(return_value=MagicMock(type="TextTarget"))
+            mock_target_service.get_target_object.return_value = mock_target_obj
+            mock_get_target_service.return_value = mock_target_service
+
+            prepended = [
+                PrependedMessageRequest(role="user", pieces=[MessagePieceRequest(original_value="Hello")]),
+            ]
+
+            await attack_service.create_attack_async(
+                request=CreateAttackRequest(
+                    target_registry_name="target-1",
+                    system_prompt="You are Bob.",
+                    prepended_conversation=prepended,
+                )
+            )
+
+            calls = mock_memory.add_message_pieces_to_memory.call_args_list
+            assert len(calls) == 2
+            roles = [call[1]["message_pieces"][0].api_role for call in calls]
+            sequences = [call[1]["message_pieces"][0].sequence for call in calls]
+            assert roles == ["system", "user"]
+            assert sequences == [0, 1]
+
     async def test_create_attack_does_not_store_labels_in_metadata(self, attack_service, mock_memory) -> None:
         """Test that labels are not stored in attack metadata (they live on pieces)."""
         with patch("pyrit.backend.services.attack_service.get_target_service") as mock_get_target_service:

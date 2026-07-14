@@ -16,7 +16,7 @@ import pytest
 from pyrit.executor.attack.core.attack_config import AttackScoringConfig
 from pyrit.executor.attack.core.attack_executor import AttackExecutor
 from pyrit.memory import CentralMemory
-from pyrit.models import SeedAttackGroup, SeedObjective
+from pyrit.models import AttackSeedGroup, SeedObjective
 from pyrit.setup.initializers.techniques import core
 from tests.unit.mocks import MockPromptTarget
 
@@ -50,7 +50,7 @@ class TestFlipTechnique:
         factory = _flip_factory()
         technique = factory.create(objective_target=target, attack_scoring_config=AttackScoringConfig())
 
-        obj_group = SeedAttackGroup(seeds=[SeedObjective(value=OBJECTIVE)])
+        obj_group = AttackSeedGroup(seeds=[SeedObjective(value=OBJECTIVE)])
         merged = obj_group.with_technique(technique=technique.seed_technique)
 
         result = await AttackExecutor(max_concurrency=1).execute_attack_from_seed_groups_async(

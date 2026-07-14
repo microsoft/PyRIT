@@ -11,7 +11,7 @@ from pyrit.converter import Base64Converter
 from pyrit.executor.attack.core.attack_config import AttackScoringConfig
 from pyrit.executor.attack.multi_turn.crescendo import CrescendoAttack
 from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
-from pyrit.models import ComponentIdentifier, SeedAttackGroup, SeedObjective
+from pyrit.models import AttackSeedGroup, ComponentIdentifier, SeedObjective
 from pyrit.prompt_target import PromptTarget
 from pyrit.scenario import AtomicAttack, DatasetAttackConfiguration
 from pyrit.scenario.foundry import (  # type: ignore[ty:unresolved-import]
@@ -47,14 +47,14 @@ def mock_memory_seed_groups():
         "test objective 3",
         "test objective 4",
     ]
-    return [SeedAttackGroup(seeds=[SeedObjective(value=obj)]) for obj in objectives]
+    return [AttackSeedGroup(seeds=[SeedObjective(value=obj)]) for obj in objectives]
 
 
 @pytest.fixture
 def mock_dataset_config(mock_memory_seed_groups):
     """Create a mock dataset config that returns the seed groups."""
     mock_config = MagicMock(spec=DatasetAttackConfiguration)
-    mock_config.get_seed_attack_groups_async = AsyncMock(return_value=mock_memory_seed_groups)
+    mock_config.get_attack_seed_groups_async = AsyncMock(return_value=mock_memory_seed_groups)
     mock_config.dataset_names = ["foundry_red_team"]
     return mock_config
 
@@ -789,9 +789,9 @@ class TestRedTeamAgentBaselineUniformity:
     """ADO 9012 regression: baseline shares objectives with techniques under max_dataset_size."""
 
     async def test_one_resolution_call_baseline_matches_techniques(self, mock_objective_target, mock_objective_scorer):
-        from pyrit.models import SeedAttackGroup, SeedObjective
+        from pyrit.models import AttackSeedGroup, SeedObjective
 
-        seed_groups = [SeedAttackGroup(seeds=[SeedObjective(value=f"obj{i}")]) for i in range(10)]
+        seed_groups = [AttackSeedGroup(seeds=[SeedObjective(value=f"obj{i}")]) for i in range(10)]
         config = DatasetAttackConfiguration(seed_groups=seed_groups, max_dataset_size=3)
 
         first_sample = [("inline", group) for group in seed_groups[:3]]

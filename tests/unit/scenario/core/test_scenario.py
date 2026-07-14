@@ -795,7 +795,7 @@ class TestScenarioBaselineOnlyExecution:
 
     async def test_initialize_async_with_empty_techniques_and_baseline(self, mock_objective_target):
         """Test that baseline is included when include_baseline=True, regardless of techniques."""
-        from pyrit.models import SeedAttackGroup, SeedObjective
+        from pyrit.models import AttackSeedGroup, SeedObjective
 
         # Create a scenario with TrueFalseScorer; baseline is included by default
         scenario = ConcreteScenarioWithTrueFalseScorer(
@@ -807,8 +807,8 @@ class TestScenarioBaselineOnlyExecution:
         mock_dataset_config = MagicMock(spec=DatasetAttackConfiguration)
         mock_dataset_config.get_attack_groups_by_dataset_async.return_value = {
             "default": [
-                SeedAttackGroup(seeds=[SeedObjective(value="test objective 1")]),
-                SeedAttackGroup(seeds=[SeedObjective(value="test objective 2")]),
+                AttackSeedGroup(seeds=[SeedObjective(value="test objective 1")]),
+                AttackSeedGroup(seeds=[SeedObjective(value="test objective 2")]),
             ]
         }
 
@@ -828,7 +828,7 @@ class TestScenarioBaselineOnlyExecution:
 
     async def test_baseline_only_execution_runs_successfully(self, mock_objective_target, sample_attack_results):
         """Test that baseline-only scenario can run successfully."""
-        from pyrit.models import SeedAttackGroup, SeedObjective
+        from pyrit.models import AttackSeedGroup, SeedObjective
 
         # Create a scenario with TrueFalseScorer; baseline is included by default
         scenario = ConcreteScenarioWithTrueFalseScorer(
@@ -839,7 +839,7 @@ class TestScenarioBaselineOnlyExecution:
         # Create a mock dataset config with seed groups
         mock_dataset_config = MagicMock(spec=DatasetAttackConfiguration)
         mock_dataset_config.get_attack_groups_by_dataset_async.return_value = {
-            "default": [SeedAttackGroup(seeds=[SeedObjective(value="test objective 1")])]
+            "default": [AttackSeedGroup(seeds=[SeedObjective(value="test objective 1")])]
         }
 
         # Initialize with None — [] also expands defaults now, both are equivalent
@@ -890,7 +890,7 @@ class TestScenarioBaselineOnlyExecution:
 
     async def test_standalone_baseline_uses_dataset_config_seeds(self, mock_objective_target):
         """Test that standalone baseline uses seed groups from dataset_config."""
-        from pyrit.models import SeedAttackGroup, SeedObjective
+        from pyrit.models import AttackSeedGroup, SeedObjective
 
         scenario = ConcreteScenarioWithTrueFalseScorer(
             name="Baseline Seeds Test",
@@ -899,9 +899,9 @@ class TestScenarioBaselineOnlyExecution:
 
         # Create specific seed groups to verify they're used
         expected_seeds = [
-            SeedAttackGroup(seeds=[SeedObjective(value="objective_a")]),
-            SeedAttackGroup(seeds=[SeedObjective(value="objective_b")]),
-            SeedAttackGroup(seeds=[SeedObjective(value="objective_c")]),
+            AttackSeedGroup(seeds=[SeedObjective(value="objective_a")]),
+            AttackSeedGroup(seeds=[SeedObjective(value="objective_b")]),
+            AttackSeedGroup(seeds=[SeedObjective(value="objective_c")]),
         ]
 
         mock_dataset_config = MagicMock(spec=DatasetAttackConfiguration)
@@ -1171,9 +1171,9 @@ class TestBuildBaselineAtomicAttack:
     """Unit tests for Scenario._build_baseline_atomic_attack."""
 
     def _seed_groups(self):
-        from pyrit.models import SeedAttackGroup, SeedObjective
+        from pyrit.models import AttackSeedGroup, SeedObjective
 
-        return [SeedAttackGroup(seeds=[SeedObjective(value="x")])]
+        return [AttackSeedGroup(seeds=[SeedObjective(value="x")])]
 
     def test_returns_baseline_atomic_attack(self, mock_objective_target):
         from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack

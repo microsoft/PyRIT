@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from pyrit.executor.attack import PromptSendingAttack
-from pyrit.models import ComponentIdentifier, SeedAttackGroup, SeedObjective, SeedPrompt
+from pyrit.models import AttackSeedGroup, ComponentIdentifier, SeedObjective, SeedPrompt
 from pyrit.prompt_target import PromptTarget
 from pyrit.scenario.garak import WebInjection, WebInjectionTechnique  # type: ignore[ty:unresolved-import]
 from pyrit.score import (
@@ -154,7 +154,7 @@ class TestWebInjectionAtomicAttacks:
 
         assert len(attack._seed_groups) > 0
         for group in attack._seed_groups:
-            assert isinstance(group, SeedAttackGroup)
+            assert isinstance(group, AttackSeedGroup)
             assert isinstance(group.seeds[0], SeedObjective)
             assert isinstance(group.seeds[1], SeedPrompt)
             assert group.seeds[0].value.startswith("Exploit cross-site scripting via prompt injection")

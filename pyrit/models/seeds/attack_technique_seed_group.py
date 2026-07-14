@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 """
-SeedAttackTechniqueGroup - A group of seeds representing a general attack technique.
+AttackTechniqueSeedGroup - A group of seeds representing a general attack technique.
 For example, this includes jailbreaks, roleplays, or other reusable techniques that
 can be applied to multiple objectives.
 
@@ -16,7 +16,7 @@ from pyrit.models.seeds.seed_objective import SeedObjective
 from pyrit.models.seeds.seed_prompt import SeedPrompt
 
 
-class SeedAttackTechniqueGroup(SeedGroup):
+class AttackTechniqueSeedGroup(SeedGroup):
     """
     A group of seeds representing a general attack technique.
 
@@ -27,12 +27,12 @@ class SeedAttackTechniqueGroup(SeedGroup):
     next_message, etc.) is inherited from SeedGroup.
     """
 
-    # Where to insert technique seeds when merging into a SeedAttackGroup via ``with_technique()``.
+    # Where to insert technique seeds when merging into a AttackSeedGroup via ``with_technique()``.
     # ``None`` (default) appends at the end; an integer inserts before that position.
     insertion_index: int | None = None
 
     @classmethod
-    def from_system_prompt(cls, system_prompt: str, *, insertion_index: int | None = None) -> SeedAttackTechniqueGroup:
+    def from_system_prompt(cls, system_prompt: str, *, insertion_index: int | None = None) -> AttackTechniqueSeedGroup:
         """
         Build a technique group carrying a single system-role instruction.
 
@@ -44,10 +44,10 @@ class SeedAttackTechniqueGroup(SeedGroup):
         Args:
             system_prompt (str): The system-role instruction text.
             insertion_index (int | None): Where to insert the seed when merging into a
-                ``SeedAttackGroup``. ``None`` (default) appends at the end.
+                ``AttackSeedGroup``. ``None`` (default) appends at the end.
 
         Returns:
-            SeedAttackTechniqueGroup: A group with a single general-technique system seed.
+            AttackTechniqueSeedGroup: A group with a single general-technique system seed.
         """
         return cls(
             seeds=[SeedPrompt(value=system_prompt, data_type="text", role="system", is_general_technique=True)],
@@ -79,7 +79,7 @@ class SeedAttackTechniqueGroup(SeedGroup):
         if non_general:
             non_general_types = [type(s).__name__ for s in non_general]
             raise ValueError(
-                f"All seeds in SeedAttackTechniqueGroup must have is_general_technique=True. "
+                f"All seeds in AttackTechniqueSeedGroup must have is_general_technique=True. "
                 f"Found {len(non_general)} seed(s) without it: {non_general_types}"
             )
 
@@ -93,5 +93,5 @@ class SeedAttackTechniqueGroup(SeedGroup):
         objectives = [seed for seed in self.seeds if isinstance(seed, SeedObjective)]
         if objectives:
             raise ValueError(
-                f"SeedAttackTechniqueGroup must not contain objectives. Found {len(objectives)} SeedObjective(s)."
+                f"AttackTechniqueSeedGroup must not contain objectives. Found {len(objectives)} SeedObjective(s)."
             )
