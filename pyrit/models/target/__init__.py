@@ -14,8 +14,7 @@ own their own ``MessagePiece.prompt_metadata`` (de)serialization:
 
 Everything here is re-exported from the top-level ``pyrit.models`` package, so
 callers should keep importing from ``pyrit.models`` (e.g.
-``from pyrit.models import TokenUsage``). Grouping mirrors the
-``pyrit.models.identifiers`` and ``pyrit.models.seeds`` sub-packages.
+``from pyrit.models import TokenUsage``).
 """
 
 from pyrit.models.target.json_response_config import JsonResponseConfig

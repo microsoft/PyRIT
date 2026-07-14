@@ -17,20 +17,16 @@ class JsonResponseConfig(BaseModel):
     """
     Canonical PyRIT configuration for requesting a JSON response from a target.
 
-    This is the JSON-response twin of ``TokenUsage``: a value object that owns
-    PyRIT's canonical ``MessagePiece.prompt_metadata`` keys for JSON responses
-    (``"response_format"``, ``JSON_SCHEMA_METADATA_KEY``, ``"json_schema_name"``,
-    ``"json_schema_strict"``) and (de)serializes them via ``from_metadata`` /
-    ``to_metadata``. Producers (scorers, attacks, converters) build one and call
-    ``to_metadata`` to attach it to a piece; targets read it back with
-    ``from_metadata``.
+    A value object that owns PyRIT's canonical ``MessagePiece.prompt_metadata`` keys for
+    JSON responses (``"response_format"``, ``JSON_SCHEMA_METADATA_KEY``, ``"json_schema_name"``,
+    ``"json_schema_strict"``) and (de)serializes them via ``from_metadata`` / ``to_metadata``.
+    Producers (scorers, attacks, converters) build one and call ``to_metadata`` to attach it to
+    a piece; targets read it back with ``from_metadata``.
 
-    These are PyRIT keys, not a provider's wire format. Translating this config
-    into a specific provider's request block (e.g. the OpenAI chat
-    ``response_format`` or Responses ``text.format`` shape) is the target's job
-    and lives in ``pyrit.prompt_target`` (``build_response_format`` /
-    ``_build_text_format``) — exactly as turning a provider ``usage`` payload
-    into a ``TokenUsage`` lives in the chat-completions parser.
+    These are PyRIT keys, not a provider's wire format. Translating this config into a specific
+    provider's request block (e.g. the OpenAI chat ``response_format`` or Responses ``text.format``
+    shape) is the target's job and lives in ``pyrit.prompt_target`` (``build_response_format`` /
+    ``_build_text_format``).
 
     For the provider shapes those translators emit, see:
     https://platform.openai.com/docs/api-reference/chat/create#chat_create-response_format-json_schema
