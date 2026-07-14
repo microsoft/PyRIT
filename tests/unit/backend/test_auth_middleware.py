@@ -90,3 +90,28 @@ async def test_resolve_excess_groups_ignores_token_endpoint():
     posted_url = mock_client.post.call_args.args[0]
     assert posted_url == EntraAuthMiddleware._GRAPH_MEMBER_OBJECTS_URL
     assert "evil.com" not in posted_url
+
+
+async def test_resolve_excess_groups_stops_on_untrusted_pagination_link():
+    """An untrusted @odata.nextLink halts pagination without issuing the follow-up GET."""
+    middleware = _make_middleware()
+    claims = {
+        "_claim_names": {"groups": "src1"},
+        "_claim_sources": {"src1": {"endpoint": "https://graph.microsoft.com/x"}},
+    }
+
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {"value": ["group-1"], "@odata.nextLink": "https://evil.com/next"}
+
+    mock_client = AsyncMock()
+    mock_client.post.return_value = mock_response
+    mock_client_cm = MagicMock()
+    mock_client_cm.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client_cm.__aexit__ = AsyncMock(return_value=False)
+
+    with patch("pyrit.backend.middleware.auth.httpx.AsyncClient", return_value=mock_client_cm):
+        result = await middleware._resolve_excess_groups_async(claims, "the-token")
+
+    assert result == ["group-1"]
+    mock_client.get.assert_not_called()
