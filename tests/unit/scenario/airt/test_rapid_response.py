@@ -15,7 +15,7 @@ from pyrit.executor.attack import (
     PromptSendingAttack,
     TreeOfAttacksWithPruningAttack,
 )
-from pyrit.models import ComponentIdentifier, SeedAttackGroup, SeedObjective
+from pyrit.models import AttackSeedGroup, ComponentIdentifier, SeedObjective
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry import TargetRegistry
 from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
@@ -125,7 +125,7 @@ def mock_runtime_env():
         yield
 
 
-def _make_seed_groups(name: str) -> list[SeedAttackGroup]:
+def _make_seed_groups(name: str) -> list[AttackSeedGroup]:
     """Create two seed attack groups for a given category.
 
     Groups are objective-only so they stay compatible with simulated-conversation
@@ -133,8 +133,8 @@ def _make_seed_groups(name: str) -> list[SeedAttackGroup]:
     and reject seed groups that already carry a prompt at sequence 0.
     """
     return [
-        SeedAttackGroup(seeds=[SeedObjective(value=f"{name} objective 1")]),
-        SeedAttackGroup(seeds=[SeedObjective(value=f"{name} objective 2")]),
+        AttackSeedGroup(seeds=[SeedObjective(value=f"{name} objective 1")]),
+        AttackSeedGroup(seeds=[SeedObjective(value=f"{name} objective 2")]),
     ]
 
 
@@ -286,7 +286,7 @@ class TestRapidResponseAttackGeneration:
         mock_objective_target,
         mock_objective_scorer,
         techniques=None,
-        seed_groups: dict[str, list[SeedAttackGroup]] | None = None,
+        seed_groups: dict[str, list[AttackSeedGroup]] | None = None,
     ):
         """Helper: initialize scenario and return atomic attacks."""
         groups = seed_groups or {"hate": _make_seed_groups("hate")}

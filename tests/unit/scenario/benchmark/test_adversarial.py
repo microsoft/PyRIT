@@ -41,9 +41,9 @@ from pyrit.models import (
     AtomicAttackEvaluationIdentifier,
     AttackOutcome,
     AttackResult,
+    AttackSeedGroup,
     ComponentIdentifier,
     ObjectiveTargetEvaluationIdentifier,
-    SeedAttackGroup,
     SeedObjective,
 )
 from pyrit.prompt_target import PromptTarget
@@ -438,7 +438,7 @@ class TestGetAtomicAttacksCrossProduct:
         bench._scenario_techniques = [red_teaming_technique]
 
         # Dataset config: one dataset with one real seed group (AtomicAttack hashes objectives).
-        seed_group = SeedAttackGroup(seeds=[SeedObjective(value="benchmark_objective_1")])
+        seed_group = AttackSeedGroup(seeds=[SeedObjective(value="benchmark_objective_1")])
         bench._dataset_config = MagicMock()
         bench._dataset_config.get_attack_groups_by_dataset_async = AsyncMock(return_value={"harmbench": [seed_group]})
 
@@ -485,7 +485,7 @@ class TestGetAtomicAttacksCrossProduct:
         red_teaming_technique.value = "red_teaming"
         bench._scenario_techniques = [red_teaming_technique]
 
-        seed_group = SeedAttackGroup(seeds=[SeedObjective(value="display_group_regression_objective")])
+        seed_group = AttackSeedGroup(seeds=[SeedObjective(value="display_group_regression_objective")])
         bench._dataset_config = MagicMock()
         bench._dataset_config.get_attack_groups_by_dataset_async = AsyncMock(return_value={"harmbench": [seed_group]})
 
@@ -772,7 +772,7 @@ class TestSkipCachedFilter:
         red_teaming_technique.value = "red_teaming"
         bench._scenario_techniques = [red_teaming_technique]
 
-        seed_group = SeedAttackGroup(seeds=[SeedObjective(value="skip_cached_objective")])
+        seed_group = AttackSeedGroup(seeds=[SeedObjective(value="skip_cached_objective")])
         bench._dataset_config = MagicMock()
         bench._dataset_config.get_attack_groups_by_dataset_async = AsyncMock(return_value={"harmbench": [seed_group]})
 

@@ -6,7 +6,7 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.19.3
+#       jupytext_version: 1.19.4
 # ---
 
 # %% [markdown]
@@ -171,9 +171,9 @@ objective = (
 )
 
 scoring_config = AttackScoringConfig(
-    objective_scorer=SelfAskTrueFalseScorer(
+    objective_scorer=SelfAskTrueFalseScorer.from_question(
         chat_target=OpenAIChatTarget(),
-        true_false_question=TrueFalseQuestion(
+        question=TrueFalseQuestion(
             true_description=(
                 "The generated image satisfies ALL five of the following criteria simultaneously: "
                 "(1) the same anthropomorphic raccoon from seed image 1 is present, with the same "

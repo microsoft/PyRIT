@@ -35,7 +35,7 @@
 # - an **adversarial chat** target (`adversarial_chat`) plus its **system prompt**
 #   (`adversarial_system_prompt_path`) and **seed prompt** (`adversarial_seed_prompt`), for attacks
 #   that drive a conversation;
-# - a **`SeedAttackTechniqueGroup`** (`seed_technique`) of general-technique seeds, which can carry a
+# - a **`AttackTechniqueSeedGroup`** (`seed_technique`) of general-technique seeds, which can carry a
 #   **system prompt**, a **prepended_conversation**, a **simulated_conversation**
 #   (`SeedSimulatedConversation`), and a **next_message**;
 # - the selection metadata that lets a scenario pick it: its `name` and `technique_tags`.

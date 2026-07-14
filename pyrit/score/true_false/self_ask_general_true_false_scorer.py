@@ -6,6 +6,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from pyrit.prompt_target import CHAT_TARGET_REQUIREMENTS
+from pyrit.score.llm_scoring import _run_llm_scoring_async
+from pyrit.score.response_handler import JsonSchemaResponseHandler, ResponseHandler
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.true_false.true_false_score_aggregator import (
     TrueFalseAggregatorFunc,
@@ -19,7 +21,6 @@ if TYPE_CHECKING:
         JsonSchemaDefinition,
         MessagePiece,
         Score,
-        UnvalidatedScore,
     )
     from pyrit.prompt_target import PromptTarget
 
@@ -28,6 +29,9 @@ class SelfAskGeneralTrueFalseScorer(TrueFalseScorer):
     """
     A general-purpose self-ask True/False scorer that uses a chat target and a configurable
     system prompt and prompt format.
+
+    The scorer holds a chat ``chat_target`` and a ``response_handler``; the system prompt is
+    rendered per-piece from ``system_prompt_format_string``.
     """
 
     _DEFAULT_VALIDATOR: ScorerPromptValidator = ScorerPromptValidator(
@@ -39,10 +43,11 @@ class SelfAskGeneralTrueFalseScorer(TrueFalseScorer):
     def __init__(
         self,
         *,
-        chat_target: PromptTarget,
         system_prompt_format_string: str,
+        chat_target: PromptTarget | None = None,
         prompt_format_string: str | None = None,
         category: str | None = None,
+        response_handler: ResponseHandler | None = None,
         validator: ScorerPromptValidator | None = None,
         score_aggregator: TrueFalseAggregatorFunc = TrueFalseScoreAggregator.OR,
         score_value_output_key: str = "score_value",
@@ -63,15 +68,16 @@ class SelfAskGeneralTrueFalseScorer(TrueFalseScorer):
         in the response, the provided `category` argument will be applied.
 
         Args:
-            chat_target (PromptTarget): The chat target used to score. Must satisfy
-                CHAT_TARGET_REQUIREMENTS (multi-turn + editable history capabilities,
-                possibly via normalization-pipeline adaptation).
             system_prompt_format_string (str): System prompt template with placeholders for
                 objective, task (alias of objective), prompt, and message_piece.
+            chat_target (PromptTarget | None): The chat target used to score. Must satisfy
+                CHAT_TARGET_REQUIREMENTS.
             prompt_format_string (str | None): User prompt template with the same placeholders.
             category (str | None): Category for the score.
+            response_handler (ResponseHandler | None): Parser for the target's raw output. Defaults
+                to a ``JsonSchemaResponseHandler`` built from the ``*_output_key`` arguments.
             validator (ScorerPromptValidator | None): Custom validator. If omitted, a default
-                validator will be used requiring text input and an objective.
+                validator will be used requiring text input.
             score_aggregator (TrueFalseAggregatorFunc): Aggregator for combining scores. Defaults to
                 TrueFalseScoreAggregator.OR.
             score_value_output_key (str): JSON key for the score value. Defaults to "score_value".
@@ -84,8 +90,12 @@ class SelfAskGeneralTrueFalseScorer(TrueFalseScorer):
                 enforces it natively when supported or omits it via normalization. Defaults to None.
 
         Raises:
-            ValueError: If system_prompt_format_string is not provided or empty.
+            ValueError: If ``chat_target`` is not provided, or if system_prompt_format_string is not
+                provided or empty.
         """
+        if chat_target is None:
+            raise ValueError("A chat_target must be provided.")
+
         super().__init__(
             validator=validator or self._DEFAULT_VALIDATOR,
             score_aggregator=score_aggregator,
@@ -98,12 +108,16 @@ class SelfAskGeneralTrueFalseScorer(TrueFalseScorer):
         self._prompt_format_string = prompt_format_string
 
         self._score_category = category
-        self._score_value_output_key = score_value_output_key
-        self._rationale_output_key = rationale_output_key
-        self._description_output_key = description_output_key
-        self._metadata_output_key = metadata_output_key
-        self._category_output_key = category_output_key
-        self._response_json_schema = response_json_schema
+        # A caller-supplied handler owns its own response contract; otherwise the default JSON
+        # handler carries the schema so the round-trip forwards it to the scoring target.
+        self._response_handler = response_handler or JsonSchemaResponseHandler(
+            score_value_output_key=score_value_output_key,
+            rationale_output_key=rationale_output_key,
+            description_output_key=description_output_key,
+            metadata_output_key=metadata_output_key,
+            category_output_key=category_output_key,
+            response_schema=response_json_schema,
+        )
 
     def _build_identifier(self) -> ComponentIdentifier:
         """
@@ -116,7 +130,7 @@ class SelfAskGeneralTrueFalseScorer(TrueFalseScorer):
             params={
                 "system_prompt_template": self._system_prompt_format_string,
                 "user_prompt_template": self._prompt_format_string,
-                "response_json_schema": self._response_json_schema,
+                "response_json_schema": self._response_handler.response_schema,
             },
             score_aggregator=self._score_aggregator.__name__,  # type: ignore[ty:unresolved-attribute]
             prompt_target=self._prompt_target.get_identifier(),
@@ -150,20 +164,16 @@ class SelfAskGeneralTrueFalseScorer(TrueFalseScorer):
                 message_piece=message_piece,
             )
 
-        unvalidated: UnvalidatedScore = await self._score_value_with_llm_async(
-            prompt_target=self._prompt_target,
+        unvalidated = await _run_llm_scoring_async(
+            chat_target=self._prompt_target,
             system_prompt=system_prompt,
-            message_value=user_prompt,
-            message_data_type=message_piece.converted_value_data_type,
+            response_handler=self._response_handler,
+            value=user_prompt,
+            data_type=message_piece.converted_value_data_type,
             scored_prompt_id=message_piece.id,
+            scorer_identifier=self.get_identifier(),
             category=self._score_category,
             objective=objective,
-            score_value_output_key=self._score_value_output_key,
-            rationale_output_key=self._rationale_output_key,
-            description_output_key=self._description_output_key,
-            metadata_output_key=self._metadata_output_key,
-            category_output_key=self._category_output_key,
-            response_json_schema=self._response_json_schema,
         )
 
         score = unvalidated.to_score(score_value=unvalidated.raw_score_value, score_type="true_false")

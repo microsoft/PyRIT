@@ -7,7 +7,7 @@ import dataclasses
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, TypeVar
 
-from pyrit.models import Message, SeedAttackGroup, SeedGroup
+from pyrit.models import AttackSeedGroup, Message, SeedGroup
 
 if TYPE_CHECKING:
     from pyrit.models import SeedUnion
@@ -82,13 +82,13 @@ class AttackParameters:
     async def from_seed_group_async(
         cls: type[AttackParamsT],
         *,
-        seed_group: SeedAttackGroup,
+        seed_group: AttackSeedGroup,
         adversarial_chat: PromptTarget | None = None,
         objective_scorer: TrueFalseScorer | None = None,
         **overrides: Any,
     ) -> AttackParamsT:
         """
-        Create an AttackParameters instance from a SeedAttackGroup.
+        Create an AttackParameters instance from a AttackSeedGroup.
 
         Extracts standard fields from the seed group and applies any overrides.
         If the seed_group has a simulated conversation config,
@@ -106,7 +106,7 @@ class AttackParameters:
             An instance of this AttackParameters type.
 
         Raises:
-            TypeError: If ``seed_group`` is not a ``SeedAttackGroup``.
+            TypeError: If ``seed_group`` is not a ``AttackSeedGroup``.
             ValueError: If overrides contain invalid fields, or if seed_group has simulated
                 conversation but adversarial_chat/scorer not provided.
         """
@@ -115,9 +115,9 @@ class AttackParameters:
             generate_simulated_conversation_async,
         )
 
-        if not isinstance(seed_group, SeedAttackGroup):
+        if not isinstance(seed_group, AttackSeedGroup):
             raise TypeError(
-                f"seed_group must be a SeedAttackGroup, got {type(seed_group).__name__}. "
+                f"seed_group must be a AttackSeedGroup, got {type(seed_group).__name__}. "
                 "Plain SeedGroup does not enforce the 'exactly one objective' invariant required for an attack."
             )
 
@@ -131,7 +131,7 @@ class AttackParameters:
                 f"{cls.__name__} does not accept parameters: {invalid_fields}. Accepted parameters: {valid_fields}"
             )
 
-        # SeedAttackGroup's Pydantic validator guarantees exactly one objective is present.
+        # AttackSeedGroup's Pydantic validator guarantees exactly one objective is present.
         assert seed_group.objective is not None
 
         # Build params dict, only including fields this class accepts

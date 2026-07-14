@@ -12,7 +12,7 @@ from pyrit.datasets import TextJailBreak
 from pyrit.executor.attack.single_turn.many_shot_jailbreak import ManyShotJailbreakAttack
 from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
 from pyrit.executor.attack.single_turn.skeleton_key import SkeletonKeyAttack
-from pyrit.models import ComponentIdentifier, SeedAttackGroup, SeedObjective
+from pyrit.models import AttackSeedGroup, ComponentIdentifier, SeedObjective
 from pyrit.prompt_target import PromptTarget
 from pyrit.scenario.core import BaselineAttackPolicy
 from pyrit.scenario.scenarios.airt.jailbreak import Jailbreak, JailbreakTechnique
@@ -43,10 +43,10 @@ def mock_scenario_result_id() -> str:
 
 
 @pytest.fixture
-def mock_memory_seed_groups() -> list[SeedAttackGroup]:
+def mock_memory_seed_groups() -> list[AttackSeedGroup]:
     """Create mock seed groups that _get_default_seed_groups() would return."""
     return [
-        SeedAttackGroup(seeds=[SeedObjective(value=prompt)])
+        AttackSeedGroup(seeds=[SeedObjective(value=prompt)])
         for prompt in [
             "sample objective 1",
             "sample objective 2",
@@ -533,7 +533,7 @@ class TestJailbreakLifecycle:
         *,
         mock_objective_target: PromptTarget,
         mock_objective_scorer: TrueFalseInverterScorer,
-        mock_memory_seed_groups: list[SeedAttackGroup],
+        mock_memory_seed_groups: list[AttackSeedGroup],
     ) -> None:
         """Test initialization with custom max_concurrency."""
         with patch.object(
@@ -557,7 +557,7 @@ class TestJailbreakLifecycle:
         *,
         mock_objective_target: PromptTarget,
         mock_objective_scorer: TrueFalseInverterScorer,
-        mock_memory_seed_groups: list[SeedAttackGroup],
+        mock_memory_seed_groups: list[AttackSeedGroup],
     ) -> None:
         """Test initialization with memory labels."""
         memory_labels = {"type": "jailbreak", "category": "scenario"}
@@ -601,7 +601,7 @@ class TestJailbreakProperties:
         assert Jailbreak.required_datasets() == ["airt_harms"]
 
     async def test_no_target_duplication_async(
-        self, *, mock_objective_target: PromptTarget, mock_memory_seed_groups: list[SeedAttackGroup]
+        self, *, mock_objective_target: PromptTarget, mock_memory_seed_groups: list[AttackSeedGroup]
     ) -> None:
         """Test that all three targets (adversarial, object, scorer) are distinct."""
         with patch.object(
@@ -651,7 +651,7 @@ class TestJailbreakAdversarialTarget:
         *,
         mock_objective_target: PromptTarget,
         mock_objective_scorer: TrueFalseInverterScorer,
-        mock_memory_seed_groups: list[SeedAttackGroup],
+        mock_memory_seed_groups: list[AttackSeedGroup],
         roleplay_jailbreak_technique: JailbreakTechnique,
     ) -> None:
         """Test that multiple role-play attacks share the same adversarial target instance."""
@@ -685,10 +685,10 @@ class TestJailbreakBaselineUniformity:
     async def test_one_resolution_call_baseline_matches_techniques(
         self, mock_objective_target, mock_objective_scorer, simple_jailbreak_technique
     ):
-        from pyrit.models import SeedAttackGroup, SeedObjective
+        from pyrit.models import AttackSeedGroup, SeedObjective
         from pyrit.scenario import DatasetAttackConfiguration
 
-        seed_groups = [SeedAttackGroup(seeds=[SeedObjective(value=f"obj{i}")]) for i in range(10)]
+        seed_groups = [AttackSeedGroup(seeds=[SeedObjective(value=f"obj{i}")]) for i in range(10)]
         config = DatasetAttackConfiguration(seed_groups=seed_groups, max_dataset_size=3)
 
         first_sample = [("inline", group) for group in seed_groups[:3]]
