@@ -139,7 +139,7 @@ def test_build_metadata_returns_empty_without_schema():
 def test_build_metadata_forwards_schema():
     metadata = _build_adversarial_prompt_metadata(response_json_schema=SCHEMA)
     assert metadata["response_format"] == "json"
-    assert metadata[JSON_SCHEMA_METADATA_KEY] is SCHEMA
+    assert metadata[JSON_SCHEMA_METADATA_KEY] == SCHEMA
 
 
 # --- _parse_adversarial_reply ------------------------------------------------

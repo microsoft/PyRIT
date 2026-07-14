@@ -79,13 +79,46 @@ def test_with_invalid_json_schema_string():
 
 def test_other_response_format():
     metadata = {
-        "response_format": "something_really_improbably_to_have_here",
+        "response_format": "something_really_improbable_to_have_here",
     }
     config = JsonResponseConfig.from_metadata(metadata=metadata)
     assert config.enabled is False
     assert config.json_schema is None
     assert config.schema_name == "CustomSchema"
     assert config.strict is True
+
+
+def test_schema_without_response_format_is_disabled():
+    # A schema is meaningless without the response_format marker, so it must be dropped.
+    metadata = {
+        "json_schema": {"type": "object"},
+        "json_schema_name": "TestSchema",
+    }
+    config = JsonResponseConfig.from_metadata(metadata=metadata)
+    assert config.enabled is False
+    assert config.json_schema is None
+
+
+def test_with_empty_json_schema_string():
+    metadata = {
+        "response_format": "json",
+        "json_schema": "",
+    }
+    config = JsonResponseConfig.from_metadata(metadata=metadata)
+    assert config.enabled is True
+    assert config.json_schema is None
+
+
+def test_ignores_unrelated_metadata_keys():
+    # Real prompt_metadata carries other keys (e.g. token usage) that must be ignored.
+    metadata = {
+        "response_format": "json",
+        "total_tokens": 42,
+        "some_other_key": "value",
+    }
+    config = JsonResponseConfig.from_metadata(metadata=metadata)
+    assert config.enabled is True
+    assert config.json_schema is None
 
 
 def test_to_metadata_disabled_is_empty():
