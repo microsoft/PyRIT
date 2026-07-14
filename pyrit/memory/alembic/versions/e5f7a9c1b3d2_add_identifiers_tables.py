@@ -19,6 +19,7 @@ import json
 import logging
 import uuid
 from collections.abc import Sequence  # noqa: TC003
+from functools import partial
 from typing import TYPE_CHECKING, Any
 
 import sqlalchemy as sa
@@ -70,6 +71,37 @@ def run_best_effort_backfill(*, bind: Any, name: str, backfill: Callable[[], Non
             backfill()
     except Exception:
         logger.warning(f"{name} backfill failed; leaving new identifier links nullable", exc_info=True)
+
+
+def _run_best_effort_row(*, bind: Any, description: str, operation: Callable[[], None]) -> bool:
+    """
+    Run one backfill row in a savepoint and report whether it succeeded.
+
+    Returns:
+        bool: Whether the row operation completed successfully.
+    """
+    try:
+        with bind.begin_nested():
+            operation()
+    except Exception:
+        logger.warning(description, exc_info=True)
+        return False
+    return True
+
+
+def _insert_identifier_link(
+    *,
+    bind: Any,
+    insert: Callable[[dict[str, Any]], str | None],
+    identifier: dict[str, Any],
+    update_statement: Any,
+    update_values: dict[str, Any],
+) -> None:
+    """Insert an identifier graph and update its domain-row link."""
+    identifier_hash = insert(identifier)
+    if not identifier_hash:
+        return
+    bind.execute(update_statement, {**update_values, "hash": identifier_hash})
 
 
 def load_identifier(raw_identifier: Any) -> dict[str, Any] | None:
@@ -361,14 +393,27 @@ class IdentifierGraphInserter:
         child_column: str,
         child_hashes: Sequence[str],
     ) -> None:
+        select_statement = sa.text(
+            f'SELECT "{child_column}" FROM "{table}" '
+            f'WHERE "{parent_column}" = :parent_hash AND position = :position'
+        )
         statement = sa.text(
-            f'INSERT INTO "{table}" ({parent_column}, position, {child_column}) '
+            f'INSERT INTO "{table}" ("{parent_column}", position, "{child_column}") '
             f"VALUES (:parent_hash, :position, :child_hash)"
         )
         for position, child_hash in enumerate(child_hashes):
+            parameters = {"parent_hash": parent_hash, "position": position}
+            existing_child_hash = self._bind.execute(select_statement, parameters).scalar_one_or_none()
+            if existing_child_hash == child_hash:
+                continue
+            if existing_child_hash is not None:
+                raise ValueError(
+                    f"Conflicting {table} edge for parent {parent_hash!r} at position {position}: "
+                    f"stored child {existing_child_hash!r}, retained child {child_hash!r}."
+                )
             self._bind.execute(
                 statement,
-                {"parent_hash": parent_hash, "position": position, "child_hash": child_hash},
+                {**parameters, "child_hash": child_hash},
             )
 
     @staticmethod
@@ -570,12 +615,16 @@ def upgrade() -> None:
 def downgrade() -> None:
     """Revert this schema upgrade."""
     with op.batch_alter_table("AttackResultEntries") as batch_op:
+        batch_op.drop_constraint("fk_attack_result_entries_atomic_attack_identifier_hash", type_="foreignkey")
         batch_op.drop_column("atomic_attack_identifier_hash")
     with op.batch_alter_table("ScenarioResultEntries") as batch_op:
+        batch_op.drop_constraint("fk_scenario_result_entries_scenario_identifier_hash", type_="foreignkey")
         batch_op.drop_column("scenario_identifier_hash")
     with op.batch_alter_table("ScoreEntries") as batch_op:
+        batch_op.drop_constraint("fk_score_entries_scorer_identifier_hash", type_="foreignkey")
         batch_op.drop_column("scorer_identifier_hash")
     with op.batch_alter_table("Conversations") as batch_op:
+        batch_op.drop_constraint("fk_conversations_target_identifier_hash", type_="foreignkey")
         batch_op.drop_column("target_identifier_hash")
 
     op.drop_table("AtomicAttackSeedIdentifiers")
@@ -688,13 +737,38 @@ def _create_attack_identifier_tables() -> None:
     )
 
 
+def _insert_converter_links(
+    *,
+    bind: Any,
+    inserter: IdentifierGraphInserter,
+    link_statement: Any,
+    prompt_id: Any,
+    stored_identifiers: Any,
+    pyrit_version: str | None,
+) -> None:
+    """Insert converter graphs and their ordered links for one prompt row."""
+    for position, identifier in enumerate(load_identifier_list(stored_identifiers)):
+        if identifier.get("pyrit_version") is None:
+            identifier = {**identifier, "pyrit_version": pyrit_version}
+        identifier_hash = inserter.insert_converter(identifier)
+        if identifier_hash:
+            bind.execute(
+                link_statement,
+                {
+                    "prompt_memory_entry_id": prompt_id,
+                    "position": position,
+                    "converter_identifier_hash": identifier_hash,
+                },
+            )
+
+
 def _backfill_target_identifiers() -> None:
     """
     Populate ``TargetIdentifiers`` / ``TargetIdentifierChildren`` and set
     ``Conversations.target_identifier_hash``.
 
     For every ``Conversations`` row with a non-null ``target_identifier`` JSON,
-    reconstruct the ``TargetIdentifier`` (recomputing its content hash), insert the
+    load the retained ``TargetIdentifier`` shape and its stored hash, insert the
     deduped ``TargetIdentifiers`` row if absent -- recursing into any inner
     ``targets`` first so the child edge foreign keys resolve -- record the
     ``parent_hash -> child_hash`` edges, and point the conversation's
@@ -704,7 +778,10 @@ def _backfill_target_identifiers() -> None:
     """
     bind = op.get_bind()
     rows = bind.execute(
-        sa.text('SELECT conversation_id, target_identifier FROM "Conversations" WHERE target_identifier IS NOT NULL')
+        sa.text(
+            'SELECT conversation_id, target_identifier FROM "Conversations" '
+            "WHERE target_identifier IS NOT NULL ORDER BY conversation_id"
+        )
     ).fetchall()
 
     update_stmt = sa.text('UPDATE "Conversations" SET target_identifier_hash = :hash WHERE conversation_id = :cid')
@@ -716,14 +793,23 @@ def _backfill_target_identifiers() -> None:
         if identifier is None:
             skipped += 1
             continue
-        try:
-            identifier_hash = inserter.insert_target(identifier)
-            if identifier_hash:
-                bind.execute(update_stmt, {"hash": identifier_hash, "cid": conversation_id})
-                linked += 1
-        except Exception:
+        operation = partial(
+            _insert_identifier_link,
+            bind=bind,
+            insert=inserter.insert_target,
+            identifier=identifier,
+            update_statement=update_stmt,
+            update_values={"cid": conversation_id},
+        )
+        if _run_best_effort_row(
+            bind=bind,
+            description=f"TargetIdentifiers backfill skipped conversation {conversation_id!r}",
+            operation=operation,
+        ):
+            linked += 1
+        else:
             skipped += 1
-            logger.warning(f"TargetIdentifiers backfill skipped conversation {conversation_id!r}", exc_info=True)
+            inserter = IdentifierGraphInserter(bind=bind)
 
     if linked or skipped:
         logger.info(f"TargetIdentifiers backfill linked {linked} conversation(s); skipped {skipped}.")
@@ -733,7 +819,10 @@ def _backfill_scorer_identifiers() -> None:
     """Backfill scorer rows and score foreign keys from retained JSON."""
     bind = op.get_bind()
     score_rows = bind.execute(
-        sa.text('SELECT id, scorer_class_identifier FROM "ScoreEntries" WHERE scorer_class_identifier IS NOT NULL')
+        sa.text(
+            'SELECT id, scorer_class_identifier FROM "ScoreEntries" '
+            "WHERE scorer_class_identifier IS NOT NULL ORDER BY id"
+        )
     ).fetchall()
     score_update = sa.text('UPDATE "ScoreEntries" SET scorer_identifier_hash = :hash WHERE id = :id')
     inserter = IdentifierGraphInserter(bind=bind)
@@ -743,16 +832,21 @@ def _backfill_scorer_identifiers() -> None:
         if identifier is None:
             skipped += 1
             continue
-        try:
-            identifier_hash = inserter.insert_scorer(identifier)
-            if identifier_hash:
-                bind.execute(score_update, {"hash": identifier_hash, "id": score_id})
-        except Exception:
+        operation = partial(
+            _insert_identifier_link,
+            bind=bind,
+            insert=inserter.insert_scorer,
+            identifier=identifier,
+            update_statement=score_update,
+            update_values={"id": score_id},
+        )
+        if not _run_best_effort_row(
+            bind=bind,
+            description=f"ScorerIdentifiers backfill: could not reconstruct scorer for score {score_id}",
+            operation=operation,
+        ):
             skipped += 1
-            logger.warning(
-                f"ScorerIdentifiers backfill: could not reconstruct scorer for score {score_id}",
-                exc_info=True,
-            )
+            inserter = IdentifierGraphInserter(bind=bind)
     if skipped:
         logger.warning(f"ScorerIdentifiers backfill skipped {skipped} score row(s)")
 
@@ -761,7 +855,10 @@ def _backfill_scenario_identifiers() -> None:
     """Backfill scenario rows and result foreign keys from retained JSON."""
     bind = op.get_bind()
     result_rows = bind.execute(
-        sa.text('SELECT id, scenario_identifier FROM "ScenarioResultEntries" WHERE scenario_identifier IS NOT NULL')
+        sa.text(
+            'SELECT id, scenario_identifier FROM "ScenarioResultEntries" '
+            "WHERE scenario_identifier IS NOT NULL ORDER BY id"
+        )
     ).fetchall()
     update_stmt = sa.text('UPDATE "ScenarioResultEntries" SET scenario_identifier_hash = :hash WHERE id = :id')
     inserter = IdentifierGraphInserter(bind=bind)
@@ -771,16 +868,21 @@ def _backfill_scenario_identifiers() -> None:
         if identifier is None:
             skipped += 1
             continue
-        try:
-            identifier_hash = inserter.insert_scenario(identifier)
-            if identifier_hash:
-                bind.execute(update_stmt, {"hash": identifier_hash, "id": result_id})
-        except Exception:
+        operation = partial(
+            _insert_identifier_link,
+            bind=bind,
+            insert=inserter.insert_scenario,
+            identifier=identifier,
+            update_statement=update_stmt,
+            update_values={"id": result_id},
+        )
+        if not _run_best_effort_row(
+            bind=bind,
+            description=f"ScenarioIdentifiers backfill: could not reconstruct scenario for result {result_id}",
+            operation=operation,
+        ):
             skipped += 1
-            logger.warning(
-                f"ScenarioIdentifiers backfill: could not reconstruct scenario for result {result_id}",
-                exc_info=True,
-            )
+            inserter = IdentifierGraphInserter(bind=bind)
     if skipped:
         logger.warning(f"ScenarioIdentifiers backfill skipped {skipped} scenario result row(s)")
 
@@ -791,7 +893,7 @@ def _backfill_converter_identifiers() -> None:
     prompt_rows = bind.execute(
         sa.text(
             'SELECT id, converter_identifiers, pyrit_version FROM "PromptMemoryEntries" '
-            "WHERE converter_identifiers IS NOT NULL"
+            "WHERE converter_identifiers IS NOT NULL ORDER BY id"
         )
     ).fetchall()
     link_insert = sa.text(
@@ -802,26 +904,22 @@ def _backfill_converter_identifiers() -> None:
     inserter = IdentifierGraphInserter(bind=bind)
     skipped = 0
     for prompt_id, stored_identifiers, pyrit_version in prompt_rows:
-        try:
-            for position, identifier in enumerate(load_identifier_list(stored_identifiers)):
-                if identifier.get("pyrit_version") is None:
-                    identifier = {**identifier, "pyrit_version": pyrit_version}
-                identifier_hash = inserter.insert_converter(identifier)
-                if identifier_hash:
-                    bind.execute(
-                        link_insert,
-                        {
-                            "prompt_memory_entry_id": prompt_id,
-                            "position": position,
-                            "converter_identifier_hash": identifier_hash,
-                        },
-                    )
-        except Exception:
+        operation = partial(
+            _insert_converter_links,
+            bind=bind,
+            inserter=inserter,
+            link_statement=link_insert,
+            prompt_id=prompt_id,
+            stored_identifiers=stored_identifiers,
+            pyrit_version=pyrit_version,
+        )
+        if not _run_best_effort_row(
+            bind=bind,
+            description=f"ConverterIdentifiers backfill: could not reconstruct converters for prompt {prompt_id}",
+            operation=operation,
+        ):
             skipped += 1
-            logger.warning(
-                f"ConverterIdentifiers backfill: could not reconstruct converters for prompt {prompt_id}",
-                exc_info=True,
-            )
+            inserter = IdentifierGraphInserter(bind=bind)
     if skipped:
         logger.warning(f"ConverterIdentifiers backfill skipped {skipped} prompt row(s)")
 
@@ -831,7 +929,8 @@ def _backfill_attack_identifiers() -> None:
     bind = op.get_bind()
     result_rows = bind.execute(
         sa.text(
-            'SELECT id, atomic_attack_identifier FROM "AttackResultEntries" WHERE atomic_attack_identifier IS NOT NULL'
+            'SELECT id, atomic_attack_identifier FROM "AttackResultEntries" '
+            "WHERE atomic_attack_identifier IS NOT NULL ORDER BY id"
         )
     ).fetchall()
     inserter = IdentifierGraphInserter(bind=bind)
@@ -842,15 +941,20 @@ def _backfill_attack_identifiers() -> None:
         if identifier is None:
             skipped += 1
             continue
-        try:
-            identifier_hash = inserter.insert_atomic_attack(identifier)
-            if identifier_hash:
-                bind.execute(update_stmt, {"hash": identifier_hash, "id": result_id})
-        except Exception:
+        operation = partial(
+            _insert_identifier_link,
+            bind=bind,
+            insert=inserter.insert_atomic_attack,
+            identifier=identifier,
+            update_statement=update_stmt,
+            update_values={"id": result_id},
+        )
+        if not _run_best_effort_row(
+            bind=bind,
+            description=f"Attack identifier backfill could not reconstruct result {result_id}",
+            operation=operation,
+        ):
             skipped += 1
-            logger.warning(
-                f"Attack identifier backfill could not reconstruct result {result_id}",
-                exc_info=True,
-            )
+            inserter = IdentifierGraphInserter(bind=bind)
     if skipped:
         logger.warning(f"Attack identifier backfill skipped {skipped} attack result row(s)")

@@ -921,6 +921,90 @@ def test_identifier_migrations_are_nullable_and_best_effort_with_malformed_json(
             engine.dispose()
 
 
+def test_identifier_migration_reuses_edges_and_rolls_back_conflicting_row():
+    """Repeated graphs reuse edges while a conflicting row is isolated in its savepoint."""
+    child_hash = "a" * 64
+    conflicting_child_hash = "b" * 64
+    parent_hash = "c" * 64
+    healthy_hash = "d" * 64
+    child = {"hash": child_hash, "class_name": "Child", "class_module": "test"}
+    parent = {
+        "hash": parent_hash,
+        "class_name": "Parent",
+        "class_module": "test",
+        "children": {"targets": [child]},
+    }
+    conflicting_parent = {
+        **parent,
+        "children": {
+            "targets": [{"hash": conflicting_child_hash, "class_name": "OtherChild", "class_module": "test"}]
+        },
+    }
+    healthy = {"hash": healthy_hash, "class_name": "Healthy", "class_module": "test"}
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        engine = create_engine(f"sqlite:///{os.path.join(temp_dir, 'identifier-row-savepoints.db')}")
+        try:
+            with engine.begin() as connection:
+                config = _config_for(connection)
+                command.upgrade(config, "d4e6f8a0b2c4")
+                insert_statement = text(
+                    'INSERT INTO "Conversations" (conversation_id, target_identifier) VALUES (:id, :identifier)'
+                )
+                for conversation_id, identifier in (
+                    ("01-original", parent),
+                    ("02-duplicate", parent),
+                    ("03-conflict", conflicting_parent),
+                    ("04-healthy", healthy),
+                ):
+                    connection.execute(
+                        insert_statement,
+                        {"id": conversation_id, "identifier": json.dumps(identifier)},
+                    )
+
+                command.upgrade(config, "e5f7a9c1b3d2")
+
+                links = connection.execute(
+                    text(
+                        'SELECT conversation_id, target_identifier_hash FROM "Conversations" '
+                        "ORDER BY conversation_id"
+                    )
+                ).fetchall()
+                target_hashes = set(connection.execute(text('SELECT hash FROM "TargetIdentifiers"')).scalars())
+                edges = connection.execute(
+                    text('SELECT parent_hash, position, child_hash FROM "TargetIdentifierChildren"')
+                ).fetchall()
+
+            assert links == [
+                ("01-original", parent_hash),
+                ("02-duplicate", parent_hash),
+                ("03-conflict", None),
+                ("04-healthy", healthy_hash),
+            ]
+            assert target_hashes == {child_hash, parent_hash, healthy_hash}
+            assert edges == [(parent_hash, 0, child_hash)]
+        finally:
+            engine.dispose()
+
+
+def test_identifier_migration_downgrade_drops_link_constraints_and_columns():
+    """Downgrade removes identifier foreign keys before removing their columns."""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        engine = create_engine(f"sqlite:///{os.path.join(temp_dir, 'identifier-downgrade.db')}")
+        try:
+            with engine.begin() as connection:
+                config = _config_for(connection)
+                command.upgrade(config, "e5f7a9c1b3d2")
+                command.downgrade(config, "d4e6f8a0b2c4")
+
+                assert "target_identifier_hash" not in {
+                    column["name"] for column in inspect(connection).get_columns("Conversations")
+                }
+                assert "TargetIdentifiers" not in set(inspect(connection).get_table_names())
+        finally:
+            engine.dispose()
+
+
 def test_identifier_migrations_do_not_import_domain_models():
     """Frozen identifier migrations operate on retained JSON rather than current domain models."""
     versions_dir = Path(__file__).resolve().parents[3] / "pyrit" / "memory" / "alembic" / "versions"
