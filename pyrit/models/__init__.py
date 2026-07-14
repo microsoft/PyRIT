@@ -84,6 +84,7 @@ from pyrit.models.messages.chat_message import (
     ToolCall,
 )
 from pyrit.models.messages.conversation_reference import ConversationReference, ConversationType
+from pyrit.models.messages.conversation_retry import ConversationRetry, ConversationRetryReason
 from pyrit.models.parameter import (
     ComponentType,
     Parameter,
@@ -138,6 +139,8 @@ __all__ = [
     "ConverterIdentifier",
     "Conversation",
     "ConversationReference",
+    "ConversationRetry",
+    "ConversationRetryReason",
     "ConversationStats",
     "ConversationType",
     "construct_response_from_request",

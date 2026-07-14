@@ -529,7 +529,7 @@ class TestGetNextMessageAsync:
 
     async def test_no_response_raises(self):
         manager = _manager(prompt_normalizer=_normalizer(None))
-        with pytest.raises(ValueError, match="No response received from adversarial chat"):
+        with pytest.raises(ValueError, match="No response received for conversation ID"):
             await manager.get_next_message_async(turn_index=1, last_response=_response_message())
 
     async def test_invalid_reply_raises(self):
@@ -774,7 +774,7 @@ class TestGenerateAdversarialReplyAsync:
 
     async def test_no_response_raises(self):
         manager = _manager(adversarial_system_prompt=_system_prompt(schema=SCHEMA), prompt_normalizer=_normalizer(None))
-        with pytest.raises(ValueError, match="No response received from adversarial chat"):
+        with pytest.raises(ValueError, match="No response received for conversation ID"):
             await manager.generate_adversarial_reply_async(prompt_text="x")
 
     async def test_invalid_json_raises(self):
