@@ -55,6 +55,10 @@ class EntraAuthMiddleware(BaseHTTPMiddleware):
     # Hosts the user's Bearer token may be forwarded to
     _GRAPH_HOSTS: ClassVar[set[str]] = {"graph.microsoft.com"}
 
+    # Trusted URL for resolving group membership; built from a constant (not the
+    # token-supplied endpoint) so token data cannot control the request destination.
+    _GRAPH_MEMBER_OBJECTS_URL: ClassVar[str] = "https://graph.microsoft.com/v1.0/me/getMemberObjects"
+
     def __init__(self, app: ASGIApp) -> None:
         """Initialize the middleware with Entra ID configuration from environment variables."""
         super().__init__(app)
@@ -171,42 +175,34 @@ class EntraAuthMiddleware(BaseHTTPMiddleware):
         """
         Resolve group membership via Microsoft Graph when user is in >200 groups.
 
-        When a user is in >200 groups, Entra ID replaces the `groups` claim with
-        `_claim_sources` containing a Graph API endpoint. This method calls the
-        Microsoft Graph `getMemberObjects` endpoint to retrieve transitive group
-        memberships, using the user's access token.
+        When a user is in >200 groups, Entra ID replaces the `groups` claim with a
+        `_claim_names` / `_claim_sources` overage pointer. This method confirms the
+        overage is present, then calls the Microsoft Graph `getMemberObjects` endpoint
+        to retrieve transitive group memberships, using the user's access token.
 
-        The token is only forwarded to hosts in the Graph allowlist (see
-        ``_is_trusted_graph_url``); untrusted endpoints and pagination links are refused.
+        The Graph URL is built from a trusted constant (``_GRAPH_MEMBER_OBJECTS_URL``)
+        rather than the token-supplied endpoint, so token data cannot control the
+        request host, path, or port. Pagination links from the Graph response are
+        additionally checked against the Graph allowlist (see ``_is_trusted_graph_url``).
 
         Args:
-            claims: The decoded JWT claims containing _claim_sources.
+            claims: The decoded JWT claims containing the group overage pointer.
             token: The raw Bearer token to forward to Graph API.
 
         Returns:
             List of group IDs the user belongs to, or empty list on failure or
-            when the resolution endpoint is not a trusted Graph host.
+            when no group overage is present.
         """
         try:
-            claim_sources = claims.get("_claim_sources", {})
-            src = claim_sources.get("src1", {})
-            endpoint = src.get("endpoint", "")
-
-            if not endpoint:
-                logger.debug("No group resolution endpoint found in _claim_sources")
+            # Entra signals a groups overage via `_claim_names` -> source key -> `_claim_sources`.
+            # We only confirm the overage is present; the endpoint it supplies is intentionally
+            # ignored in favor of a trusted constant so token data cannot control the request.
+            claim_source_key = claims.get("_claim_names", {}).get("groups")
+            if not claim_source_key or claim_source_key not in claims.get("_claim_sources", {}):
+                logger.debug("No group overage claim source found")
                 return []
 
-            # The _claim_sources endpoint may be a legacy graph.windows.net URL.
-            # Rewrite to Microsoft Graph (graph.microsoft.com) which is the
-            # supported API. The legacy Azure AD Graph was retired in 2023.
-            if "graph.windows.net" in endpoint:
-                # Legacy format: https://graph.windows.net/{tenant}/users/{oid}/getMemberObjects
-                # Graph format:  https://graph.microsoft.com/v1.0/me/getMemberObjects
-                endpoint = "https://graph.microsoft.com/v1.0/me/getMemberObjects"
-
-            if not self._is_trusted_graph_url(endpoint):
-                logger.warning("Refusing to forward token to untrusted group resolution endpoint: %s", endpoint)
-                return []
+            endpoint = self._GRAPH_MEMBER_OBJECTS_URL
 
             all_group_ids: list[str] = []
             async with httpx.AsyncClient() as client:
