@@ -102,6 +102,24 @@ class _ModalityFeedbackRouter:
         """``True`` iff no advertised objective input combo is exactly ``{text}``."""
         return not self._objective_text_only_allowed
 
+    def has_forwardable_objective_media(self, *, message: Message | None) -> bool:
+        """
+        Determine whether a prior response can be attached to the objective input.
+
+        Args:
+            message: The most recent accepted objective response.
+
+        Returns:
+            True when at least one media piece matches an advertised objective
+            ``{text, <data_type>}`` input combination.
+        """
+        return bool(
+            self._select_forwardable_media_pieces(
+                message=message,
+                allowed_media_types=self._objective_media_types_with_text,
+            )
+        )
+
     # ------------------------------------------------------------------ #
     # Validation
     # ------------------------------------------------------------------ #
