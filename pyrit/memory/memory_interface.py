@@ -712,9 +712,7 @@ class MemoryInterface(abc.ABC):
             identifier_hashes=identifier_hashes,
             filters={
                 "class_name": class_name,
-                "supported_input_types": (
-                    list(supported_input_types) if supported_input_types is not None else None
-                ),
+                "supported_input_types": (list(supported_input_types) if supported_input_types is not None else None),
                 "supported_output_types": (
                     list(supported_output_types) if supported_output_types is not None else None
                 ),

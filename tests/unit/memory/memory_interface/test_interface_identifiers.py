@@ -267,9 +267,7 @@ def test_get_identifiers_rejects_missing_identifier_json(sqlite_instance: Memory
 def test_get_identifiers_rejects_hash_mismatch(sqlite_instance: MemoryInterface) -> None:
     target = TargetIdentifier(class_name="Target", class_module="tests.unit.memory")
     identifier_hash = "f" * 64
-    sqlite_instance._insert_entry(
-        TargetIdentifierEntry(hash=identifier_hash, identifier_json=target.model_dump())
-    )
+    sqlite_instance._insert_entry(TargetIdentifierEntry(hash=identifier_hash, identifier_json=target.model_dump()))
 
     with pytest.raises(ValueError, match="does not match its stored JSON hash"):
         sqlite_instance.get_target_identifiers(identifier_hashes=[identifier_hash])
