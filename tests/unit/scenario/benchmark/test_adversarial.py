@@ -15,7 +15,7 @@ state is mutated.
 These tests cover the new contract:
 * Class metadata (VERSION, BASELINE policy, defaults).
 * Technique enum is built from registered factories with ``uses_adversarial=True``
-  and the ``core`` technique tag; ``light`` aggregate preserves the
+  that do not bake their own ``adversarial_chat``; ``light`` aggregate preserves the
   source ``light`` tag (excludes ``tap`` / ``crescendo_simulated``).
 * ``supported_parameters`` declares ``adversarial_targets: list[str]``.
 * ``_resolve_adversarial_targets`` raises with available names on typos.
@@ -76,7 +76,7 @@ def _build_benchmarkable_factories_snapshot() -> list:
         factories = build_technique_factories()
     finally:
         TargetRegistry.reset_registry_singleton()
-    return [f for f in factories if f.uses_adversarial and "core" in f.technique_tags]
+    return [f for f in factories if f.uses_adversarial and f.adversarial_chat is None]
 
 
 _BENCHMARKABLE_FACTORIES = _build_benchmarkable_factories_snapshot()
@@ -202,7 +202,7 @@ class TestAdversarialBenchmarkTechnique:
     """Tests for ``_build_benchmark_technique`` using the registry-based factory API."""
 
     def test_technique_built_from_registered_adversarial_factories(self):
-        """Each registered ``core`` adversarial factory produces one concrete enum member."""
+        """Each registered adversarial factory produces one concrete enum member."""
         technique_cls = _build_benchmark_technique()
         aggregate_names = {"all"} | technique_cls.get_aggregate_tags()
         concrete_members = [m for m in technique_cls if m.value not in aggregate_names]

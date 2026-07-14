@@ -35,8 +35,9 @@ def _build_rapid_response_technique() -> type[ScenarioTechnique]:
     """
     Build the RapidResponse technique class dynamically from the registered factories.
 
-    Reads the singleton ``AttackTechniqueRegistry`` and filters to factories
-    tagged ``core``.
+    Reads every technique registered in the singleton ``AttackTechniqueRegistry``
+    and exposes all of them. Which techniques are available is decided by the
+    active initializer (the registration gate), not narrowed again here.
 
     Returns:
         type[ScenarioTechnique]: The dynamically generated technique enum class.
@@ -50,7 +51,6 @@ def _build_rapid_response_technique() -> type[ScenarioTechnique]:
     return AttackTechniqueRegistry.build_technique_class_from_factories(  # type: ignore[ty:invalid-return-type]
         class_name="RapidResponseTechnique",
         factories=factories,
-        available=TagQuery.all("core"),
         aggregate_tags={
             "single_turn": TagQuery.any_of("single_turn"),
             "multi_turn": TagQuery.any_of("multi_turn"),

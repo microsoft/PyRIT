@@ -35,12 +35,14 @@ def _build_benchmark_technique() -> type[ScenarioTechnique]:
     """
     Build the ``BenchmarkTechnique`` enum from the registered factory catalog.
 
-    Reads ``core`` adversarial-capable factories from the
+    Reads adversarial-capable factories from the
     ``AttackTechniqueRegistry`` singleton and passes them to
     ``build_technique_class_from_factories``. Factories that bake their own
     ``adversarial_chat`` are excluded — the benchmark sweeps each technique
     across the user-supplied targets, which is incompatible with a technique
-    that pins its own adversarial target. The resulting enum has one
+    that pins its own adversarial target. Which techniques are registered is
+    decided by the active initializer (the registration gate); this scenario
+    does not narrow the pool further by group. The resulting enum has one
     concrete member per factory (e.g. ``red_teaming``, ``tap``,
     ``crescendo_simulated``) plus ``default`` / ``light`` / ``single_turn``
     / ``multi_turn`` aggregates derived from each factory's ``technique_tags``.
@@ -56,7 +58,7 @@ def _build_benchmark_technique() -> type[ScenarioTechnique]:
     factories = [
         factory
         for factory in registry.get_factories_or_raise().values()
-        if factory.uses_adversarial and "core" in factory.technique_tags and factory.adversarial_chat is None
+        if factory.uses_adversarial and factory.adversarial_chat is None
     ]
     return AttackTechniqueRegistry.build_technique_class_from_factories(  # type: ignore[ty:invalid-return-type]
         class_name="BenchmarkTechnique",
@@ -82,7 +84,7 @@ class AdversarialBenchmark(Scenario):
 
     At run time, ``_build_atomic_attacks_async`` performs the
     ``(technique × adversarial_target × dataset)`` cross-product: for each
-    selected adversarial-capable ``core`` factory in the
+    selected adversarial-capable factory in the
     ``AttackTechniqueRegistry`` and each requested target, it calls
     ``factory.create(adversarial_chat=...)`` with the
     resolved target — no global registry mutation. The resulting
