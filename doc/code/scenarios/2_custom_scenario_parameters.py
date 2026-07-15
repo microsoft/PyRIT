@@ -198,7 +198,7 @@ from pyrit.cli._output import print_scenario_list
 # Supported Parameters section is visible in one and absent in the other.
 demo_names = {"airt.scam", "foundry.red_team_agent"}
 response = await get_scenario_service().list_scenarios_async(limit=200)  # type: ignore
-print_scenario_list(items=[s.model_dump() for s in response.items if s.scenario_name in demo_names])
+print_scenario_list(items=[s for s in response.items if s.scenario_name in demo_names])
 
 # %% [markdown]
 # Notice the `Supported Parameters:` section under `airt.scam`. It's absent

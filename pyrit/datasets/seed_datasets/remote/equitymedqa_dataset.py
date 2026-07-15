@@ -11,6 +11,7 @@ from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
 from pyrit.models import Modality, SeedDataset, SeedPrompt
+from pyrit.models.harm_category import HarmCategory
 
 if TYPE_CHECKING:
     from pyrit.models.seeds.seed_group import SeedUnion
@@ -185,6 +186,10 @@ class _EquityMedQADataset(_RemoteDatasetLoader):
 
         # Remove duplicates across all subsets
         unique_prompts = list(set(prompts))
+        standardized_harm_categories = self._standardize_harm_categories(
+            "health_bias",
+            alias_overrides={"health_bias": HarmCategory.REPRESENTATIONAL},
+        )
 
         seed_prompts: list[SeedUnion] = [
             SeedPrompt(
@@ -192,7 +197,7 @@ class _EquityMedQADataset(_RemoteDatasetLoader):
                 data_type="text",
                 dataset_name=self.dataset_name,
                 description="This dataset contains prompts used to assess medical biases in AI systems",
-                harm_categories=["health_bias"],
+                harm_categories=standardized_harm_categories,
                 source=f"https://huggingface.co/datasets/{self.source}",
                 authors=self._AUTHORS,
                 groups=self._GROUPS,

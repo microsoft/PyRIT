@@ -115,6 +115,7 @@ from pyrit.models.seeds import (
     group_seeds_into_attack_groups,
 )
 from pyrit.models.target_capabilities import CapabilityName, TargetCapabilities
+from pyrit.models.token_usage import TokenUsage
 
 __all__ = [
     "ALLOWED_CHAT_MESSAGE_ROLES",
@@ -210,6 +211,8 @@ __all__ = [
     "TARGET_EVAL_PARAMS",
     "TargetCapabilities",
     "TargetIdentifier",
+    "TextDataTypeSerializer",
+    "TokenUsage",
     "ToolCall",
     "UnvalidatedScore",
     "validate_registry_name",

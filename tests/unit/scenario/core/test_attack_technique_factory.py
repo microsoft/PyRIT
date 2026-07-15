@@ -70,6 +70,35 @@ class TestFactoryInit:
 
         assert factory.seed_technique is seeds
 
+    def test_init_description_defaults_to_none(self):
+        factory = AttackTechniqueFactory(name="test", attack_class=_StubAttack)
+
+        assert factory.description is None
+
+    def test_init_stores_description(self):
+        factory = AttackTechniqueFactory(
+            name="test",
+            attack_class=_StubAttack,
+            description="Does the thing.",
+        )
+
+        assert factory.description == "Does the thing."
+
+    def test_with_simulated_conversation_forwards_description(self):
+        factory = AttackTechniqueFactory.with_simulated_conversation(
+            name="crescendo_journalist_interview",
+            description="Staged as a journalist interview.",
+        )
+
+        assert factory.description == "Staged as a journalist interview."
+
+    def test_description_does_not_affect_identifier(self):
+        """Description is decorative metadata and must not change the behavioral identity hash."""
+        with_desc = AttackTechniqueFactory(name="test", attack_class=_StubAttack, description="Does the thing.")
+        without_desc = AttackTechniqueFactory(name="test", attack_class=_StubAttack)
+
+        assert with_desc.get_identifier().hash == without_desc.get_identifier().hash
+
     def test_validate_kwargs_accepts_valid_params(self):
         """All valid kwarg names should pass without error."""
         factory = AttackTechniqueFactory(

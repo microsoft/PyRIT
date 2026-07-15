@@ -1,3 +1,15 @@
+# ---
+# jupyter:
+#   jupytext:
+#     cell_metadata_filter: -all
+#     text_representation:
+#       extension: .py
+#       format_name: percent
+#       format_version: '1.3'
+#       jupytext_version: 1.19.4
+# ---
+
+# %%
 from pyrit.output import output_attack_async
 
 # ---
@@ -117,37 +129,35 @@ target3 = OpenAIChatTarget(
 # %% [markdown]
 # ## Setting up Initialization Scripts and Defaults
 #
-# When you call initialize_pyrit_async, you can pass it initialization_scripts and/or initializers. These can do anything, including setting convenience variables. But one of the primary purposes is to set default values. It is recommended to always use an initializer.
+# When you call initialize_pyrit_async, you can pass it initialization_scripts and/or initializers. An initializer is a discrete, ordered unit of startup configuration: it runs once at init time and **prepares PyRIT's shared state** — registering targets/scorers/techniques into their registries, seeding datasets into memory, or setting default values — so downstream consumers (scenarios, attacks, the CLI, the GUI) find what they need without wiring it up by hand. It is recommended to always use an initializer.
+#
+# For a tour of the built-in initializers and how to write your own, see the [initializers](./pyrit_initializer.ipynb) notebook. Here we focus on how that shared state is consumed.
 #
 # ### Using Built-In Initializers
 #
-# Imagine you have an `OpenAIChatTarget`. What is the default?
+# Registering a component is only half the loop — the payoff is that any consumer can later ask a singleton registry for an instance by **name** or **tag** and use it. Importantly, nothing is auto-injected into a hand-built attack: you pull the registered instances back out yourself and wire them in. (Scenarios do this pull for you, which is why a scenario "just works" after these initializers run.)
 #
-# There is no good way to set these generally. An `OpenAIChatTarget` may be gpt-5, but it also might be llama. And these targets might take different parameters. Additionally, what is it being used for? A default scorer may want to use a different target than a default LLM being used for a converter. Should you always use entra auth?
-#
-# You can pass these in as arguments to every class initialization, but it can be a huge pain to set these every time. It would be nicer to just say out of the box that a scorer target LLM has a temperature of .5 by default, and a converter target LLM has a temperature of 1.1 by default. And it turns out you can!
-#
-# The following example shows how to use PyRIT initializers. This tackles a similar scenario to [Common Scenario Parameters](../scenarios/1_common_scenario_parameters.ipynb) but is much easier because defaults are set.
+# The following example runs the built-in `TargetInitializer` and `ScorerInitializer`, then demonstrates the register-then-retrieve loop by pulling a target and a scorer out of their registries and wiring them into an attack.
 
 # %%
-import os
-
-from pyrit.auth import get_azure_openai_auth
 from pyrit.common.path import PYRIT_PATH
 from pyrit.converter import TenseConverter
 from pyrit.executor.attack import (
     AttackConverterConfig,
     AttackExecutor,
+    AttackScoringConfig,
     PromptSendingAttack,
 )
 from pyrit.prompt_normalizer.converter_configuration import (
     ConverterConfiguration,
 )
-from pyrit.prompt_target import OpenAIChatTarget
+from pyrit.registry import ScorerRegistry, TargetRegistry
 from pyrit.setup import initialize_pyrit_async
 from pyrit.setup.initializers import ScorerInitializer, TargetInitializer
+from pyrit.setup.initializers.scorers import ScorerInitializerTags
 
-# This is a way to include the initializer classes directly
+# Run the built-in initializers. ScorerInitializer pulls its chat targets
+# out of the TargetRegistry.
 await initialize_pyrit_async(memory_db_type="InMemory", initializers=[TargetInitializer(), ScorerInitializer()])  # type: ignore
 
 # Alternative approach - you can pass the path to a file that defines PyRITInitializer classes.
@@ -157,9 +167,10 @@ await initialize_pyrit_async(
     memory_db_type="InMemory", initialization_scripts=[f"{PYRIT_PATH}/setup/initializers/targets.py"]
 )  # type: ignore
 
-# TargetInitializer registers sensible default targets for someone who only has OPENAI_CHAT_ENDPOINT, OPENAI_CHAT_MODEL, and OPENAI_CHAT_KEY configured
-# It can easily be combined with other PyRITInitializers (like ScorerInitializer) for a fuller setup
-# get_info_async() is a class method that shows how this initializer configures defaults and what global variables it sets
+# TargetInitializer registers sensible default targets for someone who only has OPENAI_CHAT_ENDPOINT,
+# OPENAI_CHAT_MODEL, and OPENAI_CHAT_KEY configured. It is easily combined with other PyRITInitializers
+# (like ScorerInitializer) for a fuller setup.
+# get_info_async() is a class method describing what an initializer sets up.
 info = await TargetInitializer.get_info_async()  # type: ignore
 for key, value in info.items():
     print(f"{key}: {value}")
@@ -169,23 +180,34 @@ objectives = [
     "Explain the theory of relativity in simple terms",
 ]
 
-# This is similar to the "Baseline-Only Execution" scenario but using defaults
+# The initializers registered instances into shared registries; now we consume them by
+# pulling them back out.
 
-# Create target without extensive configuration (uses defaults from initializer)
-endpoint = os.environ["OPENAI_CHAT_ENDPOINT"]
-objective_target = OpenAIChatTarget(endpoint=endpoint, api_key=get_azure_openai_auth(endpoint))
+# Pull a registered target from the TargetRegistry by its registry name. "openai_chat" is
+# the name TargetInitializer registers the OPENAI_CHAT_* endpoint under.
+target_registry = TargetRegistry.get_registry_singleton()
+objective_target = target_registry.instances.get("openai_chat")
 
-# TenseConverter automatically gets the default converter_target from our initializer
-converters = ConverterConfiguration.from_converters(converters=[TenseConverter(tense="past")])  # type: ignore
+# Pull a task-achieved objective scorer from the ScorerRegistry by tag. TASK_ACHIEVED marks
+# scorers that judge whether the objective was accomplished; we take the first match.
+scorer_registry = ScorerRegistry.get_registry_singleton()
+objective_scorer = scorer_registry.instances.get_by_tag(tag=ScorerInitializerTags.TASK_ACHIEVED)[0].instance
+
+# TenseConverter is an LLM converter, so it needs a chat target - pass one from the registry.
+converters = ConverterConfiguration.from_converters(
+    converters=[TenseConverter(tense="past", converter_target=objective_target)]  # type: ignore
+)
 converter_config = AttackConverterConfig(request_converters=converters)
 
-# Attack automatically gets default scorer configuration from our initializer
+# Wire the registered scorer into the attack explicitly
+scoring_config = AttackScoringConfig(objective_scorer=objective_scorer)  # type: ignore
+
 attack = PromptSendingAttack(
-    objective_target=objective_target,
+    objective_target=objective_target,  # type: ignore
     attack_converter_config=converter_config,
+    attack_scoring_config=scoring_config,
 )
 
-# Execute the attack - all components use sensible defaults
 results = await AttackExecutor().execute_attack_async(attack=attack, objectives=objectives)  # type: ignore
 
 for result in results:
