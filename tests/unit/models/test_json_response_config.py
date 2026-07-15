@@ -123,8 +123,16 @@ def test_ignores_unrelated_metadata_keys():
 
 def test_to_metadata_disabled_is_empty():
     assert JsonResponseConfig(enabled=False).to_metadata() == {}
-    # A schema on a disabled config is not requested, so nothing is serialized.
-    assert JsonResponseConfig(enabled=False, json_schema={"type": "object"}).to_metadata() == {}
+
+
+def test_schema_implies_enabled():
+    # A schema is meaningless without JSON output, so providing one forces enabled.
+    config = JsonResponseConfig(json_schema={"type": "object"})
+    assert config.enabled is True
+    # An explicit enabled=False alongside a schema is coerced rather than kept contradictory.
+    coerced = JsonResponseConfig(enabled=False, json_schema={"type": "object"})
+    assert coerced.enabled is True
+    assert coerced.to_metadata()["response_format"] == "json"
 
 
 def test_to_metadata_enabled_without_schema():

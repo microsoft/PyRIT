@@ -6,7 +6,7 @@ from __future__ import annotations
 import json
 from typing import Any, ClassVar
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, model_validator
 
 from pyrit.models.target.json_schema_definition import (
     JSON_SCHEMA_METADATA_KEY,  # noqa: TC001  (runtime-required by Pydantic field annotations)
@@ -22,6 +22,10 @@ class JsonResponseConfig(BaseModel):
     ``"json_schema_strict"``) and (de)serializes them via ``from_metadata`` / ``to_metadata``.
     Producers (scorers, attacks, converters) build one and call ``to_metadata`` to attach it to
     a piece; targets read it back with ``from_metadata``.
+
+    Providing a ``json_schema`` implies ``enabled`` (a schema is meaningless without JSON output),
+    so JSON-object mode is ``enabled=True`` with no schema and JSON-schema mode is just
+    ``json_schema=...``.
 
     These are PyRIT keys, not a provider's wire format. Translating this config into a specific
     provider's request block (e.g. the OpenAI chat ``response_format`` or Responses ``text.format``
@@ -47,6 +51,12 @@ class JsonResponseConfig(BaseModel):
     json_schema: dict[str, Any] | None = None
     schema_name: str = "CustomSchema"
     strict: bool = True
+
+    @model_validator(mode="after")
+    def _schema_implies_enabled(self) -> JsonResponseConfig:
+        if self.json_schema is not None:
+            self.enabled = True
+        return self
 
     @classmethod
     def from_metadata(cls, *, metadata: dict[str, Any] | None) -> JsonResponseConfig:
