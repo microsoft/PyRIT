@@ -49,7 +49,6 @@ def _make_message_piece(**overrides) -> MessagePiece:
         "converted_value": "hello converted",
         "conversation_id": str(uuid.uuid4()),
         "sequence": 0,
-        "labels": {"label1": "value1"},
         "prompt_metadata": {"meta": "data"},
         "converter_identifiers": [ComponentIdentifier(class_name="NoOp", class_module="pyrit.converters")],
         "original_value_data_type": "text",

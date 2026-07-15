@@ -292,7 +292,6 @@ async def test_send_prompt_async_empty_response_adds_to_memory(openai_response_j
                 converted_value="hello",
                 original_value_data_type="text",
                 converted_value_data_type="text",
-                labels={"test": "test"},
             ),
             MessagePiece(
                 role="user",
@@ -301,7 +300,6 @@ async def test_send_prompt_async_empty_response_adds_to_memory(openai_response_j
                 converted_value=tmp_file_name,
                 original_value_data_type="image_path",
                 converted_value_data_type="image_path",
-                labels={"test": "test"},
             ),
         ]
     )
@@ -398,7 +396,6 @@ async def test_send_prompt_async(openai_response_json: dict, patch_central_datab
                 converted_value="hello",
                 original_value_data_type="text",
                 converted_value_data_type="text",
-                labels={"test": "test"},
             ),
             MessagePiece(
                 role="user",
@@ -407,7 +404,6 @@ async def test_send_prompt_async(openai_response_json: dict, patch_central_datab
                 converted_value=tmp_file_name,
                 original_value_data_type="image_path",
                 converted_value_data_type="image_path",
-                labels={"test": "test"},
             ),
         ]
     )
@@ -459,7 +455,6 @@ async def test_send_prompt_async_empty_response_retries(openai_response_json: di
                 converted_value="hello",
                 original_value_data_type="text",
                 converted_value_data_type="text",
-                labels={"test": "test"},
             ),
             MessagePiece(
                 role="user",
@@ -468,7 +463,6 @@ async def test_send_prompt_async_empty_response_retries(openai_response_json: di
                 converted_value=tmp_file_name,
                 original_value_data_type="image_path",
                 converted_value_data_type="image_path",
-                labels={"test": "test"},
             ),
         ]
     )

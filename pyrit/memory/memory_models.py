@@ -251,7 +251,6 @@ class PromptMemoryEntry(Base):
     conversation_id = mapped_column(String, nullable=False)
     sequence = mapped_column(INTEGER, nullable=False)
     timestamp = mapped_column(UTCDateTime, nullable=False)
-    labels: Mapped[dict[str, str]] = mapped_column(JSON)
     prompt_metadata: Mapped[dict[str, str | int]] = mapped_column(JSON)
     converter_identifiers: Mapped[list[dict[str, str]] | None] = mapped_column(JSON)
     response_error: Mapped[Literal["blocked", "none", "processing", "unknown"]] = mapped_column(String, nullable=True)
@@ -291,7 +290,6 @@ class PromptMemoryEntry(Base):
         self.conversation_id = entry.conversation_id
         self.sequence = entry.sequence
         self.timestamp = entry.timestamp
-        self.labels = entry.labels
         self.prompt_metadata = entry.prompt_metadata
         self.converter_identifiers = [identifier.model_dump() for identifier in entry.converter_identifiers]
 
@@ -335,7 +333,6 @@ class PromptMemoryEntry(Base):
             response_error=self.response_error or "none",
             original_prompt_id=self.original_prompt_id,
             timestamp=self.timestamp,
-            labels=self.labels or {},
         )
 
     def __str__(self) -> str:

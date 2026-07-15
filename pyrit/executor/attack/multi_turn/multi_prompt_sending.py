@@ -360,9 +360,6 @@ class MultiPromptSendingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[An
             objective_target_conversation_id=context.session.conversation_id,
             objective=context.objective,
         ):
-            if context.memory_labels:
-                for piece in current_message.message_pieces:
-                    piece.labels = context.memory_labels
             return await self._prompt_normalizer.send_prompt_async(
                 message=current_message,
                 target=self._objective_target,

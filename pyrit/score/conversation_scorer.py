@@ -109,7 +109,6 @@ class ConversationScorer(Scorer, ABC):
                     converted_value=conversation_text,
                     id=original_piece.id,
                     conversation_id=original_piece.conversation_id,
-                    labels=original_piece.labels,
                     original_value_data_type="text",
                     converted_value_data_type="text",
                     response_error="none",

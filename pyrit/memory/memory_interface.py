@@ -1329,21 +1329,6 @@ class MemoryInterface(abc.ABC):
             logger.error(f"Failed to update entries with conversation_id {conversation_id}.")
         return success
 
-    def update_labels_by_conversation_id(self, *, conversation_id: str, labels: dict[str, Any]) -> bool:
-        """
-        Update the labels of prompt entries in memory for a given conversation ID.
-
-        Args:
-            conversation_id (str): The conversation ID of the entries to be updated.
-            labels (dict): New dictionary of labels.
-
-        Returns:
-            bool: True if the update was successful, False otherwise.
-        """
-        return self.update_prompt_entries_by_conversation_id(
-            conversation_id=conversation_id, update_fields={"labels": labels}
-        )
-
     def update_prompt_metadata_by_conversation_id(
         self, *, conversation_id: str, prompt_metadata: dict[str, str | int]
     ) -> bool:
@@ -2080,12 +2065,6 @@ class MemoryInterface(abc.ABC):
         """
         Return all unique label key-value pairs across attack results.
 
-        Labels may live on ``PromptMemoryEntry.labels`` (joined via
-        conversation_id) **or** directly on ``AttackResultEntry.labels``.
-        Both sources are queried (OR logic, mirroring the label filter
-        behaviour in ``get_attack_results``), and unique key-value pairs
-        are aggregated in Python.
-
         Returns:
             dict[str, list[str]]: Mapping of label keys to sorted lists of
             unique values.
@@ -2093,24 +2072,11 @@ class MemoryInterface(abc.ABC):
         label_values: dict[str, set[str]] = {}
 
         with closing(self.get_session()) as session:
-            # Labels from PromptMemoryEntry linked to an attack
-            pme_rows = (
-                session.query(PromptMemoryEntry.labels)
-                .join(
-                    AttackResultEntry,
-                    PromptMemoryEntry.conversation_id == AttackResultEntry.conversation_id,
-                )
-                .filter(PromptMemoryEntry.labels.isnot(None))
-                .distinct()
-                .all()
-            )
-
-            # Labels directly on AttackResultEntry
             are_rows = (
                 session.query(AttackResultEntry.labels).filter(AttackResultEntry.labels.isnot(None)).distinct().all()
             )
 
-        for (labels,) in (*pme_rows, *are_rows):
+        for (labels,) in are_rows:
             if not isinstance(labels, dict):
                 continue
             for key, value in labels.items():

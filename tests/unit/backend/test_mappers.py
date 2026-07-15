@@ -1060,25 +1060,6 @@ class TestRequestPieceToPyritMessagePiece:
 
         assert result.prompt_metadata == {}
 
-    def test_labels_default_to_empty_dict(self) -> None:
-        """Test that labels default to empty dict when not provided."""
-        piece = MagicMock()
-        piece.data_type = "text"
-        piece.original_value = "hello"
-        piece.converted_value = None
-        piece.mime_type = None
-        piece.prompt_metadata = None
-        piece.original_prompt_id = None
-
-        result = request_piece_to_pyrit_message_piece(
-            piece=piece,
-            role="user",
-            conversation_id="conv-1",
-            sequence=0,
-        )
-
-        assert result.labels == {}
-
     def test_original_prompt_id_forwarded_when_provided(self) -> None:
         """Test that original_prompt_id is passed through for lineage tracking."""
         piece = MagicMock()

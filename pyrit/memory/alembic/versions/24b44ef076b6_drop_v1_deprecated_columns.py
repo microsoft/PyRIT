@@ -7,6 +7,8 @@ Drop columns whose compatibility windows end at the v1 boundary.
 ``ScoreEntries.objective`` replaces ``task``. Scenario attack results are
 linked through ``AttackResultEntries.attribution_parent_id`` and grouped by
 ``attribution_data.parent_collection``, replacing the serialized manifest.
+Message labels now live on ``AttackResultEntries`` rather than
+``PromptMemoryEntries``.
 
 Revision ID: 24b44ef076b6
 Revises: d4e6f8a0b2c4
@@ -22,6 +24,7 @@ from typing import Any
 
 import sqlalchemy as sa
 from alembic import op
+from sqlalchemy.dialects import sqlite
 
 # revision identifiers, used by Alembic.
 revision: str = "24b44ef076b6"
@@ -38,10 +41,15 @@ def upgrade() -> None:
         batch_op.drop_column("task")
     with op.batch_alter_table("ScenarioResultEntries") as batch_op:
         batch_op.drop_column("attack_results_json")
+    with op.batch_alter_table("PromptMemoryEntries") as batch_op:
+        batch_op.drop_column("labels")
 
 
 def downgrade() -> None:
     """Revert this schema upgrade."""
+    with op.batch_alter_table("PromptMemoryEntries") as batch_op:
+        batch_op.add_column(sa.Column("labels", sqlite.JSON(), nullable=False))
+
     with op.batch_alter_table("ScoreEntries") as batch_op:
         batch_op.add_column(sa.Column("task", sa.String(), nullable=True))
     op.execute(sa.text('UPDATE "ScoreEntries" SET task = objective'))

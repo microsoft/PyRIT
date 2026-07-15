@@ -1,15 +1,14 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-import json
 import logging
 import struct
 from collections.abc import MutableSequence, Sequence
-from contextlib import closing, suppress
+from contextlib import closing
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast
 
-from sqlalchemy import and_, create_engine, event, exists, or_, text
+from sqlalchemy import and_, create_engine, event, exists, text
 from sqlalchemy.engine.base import Engine
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import InstrumentedAttribute, joinedload, sessionmaker
@@ -259,8 +258,7 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
 
         Uses JSON_VALUE() function specific to SQL Azure to query label fields in JSON format.
 
-        Matches if labels are on the PromptMemoryEntry itself OR on any
-        AttackResultEntry that shares the same conversation_id.
+        Matches labels on an AttackResultEntry that shares the same conversation_id.
 
         Args:
             memory_labels (dict[str, str]): Dictionary of label key-value pairs to filter by.
@@ -268,33 +266,14 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
         Returns:
             list: List containing a single SQLAlchemy OR condition with bound parameters.
         """
-        # Build conditions for direct PME label match
-        pme_label_parts: list[str] = []
-        pme_bindparams: dict[str, str] = {}
-        # Build conditions for AR label match (via exists subquery)
         are_label_parts: list[str] = []
         are_bindparams: dict[str, str] = {}
 
         for key, value in memory_labels.items():
-            pme_param = f"pme_ml_{key}"
-            pme_label_parts.append(f"JSON_VALUE(\"PromptMemoryEntries\".labels, '$.{key}') = :{pme_param}")
-            pme_bindparams[pme_param] = str(value)
-
             are_param = f"are_ml_{key}"
             are_label_parts.append(f"JSON_VALUE(\"AttackResultEntries\".labels, '$.{key}') = :{are_param}")
             are_bindparams[are_param] = str(value)
 
-        # Direct PME label match
-        combined_pme = " AND ".join(pme_label_parts)
-        pme_match = and_(
-            PromptMemoryEntry.labels.isnot(None),
-            cast(
-                "ColumnElement[bool]",
-                text(f'ISJSON("PromptMemoryEntries".labels) = 1 AND {combined_pme}').bindparams(**pme_bindparams),
-            ),
-        )
-
-        # AR label match via exists subquery
         combined_are = " AND ".join(are_label_parts)
         are_match = exists().where(
             and_(
@@ -307,7 +286,7 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
             )
         )
 
-        return [or_(pme_match, are_match)]
+        return [are_match]
 
     def _get_metadata_conditions(self, *, prompt_metadata: dict[str, str | int]) -> list[TextClause]:
         """
@@ -476,8 +455,7 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
         """
         Azure SQL implementation for filtering AttackResults by labels.
 
-        Matches if labels are on any associated PromptMemoryEntry OR directly
-        on the AttackResultEntry itself.
+        Matches labels directly on the AttackResultEntry.
 
         Uses JSON_VALUE() with parameterized IN clauses. See
         ``MemoryInterface._get_attack_result_label_condition`` for semantics.
@@ -485,10 +463,6 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
         Returns:
             Any: SQLAlchemy condition with bound parameters.
         """
-        # Build conditions for PromptMemoryEntry labels (via exists subquery)
-        pme_label_conditions: list[str] = []
-        pme_bindparams: dict[str, str] = {}
-        # Build conditions for AttackResultEntry labels (direct match)
         are_label_conditions: list[str] = []
         are_bindparams: dict[str, str] = {}
 
@@ -496,36 +470,14 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
             values = [raw_value] if isinstance(raw_value, str) else list(raw_value)
             if not values:
                 continue
-            pme_placeholders = []
             are_placeholders = []
             for idx, v in enumerate(values):
-                pme_param = f"pme_label_{key}_{idx}"
-                pme_placeholders.append(f":{pme_param}")
-                pme_bindparams[pme_param] = str(v)
                 are_param = f"are_label_{key}_{idx}"
                 are_placeholders.append(f":{are_param}")
                 are_bindparams[are_param] = str(v)
-            pme_in = ", ".join(pme_placeholders)
-            pme_label_conditions.append(f"JSON_VALUE(\"PromptMemoryEntries\".labels, '$.{key}') IN ({pme_in})")
             are_in = ", ".join(are_placeholders)
             are_label_conditions.append(f"JSON_VALUE(\"AttackResultEntries\".labels, '$.{key}') IN ({are_in})")
 
-        # PromptMemoryEntry subquery
-        pme_base: list[Any] = [
-            PromptMemoryEntry.conversation_id == AttackResultEntry.conversation_id,
-            PromptMemoryEntry.labels.isnot(None),
-        ]
-        if pme_label_conditions:
-            combined_pme = " AND ".join(pme_label_conditions)
-            pme_base.append(
-                cast(
-                    "ColumnElement[bool]",
-                    text(f'ISJSON("PromptMemoryEntries".labels) = 1 AND {combined_pme}').bindparams(**pme_bindparams),
-                )
-            )
-        pme_match = exists().where(and_(*pme_base))
-
-        # Direct AttackResultEntry label match
         are_parts: list[Any] = [AttackResultEntry.labels.isnot(None)]
         if are_label_conditions:
             combined_are = " AND ".join(are_label_conditions)
@@ -535,9 +487,7 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
                     text(f'ISJSON("AttackResultEntries".labels) = 1 AND {combined_are}').bindparams(**are_bindparams),
                 )
             )
-        are_match = and_(*are_parts)
-
-        return or_(pme_match, are_match)
+        return and_(*are_parts)
 
     def get_unique_attack_class_names(self) -> list[str]:
         """
@@ -587,8 +537,8 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
         Azure SQL implementation: lightweight aggregate stats per conversation.
 
         Executes a single SQL query that returns message count (distinct
-        sequences), a truncated last-message preview, the first non-empty
-        labels dict, and the earliest timestamp for each conversation_id.
+        sequences), a truncated last-message preview, and the earliest
+        timestamp for each conversation_id.
 
         Args:
             conversation_ids (Sequence[str]): The conversation IDs to query.
@@ -619,15 +569,6 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
                     WHERE p2b.conversation_id = pme.conversation_id
                     ORDER BY p2b.sequence DESC, p2b.id DESC
                 ) AS last_data_type,
-                (
-                    SELECT TOP 1 p3.labels
-                    FROM "PromptMemoryEntries" p3
-                    WHERE p3.conversation_id = pme.conversation_id
-                      AND p3.labels IS NOT NULL
-                      AND p3.labels != '{{}}'
-                      AND p3.labels != 'null'
-                    ORDER BY p3.sequence ASC, p3.id ASC
-                ) AS first_labels,
                 MIN(pme.timestamp) AS created_at
             FROM "PromptMemoryEntries" pme
             WHERE pme.conversation_id IN ({placeholders})
@@ -640,12 +581,7 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
 
         result: dict[str, ConversationStats] = {}
         for row in rows:
-            conv_id, msg_count, last_preview, last_data_type, raw_labels, raw_created_at = row
-
-            labels: dict[str, str] = {}
-            if raw_labels and raw_labels not in ("null", "{}"):
-                with suppress(ValueError, TypeError):
-                    labels = json.loads(raw_labels)
+            conv_id, msg_count, last_preview, last_data_type, raw_created_at = row
 
             created_at = None
             if raw_created_at is not None:
@@ -658,7 +594,6 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
                 message_count=msg_count,
                 last_message_preview=last_preview,
                 last_message_data_type=last_data_type,
-                labels=labels,
                 created_at=created_at,
             )
 
