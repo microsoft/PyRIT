@@ -762,6 +762,95 @@ class TestInitializeContext:
         assert "Next message" in text_value
         assert "Hello" in text_value or "doing well" in text_value
 
+    async def test_system_prompt_for_non_chat_target_preserves_instruction_and_objective(
+        self,
+        attack_identifier: ComponentIdentifier,
+        mock_prompt_target: MagicMock,
+    ) -> None:
+        manager = ConversationManager()
+        context = _TestAttackContext(params=AttackParameters(objective="Explain saponification"))
+        context.prepended_conversation = [Message.from_system_prompt("You are a chemistry tutor")]
+
+        await manager.initialize_context_async(
+            context=context,
+            target=mock_prompt_target,
+            conversation_id=str(uuid.uuid4()),
+        )
+
+        assert context.next_message is not None
+        assert context.next_message.get_value() == "Turn 1:\nuser: You are a chemistry tutor\n\nExplain saponification"
+
+        await manager.initialize_context_async(
+            context=context,
+            target=mock_prompt_target,
+            conversation_id=str(uuid.uuid4()),
+        )
+
+        assert context.next_message.get_value() == "Turn 1:\nuser: You are a chemistry tutor\n\nExplain saponification"
+
+    async def test_system_prompt_for_non_chat_target_preserves_supplied_next_message(
+        self,
+        attack_identifier: ComponentIdentifier,
+        mock_prompt_target: MagicMock,
+    ) -> None:
+        manager = ConversationManager()
+        context = _TestAttackContext(
+            params=AttackParameters(
+                objective="Unused objective",
+                next_message=Message.from_prompt(prompt="Caller-supplied question", role="user"),
+            )
+        )
+        context.prepended_conversation = [Message.from_system_prompt("Follow the policy")]
+
+        await manager.initialize_context_async(
+            context=context,
+            target=mock_prompt_target,
+            conversation_id=str(uuid.uuid4()),
+        )
+
+        assert context.next_message is not None
+        assert context.next_message.get_value() == "Turn 1:\nuser: Follow the policy\n\nCaller-supplied question"
+
+    async def test_system_prompt_for_non_chat_target_preserves_multimodal_next_message(
+        self,
+        attack_identifier: ComponentIdentifier,
+        mock_prompt_target: MagicMock,
+    ) -> None:
+        manager = ConversationManager()
+        image_piece = MessagePiece(
+            role="user",
+            original_value="diagram.png",
+            original_value_data_type="image_path",
+        )
+        context = _TestAttackContext(
+            params=AttackParameters(
+                objective="Unused objective",
+                next_message=Message(message_pieces=[image_piece]),
+            )
+        )
+        context.prepended_conversation = [Message.from_system_prompt("Describe images precisely")]
+
+        await manager.initialize_context_async(
+            context=context,
+            target=mock_prompt_target,
+            conversation_id=str(uuid.uuid4()),
+        )
+
+        assert context.next_message is not None
+        assert len(context.next_message.message_pieces) == 2
+        assert context.next_message.message_pieces[0].converted_value == "Turn 1:\nuser: Describe images precisely"
+        assert context.next_message.message_pieces[1].converted_value == "diagram.png"
+        assert context.next_message.message_pieces[1].original_value_data_type == "image_path"
+
+        await manager.initialize_context_async(
+            context=context,
+            target=mock_prompt_target,
+            conversation_id=str(uuid.uuid4()),
+        )
+
+        assert len(context.next_message.message_pieces) == 2
+        assert context.next_message.message_pieces[0].converted_value == "Turn 1:\nuser: Describe images precisely"
+
     async def test_returns_turn_count_for_multi_turn_attacks(
         self,
         attack_identifier: ComponentIdentifier,

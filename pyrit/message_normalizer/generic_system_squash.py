@@ -8,12 +8,12 @@ from pyrit.models import Message, MessagePiece
 
 class GenericSystemSquashNormalizer(MessageListNormalizer[Message]):
     """
-    Normalizer that combines the first system message with the first user message using generic instruction tags.
+    Normalizer that combines system messages with the first user message using generic instruction tags.
     """
 
     async def normalize_async(self, messages: list[Message]) -> list[Message]:
         """
-        Return messages with the first system message combined into the first user message.
+        Return messages with all system messages combined into the first user message.
 
         The format uses generic instruction tags:
         ### Instructions ###
@@ -25,7 +25,7 @@ class GenericSystemSquashNormalizer(MessageListNormalizer[Message]):
             messages: The list of messages to normalize.
 
         Returns:
-            A Message with the system message squashed into the first user message.
+            Messages with system instructions squashed into the first user message.
 
         Raises:
             ValueError: If the messages list is empty.
@@ -33,35 +33,37 @@ class GenericSystemSquashNormalizer(MessageListNormalizer[Message]):
         if not messages:
             raise ValueError("Messages list cannot be empty")
 
-        # Check if first message is a system message
-        first_piece = messages[0].get_piece()
-        if first_piece.api_role != "system":
-            # No system message to squash, return messages unchanged
+        system_messages = [message for message in messages if message.api_role == "system"]
+        if not system_messages:
             return list(messages)
 
-        if len(messages) == 1:
-            # Only system message, convert to user message.
+        system_content = "\n\n".join(
+            piece.converted_value for message in system_messages for piece in message.message_pieces
+        )
+        non_system_messages = [message for message in messages if message.api_role != "system"]
+
+        if not non_system_messages:
             return [
                 build_squashed_user_message(
-                    new_message_content=first_piece.converted_value, source_messages=messages[:1]
+                    new_message_content=system_content,
+                    source_messages=system_messages,
                 )
             ]
 
         user_message_index = next(
-            (i for i, message in enumerate(messages[1:], start=1) if message.api_role == "user"),
+            (i for i, message in enumerate(non_system_messages) if message.api_role == "user"),
             -1,
         )
         if user_message_index == -1:
-            # Preserve the instruction content without rewriting non-user messages.
             return [
                 build_squashed_user_message(
-                    new_message_content=first_piece.converted_value, source_messages=messages[:1]
+                    new_message_content=system_content,
+                    source_messages=system_messages,
                 )
-            ] + list(messages[1:])
+            ] + non_system_messages
 
         # Combine system with the first user message, preserving non-text pieces (e.g. images) and their order.
-        system_content = first_piece.converted_value
-        user_message = messages[user_message_index]
+        user_message = non_system_messages[user_message_index]
         # Propagate prompt_metadata from the user message's first piece so downstream normalizers
         # (e.g. JsonSchemaNormalizer) still see request-level metadata after squashing.
         propagated_metadata = dict(user_message.message_pieces[0].prompt_metadata)
@@ -98,5 +100,8 @@ class GenericSystemSquashNormalizer(MessageListNormalizer[Message]):
 
         squashed_message = Message(message_pieces=squashed_pieces)
 
-        # Remove system (index 0), replace the first user message with the squashed version, preserve all others
-        return list(messages[1:user_message_index]) + [squashed_message] + list(messages[user_message_index + 1 :])
+        return (
+            non_system_messages[:user_message_index]
+            + [squashed_message]
+            + non_system_messages[user_message_index + 1 :]
+        )

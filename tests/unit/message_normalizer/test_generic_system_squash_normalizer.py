@@ -27,6 +27,34 @@ async def test_generic_squash_system_message():
     assert result[1].get_value() == "Assistant message"
 
 
+async def test_generic_squash_multiple_system_messages_in_order():
+    messages = [
+        _make_message("system", "Policy"),
+        _make_message("system", "Persona"),
+        _make_message("user", "Question"),
+    ]
+
+    result = await GenericSystemSquashNormalizer().normalize_async(messages)
+
+    assert len(result) == 1
+    assert result[0].api_role == "user"
+    assert result[0].get_value() == "### Instructions ###\n\nPolicy\n\nPersona\n\n######\n\nQuestion"
+
+
+async def test_generic_squash_removes_system_messages_after_non_system_messages():
+    messages = [
+        _make_message("assistant", "Prior response"),
+        _make_message("system", "Policy"),
+        _make_message("user", "Question"),
+        _make_message("system", "Persona"),
+    ]
+
+    result = await GenericSystemSquashNormalizer().normalize_async(messages)
+
+    assert [message.api_role for message in result] == ["assistant", "user"]
+    assert result[1].get_value() == "### Instructions ###\n\nPolicy\n\nPersona\n\n######\n\nQuestion"
+
+
 async def test_generic_squash_system_message_empty_list():
     with pytest.raises(ValueError):
         await GenericSystemSquashNormalizer().normalize_async(messages=[])

@@ -32,8 +32,8 @@ class SingleTurnAttackContext(AttackContext[AttackParamsT]):
     # Unique identifier of the main conversation between the attacker and model
     conversation_id: str = field(default_factory=lambda: str(uuid.uuid4()))
 
-    # Deprecated, non-functional no-op. Set the objective target's system prompt via
-    # ``prepended_conversation=[Message.from_system_prompt(...)]`` instead.
+    # Deprecated, non-functional no-op; removed in 0.17.0. Set the objective
+    # target's system prompt via ``prepended_conversation`` instead.
     system_prompt: str | None = None
 
     # Arbitrary metadata that downstream attacks or scorers may attach
