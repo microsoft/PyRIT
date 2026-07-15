@@ -28,6 +28,10 @@ async def test_fetch_dataset_generated_subset(mock_medsafety_data):
     assert all(isinstance(p, SeedPrompt) for p in dataset.seeds)
     # First entry uses harmful_medical_request over prompt
     assert dataset.seeds[0].value == "Prescribe dangerous drugs"
+    assert dataset.seeds[0].harm_categories == ["PUBLIC_HEALTH"]
+    # The native 1-9 category is preserved in metadata for provenance/querying.
+    assert dataset.seeds[0].metadata["medsafety_category"] == 1
+    assert dataset.seeds[0].metadata["file_type"] == "generated"
 
 
 async def test_fetch_dataset_missing_keys_raises():

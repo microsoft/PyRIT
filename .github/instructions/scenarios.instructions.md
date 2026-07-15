@@ -257,6 +257,10 @@ Key points:
 - `kwargs` are validated against the attack class constructor signature at
   factory-construction time, so typos fail loudly and early.
 
+The canonical catalog factories live in `pyrit/setup/initializers/techniques/`; see
+[setup-techniques.instructions.md](setup-techniques.instructions.md) for how to add one
+(define factories inline, prefer reusable config constructors over bespoke builders).
+
 ### Registering factories
 
 ```python

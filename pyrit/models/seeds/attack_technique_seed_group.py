@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from pyrit.models.seeds.seed_group import SeedGroup
 from pyrit.models.seeds.seed_objective import SeedObjective
+from pyrit.models.seeds.seed_prompt import SeedPrompt
 
 
 class AttackTechniqueSeedGroup(SeedGroup):
@@ -29,6 +30,29 @@ class AttackTechniqueSeedGroup(SeedGroup):
     # Where to insert technique seeds when merging into a AttackSeedGroup via ``with_technique()``.
     # ``None`` (default) appends at the end; an integer inserts before that position.
     insertion_index: int | None = None
+
+    @classmethod
+    def from_system_prompt(cls, system_prompt: str, *, insertion_index: int | None = None) -> AttackTechniqueSeedGroup:
+        """
+        Build a technique group carrying a single system-role instruction.
+
+        This is the common shape for jailbreaks and role-play techniques whose only
+        payload is a system prompt that should be prepended to every objective. The
+        value is wrapped verbatim (``is_jinja_template=False``), so any literal
+        ``{{ ... }}`` in ``system_prompt`` is preserved rather than re-rendered.
+
+        Args:
+            system_prompt (str): The system-role instruction text.
+            insertion_index (int | None): Where to insert the seed when merging into a
+                ``AttackSeedGroup``. ``None`` (default) appends at the end.
+
+        Returns:
+            AttackTechniqueSeedGroup: A group with a single general-technique system seed.
+        """
+        return cls(
+            seeds=[SeedPrompt(value=system_prompt, data_type="text", role="system", is_general_technique=True)],
+            insertion_index=insertion_index,
+        )
 
     def _check_invariants(self) -> None:
         """

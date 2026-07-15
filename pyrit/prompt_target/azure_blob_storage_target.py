@@ -2,6 +2,7 @@
 # Licensed under the MIT license.
 
 import logging
+import posixpath
 from enum import Enum
 from typing import ClassVar
 from urllib.parse import urlparse
@@ -251,7 +252,7 @@ class AzureBlobStorageTarget(PromptTarget):
         # default file name is <conversation_id>.txt, but can be overridden by prompt metadata
         file_name = f"{request.conversation_id}.txt"
         if request.prompt_metadata.get("file_name"):
-            file_name = str(request.prompt_metadata["file_name"])
+            file_name = self._sanitize_file_name(str(request.prompt_metadata["file_name"]))
 
         data = str.encode(request.converted_value)
         blob_url = self._container_url + "/" + file_name
@@ -263,3 +264,24 @@ class AzureBlobStorageTarget(PromptTarget):
         )
 
         return [response]
+
+    @staticmethod
+    def _sanitize_file_name(file_name: str) -> str:
+        """
+        Validate that *file_name* is a bare leaf name with no path components.
+
+        Guards against path traversal (e.g. ``../../other/x``) that would let a
+        caller-supplied ``file_name`` escape the configured container prefix.
+
+        Args:
+            file_name (str): The caller-supplied file name from prompt metadata.
+
+        Returns:
+            str: The validated file name, unchanged.
+
+        Raises:
+            ValueError: If *file_name* contains path separators or traversal segments.
+        """
+        if file_name != posixpath.basename(file_name) or file_name in (".", "..") or "\\" in file_name:
+            raise ValueError(f"Invalid file_name '{file_name}': must be a bare filename without path separators.")
+        return file_name

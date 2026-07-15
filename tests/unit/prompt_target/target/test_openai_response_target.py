@@ -671,7 +671,8 @@ async def test_build_input_for_multi_modal_async_image_and_text(target: OpenAIRe
     assert result[0]["role"] == "user"
     assert result[0]["content"][0]["type"] == "input_text"
     assert result[0]["content"][1]["type"] == "input_image"
-    assert result[0]["content"][1]["image_url"]["url"].startswith("data:image/jpeg;base64,")
+    assert result[0]["content"][1]["detail"] == "auto"
+    assert result[0]["content"][1]["image_url"].startswith("data:image/jpeg;base64,")
 
 
 async def test_construct_request_body_filters_none(

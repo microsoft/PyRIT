@@ -45,6 +45,8 @@ from pyrit.backend.models.attacks import (
     CreateAttackResponse,
     CreateConversationRequest,
     CreateConversationResponse,
+    MessagePieceRequest,
+    PrependedMessageRequest,
     UpdateAttackRequest,
     UpdateMainConversationRequest,
     UpdateMainConversationResponse,
@@ -347,11 +349,21 @@ class AttackService:
         # Store in memory
         self._memory.add_attack_results_to_memory(attack_results=[attack_result])
 
-        # Store prepended conversation messages if provided
-        if request.prepended_conversation:
+        # Store prepended conversation messages if provided. A system_prompt is lowered to a
+        # single system-role message at the front, composing with any prepended_conversation.
+        prepended = list(request.prepended_conversation or [])
+        if request.system_prompt:
+            prepended.insert(
+                0,
+                PrependedMessageRequest(
+                    role="system",
+                    pieces=[MessagePieceRequest(original_value=request.system_prompt)],
+                ),
+            )
+        if prepended:
             await self._store_prepended_messages_async(
                 conversation_id=conversation_id,
-                prepended=request.prepended_conversation,
+                prepended=prepended,
                 labels=labels,
                 target_identifier=target_identifier,
             )

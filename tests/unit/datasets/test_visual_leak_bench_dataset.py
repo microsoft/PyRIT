@@ -142,7 +142,7 @@ class TestVisualLeakBenchDataset:
             dataset = await loader.fetch_dataset_async(cache=False)
 
         for seed in dataset.seeds:
-            assert seed.harm_categories == ["ocr_injection"]
+            assert seed.harm_categories == []
 
     async def test_fetch_dataset_harm_categories_pii(self):
         """Test that PII Leakage examples include pii_leakage and the specific PII type."""
@@ -156,8 +156,7 @@ class TestVisualLeakBenchDataset:
             dataset = await loader.fetch_dataset_async(cache=False)
 
         for seed in dataset.seeds:
-            assert "pii_leakage" in seed.harm_categories
-            assert "ssn" in seed.harm_categories
+            assert seed.harm_categories == ["PPI"]
 
     async def test_category_filter_ocr_only(self):
         """Test filtering to OCR Injection only excludes PII examples."""
@@ -172,7 +171,7 @@ class TestVisualLeakBenchDataset:
 
         assert len(dataset.seeds) == 2
         for seed in dataset.seeds:
-            assert seed.harm_categories == ["ocr_injection"]
+            assert seed.harm_categories == []
 
     async def test_category_filter_pii_only(self):
         """Test filtering to PII Leakage only excludes OCR examples."""
@@ -187,7 +186,7 @@ class TestVisualLeakBenchDataset:
 
         assert len(dataset.seeds) == 2
         for seed in dataset.seeds:
-            assert "pii_leakage" in seed.harm_categories
+            assert seed.harm_categories == ["PPI"]
 
     async def test_pii_type_filter(self):
         """Test that pii_types filter excludes non-matching PII examples."""
@@ -205,7 +204,7 @@ class TestVisualLeakBenchDataset:
 
         assert len(dataset.seeds) == 2
         for seed in dataset.seeds:
-            assert "email" in seed.harm_categories
+            assert seed.harm_categories == ["PPI"]
 
     async def test_pii_type_filter_does_not_affect_ocr(self):
         """Test that pii_types filter does not exclude OCR Injection examples."""
@@ -221,7 +220,7 @@ class TestVisualLeakBenchDataset:
         # OCR example passes through; SSN PII example is filtered out
         assert len(dataset.seeds) == 2
         categories = [seed.harm_categories for seed in dataset.seeds]
-        assert any("ocr_injection" in cats for cats in categories)
+        assert all(cats == [] for cats in categories)
 
     async def test_all_images_fail_produces_empty_dataset(self):
         """Test that when all image downloads fail, no prompts are produced and SeedDataset raises."""
@@ -309,14 +308,13 @@ class TestVisualLeakBenchDataset:
         """Test _build_harm_categories for OCR Injection."""
         loader = _VisualLeakBenchDataset()
         result = loader._build_harm_categories("OCR Injection", "")
-        assert result == ["ocr_injection"]
+        assert result == []
 
     def test_build_harm_categories_pii_with_type(self):
         """Test _build_harm_categories for PII Leakage with specific PII type."""
         loader = _VisualLeakBenchDataset()
         result = loader._build_harm_categories("PII Leakage", "API Key")
-        assert "pii_leakage" in result
-        assert "api_key" in result
+        assert result == ["api_key"]
 
     def test_build_harm_categories_pii_without_type(self):
         """Test _build_harm_categories for PII Leakage without PII type."""

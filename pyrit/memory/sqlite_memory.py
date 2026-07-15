@@ -28,7 +28,7 @@ from pyrit.memory.memory_models import (
     ScenarioResultEntry,
 )
 from pyrit.memory.storage import DiskStorageIO
-from pyrit.models import ConversationStats, MessagePiece
+from pyrit.models import ConversationStats
 
 logger = logging.getLogger(__name__)
 
@@ -291,16 +291,6 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
         joiner = " OR " if match_mode == "any" else " AND "
         combined = joiner.join(conditions)
         return text(f"({combined})").bindparams(**bindparams_dict)
-
-    def _add_message_pieces_to_memory(self, *, message_pieces: Sequence[MessagePiece]) -> None:
-        """
-        Persist already-validated message pieces to the SQLite store.
-
-        Args:
-            message_pieces (Sequence[MessagePiece]): Persistable pieces (filtered and
-                validated by ``add_message_pieces_to_memory``).
-        """
-        self._insert_entries(entries=[PromptMemoryEntry(entry=piece) for piece in message_pieces])
 
     def _add_embeddings_to_memory(self, *, embedding_data: Sequence[EmbeddingDataEntry]) -> None:
         """

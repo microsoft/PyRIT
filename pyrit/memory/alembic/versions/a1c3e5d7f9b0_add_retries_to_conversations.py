@@ -5,7 +5,7 @@
 add retries to Conversations.
 
 Revision ID: a1c3e5d7f9b0
-Revises: d4e6f8a0b2c4
+Revises: e5f7a9c1b3d2
 Create Date: 2026-01-01 00:00:00.000000
 """
 
@@ -16,7 +16,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "a1c3e5d7f9b0"
-down_revision: str | None = "d4e6f8a0b2c4"
+down_revision: str | None = "e5f7a9c1b3d2"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

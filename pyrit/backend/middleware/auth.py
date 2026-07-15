@@ -19,6 +19,7 @@ import logging
 import os
 from dataclasses import dataclass
 from typing import Any, ClassVar
+from urllib.parse import urlparse
 
 import httpx
 import jwt
@@ -50,6 +51,13 @@ class EntraAuthMiddleware(BaseHTTPMiddleware):
         "/api/auth/config",
         "/api/media",
     }
+
+    # Hosts the user's Bearer token may be forwarded to
+    _GRAPH_HOSTS: ClassVar[set[str]] = {"graph.microsoft.com"}
+
+    # Trusted URL for resolving group membership; built from a constant (not the
+    # token-supplied endpoint) so token data cannot control the request destination.
+    _GRAPH_MEMBER_OBJECTS_URL: ClassVar[str] = "https://graph.microsoft.com/v1.0/me/getMemberObjects"
 
     def __init__(self, app: ASGIApp) -> None:
         """Initialize the middleware with Entra ID configuration from environment variables."""
@@ -167,34 +175,34 @@ class EntraAuthMiddleware(BaseHTTPMiddleware):
         """
         Resolve group membership via Microsoft Graph when user is in >200 groups.
 
-        When a user is in >200 groups, Entra ID replaces the `groups` claim with
-        `_claim_sources` containing a Graph API endpoint. This method calls the
-        Microsoft Graph `getMemberObjects` endpoint to retrieve transitive group
-        memberships, using the user's access token.
+        When a user is in >200 groups, Entra ID replaces the `groups` claim with a
+        `_claim_names` / `_claim_sources` overage pointer. This method confirms the
+        overage is present, then calls the Microsoft Graph `getMemberObjects` endpoint
+        to retrieve transitive group memberships, using the user's access token.
+
+        The Graph URL is built from a trusted constant (``_GRAPH_MEMBER_OBJECTS_URL``)
+        rather than the token-supplied endpoint, so token data cannot control the
+        request host, path, or port. Pagination links from the Graph response are
+        additionally checked against the Graph allowlist (see ``_is_trusted_graph_url``).
 
         Args:
-            claims: The decoded JWT claims containing _claim_sources.
+            claims: The decoded JWT claims containing the group overage pointer.
             token: The raw Bearer token to forward to Graph API.
 
         Returns:
-            List of group IDs the user belongs to, or empty list on failure.
+            List of group IDs the user belongs to, or empty list on failure or
+            when no group overage is present.
         """
         try:
-            claim_sources = claims.get("_claim_sources", {})
-            src = claim_sources.get("src1", {})
-            endpoint = src.get("endpoint", "")
-
-            if not endpoint:
-                logger.debug("No group resolution endpoint found in _claim_sources")
+            # Entra signals a groups overage via `_claim_names` -> source key -> `_claim_sources`.
+            # We only confirm the overage is present; the endpoint it supplies is intentionally
+            # ignored in favor of a trusted constant so token data cannot control the request.
+            claim_source_key = claims.get("_claim_names", {}).get("groups")
+            if not claim_source_key or claim_source_key not in claims.get("_claim_sources", {}):
+                logger.debug("No group overage claim source found")
                 return []
 
-            # The _claim_sources endpoint may be a legacy graph.windows.net URL.
-            # Rewrite to Microsoft Graph (graph.microsoft.com) which is the
-            # supported API. The legacy Azure AD Graph was retired in 2023.
-            if "graph.windows.net" in endpoint:
-                # Legacy format: https://graph.windows.net/{tenant}/users/{oid}/getMemberObjects
-                # Graph format:  https://graph.microsoft.com/v1.0/me/getMemberObjects
-                endpoint = "https://graph.microsoft.com/v1.0/me/getMemberObjects"
+            endpoint = self._GRAPH_MEMBER_OBJECTS_URL
 
             all_group_ids: list[str] = []
             async with httpx.AsyncClient() as client:
@@ -222,6 +230,9 @@ class EntraAuthMiddleware(BaseHTTPMiddleware):
                 # Handle pagination — Graph may return @odata.nextLink for large results
                 next_link = data.get("@odata.nextLink")
                 while next_link:
+                    if not self._is_trusted_graph_url(next_link):
+                        logger.warning("Refusing to follow untrusted pagination link: %s", next_link)
+                        break
                     response = await client.get(
                         next_link,
                         headers={"Authorization": f"Bearer {token}"},
@@ -240,6 +251,16 @@ class EntraAuthMiddleware(BaseHTTPMiddleware):
         except Exception as e:
             logger.warning("Failed to resolve group memberships: %s", e)
             return []
+
+    def _is_trusted_graph_url(self, url: str) -> bool:
+        """
+        Whether *url* is an HTTPS Microsoft Graph URL safe to forward the token to.
+
+        Returns:
+            True if *url* uses HTTPS and its host is in the Graph allowlist, False otherwise.
+        """
+        parsed = urlparse(url)
+        return parsed.scheme == "https" and parsed.hostname in self._GRAPH_HOSTS
 
     def _validate_token(self, token: str) -> tuple[AuthenticatedUser | None, dict[str, Any]]:
         """

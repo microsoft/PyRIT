@@ -6,6 +6,7 @@ import logging
 from collections.abc import Awaitable, Callable, MutableSequence
 from enum import Enum
 from typing import (
+    TYPE_CHECKING,
     Any,
     Literal,
     cast,
@@ -36,6 +37,9 @@ from pyrit.prompt_target.common.utils import (
 )
 from pyrit.prompt_target.openai.openai_error_handling import _is_content_filter_error
 from pyrit.prompt_target.openai.openai_target import OpenAITarget
+
+if TYPE_CHECKING:
+    from openai.types.responses import ResponseInputImageParam
 
 logger = logging.getLogger(__name__)
 
@@ -242,7 +246,12 @@ class OpenAIResponseTarget(OpenAITarget):
             }
         if piece.converted_value_data_type == "image_path":
             data_url = await convert_local_image_to_data_url_async(piece.converted_value)
-            return {"type": "input_image", "image_url": {"url": data_url}}
+            image_item: ResponseInputImageParam = {
+                "detail": "auto",
+                "type": "input_image",
+                "image_url": data_url,
+            }
+            return dict(image_item)
         raise ValueError(f"Unsupported piece type for inline content: {piece.converted_value_data_type}")
 
     async def _build_input_for_multi_modal_async(self, conversation: MutableSequence[Message]) -> list[dict[str, Any]]:

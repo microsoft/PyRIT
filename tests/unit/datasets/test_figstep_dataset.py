@@ -175,7 +175,7 @@ class TestFigStepDataset:
             dataset = await loader.fetch_dataset_async(cache=False)
 
         objectives = [s for s in dataset.seeds if isinstance(s, SeedObjective)]
-        assert {o.harm_categories[0] for o in objectives} == {"Hate Speech", "Fraud"}
+        assert {o.harm_categories[0] for o in objectives} == {"HATE_SPEECH", "SCAMS"}
 
     async def test_fetch_figstep_empty_after_filter_raises(self):
         rows = _make_rows("Illegal Activity")

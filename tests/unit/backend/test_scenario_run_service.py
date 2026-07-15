@@ -859,6 +859,104 @@ class TestScenarioRunServiceProgressReporting:
         assert fetched.objective_achieved_rate == 100
 
 
+class TestScenarioRunServiceFailedAttackReporting:
+    """Tests that per-attack errors and retry pressure surface in the summary."""
+
+    def test_error_attacks_and_retries_are_surfaced(self, mock_memory) -> None:
+        from pyrit.models import AttackOutcome
+
+        success = MagicMock()
+        success.outcome = AttackOutcome.SUCCESS
+        success.total_retries = 2
+
+        errored = MagicMock()
+        errored.outcome = AttackOutcome.ERROR
+        errored.objective = "do the bad thing"
+        errored.error_type = "RateLimitError"
+        errored.error_message = "429 Too Many Requests"
+        errored.total_retries = 4
+
+        db_result = _make_db_scenario_result(
+            result_id="sr-mixed",
+            run_state="COMPLETED",
+            attack_results={"baseline_airt_hate": [success, errored]},
+        )
+        db_result.objective_achieved_rate.return_value = 50
+        mock_memory.get_scenario_results.return_value = [db_result]
+
+        service = ScenarioRunService()
+        fetched = service.get_run(scenario_result_id="sr-mixed")
+
+        assert fetched is not None
+        assert fetched.total_retries == 6
+        assert len(fetched.failed_attacks) == 1
+        failed = fetched.failed_attacks[0]
+        assert failed.atomic_attack_name == "baseline_airt_hate"
+        assert failed.error_type == "RateLimitError"
+        assert failed.error_message == "429 Too Many Requests"
+        assert failed.total_retries == 4
+
+    def test_no_failed_attacks_when_all_succeed(self, mock_memory) -> None:
+        from pyrit.models import AttackOutcome
+
+        success = MagicMock()
+        success.outcome = AttackOutcome.SUCCESS
+        success.total_retries = 0
+        success.retry_events = []
+
+        db_result = _make_db_scenario_result(
+            result_id="sr-clean",
+            run_state="COMPLETED",
+            attack_results={"attack_a": [success]},
+        )
+        mock_memory.get_scenario_results.return_value = [db_result]
+
+        service = ScenarioRunService()
+        fetched = service.get_run(scenario_result_id="sr-clean")
+
+        assert fetched is not None
+        assert fetched.failed_attacks == []
+        assert fetched.total_retries == 0
+        assert fetched.attack_retries == []
+
+    def test_retry_events_surface_per_attack(self, mock_memory) -> None:
+        from pyrit.models import AttackOutcome
+        from pyrit.models.retry_event import RetryEvent
+
+        attack = MagicMock()
+        attack.outcome = AttackOutcome.SUCCESS
+        attack.total_retries = 2
+        attack.attack_result_id = "ar-9"
+        attack.retry_events = [
+            RetryEvent(
+                attempt_number=1,
+                exception_type="RateLimitError",
+                exception_message="429",
+                component_role="objective_scorer",
+                component_name="TrueFalseScorer",
+                endpoint="https://ep/",
+            )
+        ]
+
+        db_result = _make_db_scenario_result(
+            result_id="sr-retry",
+            run_state="COMPLETED",
+            attack_results={"baseline_airt_hate": [attack]},
+        )
+        mock_memory.get_scenario_results.return_value = [db_result]
+
+        service = ScenarioRunService()
+        fetched = service.get_run(scenario_result_id="sr-retry")
+
+        assert fetched is not None
+        assert len(fetched.attack_retries) == 1
+        summary = fetched.attack_retries[0]
+        assert summary.attack_result_id == "ar-9"
+        assert summary.atomic_attack_name == "baseline_airt_hate"
+        assert summary.retries[0].endpoint == "https://ep/"
+        assert summary.retries[0].component_role == "objective_scorer"
+
+
 class TestResolveTechniquesAndConverters:
     """Tests for per-technique converter resolution from ``--techniques`` tokens."""
 

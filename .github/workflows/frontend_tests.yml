@@ -83,7 +83,7 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Install uv
-        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
         with:
           version: "0.9.17"
           enable-cache: true
@@ -101,10 +101,12 @@ jobs:
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium
 
-      - name: Run E2E tests (mock mode — no backend/secrets needed)
-        run: npx playwright test --project=mock
+      - name: Run E2E tests (mock and seeded — no credentials needed)
+        run: npx playwright test --fail-on-flaky-tests --project=mock --project=seeded
         env:
           CI: true
+          E2E_SEEDED_MODE: true
+          FAIL_ON_SKIPPED_TESTS: true
 
       - name: Upload Playwright report
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -150,3 +152,6 @@ jobs:
 
       - name: Run TypeScript type check
         run: npx tsc --noEmit
+
+      - name: Build production frontend
+        run: npm run build

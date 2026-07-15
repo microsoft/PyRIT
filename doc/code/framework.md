@@ -202,7 +202,7 @@ If you are contributing to PyRIT, that work will most likely land in one of the 
 
 **Framework Plans**:
 
-- We need to move some older attacks that don't belong here. Many (FlipAttack) should just be attack techniques
+- We need to move some older attacks that don't belong here. Many should just be attack techniques
 - There are potential ways we could combine different algorithms. Are Crescendo and TAP ultimately the same?
 - We need to support target capabilities more implicitly
 - Other executors, like benchmarks, need better end-to-end support; potentially including an `ExpectedResult` seed and associated scorers.

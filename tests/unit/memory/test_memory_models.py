@@ -2,37 +2,62 @@
 # Licensed under the MIT license.
 
 import uuid
+from collections.abc import Sequence
 from datetime import datetime, timezone
+from typing import Any, get_origin
 from unittest.mock import MagicMock
 
 import pytest
 from pydantic import ValidationError
+from sqlalchemy import create_engine, select
+from sqlalchemy.orm import MappedColumn, Session
 
 from pyrit.memory.memory_models import (
+    AtomicAttackIdentifierEntry,
+    AtomicAttackSeedIdentifierEntry,
+    AttackIdentifierEntry,
+    AttackRequestConverterIdentifierEntry,
+    AttackResponseConverterIdentifierEntry,
     AttackResultEntry,
+    AttackTechniqueIdentifierEntry,
+    AttackTechniqueSeedIdentifierEntry,
+    Base,
+    ComponentIdentifierEntry,
     ConversationMessageWithSimilarity,
+    ConverterIdentifierEntry,
     EmbeddingDataEntry,
     EmbeddingMessageWithSimilarity,
     PromptMemoryEntry,
+    ScenarioIdentifierEntry,
     ScenarioResultEntry,
     ScoreEntry,
+    ScorerIdentifierEntry,
     SeedEntry,
+    SeedIdentifierEntry,
+    TargetIdentifierEntry,
     UTCDateTime,
     _load_identifier,
 )
 from pyrit.models import (
     AtomicAttackIdentifier,
+    AttackIdentifier,
     AttackOutcome,
     AttackResult,
+    AttackTechniqueIdentifier,
     ComponentIdentifier,
     ConversationReference,
     ConversationType,
+    ConverterIdentifier,
     MessagePiece,
+    ScenarioIdentifier,
     ScenarioResult,
     Score,
+    ScorerIdentifier,
+    SeedIdentifier,
     SeedObjective,
     SeedPrompt,
     SeedSimulatedConversation,
+    TargetIdentifier,
 )
 from unit.mocks import make_scenario_result
 
@@ -160,6 +185,194 @@ def test_load_identifier_injects_pyrit_version():
     loaded = _load_identifier(stored, pyrit_version="9.9.9")
     assert loaded is not None
     assert loaded.pyrit_version == "9.9.9"
+
+
+def test_scorer_identifier_entry_constructs_hash_only_sub_scorer_edges():
+    leaf = ScorerIdentifier(
+        class_name="LeafScorer",
+        class_module="pyrit.score",
+        scorer_type="float_scale",
+    )
+    nested = ScorerIdentifier(
+        class_name="NestedScorer",
+        class_module="pyrit.score",
+        scorer_type="true_false",
+        sub_scorers=[leaf],
+    )
+    root = ScorerIdentifier(
+        class_name="RootScorer",
+        class_module="pyrit.score",
+        scorer_type="true_false",
+        sub_scorers=[nested, leaf],
+    )
+
+    entry = ScorerIdentifierEntry.from_domain_model(domain_model=root)
+
+    assert [edge.position for edge in entry.sub_scorers] == [0, 1]
+    assert [edge.child_hash for edge in entry.sub_scorers] == [nested.hash, leaf.hash]
+    assert all(edge.child is None for edge in entry.sub_scorers)
+
+
+@pytest.mark.parametrize(
+    ("identifier_type", "entry_type"),
+    [
+        (TargetIdentifier, TargetIdentifierEntry),
+        (ConverterIdentifier, ConverterIdentifierEntry),
+        (ScorerIdentifier, ScorerIdentifierEntry),
+        (ScenarioIdentifier, ScenarioIdentifierEntry),
+        (SeedIdentifier, SeedIdentifierEntry),
+        (AttackIdentifier, AttackIdentifierEntry),
+        (AttackTechniqueIdentifier, AttackTechniqueIdentifierEntry),
+        (AtomicAttackIdentifier, AtomicAttackIdentifierEntry),
+    ],
+)
+def test_identifier_entry_maps_promoted_children_by_cardinality(
+    identifier_type: type[ComponentIdentifier],
+    entry_type: type[ComponentIdentifierEntry[Any]],
+) -> None:
+    promoted_children = set(identifier_type.promoted_child_field_names())
+    collection_children = {
+        field_name
+        for field_name in promoted_children
+        if get_origin(identifier_type.model_fields[field_name].annotation) in (list, Sequence)
+    }
+    singular_children = promoted_children - collection_children
+
+    assert set(entry_type.CHILD_RELATIONSHIP_SPECS) == collection_children
+    assert set(entry_type.CHILD_HASH_COLUMNS) == singular_children
+    assert all(spec.edge_child_hash_attr for spec in entry_type.CHILD_RELATIONSHIP_SPECS.values())
+
+
+def test_identifier_child_relationships_delete_orphans() -> None:
+    for mapper in Base.registry.mappers:
+        entry_type = mapper.class_
+        if not issubclass(entry_type, ComponentIdentifierEntry):
+            continue
+
+        for field_name, spec in entry_type.CHILD_RELATIONSHIP_SPECS.items():
+            child_relationship = mapper.relationships[spec.relationship_name]
+            assert child_relationship.uselist, f"{entry_type.__name__}.{field_name} must be a collection"
+            assert "delete-orphan" in child_relationship.cascade, (
+                f"{entry_type.__name__}.{spec.relationship_name} must use cascade='all, delete-orphan'"
+            )
+
+
+@pytest.mark.parametrize(
+    ("identifier_type", "entry_type"),
+    [
+        (TargetIdentifier, TargetIdentifierEntry),
+        (ConverterIdentifier, ConverterIdentifierEntry),
+        (ScorerIdentifier, ScorerIdentifierEntry),
+        (ScenarioIdentifier, ScenarioIdentifierEntry),
+        (SeedIdentifier, SeedIdentifierEntry),
+        (AttackIdentifier, AttackIdentifierEntry),
+        (AttackTechniqueIdentifier, AttackTechniqueIdentifierEntry),
+        (AtomicAttackIdentifier, AtomicAttackIdentifierEntry),
+    ],
+)
+def test_identifier_entry_maps_promoted_scalars_to_columns(
+    identifier_type: type[ComponentIdentifier],
+    entry_type: type[ComponentIdentifierEntry[Any]],
+) -> None:
+    shared_columns = {name for name, value in vars(ComponentIdentifierEntry).items() if isinstance(value, MappedColumn)}
+    mapped_scalars = set(entry_type.__table__.columns.keys())
+    mapped_scalars -= shared_columns
+    mapped_scalars -= set(entry_type.CHILD_HASH_COLUMNS.values())
+
+    assert mapped_scalars == set(identifier_type.promoted_scalar_field_names())
+
+
+def test_identifier_entry_rejects_missing_promoted_scalar_column() -> None:
+    class IdentifierWithPromotedScalar(ComponentIdentifier):
+        promoted_value: str | None = None
+
+    table_name = "IncompleteIdentifierEntries"
+    try:
+        with pytest.raises(TypeError, match="has no mapped column for promoted scalar field.*promoted_value"):
+
+            class IncompleteIdentifierEntry(ComponentIdentifierEntry[IdentifierWithPromotedScalar]):
+                __tablename__ = table_name
+                __table_args__ = {"extend_existing": True}
+    finally:
+        table = Base.metadata.tables.get(table_name)
+        if table is not None:
+            Base.metadata.remove(table)
+
+
+def test_atomic_attack_identifier_graph_persists_with_result_link() -> None:
+    target = TargetIdentifier(class_name="Target", class_module="pyrit.prompt_target", model_name="model")
+    scorer = ScorerIdentifier(class_name="Scorer", class_module="pyrit.score", scorer_type="true_false")
+    converter = ConverterIdentifier(
+        class_name="Converter",
+        class_module="pyrit.prompt_converter",
+        supported_input_types=["text"],
+        supported_output_types=["text"],
+    )
+    technique_seed = SeedIdentifier(
+        class_name="Seed",
+        class_module="pyrit.models",
+        value="technique seed",
+        data_type="text",
+    )
+    dataset_seed = SeedIdentifier(
+        class_name="Seed",
+        class_module="pyrit.models",
+        value="dataset seed",
+        data_type="text",
+    )
+    attack = AttackIdentifier(
+        class_name="Attack",
+        class_module="pyrit.executor.attack",
+        objective_target=target,
+        objective_scorer=scorer,
+        request_converters=[converter],
+        response_converters=[converter],
+    )
+    technique = AttackTechniqueIdentifier(
+        class_name="AttackTechnique",
+        class_module="pyrit.scenario.core.attack_technique",
+        attack=attack,
+        technique_seeds=[technique_seed],
+    )
+    atomic = AtomicAttackIdentifier(
+        class_name="AtomicAttack",
+        class_module="pyrit.scenario.core.atomic_attack",
+        attack_technique=technique,
+        seed_identifiers=[technique_seed, dataset_seed],
+    )
+    result = AttackResult(conversation_id="conversation", objective="objective", atomic_attack_identifier=atomic)
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    from pyrit.memory import MemoryInterface
+
+    memory = MagicMock(spec=MemoryInterface)
+    memory.get_session.side_effect = lambda: Session(engine)
+    memory._persist_identifier.side_effect = lambda *, session, identifier: MemoryInterface._persist_identifier(
+        session=session, identifier=identifier
+    )
+    MemoryInterface.add_attack_results_to_memory(memory, attack_results=[result])
+
+    with Session(engine) as session:
+        assert session.scalar(select(AttackResultEntry.atomic_attack_identifier_hash)) == atomic.hash
+        assert session.scalar(select(AtomicAttackIdentifierEntry.hash)) == atomic.hash
+        assert session.scalar(select(AttackTechniqueIdentifierEntry.hash)) == technique.hash
+        assert session.scalar(select(AttackIdentifierEntry.hash)) == attack.hash
+        assert len(session.scalars(select(SeedIdentifierEntry)).all()) == 2
+
+        technique_edge = session.scalar(select(AttackTechniqueSeedIdentifierEntry))
+        assert technique_edge is not None
+        assert (technique_edge.position, technique_edge.seed_identifier_hash) == (0, technique_seed.hash)
+        atomic_edges = session.scalars(
+            select(AtomicAttackSeedIdentifierEntry).order_by(AtomicAttackSeedIdentifierEntry.position)
+        ).all()
+        assert [edge.seed_identifier_hash for edge in atomic_edges] == [technique_seed.hash, dataset_seed.hash]
+        request_edge = session.scalar(select(AttackRequestConverterIdentifierEntry))
+        assert request_edge is not None
+        assert (request_edge.position, request_edge.converter_identifier_hash) == (0, converter.hash)
+        response_edge = session.scalar(select(AttackResponseConverterIdentifierEntry))
+        assert response_edge is not None
+        assert (response_edge.position, response_edge.converter_identifier_hash) == (0, converter.hash)
 
 
 # ---------------------------------------------------------------------------
