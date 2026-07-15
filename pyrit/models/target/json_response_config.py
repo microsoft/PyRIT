@@ -36,7 +36,6 @@ class JsonResponseConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    # Would prefer StrEnum, but.... Python 3.10
     _METADATAKEYS: ClassVar[dict[str, str]] = {
         "RESPONSE_FORMAT": "response_format",
         "JSON_SCHEMA": JSON_SCHEMA_METADATA_KEY,
