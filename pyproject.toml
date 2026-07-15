@@ -131,10 +131,13 @@ speech = [
 ]
 
 litellm = [
-    # Cap below 1.92.0: 1.92.0+ replaced the universal py3-none-any wheel with
-    # manylinux-only wheels backed by a Rust (PyO3) extension, which has no
-    # Windows/macOS wheels and fails to build on Python 3.14 (PyO3 <=3.13). 1.91.x
-    # is the last pure-Python line that installs on every OS and Python version.
+    # Cap below 1.92.0: 1.92.0+ replaced the universal py3-none-any wheel with a
+    # Rust (PyO3) extension and only publishes manylinux wheels for CPython
+    # 3.10-3.13 (Linux only). On Windows, macOS, or Python 3.14 there is no
+    # matching wheel, so pip/uv falls back to building the Rust extension from the
+    # sdist, which fails (no Rust toolchain in CI; PyO3 <=3.13 has no 3.14 support).
+    # 1.91.x is the last line with a universal wheel that installs on every OS and
+    # Python version we support. Revisit once litellm ships win/mac/py3.14 wheels.
     "litellm>=1.83.0,<1.92.0",
 ]
 
@@ -146,7 +149,7 @@ all = [
     "flask>=3.1.3",
     "ipykernel>=6.29.5",
     "jupyter>=1.1.1",
-    "litellm>=1.83.0,<1.92.0",  # <1.92.0: 1.92.0+ is manylinux-only Rust wheels (no win/mac, no py3.14)
+    "litellm>=1.83.0,<1.92.0",  # <1.92.0: 1.92.0+ ships Linux-only Rust wheels (no win/mac/py3.14); see litellm group above
     "ollama>=0.5.1",
     "opencv-python>=4.11.0.86",
     "playwright>=1.49.0",
