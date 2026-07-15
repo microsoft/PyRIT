@@ -58,7 +58,7 @@
 #   any scenario can use (the `role_play_*` variants, `many_shot`, `tap`, the `crescendo_*` variants, `red_teaming`,
 #   `context_compliance`). Registered by default.
 # - [`extra.py`](../../../pyrit/setup/initializers/techniques/extra.py) — opt-in techniques that are
-#   not part of the default set (`pair`, `violent_durian`).
+#   not part of the default set (`pair`, `violent_durian`, `skeleton_key`).
 # - [`airt.py`](../../../pyrit/setup/initializers/techniques/airt.py) — source-owned techniques that
 #   belong to a specific AIRT scenario. Unlike `core`/`extra`, these are imported directly by their
 #   owning scenario and are *not* part of the default aggregation.
