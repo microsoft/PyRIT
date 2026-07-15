@@ -7,6 +7,7 @@ from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
 from pyrit.models import SeedDataset, SeedObjective
+from pyrit.models.harm_category import HarmCategory
 
 
 class _StrongRejectDataset(_RemoteDatasetLoader):
@@ -42,6 +43,18 @@ class _StrongRejectDataset(_RemoteDatasetLoader):
     modalities: list[str] = ["text"]
     size: str = "medium"  # 313 seeds
     tags: set[str] = {"jailbreak", "safety"}
+    HARM_CATEGORY_ALIAS_OVERRIDES: dict[str, list[HarmCategory]] = {
+        "disinformation and deception": [HarmCategory.INFO_INTEGRITY, HarmCategory.DECEPTION],
+        "hate, harassment and discrimination": [
+            HarmCategory.HATE_SPEECH,
+            HarmCategory.HARASSMENT,
+            HarmCategory.REPRESENTATIONAL,
+        ],
+        "illegal goods and services": [HarmCategory.REGULATED_GOODS, HarmCategory.COORDINATION_HARM],
+        "non-violent crimes": [HarmCategory.COORDINATION_HARM, HarmCategory.SCAMS],
+        "sexual content": [HarmCategory.SEXUAL_CONTENT],
+        "violence": [HarmCategory.VIOLENT_CONTENT, HarmCategory.VIOLENT_THREATS, HarmCategory.COORDINATION_HARM],
+    }
 
     def __init__(
         self,
@@ -114,7 +127,10 @@ class _StrongRejectDataset(_RemoteDatasetLoader):
                     value=example["forbidden_prompt"],
                     name="StrongREJECT forbidden behavior",
                     dataset_name=self.dataset_name,
-                    harm_categories=[example["category"]],
+                    harm_categories=self._standardize_harm_categories(
+                        example.get("category"),
+                        alias_overrides=self.HARM_CATEGORY_ALIAS_OVERRIDES,
+                    ),
                     description=(
                         "A StrongREJECT forbidden-behavior prompt covering one of six harm categories "
                         "(disinformation, hate/harassment/discrimination, illegal goods and services, "
@@ -124,7 +140,7 @@ class _StrongRejectDataset(_RemoteDatasetLoader):
                     authors=authors,
                     groups=["UC Berkeley"],
                     source="https://github.com/alexandrasouly/strongreject",
-                    metadata={"strong_reject_source": example["source"]},
+                    metadata={"category": example["category"], "strong_reject_source": example["source"]},
                 )
             )
 

@@ -10,6 +10,7 @@ from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
 from pyrit.models import Modality, SeedDataset, SeedPrompt
+from pyrit.models.harm_category import HarmCategory
 
 if TYPE_CHECKING:
     from pyrit.models.seeds.seed_group import SeedUnion
@@ -105,14 +106,58 @@ class _MLCommonsAILuminateDataset(_RemoteDatasetLoader):
             source_type=self.source_type,
             cache=cache,
         )
+        harm_category_alias_overrides: dict[str, list[HarmCategory]] = {
+            "vcr": [HarmCategory.VIOLENT_CONTENT],
+            "violent crimes": [HarmCategory.VIOLENT_CONTENT],
+            "src": [HarmCategory.SEXUAL_CONTENT],
+            "sex-related crimes": [HarmCategory.SEXUAL_CONTENT],
+            "cse": [HarmCategory.SEXUAL_CONTENT, HarmCategory.GROOMING],
+            "child sexual exploitation": [HarmCategory.SEXUAL_CONTENT, HarmCategory.GROOMING],
+            "ssh": [HarmCategory.SUICIDE, HarmCategory.SELF_HARM],
+            "suicide & self-harm": [HarmCategory.SUICIDE, HarmCategory.SELF_HARM],
+            "iwp": [HarmCategory.CBRN, HarmCategory.MILITARY],
+            "indiscriminate weapons (cbrne)": [HarmCategory.CBRN, HarmCategory.MILITARY],
+            "ipv": [HarmCategory.COPYRIGHT, HarmCategory.TRADEMARK, HarmCategory.PLAGIARISM],
+            "intellectual property violations": [
+                HarmCategory.COPYRIGHT,
+                HarmCategory.TRADEMARK,
+                HarmCategory.PLAGIARISM,
+            ],
+            "dfm": [HarmCategory.REPUTATIONAL_DAMAGE],
+            "defamation": [HarmCategory.REPUTATIONAL_DAMAGE],
+            "ncr": [HarmCategory.COORDINATION_HARM],
+            "non-violent crimes": [HarmCategory.COORDINATION_HARM],
+            "hte": [HarmCategory.HATE_SPEECH, HarmCategory.HARASSMENT],
+            "hate": [HarmCategory.HATE_SPEECH, HarmCategory.HARASSMENT],
+            "prv": [HarmCategory.PPI],
+            "privacy violations": [HarmCategory.PPI],
+            "spc_ele": [HarmCategory.CAMPAIGNING],
+            "specialized advice; elections": [HarmCategory.CAMPAIGNING],
+            "spc_fin": [HarmCategory.FINANCIAL_ADVICE],
+            "specialized advice; financial": [HarmCategory.FINANCIAL_ADVICE],
+            "spc_hlt": [HarmCategory.PUBLIC_HEALTH],
+            "specialized advice; health": [HarmCategory.PUBLIC_HEALTH],
+            "sxc_prn": [HarmCategory.SEXUAL_CONTENT],
+            "sexual content; pornographic": [HarmCategory.SEXUAL_CONTENT],
+            "spc_lgl": [HarmCategory.LEGAL_ADVICE],
+            "specialized advice; legal": [HarmCategory.LEGAL_ADVICE],
+        }
 
         seed_prompts: list[SeedUnion] = [
             SeedPrompt(
                 value=example["prompt_text"],
                 data_type="text",
                 dataset_name=self.dataset_name,
-                # Saving both the full hazard category name and the abbreviation
-                harm_categories=[self.HAZARD_CATEGORIES_MAP[example["hazard"]], example["hazard"]],
+                # Standardize using both the full hazard category name and the abbreviation,
+                # and preserve the original AILuminate hazard labels in metadata.
+                harm_categories=self._standardize_harm_categories(
+                    [self.HAZARD_CATEGORIES_MAP[example["hazard"]], example["hazard"]],
+                    alias_overrides=harm_category_alias_overrides,
+                ),
+                metadata={
+                    "mlcommons_ailuminate_hazard": example["hazard"],
+                    "mlcommons_ailuminate_hazard_name": self.HAZARD_CATEGORIES_MAP[example["hazard"]],
+                },
                 description=(
                     "This dataset contains the DEMO prompt library of the AILuminate 1.0 prompt dataset, created by"
                     " MLCommons AI Risk & Reliability working group. It contains 1,200 human-generated prompts that"

@@ -10,6 +10,7 @@ from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
 from pyrit.models import Modality, SeedDataset, SeedPrompt
+from pyrit.models.harm_category import HarmCategory
 
 logger = logging.getLogger(__name__)
 
@@ -121,7 +122,31 @@ class _PKUSafeRLHFDataset(_RemoteDatasetLoader):
             split="train",
         )
 
-        seed_prompts = []
+        harm_category_alias_overrides: dict[str, list[HarmCategory]] = {
+            "Animal Abuse": [HarmCategory.OTHER],
+            "Copyright Issues": [HarmCategory.COPYRIGHT],
+            "Cybercrime": [HarmCategory.MALWARE, HarmCategory.COORDINATION_HARM],
+            "Discriminatory Behavior": [HarmCategory.HATE_SPEECH, HarmCategory.REPRESENTATIONAL],
+            "Disrupting Public Order": [HarmCategory.COORDINATION_HARM],
+            "Drugs": [HarmCategory.DRUG_USE, HarmCategory.REGULATED_GOODS],
+            "Economic Crime": [HarmCategory.SCAMS, HarmCategory.DECEPTION],
+            "Endangering National Security": [
+                HarmCategory.COORDINATION_HARM,
+                HarmCategory.INFRASTRUCTURE_RISK,
+                HarmCategory.MILITARY,
+            ],
+            "Endangering Public Health": [HarmCategory.PUBLIC_HEALTH],
+            "Environmental Damage": [HarmCategory.OTHER],
+            "Human Trafficking": [HarmCategory.COORDINATION_HARM, HarmCategory.SEXUAL_SOLICITATION],
+            "Insulting Behavior": [HarmCategory.HARASSMENT],
+            "Mental Manipulation": [HarmCategory.DECEPTION],
+            "Physical Harm": [HarmCategory.VIOLENT_CONTENT],
+            "Privacy Violation": [HarmCategory.PPI],
+            "Psychological Harm": [HarmCategory.MENTAL_HEALTH, HarmCategory.EMOTIONAL],
+            "Violence": [HarmCategory.VIOLENT_CONTENT],
+            "White-Collar Crime": [HarmCategory.SCAMS, HarmCategory.DECEPTION],
+        }
+        seed_prompts: list[SeedPrompt] = []
 
         for item in data:
             is_unsafe = not (item["is_response_0_safe"] and item["is_response_1_safe"])
@@ -144,12 +169,16 @@ class _PKUSafeRLHFDataset(_RemoteDatasetLoader):
             if not self.filter_harm_categories or any(
                 category in self.filter_harm_categories for category in harm_categories
             ):
+                standardized_harm_categories = self._standardize_harm_categories(
+                    sorted(harm_categories),
+                    alias_overrides=harm_category_alias_overrides,
+                )
                 seed_prompts.append(
                     SeedPrompt(
                         value=item["prompt"],
                         data_type="text",
                         dataset_name=self.dataset_name,
-                        harm_categories=sorted(harm_categories),
+                        harm_categories=standardized_harm_categories,
                         description=(
                             "This is a Hugging Face dataset that labels a prompt and 2 responses categorizing "
                             "their helpfulness or harmfulness. Only the 'prompt' column is extracted."
@@ -157,6 +186,7 @@ class _PKUSafeRLHFDataset(_RemoteDatasetLoader):
                         source=f"https://huggingface.co/datasets/{self.source}",
                         authors=self._AUTHORS,
                         groups=self._GROUPS,
+                        metadata=({"pku_categories": ", ".join(sorted(harm_categories))} if harm_categories else None),
                     )
                 )
 

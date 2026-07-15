@@ -26,11 +26,13 @@ def get_technique_factories() -> list[AttackTechniqueFactory]:
         AttackTechniqueFactory(
             name="pair",
             attack_class=PAIRAttack,
+            description="Runs the PAIR algorithm, using an adversarial model to iteratively rewrite jailbreak prompts.",
             technique_tags=["multi_turn"],
         ),
         AttackTechniqueFactory(
             name="violent_durian",
             attack_class=RedTeamingAttack,
+            description="Red-teams with a 'violent durian' persona role-playing a criminal mastermind.",
             technique_tags=["multi_turn"],
             attack_kwargs={"max_turns": 3},
             adversarial_system_prompt=SeedPrompt.from_yaml_file(EXECUTOR_RED_TEAM_PATH / "violent_durian.yaml"),

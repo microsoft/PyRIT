@@ -13,6 +13,7 @@ from pyrit.auth import (
 )
 from pyrit.common.path import HOME_PATH
 from pyrit.executor.attack import PromptSendingAttack
+from pyrit.memory.sqlite_memory import SQLiteMemory
 from pyrit.models import Message, MessagePiece
 from pyrit.prompt_target import (
     OpenAIChatTarget,
@@ -229,6 +230,41 @@ async def test_openai_responses_target_entra_auth(sqlite_instance, endpoint, mod
     result = await attack.execute_async(objective="Hello, how are you?")
     assert result is not None
     assert result.last_response is not None
+
+
+@pytest.mark.run_only_if_all_tests
+async def test_openai_responses_target_image_entra_auth(sqlite_instance: SQLiteMemory) -> None:
+    endpoint = os.environ["OPENAI_RESPONSES_ENDPOINT"]
+    target = OpenAIResponseTarget(
+        endpoint=endpoint,
+        model_name=os.environ["OPENAI_RESPONSES_MODEL"],
+        api_key=get_azure_openai_auth(endpoint),
+    )
+    conversation_id = str(uuid.uuid4())
+    message = Message(
+        message_pieces=[
+            MessagePiece(
+                role="user",
+                original_value="Briefly describe this image.",
+                original_value_data_type="text",
+                conversation_id=conversation_id,
+            ),
+            MessagePiece(
+                role="user",
+                original_value=str(SAMPLE_IMAGE_FILE),
+                original_value_data_type="image_path",
+                conversation_id=conversation_id,
+            ),
+        ]
+    )
+
+    result = await target.send_prompt_async(message=message)
+
+    assert result
+    assert any(
+        piece.response_error == "none" and piece.converted_value_data_type == "text"
+        for piece in result[0].message_pieces
+    )
 
 
 @pytest.mark.parametrize(
