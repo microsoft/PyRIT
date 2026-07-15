@@ -500,8 +500,7 @@ test.describe("Multi-modal: Video response", () => {
     },
   ]);
 
-  // Marking skipped for now because this should not use the getByRole query which is too general
-  test.skip("should display video player for video response", async ({ page }) => {
+  test("should display video player for video response", async ({ page }) => {
     await setupVideoMock(page);
     await page.goto("/");
     await activateMockTarget(page);

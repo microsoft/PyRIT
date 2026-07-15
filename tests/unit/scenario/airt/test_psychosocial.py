@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from pyrit.common.path import DATASETS_PATH
-from pyrit.models import ComponentIdentifier, SeedAttackGroup, SeedDataset, SeedGroup, SeedObjective
+from pyrit.models import AttackSeedGroup, ComponentIdentifier, SeedDataset, SeedGroup, SeedObjective
 from pyrit.prompt_target import OpenAIChatTarget, PromptTarget
 from pyrit.scenario.airt import Psychosocial, PsychosocialTechnique  # type: ignore[ty:unresolved-import]
 from pyrit.scenario.scenarios.airt.psychosocial import SubharmConfig
@@ -21,11 +21,11 @@ SEED_PROMPT_LIST = list(SeedDataset.from_yaml_file(SEED_DATASETS_PATH / "psychos
 @pytest.fixture
 def mock_memory_seed_groups() -> list[SeedGroup]:
     """Create mock seed groups that _get_default_seed_groups() would return."""
-    return [SeedAttackGroup(seeds=[SeedObjective(value=prompt)]) for prompt in SEED_PROMPT_LIST]
+    return [AttackSeedGroup(seeds=[SeedObjective(value=prompt)]) for prompt in SEED_PROMPT_LIST]
 
 
 @pytest.fixture
-def mock_seed_groups_by_dataset(mock_memory_seed_groups) -> dict[str, list[SeedAttackGroup]]:
+def mock_seed_groups_by_dataset(mock_memory_seed_groups) -> dict[str, list[AttackSeedGroup]]:
     """Create mock by-dataset seed groups for patching _resolve_seed_groups_by_dataset_async."""
     return {"psychosocial": mock_memory_seed_groups}
 
@@ -36,7 +36,7 @@ def mock_dataset_config(mock_memory_seed_groups):
     from pyrit.scenario import DatasetAttackConfiguration
 
     mock_config = MagicMock(spec=DatasetAttackConfiguration)
-    mock_config.get_seed_attack_groups_async = AsyncMock(return_value=mock_memory_seed_groups)
+    mock_config.get_attack_seed_groups_async = AsyncMock(return_value=mock_memory_seed_groups)
     mock_config.dataset_names = ["airt_psychosocial"]
     return mock_config
 
@@ -485,7 +485,7 @@ class TestPsychosocialBaselineUniformity:
     async def test_one_resolution_call_baseline_matches_techniques(self, mock_objective_target, mock_objective_scorer):
         from pyrit.scenario import DatasetAttackConfiguration
 
-        seed_groups = [SeedAttackGroup(seeds=[SeedObjective(value=f"obj{i}")]) for i in range(10)]
+        seed_groups = [AttackSeedGroup(seeds=[SeedObjective(value=f"obj{i}")]) for i in range(10)]
         config = DatasetAttackConfiguration(seed_groups=seed_groups, max_dataset_size=3)
 
         first_sample = seed_groups[:3]

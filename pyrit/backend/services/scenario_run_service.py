@@ -277,7 +277,7 @@ class ScenarioRunService:
         is preserved when the caller overrides ``dataset_names`` or
         ``max_dataset_size``. Subclasses commonly override
         ``_build_attack_groups()`` to shape seeds into scenario-appropriate
-        ``SeedAttackGroup`` objects.
+        ``AttackSeedGroup`` objects.
 
         Args:
             request: The run request.

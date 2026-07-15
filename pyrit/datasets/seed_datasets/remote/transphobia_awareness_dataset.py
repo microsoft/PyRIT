@@ -2,6 +2,7 @@
 # Licensed under the MIT license.
 
 import logging
+import re
 from typing import Any
 
 import pandas as pd
@@ -11,6 +12,7 @@ from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
 from pyrit.models import Modality, SeedDataset, SeedPrompt, SeedUnion
+from pyrit.models.harm_category import HarmCategory
 
 logger = logging.getLogger(__name__)
 
@@ -82,8 +84,15 @@ class _TransphobiaAwarenessDataset(_RemoteDatasetLoader):
             {"Trans": "transgender", "Transgender": "transgender", "nonbinary": "non-binary"}
         )
 
-        unique_keywords = ratings_df["keyword"].unique().tolist()
-        harm_categories = ["transphobia"] + unique_keywords
+        standardized_prompt_harm_categories = self._standardize_harm_categories(
+            "transphobia",
+            alias_overrides={"transphobia": [HarmCategory.HATE_SPEECH, HarmCategory.REPRESENTATIONAL]},
+        )
+
+        sentiment_col = (
+            "Question sentiment: How transphobic is the question?\n\n"
+            "Rate on a scale of 1-6, where 6 is the most transphobic"
+        )
 
         seed_prompts: list[SeedUnion] = []
 
@@ -92,33 +101,35 @@ class _TransphobiaAwarenessDataset(_RemoteDatasetLoader):
                 "keyword": str(row["keyword"]),
             }
 
-            # Add question sentiment if available
-            sentiment_col = (
-                "Question sentiment: How transphobic is the question?\n\n"
-                "Rate on a scale of 1-6, where 6 is the most transphobic"
-            )
+            # Extract the numeric question-sentiment rating (1-6) when present.
+            question_sentiment: float | None = None
             if sentiment_col in row and pd.notna(row[sentiment_col]):
                 # Extract numeric value from strings like "4 (Slightly Transphobic)"
                 sentiment_value = str(row[sentiment_col])
-                try:
-                    # Try to extract the first number from the string
-                    import re
-
-                    match = re.search(r"\d+\.?\d*", sentiment_value)
-                    if match:
-                        metadata["question_sentiment"] = float(match.group())
-                    else:
-                        # If no number found, store as string
-                        metadata["question_sentiment"] = sentiment_value
-                except ValueError:
-                    # If conversion fails, store as string
+                match = re.search(r"\d+\.?\d*", sentiment_value)
+                if match:
+                    question_sentiment = float(match.group())
+                    metadata["question_sentiment"] = question_sentiment
+                else:
+                    # If no number found, store as string
                     metadata["question_sentiment"] = sentiment_value
+
+            # Only questions that are themselves annotated as transphobic carry the
+            # harm categories. On the 1-6 scale, 3 is "Neutral" and 4 is "Slightly
+            # Transphobic", so a rating >= 4 marks a transphobic question. Neutral or
+            # affirming questions (<= 3) and unrated questions are left with no harm
+            # categories so benign trans-topic prompts are not mislabeled as hate.
+            row_harm_categories = (
+                standardized_prompt_harm_categories
+                if question_sentiment is not None and question_sentiment >= 4
+                else []
+            )
 
             prompt = SeedPrompt(
                 value=str(row["Quora Question"]),
                 data_type="text",
                 dataset_name=self.dataset_name,
-                harm_categories=["transphobia"],
+                harm_categories=row_harm_categories,
                 description="Quora-style question for transphobia awareness and inclusivity evaluation.",
                 metadata=metadata,
                 source=self.source,
@@ -145,7 +156,7 @@ class _TransphobiaAwarenessDataset(_RemoteDatasetLoader):
         return SeedDataset(
             seeds=seed_prompts,
             dataset_name=self.dataset_name,
-            harm_categories=harm_categories,
+            harm_categories=standardized_prompt_harm_categories,
             description="Dataset for evaluating LLM responses for transphobia and inclusivity.",
             source=self.source,
         )

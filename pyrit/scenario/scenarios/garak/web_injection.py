@@ -11,7 +11,7 @@ from pyrit.common import apply_defaults
 from pyrit.executor.attack.core.attack_config import AttackScoringConfig
 from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
 from pyrit.memory import CentralMemory
-from pyrit.models import SeedAttackGroup, SeedObjective, SeedPrompt
+from pyrit.models import AttackSeedGroup, SeedObjective, SeedPrompt
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
@@ -452,9 +452,9 @@ class WebInjection(Scenario):
 
         return _OBJECTIVE_EXFIL_URI, []
 
-    def _build_seed_groups(self, *, objective: str, prompts: list[str]) -> list[SeedAttackGroup]:
+    def _build_seed_groups(self, *, objective: str, prompts: list[str]) -> list[AttackSeedGroup]:
         """
-        Wrap each rendered prompt in a SeedAttackGroup pairing the objective and the prompt.
+        Wrap each rendered prompt in a AttackSeedGroup pairing the objective and the prompt.
 
         The objective embeds the specific injection prompt so that every seed group within an
         atomic attack has a unique objective hash (required by ``AtomicAttack``), mirroring the
@@ -465,9 +465,9 @@ class WebInjection(Scenario):
             prompts (list[str]): The rendered injection prompts.
 
         Returns:
-            list[SeedAttackGroup]: One SeedAttackGroup per prompt.
+            list[AttackSeedGroup]: One AttackSeedGroup per prompt.
         """
-        seed_groups: list[SeedAttackGroup] = []
+        seed_groups: list[AttackSeedGroup] = []
         seen_objectives: set[str] = set()
         for prompt in prompts:
             full_objective = f"{objective}: {prompt}"
@@ -475,7 +475,7 @@ class WebInjection(Scenario):
                 continue
             seen_objectives.add(full_objective)
             seed_groups.append(
-                SeedAttackGroup(
+                AttackSeedGroup(
                     seeds=[
                         SeedObjective(value=full_objective),
                         SeedPrompt(value=prompt),
@@ -500,7 +500,7 @@ class WebInjection(Scenario):
 
     async def _resolve_seed_groups_by_dataset_async(
         self, *, apply_sampling: bool = True
-    ) -> dict[str, list[SeedAttackGroup]]:
+    ) -> dict[str, list[AttackSeedGroup]]:
         """
         Generate the injection prompts and wrap them into seed groups, keyed by technique.
 
@@ -515,7 +515,7 @@ class WebInjection(Scenario):
                 so resume reproduces the same set without a ``max_dataset_size`` sampling path.
 
         Returns:
-            dict[str, list[SeedAttackGroup]]: Seed groups keyed by technique value.
+            dict[str, list[AttackSeedGroup]]: Seed groups keyed by technique value.
 
         Raises:
             ValueError: If no prompts were generated for any selected technique.
@@ -523,7 +523,7 @@ class WebInjection(Scenario):
         dataset_values = self._load_dataset_values()
         rng = random.Random(self._random_seed)
 
-        seed_groups_by_technique: dict[str, list[SeedAttackGroup]] = {}
+        seed_groups_by_technique: dict[str, list[AttackSeedGroup]] = {}
         # ``_scenario_techniques`` is typed as the base ``ScenarioTechnique`` on the
         # ``Scenario`` base class, but this scenario only ever populates it with
         # ``WebInjectionTechnique`` members (its ``technique_class``).

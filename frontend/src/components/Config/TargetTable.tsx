@@ -402,6 +402,7 @@ export default function TargetTable({ targets, activeTarget, onSetActiveTarget }
               <React.Fragment key={target.target_registry_name}>
                 <TableRow
                   className={isActive(target) ? styles.activeRow : undefined}
+                  data-testid={`target-row-${target.target_registry_name}`}
                 >
                   <TableCell>
                     {isActive(target) ? (

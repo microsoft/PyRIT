@@ -75,6 +75,12 @@
 #
 # The `turkish_conversation_prompt_injection` loader defaults to attack examples
 # and preserves each record's attack family, source context, split, and pair ID.
+# It loads the published v1.0.1 data from an immutable Hugging Face revision and
+# validates the source schema, stable IDs, split claims, and complete boundary pairs.
+# Attack families describe delivery techniques rather than resulting harms, so
+# they remain in seed metadata instead of PyRIT's harm-category field.
+# Pair IDs also remain metadata: each attack and boundary example is an independent
+# evaluation case, not a multi-prompt group that should be sent together.
 # Typed filters can also load legitimate Turkish requests, a specific published
 # split, or selected attack families. For example:
 #

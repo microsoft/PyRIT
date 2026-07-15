@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
-    from pyrit.models import SeedAttackGroup
+    from pyrit.models import AttackSeedGroup
     from pyrit.prompt_target import PromptTarget
     from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
     from pyrit.scenario.core.scenario_technique import ScenarioTechnique
@@ -44,11 +44,11 @@ class ScenarioContext:
         include_baseline (bool): Whether a baseline atomic attack should be emitted
             for this run, already resolved against the scenario's
             ``BASELINE_ATTACK_POLICY``.
-        seed_groups (Sequence[SeedAttackGroup]): The scenario's seed groups, resolved
+        seed_groups (Sequence[AttackSeedGroup]): The scenario's seed groups, resolved
             and sampled once by the base ``Scenario`` (flattened across datasets). Use
             these to build attacks so every atomic attack — and the baseline — draws from
             the same population.
-        seed_groups_by_dataset (Mapping[str, list[SeedAttackGroup]]): The same resolved
+        seed_groups_by_dataset (Mapping[str, list[AttackSeedGroup]]): The same resolved
             seed groups keyed by originating dataset name, for scenarios that map datasets
             onto separate attacks or display groups.
     """
@@ -58,5 +58,5 @@ class ScenarioContext:
     dataset_config: DatasetAttackConfiguration
     memory_labels: dict[str, str] = field(default_factory=dict)
     include_baseline: bool = False
-    seed_groups: Sequence[SeedAttackGroup] = field(default_factory=tuple)
-    seed_groups_by_dataset: Mapping[str, list[SeedAttackGroup]] = field(default_factory=dict)
+    seed_groups: Sequence[AttackSeedGroup] = field(default_factory=tuple)
+    seed_groups_by_dataset: Mapping[str, list[AttackSeedGroup]] = field(default_factory=dict)

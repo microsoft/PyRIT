@@ -1,12 +1,12 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-"""Tests for is_general_technique property and SeedAttackTechniqueGroup class."""
+"""Tests for is_general_technique property and AttackTechniqueSeedGroup class."""
 
 import pytest
 
 from pyrit.models.seeds import (
-    SeedAttackTechniqueGroup,
+    AttackTechniqueSeedGroup,
     SeedObjective,
     SeedPrompt,
     SeedSimulatedConversation,
@@ -65,12 +65,12 @@ class TestIsGeneralTechnique:
 
 
 # =============================================================================
-# SeedAttackTechniqueGroup Tests
+# AttackTechniqueSeedGroup Tests
 # =============================================================================
 
 
-class TestSeedAttackTechniqueGroupInit:
-    """Tests for SeedAttackTechniqueGroup initialization."""
+class TestAttackTechniqueSeedGroupInit:
+    """Tests for AttackTechniqueSeedGroup initialization."""
 
     def test_init_with_general_technique_prompts(self):
         """Test initialization with all general technique seeds."""
@@ -78,14 +78,14 @@ class TestSeedAttackTechniqueGroupInit:
             SeedPrompt(value="Technique 1", data_type="text", is_general_technique=True),
             SeedPrompt(value="Technique 2", data_type="text", is_general_technique=True),
         ]
-        group = SeedAttackTechniqueGroup(seeds=prompts)
+        group = AttackTechniqueSeedGroup(seeds=prompts)
 
         assert len(group.seeds) == 2
 
     def test_init_raises_if_non_general_technique_prompt(self):
         """Test that initialization fails if any seed is not a general technique."""
         with pytest.raises(ValueError, match="must have is_general_technique=True"):
-            SeedAttackTechniqueGroup(
+            AttackTechniqueSeedGroup(
                 seeds=[
                     SeedPrompt(value="Technique", data_type="text", is_general_technique=True),
                     SeedPrompt(value="Not a technique", data_type="text", is_general_technique=False),
@@ -95,7 +95,7 @@ class TestSeedAttackTechniqueGroupInit:
     def test_init_raises_if_all_non_general_technique(self):
         """Test that initialization fails if all seeds are not general techniques."""
         with pytest.raises(ValueError, match="must have is_general_technique=True"):
-            SeedAttackTechniqueGroup(
+            AttackTechniqueSeedGroup(
                 seeds=[
                     SeedPrompt(value="Not a technique", data_type="text"),
                 ]
@@ -104,7 +104,7 @@ class TestSeedAttackTechniqueGroupInit:
     def test_init_raises_with_objective(self):
         """Test that initialization fails with a SeedObjective (never general technique)."""
         with pytest.raises(ValueError, match="must have is_general_technique=True"):
-            SeedAttackTechniqueGroup(
+            AttackTechniqueSeedGroup(
                 seeds=[
                     SeedObjective(value="Objective"),
                     SeedPrompt(value="Technique", data_type="text", is_general_technique=True),
@@ -116,7 +116,7 @@ class TestSeedAttackTechniqueGroupInit:
         adv_path = tmp_path / "adversarial.yaml"
         adv_path.write_text("value: Adversarial\ndata_type: text")
 
-        group = SeedAttackTechniqueGroup(
+        group = AttackTechniqueSeedGroup(
             seeds=[
                 SeedSimulatedConversation(
                     num_turns=3,
@@ -134,15 +134,15 @@ class TestSeedAttackTechniqueGroupInit:
     def test_init_empty_raises_error(self):
         """Test that empty seeds raises ValueError."""
         with pytest.raises(ValueError, match="SeedGroup cannot be empty"):
-            SeedAttackTechniqueGroup(seeds=[])
+            AttackTechniqueSeedGroup(seeds=[])
 
 
-class TestSeedAttackTechniqueGroupValidation:
-    """Tests for SeedAttackTechniqueGroup validation."""
+class TestAttackTechniqueSeedGroupValidation:
+    """Tests for AttackTechniqueSeedGroup validation."""
 
     def test_validate_all_general_technique_passes(self):
         """Test validate passes when all seeds are general techniques."""
-        group = SeedAttackTechniqueGroup(
+        group = AttackTechniqueSeedGroup(
             seeds=[
                 SeedPrompt(value="Technique 1", data_type="text", is_general_technique=True),
             ]
@@ -153,7 +153,7 @@ class TestSeedAttackTechniqueGroupValidation:
     def test_error_message_includes_non_general_types(self):
         """Test that error message lists the types of non-general seeds."""
         with pytest.raises(ValueError, match="SeedPrompt"):
-            SeedAttackTechniqueGroup(
+            AttackTechniqueSeedGroup(
                 seeds=[
                     SeedPrompt(value="Non-technique", data_type="text", is_general_technique=False),
                 ]
@@ -162,7 +162,7 @@ class TestSeedAttackTechniqueGroupValidation:
     def test_mixed_general_and_non_general_raises(self):
         """Test that mix of general and non-general seeds raises error."""
         with pytest.raises(ValueError, match="must have is_general_technique=True"):
-            SeedAttackTechniqueGroup(
+            AttackTechniqueSeedGroup(
                 seeds=[
                     SeedPrompt(value="General", data_type="text", is_general_technique=True),
                     SeedPrompt(value="Not general", data_type="text", is_general_technique=False),
@@ -170,12 +170,12 @@ class TestSeedAttackTechniqueGroupValidation:
             )
 
 
-class TestSeedAttackTechniqueGroupNoObjectives:
+class TestAttackTechniqueSeedGroupNoObjectives:
     """Tests for _enforce_no_objectives validation."""
 
     def test_rejects_seed_objective(self):
         """Test that _enforce_no_objectives rejects SeedObjective seeds."""
-        group = SeedAttackTechniqueGroup(
+        group = AttackTechniqueSeedGroup(
             seeds=[SeedPrompt(value="ok", data_type="text", is_general_technique=True)],
         )
         # Inject a SeedObjective after construction to bypass the general-technique check.
@@ -187,7 +187,7 @@ class TestSeedAttackTechniqueGroupNoObjectives:
     def test_init_rejects_objective_via_general_technique_check(self):
         """Test that constructing with a SeedObjective fails (caught by general-technique check)."""
         with pytest.raises(ValueError, match="is_general_technique"):
-            SeedAttackTechniqueGroup(
+            AttackTechniqueSeedGroup(
                 seeds=[
                     SeedObjective(value="objective"),
                     SeedPrompt(value="ok", data_type="text", is_general_technique=True),
@@ -195,19 +195,19 @@ class TestSeedAttackTechniqueGroupNoObjectives:
             )
 
 
-class TestSeedAttackTechniqueGroupInsertionIndex:
+class TestAttackTechniqueSeedGroupInsertionIndex:
     """Tests for insertion_index parameter."""
 
     def test_default_insertion_index_is_none(self):
         """Test that insertion_index defaults to None."""
-        group = SeedAttackTechniqueGroup(
+        group = AttackTechniqueSeedGroup(
             seeds=[SeedPrompt(value="s", data_type="text", is_general_technique=True)],
         )
         assert group.insertion_index is None
 
     def test_insertion_index_set_to_int(self):
         """Test that insertion_index can be set to an integer."""
-        group = SeedAttackTechniqueGroup(
+        group = AttackTechniqueSeedGroup(
             seeds=[SeedPrompt(value="s", data_type="text", is_general_technique=True)],
             insertion_index=2,
         )
@@ -215,19 +215,46 @@ class TestSeedAttackTechniqueGroupInsertionIndex:
 
     def test_insertion_index_zero(self):
         """Test that insertion_index can be zero (insert at beginning)."""
-        group = SeedAttackTechniqueGroup(
+        group = AttackTechniqueSeedGroup(
             seeds=[SeedPrompt(value="s", data_type="text", is_general_technique=True)],
             insertion_index=0,
         )
         assert group.insertion_index == 0
 
 
-class TestSeedAttackTechniqueGroupRepr:
-    """Tests for SeedAttackTechniqueGroup.__repr__ method."""
+class TestAttackTechniqueSeedGroupFromSystemPrompt:
+    """Tests for the from_system_prompt classmethod."""
+
+    def test_builds_single_system_general_technique_seed(self):
+        """Test that from_system_prompt yields one system-role general-technique seed."""
+        group = AttackTechniqueSeedGroup.from_system_prompt("Follow these rules.")
+
+        assert len(group.seeds) == 1
+        seed = group.seeds[0]
+        assert isinstance(seed, SeedPrompt)
+        assert seed.value == "Follow these rules."
+        assert seed.role == "system"
+        assert seed.data_type == "text"
+        assert seed.is_general_technique is True
+        assert group.insertion_index is None
+
+    def test_preserves_literal_braces_without_rendering(self):
+        """Test that literal Jinja braces are preserved (is_jinja_template stays False)."""
+        group = AttackTechniqueSeedGroup.from_system_prompt("Decode this: {{ prompt }}")
+        assert group.seeds[0].value == "Decode this: {{ prompt }}"
+
+    def test_respects_insertion_index(self):
+        """Test that insertion_index is forwarded to the group."""
+        group = AttackTechniqueSeedGroup.from_system_prompt("s", insertion_index=0)
+        assert group.insertion_index == 0
+
+
+class TestAttackTechniqueSeedGroupRepr:
+    """Tests for AttackTechniqueSeedGroup.__repr__ method."""
 
     def test_repr_basic(self):
         """Test basic __repr__ output."""
-        group = SeedAttackTechniqueGroup(
+        group = AttackTechniqueSeedGroup(
             seeds=[
                 SeedPrompt(value="Technique", data_type="text", is_general_technique=True),
             ]

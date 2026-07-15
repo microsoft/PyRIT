@@ -10,15 +10,15 @@ import pytest
 from pyrit.converter import Base64Converter, ROT13Converter
 from pyrit.executor.attack.core.attack_config import AttackConverterConfig, AttackScoringConfig
 from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
-from pyrit.models import ComponentIdentifier, Identifiable, SeedAttackTechniqueGroup, SeedPrompt
+from pyrit.models import AttackTechniqueSeedGroup, ComponentIdentifier, Identifiable, SeedPrompt
 from pyrit.prompt_normalizer import ConverterConfiguration
 from pyrit.prompt_target import PromptTarget
 from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory, ScorerOverridePolicy
 
 
-def _make_seed_technique() -> SeedAttackTechniqueGroup:
-    return SeedAttackTechniqueGroup(
+def _make_seed_technique() -> AttackTechniqueSeedGroup:
+    return AttackTechniqueSeedGroup(
         seeds=[
             SeedPrompt(value="technique1", data_type="text", is_general_technique=True),
         ]
@@ -69,6 +69,35 @@ class TestFactoryInit:
         factory = AttackTechniqueFactory(name="test", attack_class=_StubAttack, seed_technique=seeds)
 
         assert factory.seed_technique is seeds
+
+    def test_init_description_defaults_to_none(self):
+        factory = AttackTechniqueFactory(name="test", attack_class=_StubAttack)
+
+        assert factory.description is None
+
+    def test_init_stores_description(self):
+        factory = AttackTechniqueFactory(
+            name="test",
+            attack_class=_StubAttack,
+            description="Does the thing.",
+        )
+
+        assert factory.description == "Does the thing."
+
+    def test_with_simulated_conversation_forwards_description(self):
+        factory = AttackTechniqueFactory.with_simulated_conversation(
+            name="crescendo_journalist_interview",
+            description="Staged as a journalist interview.",
+        )
+
+        assert factory.description == "Staged as a journalist interview."
+
+    def test_description_does_not_affect_identifier(self):
+        """Description is decorative metadata and must not change the behavioral identity hash."""
+        with_desc = AttackTechniqueFactory(name="test", attack_class=_StubAttack, description="Does the thing.")
+        without_desc = AttackTechniqueFactory(name="test", attack_class=_StubAttack)
+
+        assert with_desc.get_identifier().hash == without_desc.get_identifier().hash
 
     def test_validate_kwargs_accepts_valid_params(self):
         """All valid kwarg names should pass without error."""
@@ -462,10 +491,10 @@ class TestFactoryIdentifier:
 
     def test_different_seed_techniques_produce_different_hashes(self):
         """Two factories differing only by seed_technique must have different hashes."""
-        seed1 = SeedAttackTechniqueGroup(
+        seed1 = AttackTechniqueSeedGroup(
             seeds=[SeedPrompt(value="technique_a", data_type="text", is_general_technique=True)],
         )
-        seed2 = SeedAttackTechniqueGroup(
+        seed2 = AttackTechniqueSeedGroup(
             seeds=[SeedPrompt(value="technique_b", data_type="text", is_general_technique=True)],
         )
         factory1 = AttackTechniqueFactory(name="test", attack_class=_StubAttack, seed_technique=seed1)

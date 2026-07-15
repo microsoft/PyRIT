@@ -101,10 +101,10 @@ from pyrit.models.score import Score, ScoreType, UnvalidatedScore
 # Seeds - import from new seeds submodule for forward compatibility
 # Also keep imports from old locations for backward compatibility
 from pyrit.models.seeds import (
+    AttackSeedGroup,
+    AttackTechniqueSeedGroup,
     NextMessageSystemPromptPaths,
     Seed,
-    SeedAttackGroup,
-    SeedAttackTechniqueGroup,
     SeedDataset,
     SeedGroup,
     SeedObjective,
@@ -115,6 +115,7 @@ from pyrit.models.seeds import (
     group_seeds_into_attack_groups,
 )
 from pyrit.models.target_capabilities import CapabilityName, TargetCapabilities
+from pyrit.models.token_usage import TokenUsage
 
 __all__ = [
     "ALLOWED_CHAT_MESSAGE_ROLES",
@@ -191,8 +192,8 @@ __all__ = [
     "ScenarioResult",
     "ScenarioRunState",
     "Seed",
-    "SeedAttackGroup",
-    "SeedAttackTechniqueGroup",
+    "AttackSeedGroup",
+    "AttackTechniqueSeedGroup",
     "SeedObjective",
     "SeedPrompt",
     "SeedDataset",
@@ -210,6 +211,8 @@ __all__ = [
     "TARGET_EVAL_PARAMS",
     "TargetCapabilities",
     "TargetIdentifier",
+    "TextDataTypeSerializer",
+    "TokenUsage",
     "ToolCall",
     "UnvalidatedScore",
     "validate_registry_name",

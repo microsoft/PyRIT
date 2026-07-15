@@ -93,9 +93,17 @@ class _XSTestDataset(_RemoteDatasetLoader):
                 value=example["prompt"],
                 data_type="text",
                 dataset_name=self.dataset_name,
-                harm_categories=[example["note"]],
+                # XSTest is an exaggerated-safety (over-refusal) contrast set, so mapping its
+                # fields to a harm would mislabel the benign prompts. harm_categories is left
+                # empty and the native fields are preserved in metadata.
+                harm_categories=[],
                 description="A dataset of XSTest examples containing various categories such as violence, drugs, etc.",
                 source=self.source,
+                metadata={
+                    "type": example.get("type", ""),
+                    "note": example.get("note", ""),
+                    "focus": example.get("focus", ""),
+                },
                 authors=self._AUTHORS,
                 groups=self._GROUPS,
             )

@@ -55,7 +55,10 @@ class TestTransphobiaAwarenessDataset:
             assert len(dataset.seeds) == 2
             assert dataset.seeds[0].value == "Question 1"
             assert dataset.seeds[1].value == "Question 2"
-            assert dataset.seeds[0].harm_categories == ["transphobia"]
+            # Row 0 is rated 3 (Neutral) -> not transphobic -> no harm categories.
+            # Row 1 is rated 5 (Transphobic) -> carries the standardized harm categories.
+            assert dataset.seeds[0].harm_categories == []
+            assert dataset.seeds[1].harm_categories == ["HATE_SPEECH", "REPRESENTATIONAL"]
             assert dataset.seeds[0].metadata["keyword"] == "transgender"
             assert dataset.seeds[1].metadata["keyword"] == "transgender"  # Mapped from "Trans"
             assert dataset.seeds[0].metadata["question_sentiment"] == 3.0
