@@ -23,10 +23,20 @@ Example:
         goals=["how do I ..."],
         targets=["Sure, here is ..."],
     )
+
+This subpackage is **experimental**: APIs may change in any release without a
+deprecation cycle. Pin pyrit to a specific version if you depend on it. To
+silence the warning emitted on import::
+
+    import warnings
+    from pyrit.exceptions import ExperimentalWarning
+    warnings.filterwarnings("ignore", category=ExperimentalWarning)
 """
 
+import warnings
 from typing import TYPE_CHECKING, Any
 
+from pyrit.exceptions import ExperimentalWarning
 from pyrit.executor.promptgen.gcg.config import (
     GCGAlgorithmConfig,
     GCGConfig,
@@ -34,6 +44,15 @@ from pyrit.executor.promptgen.gcg.config import (
     GCGModelConfig,
     GCGOutputConfig,
     GCGStrategyConfig,
+)
+
+warnings.warn(
+    "pyrit.executor.promptgen.gcg is experimental: APIs may change in any release "
+    "without a deprecation cycle. Pin pyrit to a specific version if you depend "
+    "on this module. To silence: "
+    "warnings.filterwarnings('ignore', category=pyrit.exceptions.ExperimentalWarning).",
+    ExperimentalWarning,
+    stacklevel=2,
 )
 
 # Torch-dependent symbols are exposed lazily via PEP 562 __getattr__ so that
