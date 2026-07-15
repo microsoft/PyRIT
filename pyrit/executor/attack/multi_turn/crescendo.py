@@ -863,12 +863,7 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
             return None
 
         first_piece = message.message_pieces[0]
-        placeholder = MessagePiece(
-            role=first_piece.role,
-            original_value="",
-            original_value_data_type="text",
-            conversation_id=first_piece.conversation_id,
-            sequence=first_piece.sequence,
-            prompt_metadata={"adversarial_placeholder": True},
-        )
+        placeholder = MessagePiece.adversarial_placeholder(role=first_piece.role)
+        placeholder.conversation_id = first_piece.conversation_id
+        placeholder.sequence = first_piece.sequence
         return Message(message_pieces=[placeholder, *media_pieces])
