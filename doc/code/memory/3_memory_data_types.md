@@ -1,4 +1,4 @@
-# 3. Memory Types
+# Memory Types
 
 There are several types of data you can retrieve from memory at any point in time using the `MemoryInterface`.
 

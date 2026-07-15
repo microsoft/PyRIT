@@ -9,7 +9,7 @@
 # ---
 
 # %% [markdown]
-# # 5. Simulated Conversations
+# # Simulated Conversations
 #
 # Multi-turn attacks like Crescendo [@russinovich2024crescendo] are powerful but slow — each turn
 # requires a round-trip to the target. If you've already generated a successful multi-turn prefix

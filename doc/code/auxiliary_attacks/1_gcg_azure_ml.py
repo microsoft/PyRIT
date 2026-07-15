@@ -10,7 +10,7 @@
 # ---
 
 # %% [markdown]
-# # 1. Generating GCG Suffixes Using Azure Machine Learning
+# # Generating GCG Suffixes Using Azure Machine Learning
 
 # %% [markdown]
 # > ⚠️ **Experimental module.** `pyrit.auxiliary_attacks` is experimental: its

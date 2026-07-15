@@ -1,4 +1,4 @@
-# 10. Memory Schema Diagram
+# Memory Schema Diagram
 
 Our memory contains multiple components. This diagram  shows a mapping of our database schema and how our components map together! The arrows indicate the values that map one database to another.
 
