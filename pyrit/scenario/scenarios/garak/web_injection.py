@@ -198,6 +198,11 @@ class WebInjectionTechnique(ScenarioTechnique):
         """Return the tags that represent aggregate categories."""
         return {"all", "default", "exfil", "xss"}
 
+    @classmethod
+    def default(cls) -> "WebInjectionTechnique":
+        """Return the default technique (``DEFAULT``) used when the caller selects nothing."""
+        return cls.DEFAULT
+
 
 class WebInjection(Scenario):
     """
@@ -260,7 +265,6 @@ class WebInjection(Scenario):
         super().__init__(
             version=self.VERSION,
             technique_class=WebInjectionTechnique,
-            default_technique=WebInjectionTechnique.DEFAULT,
             default_dataset_config=DatasetAttackConfiguration(
                 dataset_names=[
                     DATASET_EXAMPLE_DOMAINS,

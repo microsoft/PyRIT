@@ -156,7 +156,6 @@ class ConcreteScenario(Scenario):
                 return {"all"}
 
         kwargs.setdefault("technique_class", TestTechnique)
-        kwargs.setdefault("default_technique", kwargs["technique_class"].ALL)
         kwargs.setdefault("default_dataset_config", DatasetConfiguration())
 
         # Add a mock scorer if not provided
@@ -772,7 +771,6 @@ class ConcreteScenarioWithTrueFalseScorer(Scenario):
                 return {"all"}
 
         kwargs.setdefault("technique_class", TestTechnique)
-        kwargs.setdefault("default_technique", kwargs["technique_class"].ALL)
         kwargs.setdefault("default_dataset_config", DatasetConfiguration())
 
         # Use TrueFalseScorer mock if not provided

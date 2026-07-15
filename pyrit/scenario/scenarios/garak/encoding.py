@@ -154,7 +154,6 @@ class Encoding(Scenario):
         super().__init__(
             version=self.VERSION,
             technique_class=EncodingTechnique,
-            default_technique=EncodingTechnique.ALL,
             default_dataset_config=CompoundDatasetAttackConfiguration(
                 configurations=[
                     EncodingDatasetConfiguration(dataset_names=["garak_slur_terms_en"], max_dataset_size=3),

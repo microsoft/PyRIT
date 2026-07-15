@@ -135,9 +135,10 @@ class TestTextAdaptiveBasics:
         assert cls_a is cls_b
 
     def test_get_default_technique(self):
-        strat = TextAdaptive.get_default_technique()
+        strat = TextAdaptive.get_technique_class().default()
         # The default aggregate must resolve to something runnable.
         assert strat is not None
+        assert strat.value == "default"
 
     @patch("pyrit.scenario.core.scenario.Scenario._get_default_objective_scorer")
     def test_init_stores_adaptive_params(self, mock_get_scorer, mock_objective_scorer):

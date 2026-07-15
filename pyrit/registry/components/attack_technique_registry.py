@@ -179,7 +179,7 @@ class AttackTechniqueRegistry(Registry["AttackTechniqueFactory", AttackTechnique
         factories: list[AttackTechniqueFactory],
         aggregate_tags: dict[str, TagQuery] | None = None,
         available: TagQuery | None = None,
-        default: TagQuery | None = None,
+        default: str | None = None,
         default_technique_names: set[str] | None = None,
     ) -> type:
         """
@@ -204,14 +204,14 @@ class AttackTechniqueRegistry(Registry["AttackTechniqueFactory", AttackTechnique
             pool becomes one automatically; ``aggregate_tags`` adds explicit ones for
             queries a single tag can't express. Each is evaluated only over the pool,
             so every aggregate is a subset of available.
-        - **default**: what runs when the caller selects nothing. Given as a
-            ``TagQuery`` (``default``) and/or explicit ``default_technique_names``;
-            both are intersected with the pool, so ``DEFAULT`` is always a subset of
-            available.
+        - **default**: what runs when the caller selects nothing. ``default`` names
+            the member (an aggregate or a single technique) the catalog treats as its
+            default; it is recorded on the class and returned by
+            ``ScenarioTechnique.default()``. When omitted, a ``DEFAULT`` aggregate
+            (built from ``default_technique_names``) is used if present, else ``ALL``.
 
-        ``default`` is chosen per-scenario: a scenario picks its default set by query
-        or by name, so the same technique can be the default for one scenario and not
-        another.
+        The default is chosen per-scenario, so the same technique can be the default for
+        one scenario and not another.
 
         Args:
             class_name (str): Name for the generated enum class.
@@ -233,15 +233,16 @@ class AttackTechniqueRegistry(Registry["AttackTechniqueFactory", AttackTechnique
                 filter (e.g. ``TagQuery.none_of("foobar")`` to hide a
                 technique this scenario is incompatible with while it stays
                 registered for others).
-            default (TagQuery | None): Query selecting the pool techniques that form
-                the ``DEFAULT`` aggregate. Combined (union) with
-                ``default_technique_names``.
+            default (str | None): Value of the member (aggregate or technique) the
+                catalog uses as its default. Falls back to ``all`` when that member is
+                absent from the pool (e.g. a custom initializer registers no
+                ``light``-tagged factory). When ``None``, the default is the ``DEFAULT``
+                aggregate if one was built, otherwise ``all``.
             default_technique_names (set[str] | None): Names of pool techniques that
-                form this scenario's ``DEFAULT`` aggregate. Combined (union) with
-                ``default``. Names not present in the pool are ignored, so a scenario
-                can list its intended default set even when some of those techniques
-                are filtered out of its pool. When the combined default selection is
-                empty, no ``DEFAULT`` aggregate is generated.
+                form this scenario's ``DEFAULT`` aggregate. Names not present in the pool
+                are ignored, so a scenario can list its intended default set even when
+                some of those techniques are filtered out of its pool. When empty, no
+                ``DEFAULT`` aggregate is generated.
 
         Returns:
             type: A ``ScenarioTechnique`` subclass with the generated members.
@@ -253,13 +254,12 @@ class AttackTechniqueRegistry(Registry["AttackTechniqueFactory", AttackTechnique
         # available (the pool): filter the candidate factories by the availability query.
         pool = available.filter(factories) if available is not None else list(factories)
 
-        # default: resolve from an explicit name set and/or a query over the pool. The
-        # DEFAULT aggregate exists whenever a default was requested; its membership is
-        # limited to the pool below (only pool factories are iterated), so DEFAULT is
-        # always a subset of available.
+        # default: the DEFAULT aggregate is built from ``default_technique_names``. Its
+        # membership is limited to the pool below (only pool factories are iterated), so
+        # DEFAULT is always a subset of available. Which member is the *catalog default*
+        # (used when the caller selects nothing) is recorded separately after the class
+        # is built, from the ``default`` argument.
         default_names: set[str] = set(default_technique_names or set())
-        if default is not None:
-            default_names |= {f.name for f in pool if default.matches(set(f.technique_tags))}
 
         # Auto-promote every catalog tag present in the pool into a selectable
         # aggregate, so tags and aggregates are synonymous: selecting a tag expands to
@@ -304,6 +304,20 @@ class AttackTechniqueRegistry(Registry["AttackTechniqueFactory", AttackTechnique
             return set(all_aggregate_tag_names)
 
         technique_cls.get_aggregate_tags = _get_aggregate_tags  # type: ignore[ty:invalid-assignment]
+
+        # Record the catalog's default member (used when the caller selects nothing).
+        # ``default`` names an aggregate/technique to use; it falls back to ``all`` when
+        # that member is absent from the pool (e.g. a custom initializer registers no
+        # ``light``-tagged factory). Absent an explicit ``default``, a built ``DEFAULT``
+        # aggregate is used when present, otherwise ``all``.
+        member_values = {member.value for member in technique_cls}
+        if default is not None and default in member_values:
+            default_value = default
+        elif default_names:
+            default_value = "default"
+        else:
+            default_value = "all"
+        technique_cls._default_technique_value = default_value  # type: ignore[attr-defined]
 
         return technique_cls  # type: ignore[ty:invalid-return-type]
 

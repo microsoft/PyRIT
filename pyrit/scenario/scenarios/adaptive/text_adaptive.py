@@ -100,12 +100,6 @@ class TextAdaptive(AdaptiveScenario):
         return cls._cached_technique_class
 
     @classmethod
-    def get_default_technique(cls) -> ScenarioTechnique:
-        """Return the default technique aggregate (resolves to every ``default``-tagged technique)."""
-        technique_class = cls.get_technique_class()
-        return technique_class("default")
-
-    @classmethod
     def required_datasets(cls) -> list[str]:
         """Return the dataset names this scenario expects when no override is provided."""
         return [

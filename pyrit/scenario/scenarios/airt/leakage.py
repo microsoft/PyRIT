@@ -119,7 +119,6 @@ class Leakage(Scenario):
         super().__init__(
             version=self.VERSION,
             technique_class=technique_class,
-            default_technique=technique_class("default"),
             default_dataset_config=DatasetAttackConfiguration(dataset_names=["airt_leakage"], max_dataset_size=4),
             objective_scorer=objective_scorer,
             scenario_result_id=scenario_result_id,

@@ -50,6 +50,7 @@ def _build_rapid_response_technique() -> type[ScenarioTechnique]:
     return AttackTechniqueRegistry.build_technique_class_from_factories(  # type: ignore[ty:invalid-return-type]
         class_name="RapidResponseTechnique",
         factories=factories,
+        default="light",
     )
 
 
@@ -89,17 +90,10 @@ class RapidResponse(Scenario):
 
         technique_class = _build_rapid_response_technique()
 
-        # ``light`` is the curated default run, but it only exists when the pool
-        # (decided by the active initializer) contains a light-tagged factory. Fall
-        # back to ``all`` so a custom technique set with no light factory still yields
-        # a constructible scenario rather than raising on an absent aggregate.
-        default_aggregate = "light" if "light" in technique_class.get_aggregate_tags() else "all"
-
         super().__init__(
             version=self.VERSION,
             objective_scorer=self._objective_scorer,
             technique_class=technique_class,
-            default_technique=technique_class(default_aggregate),
             default_dataset_config=CompoundDatasetAttackConfiguration.per_dataset(
                 dataset_names=[
                     "airt_hate",

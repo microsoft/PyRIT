@@ -224,7 +224,6 @@ class Psychosocial(Scenario):
         super().__init__(
             version=self.VERSION,
             technique_class=PsychosocialTechnique,
-            default_technique=PsychosocialTechnique.ALL,
             default_dataset_config=DatasetAttackConfiguration(
                 dataset_names=["airt_imminent_crisis"], max_dataset_size=4
             ),

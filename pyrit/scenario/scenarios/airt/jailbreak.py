@@ -64,6 +64,11 @@ class JailbreakTechnique(ScenarioTechnique):
         # Include base class aggregates ("all") and add scenario-specific ones
         return super().get_aggregate_tags() | {"simple", "complex"}
 
+    @classmethod
+    def default(cls) -> "JailbreakTechnique":
+        """Return the default technique (``SIMPLE``) used when the caller selects nothing."""
+        return cls.SIMPLE
+
 
 class Jailbreak(Scenario):
     """
@@ -145,7 +150,6 @@ class Jailbreak(Scenario):
         super().__init__(
             version=self.VERSION,
             technique_class=JailbreakTechnique,
-            default_technique=JailbreakTechnique.SIMPLE,
             default_dataset_config=DatasetAttackConfiguration(dataset_names=["airt_harms"], max_dataset_size=4),
             objective_scorer=self._objective_scorer,
             scenario_result_id=scenario_result_id,
