@@ -8,6 +8,7 @@ from typing import Any, cast
 
 from openai.types import VideoSeconds, VideoSize
 
+from pyrit.common import forward_init_parameters
 from pyrit.exceptions import (
     pyrit_target_retry,
 )
@@ -56,6 +57,7 @@ class OpenAIVideoTarget(OpenAITarget):
         )
     )
 
+    @forward_init_parameters
     def __init__(
         self,
         *,

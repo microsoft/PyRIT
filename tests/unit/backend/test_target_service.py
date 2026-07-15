@@ -339,6 +339,14 @@ class TestCreateTarget:
         assert result.target_registry_name is not None
         assert result.identifier.class_name == "TextTarget"
 
+    async def test_create_target_delegates_construction_to_registry(self, sqlite_instance) -> None:
+        """Every target construction path is owned by the registry."""
+        service = TargetService()
+        with patch.object(service._registry, "create_instance", wraps=service._registry.create_instance) as create:
+            await service.create_target_async(request=CreateTargetRequest(type="TextTarget", params={}))
+
+        create.assert_called_once()
+
     async def test_create_gandalf_target_coerces_level_string(self, sqlite_instance) -> None:
         """A Gandalf level from the JSON request is coerced to its enum before construction."""
         service = TargetService()
