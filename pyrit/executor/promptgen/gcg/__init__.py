@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-"""Public API for the Greedy Coordinate Gradient (GCG) auxiliary attack.
+"""Public API for the Greedy Coordinate Gradient (GCG) adversarial-suffix generator.
 
 The primary entry point is ``GCG`` (alias for ``GCGGenerator``), a
 ``pyrit.executor.promptgen.core.PromptGeneratorStrategy`` that produces
