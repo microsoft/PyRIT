@@ -225,6 +225,14 @@ class AttackTechniqueRegistry(Registry["AttackTechniqueFactory", AttackTechnique
                 omitted. An ``ALL`` aggregate is always added.
             available (TagQuery | None): Query selecting which of ``factories`` are
                 available for this scenario (the pool). ``None`` means all of them.
+                This is a per-scenario *pool-shaping* hook, distinct from catalog
+                *membership* (which techniques exist at all) — membership is owned by
+                the active initializer, while ``available`` lets a single scenario
+                surface only a subset of the registered catalog. Use it for a
+                compound exclusion that reads better as one query than a manual
+                filter (e.g. ``TagQuery.none_of("foobar")`` to hide a
+                technique this scenario is incompatible with while it stays
+                registered for others).
             default (TagQuery | None): Query selecting the pool techniques that form
                 the ``DEFAULT`` aggregate. Combined (union) with
                 ``default_technique_names``.
