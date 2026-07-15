@@ -73,8 +73,9 @@
 # %% [markdown]
 # ## Loading Agentic Prompt-Injection Boundary Pairs
 #
-# The `agentic_prompt_injection_boundary_pairs` loader defaults to attack
-# prompts for red-team use. It can also return the paired legitimate requests,
+# The `agentic_prompt_injection_boundary_pairs` loader uses the published v1.0.0
+# snapshot and defaults to attack prompts for red-team use. It can also return
+# the paired legitimate requests,
 # preserving each record's pair ID, scenario, attack family, source context,
 # target boundary, and expected action. For example:
 #

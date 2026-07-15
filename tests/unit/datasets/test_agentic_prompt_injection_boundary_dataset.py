@@ -129,12 +129,20 @@ async def test_default_loads_attacks_from_all_splits(
     assert {call.kwargs["split"] for call in mock_fetch.await_args_list} == {"train", "validation", "test"}
     assert all(call.kwargs["config"] == "default" for call in mock_fetch.await_args_list)
     assert all(call.kwargs["cache"] is False for call in mock_fetch.await_args_list)
+    assert all(
+        call.kwargs["revision"] == _AgenticPromptInjectionBoundaryDataset.HF_DATASET_REVISION
+        for call in mock_fetch.await_args_list
+    )
 
     first = dataset.seeds[0]
     assert first.name == "apibp_0001_a"
-    assert first.prompt_group_alias == "pair_0001"
+    assert first.prompt_group_alias is None
+    assert first.metadata["pair_id"] == "pair_0001"
     assert first.metadata["scenario_id"] == "scn_001"
     assert first.metadata["target_boundary"] == "tool_permissions"
+    assert first.metadata["dataset_version"] == "1.0.0"
+    assert first.metadata["hf_revision"] == _AgenticPromptInjectionBoundaryDataset.HF_DATASET_REVISION
+    assert first.harm_categories == []
     assert first.source == ("https://huggingface.co/datasets/3nesdeniz/agentic-prompt-injection-boundary-pairs")
 
 
@@ -155,7 +163,9 @@ async def test_label_all_reconstructs_pairs(
 
     assert len(dataset.seeds) == 4
     assert {seed.metadata["label"] for seed in dataset.seeds} == {0, 1}
-    assert {seed.prompt_group_alias for seed in dataset.seeds} == {"pair_0003", "pair_0004"}
+    assert {seed.metadata["pair_id"] for seed in dataset.seeds} == {"pair_0003", "pair_0004"}
+    assert all(seed.prompt_group_alias is None for seed in dataset.seeds)
+    assert len(dataset.seed_groups) == len(dataset.seeds)
 
 
 async def test_benign_filter_loads_hard_negative_surface(
@@ -174,7 +184,8 @@ async def test_benign_filter_loads_hard_negative_surface(
         dataset = await loader.fetch_dataset_async()
 
     assert len(dataset.seeds) == 1
-    assert dataset.seeds[0].harm_categories == ["benign_boundary"]
+    assert dataset.seeds[0].harm_categories == []
+    assert dataset.seeds[0].metadata["category"] == "benign_boundary"
     assert dataset.seeds[0].metadata["expected_action"] == "allow"
 
 
@@ -280,5 +291,56 @@ async def test_conflicting_split_metadata_raises(
         "_fetch_from_huggingface_async",
         new=AsyncMock(return_value=[mismatched]),
     ):
-        with pytest.raises(ValueError, match="does not match requested split"):
+        with pytest.raises(ValueError, match="does not match fetched split"):
+            await loader.fetch_dataset_async()
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("label", "1", "Invalid label"),
+        ("label", 1.5, "Invalid label"),
+        ("category", "benign_boundary", "category"),
+        ("attack_family", "none", "attack_family"),
+        ("expected_action", "allow", "expected_action"),
+        ("pair_family", "unknown_family", "Invalid pair family"),
+        ("source_context", "unknown_context", "Invalid source context"),
+        ("source_type", "customer_data", "source_type"),
+        ("language", "tr", "language"),
+    ],
+)
+async def test_invalid_row_invariants_raise(
+    mock_rows_by_split: dict[str, list[dict[str, Any]]],
+    field: str,
+    value: Any,
+    message: str,
+) -> None:
+    malformed = dict(mock_rows_by_split["train"][0])
+    malformed[field] = value
+    loader = _AgenticPromptInjectionBoundaryDataset(split=AgenticPromptInjectionBoundarySplit.TRAIN)
+
+    with patch.object(loader, "_fetch_from_huggingface_async", new=AsyncMock(return_value=[malformed])):
+        with pytest.raises(ValueError, match=message):
+            await loader.fetch_dataset_async()
+
+
+async def test_incomplete_pair_raises(mock_rows_by_split: dict[str, list[dict[str, Any]]]) -> None:
+    loader = _AgenticPromptInjectionBoundaryDataset(split=AgenticPromptInjectionBoundarySplit.TRAIN)
+
+    with patch.object(
+        loader,
+        "_fetch_from_huggingface_async",
+        new=AsyncMock(return_value=[mock_rows_by_split["train"][0]]),
+    ):
+        with pytest.raises(ValueError, match="exactly labels 0 and 1"):
+            await loader.fetch_dataset_async()
+
+
+async def test_mismatched_pair_metadata_raises(mock_rows_by_split: dict[str, list[dict[str, Any]]]) -> None:
+    pair_rows = [dict(row) for row in mock_rows_by_split["train"]]
+    pair_rows[1]["risk_domain"] = "healthcare"
+    loader = _AgenticPromptInjectionBoundaryDataset(split=AgenticPromptInjectionBoundarySplit.TRAIN)
+
+    with patch.object(loader, "_fetch_from_huggingface_async", new=AsyncMock(return_value=pair_rows)):
+        with pytest.raises(ValueError, match="mismatched `risk_domain`"):
             await loader.fetch_dataset_async()

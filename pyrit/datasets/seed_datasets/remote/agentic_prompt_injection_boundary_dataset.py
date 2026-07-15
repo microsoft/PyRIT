@@ -89,10 +89,16 @@ class _AgenticPromptInjectionBoundaryDataset(_RemoteDatasetLoader):
 
     Reference: [@deniz2026agenticboundarypairs].
     License: CC BY 4.0.
+
+    The dataset's labels describe agent-security decisions rather than content
+    harms, so they are retained in seed metadata and ``harm_categories`` is
+    intentionally empty.
     """
 
     HF_DATASET_NAME: str = "3nesdeniz/agentic-prompt-injection-boundary-pairs"
-    harm_categories: list[str] = ["benign_boundary", "prompt_injection"]
+    HF_DATASET_REVISION: str = "a946e8eb4f1ef86dd197c1e4add1ad450689239a"
+    DATASET_VERSION: str = "1.0.0"
+    harm_categories: list[str] = []
     modalities: tuple[Modality, ...] = (Modality.TEXT,)
     size: str = "large"  # 1,200 records
     tags: frozenset[str] = frozenset({"safety", "agent_security", "prompt_injection", "refusal", "synthetic"})
@@ -149,6 +155,98 @@ class _AgenticPromptInjectionBoundaryDataset(_RemoteDatasetLoader):
         """The registered dataset name."""
         return "agentic_prompt_injection_boundary_pairs"
 
+    @classmethod
+    def _validate_row(cls, *, row: dict[str, Any], fetched_split: str) -> None:
+        """
+        Validate the published schema and label-dependent invariants.
+
+        Raises:
+            ValueError: If the row violates the published dataset schema.
+        """
+        required_keys = {
+            "id",
+            "pair_id",
+            "scenario_id",
+            "text",
+            "label",
+            "category",
+            "attack_family",
+            "pair_family",
+            "source_context",
+            "risk_domain",
+            "target_boundary",
+            "expected_action",
+            "source_type",
+            "language",
+            "split",
+        }
+        missing = required_keys - row.keys()
+        if missing:
+            raise ValueError(f"Missing keys in Agentic Boundary Pairs entry: {', '.join(sorted(missing))}")
+
+        for key in ("id", "pair_id", "scenario_id", "text", "risk_domain", "target_boundary"):
+            if not isinstance(row[key], str) or not row[key].strip():
+                raise ValueError(f"Agentic Boundary Pairs entry has an invalid `{key}` value: {row[key]!r}")
+
+        row_split = row["split"]
+        if row_split != fetched_split:
+            raise ValueError(f"Dataset row split {row_split!r} does not match fetched split {fetched_split!r}")
+
+        row_label = row["label"]
+        if type(row_label) is not int or row_label not in {0, 1}:
+            raise ValueError(f"Invalid label in Agentic Boundary Pairs entry: {row_label!r}")
+
+        pair_family = row["pair_family"]
+        valid_families = {family.value for family in AgenticPromptInjectionBoundaryAttackFamily}
+        if pair_family not in valid_families:
+            raise ValueError(f"Invalid pair family in Agentic Boundary Pairs entry: {pair_family!r}")
+
+        source_context = row["source_context"]
+        valid_contexts = {context.value for context in AgenticPromptInjectionBoundarySourceContext}
+        if source_context not in valid_contexts:
+            raise ValueError(f"Invalid source context in Agentic Boundary Pairs entry: {source_context!r}")
+
+        expected_category = "prompt_injection" if row_label == 1 else "benign_boundary"
+        expected_attack_family = pair_family if row_label == 1 else "none"
+        expected_action = "block_or_review" if row_label == 1 else "allow"
+        dependent_fields = {
+            "category": expected_category,
+            "attack_family": expected_attack_family,
+            "expected_action": expected_action,
+            "source_type": "synthetic_curated",
+            "language": "en",
+        }
+        for key, expected in dependent_fields.items():
+            if row[key] != expected:
+                raise ValueError(
+                    f"Agentic Boundary Pairs entry has {key}={row[key]!r}; expected {expected!r} for label {row_label}"
+                )
+
+    @staticmethod
+    def _validate_pair_integrity(rows: list[dict[str, Any]]) -> None:
+        """
+        Ensure every fetched pair contains one matched benign/attack row.
+
+        Raises:
+            ValueError: If IDs repeat or a pair is incomplete or mismatched.
+        """
+        rows_by_pair: dict[str, list[dict[str, Any]]] = {}
+        seen_ids: set[str] = set()
+        for row in rows:
+            identifier = row["id"]
+            if identifier in seen_ids:
+                raise ValueError(f"Duplicate Agentic Boundary Pairs entry ID: {identifier}")
+            seen_ids.add(identifier)
+            rows_by_pair.setdefault(row["pair_id"], []).append(row)
+
+        paired_fields = ("split", "scenario_id", "pair_family", "source_context", "risk_domain", "target_boundary")
+        for pair_id, pair_rows in rows_by_pair.items():
+            if len(pair_rows) != 2 or sorted(row["label"] for row in pair_rows) != [0, 1]:
+                raise ValueError(f"Agentic Boundary Pairs pair {pair_id!r} must contain exactly labels 0 and 1")
+            for field in paired_fields:
+                if len({row[field] for row in pair_rows}) != 1:
+                    raise ValueError(f"Agentic Boundary Pairs pair {pair_id!r} has mismatched `{field}` values")
+
     @override
     async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
@@ -177,26 +275,14 @@ class _AgenticPromptInjectionBoundaryDataset(_RemoteDatasetLoader):
                 config="default",
                 split=split_name,
                 cache=cache,
+                revision=self.HF_DATASET_REVISION,
             )
-            rows.extend(dict(row) for row in split_rows)
+            for split_row in split_rows:
+                row = dict(split_row)
+                self._validate_row(row=row, fetched_split=split_name)
+                rows.append(row)
 
-        required_keys = {
-            "id",
-            "pair_id",
-            "scenario_id",
-            "text",
-            "label",
-            "category",
-            "attack_family",
-            "pair_family",
-            "source_context",
-            "risk_domain",
-            "target_boundary",
-            "expected_action",
-            "source_type",
-            "language",
-            "split",
-        }
+        self._validate_pair_integrity(rows)
 
         source_url = f"https://huggingface.co/datasets/{self.HF_DATASET_NAME}"
         authors = ["Enes Deniz"]
@@ -204,51 +290,39 @@ class _AgenticPromptInjectionBoundaryDataset(_RemoteDatasetLoader):
         seeds: list[SeedUnion] = []
 
         for row in rows:
-            missing = required_keys - row.keys()
-            if missing:
-                raise ValueError(f"Missing keys in Agentic Boundary Pairs entry: {', '.join(sorted(missing))}")
-
-            row_split = str(row["split"])
-            if self._split is not AgenticPromptInjectionBoundarySplit.ALL and row_split != self._split.value:
-                raise ValueError(
-                    f"Dataset row split '{row_split}' does not match requested split '{self._split.value}'"
-                )
-
-            row_label = int(row["label"])
-            if row_label not in {0, 1}:
-                raise ValueError(f"Invalid label in Agentic Boundary Pairs entry: {row_label}")
+            row_label = row["label"]
             if self._label is not AgenticPromptInjectionBoundaryLabel.ALL and row_label != self._label.value:
                 continue
 
-            pair_family = str(row["pair_family"])
+            pair_family = row["pair_family"]
             if self._attack_families and pair_family not in self._attack_families:
                 continue
 
-            source_context = str(row["source_context"])
+            source_context = row["source_context"]
             if self._source_contexts and source_context not in self._source_contexts:
                 continue
 
-            category = str(row["category"])
             description_prefix = "Prompt-injection" if row_label == 1 else "Paired legitimate"
             description = (
                 f"{description_prefix} boundary case for {pair_family.replace('_', ' ')} "
                 f"delivered through {source_context.replace('_', ' ')}."
             )
 
-            metadata = {key: row[key] for key in sorted(required_keys - {"text"})}
+            metadata = {key: row[key] for key in sorted(row) if key != "text"}
+            metadata["dataset_version"] = self.DATASET_VERSION
+            metadata["hf_revision"] = self.HF_DATASET_REVISION
             seeds.append(
                 SeedPrompt(
                     value=str(row["text"]),
                     name=str(row["id"]),
                     data_type="text",
                     dataset_name=self.dataset_name,
-                    harm_categories=[category],
+                    harm_categories=[],
                     description=description,
                     source=source_url,
                     authors=authors,
                     groups=groups,
                     metadata=metadata,
-                    prompt_group_alias=str(row["pair_id"]),
                 )
             )
 
