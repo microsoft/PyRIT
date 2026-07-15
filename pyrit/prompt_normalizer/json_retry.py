@@ -27,17 +27,13 @@ async def send_json_with_retry_async(
     parse: Callable[[Message], T],
 ) -> T:
     """
-    Send a message expecting a JSON response, retrying on a clean conversation history.
+    Send a message expecting a JSON response, retrying each attempt on a clean conversation history.
 
-    JSON retries are only useful if each attempt is independent. Because the normalizer
-    persists the request and response to memory *before* the caller validates the JSON, a
-    naive retry on a stable ``conversation_id`` replays the failed turn (the target rebuilds
-    history from memory and re-sees its own malformed reply plus a duplicated user prompt).
-
-    This helper fixes that: it records a baseline sequence for the conversation and, on every
-    attempt, rolls memory back to that baseline before resending. The first attempt deletes
-    nothing; each retry deletes the previous failed turn (and records a ``ConversationRetry``
-    marker) so the model sees a clean history identical to the first attempt.
+    JSON retries are only useful if each attempt is independent. This helper records a baseline
+    sequence for the conversation and, on every attempt, rolls memory back to that baseline before
+    resending: the first attempt deletes nothing; each retry deletes the previous failed turn (and
+    records a ``ConversationRetry`` marker) so the target rebuilds history from memory and sees a
+    clean conversation identical to the first attempt, instead of replaying its own malformed reply.
 
     The retry loop keeps the ``@pyrit_json_retry`` (tenacity) decorator so retry logging and
     the ``RetryCollector`` attribution driven by ``after=log_exception`` are preserved.
