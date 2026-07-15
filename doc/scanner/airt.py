@@ -166,12 +166,14 @@ await output_scenario_async(scenario_result)
 # ## Jailbreak
 #
 # Tests target resilience against jailbreak templates. A run crosses three selectors: the harmful
-# objectives (**dataset**, HarmBench), the **techniques** each jailbreak is delivered through
-# (default `prompt_sending` — "just send"; registry techniques like `role_play_*`, `many_shot`,
-# `tap` are opt-in), and which **jailbreaks** to run. Each selected jailbreak template is applied as
-# a request converter that renders the objective inline into the template, so the target sees the
-# jailbroken prompt exactly as authored; this keeps the scenario target-agnostic and composable with
-# every technique, and results are grouped by jailbreak template.
+# objectives (**dataset**, HarmBench), the **techniques** each jailbreak is delivered through, and
+# which **jailbreaks** to run. Two deliveries are on by default: `prompt_sending` renders the
+# objective inline into the template as a request converter (target-agnostic), and
+# `jailbreak_system_prompt` sets the template as a native system prompt with the objective sent as
+# the user turn (only for targets that natively support editable history + system prompts — it is
+# skipped for incapable targets). Registry techniques like `role_play_*`, `many_shot`, and `tap` are
+# opt-in. Results are grouped by jailbreak template, and a baseline (the un-jailbroken objective) is
+# included by default so complying with the bare objective is itself visible.
 #
 # ```bash
 # pyrit_scan airt.jailbreak \
@@ -181,10 +183,10 @@ await output_scenario_async(scenario_result)
 #   --max-dataset-size 1
 # ```
 #
-# **Available techniques:** ALL, DEFAULT (`prompt_sending`), plus registry techniques
-# (`role_play_*`, `many_shot`, `tap`, …). By default a small curated set of jailbreak templates
-# runs; pass `num_templates` (random sample) or `jailbreak_names` (explicit) to widen or pin the
-# selection.
+# **Available techniques:** ALL, DEFAULT (`prompt_sending` + `jailbreak_system_prompt`), plus registry
+# techniques (`role_play_*`, `many_shot`, `tap`, …). By default a small random sample of jailbreak
+# templates runs; pass `num_jailbreaks` (random count) or `jailbreak_names` (explicit) to widen or
+# pin the selection.
 
 # %%
 from pyrit.scenario.airt import Jailbreak, JailbreakTechnique
