@@ -129,6 +129,21 @@ def create_prompt_response(*, text: str, role: ChatMessageRole = "assistant") ->
     )
 
 
+def create_image_response(*, path: str, role: ChatMessageRole = "assistant") -> Message:
+    """Create an image-path response with normalized values populated."""
+    return Message(
+        message_pieces=[
+            MessagePiece(
+                role=role,
+                original_value=path,
+                original_value_data_type="image_path",
+                converted_value=path,
+                converted_value_data_type="image_path",
+            )
+        ]
+    )
+
+
 def create_adversarial_json_response(
     *,
     question: str = "Attack prompt",
@@ -761,7 +776,8 @@ class TestPromptGeneration:
         assert result is not custom_message  # Should be a duplicate, not the same object
         assert result.get_value() == "Custom prompt"
         assert result.message_pieces[0].id != original_id  # Should have a new ID
-        assert basic_context.next_message is None  # Should be cleared
+        assert basic_context.next_message is None
+        assert basic_context.pending_seed_message is custom_message
 
     async def test_generate_next_prompt_calls_adversarial_chat(
         self,
@@ -825,6 +841,57 @@ class TestPromptGeneration:
         assert "Test objective" in result
         assert "The target refused to respond" in result
         assert refused_text in result
+
+    def test_build_adversarial_prompt_includes_seed_state(
+        self,
+        mock_objective_target: MagicMock,
+        mock_adversarial_chat: MagicMock,
+        basic_context: CrescendoAttackContext,
+    ):
+        """Text-only adversarial targets receive explicit seeded-run state."""
+        mock_objective_target.configuration.capabilities.input_modalities = frozenset(
+            {frozenset({"text", "image_path"})}
+        )
+        attack = CrescendoAttack(
+            objective_target=mock_objective_target,
+            attack_adversarial_config=AttackAdversarialConfig(target=mock_adversarial_chat),
+        )
+        basic_context.initial_seed_count = 2
+        basic_context.pending_seed_message = create_image_response(path="/tmp/seed.png", role="user")
+
+        first_turn = attack._build_adversarial_prompt(context=basic_context, refused_text="")
+        basic_context.executed_turns = 1
+        basic_context.pending_seed_message = None
+        basic_context.last_accepted_response = create_image_response(path="/tmp/generated.png")
+        later_turn = attack._build_adversarial_prompt(context=basic_context, refused_text="")
+
+        assert "seeded_run=true, seed_count=2, input_mode=seed_media" in first_turn
+        assert "original seed media is no longer attached" not in first_turn
+        assert "seeded_run=true, seed_count=2, input_mode=latest_response" in later_turn
+        assert "original seed media is no longer attached" in later_turn
+
+    def test_build_adversarial_prompt_does_not_advertise_first_turn_response_media(
+        self,
+        mock_objective_target: MagicMock,
+        mock_adversarial_chat: MagicMock,
+        basic_context: CrescendoAttackContext,
+    ):
+        """First-turn prompt state matches the objective router's text-only behavior."""
+        mock_objective_target.configuration.capabilities.input_modalities = frozenset(
+            {frozenset({"text"}), frozenset({"text", "image_path"})}
+        )
+        attack = CrescendoAttack(
+            objective_target=mock_objective_target,
+            attack_adversarial_config=AttackAdversarialConfig(target=mock_adversarial_chat),
+        )
+        basic_context.executed_turns = 0
+        basic_context.pending_seed_message = None
+        basic_context.last_accepted_response = create_image_response(path="/tmp/generated.png")
+
+        prompt = attack._build_adversarial_prompt(context=basic_context, refused_text="")
+
+        assert "input_mode=text_only" in prompt
+        assert "input_mode=latest_response" not in prompt
 
     async def test_build_adversarial_prompt_with_objective_score(
         self,
@@ -1233,9 +1300,7 @@ class TestBacktrackingLogic:
     ):
         """Test that no backtracking occurs when max backtracks is reached.
 
-        This prevents infinite loops where the attack keeps getting refused.
-        Once the limit is reached, the attack continues forward even if refused,
-        allowing it to potentially find success through persistence rather than revision.
+        The refusal is still recorded so it cannot become accepted state.
         """
         adversarial_config = AttackAdversarialConfig(target=mock_adversarial_chat)
         scoring_config = AttackScoringConfig(refusal_scorer=mock_refusal_scorer)
@@ -1249,12 +1314,14 @@ class TestBacktrackingLogic:
 
         basic_context.last_response = sample_response
         basic_context.backtrack_count = 5  # Already at max
+        mock_refusal_scorer.score_async.return_value = [refusal_score]
 
         result = await attack._perform_backtrack_if_refused_async(context=basic_context, prompt_sent="Refused prompt")
 
         assert result is False
-        # Important: Should not even check for refusal to save API calls
-        mock_refusal_scorer.score_async.assert_not_called()
+        mock_refusal_scorer.score_async.assert_awaited_once()
+        assert basic_context.last_response_was_refusal is True
+        assert basic_context.refused_text == "Refused prompt"
 
     async def test_backtrack_on_content_filter_error(
         self,
@@ -1368,6 +1435,75 @@ class TestAttackExecution:
 
         # Verify the message was cleared after use
         assert basic_context.next_message is None
+
+    async def test_refused_concrete_message_is_not_replayed(
+        self,
+        mock_objective_target: MagicMock,
+        mock_adversarial_chat: MagicMock,
+        mock_prompt_normalizer: MagicMock,
+        basic_context: CrescendoAttackContext,
+        sample_response: Message,
+        success_objective_score: Score,
+        refusal_score: Score,
+        no_refusal_score: Score,
+    ):
+        """A refused one-shot message gives way to a generated retry with the same media."""
+        mock_objective_target.configuration.capabilities.input_modalities = frozenset(
+            {frozenset({"text", "image_path"})}
+        )
+        attack = CrescendoTestHelper.create_attack(
+            objective_target=mock_objective_target,
+            adversarial_chat=mock_adversarial_chat,
+            prompt_normalizer=mock_prompt_normalizer,
+        )
+        custom_message = Message(
+            message_pieces=[
+                MessagePiece(
+                    role="user",
+                    original_value="Custom first turn message",
+                    conversation_id="seed-conv",
+                ),
+                MessagePiece(
+                    role="user",
+                    original_value="/tmp/seed.png",
+                    original_value_data_type="image_path",
+                    conversation_id="seed-conv",
+                ),
+            ]
+        )
+        basic_context.next_message = custom_message
+        retry_response = create_prompt_response(
+            text=create_adversarial_json_response(question="Regenerated retry message")
+        )
+        mock_prompt_normalizer.send_prompt_async.side_effect = [
+            sample_response,
+            retry_response,
+            sample_response,
+        ]
+
+        with (
+            patch.object(
+                attack,
+                "_check_refusal_async",
+                new_callable=AsyncMock,
+                side_effect=[refusal_score, no_refusal_score],
+            ),
+            patch.object(attack, "_backtrack_memory_async", new_callable=AsyncMock, return_value="retry-conv"),
+            patch(
+                "pyrit.score.Scorer.score_response_async",
+                new_callable=AsyncMock,
+                return_value={"objective_scores": [success_objective_score], "auxiliary_scores": []},
+            ),
+        ):
+            result = await attack._perform_async(context=basic_context)
+
+        sent_messages = [call.kwargs["message"] for call in mock_prompt_normalizer.send_prompt_async.call_args_list]
+        assert result.outcome == AttackOutcome.SUCCESS
+        assert result.backtrack_count == 1
+        assert sent_messages[0].message_pieces[0].original_value == "Custom first turn message"
+        assert sent_messages[2].message_pieces[0].original_value == "Regenerated retry message"
+        assert sent_messages[2].message_pieces[1].original_value == "/tmp/seed.png"
+        assert basic_context.pending_seed_message is None
 
     async def test_perform_async_sets_atomic_attack_identifier(
         self,
@@ -1626,6 +1762,221 @@ class TestAttackExecution:
         assert result.executed_turns == 1  # Only counts non-backtracked turns
         assert result.backtrack_count == 1  # Tracks backtracking for analysis
 
+    async def test_seeded_edit_only_backtrack_reuses_seed_then_forwards_latest_image(
+        self,
+        mock_objective_target: MagicMock,
+        mock_adversarial_chat: MagicMock,
+        mock_prompt_normalizer: MagicMock,
+        refusal_score: Score,
+        no_refusal_score: Score,
+        failure_objective_score: Score,
+        success_objective_score: Score,
+    ):
+        """A refused first turn retains seed media until an accepted response replaces it."""
+        mock_objective_target.configuration.capabilities.input_modalities = frozenset(
+            {frozenset({"text", "image_path"})}
+        )
+        mock_objective_target.configuration.capabilities.output_modalities = frozenset({frozenset({"image_path"})})
+        attack = CrescendoTestHelper.create_attack(
+            objective_target=mock_objective_target,
+            adversarial_chat=mock_adversarial_chat,
+            prompt_normalizer=mock_prompt_normalizer,
+        )
+        seed_message = Message(
+            message_pieces=[
+                MessagePiece.adversarial_placeholder(),
+                MessagePiece(
+                    role="user",
+                    original_value="/path/to/seed.png",
+                    original_value_data_type="image_path",
+                ),
+            ]
+        )
+        context = CrescendoAttackContext(
+            params=AttackParameters(objective="goal", next_message=seed_message),
+            session=ConversationSession(),
+            initial_seed_count=1,
+        )
+
+        def image_response(path: str) -> Message:
+            return Message(
+                message_pieces=[
+                    MessagePiece(
+                        role="assistant",
+                        original_value=path,
+                        original_value_data_type="image_path",
+                        converted_value=path,
+                        converted_value_data_type="image_path",
+                    )
+                ]
+            )
+
+        adversarial_responses = [
+            create_prompt_response(text=create_adversarial_json_response(question="first edit")),
+            create_prompt_response(text=create_adversarial_json_response(question="retry edit")),
+            create_prompt_response(text=create_adversarial_json_response(question="follow-up edit")),
+        ]
+        mock_prompt_normalizer.send_prompt_async.side_effect = [
+            adversarial_responses[0],
+            image_response("/tmp/refused.png"),
+            adversarial_responses[1],
+            image_response("/tmp/accepted-base.png"),
+            adversarial_responses[2],
+            image_response("/tmp/final.png"),
+        ]
+
+        with (
+            patch.object(
+                attack,
+                "_check_refusal_async",
+                new_callable=AsyncMock,
+                side_effect=[refusal_score, no_refusal_score, no_refusal_score],
+            ),
+            patch.object(attack, "_backtrack_memory_async", new_callable=AsyncMock, return_value="retry-conv"),
+            patch(
+                "pyrit.score.Scorer.score_response_async",
+                new_callable=AsyncMock,
+                side_effect=[
+                    {"objective_scores": [failure_objective_score], "auxiliary_scores": []},
+                    {"objective_scores": [success_objective_score], "auxiliary_scores": []},
+                ],
+            ),
+        ):
+            result = await attack._perform_async(context=context)
+
+        objective_messages = [
+            mock_prompt_normalizer.send_prompt_async.call_args_list[index].kwargs["message"] for index in (1, 3, 5)
+        ]
+        assert result.outcome == AttackOutcome.SUCCESS
+        assert result.executed_turns == 2
+        assert result.backtrack_count == 1
+        assert context.next_message is None
+        assert objective_messages[0].message_pieces[1].original_value == "/path/to/seed.png"
+        assert objective_messages[1].message_pieces[1].original_value == "/path/to/seed.png"
+        assert objective_messages[2].message_pieces[1].original_value == "/tmp/accepted-base.png"
+
+    async def test_placeholder_seed_is_consumed_after_first_live_turn_with_prepended_history(
+        self,
+        mock_objective_target: MagicMock,
+        mock_adversarial_chat: MagicMock,
+        mock_prompt_normalizer: MagicMock,
+        no_refusal_score: Score,
+        success_objective_score: Score,
+    ):
+        """Seed lifetime is based on live request state, not the absolute turn count."""
+        mock_objective_target.configuration.capabilities.input_modalities = frozenset(
+            {frozenset({"text", "image_path"})}
+        )
+        mock_objective_target.configuration.capabilities.output_modalities = frozenset({frozenset({"image_path"})})
+        attack = CrescendoAttack(
+            objective_target=mock_objective_target,
+            attack_adversarial_config=AttackAdversarialConfig(target=mock_adversarial_chat),
+            prompt_normalizer=mock_prompt_normalizer,
+            max_turns=3,
+        )
+        seed_message = Message(
+            message_pieces=[
+                MessagePiece.adversarial_placeholder(),
+                MessagePiece(
+                    role="user",
+                    original_value="/tmp/seed.png",
+                    original_value_data_type="image_path",
+                ),
+            ]
+        )
+        context = CrescendoAttackContext(
+            params=AttackParameters(objective="goal", next_message=seed_message),
+            session=ConversationSession(),
+            executed_turns=2,
+        )
+        generated_image = create_image_response(path="/tmp/generated.png")
+        mock_prompt_normalizer.send_prompt_async.side_effect = [
+            create_prompt_response(text=create_adversarial_json_response(question="Compose the seed")),
+            generated_image,
+        ]
+
+        with (
+            patch.object(attack, "_check_refusal_async", new_callable=AsyncMock, return_value=no_refusal_score),
+            patch(
+                "pyrit.score.Scorer.score_response_async",
+                new_callable=AsyncMock,
+                return_value={"objective_scores": [success_objective_score], "auxiliary_scores": []},
+            ),
+        ):
+            result = await attack._perform_async(context=context)
+
+        adversarial_message = mock_prompt_normalizer.send_prompt_async.call_args_list[0].kwargs["message"]
+        objective_message = mock_prompt_normalizer.send_prompt_async.call_args_list[1].kwargs["message"]
+        assert result.outcome == AttackOutcome.SUCCESS
+        assert "input_mode=seed_media" in adversarial_message.get_value()
+        assert objective_message.message_pieces[1].original_value == "/tmp/seed.png"
+        assert context.pending_seed_message is None
+        assert context.last_accepted_response is generated_image
+
+    async def test_later_turn_backtrack_reuses_last_accepted_image(
+        self,
+        mock_objective_target: MagicMock,
+        mock_adversarial_chat: MagicMock,
+        mock_prompt_normalizer: MagicMock,
+        refusal_score: Score,
+        no_refusal_score: Score,
+        success_objective_score: Score,
+    ):
+        """A refused edit never becomes the input base for its retry."""
+        mock_objective_target.configuration.capabilities.input_modalities = frozenset(
+            {frozenset({"text", "image_path"})}
+        )
+        mock_objective_target.configuration.capabilities.output_modalities = frozenset({frozenset({"image_path"})})
+        attack = CrescendoAttack(
+            objective_target=mock_objective_target,
+            attack_adversarial_config=AttackAdversarialConfig(target=mock_adversarial_chat),
+            prompt_normalizer=mock_prompt_normalizer,
+            max_turns=2,
+        )
+        accepted_base = create_image_response(path="/tmp/accepted-base.png")
+        refused_image = create_image_response(path="/tmp/refused.png")
+        final_image = create_image_response(path="/tmp/final.png")
+        context = CrescendoAttackContext(
+            params=AttackParameters(objective="goal"),
+            session=ConversationSession(),
+            executed_turns=1,
+            initial_seed_count=1,
+            seed_state_initialized=True,
+            last_response=accepted_base,
+            last_accepted_response=accepted_base,
+        )
+        mock_prompt_normalizer.send_prompt_async.side_effect = [
+            create_prompt_response(text=create_adversarial_json_response(question="First edit attempt")),
+            refused_image,
+            create_prompt_response(text=create_adversarial_json_response(question="Retry the edit")),
+            final_image,
+        ]
+
+        with (
+            patch.object(
+                attack,
+                "_check_refusal_async",
+                new_callable=AsyncMock,
+                side_effect=[refusal_score, no_refusal_score],
+            ),
+            patch.object(attack, "_backtrack_memory_async", new_callable=AsyncMock, return_value="retry-conv"),
+            patch(
+                "pyrit.score.Scorer.score_response_async",
+                new_callable=AsyncMock,
+                return_value={"objective_scores": [success_objective_score], "auxiliary_scores": []},
+            ),
+        ):
+            result = await attack._perform_async(context=context)
+
+        objective_messages = [
+            mock_prompt_normalizer.send_prompt_async.call_args_list[index].kwargs["message"] for index in (1, 3)
+        ]
+        assert result.outcome == AttackOutcome.SUCCESS
+        assert all(
+            message.message_pieces[1].original_value == "/tmp/accepted-base.png" for message in objective_messages
+        )
+        assert context.last_accepted_response is final_image
+
     async def test_perform_attack_max_backtracks_then_continue(
         self,
         mock_objective_target: MagicMock,
@@ -1704,6 +2055,7 @@ class TestAttackExecution:
         assert result.outcome == AttackOutcome.FAILURE
         assert result.executed_turns == 3  # Reaches max turns despite refusals
         assert result.backtrack_count == 1
+        assert basic_context.last_accepted_response is None
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -2399,7 +2751,7 @@ class TestModalityRouterIntegration:
         mock_adversarial_chat: MagicMock,
         mock_prompt_normalizer: MagicMock,
     ):
-        """next_message with placeholder + seed image -> adv text fills the slot."""
+        """A placeholder seed receives adversarial text while retaining its media."""
         mock_objective_target.configuration.capabilities.input_modalities = frozenset(
             {frozenset({"text", "image_path"})}
         )
@@ -2428,14 +2780,14 @@ class TestModalityRouterIntegration:
                 ),
             ]
         )
-        # Use the context-level override so the cleared-after-use assertion holds
-        # without relying on mutating frozen AttackParameters.
         context = CrescendoAttackContext(
-            params=AttackParameters(objective="goal"),
+            params=AttackParameters(
+                objective="goal",
+                next_message=seed_message,
+            ),
             session=ConversationSession(),
             executed_turns=0,
         )
-        context.next_message = seed_message
 
         mock_prompt_normalizer.send_prompt_async.return_value = create_prompt_response(
             text=create_adversarial_json_response(question="seed text")
@@ -2443,6 +2795,7 @@ class TestModalityRouterIntegration:
         result = await attack._generate_next_prompt_async(context=context)
 
         assert context.next_message is None
+        assert context.pending_seed_message is seed_message
         mock_prompt_normalizer.send_prompt_async.assert_awaited_once()
         assert len(result.message_pieces) == 2
         assert result.message_pieces[0].original_value == "seed text"
