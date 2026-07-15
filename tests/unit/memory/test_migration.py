@@ -679,7 +679,7 @@ def test_memory_migrations_head_command(capsys):
 
 
 _V1_CLEANUP_REV = "24b44ef076b6"
-_V1_CLEANUP_PREV_REV = "d4e6f8a0b2c4"
+_V1_CLEANUP_PREV_REV = "e5f7a9c1b3d2"
 
 
 def test_v1_cleanup_migration_drops_compatibility_columns_and_preserves_rows():
