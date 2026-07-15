@@ -141,6 +141,94 @@ async def test_start_async_raises_when_timeout_exhausted():
             await launcher.start_async(host="localhost", port=8000, startup_timeout=2)
 
 
+async def test_start_async_prints_log_path_on_success(capsys):
+    launcher = ServerLauncher()
+    fake_proc = MagicMock()
+    fake_proc.pid = 4321
+    fake_proc.poll.return_value = None
+    probe = AsyncMock(side_effect=[False, True])
+
+    with (
+        patch.object(ServerLauncher, "probe_health_async", new=probe),
+        patch("subprocess.Popen", return_value=fake_proc),
+        patch("asyncio.sleep", new=AsyncMock(return_value=None)),
+    ):
+        await launcher.start_async(host="localhost", port=8001, startup_timeout=5)
+
+    out = capsys.readouterr().out
+    assert "Server ready (PID 4321)" in out
+    assert "Logs:" in out
+    assert launcher._log_path in out
+
+
+async def test_start_async_echoes_log_tail_on_crash(capsys):
+    launcher = ServerLauncher()
+    fake_proc = MagicMock()
+    fake_proc.pid = 42
+    fake_proc.poll.return_value = 1  # exited
+    probe = AsyncMock(return_value=False)
+
+    with (
+        patch.object(ServerLauncher, "probe_health_async", new=probe),
+        patch("subprocess.Popen", return_value=fake_proc),
+        patch("asyncio.sleep", new=AsyncMock(return_value=None)),
+        patch.object(ServerLauncher, "_read_log_tail", return_value="ERROR: port already in use"),
+    ):
+        with pytest.raises(RuntimeError, match="exited with code 1"):
+            await launcher.start_async(host="localhost", port=8000, startup_timeout=3)
+
+    err = capsys.readouterr().err
+    assert "pyrit_backend log" in err
+    assert "ERROR: port already in use" in err
+
+
+async def test_start_async_echoes_log_tail_on_timeout(capsys):
+    launcher = ServerLauncher()
+    fake_proc = MagicMock()
+    fake_proc.pid = 99
+    fake_proc.poll.return_value = None  # still running
+    probe = AsyncMock(return_value=False)
+
+    with (
+        patch.object(ServerLauncher, "probe_health_async", new=probe),
+        patch("subprocess.Popen", return_value=fake_proc),
+        patch("asyncio.sleep", new=AsyncMock(return_value=None)),
+        patch.object(ServerLauncher, "_read_log_tail", return_value="Traceback: boom"),
+    ):
+        with pytest.raises(RuntimeError, match="did not become healthy"):
+            await launcher.start_async(host="localhost", port=8000, startup_timeout=2)
+
+    err = capsys.readouterr().err
+    assert "Traceback: boom" in err
+
+
+# ---------------------------------------------------------------------------
+# _read_log_tail
+# ---------------------------------------------------------------------------
+
+
+def test_read_log_tail_returns_last_lines(tmp_path):
+    log_file = tmp_path / "pyrit_backend.log"
+    log_file.write_text("\n".join(f"line {i}" for i in range(50)), encoding="utf-8")
+    launcher = ServerLauncher()
+    launcher._log_path = str(log_file)
+
+    tail = launcher._read_log_tail(max_lines=5)
+
+    assert tail.splitlines() == ["line 45", "line 46", "line 47", "line 48", "line 49"]
+
+
+def test_read_log_tail_returns_empty_when_no_log_path():
+    launcher = ServerLauncher()
+    assert launcher._read_log_tail() == ""
+
+
+def test_read_log_tail_returns_empty_when_file_missing(tmp_path):
+    launcher = ServerLauncher()
+    launcher._log_path = str(tmp_path / "does_not_exist.log")
+    assert launcher._read_log_tail() == ""
+
+
 # ---------------------------------------------------------------------------
 # stop
 # ---------------------------------------------------------------------------

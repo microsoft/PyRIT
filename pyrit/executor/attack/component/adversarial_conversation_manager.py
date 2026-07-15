@@ -27,7 +27,7 @@ from pyrit.executor.attack.core.attack_config import (
     resolve_adversarial_system_prompt,
 )
 from pyrit.models import (
-    JSON_SCHEMA_METADATA_KEY,
+    JsonResponseConfig,
     JsonSchemaDefinition,
     Message,
     Score,
@@ -208,7 +208,7 @@ def _build_adversarial_prompt_metadata(*, response_json_schema: JsonSchemaDefini
     """
     if response_json_schema is None:
         return {}
-    return {"response_format": "json", JSON_SCHEMA_METADATA_KEY: response_json_schema}
+    return JsonResponseConfig(enabled=True, json_schema=response_json_schema).to_metadata()
 
 
 def _parse_adversarial_reply(response_text: str, *, schema: JsonSchemaDefinition | None = None) -> AdversarialReply:

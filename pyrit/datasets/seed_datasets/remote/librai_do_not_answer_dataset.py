@@ -10,6 +10,7 @@ from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
 from pyrit.models import Modality, SeedDataset, SeedPrompt
+from pyrit.models.harm_category import HarmCategory
 
 if TYPE_CHECKING:
     from pyrit.models.seeds.seed_group import SeedUnion
@@ -84,12 +85,45 @@ class _LibrAIDoNotAnswerDataset(_RemoteDatasetLoader):
             cache=cache,
         )
 
+        # Map the 12 "types_of_harm" labels (finer-grained than the 5 risk_area
+        # buckets) to canonical harm categories. The native risk_area,
+        # types_of_harm, and specific_harms annotations are preserved in metadata.
+        harm_type_alias_overrides: dict[str, list[HarmCategory]] = {
+            "Toxic language (hate speech)": [HarmCategory.HATE_SPEECH],
+            "Mental Health or Overreliance Crisis": [HarmCategory.MENTAL_HEALTH, HarmCategory.EMOTIONAL],
+            "Social stereotypes and unfair discrimination": [
+                HarmCategory.REPRESENTATIONAL,
+                HarmCategory.HATE_SPEECH,
+            ],
+            "Treat Chatbot as a Human": [HarmCategory.EMOTIONAL],
+            "Adult Content": [HarmCategory.SEXUAL_CONTENT],
+            "Compromise privacy by leaking or inferring private information (person/individual)": [HarmCategory.PPI],
+            "Risks from leaking or inferring sensitive information (organization/gov)": [
+                HarmCategory.PROPRIETARY_INFO,
+                HarmCategory.HIGH_RISK_GOVERNMENT,
+            ],
+            "Nudging or advising users to perform unethical or unsafe actions": [HarmCategory.DANGEROUS_SITUATIONS],
+            "Assisting illegal activities": [HarmCategory.COORDINATION_HARM],
+            "Causing material harm by disseminating misinformation e.g. in medicine or law": [
+                HarmCategory.INFO_INTEGRITY,
+                HarmCategory.CURRENT_EVENTS_MISINFO,
+            ],
+            "Disseminating false or misleading information": [HarmCategory.INFO_INTEGRITY],
+            "Reducing the cost of disinformation campaigns": [
+                HarmCategory.INFO_INTEGRITY,
+                HarmCategory.CAMPAIGNING,
+            ],
+        }
+
         seed_prompts: list[SeedUnion] = [
             SeedPrompt(
                 value=entry["question"],
                 data_type="text",
                 dataset_name=self.dataset_name,
-                harm_categories=[entry["risk_area"], entry["types_of_harm"], entry["specific_harms"]],
+                harm_categories=self._standardize_harm_categories(
+                    entry.get("types_of_harm"),
+                    alias_overrides=harm_type_alias_overrides,
+                ),
                 description=(
                     f"This is a prompt from the 'Do Not Answer' dataset under the risk area: {entry['risk_area']}, "
                     f"harm type: {entry['types_of_harm']}, and specific harm: {entry['specific_harms']}."
@@ -97,6 +131,11 @@ class _LibrAIDoNotAnswerDataset(_RemoteDatasetLoader):
                 source=f"https://huggingface.co/datasets/{self.source}",
                 authors=self._AUTHORS,
                 groups=self._GROUPS,
+                metadata={
+                    "risk_area": entry.get("risk_area", ""),
+                    "types_of_harm": entry.get("types_of_harm", ""),
+                    "specific_harms": entry.get("specific_harms", ""),
+                },
             )
             for entry in data
         ]

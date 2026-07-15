@@ -19,6 +19,7 @@ from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
 from pyrit.models import Modality, SeedDataset, SeedPrompt
+from pyrit.models.harm_category import HarmCategory
 
 if TYPE_CHECKING:
     from pyrit.models.seeds.seed_group import SeedUnion
@@ -97,6 +98,20 @@ class _VLGuardDataset(_RemoteDatasetLoader):
     Paper: Safety Fine-Tuning at (Almost) No Cost: A Baseline for Vision Large Language Models (ICML 2024)
     """
 
+    HARM_SUBCATEGORY_ALIAS_OVERRIDES: dict[str, list[HarmCategory]] = {
+        "personal data": [HarmCategory.PPI],
+        "professional advice": [
+            HarmCategory.LEGAL_ADVICE,
+            HarmCategory.FINANCIAL_ADVICE,
+            HarmCategory.HEALTH_DIAGNOSIS,
+        ],
+        "political": [HarmCategory.CAMPAIGNING],
+        "sexually explicit": [HarmCategory.SEXUAL_CONTENT],
+        "violence": [HarmCategory.VIOLENT_CONTENT],
+        "disinformation": [HarmCategory.INFO_INTEGRITY],
+        "sex": [HarmCategory.REPRESENTATIONAL, HarmCategory.HATE_SPEECH],
+        "race": [HarmCategory.REPRESENTATIONAL, HarmCategory.HATE_SPEECH],
+    }
     _HF_REPO_ID: ClassVar[str] = "ys-zong/VLGuard"
 
     _AUTHORS = [
@@ -211,13 +226,17 @@ class _VLGuardDataset(_RemoteDatasetLoader):
                 continue
 
             group_id = uuid.uuid4()
+            standardized_harm_categories = self._standardize_harm_categories(
+                subcategory,
+                alias_overrides=self.HARM_SUBCATEGORY_ALIAS_OVERRIDES,
+            )
 
             text_prompt = SeedPrompt(
                 value=instruction,
                 data_type="text",
                 name="VLGuard Text",
                 dataset_name=self.dataset_name,
-                harm_categories=[category],
+                harm_categories=standardized_harm_categories,
                 description=f"Text component of VLGuard multimodal prompt ({self.subset.value}).",
                 source=self.source,
                 prompt_group_id=group_id,
@@ -225,6 +244,8 @@ class _VLGuardDataset(_RemoteDatasetLoader):
                 metadata={
                     "category": category,
                     "subcategory": subcategory,
+                    "harmful_category": category,
+                    "harmful_subcategory": subcategory,
                     "subset": self.subset.value,
                     "safe_image": is_safe,
                 },
@@ -237,7 +258,7 @@ class _VLGuardDataset(_RemoteDatasetLoader):
                 data_type="image_path",
                 name="VLGuard Image",
                 dataset_name=self.dataset_name,
-                harm_categories=[category],
+                harm_categories=standardized_harm_categories,
                 description=f"Image component of VLGuard multimodal prompt ({self.subset.value}).",
                 source=self.source,
                 prompt_group_id=group_id,
@@ -245,6 +266,8 @@ class _VLGuardDataset(_RemoteDatasetLoader):
                 metadata={
                     "category": category,
                     "subcategory": subcategory,
+                    "harmful_category": category,
+                    "harmful_subcategory": subcategory,
                     "subset": self.subset.value,
                     "safe_image": is_safe,
                     "original_filename": image_filename,

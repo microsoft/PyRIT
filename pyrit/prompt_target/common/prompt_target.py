@@ -6,8 +6,15 @@ import logging
 from typing import Any, ClassVar, Literal, final
 
 from pyrit.memory import CentralMemory, MemoryInterface
-from pyrit.models import ComponentIdentifier, Conversation, Identifiable, Message, MessagePiece, TargetIdentifier
-from pyrit.prompt_target.common.json_response_config import _JsonResponseConfig
+from pyrit.models import (
+    ComponentIdentifier,
+    Conversation,
+    Identifiable,
+    JsonResponseConfig,
+    Message,
+    MessagePiece,
+    TargetIdentifier,
+)
 from pyrit.prompt_target.common.target_capabilities import (
     CapabilityName,
     TargetCapabilities,
@@ -505,7 +512,7 @@ class PromptTarget(Identifiable):
         config = self._get_json_response_config(message_piece=message_piece)
         return config.enabled
 
-    def _get_json_response_config(self, *, message_piece: MessagePiece) -> _JsonResponseConfig:
+    def _get_json_response_config(self, *, message_piece: MessagePiece) -> JsonResponseConfig:
         """
         Get the JSON response configuration from the message piece metadata.
 
@@ -514,12 +521,12 @@ class PromptTarget(Identifiable):
                 include JSON response configuration.
 
         Returns:
-            _JsonResponseConfig: The JSON response configuration.
+            JsonResponseConfig: The JSON response configuration.
 
         Raises:
             ValueError: If JSON response format is requested but unsupported.
         """
-        config = _JsonResponseConfig.from_metadata(metadata=message_piece.prompt_metadata)
+        config = JsonResponseConfig.from_metadata(metadata=message_piece.prompt_metadata)
 
         if config.enabled and not self.capabilities.supports_json_output:
             target_name = self.get_identifier().class_name

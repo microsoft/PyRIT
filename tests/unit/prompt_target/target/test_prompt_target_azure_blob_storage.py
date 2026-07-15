@@ -240,3 +240,35 @@ async def test_upload_blob_async_raises_when_client_async_none(azure_blob_storag
                 await azure_blob_storage_target._upload_blob_async(
                     file_name="test.txt", data=b"hello", content_type="text/plain"
                 )
+
+
+@pytest.mark.parametrize(
+    "file_name",
+    ["../../admin/stolen.txt", "sub/dir/file.txt", "..", ".", "dir\\file.txt", "/abs.txt"],
+)
+def test_sanitize_file_name_rejects_path_traversal(file_name):
+    """Caller-supplied file_name with path components must be rejected (CWE-22 hardening)."""
+    with pytest.raises(ValueError, match="bare filename"):
+        AzureBlobStorageTarget._sanitize_file_name(file_name)
+
+
+def test_sanitize_file_name_allows_bare_name():
+    """A plain leaf file name passes through unchanged."""
+    assert AzureBlobStorageTarget._sanitize_file_name("results.txt") == "results.txt"
+
+
+async def test_send_prompt_async_rejects_traversal_file_name(
+    azure_blob_storage_target: AzureBlobStorageTarget,
+    sample_entries: MutableSequence[MessagePiece],
+):
+    """A traversal file_name in prompt metadata is refused before any upload."""
+    message_piece = sample_entries[0]
+    message_piece.converted_value = "Test content"
+    message_piece.prompt_metadata = {"file_name": "../../admin/stolen.txt"}
+    request = Message(message_pieces=[message_piece])
+
+    with patch.object(AzureBlobStorageTarget, "_upload_blob_async", new_callable=AsyncMock) as mock_upload:
+        with pytest.raises(ValueError, match="bare filename"):
+            await azure_blob_storage_target.send_prompt_async(message=request)
+
+    mock_upload.assert_not_called()

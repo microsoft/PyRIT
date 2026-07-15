@@ -18,6 +18,8 @@ from pyrit.backend.models.scenarios import ScenarioRunListResponse
 from pyrit.memory import CentralMemory
 from pyrit.models import AttackOutcome, ScenarioResult, ScenarioRunState
 from pyrit.models.catalog.scenario import (
+    AttackErrorSummary,
+    AttackRetrySummary,
     RunScenarioRequest,
     ScenarioRunSummary,
 )
@@ -597,6 +599,38 @@ class ScenarioRunService:
         completed_attacks = total_attacks
         techniques_used = scenario_result.get_techniques_used()
 
+        # Surface per-attack errors and retry pressure regardless of overall run status:
+        # a COMPLETED scenario can still hide errored objectives or rate-limit retries.
+        failed_attacks: list[AttackErrorSummary] = []
+        attack_retries: list[AttackRetrySummary] = []
+        total_retries = 0
+        for atomic_attack_name, results in scenario_result.attack_results.items():
+            for attack_result in results:
+                retries = getattr(attack_result, "total_retries", 0)
+                if isinstance(retries, int):
+                    total_retries += retries
+
+                retry_events = getattr(attack_result, "retry_events", None)
+                if isinstance(retry_events, list) and retry_events:
+                    attack_retries.append(
+                        AttackRetrySummary(
+                            attack_result_id=str(attack_result.attack_result_id),
+                            atomic_attack_name=atomic_attack_name,
+                            retries=retry_events,
+                        )
+                    )
+
+                if attack_result.outcome == AttackOutcome.ERROR:
+                    failed_attacks.append(
+                        AttackErrorSummary(
+                            atomic_attack_name=atomic_attack_name,
+                            objective=attack_result.objective,
+                            error_type=attack_result.error_type,
+                            error_message=attack_result.error_message,
+                            total_retries=retries if isinstance(retries, int) else 0,
+                        )
+                    )
+
         return ScenarioRunSummary(
             scenario_result_id=scenario_result_id,
             scenario_name=scenario_result.scenario_name,
@@ -610,6 +644,9 @@ class ScenarioRunService:
             total_attacks=total_attacks,
             completed_attacks=completed_attacks,
             objective_achieved_rate=scenario_result.objective_achieved_rate(),
+            failed_attacks=failed_attacks,
+            attack_retries=attack_retries,
+            total_retries=total_retries,
             labels=scenario_result.labels,
             completed_at=scenario_result.completion_time,
         )

@@ -50,6 +50,18 @@ def _header(text: str) -> None:
     _cprint(f"\n  {text}", color="cyan", bold=True)
 
 
+def _truncate_text(text: str, max_length: int) -> str:
+    """
+    Truncate *text* to *max_length* characters, appending an ellipsis when cut.
+
+    Returns:
+        str: The original text, or a truncated copy ending in ``...``.
+    """
+    if len(text) <= max_length:
+        return text
+    return text[: max_length - 3].rstrip() + "..."
+
+
 def _wrap(*, text: str, indent: str, width: int = 78) -> str:
     """
     Word-wrap *text* with the given *indent*.
@@ -262,6 +274,54 @@ def print_dataset_list(*, items: list[dict[str, Any]]) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _format_retry_location(retry: Any) -> str:
+    """
+    Build a human-readable "on <component>, endpoint <url>" clause for a retry.
+
+    Returns:
+        str: The location clause, or an empty string when no context is available.
+    """
+    bits: list[str] = []
+    if retry.component_role:
+        role = retry.component_role.replace("_", " ")
+        bits.append(f"{role} {retry.component_name}" if retry.component_name else role)
+    if retry.endpoint:
+        bits.append(f"endpoint {retry.endpoint}")
+    return " on " + ", ".join(bits) if bits else ""
+
+
+def print_scenario_retry_warnings(*, run: ScenarioRunSummary, seen_attack_ids: set[str]) -> None:
+    """
+    Print retry warnings for attack results seen for the first time.
+
+    Called during polling so retries stream to the console as each attack result
+    lands. ``seen_attack_ids`` is mutated to de-duplicate across polls.
+
+    Args:
+        run: ``ScenarioRunSummary`` from ``GET /api/scenarios/runs/{id}``.
+        seen_attack_ids: Attack-result IDs already printed; updated in place.
+    """
+    new_attacks = [a for a in run.attack_retries if a.attack_result_id not in seen_attack_ids]
+    if not new_attacks:
+        return
+
+    # Finalize the in-place progress line (written with `\r`, no newline) so these
+    # warnings become persistent scrollback above the next progress redraw.
+    print()
+    for attack in new_attacks:
+        seen_attack_ids.add(attack.attack_result_id)
+        for retry in attack.retries:
+            exc = retry.exception_type or "error"
+            message = (retry.exception_message or "").strip().splitlines()
+            if message:
+                exc = f"{exc}: {_truncate_text(message[0], 160)}"
+            location = _format_retry_location(retry)
+            _cprint(
+                f"  ! retry #{retry.attempt_number} [{attack.atomic_attack_name}]{location}: {exc}",
+                color="yellow",
+            )
+
+
 def print_scenario_run_progress(*, run: ScenarioRunSummary, total_techniques: int = 0) -> None:
     """
     Print a single-line progress update (overwrites the current line).
@@ -277,19 +337,17 @@ def print_scenario_run_progress(*, run: ScenarioRunSummary, total_techniques: in
 
     parts: list[str] = []
 
+    # The bar tracks techniques completed / total, which is the only ratio we can
+    # honestly compute mid-run: the server only knows about attacks already persisted,
+    # so an attacks-based bar would always read 100%.
     if effective_total > 0:
-        parts.append(f"techniques: {techniques_done}/{effective_total}")
-    elif techniques_done > 0:
-        parts.append(f"techniques: {techniques_done}")
-
-    if run.total_attacks > 0:
-        pct = int((run.completed_attacks / run.total_attacks) * 100)
+        pct = int((techniques_done / effective_total) * 100)
         bar_width = 30
-        filled = int(bar_width * run.completed_attacks / run.total_attacks)
+        filled = int(bar_width * techniques_done / effective_total)
         bar = "█" * filled + "░" * (bar_width - filled)
-        parts.append(f"[{bar}] {run.completed_attacks}/{run.total_attacks} attacks ({pct}%)")
+        parts.append(f"[{bar}] techniques: {techniques_done}/{effective_total} ({pct}%)")
     else:
-        parts.append(f"attacks: {run.completed_attacks}")
+        parts.append(f"techniques: {techniques_done}")
 
     parts.append(f"success rate: {run.objective_achieved_rate}%")
     parts.append(run.status.value)
@@ -310,15 +368,28 @@ def print_scenario_run_summary(*, run: ScenarioRunSummary) -> None:
     print(f"\nScenario: {run.scenario_name}")
     print(f"  Result ID:      {run.scenario_result_id}")
     print(f"  Status:         {run.status.value}")
-    print(f"  Total Attacks:  {run.total_attacks}")
-    print(f"  Completed:      {run.completed_attacks}")
+    # Count of individual attack-result records persisted (one per technique x objective
+    # that ran), not a planned total. It stops growing wherever a failed run halted.
+    print(f"  Attack Results: {run.total_attacks}")
     print(f"  Success Rate:   {run.objective_achieved_rate}%")
+
+    if run.total_retries:
+        print(f"  Retries:        {run.total_retries} (endpoint-stress signal)")
 
     if run.error:
         print(f"  Error:          {run.error}")
 
     if run.techniques_used:
         print(f"  Techniques:     {', '.join(run.techniques_used)}")
+
+    if run.failed_attacks:
+        print(f"\n  Failed Attacks ({len(run.failed_attacks)}):")
+        for failed in run.failed_attacks:
+            error_type = failed.error_type or "Error"
+            message = (failed.error_message or "").strip().splitlines()
+            detail = _truncate_text(message[0], 200) if message else "no detail"
+            retry_note = f" [{failed.total_retries} retries]" if failed.total_retries else ""
+            print(f"    - {failed.atomic_attack_name}{retry_note}: {error_type}: {detail}")
 
 
 # ---------------------------------------------------------------------------

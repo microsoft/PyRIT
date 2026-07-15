@@ -22,12 +22,12 @@ from pyrit.exceptions import (
 from pyrit.memory.storage import convert_local_image_to_data_url_async
 from pyrit.models import (
     ComponentIdentifier,
+    JsonResponseConfig,
     Message,
     MessagePiece,
     PromptDataType,
     PromptResponseError,
 )
-from pyrit.prompt_target.common.json_response_config import _JsonResponseConfig
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.prompt_target.common.utils import (
@@ -371,7 +371,7 @@ class OpenAIResponseTarget(OpenAITarget):
         return input_items
 
     async def _construct_request_body_async(
-        self, *, conversation: MutableSequence[Message], json_config: _JsonResponseConfig
+        self, *, conversation: MutableSequence[Message], json_config: JsonResponseConfig
     ) -> dict[str, Any]:
         """
         Construct the request body to send to the Responses API.
@@ -425,7 +425,7 @@ class OpenAIResponseTarget(OpenAITarget):
             reasoning["summary"] = self._reasoning_summary
         return reasoning
 
-    def _build_text_format(self, json_config: _JsonResponseConfig) -> dict[str, Any] | None:
+    def _build_text_format(self, json_config: JsonResponseConfig) -> dict[str, Any] | None:
         if not json_config.enabled:
             return None
 

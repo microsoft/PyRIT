@@ -126,7 +126,8 @@ class TestSIUODataset:
                 assert seed.metadata["category"] == "self-harm"
                 assert seed.metadata["safety_warning"] == mock_data[0]["safety_warning"]
                 assert "reference_answer" not in seed.metadata
-            assert seed.harm_categories == ["self-harm"]
+            assert seed.metadata["category"] == "self-harm"
+            assert seed.harm_categories == ["SELF_HARM", "SUICIDE"]
             assert seed.dataset_name == "siuo"
 
     async def test_fetch_dataset_image_metadata_includes_url(self):
@@ -190,7 +191,7 @@ class TestSIUODataset:
         # Only the morality row remains: 1 group × 3 seeds
         assert len(dataset.seeds) == 3
         for seed in dataset.seeds:
-            assert seed.harm_categories == ["morality"]
+            assert seed.harm_categories == ["OTHER"]
 
     async def test_multiple_categories_filter(self):
         mock_data = [
@@ -208,8 +209,37 @@ class TestSIUODataset:
 
         # 2 rows kept × 3 seeds each = 6
         assert len(dataset.seeds) == 6
-        kept = {seed.harm_categories[0] for seed in dataset.seeds}
-        assert kept == {"self-harm", "dangerous behavior"}
+        kept = {tuple(seed.harm_categories) for seed in dataset.seeds}
+        assert kept == {("SELF_HARM", "SUICIDE"), ("DANGEROUS_SITUATIONS",)}
+
+    @pytest.mark.parametrize(
+        ("category", "expected_harm_categories"),
+        [
+            ("self-harm", ["SELF_HARM", "SUICIDE"]),
+            ("illegal activities & crime", ["COORDINATION_HARM"]),
+            ("privacy violation", ["PPI"]),
+            ("morality", ["OTHER"]),
+            ("dangerous behavior", ["DANGEROUS_SITUATIONS"]),
+            ("discrimination & stereotyping", ["REPRESENTATIONAL", "HATE_SPEECH"]),
+            ("information misinterpretation", ["INFO_INTEGRITY"]),
+            ("religion beliefs", ["PROTECTED_INFERENCE"]),
+            ("controversial topics, politics", ["INFO_INTEGRITY"]),
+        ],
+    )
+    async def test_category_harm_mappings(self, category, expected_harm_categories):
+        mock_data = [_make_example(category=category)]
+        loader = _SIUODataset()
+
+        with (
+            patch.object(loader, "_fetch_from_url", return_value=mock_data),
+            patch.object(loader, "_fetch_and_save_image_async", new_callable=AsyncMock, return_value="/fake/img.png"),
+        ):
+            dataset = await loader.fetch_dataset_async(cache=False)
+
+        assert len(dataset.seeds) == 3
+        for seed in dataset.seeds:
+            assert seed.metadata["category"] == category
+            assert seed.harm_categories == expected_harm_categories
 
     async def test_empty_after_filter_raises(self):
         mock_data = [_make_example(category="self-harm")]
