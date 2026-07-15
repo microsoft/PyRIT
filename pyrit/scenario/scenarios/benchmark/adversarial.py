@@ -43,9 +43,8 @@ def _build_benchmark_technique() -> type[ScenarioTechnique]:
     decided by the active initializer (the registration gate); this scenario
     does not narrow the pool further by group. The resulting enum has one
     concrete member per factory (e.g. ``red_teaming``, ``tap``,
-    ``crescendo_simulated``), a ``light`` / ``single_turn`` / ``multi_turn``
-    aggregate for each catalog tag, and a ``default`` aggregate for the
-    scenario's default run.
+    ``crescendo_simulated``) and a ``light`` / ``single_turn`` / ``multi_turn``
+    aggregate for each catalog tag. ``light`` is the scenario's default run.
 
     The (technique × target) cross-product is materialized lazily in
     ``AdversarialBenchmark._build_atomic_attacks_async`` from the
@@ -63,7 +62,6 @@ def _build_benchmark_technique() -> type[ScenarioTechnique]:
     return AttackTechniqueRegistry.build_technique_class_from_factories(  # type: ignore[ty:invalid-return-type]
         class_name="BenchmarkTechnique",
         factories=factories,
-        default_technique_names={"role_play_movie_script", "many_shot"},
     )
 
 

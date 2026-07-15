@@ -165,12 +165,12 @@ class TestRapidResponseBasic:
         ):
             assert RapidResponse()._technique_class is strat
 
-    def test_get_default_technique_returns_default(self, mock_objective_scorer):
+    def test_get_default_technique_returns_light(self, mock_objective_scorer):
         strat = _technique_class()
         with patch(
             "pyrit.scenario.core.scenario.Scenario._get_default_objective_scorer", return_value=mock_objective_scorer
         ):
-            assert RapidResponse()._default_technique == strat.DEFAULT
+            assert RapidResponse()._default_technique == strat.LIGHT
 
     def test_default_dataset_config_has_all_harm_datasets(self, mock_objective_scorer):
         with patch(
@@ -210,7 +210,7 @@ class TestRapidResponseBasic:
         new_callable=AsyncMock,
         return_value=ALL_HARM_SEED_GROUPS,
     )
-    async def test_initialization_defaults_to_default_technique(
+    async def test_initialization_defaults_to_light_technique(
         self,
         _mock_groups,
         mock_get_scorer,
@@ -221,8 +221,11 @@ class TestRapidResponseBasic:
         scenario = RapidResponse()
         scenario.set_params_from_args(args={"objective_target": mock_objective_target})
         await scenario.initialize_async()
-        # DEFAULT expands to PromptSending + ManyShot → 2 composites
-        assert len(scenario._scenario_techniques) == 2
+        # Default is the LIGHT aggregate; it expands to every light-tagged technique.
+        strat = _technique_class()
+        expected = len(strat.expand({strat.LIGHT}))
+        assert expected > 2
+        assert len(scenario._scenario_techniques) == expected
 
     async def test_initialize_raises_when_no_datasets(self, mock_objective_target, mock_objective_scorer):
         """Dataset resolution fails from empty memory."""
@@ -306,16 +309,17 @@ class TestRapidResponseAttackGeneration:
             await scenario.initialize_async()
             return scenario._atomic_attacks
 
-    async def test_default_technique_produces_role_play_and_many_shot(
-        self, mock_objective_target, mock_objective_scorer
-    ):
+    async def test_default_technique_is_light(self, mock_objective_target, mock_objective_scorer):
         attacks = await self._init_and_get_attacks(
             mock_objective_target=mock_objective_target,
             mock_objective_scorer=mock_objective_scorer,
         )
         technique_classes = {type(a.attack_technique.attack) for a in attacks}
-        # role_play_movie_script is now a simulated-conversation PromptSendingAttack.
+        # Default is the LIGHT aggregate: it includes many_shot, context_compliance, and the
+        # simulated-conversation role_play_* variants, but excludes the slow TAP attack.
         assert ManyShotJailbreakAttack in technique_classes
+        assert ContextComplianceAttack in technique_classes
+        assert TreeOfAttacksWithPruningAttack not in technique_classes
         assert any(
             a.attack_technique.seed_technique is not None
             and a.attack_technique.seed_technique.has_simulated_conversation
@@ -432,7 +436,7 @@ class TestRapidResponseAttackGeneration:
             assert len(extra) == 1
 
     async def test_attack_count_is_techniques_times_datasets(self, mock_objective_target, mock_objective_scorer):
-        """With 2 datasets and DEFAULT (2 techniques), expect 4 atomic attacks."""
+        """With 2 datasets and the LIGHT default, expect (light techniques) x 2 atomic attacks."""
         two_datasets = {
             "hate": _make_seed_groups("hate"),
             "violence": _make_seed_groups("violence"),
@@ -442,8 +446,9 @@ class TestRapidResponseAttackGeneration:
             mock_objective_scorer=mock_objective_scorer,
             seed_groups=two_datasets,
         )
-        # DEFAULT = RolePlay + ManyShot = 2 techniques, 2 datasets → 4
-        assert len(attacks) == 4
+        strat = _technique_class()
+        expected = len(strat.expand({strat.LIGHT})) * 2
+        assert len(attacks) == expected
 
     async def test_atomic_attack_names_are_unique_compound_keys(self, mock_objective_target, mock_objective_scorer):
         """Each AtomicAttack has a unique compound atomic_attack_name for resume correctness."""
