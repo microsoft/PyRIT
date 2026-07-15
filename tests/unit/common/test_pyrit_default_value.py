@@ -393,11 +393,11 @@ class TestComplexScenarios:
                 *,
                 temperature: float | None = None,
                 top_p: float | None = None,
-                max_tokens: int | None = None,
+                max_completion_tokens: int | None = None,
             ) -> None:
                 self.temperature = temperature
                 self.top_p = top_p
-                self.max_tokens = max_tokens
+                self.max_completion_tokens = max_completion_tokens
 
         class AzureOpenAIChatTarget(OpenAIChatTarget):
             @apply_defaults
@@ -406,9 +406,13 @@ class TestComplexScenarios:
                 *,
                 temperature: float | None = None,
                 top_p: float | None = None,
-                max_tokens: int | None = None,
+                max_completion_tokens: int | None = None,
             ) -> None:
-                super().__init__(temperature=temperature, top_p=top_p, max_tokens=max_tokens)
+                super().__init__(
+                    temperature=temperature,
+                    top_p=top_p,
+                    max_completion_tokens=max_completion_tokens,
+                )
 
         # Set defaults for base class
         set_default_value(class_type=OpenAIChatTarget, parameter_name="temperature", value=0.7)
@@ -421,19 +425,19 @@ class TestComplexScenarios:
         base_obj = OpenAIChatTarget()
         assert base_obj.temperature == 0.7
         assert base_obj.top_p == 0.9
-        assert base_obj.max_tokens is None
+        assert base_obj.max_completion_tokens is None
 
         # Test subclass with inheritance
         azure_obj = AzureOpenAIChatTarget()
         assert azure_obj.temperature == 0.3  # More specific default
         assert azure_obj.top_p == 0.9  # Inherited from parent
-        assert azure_obj.max_tokens is None  # No default set
+        assert azure_obj.max_completion_tokens is None  # No default set
 
         # Test with explicit overrides
-        custom_obj = AzureOpenAIChatTarget(temperature=0.5, max_tokens=100)
+        custom_obj = AzureOpenAIChatTarget(temperature=0.5, max_completion_tokens=100)
         assert custom_obj.temperature == 0.5  # Explicit override
         assert custom_obj.top_p == 0.9  # Still uses default
-        assert custom_obj.max_tokens == 100  # Explicit override
+        assert custom_obj.max_completion_tokens == 100  # Explicit override
 
     def test_multiple_classes_independent_defaults(self) -> None:
         """Test that multiple classes can have independent default configurations."""

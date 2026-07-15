@@ -19,7 +19,7 @@ from pyrit.executor.attack import (
     CrescendoAttack,
     PromptSendingAttack,
 )
-from pyrit.models import AttackSeedGroup, SeedObjective, SeedPrompt
+from pyrit.models import AttackSeedGroup, SeedPrompt
 from pyrit.prompt_normalizer.converter_configuration import ConverterConfiguration
 from pyrit.prompt_target import CapabilityName, PromptTarget
 from pyrit.prompt_target.common.target_requirements import CHAT_TARGET_REQUIREMENTS, TargetRequirements
@@ -137,7 +137,7 @@ class Psychosocial(Scenario):
         await scenario.initialize_async()
     """
 
-    VERSION: int = 1
+    VERSION: int = 2
 
     #: Psychosocial runs CrescendoAttack, which requires the target to natively support
     #: editable conversation history (for backtracking). Declared here so the base scenario
@@ -170,7 +170,6 @@ class Psychosocial(Scenario):
     def __init__(
         self,
         *,
-        objectives: list[str] | None = None,
         adversarial_chat: PromptTarget | None = None,
         objective_scorer: FloatScaleThresholdScorer | None = None,
         scenario_result_id: str | None = None,
@@ -181,8 +180,6 @@ class Psychosocial(Scenario):
         Initialize the Psychosocial Harms Scenario.
 
         Args:
-            objectives (list[str] | None): DEPRECATED - Use dataset_config in initialize_async instead.
-                List of objectives to test for psychosocial harms.
             adversarial_chat (PromptTarget | None): Additionally used for adversarial attacks
                 and scoring defaults. If not provided, a default OpenAI target will be created using
                 environment variables.
@@ -208,11 +205,6 @@ class Psychosocial(Scenario):
             max_turns (int): Maximum number of conversation turns for multi-turn attacks (CrescendoAttack).
                 Defaults to 5. Increase for more gradual escalation, decrease for faster testing.
         """
-        if objectives is not None:
-            logger.warning(
-                "objectives is deprecated and will be removed in a future version. "
-                "Use dataset_config in initialize_async instead."
-            )
         self._adversarial_chat = adversarial_chat if adversarial_chat else get_default_adversarial_target()
 
         # Merge user-provided configs with defaults (user-provided takes precedence)
@@ -232,14 +224,11 @@ class Psychosocial(Scenario):
             scenario_result_id=scenario_result_id,
         )
 
-        # Store deprecated objectives for later resolution in _resolve_seed_groups_by_dataset_async
-        self._deprecated_objectives = objectives
-
     async def _resolve_seed_groups_by_dataset_async(
         self, *, apply_sampling: bool = True
     ) -> dict[str, list[AttackSeedGroup]]:
         """
-        Resolve seed groups from deprecated objectives or dataset configuration.
+        Resolve seed groups from the dataset configuration.
 
         Seeds are filtered to the harm category selected by the scenario techniques (e.g.
         ``imminent_crisis``); the default ``ALL`` technique keeps the broad ``psychosocial``
@@ -249,29 +238,15 @@ class Psychosocial(Scenario):
         Args:
             apply_sampling (bool): When True (default), apply ``max_dataset_size`` sampling.
                 On resume the base passes False so the full, deterministic dataset is resolved
-                and the persisted objective subset is reconstructed exactly. Inline deprecated
-                objectives are never sampled.
+                and the persisted objective subset is reconstructed exactly.
 
         Returns:
-            dict[str, list[AttackSeedGroup]]: Seed groups keyed by dataset (or a synthetic
-                key for deprecated inline objectives).
+            dict[str, list[AttackSeedGroup]]: Seed groups keyed by harm category.
 
         Raises:
-            ValueError: If both objectives and dataset_config are specified.
             DatasetConstraintError: If the dataset yields no seeds, or if no seeds remain
                 after filtering by the requested harm category.
         """
-        if self._deprecated_objectives is not None and self._dataset_config_provided:
-            raise ValueError(
-                "Cannot specify both 'objectives' parameter and 'dataset_config'. "
-                "Please use only 'dataset_config' in initialize_async."
-            )
-
-        if self._deprecated_objectives is not None:
-            return {
-                "objectives": [AttackSeedGroup(seeds=[SeedObjective(value=obj)]) for obj in self._deprecated_objectives]
-            }
-
         harm_category_filter = self._extract_harm_category_filter()
         # Auto-fetch populates memory first; a still-empty result raises a
         # DatasetConstraintError naming the offending dataset, which we let propagate.
@@ -399,8 +374,7 @@ class Psychosocial(Scenario):
                 f"does not satisfy these requirements: {exc}"
             ) from exc
 
-        # Deprecated inline objectives carry no harm category, so they map to no subharm rubric.
-        subharm = None if self._deprecated_objectives is not None else self._extract_harm_category_filter()
+        subharm = self._extract_harm_category_filter()
         seed_groups = list(context.seed_groups)
         scoring_config = self._create_scoring_config(subharm)
 

@@ -209,7 +209,7 @@ class AttackService:
         Get all unique attack type names from stored attack results.
 
         Delegates to the memory layer which extracts distinct class_name
-        values from the attack_identifier JSON column via SQL.
+        values from the atomic_attack_identifier JSON column via SQL.
 
         Returns:
             Sorted list of unique attack type names.
@@ -221,7 +221,7 @@ class AttackService:
         Get all unique converter type names used across attack results.
 
         Delegates to the memory layer which extracts distinct converter
-        type names from the attack_identifier JSON column via SQL.
+        type names from the atomic_attack_identifier JSON column via SQL.
 
         Returns:
             Sorted list of unique converter type names.

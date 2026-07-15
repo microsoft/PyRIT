@@ -58,7 +58,6 @@ class OpenAIChatTarget(OpenAITarget):
         max_completion_tokens (int): The maximum number of tokens to be returned by the model.
             The total length of input tokens and generated tokens is limited by
             the model's context length.
-        max_tokens (int): Deprecated. Use max_completion_tokens instead
         top_p (float): The nucleus sampling probability.
         frequency_penalty (float): Number between -2.0 and 2.0. Positive values
             penalize new tokens based on their existing frequency in the text so far,
@@ -93,7 +92,6 @@ class OpenAIChatTarget(OpenAITarget):
         self,
         *,
         max_completion_tokens: int | None = None,
-        max_tokens: int | None = None,
         temperature: float | None = None,
         top_p: float | None = None,
         frequency_penalty: float | None = None,
@@ -106,6 +104,8 @@ class OpenAIChatTarget(OpenAITarget):
         **kwargs: Any,
     ) -> None:
         """
+        Initialize the target.
+
         Args:
             model_name (str, Optional): The name of the model.
                 If no value is provided, the OPENAI_CHAT_MODEL environment variable will be used.
@@ -122,12 +122,6 @@ class OpenAIChatTarget(OpenAITarget):
                 can be generated for a completion, including visible output tokens and
                 reasoning tokens.
                 NOTE: Specify this value when using an o1 series model.
-            max_tokens (int, Optional): The maximum number of tokens that can be
-                generated in the chat completion. This value can be used to control
-                costs for text generated via API.
-
-                This value is now deprecated in favor of `max_completion_tokens`, and IS NOT
-                COMPATIBLE with o1 series models.
             temperature (float, Optional): The temperature parameter for controlling the
                 randomness of the response.
             top_p (float, Optional): The top-p parameter for controlling the diversity of the
@@ -151,7 +145,6 @@ class OpenAIChatTarget(OpenAITarget):
             PyritException: If the temperature or top_p values are out of bounds.
             ValueError: If the temperature is not between 0 and 2 (inclusive).
             ValueError: If the top_p is not between 0 and 1 (inclusive).
-            ValueError: If both `max_completion_tokens` and `max_tokens` are provided.
             RateLimitException: If the target is rate-limited.
             httpx.HTTPStatusError: If the request fails with a 400 Bad Request or 429 Too Many Requests error.
             json.JSONDecodeError: If the response from the target is not valid JSON.
@@ -163,13 +156,9 @@ class OpenAIChatTarget(OpenAITarget):
         validate_temperature(temperature)
         validate_top_p(top_p)
 
-        if max_completion_tokens and max_tokens:
-            raise ValueError("Cannot provide both max_tokens and max_completion_tokens.")
-
         self._temperature = temperature
         self._top_p = top_p
         self._max_completion_tokens = max_completion_tokens
-        self._max_tokens = max_tokens
         self._frequency_penalty = frequency_penalty
         self._presence_penalty = presence_penalty
         self._seed = seed
@@ -195,7 +184,6 @@ class OpenAIChatTarget(OpenAITarget):
                 "temperature": self._temperature,
                 "top_p": self._top_p,
                 "max_completion_tokens": self._max_completion_tokens,
-                "max_tokens": self._max_tokens,
                 "frequency_penalty": self._frequency_penalty,
                 "presence_penalty": self._presence_penalty,
                 "seed": self._seed,
@@ -465,7 +453,6 @@ class OpenAIChatTarget(OpenAITarget):
         body_parameters = {
             "model": self._model_name,
             "max_completion_tokens": self._max_completion_tokens,
-            "max_tokens": self._max_tokens,
             "temperature": self._temperature,
             "top_p": self._top_p,
             "frequency_penalty": self._frequency_penalty,

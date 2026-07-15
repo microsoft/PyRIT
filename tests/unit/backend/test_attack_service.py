@@ -2520,7 +2520,7 @@ class TestAttackServiceAdditionalCoverage:
 
         assert persisted_classes.count("ExistingConverter") == 1
         assert persisted_classes.count("NewConverter") == 1
-        # The deprecated attack_identifier column should NOT be written
+        # The removed attack_identifier column should not be written.
         assert "attack_identifier" not in update_fields
 
     async def test_converter_merge_with_flat_atomic_identifier(self, attack_service, mock_memory):

@@ -250,8 +250,6 @@ class TestScoreEntry:
         assert entry.score_value == "0.9"
         assert entry.score_type == "float_scale"
         assert entry.objective == "test objective"
-        # backward compat: task == objective
-        assert entry.task == "test objective"
 
     def test_roundtrip_get_score(self):
         score = _make_score()
@@ -582,32 +580,8 @@ class TestScenarioResultEntry:
         # attack_results should be empty after roundtrip (populated by memory_interface)
         assert recovered.attack_results == {}
 
-    def test_get_conversation_ids_by_attack_name(self):
-        attack_result = _make_attack_result()
-        sr = self._make_scenario_result(attack_results={"attack1": [attack_result]})
-        entry = ScenarioResultEntry(entry=sr)
-        conv_ids = entry.get_conversation_ids_by_attack_name()
-        assert "attack1" in conv_ids
-        assert len(conv_ids["attack1"]) == 1
-
-    def test_get_conversation_ids_by_attack_name_multiple_attacks(self):
-        result_a = _make_attack_result()
-        result_b = _make_attack_result()
-        result_c = _make_attack_result()
-        sr = self._make_scenario_result(attack_results={"attack1": [result_a, result_b], "attack2": [result_c]})
-        entry = ScenarioResultEntry(entry=sr)
-        conv_ids = entry.get_conversation_ids_by_attack_name()
-        assert len(conv_ids["attack1"]) == 2
-        assert len(conv_ids["attack2"]) == 1
-
     def test_str(self):
         sr = self._make_scenario_result()
         entry = ScenarioResultEntry(entry=sr)
         s = str(entry)
         assert "test_scenario" in s
-
-    def test_init_with_empty_attack_results(self):
-        sr = self._make_scenario_result(attack_results={})
-        entry = ScenarioResultEntry(entry=sr)
-        conv_ids = entry.get_conversation_ids_by_attack_name()
-        assert conv_ids == {}

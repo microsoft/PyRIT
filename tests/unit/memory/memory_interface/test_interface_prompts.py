@@ -1446,8 +1446,7 @@ def test_get_message_pieces_by_attack_identifier_filter(sqlite_instance: MemoryI
     attack1 = PromptSendingAttack(objective_target=get_mock_target())
 
     # IdentifierType.ATTACK is no longer stamped on message pieces, so the piece-level
-    # identifier filter rejects it. Attack filtering now goes through get_attack_results
-    # or the deprecated attack_id parameter.
+    # identifier filter rejects it. Attack filtering now goes through get_attack_results.
     with pytest.raises(ValueError, match="does not support identifier type"):
         sqlite_instance.get_message_pieces(
             identifier_filters=[
