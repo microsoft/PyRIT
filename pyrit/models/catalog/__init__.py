@@ -17,6 +17,8 @@ from pyrit.models.catalog.initializer import (
     RegisteredInitializer,
 )
 from pyrit.models.catalog.scenario import (
+    AttackErrorSummary,
+    AttackRetrySummary,
     RegisteredScenario,
     RunScenarioRequest,
     ScenarioRunSummary,
@@ -26,6 +28,8 @@ from pyrit.models.catalog.target import (
 )
 
 __all__ = [
+    "AttackErrorSummary",
+    "AttackRetrySummary",
     "RegisteredInitializer",
     "RegisteredScenario",
     "RunScenarioRequest",
