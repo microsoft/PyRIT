@@ -65,7 +65,7 @@ ml_client = MLClient(AzureCliCredential(), subscription_id, resource_group, work
 
 # %% [markdown]
 # To install the dependencies needed to run GCG, we create an AML environment from a
-# [Dockerfile](../../../../pyrit/executor/promptgen/gcg/src/Dockerfile). The Dockerfile uses
+# [Dockerfile](https://github.com/microsoft/PyRIT/blob/main/pyrit/executor/promptgen/gcg/src/Dockerfile). The Dockerfile uses
 # an NVIDIA CUDA base image with Python 3.11 and installs PyRIT with the `gcg` extra.
 
 # %%
@@ -94,7 +94,7 @@ ml_client.environments.create_or_update(env_docker_context)
 
 # %% [markdown]
 # Finally, we configure the command to run the GCG algorithm. The entry point is
-# [`pyrit.executor.promptgen.gcg.experiments.run`](../../../../pyrit/executor/promptgen/gcg/experiments/run.py),
+# [`pyrit.executor.promptgen.gcg.experiments.run`](https://github.com/microsoft/PyRIT/blob/main/pyrit/executor/promptgen/gcg/experiments/run.py),
 # invoked as a module so the uploaded code snapshot takes priority over the
 # Docker-installed package (Python's `-m` flag puts the cwd at the front of `sys.path`).
 #
