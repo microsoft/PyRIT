@@ -67,8 +67,8 @@ def _is_azure_blob_url(value: str) -> bool:
     # Azure Blob Storage enforces HTTPS; rejecting HTTP also limits SSRF surface.
     if parsed.scheme != "https":
         return False
-    host = parsed.netloc.split(":")[0]  # strip port
-    return host.endswith(".blob.core.windows.net") and bool(host.split(".")[0])
+    host = parsed.hostname
+    return bool(host) and host.endswith(".blob.core.windows.net") and bool(host.split(".")[0])
 
 
 async def _get_sas_for_container_async(*, container_url: str) -> str:

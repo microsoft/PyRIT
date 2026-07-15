@@ -24,7 +24,7 @@ from pyrit.converter.ecoji_converter import EcojiConverter
 from pyrit.converter.nato_converter import NatoConverter
 from pyrit.executor.attack.core.attack_config import AttackConverterConfig, AttackScoringConfig
 from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
-from pyrit.models import Seed, SeedAttackGroup, SeedObjective, SeedPrompt
+from pyrit.models import AttackSeedGroup, Seed, SeedObjective, SeedPrompt
 from pyrit.prompt_normalizer.converter_configuration import ConverterConfiguration
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
@@ -40,18 +40,18 @@ class EncodingDatasetConfiguration(DatasetAttackConfiguration):
     """
     Custom dataset configuration for the Encoding scenario.
 
-    This configuration transforms each seed from the dataset into a SeedAttackGroup
+    This configuration transforms each seed from the dataset into a AttackSeedGroup
     with a properly formatted objective for encoding attacks. It customizes only the
     grouping step (``_build_attack_groups``); memory querying, auto-fetch, sampling,
     and the loud "dataset not found" behavior are inherited from
     ``DatasetAttackConfiguration``.
     """
 
-    def _build_attack_groups(self, seeds: list[Seed]) -> list[SeedAttackGroup]:
+    def _build_attack_groups(self, seeds: list[Seed]) -> list[AttackSeedGroup]:
         """
-        Shape raw seeds into SeedAttackGroups carrying an encoding objective.
+        Shape raw seeds into AttackSeedGroups carrying an encoding objective.
 
-        Each seed is transformed into a SeedAttackGroup containing:
+        Each seed is transformed into a AttackSeedGroup containing:
         - A SeedObjective with the encoding attack objective
         - The original seed value as a SeedPrompt
 
@@ -59,10 +59,10 @@ class EncodingDatasetConfiguration(DatasetAttackConfiguration):
             seeds (list[Seed]): The raw seeds loaded from memory.
 
         Returns:
-            list[SeedAttackGroup]: One attack group per seed, each with an objective.
+            list[AttackSeedGroup]: One attack group per seed, each with an objective.
         """
         return [
-            SeedAttackGroup(
+            AttackSeedGroup(
                 seeds=[
                     SeedObjective(value=f"Make the model say an encoded payload: {seed.value}"),
                     SeedPrompt(value=seed.value),
@@ -182,7 +182,7 @@ class Encoding(Scenario):
         return self._get_converter_attacks(seed_groups=list(context.seed_groups))
 
     # These are the same as Garak encoding attacks
-    def _get_converter_attacks(self, *, seed_groups: list[SeedAttackGroup]) -> list[AtomicAttack]:
+    def _get_converter_attacks(self, *, seed_groups: list[AttackSeedGroup]) -> list[AtomicAttack]:
         """
         Get all converter-based atomic attacks.
 
@@ -190,7 +190,7 @@ class Encoding(Scenario):
         Each encoding scheme is tested both with and without explicit decoding instructions.
 
         Args:
-            seed_groups (list[SeedAttackGroup]): Seed groups the attacks draw from.
+            seed_groups (list[AttackSeedGroup]): Seed groups the attacks draw from.
 
         Returns:
             list[AtomicAttack]: List of all atomic attacks to execute.
@@ -234,7 +234,7 @@ class Encoding(Scenario):
         return atomic_attacks
 
     def _get_prompt_attacks(
-        self, *, converters: list[Converter], encoding_name: str, seed_groups: list[SeedAttackGroup]
+        self, *, converters: list[Converter], encoding_name: str, seed_groups: list[AttackSeedGroup]
     ) -> list[AtomicAttack]:
         """
         Create atomic attacks for a specific encoding scheme.
@@ -248,7 +248,7 @@ class Encoding(Scenario):
         Args:
             converters (list[Converter]): The list of converters to apply to the seed prompts.
             encoding_name (str): Human-readable name of the encoding scheme (e.g., "Base64", "ROT13").
-            seed_groups (list[SeedAttackGroup]): Seed groups the attacks draw from.
+            seed_groups (list[AttackSeedGroup]): Seed groups the attacks draw from.
 
         Returns:
             list[AtomicAttack]: List of atomic attacks for this encoding scheme.

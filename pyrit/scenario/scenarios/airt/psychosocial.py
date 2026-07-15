@@ -19,7 +19,7 @@ from pyrit.executor.attack import (
     CrescendoAttack,
     PromptSendingAttack,
 )
-from pyrit.models import SeedAttackGroup, SeedObjective, SeedPrompt
+from pyrit.models import AttackSeedGroup, SeedObjective, SeedPrompt
 from pyrit.prompt_normalizer.converter_configuration import ConverterConfiguration
 from pyrit.prompt_target import CapabilityName, PromptTarget
 from pyrit.prompt_target.common.target_requirements import CHAT_TARGET_REQUIREMENTS, TargetRequirements
@@ -237,7 +237,7 @@ class Psychosocial(Scenario):
 
     async def _resolve_seed_groups_by_dataset_async(
         self, *, apply_sampling: bool = True
-    ) -> dict[str, list[SeedAttackGroup]]:
+    ) -> dict[str, list[AttackSeedGroup]]:
         """
         Resolve seed groups from deprecated objectives or dataset configuration.
 
@@ -253,7 +253,7 @@ class Psychosocial(Scenario):
                 objectives are never sampled.
 
         Returns:
-            dict[str, list[SeedAttackGroup]]: Seed groups keyed by dataset (or a synthetic
+            dict[str, list[AttackSeedGroup]]: Seed groups keyed by dataset (or a synthetic
                 key for deprecated inline objectives).
 
         Raises:
@@ -269,13 +269,13 @@ class Psychosocial(Scenario):
 
         if self._deprecated_objectives is not None:
             return {
-                "objectives": [SeedAttackGroup(seeds=[SeedObjective(value=obj)]) for obj in self._deprecated_objectives]
+                "objectives": [AttackSeedGroup(seeds=[SeedObjective(value=obj)]) for obj in self._deprecated_objectives]
             }
 
         harm_category_filter = self._extract_harm_category_filter()
         # Auto-fetch populates memory first; a still-empty result raises a
         # DatasetConstraintError naming the offending dataset, which we let propagate.
-        seed_groups = list(await self._dataset_config.get_seed_attack_groups_async(apply_sampling=apply_sampling))
+        seed_groups = list(await self._dataset_config.get_attack_seed_groups_async(apply_sampling=apply_sampling))
 
         if harm_category_filter:
             seed_groups = self._filter_by_harm_category(
@@ -310,18 +310,18 @@ class Psychosocial(Scenario):
     def _filter_by_harm_category(
         self,
         *,
-        seed_groups: list[SeedAttackGroup],
+        seed_groups: list[AttackSeedGroup],
         harm_category: str,
-    ) -> list[SeedAttackGroup]:
+    ) -> list[AttackSeedGroup]:
         """
         Filter seed groups by harm category.
 
         Args:
-            seed_groups (list[SeedAttackGroup]): List of seed attack groups to filter.
+            seed_groups (list[AttackSeedGroup]): List of seed attack groups to filter.
             harm_category (str): Harm category to filter by (e.g., 'imminent_crisis', 'psychosocial').
 
         Returns:
-            list[SeedAttackGroup]: Filtered seed groups containing only seeds with the specified harm category.
+            list[AttackSeedGroup]: Filtered seed groups containing only seeds with the specified harm category.
         """
         filtered_groups = []
         for group in seed_groups:
@@ -329,7 +329,7 @@ class Psychosocial(Scenario):
                 seed for seed in group.seeds if seed.harm_categories and harm_category in seed.harm_categories
             ]
             if filtered_seeds:
-                filtered_groups.append(SeedAttackGroup(seeds=filtered_seeds))
+                filtered_groups.append(AttackSeedGroup(seeds=filtered_seeds))
         return filtered_groups
 
     def _get_scorer(self, subharm: str | None = None) -> FloatScaleThresholdScorer:
@@ -422,7 +422,7 @@ class Psychosocial(Scenario):
         self,
         *,
         scoring_config: AttackScoringConfig,
-        seed_groups: list[SeedAttackGroup],
+        seed_groups: list[AttackSeedGroup],
     ) -> list[AtomicAttack]:
         if self._objective_target is None:
             raise ValueError(
@@ -474,7 +474,7 @@ class Psychosocial(Scenario):
         *,
         scoring_config: AttackScoringConfig,
         subharm: str | None,
-        seed_groups: list[SeedAttackGroup],
+        seed_groups: list[AttackSeedGroup],
     ) -> AtomicAttack:
         subharm_config = self._subharm_configs.get(subharm) if subharm else None
         crescendo_prompt_path = (

@@ -15,9 +15,9 @@ from scipy.io import wavfile
 from pyrit.common.path import DATASETS_PATH
 from pyrit.memory.storage.serializers import set_seed_sha256_async
 from pyrit.models import (
+    AttackSeedGroup,
     Message,
     MessagePiece,
-    SeedAttackGroup,
     SeedDataset,
     SeedGroup,
     SeedObjective,
@@ -1156,15 +1156,15 @@ def test_seed_group_round_trip_preserves_subclasses():
     assert rt.objective.value == "goal"
 
 
-def test_seed_attack_group_round_trip_preserves_subclasses():
-    """The original blocking bug: SeedAttackGroup(model_validate(model_dump())) must work."""
-    sag = SeedAttackGroup(
+def test_attack_seed_group_round_trip_preserves_subclasses():
+    """The original blocking bug: AttackSeedGroup(model_validate(model_dump())) must work."""
+    sag = AttackSeedGroup(
         seeds=[
             SeedObjective(value="objective"),
             SeedPrompt(value="hi", data_type="text", role="user", sequence=0),
         ]
     )
-    rt = SeedAttackGroup.model_validate(sag.model_dump())
+    rt = AttackSeedGroup.model_validate(sag.model_dump())
     assert isinstance(rt.objective, SeedObjective)
     assert rt.objective.value == "objective"
     assert any(isinstance(s, SeedPrompt) for s in rt.seeds)

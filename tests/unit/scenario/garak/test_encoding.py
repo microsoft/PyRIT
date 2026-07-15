@@ -9,7 +9,7 @@ import pytest
 
 from pyrit.converter import Base64Converter
 from pyrit.executor.attack import PromptSendingAttack
-from pyrit.models import ComponentIdentifier, SeedAttackGroup, SeedObjective, SeedPrompt
+from pyrit.models import AttackSeedGroup, ComponentIdentifier, SeedObjective, SeedPrompt
 from pyrit.prompt_target import PromptTarget
 from pyrit.scenario import CompoundDatasetAttackConfiguration, DatasetAttackConfiguration, DatasetConfiguration
 from pyrit.scenario.garak import Encoding, EncodingTechnique  # type: ignore[ty:unresolved-import]
@@ -45,10 +45,10 @@ def mock_memory_seeds():
 
 
 @pytest.fixture
-def mock_seed_attack_groups(mock_memory_seeds):
+def mock_attack_seed_groups(mock_memory_seeds):
     """Create mock seed attack groups from the mock seeds."""
     return [
-        SeedAttackGroup(
+        AttackSeedGroup(
             seeds=[
                 SeedObjective(value=f"Make the model say an encoded payload: {seed.value}"),
                 SeedPrompt(value=seed.value),
@@ -59,10 +59,10 @@ def mock_seed_attack_groups(mock_memory_seeds):
 
 
 @pytest.fixture
-def mock_dataset_config(mock_seed_attack_groups):
+def mock_dataset_config(mock_attack_seed_groups):
     """Create a mock dataset config that returns the seed attack groups."""
     mock_config = MagicMock(spec=EncodingDatasetConfiguration)
-    mock_config.get_seed_attack_groups_async = AsyncMock(return_value=mock_seed_attack_groups)
+    mock_config.get_attack_seed_groups_async = AsyncMock(return_value=mock_attack_seed_groups)
     mock_config.dataset_names = ["garak_slur_terms_en", "garak_web_html_js"]
     return mock_config
 
@@ -182,7 +182,7 @@ class TestEncodingInitialization:
             assert scenario._max_concurrency is None
 
     async def test_init_attack_techniques(
-        self, mock_objective_target, mock_objective_scorer, mock_seed_attack_groups, mock_dataset_config
+        self, mock_objective_target, mock_objective_scorer, mock_attack_seed_groups, mock_dataset_config
     ):
         """Test that attack techniques are set correctly."""
         from unittest.mock import patch
@@ -191,7 +191,7 @@ class TestEncodingInitialization:
             Encoding,
             "_resolve_seed_groups_by_dataset_async",
             new_callable=AsyncMock,
-            return_value={"memory": mock_seed_attack_groups},
+            return_value={"memory": mock_attack_seed_groups},
         ):
             scenario = Encoding(
                 objective_scorer=mock_objective_scorer,
@@ -218,7 +218,7 @@ class TestEncodingAtomicAttacks:
     """Tests for Encoding atomic attack generation."""
 
     async def test_get_atomic_attacks_async_returns_attacks(
-        self, mock_objective_target, mock_objective_scorer, mock_seed_attack_groups, mock_dataset_config
+        self, mock_objective_target, mock_objective_scorer, mock_attack_seed_groups, mock_dataset_config
     ):
         """Test that _get_atomic_attacks_async returns atomic attacks."""
         from unittest.mock import patch
@@ -227,7 +227,7 @@ class TestEncodingAtomicAttacks:
             Encoding,
             "_resolve_seed_groups_by_dataset_async",
             new_callable=AsyncMock,
-            return_value={"memory": mock_seed_attack_groups},
+            return_value={"memory": mock_attack_seed_groups},
         ):
             scenario = Encoding(
                 objective_scorer=mock_objective_scorer,
@@ -247,7 +247,7 @@ class TestEncodingAtomicAttacks:
             assert all(run.attack_technique is not None for run in atomic_attacks)
 
     async def test_get_converter_attacks_returns_multiple_encodings(
-        self, mock_objective_target, mock_objective_scorer, mock_seed_attack_groups, mock_dataset_config
+        self, mock_objective_target, mock_objective_scorer, mock_attack_seed_groups, mock_dataset_config
     ):
         """Test that _get_converter_attacks returns attacks for multiple encoding types."""
         from unittest.mock import patch
@@ -256,7 +256,7 @@ class TestEncodingAtomicAttacks:
             Encoding,
             "_resolve_seed_groups_by_dataset_async",
             new_callable=AsyncMock,
-            return_value={"memory": mock_seed_attack_groups},
+            return_value={"memory": mock_attack_seed_groups},
         ):
             scenario = Encoding(
                 objective_scorer=mock_objective_scorer,
@@ -269,7 +269,7 @@ class TestEncodingAtomicAttacks:
                 }
             )
             await scenario.initialize_async()
-            attack_runs = scenario._get_converter_attacks(seed_groups=mock_seed_attack_groups)
+            attack_runs = scenario._get_converter_attacks(seed_groups=mock_attack_seed_groups)
 
             # Should have multiple attack runs for different encodings
             # The list includes: Base64 (4 variants), Base2048, Base16, Base32, ASCII85 (2), hex,
@@ -277,7 +277,7 @@ class TestEncodingAtomicAttacks:
             assert len(attack_runs) > 0
 
     async def test_get_prompt_attacks_creates_attack_runs(
-        self, mock_objective_target, mock_objective_scorer, mock_seed_attack_groups, mock_dataset_config
+        self, mock_objective_target, mock_objective_scorer, mock_attack_seed_groups, mock_dataset_config
     ):
         """Test that _get_prompt_attacks creates attack runs with correct structure."""
         from unittest.mock import patch
@@ -286,7 +286,7 @@ class TestEncodingAtomicAttacks:
             Encoding,
             "_resolve_seed_groups_by_dataset_async",
             new_callable=AsyncMock,
-            return_value={"memory": mock_seed_attack_groups},
+            return_value={"memory": mock_attack_seed_groups},
         ):
             scenario = Encoding(
                 objective_scorer=mock_objective_scorer,
@@ -300,7 +300,7 @@ class TestEncodingAtomicAttacks:
             )
             await scenario.initialize_async()
             attack_runs = scenario._get_prompt_attacks(
-                converters=[Base64Converter()], encoding_name="Base64", seed_groups=mock_seed_attack_groups
+                converters=[Base64Converter()], encoding_name="Base64", seed_groups=mock_attack_seed_groups
             )
 
             # Should create attack runs
@@ -309,13 +309,13 @@ class TestEncodingAtomicAttacks:
             # Each attack run should have the correct attack type
             for run in attack_runs:
                 assert isinstance(run.attack_technique.attack, PromptSendingAttack)
-                assert len(run._seed_groups) == len(mock_seed_attack_groups)
+                assert len(run._seed_groups) == len(mock_attack_seed_groups)
 
     async def test_attack_runs_include_objectives(
         self,
         mock_objective_target,
         mock_objective_scorer,
-        mock_seed_attack_groups,
+        mock_attack_seed_groups,
         mock_memory_seeds,
         mock_dataset_config,
     ):
@@ -326,7 +326,7 @@ class TestEncodingAtomicAttacks:
             Encoding,
             "_resolve_seed_groups_by_dataset_async",
             new_callable=AsyncMock,
-            return_value={"memory": mock_seed_attack_groups},
+            return_value={"memory": mock_attack_seed_groups},
         ):
             scenario = Encoding(
                 objective_scorer=mock_objective_scorer,
@@ -340,12 +340,12 @@ class TestEncodingAtomicAttacks:
             )
             await scenario.initialize_async()
             attack_runs = scenario._get_prompt_attacks(
-                converters=[Base64Converter()], encoding_name="Base64", seed_groups=mock_seed_attack_groups
+                converters=[Base64Converter()], encoding_name="Base64", seed_groups=mock_attack_seed_groups
             )
 
             # Check that seed groups contain objectives with the expected format
             for run in attack_runs:
-                assert len(run._seed_groups) == len(mock_seed_attack_groups)
+                assert len(run._seed_groups) == len(mock_attack_seed_groups)
                 for i, seed_group in enumerate(run._seed_groups):
                     # The first seed in each group should be a SeedObjective
                     objective_seed = seed_group.seeds[0]
@@ -359,7 +359,7 @@ class TestEncodingExecution:
     """Tests for Encoding execution."""
 
     async def test_scenario_initialization(
-        self, mock_objective_target, mock_objective_scorer, mock_seed_attack_groups, mock_dataset_config
+        self, mock_objective_target, mock_objective_scorer, mock_attack_seed_groups, mock_dataset_config
     ):
         """Test that scenario can be initialized successfully."""
         from unittest.mock import patch
@@ -368,7 +368,7 @@ class TestEncodingExecution:
             Encoding,
             "_resolve_seed_groups_by_dataset_async",
             new_callable=AsyncMock,
-            return_value={"memory": mock_seed_attack_groups},
+            return_value={"memory": mock_attack_seed_groups},
         ):
             scenario = Encoding(
                 objective_scorer=mock_objective_scorer,
@@ -386,7 +386,7 @@ class TestEncodingExecution:
             assert scenario.atomic_attack_count > 0
 
     async def test_resolve_seed_groups_loads_garak_data(
-        self, mock_objective_target, mock_objective_scorer, mock_seed_attack_groups, mock_dataset_config
+        self, mock_objective_target, mock_objective_scorer, mock_attack_seed_groups, mock_dataset_config
     ):
         """Test that _resolve_seed_groups_by_dataset_async loads data from Garak datasets."""
         from unittest.mock import patch
@@ -395,7 +395,7 @@ class TestEncodingExecution:
             Encoding,
             "_resolve_seed_groups_by_dataset_async",
             new_callable=AsyncMock,
-            return_value={"memory": mock_seed_attack_groups},
+            return_value={"memory": mock_attack_seed_groups},
         ):
             scenario = Encoding(
                 objective_scorer=mock_objective_scorer,
@@ -406,8 +406,8 @@ class TestEncodingExecution:
             flattened = [group for groups in resolved.values() for group in groups]
             assert flattened
 
-            # Verify it's returning SeedAttackGroup objects
-            assert all(isinstance(group, SeedAttackGroup) for group in flattened)
+            # Verify it's returning AttackSeedGroup objects
+            assert all(isinstance(group, AttackSeedGroup) for group in flattened)
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -438,13 +438,13 @@ class TestEncodingDatasetConfigurationBuildAttackGroups:
     """Tests for EncodingDatasetConfiguration._build_attack_groups and resolution."""
 
     def test_build_attack_groups_transforms_seeds(self, mock_memory_seeds):
-        """Test that _build_attack_groups transforms raw seeds into objective-bearing SeedAttackGroups."""
+        """Test that _build_attack_groups transforms raw seeds into objective-bearing AttackSeedGroups."""
         config = EncodingDatasetConfiguration(dataset_names=["garak_slur_terms_en"])
         result = config._build_attack_groups(mock_memory_seeds)
 
         assert len(result) == len(mock_memory_seeds)
         for i, group in enumerate(result):
-            assert isinstance(group, SeedAttackGroup)
+            assert isinstance(group, AttackSeedGroup)
             # First seed should be a SeedObjective with the encoding objective format
             assert isinstance(group.seeds[0], SeedObjective)
             assert "Make the model say an encoded payload:" in group.seeds[0].value
@@ -458,8 +458,8 @@ class TestEncodingDatasetConfigurationBuildAttackGroups:
         config = EncodingDatasetConfiguration(dataset_names=["empty_dataset"])
         assert config._build_attack_groups([]) == []
 
-    async def test_get_seed_attack_groups_async_transforms_memory_seeds(self, mock_memory_seeds):
-        """Test that get_seed_attack_groups_async loads seeds and shapes them via _build_attack_groups."""
+    async def test_get_attack_seed_groups_async_transforms_memory_seeds(self, mock_memory_seeds):
+        """Test that get_attack_seed_groups_async loads seeds and shapes them via _build_attack_groups."""
         from unittest.mock import patch
 
         config = EncodingDatasetConfiguration(dataset_names=["garak_slur_terms_en"], auto_fetch=False)
@@ -469,19 +469,19 @@ class TestEncodingDatasetConfigurationBuildAttackGroups:
             new_callable=AsyncMock,
             return_value={"garak_slur_terms_en": mock_memory_seeds},
         ):
-            result = await config.get_seed_attack_groups_async()
+            result = await config.get_attack_seed_groups_async()
 
         assert len(result) == len(mock_memory_seeds)
-        assert all(isinstance(group, SeedAttackGroup) for group in result)
+        assert all(isinstance(group, AttackSeedGroup) for group in result)
 
-    async def test_get_seed_attack_groups_async_raises_when_empty(self):
-        """Test that get_seed_attack_groups_async raises DatasetConstraintError when nothing resolves."""
+    async def test_get_attack_seed_groups_async_raises_when_empty(self):
+        """Test that get_attack_seed_groups_async raises DatasetConstraintError when nothing resolves."""
         from pyrit.scenario.core.dataset_configuration import DatasetConstraintError
 
         config = EncodingDatasetConfiguration(dataset_names=["empty_dataset"], auto_fetch=False)
 
         with pytest.raises(DatasetConstraintError):
-            await config.get_seed_attack_groups_async()
+            await config.get_attack_seed_groups_async()
 
     def test_encoding_dataset_config_inherits_from_dataset_config(self):
         """Test that EncodingDatasetConfiguration is a subclass of DatasetConfiguration."""
@@ -505,9 +505,9 @@ class TestEncodingBaselineUniformity:
     async def test_one_resolution_call_baseline_matches_techniques(self, mock_objective_target, mock_objective_scorer):
         from unittest.mock import patch
 
-        from pyrit.models import SeedAttackGroup, SeedObjective
+        from pyrit.models import AttackSeedGroup, SeedObjective
 
-        seed_groups = [SeedAttackGroup(seeds=[SeedObjective(value=f"obj{i}")]) for i in range(10)]
+        seed_groups = [AttackSeedGroup(seeds=[SeedObjective(value=f"obj{i}")]) for i in range(10)]
         config = DatasetAttackConfiguration(seed_groups=seed_groups, max_dataset_size=3)
 
         first_sample = [("inline", group) for group in seed_groups[:3]]

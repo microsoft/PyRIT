@@ -15,6 +15,7 @@ from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
 from pyrit.models import Modality, SeedDataset, SeedObjective, SeedPrompt
+from pyrit.models.harm_category import HarmCategory
 
 if TYPE_CHECKING:
     from pyrit.models.seeds.seed_group import SeedUnion
@@ -86,16 +87,42 @@ class _ComicJailbreakDataset(_RemoteDatasetLoader):
     )
     TEMPLATE_NAMES: tuple[str, ...] = tuple(COMIC_JAILBREAK_TEMPLATES.keys())
     PAPER_URL: str = "https://arxiv.org/abs/2603.21697"
+    HARM_CATEGORY_ALIAS_OVERRIDES: dict[str, list[HarmCategory]] = {
+        "disinformation": [HarmCategory.INFO_INTEGRITY],
+        "economic harm": [HarmCategory.SCAMS],
+        "expert advice": [HarmCategory.HEALTH_DIAGNOSIS, HarmCategory.LEGAL_ADVICE, HarmCategory.FINANCIAL_ADVICE],
+        "fraud/deception": [HarmCategory.SCAMS, HarmCategory.DECEPTION],
+        "government decision-making": [HarmCategory.HIGH_RISK_GOVERNMENT],
+        "harassment/discrimination": [
+            HarmCategory.HARASSMENT,
+            HarmCategory.HATE_SPEECH,
+            HarmCategory.REPRESENTATIONAL,
+        ],
+        "illegal": [HarmCategory.COORDINATION_HARM],
+        "malware": [HarmCategory.MALWARE],
+        "malware-hacking": [HarmCategory.MALWARE],
+        "malware/hacking": [HarmCategory.MALWARE],
+        "misinformation": [HarmCategory.INFO_INTEGRITY],
+        "physical harm": [HarmCategory.VIOLENT_CONTENT, HarmCategory.COORDINATION_HARM],
+        "privacy": [HarmCategory.PPI],
+        "sexual": [HarmCategory.SEXUAL_CONTENT],
+        "sexual-adult": [HarmCategory.SEXUAL_CONTENT],
+        "sexual/adult content": [HarmCategory.SEXUAL_CONTENT],
+        "violence": [HarmCategory.VIOLENT_CONTENT],
+    }
 
     # Metadata
     harm_categories: tuple[str, ...] = (
-        "harassment",
-        "violence",
-        "illegal",
-        "malware",
-        "misinformation",
-        "sexual",
+        "disinformation",
+        "economic harm",
+        "expert advice",
+        "fraud/deception",
+        "government decision-making",
+        "harassment/discrimination",
+        "malware/hacking",
+        "physical harm",
         "privacy",
+        "sexual/adult content",
     )
     modalities: tuple[Modality, ...] = (Modality.TEXT, Modality.IMAGE)
     size: str = "large"  # 3501 image-text jailbreak prompts
@@ -191,7 +218,10 @@ class _ComicJailbreakDataset(_RemoteDatasetLoader):
                 continue
 
             category = example.get("Category", "").strip()
-            harm_categories = [category] if category else []
+            harm_categories = self._standardize_harm_categories(
+                category,
+                alias_overrides=self.HARM_CATEGORY_ALIAS_OVERRIDES,
+            )
 
             for template_name in self.templates:
                 col_name = template_name.capitalize()
@@ -212,6 +242,7 @@ class _ComicJailbreakDataset(_RemoteDatasetLoader):
                     image_path=rendered_path,
                     harm_categories=harm_categories,
                     goal=goal,
+                    category=category,
                     template_name=template_name,
                     behavior=example.get("Behavior", ""),
                 )
@@ -230,19 +261,21 @@ class _ComicJailbreakDataset(_RemoteDatasetLoader):
         image_path: str,
         harm_categories: list[str],
         goal: str,
+        category: str,
         template_name: str,
         behavior: str,
     ) -> list["SeedUnion"]:
         """
         Build a SeedObjective + image+text SeedPrompt group for a single rendered comic.
 
-        All three seeds share the same prompt_group_id so they form a SeedAttackGroup
+        All three seeds share the same prompt_group_id so they form a AttackSeedGroup
         when grouped by the scenario layer.
 
         Args:
             image_path: Local path to the rendered comic image.
             harm_categories: Harm category labels from the dataset.
             goal: The harmful goal text.
+            category: The native ComicJailbreak category label.
             template_name: Which comic template was used.
             behavior: The behavior label from the dataset.
 
@@ -253,6 +286,7 @@ class _ComicJailbreakDataset(_RemoteDatasetLoader):
         """
         group_id = uuid.uuid4()
         metadata: dict[str, str | int] = {
+            "category": category,
             "goal": goal,
             "template": template_name,
             "behavior": behavior,
@@ -268,6 +302,7 @@ class _ComicJailbreakDataset(_RemoteDatasetLoader):
             groups=self._GROUPS,
             source=self.PAPER_URL,
             prompt_group_id=group_id,
+            metadata=metadata,
         )
 
         image_prompt = SeedPrompt(

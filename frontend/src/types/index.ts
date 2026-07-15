@@ -194,6 +194,8 @@ export interface CreateAttackRequest {
   labels?: Record<string, string>
   source_conversation_id?: string
   cutoff_index?: number
+  system_prompt?: string
+  prepended_conversation?: PrependedMessageRequest[]
 }
 
 export interface CreateAttackResponse {
@@ -251,6 +253,11 @@ export interface MessagePieceRequest {
   mime_type?: string
   original_prompt_id?: string
   prompt_metadata?: Record<string, unknown>
+}
+
+export interface PrependedMessageRequest {
+  role: string // 'system' | 'user' | 'assistant'
+  pieces: MessagePieceRequest[]
 }
 
 export interface AddMessageRequest {

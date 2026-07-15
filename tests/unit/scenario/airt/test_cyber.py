@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from pyrit.executor.attack import RedTeamingAttack
-from pyrit.models import ComponentIdentifier, SeedAttackGroup, SeedObjective, SeedPrompt
+from pyrit.models import AttackSeedGroup, ComponentIdentifier, SeedObjective, SeedPrompt
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
 from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
@@ -106,11 +106,11 @@ def mock_runtime_env():
         yield
 
 
-def _make_seed_groups(name: str) -> list[SeedAttackGroup]:
+def _make_seed_groups(name: str) -> list[AttackSeedGroup]:
     """Create two seed attack groups for a given category."""
     return [
-        SeedAttackGroup(seeds=[SeedObjective(value=f"{name} objective 1"), SeedPrompt(value=f"{name} prompt 1")]),
-        SeedAttackGroup(seeds=[SeedObjective(value=f"{name} objective 2"), SeedPrompt(value=f"{name} prompt 2")]),
+        AttackSeedGroup(seeds=[SeedObjective(value=f"{name} objective 1"), SeedPrompt(value=f"{name} prompt 1")]),
+        AttackSeedGroup(seeds=[SeedObjective(value=f"{name} objective 2"), SeedPrompt(value=f"{name} prompt 2")]),
     ]
 
 
@@ -278,7 +278,7 @@ class TestCyberAttackGeneration:
         mock_objective_target,
         mock_objective_scorer,
         techniques=None,
-        seed_groups: dict[str, list[SeedAttackGroup]] | None = None,
+        seed_groups: dict[str, list[AttackSeedGroup]] | None = None,
     ):
         """Helper: initialize scenario and return atomic attacks."""
         groups = seed_groups or {"malware": _make_seed_groups("malware")}

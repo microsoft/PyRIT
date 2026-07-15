@@ -42,7 +42,7 @@ from pyrit.converter.token_smuggling.ascii_smuggler_converter import AsciiSmuggl
 from pyrit.datasets import TextJailBreak
 from pyrit.executor.attack import CrescendoAttack, PromptSendingAttack, RedTeamingAttack, TreeOfAttacksWithPruningAttack
 from pyrit.executor.attack.core.attack_config import AttackAdversarialConfig, AttackConverterConfig, AttackScoringConfig
-from pyrit.models import SeedAttackGroup
+from pyrit.models import AttackSeedGroup
 from pyrit.prompt_normalizer.converter_configuration import ConverterConfiguration
 from pyrit.prompt_target import PromptTarget
 from pyrit.scenario.core.atomic_attack import AtomicAttack
@@ -354,7 +354,7 @@ class RedTeamAgent(Scenario):
         ]
 
     def _get_attack_from_technique(
-        self, *, composite: FoundryComposite, seed_groups: list[SeedAttackGroup]
+        self, *, composite: FoundryComposite, seed_groups: list[AttackSeedGroup]
     ) -> AtomicAttack:
         """
         Get an atomic attack for the specified FoundryComposite.
@@ -362,7 +362,7 @@ class RedTeamAgent(Scenario):
         Args:
             composite (FoundryComposite): Typed composite with an optional attack technique
                 and zero or more converter techniques.
-            seed_groups (list[SeedAttackGroup]): Seed groups the attack draws from.
+            seed_groups (list[AttackSeedGroup]): Seed groups the attack draws from.
 
         Returns:
             AtomicAttack: The configured atomic attack.

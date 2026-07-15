@@ -10,9 +10,9 @@ from pyrit.executor.attack.core.attack_parameters import (
     AttackParameters,
 )
 from pyrit.models import (
+    AttackSeedGroup,
     Message,
     MessagePiece,
-    SeedAttackGroup,
     SeedObjective,
     SeedPrompt,
     SeedSimulatedConversation,
@@ -34,11 +34,11 @@ class TestFromSeedGroupAsync:
         return SeedObjective(value="Test objective")
 
     @pytest.fixture
-    def seed_group_with_objective(self, seed_objective: SeedObjective) -> SeedAttackGroup:
-        """Create a SeedAttackGroup with just an objective."""
-        return SeedAttackGroup(seeds=[seed_objective])
+    def seed_group_with_objective(self, seed_objective: SeedObjective) -> AttackSeedGroup:
+        """Create a AttackSeedGroup with just an objective."""
+        return AttackSeedGroup(seeds=[seed_objective])
 
-    async def test_extracts_objective_from_seed_group(self, seed_group_with_objective: SeedAttackGroup) -> None:
+    async def test_extracts_objective_from_seed_group(self, seed_group_with_objective: AttackSeedGroup) -> None:
         """Test that objective is correctly extracted from seed group."""
         params = await AttackParameters.from_seed_group_async(seed_group=seed_group_with_objective)
 
@@ -48,14 +48,14 @@ class TestFromSeedGroupAsync:
         """Harm categories from the seed group's seeds are captured onto the parameters."""
         objective = SeedObjective(value="Test objective", harm_categories=["violence"])
         prompt = SeedPrompt(value="Test prompt", data_type="text", role="user", harm_categories=["hate", "violence"])
-        seed_group = SeedAttackGroup(seeds=[objective, prompt])
+        seed_group = AttackSeedGroup(seeds=[objective, prompt])
 
         params = await AttackParameters.from_seed_group_async(seed_group=seed_group)
 
         assert sorted(params.targeted_harm_categories) == ["hate", "violence"]
 
     async def test_targeted_harm_categories_empty_when_seed_group_has_none(
-        self, seed_group_with_objective: SeedAttackGroup
+        self, seed_group_with_objective: AttackSeedGroup
     ) -> None:
         """When no seed declares harm categories, the parameters list is empty."""
         params = await AttackParameters.from_seed_group_async(seed_group=seed_group_with_objective)
@@ -63,18 +63,18 @@ class TestFromSeedGroupAsync:
         assert params.targeted_harm_categories == []
 
     async def test_raises_when_no_objective(self) -> None:
-        """Test that ValueError is raised when SeedAttackGroup has no objective."""
-        # SeedAttackGroup now validates exactly one objective at construction
+        """Test that ValueError is raised when AttackSeedGroup has no objective."""
+        # AttackSeedGroup now validates exactly one objective at construction
         prompt = SeedPrompt(value="Some prompt", data_type="text", role="user")
 
-        with pytest.raises(ValueError, match="SeedAttackGroup must have exactly one objective"):
-            SeedAttackGroup(seeds=[prompt])
+        with pytest.raises(ValueError, match="AttackSeedGroup must have exactly one objective"):
+            AttackSeedGroup(seeds=[prompt])
 
     async def test_extracts_next_message(self) -> None:
         """Test that next_message is extracted from seed group prompts."""
         objective = SeedObjective(value="Test objective")
         prompt = SeedPrompt(value="Test prompt", data_type="text", role="user")
-        seed_group = SeedAttackGroup(seeds=[objective, prompt])
+        seed_group = AttackSeedGroup(seeds=[objective, prompt])
 
         params = await AttackParameters.from_seed_group_async(seed_group=seed_group)
 
@@ -87,7 +87,7 @@ class TestFromSeedGroupAsync:
         prompt1 = SeedPrompt(value="First message", data_type="text", role="user", sequence=1)
         prompt2 = SeedPrompt(value="Response", data_type="text", role="assistant", sequence=2)
         prompt3 = SeedPrompt(value="Second message", data_type="text", role="user", sequence=3)
-        seed_group = SeedAttackGroup(seeds=[objective, prompt1, prompt2, prompt3])
+        seed_group = AttackSeedGroup(seeds=[objective, prompt1, prompt2, prompt3])
 
         params = await AttackParameters.from_seed_group_async(seed_group=seed_group)
 
@@ -96,7 +96,7 @@ class TestFromSeedGroupAsync:
         assert params.next_message is not None
         assert params.next_message.get_value() == "Second message"
 
-    async def test_applies_overrides(self, seed_group_with_objective: SeedAttackGroup) -> None:
+    async def test_applies_overrides(self, seed_group_with_objective: AttackSeedGroup) -> None:
         """Test that overrides are applied to the parameters."""
         custom_message = _make_message("user", "Override message")
 
@@ -107,7 +107,7 @@ class TestFromSeedGroupAsync:
 
         assert params.next_message == custom_message
 
-    async def test_rejects_invalid_overrides(self, seed_group_with_objective: SeedAttackGroup) -> None:
+    async def test_rejects_invalid_overrides(self, seed_group_with_objective: AttackSeedGroup) -> None:
         """Test that invalid override fields raise ValueError."""
         with pytest.raises(ValueError, match="does not accept parameters"):
             await AttackParameters.from_seed_group_async(
@@ -136,9 +136,9 @@ class TestFromSeedGroupAsyncWithSimulatedConversation:
     @pytest.fixture
     def seed_group_with_simulated_conv(
         self, seed_objective: SeedObjective, simulated_conversation_config: SeedSimulatedConversation
-    ) -> SeedAttackGroup:
-        """Create a SeedAttackGroup with simulated conversation config."""
-        return SeedAttackGroup(seeds=[seed_objective, simulated_conversation_config])
+    ) -> AttackSeedGroup:
+        """Create a AttackSeedGroup with simulated conversation config."""
+        return AttackSeedGroup(seeds=[seed_objective, simulated_conversation_config])
 
     @pytest.fixture
     def mock_adversarial_chat(self) -> MagicMock:
@@ -161,7 +161,7 @@ class TestFromSeedGroupAsyncWithSimulatedConversation:
 
     async def test_raises_when_adversarial_chat_missing(
         self,
-        seed_group_with_simulated_conv: SeedAttackGroup,
+        seed_group_with_simulated_conv: AttackSeedGroup,
         mock_objective_scorer: MagicMock,
     ) -> None:
         """Test that ValueError is raised when adversarial_chat is None."""
@@ -174,7 +174,7 @@ class TestFromSeedGroupAsyncWithSimulatedConversation:
 
     async def test_raises_when_objective_scorer_missing(
         self,
-        seed_group_with_simulated_conv: SeedAttackGroup,
+        seed_group_with_simulated_conv: AttackSeedGroup,
         mock_adversarial_chat: MagicMock,
     ) -> None:
         """Test that ValueError is raised when objective_scorer is None."""
@@ -195,7 +195,7 @@ class TestFromSeedGroupAsyncWithSimulatedConversation:
 
         # Validation now happens at construction time with sequence overlap checking
         with pytest.raises(ValueError, match="overlaps with SeedSimulatedConversation"):
-            SeedAttackGroup(seeds=[seed_objective, prompt, simulated_conversation_config])
+            AttackSeedGroup(seeds=[seed_objective, prompt, simulated_conversation_config])
 
     async def test_raises_when_multi_sequence_prompts_overlap_with_simulated_conv(
         self, seed_objective: SeedObjective, simulated_conversation_config: SeedSimulatedConversation
@@ -205,13 +205,13 @@ class TestFromSeedGroupAsyncWithSimulatedConversation:
         prompt = SeedPrompt(value="Static prompt", data_type="text", role="user", sequence=1)
 
         with pytest.raises(ValueError, match="overlaps with SeedSimulatedConversation"):
-            SeedAttackGroup(seeds=[seed_objective, prompt, simulated_conversation_config])
+            AttackSeedGroup(seeds=[seed_objective, prompt, simulated_conversation_config])
 
     @patch("pyrit.executor.attack.multi_turn.simulated_conversation.generate_simulated_conversation_async")
     async def test_generates_simulated_conversation(
         self,
         mock_generate: AsyncMock,
-        seed_group_with_simulated_conv: SeedAttackGroup,
+        seed_group_with_simulated_conv: AttackSeedGroup,
         mock_adversarial_chat: MagicMock,
         mock_objective_scorer: MagicMock,
         mock_simulated_result: MagicMock,
@@ -236,7 +236,7 @@ class TestFromSeedGroupAsyncWithSimulatedConversation:
     async def test_uses_generated_prepended_messages(
         self,
         mock_generate: AsyncMock,
-        seed_group_with_simulated_conv: SeedAttackGroup,
+        seed_group_with_simulated_conv: AttackSeedGroup,
         mock_adversarial_chat: MagicMock,
         mock_objective_scorer: MagicMock,
         mock_simulated_result: list,
@@ -260,7 +260,7 @@ class TestFromSeedGroupAsyncWithSimulatedConversation:
     async def test_uses_generated_next_message(
         self,
         mock_generate: AsyncMock,
-        seed_group_with_simulated_conv: SeedAttackGroup,
+        seed_group_with_simulated_conv: AttackSeedGroup,
         mock_adversarial_chat: MagicMock,
         mock_objective_scorer: MagicMock,
         mock_simulated_result: list,
@@ -308,7 +308,7 @@ class TestExcluding:
         """Test that from_seed_group_async works on excluded class."""
         ExcludedParams = AttackParameters.excluding("next_message", "prepended_conversation")  # noqa: N806
         objective = SeedObjective(value="Test objective")
-        seed_group = SeedAttackGroup(seeds=[objective])
+        seed_group = AttackSeedGroup(seeds=[objective])
 
         params = await ExcludedParams.from_seed_group_async(seed_group=seed_group)
 
@@ -318,7 +318,7 @@ class TestExcluding:
         """Test that from_seed_group_async rejects overrides for excluded fields."""
         ExcludedParams = AttackParameters.excluding("next_message")  # noqa: N806
         objective = SeedObjective(value="Test objective")
-        seed_group = SeedAttackGroup(seeds=[objective])
+        seed_group = AttackSeedGroup(seeds=[objective])
 
         with pytest.raises(ValueError, match="does not accept parameters"):
             await ExcludedParams.from_seed_group_async(
@@ -329,12 +329,12 @@ class TestExcluding:
 
 async def test_from_seed_group_async_rejects_plain_seed_group():
     """Plain SeedGroup is rejected at the boundary because it doesn't enforce the
-    'exactly one objective' invariant SeedAttackGroup does. A real SeedAttackGroup
+    'exactly one objective' invariant AttackSeedGroup does. A real AttackSeedGroup
     can't reach this method with objective=None — Pydantic validation at construction
     blocks that — so the runtime guard targets the more interesting failure mode:
     callers passing the wrong subtype."""
     from pyrit.models import SeedGroup
 
     plain_group = SeedGroup(seeds=[SeedObjective(value="Test objective")])
-    with pytest.raises(TypeError, match="seed_group must be a SeedAttackGroup"):
+    with pytest.raises(TypeError, match="seed_group must be a AttackSeedGroup"):
         await AttackParameters.from_seed_group_async(seed_group=plain_group)  # type: ignore[arg-type]

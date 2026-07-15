@@ -10,6 +10,7 @@ import traceback
 import uuid
 from abc import ABC
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, TypeVar, overload
 
 from pyrit.common.logger import logger
@@ -52,6 +53,12 @@ AttackStrategyContextT = TypeVar("AttackStrategyContextT", bound="AttackContext[
 AttackStrategyResultT = TypeVar("AttackStrategyResultT", bound="AttackResult")
 
 
+class _NextMessageOverrideState(Enum):
+    """State marker distinguishing an unset override from an explicit ``None``."""
+
+    UNSET = "unset"
+
+
 @dataclass
 class AttackContext(StrategyContext, ABC, Generic[AttackParamsT]):
     """
@@ -77,7 +84,7 @@ class AttackContext(StrategyContext, ABC, Generic[AttackParamsT]):
     related_conversations: set[ConversationReference] = field(default_factory=set)
 
     # Mutable overrides for attacks that generate these values internally
-    _next_message_override: Message | None = None
+    _next_message_override: Message | None | _NextMessageOverrideState = _NextMessageOverrideState.UNSET
     _prepended_conversation_override: list[Message] | None = None
     _memory_labels_override: dict[str, str] | None = None
 
@@ -127,7 +134,7 @@ class AttackContext(StrategyContext, ABC, Generic[AttackParamsT]):
     def next_message(self) -> Message | None:
         """Optional message to send to the objective target."""
         # Check override first (for attacks that generate internally)
-        if self._next_message_override is not None:
+        if not isinstance(self._next_message_override, _NextMessageOverrideState):
             return self._next_message_override
         # Then check params
         if hasattr(self.params, "next_message"):

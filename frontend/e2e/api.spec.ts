@@ -1,6 +1,6 @@
 import { test, expect } from "@playwright/test";
 
-// API tests go through the Vite dev server proxy (/api -> backend:8000)
+// API tests go through the Vite dev server proxy (/api -> configured backend)
 // rather than hitting the backend directly, so they work as soon as
 // Playwright's webServer (port 3000) is ready.
 
@@ -68,8 +68,10 @@ test.describe("Targets API", () => {
   });
 
   test("should create and retrieve a target @seeded", async ({ request }) => {
+    test.setTimeout(90_000);
     const createPayload = {
       type: "OpenAIChatTarget",
+      auth_mode: "api_key",
       params: {
         endpoint: "https://e2e-test.openai.azure.com",
         model_name: "gpt-4o-e2e-test",
@@ -77,17 +79,15 @@ test.describe("Targets API", () => {
       },
     };
 
-    const createResp = await request.post("/api/targets", { data: createPayload });
-    // The endpoint may require credentials or env setup that isn't available
-    // in CI.  Skip gracefully rather than masking real regressions.
-    if (!createResp.ok()) {
-      test.skip(true, `POST /api/targets returned ${createResp.status()} — skipping`);
-      return;
-    }
+    const createResp = await request.post("/api/targets", {
+      data: createPayload,
+      timeout: 60_000,
+    });
+    expect(createResp.ok()).toBe(true);
 
     const created = await createResp.json();
     expect(created).toHaveProperty("target_registry_name");
-    expect(created.target_type).toBe("OpenAIChatTarget");
+    expect(created.identifier.class_name).toBe("OpenAIChatTarget");
 
     // Retrieve via list and check it's there
     const listResp = await request.get("/api/targets?limit=200");
@@ -120,12 +120,6 @@ test.describe("Attacks API", () => {
 
   test("should list attacks @seeded", async ({ request }) => {
     const response = await request.get("/api/attacks");
-    // Backend may return 500 due to stale DB schema or 404 if not implemented.
-    // Only assert when the endpoint is actually healthy.
-    if (!response.ok()) {
-      test.skip(true, `GET /api/attacks returned ${response.status()} — skipping`);
-      return;
-    }
     expect(response.ok()).toBe(true);
   });
 });

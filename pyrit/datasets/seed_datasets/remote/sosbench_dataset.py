@@ -9,6 +9,7 @@ from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
 from pyrit.models import Modality, SeedDataset, SeedPrompt, SeedUnion
+from pyrit.models.harm_category import HarmCategory
 
 logger = logging.getLogger(__name__)
 
@@ -68,12 +69,32 @@ class _SOSBenchDataset(_RemoteDatasetLoader):
             cache=cache,
         )
 
+        # Map SOSBench's six scientific domains to PyRIT harm categories. Keys must
+        # match the dataset's actual ``subject`` values ("medical"/"pharmacy", not
+        # "medicine"/"pharmacology"). The mapping reflects the content each domain
+        # actually contains: biology/medical prompts are infectious-disease and
+        # health misinformation (PUBLIC_HEALTH), physics prompts concern radioactive
+        # isotopes (CBRN, radiological), pharmacy prompts synthesize designer drugs
+        # (PSEUDO_PHARMA), and chemistry prompts describe hazardous synthesis (CBRN).
+        alias_overrides: dict[str, list[HarmCategory]] = {
+            "chemistry": [HarmCategory.CBRN],
+            "biology": [HarmCategory.PUBLIC_HEALTH],
+            "physics": [HarmCategory.CBRN],
+            "medical": [HarmCategory.PUBLIC_HEALTH],
+            "pharmacy": [HarmCategory.PSEUDO_PHARMA],
+            "psychology": [HarmCategory.MENTAL_HEALTH],
+        }
+
         seed_prompts: list[SeedUnion] = [
             SeedPrompt(
                 value=item["goal"],
                 data_type="text",
                 dataset_name=self.dataset_name,
-                harm_categories=[item["subject"]],
+                harm_categories=self._standardize_harm_categories(
+                    item.get("subject"),
+                    alias_overrides=alias_overrides,
+                ),
+                metadata={"sosbench_subject": item.get("subject")},
                 description=(
                     "SOSBench is a regulation-grounded, hazard-focused benchmark encompassing "
                     "six high-risk scientific domains: chemistry, biology, medicine, pharmacology, "

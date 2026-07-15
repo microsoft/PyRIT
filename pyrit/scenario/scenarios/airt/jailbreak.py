@@ -12,7 +12,7 @@ from pyrit.executor.attack.core.attack_config import AttackConverterConfig, Atta
 from pyrit.executor.attack.single_turn.many_shot_jailbreak import ManyShotJailbreakAttack
 from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
 from pyrit.executor.attack.single_turn.skeleton_key import SkeletonKeyAttack
-from pyrit.models import SeedAttackGroup
+from pyrit.models import AttackSeedGroup
 from pyrit.prompt_normalizer import ConverterConfiguration
 from pyrit.prompt_target.common.prompt_target import PromptTarget
 from pyrit.scenario.core.atomic_attack import AtomicAttack
@@ -166,7 +166,7 @@ class Jailbreak(Scenario):
         return self._adversarial_target
 
     async def _get_atomic_attack_from_technique_async(
-        self, *, technique: str, jailbreak_template_name: str, seed_groups: list[SeedAttackGroup]
+        self, *, technique: str, jailbreak_template_name: str, seed_groups: list[AttackSeedGroup]
     ) -> AtomicAttack:
         """
         Create an atomic attack for a specific jailbreak template.
@@ -174,7 +174,7 @@ class Jailbreak(Scenario):
         Args:
             technique (str): JailbreakTechnique to use.
             jailbreak_template_name (str): Name of the jailbreak template file.
-            seed_groups (list[SeedAttackGroup]): Seed groups the attack draws from.
+            seed_groups (list[AttackSeedGroup]): Seed groups the attack draws from.
 
         Returns:
             AtomicAttack: An atomic attack using the specified jailbreak template.

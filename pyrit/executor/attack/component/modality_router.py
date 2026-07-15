@@ -102,6 +102,20 @@ class _ModalityFeedbackRouter:
         """``True`` iff no advertised objective input combo is exactly ``{text}``."""
         return not self._objective_text_only_allowed
 
+    def has_forwardable_objective_media(self, *, message: Message | None, turn_index: int) -> bool:
+        """
+        Determine whether a prior response can be attached to this turn's objective input.
+
+        Args:
+            message: The most recent accepted objective response.
+            turn_index: Zero-based index of the current turn.
+
+        Returns:
+            True when at least one media piece matches an advertised objective
+            ``{text, <data_type>}`` input combination and this is not turn zero.
+        """
+        return bool(self._select_forwardable_objective_media_pieces(message=message, turn_index=turn_index))
+
     # ------------------------------------------------------------------ #
     # Validation
     # ------------------------------------------------------------------ #
@@ -287,6 +301,10 @@ class _ModalityFeedbackRouter:
             ValueError: If ``turn_index == 0`` and the objective target does
                 not advertise a text-only input combo.
         """
+        media_pieces = self._select_forwardable_objective_media_pieces(
+            message=last_response,
+            turn_index=turn_index,
+        )
         if turn_index == 0:
             if not self._objective_text_only_allowed:
                 raise ValueError(
@@ -296,10 +314,6 @@ class _ModalityFeedbackRouter:
                 )
             return Message.from_prompt(prompt=text, role="user")
 
-        media_pieces = self._select_forwardable_media_pieces(
-            message=last_response,
-            allowed_media_types=self._objective_media_types_with_text,
-        )
         if not media_pieces:
             return Message.from_prompt(prompt=text, role="user")
         return self._build_multimodal_message(text=text, media_pieces=media_pieces)
@@ -307,6 +321,20 @@ class _ModalityFeedbackRouter:
     # ------------------------------------------------------------------ #
     # Internal helpers
     # ------------------------------------------------------------------ #
+    def _select_forwardable_objective_media_pieces(
+        self,
+        *,
+        message: Message | None,
+        turn_index: int,
+    ) -> list[MessagePiece]:
+        """Return prior-response media eligible for forwarding on this objective turn."""
+        if turn_index == 0:
+            return []
+        return self._select_forwardable_media_pieces(
+            message=message,
+            allowed_media_types=self._objective_media_types_with_text,
+        )
+
     @staticmethod
     def _extract_seed_media_pieces(next_message: Message | None) -> list[MessagePiece]:
         """Return the non-text pieces of ``next_message`` that count as seed media."""
