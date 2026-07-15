@@ -11,7 +11,7 @@ Message labels now live on ``AttackResultEntries`` rather than
 ``PromptMemoryEntries``.
 
 Revision ID: 24b44ef076b6
-Revises: d4e6f8a0b2c4
+Revises: e5f7a9c1b3d2
 Create Date: 2026-07-14 14:47:47.419485
 """
 
@@ -28,7 +28,7 @@ from sqlalchemy.dialects import sqlite
 
 # revision identifiers, used by Alembic.
 revision: str = "24b44ef076b6"
-down_revision: str | None = "d4e6f8a0b2c4"
+down_revision: str | None = "e5f7a9c1b3d2"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
