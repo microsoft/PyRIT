@@ -62,7 +62,10 @@ class RapidResponse(Scenario):
     techniques.
     """
 
-    VERSION: int = 2
+    #: Bumped from 2 → 3 by dropping the ``core`` pool gate so the selectable
+    #: technique pool (and the ``all`` aggregate) reflects whatever the initializer
+    #: registered. ``use_cached`` only matches prior runs at the current ``VERSION``.
+    VERSION: int = 3
 
     @apply_defaults
     def __init__(

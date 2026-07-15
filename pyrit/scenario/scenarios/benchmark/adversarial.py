@@ -92,9 +92,12 @@ class AdversarialBenchmark(Scenario):
     #: from a constructor parameter to the ``adversarial_targets`` scenario
     #: parameter and changed ``atomic_attack_name`` from
     #: ``{technique}__{model}__{dataset}`` to ``{technique}__{target}_{dataset}``.
+    #: Bumped from 2 → 3 by dropping the ``core`` pool gate so the selectable
+    #: technique pool (and therefore the ``all`` aggregate) reflects whatever the
+    #: initializer registered rather than only core-tagged factories.
     #: ``use_cached`` only matches against prior runs at the current
-    #: ``VERSION``; v1 results remain queryable but won't suppress v2 runs.
-    VERSION: int = 2
+    #: ``VERSION``; older results remain queryable but won't suppress v3 runs.
+    VERSION: int = 3
 
     #: AdversarialBenchmark compares attack-success rates across adversarial models; a baseline
     #: attack would be model-independent and contribute no signal to the comparison.
@@ -174,11 +177,17 @@ class AdversarialBenchmark(Scenario):
 
         technique_class = _build_benchmark_technique()
 
+        # ``light`` is the curated default run, but it only exists when the pool
+        # (decided by the active initializer) contains a light-tagged factory. Fall
+        # back to ``all`` so a custom technique set with no light factory still yields
+        # a constructible benchmark rather than raising on an absent aggregate.
+        default_aggregate = "light" if "light" in technique_class.get_aggregate_tags() else "all"
+
         super().__init__(
             version=self.VERSION,
             objective_scorer=self._objective_scorer,
             technique_class=technique_class,
-            default_technique=technique_class("light"),
+            default_technique=technique_class(default_aggregate),
             default_dataset_config=DatasetAttackConfiguration(
                 dataset_names=["harmbench"],
                 max_dataset_size=8,

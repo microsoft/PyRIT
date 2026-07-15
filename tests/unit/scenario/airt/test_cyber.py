@@ -126,8 +126,8 @@ FIXTURES = ["patch_central_database", "mock_runtime_env"]
 class TestCyberBasic:
     """Tests for Cyber initialization and class properties."""
 
-    def test_version_is_2(self):
-        assert Cyber.VERSION == 2
+    def test_version_is_3(self):
+        assert Cyber.VERSION == 3
 
     def test_get_technique_class(self):
         strat = _technique_class()
