@@ -4,14 +4,14 @@
 from __future__ import annotations
 
 import uuid
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from pyrit.exceptions import (
     EmptyResponseException,
     InvalidJsonException,
     ScorerLLMResponseBlockedException,
 )
-from pyrit.models import JSON_SCHEMA_METADATA_KEY, Message, MessagePiece
+from pyrit.models import Message, MessagePiece
 from pyrit.prompt_normalizer import PromptNormalizer, send_json_with_retry_async
 
 if TYPE_CHECKING:
@@ -44,7 +44,7 @@ async def _run_llm_scoring_async(
     Perform a single scoring round-trip against an LLM target and delegate parsing.
 
     This is the shared LLM evaluation mechanism: it sets the system prompt on the target, sends
-    the value to be scored (forwarding ``response_handler.response_schema`` so targets that
+    the value to be scored (forwarding ``response_handler.json_response_config`` so targets that
     support structured output can enforce it), and delegates parsing and validation to
     ``response_handler``. The round-trip is routed through a ``PromptNormalizer`` via
     ``send_json_with_retry_async`` so the scorer's question and the target's answer are persisted
@@ -90,10 +90,14 @@ async def _run_llm_scoring_async(
         ScorerLLMResponseBlockedException: If the scorer's LLM response is blocked by
             content filtering. The transport only surfaces the condition; the calling
             ``Scorer`` owns the policy for whether to raise or return a default score.
-        EmptyResponseException: If the scorer's LLM response contains no text piece to parse
-            and was not blocked (e.g. an empty or malformed response).
+        EmptyResponseException: If the scorer's LLM response has message pieces but none of them
+            are text and none are blocked (a rare no-text-modality shape). Note a genuinely empty
+            text reply does NOT surface here: the normalizer converts an empty target response into
+            an empty text piece, which fails JSON parsing and is therefore retried and, if still
+            empty, ultimately raised as ``InvalidJsonException``.
         InvalidJsonException: If the response is not valid JSON, is missing required keys, or
-            fails the handler's value validation.
+            fails the handler's value validation. This also covers an empty text reply (normalized
+            to ``""``), which is retried before being surfaced here.
         Exception: For other unexpected errors during scoring.
     """
     conversation_id = str(uuid.uuid4())
@@ -102,15 +106,10 @@ async def _run_llm_scoring_async(
         system_prompt=system_prompt,
         conversation_id=conversation_id,
     )
-    prompt_metadata: dict[str, Any] = {}
-    response_format = response_handler.response_format
-    if response_format is not None:
-        prompt_metadata["response_format"] = response_format
-    response_schema = response_handler.response_schema
-    if response_schema is not None:
-        # Always forward the schema; the target's normalization pipeline omits it
-        # when the target cannot natively enforce a JSON schema.
-        prompt_metadata[JSON_SCHEMA_METADATA_KEY] = response_schema
+    # Forward the JSON-response request (format and any schema together) via the handler's
+    # canonical config; the target's normalization pipeline omits the schema when it cannot
+    # natively enforce one.
+    prompt_metadata = response_handler.json_response_config.to_metadata()
 
     # Build message pieces - prepended text context first (if provided), then the main message being scored
     message_pieces: list[MessagePiece] = []
@@ -142,12 +141,13 @@ async def _run_llm_scoring_async(
 
     scorer_llm_request = Message(message_pieces=message_pieces)
 
-    # Resolve the text piece that holds the JSON response (score_value + rationale). When it's
-    # absent the scorer produced no parseable output. Guard on the actual failure (no text
-    # piece) rather than "all pieces blocked" so every no-text shape is handled instead of
-    # only the fully-blocked one. A content-filter block surfaces as a dedicated exception
-    # (the calling Scorer owns whether to raise or fall back); any other no-text response is a
-    # genuine empty/malformed error. Neither is retried; only invalid JSON triggers a retry.
+    # Resolve the text piece that holds the JSON response (score_value + rationale). The normalizer
+    # converts an empty or blocked-then-empty target response into an empty text piece, so a genuine
+    # empty reply lands here as text_piece.converted_value == "" -> parse fails -> retried as invalid
+    # JSON. The text_piece-is-None branch below therefore only fires for a response that has pieces
+    # but no text piece: a content-filter block surfaces as its own exception (the calling Scorer
+    # owns whether to raise or fall back), and any other no-text shape is a genuine empty/malformed
+    # error. Neither of those is retried; only invalid JSON triggers a retry.
     def _parse(response: Message) -> UnvalidatedScore:
         text_piece = next(
             (piece for piece in response.message_pieces if piece.converted_value_data_type == "text"), None

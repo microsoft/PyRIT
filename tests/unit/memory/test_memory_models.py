@@ -562,7 +562,7 @@ class TestSeedEntry:
 
     def test_roundtrip_seed_prompt_with_named_schema_kwarg(self):
         """Named-schema construction round-trips as the resolved body."""
-        from pyrit.models.json_schema_definition import get_common_json_schema
+        from pyrit.models import get_common_json_schema
 
         expected = get_common_json_schema("true_false_with_rationale")
         seed = _make_seed_prompt(response_json_schema_name="true_false_with_rationale")
