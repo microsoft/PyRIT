@@ -41,17 +41,17 @@ def test_render_llamaguard_prompt_exact_user_contract() -> None:
     )
 
     assert rendered.value == (
-        "Task: Check if there is unsafe content in 'User' messages in conversations according to the safety policy "
-        "with the categories below.\n\n"
+        "Task: Check if there is unsafe content in 'User' messages in conversations according our safety policy "
+        "with the below categories.\n\n"
         "<BEGIN UNSAFE CONTENT CATEGORIES>\n"
         "C1: Custom harm.\n"
         "<END UNSAFE CONTENT CATEGORIES>\n\n"
         "<BEGIN CONVERSATION>\n\n"
         "User: message to classify\n\n"
         "<END CONVERSATION>\n\n"
-        "Provide your safety assessment for ONLY THE LAST User message in the conversation:\n"
-        "- First line must read 'safe' or 'unsafe'.\n"
-        "- If unsafe, a second line must include a comma-separated list of violated categories."
+        "Provide your safety assessment for ONLY THE LAST User message in the above conversation:\n"
+        " - First line must read 'safe' or 'unsafe'.\n"
+        " - If unsafe, a second line must include a comma-separated list of violated categories."
     )
 
 

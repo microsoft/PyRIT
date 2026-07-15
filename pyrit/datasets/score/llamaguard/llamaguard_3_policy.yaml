@@ -1,5 +1,5 @@
-name: Llama Guard 3 MLCommons policy
-version: "3"
+name: Llama Guard 3 8B MLCommons policy
+version: "3-8B"
 categories:
   - code: S1
     name: Violent Crimes

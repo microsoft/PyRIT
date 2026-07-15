@@ -15,7 +15,8 @@ DEFAULT_POLICY_PATH = Path(SCORER_SEED_PROMPT_PATH, "llamaguard", "llamaguard_3_
 def test_default_policy_loads_expected_categories() -> None:
     policy = LlamaGuardPolicy.from_yaml(DEFAULT_POLICY_PATH)
 
-    assert policy.version == "3"
+    assert policy.name == "Llama Guard 3 8B MLCommons policy"
+    assert policy.version == "3-8B"
     assert policy.category_codes == tuple(f"S{index}" for index in range(1, 15))
     assert "S14: Code Interpreter Abuse." in policy.rendered_categories
 

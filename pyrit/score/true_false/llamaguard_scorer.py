@@ -50,7 +50,7 @@ def render_llamaguard_prompt(
         message_role (LlamaGuardMessageRole): Whether the message represents a User or Agent turn.
         policy (LlamaGuardPolicy): The categories used for prompting and response validation.
         prompt_template (SeedPrompt | str | None): Custom request template. Defaults to the
-            bundled Llama Guard 3 template.
+            bundled Llama Guard 3 8B template.
 
     Returns:
         SeedPrompt: The rendered request prompt.
@@ -68,7 +68,12 @@ def render_llamaguard_prompt(
 
 
 class LlamaGuardScorer(TrueFalseScorer):
-    """Classify text with a LlamaGuard endpoint."""
+    """
+    Classify text with a Llama Guard endpoint.
+
+    The bundled default targets ``meta-llama/Llama-Guard-3-8B`` and its S1-S14
+    taxonomy. Other variants require a matching policy.
+    """
 
     SCORE_CATEGORY: ClassVar[str] = "llamaguard"
     TARGET_REQUIREMENTS = CHAT_TARGET_REQUIREMENTS
@@ -93,9 +98,9 @@ class LlamaGuardScorer(TrueFalseScorer):
             message_role (LlamaGuardMessageRole): The role to classify. Defaults to Agent for
                 model-response classification.
             policy (LlamaGuardPolicy | None): Safety policy used for prompting and category
-                validation. Defaults to the bundled Llama Guard 3 policy.
+                validation. Defaults to the bundled Llama Guard 3 8B S1-S14 policy.
             prompt_template (SeedPrompt | str | None): Custom LlamaGuard request template.
-                Defaults to the bundled Llama Guard 3 template.
+                Defaults to the bundled Llama Guard 3 8B template.
             validator (ScorerPromptValidator | None): Custom validator. Defaults to text only.
             score_aggregator (TrueFalseAggregatorFunc): Aggregator for multi-piece scores.
                 Defaults to TrueFalseScoreAggregator.OR.

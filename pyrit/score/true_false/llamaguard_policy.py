@@ -49,7 +49,7 @@ class LlamaGuardCategory(BaseModel):
 
 
 class LlamaGuardPolicy(BaseModel):
-    """A versioned set of categories used to prompt and validate LlamaGuard."""
+    """A versioned set of categories used to prompt and validate Llama Guard."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
