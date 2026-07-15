@@ -528,7 +528,10 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
         seeded_run = context.initial_seed_count > 0
         if context.pending_seed_message is not None:
             input_mode = "seed_media"
-        elif self._modality_router.has_forwardable_objective_media(message=context.last_accepted_response):
+        elif self._modality_router.has_forwardable_objective_media(
+            message=context.last_accepted_response,
+            turn_index=context.executed_turns,
+        ):
             input_mode = "latest_response"
         else:
             input_mode = "text_only"

@@ -870,6 +870,29 @@ class TestPromptGeneration:
         assert "seeded_run=true, seed_count=2, input_mode=latest_response" in later_turn
         assert "original seed media is no longer attached" in later_turn
 
+    def test_build_adversarial_prompt_does_not_advertise_first_turn_response_media(
+        self,
+        mock_objective_target: MagicMock,
+        mock_adversarial_chat: MagicMock,
+        basic_context: CrescendoAttackContext,
+    ):
+        """First-turn prompt state matches the objective router's text-only behavior."""
+        mock_objective_target.configuration.capabilities.input_modalities = frozenset(
+            {frozenset({"text"}), frozenset({"text", "image_path"})}
+        )
+        attack = CrescendoAttack(
+            objective_target=mock_objective_target,
+            attack_adversarial_config=AttackAdversarialConfig(target=mock_adversarial_chat),
+        )
+        basic_context.executed_turns = 0
+        basic_context.pending_seed_message = None
+        basic_context.last_accepted_response = create_image_response(path="/tmp/generated.png")
+
+        prompt = attack._build_adversarial_prompt(context=basic_context, refused_text="")
+
+        assert "input_mode=text_only" in prompt
+        assert "input_mode=latest_response" not in prompt
+
     async def test_build_adversarial_prompt_with_objective_score(
         self,
         mock_objective_target: MagicMock,
