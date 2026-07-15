@@ -282,7 +282,10 @@ class TestEncodingAtomicNameUniqueness:
             await scenario.initialize_async()
 
             names = [
-                aa.atomic_attack_name for aa in scenario._get_converter_attacks(seed_groups=mock_attack_seed_groups)
+                aa.atomic_attack_name
+                for aa in scenario._get_converter_attacks(
+                    context=scenario._build_scenario_context(seed_groups_by_dataset={"memory": mock_attack_seed_groups})
+                )
             ]
             assert len(names) == len(set(names)), "atomic_attack_name collisions detected"
 
@@ -307,7 +310,9 @@ class TestEncodingAtomicNameUniqueness:
             )
             await scenario.initialize_async()
 
-            attacks = scenario._get_converter_attacks(seed_groups=mock_attack_seed_groups)
+            attacks = scenario._get_converter_attacks(
+                context=scenario._build_scenario_context(seed_groups_by_dataset={"memory": mock_attack_seed_groups})
+            )
             # Every base64 atomic attack groups under the "base64" display group.
             assert all(aa.display_group == "base64" for aa in attacks)
             # Two distinct converter variants (default + urlsafe), each fanned over the raw config
@@ -404,7 +409,9 @@ class TestEncodingAtomicAttacks:
                 }
             )
             await scenario.initialize_async()
-            attack_runs = scenario._get_converter_attacks(seed_groups=mock_attack_seed_groups)
+            attack_runs = scenario._get_converter_attacks(
+                context=scenario._build_scenario_context(seed_groups_by_dataset={"memory": mock_attack_seed_groups})
+            )
 
             # Should have multiple attack runs for different encodings
             # The list includes: base64 (2 variants: default + urlsafe), base2048, base16, base32, ascii85 (2),
@@ -438,7 +445,7 @@ class TestEncodingAtomicAttacks:
                 converters=[Base64Converter()],
                 encoding_name="base64",
                 variant_slug="base64",
-                seed_groups=mock_attack_seed_groups,
+                context=scenario._build_scenario_context(seed_groups_by_dataset={"memory": mock_attack_seed_groups}),
             )
 
             # Should create attack runs
@@ -481,7 +488,7 @@ class TestEncodingAtomicAttacks:
                 converters=[Base64Converter()],
                 encoding_name="base64",
                 variant_slug="base64",
-                seed_groups=mock_attack_seed_groups,
+                context=scenario._build_scenario_context(seed_groups_by_dataset={"memory": mock_attack_seed_groups}),
             )
 
             # Check that seed groups contain objectives with the expected format

@@ -197,10 +197,10 @@ class Encoding(Scenario):
         Returns:
             list[AtomicAttack]: The list of AtomicAttack instances in this scenario.
         """
-        return self._get_converter_attacks(seed_groups=list(context.seed_groups))
+        return self._get_converter_attacks(context=context)
 
     # These are the same as Garak encoding attacks
-    def _get_converter_attacks(self, *, seed_groups: list[AttackSeedGroup]) -> list[AtomicAttack]:
+    def _get_converter_attacks(self, *, context: ScenarioContext) -> list[AtomicAttack]:
         """
         Get all converter-based atomic attacks.
 
@@ -208,7 +208,7 @@ class Encoding(Scenario):
         Each encoding scheme is tested both with and without explicit decoding instructions.
 
         Args:
-            seed_groups (list[AttackSeedGroup]): Seed groups the attacks draw from.
+            context (ScenarioContext): The resolved runtime inputs for this run.
 
         Returns:
             list[AtomicAttack]: List of all atomic attacks to execute.
@@ -244,7 +244,7 @@ class Encoding(Scenario):
         ]
 
         # Filter to only include selected techniques
-        selected_encoding_names = {s.value for s in self._scenario_techniques}
+        selected_encoding_names = {s.value for s in context.scenario_techniques}
         converters_with_encodings = [
             (conv, name, variant_slug)
             for conv, name, variant_slug in all_converters_with_encodings
@@ -255,7 +255,7 @@ class Encoding(Scenario):
         for conv, name, variant_slug in converters_with_encodings:
             atomic_attacks.extend(
                 self._get_prompt_attacks(
-                    converters=conv, encoding_name=name, variant_slug=variant_slug, seed_groups=seed_groups
+                    converters=conv, encoding_name=name, variant_slug=variant_slug, context=context
                 )
             )
         return atomic_attacks
@@ -266,7 +266,7 @@ class Encoding(Scenario):
         converters: list[Converter],
         encoding_name: str,
         variant_slug: str,
-        seed_groups: list[AttackSeedGroup],
+        context: ScenarioContext,
     ) -> list[AtomicAttack]:
         """
         Create atomic attacks for a specific encoding converter variant.
@@ -283,13 +283,10 @@ class Encoding(Scenario):
                 Used as the ``display_group`` so all variants of an encoding aggregate together in output.
             variant_slug (str): Unique slug for this converter variant, used to build a unique
                 ``atomic_attack_name`` per converter variant and prompt config.
-            seed_groups (list[AttackSeedGroup]): Seed groups the attacks draw from.
+            context (ScenarioContext): The resolved runtime inputs for this run.
 
         Returns:
             list[AtomicAttack]: List of atomic attacks for this encoding converter variant.
-
-        Raises:
-            ValueError: If scenario is not properly initialized.
         """
         # (config_name_suffix, converter_config). The bare "raw" config encodes only; each
         # decode-template config additionally asks the model to decode.
@@ -314,13 +311,8 @@ class Encoding(Scenario):
 
         atomic_attacks = []
         for config_suffix, attack_converter_config in converter_configs:
-            # objective_target is guaranteed to be non-None by parent class validation
-            if self._objective_target is None:
-                raise ValueError(
-                    "Scenario not properly initialized. Call await scenario.initialize_async() before running."
-                )
             attack = PromptSendingAttack(
-                objective_target=self._objective_target,
+                objective_target=context.objective_target,
                 attack_converter_config=attack_converter_config,
                 attack_scoring_config=self._scorer_config,
             )
@@ -329,8 +321,8 @@ class Encoding(Scenario):
                     atomic_attack_name=f"{variant_slug}_{config_suffix}",
                     display_group=encoding_name,
                     attack_technique=AttackTechnique(attack=attack),
-                    seed_groups=seed_groups,
-                    memory_labels=self._memory_labels,
+                    seed_groups=list(context.seed_groups),
+                    memory_labels=context.memory_labels,
                 )
             )
 
