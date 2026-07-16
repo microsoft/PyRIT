@@ -7,7 +7,7 @@ from pathlib import Path
 
 import aiofiles
 import httpx
-from huggingface_hub import HfApi
+from huggingface_hub import HfApi, snapshot_download
 
 logger = logging.getLogger(__name__)
 
@@ -41,29 +41,18 @@ async def download_specific_files_async(
     model_id: str, file_patterns: list[str] | None, token: str, cache_dir: Path
 ) -> None:
     """
-    Download specific files from a Hugging Face model repository.
+    Download a Hugging Face model snapshot without blocking the event loop.
+
     If file_patterns is None, downloads all files.
     """
     cache_dir.mkdir(parents=True, exist_ok=True)
-
-    available_files = get_available_files(model_id, token)
-    # If no file patterns are provided, download all available files
-    if file_patterns is None:
-        files_to_download = available_files
-        logger.info(f"Downloading all files for model {model_id}.")
-    else:
-        # Filter files based on the patterns provided
-        files_to_download = [file for file in available_files if any(pattern in file for pattern in file_patterns)]
-        if not files_to_download:
-            logger.info(f"No files matched the patterns provided for model {model_id}.")
-            return
-
-    # Generate download URLs directly
-    base_url = f"https://huggingface.co/{model_id}/resolve/main/"
-    urls = [base_url + file for file in files_to_download]
-
-    # Download the files
-    await download_files_async(urls, token, cache_dir)
+    await asyncio.to_thread(
+        snapshot_download,
+        repo_id=model_id,
+        allow_patterns=file_patterns,
+        token=token,
+        local_dir=cache_dir,
+    )
 
 
 async def download_chunk_async(
