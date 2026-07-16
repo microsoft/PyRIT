@@ -317,12 +317,11 @@ Make sure that it starts where the last release left off.
 Sometimes this tool adds too many changes, or leaves a few out, so it's best to check.
 Be sure to check and update the new contributors as well.
 Add a header "## Full list of changes" below "## What's changed?".
-In addition to the full notes, we also want a shorter section with just the relevant
-changes that users should be aware of. The shorter section will be under "## What's changed"
-while the full list of changes will be right below.
-Maintenance changes, build pipeline updates, and documentation fixes are not really important for users.
-However, important bug fixes, new features, and breaking changes are good candidates to include.
-Every release must also include these customer-facing sections before "## Full list of changes":
+Under "## What's changed", summarize the important bug fixes and features that
+customers should know about. Maintenance changes, build pipeline updates, and routine
+documentation fixes can remain in the full list only.
+
+Every release must include these customer-facing sections before "## Full list of changes":
 
 ```markdown
 ## Security
