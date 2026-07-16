@@ -11,11 +11,23 @@ Follow the instructions according to the order provided.
 
 Before starting the release process, verify the codebase is in a healthy state.
 
-- **Create the release review record.** Create a durable release work item that identifies the release owner and links to the content and UI under review. Keep reviewer names, review dates, decisions, high-priority findings, their resolution or documented disposition, and links to approval evidence in this record. Link the record from the release PR or GitHub release. Do not put embargoed vulnerability details in a public record.
-- **Complete milestone reviews.** For every external-facing release, record reviews at these designated milestones:
-  - **Scope freeze:** Development, content publishing, user experience, and security reviewers assess the planned customer-facing changes and identify security or compatibility risks.
-  - **Release candidate:** Content publishing and user experience reviewers verify the release notes, documentation, and UI after technical review feedback has been incorporated. Security reviewers confirm that high-priority security findings are resolved or have an approved, customer-safe disclosure and disposition.
-  - **Final pre-release review:** Immediately before publishing, repeat the security review of the final artifacts and collect explicit approval from development, content publishing, security, and user experience owners. A reviewer may mark a discipline not applicable only with a rationale in the release record.
+### Required Release Reviews
+
+Use the existing release work item to record:
+
+- Release owner and target version
+- Links to the UI, documentation, and release notes
+- One reviewer each for development, security, content publishing, and user experience
+
+| Checkpoint | Timing | Completion criteria |
+|---|---|---|
+| Scope freeze | Before release testing | Reviewers assess planned customer-facing changes. Security and compatibility findings are linked and assigned. |
+| Final release candidate | Immediately before publishing | Reviewers approve the final UI, documentation, and release notes. High-priority findings are resolved or covered by an approved customer disclosure. |
+
+Do not publish until all final approvals, including reviewer names and dates, are
+recorded in the release work item. Store details about security vulnerabilities that
+have not yet been publicly disclosed only in the approved private security system.
+
 - **Check for pending changes.** Ask other PyRIT maintainers whether they have any in-flight changes that should land before the release.
 - **Verify build pipelines.** Confirm that all integration tests and end-to-end tests are passing in the CI pipelines. If any tests are failing, fix them before proceeding.
   - **Partner integration tests.** Ensure the partner integration tests are also passing. These tests validate that we are not breaking contracts with partner teams (e.g., Foundry). If any are failing, coordinate with the affected partner teams before proceeding with the release.
@@ -259,13 +271,13 @@ since `downgrade()` risks data loss.
 
 ## 10. Publish to PyPI
 
-Before publishing, complete and retain this checklist in the release review record:
+Before publishing, complete and retain this checklist in the release work item:
 
 - [ ] Technical reviews of the final customer-facing content and UI are complete, and all high-priority feedback is resolved or has an approved disposition.
-- [ ] Security, content publishing, and user experience milestone reviews are recorded.
+- [ ] Scope-freeze and final-release-candidate reviews are recorded.
 - [ ] The final development, content publishing, security, and user experience approvals are recorded with reviewer names and dates.
 - [ ] Release notes contain the required security and compatibility disclosures described in step 12, including explicit "None known" statements where applicable.
-- [ ] Links to review evidence and the final approved artifacts are retained in the release record.
+- [ ] Links to review evidence and the final approved artifacts are retained in the release work item.
 
 Do not publish the package until every item is complete.
 
@@ -326,10 +338,10 @@ migration or mitigation steps. If there are none, write "No known breaking chang
 or backward-compatibility issues."
 ```
 
-Coordinate the wording of non-public or embargoed security issues with the security
-reviewer and MSRC. Never disclose sensitive vulnerability details before the approved
-publication date. Confirm in the release review record that these sections match the
-final reviewed content and UI.
+Coordinate the wording of security issues that have not yet been publicly disclosed
+with the security reviewer and MSRC. Do not publish vulnerability details before their
+approved publication date. Confirm in the release work item that these sections match
+the final reviewed content and UI.
 If you are unsure about whether to include certain changes please consult with your fellow
 maintainers.
 When you're done, hit "Publish release" and mark it as the latest release.
