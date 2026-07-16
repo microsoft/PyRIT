@@ -65,6 +65,23 @@ class TestScenarioResult:
         techniques = result.get_techniques_used()
         assert sorted(techniques) == ["crescendo", "flip"]
 
+    def test_get_techniques_used_aggregates_by_display_group(self):
+        # A single technique fanned out across two datasets produces two atomic-attack
+        # cells; get_techniques_used should collapse them back to one technique.
+        result = make_scenario_result(
+            scenario_name="TestScenario",
+            objective_target_identifier=ComponentIdentifier.model_validate({}),
+            attack_results={"crescendo_advbench": [], "crescendo_harmbench": [], "flip_advbench": []},
+            objective_scorer_identifier=ComponentIdentifier.model_validate({}),
+            display_group_map={
+                "crescendo_advbench": "crescendo",
+                "crescendo_harmbench": "crescendo",
+                "flip_advbench": "flip",
+            },
+        )
+        techniques = result.get_techniques_used()
+        assert sorted(techniques) == ["crescendo", "flip"]
+
     def test_get_objectives_all(self):
         ar1 = _make_attack_result(objective="obj1")
         ar2 = _make_attack_result(objective="obj2")

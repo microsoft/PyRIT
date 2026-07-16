@@ -361,8 +361,8 @@ class AtomicAttack:
             return results
 
         except Exception as e:
-            logger.error(f"Atomic attack execution failed: {str(e)}")
-            raise ValueError(f"Failed to execute atomic attack: {str(e)}") from e
+            logger.error(f"Atomic attack '{self.atomic_attack_name}' execution failed: {str(e)}")
+            raise ValueError(f"Failed to execute atomic attack '{self.atomic_attack_name}': {str(e)}") from e
 
     def _enrich_atomic_attack_identifiers(self, *, results: AttackExecutorResult[AttackResult]) -> None:
         """

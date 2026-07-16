@@ -25,14 +25,13 @@ from pyrit.exceptions.exception_classes import (
     RateLimitException,
 )
 from pyrit.memory.memory_interface import MemoryInterface
-from pyrit.models import Message, MessagePiece, flatten_to_message_pieces
+from pyrit.models import JsonResponseConfig, Message, MessagePiece, flatten_to_message_pieces
 from pyrit.prompt_target import (
     OpenAIChatAudioConfig,
     OpenAIChatTarget,
     OpenAIResponseTarget,
     PromptTarget,
 )
-from pyrit.prompt_target.common.json_response_config import _JsonResponseConfig
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 
@@ -157,14 +156,14 @@ async def test_construct_request_body_includes_extra_body_params(
 
     request = Message(message_pieces=[dummy_text_message_piece])
 
-    jrc = _JsonResponseConfig.from_metadata(metadata=None)
+    jrc = JsonResponseConfig.from_metadata(metadata=None)
     body = await target._construct_request_body_async(conversation=[request], json_config=jrc)
     assert body["key"] == "value"
 
 
 async def test_construct_request_body_json_object(target: OpenAIChatTarget, dummy_text_message_piece: MessagePiece):
     request = Message(message_pieces=[dummy_text_message_piece])
-    jrc = _JsonResponseConfig.from_metadata(metadata={"response_format": "json"})
+    jrc = JsonResponseConfig.from_metadata(metadata={"response_format": "json"})
 
     body = await target._construct_request_body_async(conversation=[request], json_config=jrc)
     assert body["response_format"] == {"type": "json_object"}
@@ -173,7 +172,7 @@ async def test_construct_request_body_json_object(target: OpenAIChatTarget, dumm
 async def test_construct_request_body_json_schema(target: OpenAIChatTarget, dummy_text_message_piece: MessagePiece):
     schema_obj = {"type": "object", "properties": {"name": {"type": "string"}}}
     request = Message(message_pieces=[dummy_text_message_piece])
-    jrc = _JsonResponseConfig.from_metadata(metadata={"response_format": "json", "json_schema": schema_obj})
+    jrc = JsonResponseConfig.from_metadata(metadata={"response_format": "json", "json_schema": schema_obj})
 
     body = await target._construct_request_body_async(conversation=[request], json_config=jrc)
     assert body["response_format"] == {
@@ -187,7 +186,7 @@ async def test_construct_request_body_json_schema_optional_params(
 ):
     schema_obj = {"type": "object", "properties": {"name": {"type": "string"}}}
     request = Message(message_pieces=[dummy_text_message_piece])
-    jrc = _JsonResponseConfig.from_metadata(
+    jrc = JsonResponseConfig.from_metadata(
         metadata={
             "response_format": "json",
             "json_schema": schema_obj,
@@ -208,7 +207,7 @@ async def test_construct_request_body_removes_empty_values(
 ):
     request = Message(message_pieces=[dummy_text_message_piece])
 
-    jrc = _JsonResponseConfig.from_metadata(metadata=None)
+    jrc = JsonResponseConfig.from_metadata(metadata=None)
     body = await target._construct_request_body_async(conversation=[request], json_config=jrc)
     assert "max_completion_tokens" not in body
     assert "max_tokens" not in body
@@ -223,7 +222,7 @@ async def test_construct_request_body_serializes_text_message(
     target: OpenAIChatTarget, dummy_text_message_piece: MessagePiece
 ):
     request = Message(message_pieces=[dummy_text_message_piece])
-    jrc = _JsonResponseConfig.from_metadata(metadata=None)
+    jrc = JsonResponseConfig.from_metadata(metadata=None)
 
     body = await target._construct_request_body_async(conversation=[request], json_config=jrc)
     assert body["messages"][0]["content"] == "dummy text", (
@@ -237,7 +236,7 @@ async def test_construct_request_body_serializes_complex_message(
     image_piece = get_image_message_piece()
     image_piece.conversation_id = dummy_text_message_piece.conversation_id  # Match conversation IDs
     request = Message(message_pieces=[dummy_text_message_piece, image_piece])
-    jrc = _JsonResponseConfig.from_metadata(metadata=None)
+    jrc = JsonResponseConfig.from_metadata(metadata=None)
 
     body = await target._construct_request_body_async(conversation=[request], json_config=jrc)
     messages = body["messages"][0]["content"]
@@ -1261,7 +1260,7 @@ async def test_construct_request_body_with_audio_config(patch_central_database, 
     )
 
     request = Message(message_pieces=[dummy_text_message_piece])
-    jrc = _JsonResponseConfig.from_metadata(metadata=None)
+    jrc = JsonResponseConfig.from_metadata(metadata=None)
 
     body = await target._construct_request_body_async(conversation=[request], json_config=jrc)
 

@@ -13,16 +13,23 @@ from unit.mocks import get_mock_target
 
 from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
 from pyrit.memory import MemoryInterface, PromptMemoryEntry
+from pyrit.memory.memory_models import (
+    ConverterIdentifierEntry,
+    PromptConverterIdentifierEntry,
+    TargetIdentifierEntry,
+)
 from pyrit.memory.storage.serializers import set_message_piece_sha256_async
 from pyrit.models import (
     ComponentIdentifier,
     Conversation,
+    ConverterIdentifier,
     IdentifierFilter,
     IdentifierType,
     Message,
     MessagePiece,
     Score,
     SeedPrompt,
+    TargetIdentifier,
 )
 
 
@@ -60,6 +67,51 @@ def test_add_message_pieces_to_memory(
 
     sqlite_instance.add_message_to_memory(request=message)
     assert len(sqlite_instance.get_message_pieces()) == num_conversations
+
+
+def test_add_message_pieces_persists_converter_identifier_graph(sqlite_instance: MemoryInterface):
+    target = TargetIdentifier(
+        class_name="ConverterTarget",
+        class_module="tests.unit.memory",
+        model_name="converter-model",
+    )
+    nested = ConverterIdentifier(
+        class_name="NestedConverter",
+        class_module="tests.unit.memory",
+        supported_input_types=["text"],
+        supported_output_types=["text"],
+        converter_target=target,
+    )
+    converter = ConverterIdentifier(
+        class_name="CompositeConverter",
+        class_module="tests.unit.memory",
+        supported_input_types=["text"],
+        supported_output_types=["text"],
+        sub_converter=nested,
+    )
+    pieces = [
+        MessagePiece(
+            conversation_id=str(uuid4()),
+            role="user",
+            original_value=f"Prompt {index}",
+            converter_identifiers=[converter, nested],
+        )
+        for index in range(2)
+    ]
+
+    sqlite_instance.add_message_pieces_to_memory(message_pieces=pieces)
+
+    converter_rows = sqlite_instance._query_entries(ConverterIdentifierEntry)
+    link_rows = sqlite_instance._query_entries(PromptConverterIdentifierEntry)
+    assert {row.hash for row in converter_rows} == {converter.hash, nested.hash}
+    assert next(row for row in converter_rows if row.hash == converter.hash).sub_converter_hash == nested.hash
+    assert next(row for row in converter_rows if row.hash == nested.hash).converter_target_hash == target.hash
+    assert len(sqlite_instance._query_entries(TargetIdentifierEntry)) == 1
+    assert len(link_rows) == 4
+    assert {(row.position, row.converter_identifier_hash) for row in link_rows} == {
+        (0, converter.hash),
+        (1, nested.hash),
+    }
 
 
 def test_get_message_pieces_uuid_and_string_ids(sqlite_instance: MemoryInterface):
@@ -677,6 +729,105 @@ def test_add_conversation_to_memory_different_target_reregister_raises(sqlite_in
     metadata = sqlite_instance._get_conversation(conversation_id=conversation_id)
     assert metadata is not None
     assert metadata.target_identifier.hash == target_a.hash
+
+
+def test_target_identifier_dual_write_reconstruction_is_equivalent(sqlite_instance: MemoryInterface):
+    # Phase 1 dual-write invariant: reconstructing the target from the ConversationEntry
+    # JSON column must be identical to reconstructing it from the deduped
+    # TargetIdentifierEntry.identifier_json row, and the stored PK must match the
+    # recomputed content hash. This is the safety net that lets phase 2 flip reads to
+    # the FK path.
+    from pyrit.memory.memory_models import ConversationEntry, TargetIdentifierEntry
+
+    target = ComponentIdentifier(
+        class_name="OpenAIChatTarget",
+        class_module="pyrit.prompt_target",
+        params={"endpoint": "https://api.openai.com", "model_name": "gpt-4"},
+    )
+    conversation_id = "conv-dualwrite"
+    sqlite_instance.add_conversation_to_memory(
+        conversation=Conversation(conversation_id=conversation_id, target_identifier=target)
+    )
+
+    conv_entry = sqlite_instance._query_entries(
+        ConversationEntry, conditions=ConversationEntry.conversation_id == conversation_id
+    )[0]
+    id_entry = sqlite_instance._query_entries(
+        TargetIdentifierEntry, conditions=TargetIdentifierEntry.hash == target.hash
+    )[0]
+
+    from_conversation_json = ComponentIdentifier.model_validate(conv_entry.target_identifier)
+    from_identifier_row = ComponentIdentifier.model_validate(id_entry.identifier_json)
+
+    # Both reconstructions agree (equality is content-hash based) and match the FK / PK.
+    assert from_conversation_json == from_identifier_row
+    assert from_conversation_json.hash == target.hash
+    assert id_entry.hash == target.hash
+    assert conv_entry.target_identifier_hash == target.hash
+    # Promoted columns are surfaced from params for querying.
+    assert id_entry.endpoint == "https://api.openai.com"
+    assert id_entry.model_name == "gpt-4"
+
+
+def test_target_identifier_row_is_deduped_across_conversations(sqlite_instance: MemoryInterface):
+    # The same target reused across conversations is content-addressed, so it is stored
+    # once: two conversations with an identical target share a single TargetIdentifiers row.
+    from pyrit.memory.memory_models import TargetIdentifierEntry
+
+    target = ComponentIdentifier(
+        class_name="OpenAIChatTarget", class_module="pyrit.prompt_target", params={"endpoint": "shared"}
+    )
+    for cid in ("conv-dedup-a", "conv-dedup-b"):
+        sqlite_instance.add_conversation_to_memory(
+            conversation=Conversation(conversation_id=cid, target_identifier=target)
+        )
+
+    rows = sqlite_instance._query_entries(TargetIdentifierEntry, conditions=TargetIdentifierEntry.hash == target.hash)
+    assert len(rows) == 1
+
+
+def test_target_identifier_persists_inner_targets_and_edges(sqlite_instance: MemoryInterface):
+    # A multi-target's inner targets are persisted as their own content-addressed rows
+    # and linked to the parent via ordered TargetIdentifierChildren edges. Promoted
+    # scalar columns are surfaced on each row for querying.
+    from pyrit.memory.memory_models import TargetIdentifierChildEntry, TargetIdentifierEntry
+
+    inner_a = ComponentIdentifier(
+        class_name="OpenAIChatTarget",
+        class_module="pyrit.prompt_target",
+        params={"endpoint": "https://a", "model_name": "gpt-a", "temperature": 0.5},
+    )
+    inner_b = ComponentIdentifier(
+        class_name="OpenAIChatTarget",
+        class_module="pyrit.prompt_target",
+        params={"endpoint": "https://b", "model_name": "gpt-b"},
+    )
+    multi = ComponentIdentifier(
+        class_name="RoundRobinTarget",
+        class_module="pyrit.prompt_target",
+        children={"targets": [inner_a, inner_b]},
+    )
+    sqlite_instance.add_conversation_to_memory(
+        conversation=Conversation(conversation_id="conv-inner-a", target_identifier=inner_a)
+    )
+    sqlite_instance.add_conversation_to_memory(
+        conversation=Conversation(conversation_id="conv-multi", target_identifier=multi)
+    )
+
+    id_rows = sqlite_instance._query_entries(TargetIdentifierEntry)
+    by_hash = {row.hash: row for row in id_rows}
+    # Parent + both inner targets are each stored once (content-addressed).
+    assert multi.hash in by_hash
+    assert inner_a.hash in by_hash
+    assert inner_b.hash in by_hash
+    # Promoted scalar column surfaced from the inner target's params.
+    assert by_hash[inner_a.hash].temperature == 0.5
+
+    edges = sqlite_instance._query_entries(
+        TargetIdentifierChildEntry, conditions=TargetIdentifierChildEntry.parent_hash == multi.hash
+    )
+    ordered = sorted(edges, key=lambda edge: edge.position)
+    assert [(edge.position, edge.child_hash) for edge in ordered] == [(0, inner_a.hash), (1, inner_b.hash)]
 
 
 def test_insert_conversation_rolls_back_and_reraises_on_db_error(sqlite_instance: MemoryInterface):

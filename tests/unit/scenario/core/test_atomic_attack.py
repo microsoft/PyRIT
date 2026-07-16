@@ -367,7 +367,7 @@ class TestAtomicAttackExecution:
         with patch.object(AttackExecutor, "execute_attack_from_seed_groups_async", new_callable=AsyncMock) as mock_exec:
             mock_exec.side_effect = Exception("Execution error")
 
-            with pytest.raises(ValueError, match="Failed to execute atomic attack"):
+            with pytest.raises(ValueError, match="Failed to execute atomic attack 'Test Attack Run'"):
                 await atomic_attack.run_async()
 
     async def test_run_async_passes_return_partial_on_failure_true_by_default(

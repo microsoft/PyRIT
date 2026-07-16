@@ -44,6 +44,10 @@ def _mock_factory(*, name: str, seed_technique=None, adversarial_chat=None) -> M
     factory.name = name
     factory.seed_technique = seed_technique
     factory.adversarial_chat = adversarial_chat
+    # Mirror the real factory: with no simulated-conversation seed, resolution returns
+    # whatever adversarial_chat was baked (possibly None). Tests that exercise the
+    # simulated-conversation lazy path override this return value explicitly.
+    factory.resolve_adversarial_chat.return_value = adversarial_chat
     factory.create.return_value = MagicMock(name=f"{name}_technique")
     return factory
 
@@ -169,6 +173,21 @@ class TestMatrixAdversarialForwarding:
         # No adversarial_chat is forwarded into create() when the axis is collapsed.
         assert "adversarial_chat" not in factory.create.call_args.kwargs
         assert result[0]._adversarial_chat is baked
+
+    def test_no_target_axis_stamps_factory_resolved_adversarial_chat(self):
+        # A simulated-conversation technique with no baked adversarial_chat resolves the
+        # default lazily via factory.resolve_adversarial_chat(); the builder must stamp that
+        # onto the AtomicAttack so seed-group expansion has an adversarial chat to use.
+        builder = _builder()
+        resolved = MagicMock(spec=PromptTarget)
+        factory = _mock_factory(name="tech")
+        factory.resolve_adversarial_chat.return_value = resolved
+        result = builder.build(
+            technique_factories={"tech": factory},
+            dataset_groups={"ds": [_seed_group(objective="o1")]},
+        )
+        assert "adversarial_chat" not in factory.create.call_args.kwargs
+        assert result[0]._adversarial_chat is resolved
 
 
 @pytest.mark.usefixtures("patch_central_database")

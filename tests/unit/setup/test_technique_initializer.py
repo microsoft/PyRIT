@@ -256,6 +256,86 @@ class TestPersonaCrescendoYamls:
         assert "—" not in text, f"{technique_name}.yaml contains an em-dash"
 
 
+class TestContextComplianceTechnique:
+    """Tests for the context_compliance simulated-conversation technique."""
+
+    @staticmethod
+    def _context_compliance_factory():
+        factories = {f.name: f for f in build_technique_factories(groups=["core"])}
+        return factories["context_compliance"]
+
+    def test_uses_prompt_sending_attack(self):
+        factory = self._context_compliance_factory()
+        assert factory.attack_class is PromptSendingAttack
+
+    def test_has_simulated_conversation_seed_technique(self):
+        factory = self._context_compliance_factory()
+        assert factory.seed_technique is not None
+        assert factory.seed_technique.has_simulated_conversation
+
+    def test_seed_technique_uses_single_turn(self):
+        factory = self._context_compliance_factory()
+        sim = factory.seed_technique.simulated_conversation_config
+        assert sim is not None
+        assert sim.num_turns == 1
+
+    def test_seed_technique_uses_custom_simulated_target_prompt(self):
+        factory = self._context_compliance_factory()
+        sim = factory.seed_technique.simulated_conversation_config
+        assert sim is not None
+        assert sim.simulated_target_system_prompt_path.name == "context_compliance_target.yaml"
+        assert sim.simulated_target_system_prompt_path.exists()
+        # No LLM-generated next message: the final turn is a fixed affirmation instead.
+        assert sim.next_message_system_prompt_path is None
+
+    def test_final_user_message_is_fixed_affirmation(self):
+        factory = self._context_compliance_factory()
+        # The fixed "yes." final turn is appended as a static SeedPrompt after the
+        # simulated conversation's sequence range (user seq 0, assistant seq 1 -> "yes." seq 2).
+        prompts = list(factory.seed_technique.prompts)
+        assert len(prompts) == 1
+        yes_prompt = prompts[0]
+        assert yes_prompt.value == "yes."
+        assert yes_prompt.role == "user"
+        assert yes_prompt.sequence == 2
+
+    def test_adversarial_yaml_resolves_to_existing_file(self):
+        factory = self._context_compliance_factory()
+        sim = factory.seed_technique.simulated_conversation_config
+        assert sim is not None
+        assert sim.adversarial_chat_system_prompt_path.name == "context_compliance.yaml"
+        assert sim.adversarial_chat_system_prompt_path.exists()
+
+    def test_tagged_core_single_turn_light(self):
+        factory = self._context_compliance_factory()
+        assert "core" in factory.technique_tags
+        assert "single_turn" in factory.technique_tags
+        assert "light" in factory.technique_tags
+
+
+class TestContextComplianceYamls:
+    """Tests for the context_compliance technique YAML files."""
+
+    def test_adversarial_yaml_loads_with_required_objective(self):
+        path = Path(EXECUTOR_RED_TEAM_PATH) / "context_compliance" / "context_compliance.yaml"
+        sp = SeedPrompt.from_yaml_with_required_parameters(
+            template_path=path,
+            required_parameters=["objective"],
+        )
+        rendered = sp.render_template_value(objective="UNIQUE_TEST_OBJECTIVE", max_turns=1)
+        assert "UNIQUE_TEST_OBJECTIVE" in rendered
+
+    def test_simulated_target_yaml_loads_with_required_parameters(self):
+        path = Path(EXECUTOR_SEED_PROMPT_PATH) / "simulated_target" / "context_compliance_target.yaml"
+        sp = SeedPrompt.from_yaml_with_required_parameters(
+            template_path=path,
+            required_parameters=["objective", "num_turns"],
+        )
+        rendered = sp.render_template_value(objective="UNIQUE_TEST_OBJECTIVE", num_turns=1)
+        assert "UNIQUE_TEST_OBJECTIVE" in rendered
+        assert "1" in rendered
+
+
 # ---------------------------------------------------------------------------
 # Role-play factories (simulated-conversation personas in the core group)
 # ---------------------------------------------------------------------------

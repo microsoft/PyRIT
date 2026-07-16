@@ -155,13 +155,18 @@ class ScenarioResult(BaseModel):
 
     def get_techniques_used(self) -> list[str]:
         """
-        Get the list of techniques used in this scenario.
+        Get the list of techniques present in the results.
+
+        Results are aggregated by display group so each technique is counted once,
+        even when it fans out into multiple atomic-attack cells (e.g. across
+        datasets or targets in a matrix scenario). When no ``display_group_map`` is
+        set, atomic-attack names are returned unchanged.
 
         Returns:
-            list[str]: Atomic attack technique names present in the results.
+            list[str]: Technique (display-group) names that produced results.
 
         """
-        return list(self.attack_results.keys())
+        return list(self.get_display_groups().keys())
 
     def get_display_groups(self) -> dict[str, list[AttackResult]]:
         """
