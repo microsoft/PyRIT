@@ -303,9 +303,9 @@ class TestScenarioTechniqueFactoriesValid:
     def test_factory_attack_class_accepts_objective_target(self, factory: AttackTechniqueFactory):
         """Every attack class must accept ``objective_target`` (required at create time)."""
         sig = inspect.signature(factory.attack_class.__init__)
-        assert (
-            "objective_target" in sig.parameters
-        ), f"{factory.attack_class.__name__} is missing required 'objective_target' parameter"
+        assert "objective_target" in sig.parameters, (
+            f"{factory.attack_class.__name__} is missing required 'objective_target' parameter"
+        )
 
     def test_factory_names_are_unique(self):
         """No two factories should share the same name."""

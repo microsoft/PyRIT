@@ -124,7 +124,12 @@ class EncodingTechnique(ScenarioTechnique):
 
     @classmethod
     def default(cls) -> "EncodingTechnique":
-        """The out-of-the-box run selects the curated ``DEFAULT`` aggregate, not the exhaustive ``ALL``."""
+        """
+        Select the curated ``DEFAULT`` aggregate for the out-of-the-box run, not the exhaustive ``ALL``.
+
+        Returns:
+            EncodingTechnique: The curated ``DEFAULT`` aggregate.
+        """
         return cls.DEFAULT
 
 
