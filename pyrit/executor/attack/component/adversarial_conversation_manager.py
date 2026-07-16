@@ -16,7 +16,6 @@ from pyrit.exceptions import (
     ComponentRole,
     InvalidJsonException,
     execution_context,
-    pyrit_json_retry,
     remove_markdown_json,
 )
 from pyrit.executor.attack.core.attack_config import (
@@ -34,7 +33,7 @@ from pyrit.models import (
     SeedPrompt,
     get_common_json_schema,
 )
-from pyrit.prompt_normalizer import PromptNormalizer
+from pyrit.prompt_normalizer import PromptNormalizer, send_json_with_retry_async
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -413,7 +412,6 @@ class _AdversarialConversationManager:
         adversarial_first_user_message: SeedPrompt | None = None,
         adversarial_next_user_message: SeedPrompt | None = None,
         max_turns: int = 1,
-        raise_on_invalid_json: bool = True,
         prompt_normalizer: PromptNormalizer | None = None,
         conversation_id: str | None = None,
         objective: str | None = None,
@@ -439,9 +437,6 @@ class _AdversarialConversationManager:
                 text directly.
             max_turns: Maximum number of turns; rendered into the adversarial system prompt as
                 ``max_turns``. Defaults to 1.
-            raise_on_invalid_json: When True (default), a reply that fails to match the resolved
-                schema raises ``InvalidJsonException`` (retried via ``pyrit_json_retry``). When False,
-                the raw reply text is returned as ``next_message`` instead of raising.
             prompt_normalizer: The prompt normalizer to send through. Defaults to a new one.
             conversation_id: The adversarial-chat conversation id this manager drives. A fresh
                 id is generated when None.
@@ -468,7 +463,6 @@ class _AdversarialConversationManager:
         self._adversarial_first_user_message = adversarial_first_user_message
         self._adversarial_next_user_message = adversarial_next_user_message
         self._max_turns = max_turns
-        self._raise_on_invalid_json = raise_on_invalid_json
         self._prompt_normalizer = prompt_normalizer or PromptNormalizer()
         self._conversation_id = conversation_id or str(uuid4())
         self._objective = objective
@@ -757,7 +751,7 @@ class _AdversarialConversationManager:
 
         Raises:
             ValueError: If no response is received from the adversarial chat.
-            InvalidJsonException: If ``raise_on_invalid_json`` is True and the reply is invalid.
+            InvalidJsonException: If the reply is not valid JSON after the retry budget is exhausted.
         """
         return await self._send_and_parse_async(
             prompt_text=prompt_text,
@@ -803,7 +797,6 @@ class _AdversarialConversationManager:
             )
         return Message.from_prompt(prompt=reply.next_message, role="user")
 
-    @pyrit_json_retry
     async def _send_and_parse_async(
         self,
         *,
@@ -814,10 +807,10 @@ class _AdversarialConversationManager:
         """
         Send one user turn to the adversarial chat and parse its reply.
 
-        This is the single place adversarial-chat JSON retry lives: when the reply fails to match the
-        resolved schema, ``InvalidJsonException`` propagates and ``pyrit_json_retry`` re-sends the turn
-        until it parses or the attempt budget is exhausted. When ``raise_on_invalid_json`` is False, an
-        unparseable reply is returned as raw text instead.
+        This is the single place adversarial-chat JSON retry lives. It delegates to
+        ``send_json_with_retry_async`` so each retry sends on a clean conversation history:
+        the failed turn is rolled back out of memory before the turn is resent, instead of
+        replaying the model's own malformed reply.
 
         When a ``modality_router`` is configured, the outgoing message is built via
         ``build_adversarial_input_message`` so first-turn seed media (``seed_message``) and prior
@@ -834,7 +827,7 @@ class _AdversarialConversationManager:
 
         Raises:
             ValueError: If no response is received from the adversarial chat.
-            InvalidJsonException: If ``raise_on_invalid_json`` is True and the reply is invalid.
+            InvalidJsonException: If the reply is not valid JSON after the retry budget is exhausted.
         """
         prompt_metadata = _build_adversarial_prompt_metadata(response_json_schema=self._response_json_schema)
 
@@ -852,6 +845,15 @@ class _AdversarialConversationManager:
                 prompt_metadata=prompt_metadata or None,
             )
 
+        if self._memory_labels:
+            for piece in message.message_pieces:
+                piece.labels = self._memory_labels
+
+        schema = self._response_json_schema
+
+        def _parse(response: Message) -> AdversarialReply:
+            return _parse_adversarial_reply(response.get_value(), schema=schema)
+
         with execution_context(
             component_role=ComponentRole.ADVERSARIAL_CHAT,
             attack_strategy_name=self._attack_strategy_name,
@@ -859,25 +861,10 @@ class _AdversarialConversationManager:
             objective_target_conversation_id=self._objective_target_conversation_id,
             objective=self._objective,
         ):
-            if self._memory_labels:
-                for piece in message.message_pieces:
-                    piece.labels = self._memory_labels
-            response = await self._prompt_normalizer.send_prompt_async(
+            return await send_json_with_retry_async(
+                normalizer=self._prompt_normalizer,
+                target=self._adversarial_target,
                 message=message,
                 conversation_id=self._conversation_id,
-                target=self._adversarial_target,
+                parse=_parse,
             )
-
-        if not response:
-            raise ValueError("No response received from adversarial chat")
-
-        raw = response.get_value()
-
-        schema = self._response_json_schema
-        if not self._raise_on_invalid_json:
-            try:
-                return _parse_adversarial_reply(raw, schema=schema)
-            except InvalidJsonException:
-                return AdversarialReply(next_message=raw, raw=raw)
-
-        return _parse_adversarial_reply(raw, schema=schema)

@@ -48,6 +48,7 @@ from pyrit.models import (
     ComponentIdentifier,
     Conversation,
     ConversationReference,
+    ConversationRetry,
     ConversationType,
     ConverterIdentifier,
     EvaluationIdentifier,
@@ -1017,6 +1018,10 @@ class ConversationEntry(Base):
         String(64), ForeignKey(f"{TargetIdentifierEntry.__tablename__}.hash"), nullable=True
     )
 
+    # JSON-serialized list of ConversationRetry records (turns that were retried in
+    # this conversation). Nullable for backwards compatibility with existing databases.
+    retries: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
+
     # Version of PyRIT used when this entry was created. Nullable for backwards
     # compatibility with existing databases.
     pyrit_version = mapped_column(String, nullable=True)
@@ -1031,6 +1036,7 @@ class ConversationEntry(Base):
         self.conversation_id = conversation.conversation_id
         self.target_identifier = conversation.target_identifier.model_dump() if conversation.target_identifier else None
         self.target_identifier_hash = conversation.target_identifier.hash if conversation.target_identifier else None
+        self.retries = [retry.model_dump(mode="json") for retry in conversation.retries] or None
         self.pyrit_version = pyrit.__version__
 
     def get_conversation(self) -> Conversation:
@@ -1042,7 +1048,12 @@ class ConversationEntry(Base):
         """
         stored_version = self.pyrit_version or LEGACY_PYRIT_VERSION
         target_id = _load_identifier(self.target_identifier, pyrit_version=stored_version)
-        return Conversation(conversation_id=self.conversation_id, target_identifier=target_id)
+        retries = [ConversationRetry.model_validate(retry) for retry in self.retries or []]
+        return Conversation(
+            conversation_id=self.conversation_id,
+            target_identifier=target_id,
+            retries=retries,
+        )
 
 
 class EmbeddingDataEntry(Base):
