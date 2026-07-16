@@ -91,5 +91,5 @@ repos:
         entry: uv run --link-mode=copy ty check
         language: system
         files: ^pyrit/
-        exclude: ^pyrit/auxiliary_attacks/
+        exclude: ^pyrit/executor/promptgen/gcg/
         types: [python]

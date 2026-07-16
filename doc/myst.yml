@@ -108,6 +108,9 @@ project:
             - file: code/executor/6_benchmark.ipynb
             - file: code/executor/7_promptgen.ipynb
             - file: code/executor/8_modality_feedback.ipynb
+            - file: code/executor/gcg/0_gcg.ipynb
+              children:
+                - file: code/executor/gcg/1_gcg_azure_ml.ipynb
         - file: code/targets/0_prompt_targets.md
           children:
             - file: code/targets/1_openai_chat_target.ipynb
@@ -162,9 +165,6 @@ project:
             - file: code/setup/2_resiliency.ipynb
             - file: code/setup/default_values.md
             - file: code/setup/pyrit_initializer.ipynb
-        - file: code/auxiliary_attacks/0_auxiliary_attacks.ipynb
-          children:
-            - file: code/auxiliary_attacks/1_gcg_azure_ml.ipynb
         - file: code/scenarios/0_scenarios.ipynb
           children:
             - file: code/scenarios/0_attack_techniques.ipynb
@@ -180,7 +180,6 @@ project:
       children:
         - file: api/pyrit_analytics.md
         - file: api/pyrit_auth.md
-        - file: api/pyrit_auxiliary_attacks.md
         - file: api/pyrit_cli_api_client.md
         - file: api/pyrit_cli_pyrit_scan.md
         - file: api/pyrit_cli_pyrit_shell.md
