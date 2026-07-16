@@ -92,7 +92,10 @@ class PyRITApiClient:
         try:
             client = self._get_client()
             resp = await client.get("/api/health")
-            return resp.status_code == 200
+            if resp.status_code != 200:
+                return False
+            payload = resp.json()
+            return payload.get("status") == "healthy" and payload.get("service") == "pyrit-backend"
         except httpx.ConnectError:
             return False
         except Exception:
