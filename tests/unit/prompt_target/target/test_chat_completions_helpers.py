@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from pyrit.exceptions import EmptyResponseException, PyritException
-from pyrit.models import Message, MessagePiece
+from pyrit.models import JsonResponseConfig, Message, MessagePiece
 from pyrit.prompt_target.common.chat_completions_message_builder import (
     build_multimodal_chat_messages_async,
     build_response_format,
@@ -31,7 +31,6 @@ from pyrit.prompt_target.common.chat_completions_response_parser import (
     token_usage_from_chat_completion,
     validate_chat_completion_response,
 )
-from pyrit.prompt_target.common.json_response_config import _JsonResponseConfig
 
 pytestmark = pytest.mark.usefixtures("patch_central_database")
 
@@ -89,18 +88,18 @@ def test_build_text_content_entry():
 
 
 def test_build_response_format_disabled_returns_none():
-    config = _JsonResponseConfig.from_metadata(metadata={})
+    config = JsonResponseConfig.from_metadata(metadata={})
     assert build_response_format(json_config=config) is None
 
 
 def test_build_response_format_json_object():
-    config = _JsonResponseConfig.from_metadata(metadata={"response_format": "json"})
+    config = JsonResponseConfig.from_metadata(metadata={"response_format": "json"})
     assert build_response_format(json_config=config) == {"type": "json_object"}
 
 
 def test_build_response_format_json_schema():
     schema = {"type": "object", "properties": {"a": {"type": "string"}}}
-    config = _JsonResponseConfig.from_metadata(metadata={"response_format": "json", "json_schema": json.dumps(schema)})
+    config = JsonResponseConfig.from_metadata(metadata={"response_format": "json", "json_schema": json.dumps(schema)})
     result = build_response_format(json_config=config)
     assert result is not None
     assert result["type"] == "json_schema"

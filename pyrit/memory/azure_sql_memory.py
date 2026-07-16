@@ -27,7 +27,7 @@ from pyrit.memory.memory_models import (
     PromptMemoryEntry,
 )
 from pyrit.memory.storage import AzureBlobStorageIO
-from pyrit.models import ConversationStats, MessagePiece
+from pyrit.models import ConversationStats
 
 if TYPE_CHECKING:
     from azure.core.credentials import AccessToken
@@ -684,21 +684,6 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
             )
             conditions.append(condition)
         return and_(*conditions)
-
-    def _add_message_pieces_to_memory(self, *, message_pieces: Sequence[MessagePiece]) -> None:
-        """
-        Persist already-validated message pieces to the Azure SQL store.
-
-        ``not_in_memory`` pieces are ephemeral -- typically synthesized inside a
-        scorer to score arbitrary content that never came through a real
-        PromptTarget. They are filtered out upstream in
-        ``add_message_pieces_to_memory`` before this method is called.
-
-        Args:
-            message_pieces (Sequence[MessagePiece]): Persistable pieces (filtered and
-                validated by ``add_message_pieces_to_memory``).
-        """
-        self._insert_entries(entries=[PromptMemoryEntry(entry=piece) for piece in message_pieces])
 
     def dispose_engine(self) -> None:
         """

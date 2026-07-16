@@ -26,7 +26,7 @@ from pydantic import BaseModel, Field
 
 from pyrit.models.identifiers.component_identifier import JSONValue
 from pyrit.models.identifiers.target_identifier import TargetIdentifier
-from pyrit.models.target_capabilities import TargetCapabilities
+from pyrit.models.target.target_capabilities import TargetCapabilities
 
 
 class TargetInstance(BaseModel):

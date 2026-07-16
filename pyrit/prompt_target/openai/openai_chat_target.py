@@ -11,6 +11,7 @@ from pyrit.exceptions import (
 )
 from pyrit.models import (
     ComponentIdentifier,
+    JsonResponseConfig,
     Message,
     MessagePiece,
 )
@@ -30,7 +31,6 @@ from pyrit.prompt_target.common.chat_completions_response_parser import (
     save_audio_response_async,
     validate_chat_completion_response,
 )
-from pyrit.prompt_target.common.json_response_config import _JsonResponseConfig
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.prompt_target.common.utils import (
@@ -457,7 +457,7 @@ class OpenAIChatTarget(OpenAITarget):
         )
 
     async def _construct_request_body_async(
-        self, *, conversation: MutableSequence[Message], json_config: _JsonResponseConfig
+        self, *, conversation: MutableSequence[Message], json_config: JsonResponseConfig
     ) -> dict[str, Any]:
         messages = await self._build_chat_messages_async(conversation)
         response_format = self._build_response_format(json_config)
@@ -483,5 +483,5 @@ class OpenAIChatTarget(OpenAITarget):
         # Filter out None values
         return {k: v for k, v in body_parameters.items() if v is not None}
 
-    def _build_response_format(self, json_config: _JsonResponseConfig) -> dict[str, Any] | None:
+    def _build_response_format(self, json_config: JsonResponseConfig) -> dict[str, Any] | None:
         return build_response_format(json_config=json_config)

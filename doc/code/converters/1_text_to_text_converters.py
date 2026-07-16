@@ -183,6 +183,7 @@ from pyrit.converter import (
     PolicyPuppetryConverter,
     SearchReplaceConverter,
     SuffixAppendConverter,
+    TaskFramingConverter,
     TemplateSegmentConverter,
     TextJailbreakConverter,
     UrlConverter,
@@ -215,6 +216,10 @@ print("Text Jailbreak:", await text_jailbreak.convert_async(prompt=prompt))  # t
 # Template segment splits prompt using a template (uses default tom_and_jerry.yaml if not specified)
 template_converter = TemplateSegmentConverter()
 print("Template Segment:", await template_converter.convert_async(prompt=prompt))  # type: ignore
+
+# Task framing wraps the prompt in a task template (default "TASK is '...'"), stripping quotes so they don't collide with the template's delimiters
+task_framing = TaskFramingConverter(strip_characters="'")
+print("Task Framing:", await task_framing.convert_async(prompt=prompt))  # type: ignore
 
 # Policy Puppetry [@hiddenlayer2025policypuppetry] frames the request as policy/config the model should follow
 policy_puppetry = PolicyPuppetryConverter(prompt_template=PolicyPuppetryTemplate.DR_HOUSE.to_seed_prompt())

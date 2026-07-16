@@ -9,7 +9,7 @@ import logging
 import tempfile
 import zipfile
 from abc import ABC
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import fields
 from enum import Enum
 from pathlib import Path
@@ -25,6 +25,7 @@ from pyrit.common.path import DB_DATA_PATH
 from pyrit.common.text_helper import read_txt, write_txt
 from pyrit.datasets.seed_datasets.seed_dataset_provider import SeedDatasetProvider
 from pyrit.datasets.seed_datasets.seed_metadata import SeedDatasetMetadata
+from pyrit.models.harm_category import standardize_harm_categories
 
 logger = logging.getLogger(__name__)
 
@@ -99,6 +100,28 @@ class _RemoteDatasetLoader(SeedDatasetProvider, ABC):
             raise ValueError(
                 f"Expected {enum_cls.__name__}, got {type(value).__name__}: {value!r}. Valid values: {valid}"
             )
+
+    @staticmethod
+    def _standardize_harm_categories(
+        raw_categories: list[str] | str | None,
+        *,
+        alias_overrides: Mapping[str, object] | None = None,
+    ) -> list[str]:
+        """
+        Standardize raw harm categories.
+
+        Converts raw category string(s) to standardized HarmCategory enum names.
+
+        Args:
+            raw_categories: Raw category string(s) from the dataset
+                           (e.g., "violence", "harmful"), or None.
+            alias_overrides: Optional dataset-specific mapping that overrides alias
+                resolution and can map one raw category to multiple canonical values.
+
+        Returns:
+            List of standardized HarmCategory enum names.
+        """
+        return standardize_harm_categories(raw_categories, alias_overrides=alias_overrides)
 
     def _get_cache_file_name(self, *, source: str, file_type: str) -> str:
         """

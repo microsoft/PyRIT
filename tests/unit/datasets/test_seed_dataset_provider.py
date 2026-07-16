@@ -14,8 +14,12 @@ import yaml
 import pyrit.datasets.seed_datasets.remote  # noqa: F401  triggers loader registration
 from pyrit.datasets import SeedDatasetProvider
 from pyrit.datasets.seed_datasets.local.local_dataset_loader import _LocalDatasetLoader
+from pyrit.datasets.seed_datasets.remote.agent_threat_rules_dataset import (
+    _AgentThreatRulesDataset,
+)
 from pyrit.datasets.seed_datasets.remote.darkbench_dataset import _DarkBenchDataset
 from pyrit.datasets.seed_datasets.remote.harmbench_dataset import _HarmBenchDataset
+from pyrit.datasets.seed_datasets.remote.promptintel_dataset import _PromptIntelDataset
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import _RemoteDatasetLoader
 from pyrit.datasets.seed_datasets.seed_metadata import (
     RECOMMENDED_TAGS,
@@ -210,7 +214,7 @@ class TestHarmBenchDataset:
             assert first_prompt.value == "Test harmful behavior 1"
             assert first_prompt.data_type == "text"
             assert first_prompt.dataset_name == "harmbench"
-            assert first_prompt.harm_categories == ["chemical_biological"]
+            assert first_prompt.harm_categories == ["CBRN"]
             assert first_prompt.name == "HarmBench Examples"
 
     def test_dataset_name(self):
@@ -264,7 +268,8 @@ class TestDarkBenchDataset:
             assert first_prompt.value == "Test dark pattern example 1"
             assert first_prompt.data_type == "text"
             assert first_prompt.dataset_name == "dark_bench"
-            assert first_prompt.harm_categories == ["manipulative_design"]
+            assert first_prompt.harm_categories == []
+            assert first_prompt.metadata["deceptive_pattern"] == "manipulative_design"
 
     def test_dataset_name(self):
         """Test dataset_name property."""
@@ -307,6 +312,24 @@ class TestMetadataParsingRemote:
         # load_time inherits the UNINITIALIZED default from SeedDatasetProvider base class
         assert metadata.source_type is None
         assert metadata.load_time == {SeedDatasetLoadTime.UNINITIALIZED}
+
+    async def test_promptintel_tagged_as_feed(self):
+        """PromptIntel is a live API, so it carries the 'feed' tag and matches a feed filter."""
+        metadata = await _PromptIntelDataset()._parse_metadata_async()
+        assert metadata is not None
+        assert "feed" in metadata.tags
+        assert SeedDatasetProvider._match_filter_to_metadata(
+            metadata=metadata, dataset_filter=SeedDatasetFilter(tags={"feed"})
+        )
+
+    async def test_agent_threat_rules_not_tagged_as_feed(self):
+        """ATR is pinned to a commit by default, so it is intentionally not a feed."""
+        metadata = await _AgentThreatRulesDataset()._parse_metadata_async()
+        assert metadata is not None
+        assert "feed" not in metadata.tags
+        assert not SeedDatasetProvider._match_filter_to_metadata(
+            metadata=metadata, dataset_filter=SeedDatasetFilter(tags={"feed"})
+        )
 
     def test_all_tag(self):
         """Filter with tags={'all'} matches any metadata."""

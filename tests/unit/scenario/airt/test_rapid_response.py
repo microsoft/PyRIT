@@ -10,7 +10,6 @@ import pytest
 
 from pyrit.common.path import DATASETS_PATH
 from pyrit.executor.attack import (
-    ContextComplianceAttack,
     ManyShotJailbreakAttack,
     PromptSendingAttack,
     TreeOfAttacksWithPruningAttack,
@@ -129,8 +128,9 @@ def _make_seed_groups(name: str) -> list[AttackSeedGroup]:
     """Create two seed attack groups for a given category.
 
     Groups are objective-only so they stay compatible with simulated-conversation
-    techniques (e.g. role_play_*), which generate their own prepended conversation
-    and reject seed groups that already carry a prompt at sequence 0.
+    techniques (e.g. context_compliance, role_play_*), which generate their own
+    prepended conversation and reject seed groups that already carry a prompt at
+    sequence 0.
     """
     return [
         AttackSeedGroup(seeds=[SeedObjective(value=f"{name} objective 1")]),
@@ -318,11 +318,11 @@ class TestRapidResponseAttackGeneration:
             mock_objective_scorer=mock_objective_scorer,
         )
         technique_classes = {type(a.attack_technique.attack) for a in attacks}
-        # Default is the DEFAULT aggregate (built from light tags): it includes many_shot,
-        # context_compliance, and the simulated-conversation role_play_* variants, but excludes
-        # the slow TAP attack.
+        # Default is the DEFAULT aggregate (built from light tags): it includes many_shot and the
+        # simulated-conversation techniques (context_compliance, role_play_*), but excludes the slow
+        # TAP attack. context_compliance and role_play_* are now simulated-conversation
+        # PromptSendingAttacks, so assert on the simulated-conversation seed rather than a dedicated class.
         assert ManyShotJailbreakAttack in technique_classes
-        assert ContextComplianceAttack in technique_classes
         assert TreeOfAttacksWithPruningAttack not in technique_classes
         assert any(
             a.attack_technique.seed_technique is not None
@@ -340,9 +340,9 @@ class TestRapidResponseAttackGeneration:
         )
         technique_classes = {type(a.attack_technique.attack) for a in attacks}
         # Every core technique tagged ``single_turn`` in the scenario-technique catalog must appear.
-        # role_play_* variants are simulated-conversation PromptSendingAttacks, so assert on the
-        # simulated-conversation seed rather than a dedicated class.
-        assert ContextComplianceAttack in technique_classes
+        # context_compliance and role_play_* are now simulated-conversation PromptSendingAttacks,
+        # so assert on the simulated-conversation seed rather than a dedicated class.
+        assert PromptSendingAttack in technique_classes
         assert any(
             a.attack_technique.seed_technique is not None
             and a.attack_technique.seed_technique.has_simulated_conversation
@@ -371,8 +371,8 @@ class TestRapidResponseAttackGeneration:
             techniques=[_technique_class().ALL],
         )
         technique_classes = {type(a.attack_technique.attack) for a in attacks}
-        # Should include all known core techniques. role_play_* variants are
-        # simulated-conversation PromptSendingAttacks, asserted via the seed technique.
+        # Should include all known core techniques. context_compliance and role_play_* variants
+        # are simulated-conversation PromptSendingAttacks, asserted via the seed technique.
         assert {
             ManyShotJailbreakAttack,
             TreeOfAttacksWithPruningAttack,
@@ -698,6 +698,6 @@ class TestAttackTechniqueFactoryBasics:
         with pytest.raises(ValueError, match="attack_adversarial_config"):
             AttackTechniqueFactory(
                 name="bad",
-                attack_class=ContextComplianceAttack,
+                attack_class=PromptSendingAttack,
                 attack_kwargs={"attack_adversarial_config": "oops"},
             )

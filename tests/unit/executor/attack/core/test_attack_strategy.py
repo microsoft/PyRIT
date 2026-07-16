@@ -2,6 +2,7 @@
 # Licensed under the MIT license.
 
 import logging
+from dataclasses import replace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -92,6 +93,47 @@ def mock_logger():
 def event_handler(mock_logger):
     """Create an event handler for testing"""
     return _DefaultAttackStrategyEventHandler(logger=mock_logger)
+
+
+def test_next_message_override_can_clear_parameter_value_and_survive_copy():
+    """An explicit None override must not fall back to the immutable parameter after copying."""
+
+    class TestAttackContext(AttackContext):
+        pass
+
+    seed_message = Message.from_prompt(prompt="seed", role="user")
+    context = TestAttackContext(
+        params=AttackParameters(
+            objective="Test objective",
+            next_message=seed_message,
+        )
+    )
+
+    assert context.next_message is seed_message
+
+    context.next_message = None
+
+    assert context.next_message is None
+    assert context.duplicate().next_message is None
+    assert replace(context).next_message is None
+
+
+def test_next_message_override_constructor_value_takes_precedence():
+    """A directly supplied override must take precedence over the immutable parameter."""
+
+    class TestAttackContext(AttackContext):
+        pass
+
+    seed_message = Message.from_prompt(prompt="seed", role="user")
+    context = TestAttackContext(
+        params=AttackParameters(
+            objective="Test objective",
+            next_message=seed_message,
+        ),
+        _next_message_override=None,
+    )
+
+    assert context.next_message is None
 
 
 @pytest.fixture

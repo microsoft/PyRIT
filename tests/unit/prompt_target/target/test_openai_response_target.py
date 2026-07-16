@@ -23,9 +23,8 @@ from pyrit.exceptions.exception_classes import (
     RateLimitException,
 )
 from pyrit.memory.memory_interface import MemoryInterface
-from pyrit.models import Message, MessagePiece, flatten_to_message_pieces
+from pyrit.models import JsonResponseConfig, Message, MessagePiece, flatten_to_message_pieces
 from pyrit.prompt_target import OpenAIResponseTarget, PromptTarget
-from pyrit.prompt_target.common.json_response_config import _JsonResponseConfig
 
 
 def create_mock_response(response_dict: dict = None) -> MagicMock:
@@ -212,13 +211,13 @@ async def test_construct_request_body_includes_extra_body_params(
 
     request = Message(message_pieces=[dummy_text_message_piece])
 
-    jrc = _JsonResponseConfig.from_metadata(metadata=None)
+    jrc = JsonResponseConfig.from_metadata(metadata=None)
     body = await target._construct_request_body_async(conversation=[request], json_config=jrc)
     assert body["key"] == "value"
 
 
 async def test_construct_request_body_json_object(target: OpenAIResponseTarget, dummy_text_message_piece: MessagePiece):
-    json_response_config = _JsonResponseConfig(enabled=True)
+    json_response_config = JsonResponseConfig(enabled=True)
     request = Message(message_pieces=[dummy_text_message_piece])
 
     body = await target._construct_request_body_async(conversation=[request], json_config=json_response_config)
@@ -227,7 +226,7 @@ async def test_construct_request_body_json_object(target: OpenAIResponseTarget, 
 
 async def test_construct_request_body_json_schema(target: OpenAIResponseTarget, dummy_text_message_piece: MessagePiece):
     schema_object = {"type": "object", "properties": {"name": {"type": "string"}}}
-    json_response_config = _JsonResponseConfig.from_metadata(
+    json_response_config = JsonResponseConfig.from_metadata(
         metadata={"response_format": "json", "json_schema": schema_object}
     )
     request = Message(message_pieces=[dummy_text_message_piece])
@@ -248,7 +247,7 @@ async def test_construct_request_body_removes_empty_values(
 ):
     request = Message(message_pieces=[dummy_text_message_piece])
 
-    json_response_config = _JsonResponseConfig(enabled=False)
+    json_response_config = JsonResponseConfig(enabled=False)
     body = await target._construct_request_body_async(conversation=[request], json_config=json_response_config)
     assert "max_completion_tokens" not in body
     assert "max_tokens" not in body
@@ -264,7 +263,7 @@ async def test_construct_request_body_serializes_text_message(
 ):
     request = Message(message_pieces=[dummy_text_message_piece])
 
-    jrc = _JsonResponseConfig.from_metadata(metadata=None)
+    jrc = JsonResponseConfig.from_metadata(metadata=None)
     body = await target._construct_request_body_async(conversation=[request], json_config=jrc)
     assert body["input"][0]["content"][0]["text"] == "dummy text"
 
@@ -276,7 +275,7 @@ async def test_construct_request_body_serializes_complex_message(
     dummy_text_message_piece.conversation_id = image_piece.conversation_id
 
     request = Message(message_pieces=[dummy_text_message_piece, image_piece])
-    jrc = _JsonResponseConfig.from_metadata(metadata=None)
+    jrc = JsonResponseConfig.from_metadata(metadata=None)
 
     body = await target._construct_request_body_async(conversation=[request], json_config=jrc)
     messages = body["input"][0]["content"]
@@ -679,7 +678,7 @@ async def test_construct_request_body_filters_none(
     target: OpenAIResponseTarget, dummy_text_message_piece: MessagePiece
 ):
     req = Message(message_pieces=[dummy_text_message_piece])
-    jrc = _JsonResponseConfig.from_metadata(metadata=None)
+    jrc = JsonResponseConfig.from_metadata(metadata=None)
     body = await target._construct_request_body_async(conversation=[req], json_config=jrc)
     assert "max_output_tokens" not in body or body["max_output_tokens"] is None
     assert "temperature" not in body or body["temperature"] is None
@@ -1270,7 +1269,7 @@ async def test_construct_request_body_includes_reasoning_effort(
         reasoning_effort="medium",
     )
     request = Message(message_pieces=[dummy_text_message_piece])
-    jrc = _JsonResponseConfig.from_metadata(metadata=None)
+    jrc = JsonResponseConfig.from_metadata(metadata=None)
     body = await target._construct_request_body_async(conversation=[request], json_config=jrc)
     assert body["reasoning"] == {"effort": "medium"}
 
@@ -1285,7 +1284,7 @@ async def test_construct_request_body_includes_reasoning_summary(
         reasoning_summary="detailed",
     )
     request = Message(message_pieces=[dummy_text_message_piece])
-    jrc = _JsonResponseConfig.from_metadata(metadata=None)
+    jrc = JsonResponseConfig.from_metadata(metadata=None)
     body = await target._construct_request_body_async(conversation=[request], json_config=jrc)
     assert body["reasoning"] == {"summary": "detailed"}
 
@@ -1301,7 +1300,7 @@ async def test_construct_request_body_includes_reasoning_effort_and_summary(
         reasoning_summary="auto",
     )
     request = Message(message_pieces=[dummy_text_message_piece])
-    jrc = _JsonResponseConfig.from_metadata(metadata=None)
+    jrc = JsonResponseConfig.from_metadata(metadata=None)
     body = await target._construct_request_body_async(conversation=[request], json_config=jrc)
     assert body["reasoning"] == {"effort": "high", "summary": "auto"}
 
@@ -1310,7 +1309,7 @@ async def test_construct_request_body_omits_reasoning_when_not_set(
     target: OpenAIResponseTarget, dummy_text_message_piece: MessagePiece
 ):
     request = Message(message_pieces=[dummy_text_message_piece])
-    jrc = _JsonResponseConfig.from_metadata(metadata=None)
+    jrc = JsonResponseConfig.from_metadata(metadata=None)
     body = await target._construct_request_body_async(conversation=[request], json_config=jrc)
     assert "reasoning" not in body
 
