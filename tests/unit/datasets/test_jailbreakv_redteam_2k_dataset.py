@@ -38,6 +38,11 @@ def test_init_rejects_raw_string_harm_category():
         _JailbreakVRedteam2KDataset(harm_categories=["Hate Speech"])  # type: ignore[list-item]
 
 
+def test_init_empty_harm_categories_raises():
+    with pytest.raises(ValueError, match="`harm_categories` must be a non-empty list"):
+        _JailbreakVRedteam2KDataset(harm_categories=[])
+
+
 def test_init_accepts_valid_enum():
     loader = _JailbreakVRedteam2KDataset(harm_categories=[_HarmCategory.HATE_SPEECH])
     assert loader.filter_categories == [_HarmCategory.HATE_SPEECH]

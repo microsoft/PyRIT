@@ -1,12 +1,12 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-import warnings
+from typing_extensions import override
 
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import Modality, SeedDataset, SeedPrompt
+from pyrit.models import Modality, SeedDataset, SeedPrompt, SeedUnion
 
 
 class _DarkBenchDataset(_RemoteDatasetLoader):
@@ -35,7 +35,6 @@ class _DarkBenchDataset(_RemoteDatasetLoader):
         *,
         dataset_name: str = "apart/darkbench",
         config: str = "default",
-        split: str | None = None,
     ) -> None:
         """
         Initialize the DarkBench dataset loader.
@@ -43,26 +42,17 @@ class _DarkBenchDataset(_RemoteDatasetLoader):
         Args:
             dataset_name: HuggingFace dataset identifier. Defaults to "apart/darkbench".
             config: Dataset configuration. Defaults to "default".
-            split: **Deprecated.** Upstream ``apart/darkbench`` publishes only the
-                ``"train"`` split, so this kwarg has no effect. It will be removed in
-                v0.16.0.
         """
-        if split is not None:
-            warnings.warn(
-                "'split' is deprecated and will be removed in v0.16.0. "
-                "Upstream apart/darkbench publishes only the 'train' split, "
-                "so this kwarg has no effect.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
         self.hf_dataset_name = dataset_name
         self.config = config
 
     @property
+    @override
     def dataset_name(self) -> str:
-        """Return the dataset name."""
+        """The dataset name."""
         return "dark_bench"
 
+    @override
     async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch DarkBench dataset from HuggingFace and return as SeedDataset.
@@ -87,31 +77,45 @@ class _DarkBenchDataset(_RemoteDatasetLoader):
         )
 
         # Process into SeedPrompts
-        seed_prompts = [
-            SeedPrompt(
-                value=item["Example"],
-                data_type="text",
-                name="",
-                dataset_name=self.dataset_name,
-                harm_categories=[item["Deceptive Pattern"]],
-                description=(
-                    "DarkBench is a comprehensive benchmark designed to detect dark design patterns in large "
-                    "language models (LLMs). Dark patterns are manipulative techniques that influence user "
-                    "behavior, often against the user's best interests. The benchmark comprises 660 prompts "
-                    "across six categories of dark patterns, which the researchers used to evaluate 14 different "
-                    "models from leading AI companies including OpenAI, Anthropic, Meta, Mistral, and Google."
-                ),
-                source="https://huggingface.co/datasets/apart/darkbench",
-                authors=[
-                    "Esben Kran",
-                    "Jord Nguyen",
-                    "Akash Kundu",
-                    "Sami Jawhar",
-                    "Jinsuk Park",
-                    "Mateusz Maria Jurewicz",
-                ],
-            )
-            for item in data
+        description = (
+            "DarkBench is a comprehensive benchmark designed to detect dark design patterns in large "
+            "language models (LLMs). Dark patterns are manipulative techniques that influence user "
+            "behavior, often against the user's best interests. The benchmark comprises 660 prompts "
+            "across six categories of dark patterns, which the researchers used to evaluate 14 different "
+            "models from leading AI companies including OpenAI, Anthropic, Meta, Mistral, and Google."
+        )
+        authors = [
+            "Esben Kran",
+            "Jord Nguyen",
+            "Akash Kundu",
+            "Sami Jawhar",
+            "Jinsuk Park",
+            "Mateusz Maria Jurewicz",
         ]
+        groups = ["Apart Research", "METR"]
+
+        seed_prompts: list[SeedUnion] = []
+        for item in data:
+            # DarkBench's dark-pattern types (Brand bias, Sycophancy, Sneaking, ...)
+            # are not a harm taxonomy, so harm categories are left empty while the
+            # native pattern label is preserved in metadata.
+            deceptive_pattern = item.get("Deceptive Pattern") or ""
+            harm_categories: list[str] = []
+            seed_prompts.append(
+                SeedPrompt(
+                    value=item["Example"],
+                    data_type="text",
+                    name="",
+                    dataset_name=self.dataset_name,
+                    harm_categories=harm_categories,
+                    description=description,
+                    source="https://huggingface.co/datasets/apart/darkbench",
+                    authors=authors,
+                    groups=groups,
+                    metadata={
+                        "deceptive_pattern": deceptive_pattern,
+                    },
+                )
+            )
 
         return SeedDataset(seeds=seed_prompts, dataset_name=self.dataset_name)

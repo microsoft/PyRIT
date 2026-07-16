@@ -18,19 +18,29 @@ This module provides:
 * ``AtomicAttackEvaluationIdentifier`` — attack-domain concrete subclass.
 * ``ObjectiveTargetEvaluationIdentifier`` — leaf-target subclass used by the
   analytics layer to key cached results by behavioral target configuration.
+* ``ScenarioEvaluationIdentifier`` — scenario-domain concrete subclass used to
+  key a scenario run's behavioral identity (for resume drift detection).
 """
 
 from __future__ import annotations
 
-from abc import ABC
-from typing import TYPE_CHECKING, Any, ClassVar, Optional
+from typing import TYPE_CHECKING, Any, ClassVar, get_args, get_origin
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from pyrit.models.identifiers.atomic_attack_identifier import AtomicAttackIdentifier
+from pyrit.models.identifiers.attack_identifier import AttackIdentifier
 from pyrit.models.identifiers.component_identifier import ComponentIdentifier, config_hash
+from pyrit.models.identifiers.evaluation_markers import EvalMarker, Exclude, Include, Unwrap
+from pyrit.models.identifiers.scenario_identifier import ScenarioIdentifier
+from pyrit.models.identifiers.scorer_identifier import ScorerIdentifier
+from pyrit.models.identifiers.target_identifier import TargetIdentifier
 
 if TYPE_CHECKING:
     from pyrit.executor.attack.core.attack_strategy import AttackStrategy
+
+# ``AttackIdentifier`` is imported for the eval-config deriver's type graph walk.
+_ = AttackIdentifier
 
 # Behavioral params that define model output quality for scoring.
 TARGET_EVAL_PARAMS: frozenset[str] = frozenset({"underlying_model_name", "temperature", "top_p"})
@@ -65,18 +75,18 @@ class ChildEvalRule(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     exclude: bool = False
-    included_params: Optional[frozenset[str]] = None
-    included_item_values: Optional[dict[str, Any]] = Field(default=None)
-    param_fallbacks: Optional[dict[str, str]] = Field(default=None)
-    inner_child_name: Optional[str] = Field(default=None)
+    included_params: frozenset[str] | None = None
+    included_item_values: dict[str, Any] | None = Field(default=None)
+    param_fallbacks: dict[str, str] | None = Field(default=None)
+    inner_child_name: str | None = Field(default=None)
 
 
 def _build_eval_dict(
     identifier: ComponentIdentifier,
     *,
     child_eval_rules: dict[str, ChildEvalRule],
-    _included_params: Optional[frozenset[str]] = None,
-    _param_fallbacks: Optional[dict[str, str]] = None,
+    _included_params: frozenset[str] | None = None,
+    _param_fallbacks: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """
     Build a filtered dictionary for eval-hash computation.
@@ -89,10 +99,10 @@ def _build_eval_dict(
         identifier (ComponentIdentifier): The component identity to process.
         child_eval_rules (dict[str, ChildEvalRule]): Per-child eval rules.
             Keys are child names; values describe how each child is filtered.
-        _included_params (Optional[frozenset[str]]): Internal. If set, only
+        _included_params (frozenset[str] | None): Internal. If set, only
             include params whose keys are in this frozenset. Passed down from
             a parent rule's ``included_params``.
-        _param_fallbacks (Optional[dict[str, str]]): Internal. Maps a primary
+        _param_fallbacks (dict[str, str] | None): Internal. Maps a primary
             param key to a fallback key. When the primary value is falsy,
             the fallback key's value from raw params is used instead.
             Passed down from a parent rule's ``param_fallbacks``.
@@ -177,7 +187,8 @@ def compute_eval_hash(
     identifier: ComponentIdentifier,
     *,
     child_eval_rules: dict[str, ChildEvalRule],
-    own_rule: Optional[ChildEvalRule] = None,
+    own_rule: ChildEvalRule | None = None,
+    root_unwrap_child: str | None = None,
 ) -> str:
     """
     Compute a behavioral equivalence hash for evaluation grouping.
@@ -193,18 +204,24 @@ def compute_eval_hash(
 
     Children not listed in ``child_eval_rules`` receive full recursive treatment.
 
-    When both ``child_eval_rules`` is empty and ``own_rule`` is ``None``, no
-    filtering occurs and the result equals ``identifier.hash``.
+    When both ``child_eval_rules`` is empty and ``own_rule`` is ``None`` (and no
+    root unwrap applies), no filtering occurs and the result equals
+    ``identifier.hash``.
 
     Args:
         identifier (ComponentIdentifier): The component identity to compute
             the hash for.
         child_eval_rules (dict[str, ChildEvalRule]): Per-child eval rules.
-        own_rule (Optional[ChildEvalRule]): Rule applied to the root entity's
+        own_rule (ChildEvalRule | None): Rule applied to the root entity's
             own params and fallbacks. Only ``included_params`` and
             ``param_fallbacks`` are honored; ``exclude``, ``included_item_values``,
             and ``inner_child_name`` are not meaningful at the root and will
             raise ``ValueError`` if set. Defaults to None.
+        root_unwrap_child (str | None): If set, names the wrapper passthrough
+            slot on the root identifier (e.g. ``"targets"``). When the root is a
+            wrapper carrying that slot, the first element is substituted before
+            filtering, so the eval hash matches the unwrapped inner component.
+            Defaults to None.
 
     Returns:
         str: A hex-encoded SHA256 hash suitable for eval registry keying.
@@ -221,9 +238,12 @@ def compute_eval_hash(
         if own_rule.inner_child_name is not None:
             raise ValueError("own_rule.inner_child_name is not meaningful at the root entity")
 
+    if root_unwrap_child is not None:
+        inner = identifier.get_child_list(root_unwrap_child)
+        if inner:
+            identifier = inner[0]
+
     if not child_eval_rules and own_rule is None:
-        if identifier.hash is None:
-            raise RuntimeError("hash should be set by __post_init__")
         return identifier.hash
 
     eval_dict = _build_eval_dict(
@@ -235,44 +255,231 @@ def compute_eval_hash(
     return config_hash(eval_dict)
 
 
-class EvaluationIdentifier(ABC):
+# ----------------------------------------------------------------------
+# Eval-config derivation from field markers
+# ----------------------------------------------------------------------
+#
+# The typed identifier classes declare — on their own fields — what feeds the
+# eval hash, via ``Evaluate.Include`` / ``Evaluate.Exclude`` / ``Evaluate.Unwrap``
+# markers (see ``evaluation_markers``). ``derive_eval_config`` walks a root
+# identifier type's class graph and projects those markers into the engine's
+# name-keyed ``ChildEvalRule`` dict (+ ``own_rule`` and root-unwrap slot), so the
+# strongly-typed identifiers are the single source of truth and the proven engine
+# is reused unchanged.
+
+
+def _resolve_child_type(annotation: Any) -> type[ComponentIdentifier]:
+    """
+    Resolve the ``ComponentIdentifier`` subclass a child field annotation denotes.
+
+    Args:
+        annotation (Any): A resolved child field annotation, e.g.
+            ``TargetIdentifier | None`` or ``list[TargetIdentifier]``.
+
+    Returns:
+        type[ComponentIdentifier]: The referenced identifier subclass.
+
+    Raises:
+        TypeError: If no ``ComponentIdentifier`` subclass can be resolved.
+    """
+    if get_origin(annotation) is list:
+        args = get_args(annotation)
+        inner = args[0] if args else None
+        if isinstance(inner, type) and issubclass(inner, ComponentIdentifier):
+            return inner
+
+    for candidate in get_args(annotation) or (annotation,):
+        if isinstance(candidate, type) and issubclass(candidate, ComponentIdentifier):
+            return candidate
+
+    raise TypeError(f"Could not resolve a child identifier type from annotation {annotation!r}")
+
+
+def _field_marker(model_cls: type[ComponentIdentifier], field_name: str) -> EvalMarker | None:
+    """Return the ``EvalMarker`` attached to a field, or ``None`` if unmarked."""
+    for meta in model_cls.model_fields[field_name].metadata:
+        if isinstance(meta, EvalMarker):
+            return meta
+    return None
+
+
+def _type_param_projection(
+    model_cls: type[ComponentIdentifier],
+) -> tuple[frozenset[str] | None, dict[str, str] | None]:
+    """
+    Project a type's own param-field markers into ``(included_params, fallbacks)``.
+
+    An unmarked or ``Include`` param is kept; ``Exclude`` drops it. When the type
+    has no excluded params, ``included_params`` is ``None`` (full include).
+
+    Returns:
+        tuple[frozenset[str] | None, dict[str, str] | None]: The included param
+            names (``None`` for full include) and the per-param fallbacks (``None``
+            when there are none).
+    """
+    included: list[str] = []
+    fallbacks: dict[str, str] = {}
+    has_exclude = False
+    for name in model_cls._promoted_param_fields():
+        marker = _field_marker(model_cls, name)
+        if isinstance(marker, Exclude):
+            has_exclude = True
+            continue
+        included.append(name)
+        if isinstance(marker, Include) and marker.fallback is not None:
+            fallbacks[name] = marker.fallback
+    included_params = frozenset(included) if has_exclude else None
+    return included_params, (fallbacks or None)
+
+
+def _type_unwrap_field(model_cls: type[ComponentIdentifier]) -> str | None:
+    """Return the name of the type's ``Evaluate.Unwrap()`` child field, if any."""
+    for name in model_cls._promoted_child_fields():
+        if isinstance(_field_marker(model_cls, name), Unwrap):
+            return name
+    return None
+
+
+def _slot_rule(
+    *,
+    parent_cls: type[ComponentIdentifier],
+    field_name: str,
+    child_type: type[ComponentIdentifier],
+) -> ChildEvalRule:
+    """
+    Build the ``ChildEvalRule`` for a parent's child slot.
+
+    The slot's projection defaults to the child type's own marker projection; a
+    parent ``Evaluate.Exclude()`` drops the child, and a parent
+    ``Evaluate.Include(only_params=...)`` restricts the child subtree's params.
+
+    Returns:
+        ChildEvalRule: The derived rule for the parent's child slot.
+    """
+    marker = _field_marker(parent_cls, field_name)
+    if isinstance(marker, Exclude):
+        return ChildEvalRule(exclude=True)
+
+    included_params, fallbacks = _type_param_projection(child_type)
+    if isinstance(marker, Include) and marker.only_params is not None:
+        included_params = frozenset(marker.only_params)
+        if fallbacks is not None:
+            fallbacks = {k: v for k, v in fallbacks.items() if k in included_params} or None
+
+    return ChildEvalRule(
+        included_params=included_params,
+        param_fallbacks=fallbacks,
+        inner_child_name=_type_unwrap_field(child_type),
+    )
+
+
+def _is_neutral_rule(rule: ChildEvalRule) -> bool:
+    """Return whether a rule is a no-op (absent from the dict means the same thing)."""
+    return (
+        not rule.exclude
+        and rule.included_params is None
+        and rule.included_item_values is None
+        and rule.param_fallbacks is None
+        and rule.inner_child_name is None
+    )
+
+
+def derive_eval_config(
+    root_type: type[ComponentIdentifier],
+) -> tuple[dict[str, ChildEvalRule], ChildEvalRule | None, str | None]:
+    """
+    Derive the eval engine's configuration from a root identifier type's markers.
+
+    Walks the class graph reachable from ``root_type`` (depth-first, each type
+    visited once) and projects each promoted child field's markers into a
+    name-keyed ``ChildEvalRule``. Neutral (no-op) rules are omitted, since the
+    engine treats an absent child the same as a full include. The root type's
+    own param markers yield the ``own_rule``, and its ``Unwrap`` field (if any)
+    yields the root-unwrap slot.
+
+    All promoted child field names are unique across the identifier types, so the
+    flat name-keyed dict has no collisions (matching how the engine keys rules).
+
+    Args:
+        root_type (type[ComponentIdentifier]): The eval root identifier type.
+
+    Returns:
+        tuple[dict[str, ChildEvalRule], ChildEvalRule | None, str | None]: The
+        ``child_eval_rules`` dict, the root ``own_rule`` (or ``None``), and the
+        root-unwrap child name (or ``None``).
+    """
+    child_eval_rules: dict[str, ChildEvalRule] = {}
+    visited: set[type[ComponentIdentifier]] = set()
+    stack: list[type[ComponentIdentifier]] = [root_type]
+
+    while stack:
+        cls = stack.pop()
+        if cls in visited:
+            continue
+        visited.add(cls)
+
+        for field_name in cls._promoted_child_fields():
+            child_type = _resolve_child_type(cls.model_fields[field_name].annotation)
+            marker = _field_marker(cls, field_name)
+            rule = _slot_rule(parent_cls=cls, field_name=field_name, child_type=child_type)
+            if not _is_neutral_rule(rule):
+                child_eval_rules[field_name] = rule
+            if not isinstance(marker, Exclude):
+                stack.append(child_type)
+
+    own_included, own_fallbacks = _type_param_projection(root_type)
+    own_rule: ChildEvalRule | None = None
+    if own_included is not None or own_fallbacks is not None:
+        own_rule = ChildEvalRule(included_params=own_included, param_fallbacks=own_fallbacks)
+
+    return child_eval_rules, own_rule, _type_unwrap_field(root_type)
+
+
+class EvaluationIdentifier:
     """
     Wraps a ``ComponentIdentifier`` with domain-specific eval-hash configuration.
 
-    Subclasses set ``CHILD_EVAL_RULES`` — a mapping of child names to
-    ``ChildEvalRule`` instances that control how each child is treated during
-    eval-hash computation.  Children not listed receive full recursive treatment.
+    Concrete subclasses name their root typed-identifier type via ``EVAL_ROOT``;
+    the per-child rules (``CHILD_EVAL_RULES``), the root ``OWN_RULE``, and the
+    root-unwrap slot (``ROOT_UNWRAP_CHILD``) are then **derived** from the
+    ``Evaluate.*`` field markers on that type's class graph (see
+    ``derive_eval_config``). The typed identifier fields are the single source of
+    truth for what feeds the eval hash.
 
-    Leaf-entity subclasses (no relevant children to delegate to) may also set
-    ``OWN_RULE`` to filter the root entity's own params.  See
-    ``ObjectiveTargetEvaluationIdentifier`` for an example.
+    Subclasses may instead set ``CHILD_EVAL_RULES`` (and optionally ``OWN_RULE`` /
+    ``ROOT_UNWRAP_CHILD``) directly to bypass derivation.
 
     The concrete ``eval_hash`` property delegates to the module-level
     ``compute_eval_hash`` free function.
     """
 
-    CHILD_EVAL_RULES: ClassVar[dict[str, ChildEvalRule]]
-    OWN_RULE: ClassVar[Optional[ChildEvalRule]] = None
+    EVAL_ROOT: ClassVar[type[ComponentIdentifier] | None] = None
+    CHILD_EVAL_RULES: ClassVar[dict[str, ChildEvalRule]] = {}
+    OWN_RULE: ClassVar[ChildEvalRule | None] = None
+    ROOT_UNWRAP_CHILD: ClassVar[str | None] = None
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        """Derive eval config from ``EVAL_ROOT`` markers unless declared explicitly."""
+        super().__init_subclass__(**kwargs)
+        if cls.EVAL_ROOT is not None and "CHILD_EVAL_RULES" not in cls.__dict__:
+            cls.CHILD_EVAL_RULES, cls.OWN_RULE, cls.ROOT_UNWRAP_CHILD = derive_eval_config(cls.EVAL_ROOT)
 
     def __init__(self, identifier: ComponentIdentifier) -> None:
         """
-        Wrap a ComponentIdentifier and resolve its eval hash.
+        Wrap a ComponentIdentifier and compute its eval hash.
 
-        If the identifier carries an ``eval_hash`` (preserved from a prior
-        DB round-trip or set by the scorer), that value is used directly.
-        Otherwise the eval hash is computed from the identifier's params
-        and children using the subclass's ``CHILD_EVAL_RULES`` and
-        ``OWN_RULE``.
+        The eval hash is always computed fresh from the identifier's params and
+        children using the subclass's ``CHILD_EVAL_RULES``, ``OWN_RULE``, and
+        ``ROOT_UNWRAP_CHILD`` — any ``eval_hash`` already carried on the
+        identifier (e.g. a value read back from storage) is never trusted.
         """
         self._identifier = identifier
-        if identifier.eval_hash is not None:
-            self._eval_hash = identifier.eval_hash
-        else:
-            self._eval_hash = compute_eval_hash(
-                identifier,
-                child_eval_rules=self.CHILD_EVAL_RULES,
-                own_rule=self.OWN_RULE,
-            )
+        self._eval_hash = compute_eval_hash(
+            identifier,
+            child_eval_rules=self.CHILD_EVAL_RULES,
+            own_rule=self.OWN_RULE,
+            root_unwrap_child=self.ROOT_UNWRAP_CHILD,
+        )
 
     @property
     def identifier(self) -> ComponentIdentifier:
@@ -289,81 +496,60 @@ class ScorerEvaluationIdentifier(EvaluationIdentifier):
     """
     Evaluation identity for scorers.
 
-    The ``prompt_target`` child is filtered to behavioral params only
-    (``underlying_model_name``, ``temperature``, ``top_p``), so the same scorer
-    configuration on different deployments produces the same eval hash.
+    Rules are derived from ``ScorerIdentifier``'s field markers. The
+    ``prompt_target`` child is projected to behavioral target params only
+    (``underlying_model_name``, ``temperature``, ``top_p``) and wrapper targets
+    are unwrapped, so the same scorer configuration on different deployments
+    produces the same eval hash.
     """
 
-    CHILD_EVAL_RULES: ClassVar[dict[str, ChildEvalRule]] = {
-        "prompt_target": ChildEvalRule(
-            included_params=TARGET_EVAL_PARAMS,
-            param_fallbacks=TARGET_EVAL_PARAM_FALLBACKS,
-            inner_child_name="targets",
-        ),
-    }
+    EVAL_ROOT: ClassVar[type[ComponentIdentifier] | None] = ScorerIdentifier
 
 
 class AtomicAttackEvaluationIdentifier(EvaluationIdentifier):
     """
     Evaluation identity for atomic attacks.
 
-    Per-child rules:
-
-    * ``seed_identifiers`` — excluded entirely (present for traceability only).
-    * ``attack_technique`` — not listed, so fully included by default.
-      Its nested children (``objective_target``, ``adversarial_chat``,
-      ``objective_scorer``, ``technique_seeds``) are processed recursively
-      using the same rules dict, so the rules below apply at any depth.
-    * ``objective_target`` — include only ``temperature``.
-    * ``adversarial_chat`` — include ``underlying_model_name``, ``temperature``, ``top_p``.
-    * ``objective_scorer`` — excluded entirely.
-
-    Non-target children (e.g., ``request_converters``, ``response_converters``,
-    ``technique_seeds``) receive full recursive eval treatment.
+    Rules are derived from ``AtomicAttackIdentifier``'s field markers, which
+    propagate down the technique/attack subtree. The behavioral projection of
+    targets, the ``objective_target`` restriction to ``temperature``, and the
+    exclusion of ``objective_scorer`` / ``seed_identifiers`` all live on the
+    typed identifier fields.
     """
 
-    CHILD_EVAL_RULES: ClassVar[dict[str, ChildEvalRule]] = {
-        "objective_target": ChildEvalRule(
-            included_params=frozenset({"temperature"}),
-            inner_child_name="targets",
-        ),
-        "adversarial_chat": ChildEvalRule(
-            included_params=TARGET_EVAL_PARAMS,
-            param_fallbacks=TARGET_EVAL_PARAM_FALLBACKS,
-        ),
-        "objective_scorer": ChildEvalRule(exclude=True),
-        "seed_identifiers": ChildEvalRule(exclude=True),
-        # attack_technique: not listed in rules — fully included in eval hash.
-        # technique_seeds (nested inside attack_technique): also not listed — fully included.
-    }
+    EVAL_ROOT: ClassVar[type[ComponentIdentifier] | None] = AtomicAttackIdentifier
 
 
 class ObjectiveTargetEvaluationIdentifier(EvaluationIdentifier):
     """
     Evaluation identity for an objective target.
 
-    Mirrors how ``ScorerEvaluationIdentifier`` filters its inner
-    ``prompt_target`` child, except the target itself is the root of this
-    identifier (it has no children carrying behavioral configuration).  The
-    target's own params are filtered to the behavioral set
-    (``underlying_model_name``, ``temperature``, ``top_p``) via ``OWN_RULE``,
-    so the same logical target on different deployments produces the same
-    eval hash.
-
-    Wrapper targets (e.g., ``RoundRobinTarget``) are not unwrapped — the
-    caller must pass the inner target's ``ComponentIdentifier`` directly if
-    behavioral equivalence with the unwrapped form is desired.  This mirrors
-    the constraint on ``OWN_RULE`` (no ``inner_child_name`` at the root).
+    Rules are derived from ``TargetIdentifier``'s field markers: the target's own
+    params are filtered to the behavioral set (``underlying_model_name``,
+    ``temperature``, ``top_p``) via the derived ``OWN_RULE``, and wrapper targets
+    (e.g. ``RoundRobinTarget``) are unwrapped at the root, so the same logical
+    target produces the same eval hash whether bare or wrapped.
     """
 
-    CHILD_EVAL_RULES: ClassVar[dict[str, ChildEvalRule]] = {}
-    OWN_RULE: ClassVar[Optional[ChildEvalRule]] = ChildEvalRule(
-        included_params=TARGET_EVAL_PARAMS,
-        param_fallbacks=TARGET_EVAL_PARAM_FALLBACKS,
-    )
+    EVAL_ROOT: ClassVar[type[ComponentIdentifier] | None] = TargetIdentifier
 
 
-def compute_inner_attack_eval_hash(*, attack: AttackStrategy) -> str:
+class ScenarioEvaluationIdentifier(EvaluationIdentifier):
+    """
+    Evaluation identity for scenarios.
+
+    Rules are derived from ``ScenarioIdentifier``'s field markers: the definition
+    ``version`` and resolved ``techniques`` / ``datasets`` feed the hash, the
+    resolved scenario ``params`` are included, and the ``objective_target`` /
+    ``objective_scorer`` children contribute their full behavioral projection.
+    Two runs of the same scenario definition with the same configuration produce
+    the same eval hash, which backs resume drift detection.
+    """
+
+    EVAL_ROOT: ClassVar[type[ComponentIdentifier] | None] = ScenarioIdentifier
+
+
+def compute_inner_attack_eval_hash(*, attack: AttackStrategy[Any, Any]) -> str:
     """
     Predict the eval hash the executor will stamp on persisted child rows
     for this attack.
@@ -379,7 +565,7 @@ def compute_inner_attack_eval_hash(*, attack: AttackStrategy) -> str:
         str: The eval hash that will appear on persisted child rows.
     """
     # Local import avoids a circular dependency inside the identifiers package.
-    from pyrit.models.identifiers.atomic_attack_identifier import build_atomic_attack_identifier
+    from pyrit.models.identifiers.atomic_attack_identifier import AtomicAttackIdentifier
 
-    composite = build_atomic_attack_identifier(attack_identifier=attack.get_identifier())
+    composite = AtomicAttackIdentifier.build(attack_identifier=attack.get_identifier())
     return AtomicAttackEvaluationIdentifier(composite).eval_hash

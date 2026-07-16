@@ -30,6 +30,7 @@ class TrustAIRLabPlatform(Enum):
     """Source platforms for the TrustAIRLab in-the-wild jailbreak prompts (jailbreak_2023_12_25 config)."""
 
     DISCORD = "discord"
+    OPEN_SOURCE = "open_source"
     REDDIT = "reddit"
     WEBSITE = "website"
 
@@ -55,6 +56,8 @@ class _TrustAIRLabInTheWildJailbreakDataset(_RemoteDatasetLoader):
     """
 
     HF_DATASET_NAME: str = _HF_REPO_ID
+    # Upstream provides jailbreak source/technique metadata, but no content-harm taxonomy.
+    harm_categories: list[str] = []
     modalities: list[str] = ["text"]
     size: str = "large"
     tags: set[str] = {"safety", "jailbreak"}
@@ -70,7 +73,7 @@ class _TrustAIRLabInTheWildJailbreakDataset(_RemoteDatasetLoader):
 
         Args:
             platforms (list[TrustAIRLabPlatform] | None): Source platforms to include.
-                Defaults to all four (``DISCORD``, ``REDDIT``, ``WEBSITE``, ``DATASET``).
+                Defaults to all four (``DISCORD``, ``OPEN_SOURCE``, ``REDDIT``, ``WEBSITE``).
             deduplicate (bool): When True, drop exact-text duplicate prompts. The
                 upstream README explicitly notes duplicates in the ``prompt`` field;
                 default is False (lossless) to preserve the original corpus shape.
@@ -84,7 +87,7 @@ class _TrustAIRLabInTheWildJailbreakDataset(_RemoteDatasetLoader):
 
     @property
     def dataset_name(self) -> str:
-        """Return the dataset name."""
+        """The dataset name."""
         return "trustairlab_in_the_wild_jailbreak"
 
     async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:

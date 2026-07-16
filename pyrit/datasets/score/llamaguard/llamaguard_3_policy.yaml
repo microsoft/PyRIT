@@ -1,0 +1,31 @@
+name: Llama Guard 3 8B MLCommons policy
+version: "3-8B"
+categories:
+  - code: S1
+    name: Violent Crimes
+  - code: S2
+    name: Non-Violent Crimes
+  - code: S3
+    name: Sex-Related Crimes
+  - code: S4
+    name: Child Sexual Exploitation
+  - code: S5
+    name: Defamation
+  - code: S6
+    name: Specialized Advice
+  - code: S7
+    name: Privacy
+  - code: S8
+    name: Intellectual Property
+  - code: S9
+    name: Indiscriminate Weapons
+  - code: S10
+    name: Hate
+  - code: S11
+    name: Suicide & Self-Harm
+  - code: S12
+    name: Sexual Content
+  - code: S13
+    name: Elections
+  - code: S14
+    name: Code Interpreter Abuse

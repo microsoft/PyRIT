@@ -2,11 +2,10 @@
 # Licensed under the MIT license.
 
 from dataclasses import dataclass
-from typing import Optional
 
 from pyrit.models import Message
-from pyrit.prompt_normalizer.prompt_converter_configuration import (
-    PromptConverterConfiguration,
+from pyrit.prompt_normalizer.converter_configuration import (
+    ConverterConfiguration,
 )
 
 
@@ -17,28 +16,28 @@ class NormalizerRequest:
     """
 
     message: Message
-    request_converter_configurations: list[PromptConverterConfiguration]
-    response_converter_configurations: list[PromptConverterConfiguration]
+    request_converter_configurations: list[ConverterConfiguration]
+    response_converter_configurations: list[ConverterConfiguration]
     conversation_id: str | None
 
     def __init__(
         self,
         *,
         message: Message,
-        request_converter_configurations: list[PromptConverterConfiguration] | None = None,
-        response_converter_configurations: list[PromptConverterConfiguration] | None = None,
-        conversation_id: Optional[str] = None,
+        request_converter_configurations: list[ConverterConfiguration] | None = None,
+        response_converter_configurations: list[ConverterConfiguration] | None = None,
+        conversation_id: str | None = None,
     ) -> None:
         """
         Initialize a normalizer request.
 
         Args:
             message (Message): The message to be normalized.
-            request_converter_configurations (list[PromptConverterConfiguration]): Configurations for converting
+            request_converter_configurations (list[ConverterConfiguration]): Configurations for converting
                 the request. Defaults to an empty list.
-            response_converter_configurations (list[PromptConverterConfiguration]): Configurations for converting
+            response_converter_configurations (list[ConverterConfiguration]): Configurations for converting
                 the response. Defaults to an empty list.
-            conversation_id (Optional[str]): The ID of the conversation. Defaults to None.
+            conversation_id (str | None): The ID of the conversation. Defaults to None.
         """
         if response_converter_configurations is None:
             response_converter_configurations = []

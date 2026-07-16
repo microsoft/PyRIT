@@ -3,12 +3,11 @@
 
 import logging
 import os
-from typing import Any, Optional
+from typing import Any
 
 import jwt
 
 from pyrit.auth.authenticator import Authenticator
-from pyrit.common.deprecation import print_deprecation_message
 
 logger = logging.getLogger(__name__)
 
@@ -36,12 +35,12 @@ class ManualCopilotAuthenticator(Authenticator):
     #: Environment variable name for the Copilot access token
     ACCESS_TOKEN_ENV_VAR: str = "COPILOT_ACCESS_TOKEN"
 
-    def __init__(self, *, access_token: Optional[str] = None) -> None:
+    def __init__(self, *, access_token: str | None = None) -> None:
         """
         Initialize the ManualCopilotAuthenticator with a pre-obtained access token.
 
         Args:
-            access_token (Optional[str]): A valid JWT access token for Microsoft Copilot.
+            access_token (str | None): A valid JWT access token for Microsoft Copilot.
                 This token can be obtained from browser DevTools when connected to Copilot.
                 If None, the token will be read from the ``COPILOT_ACCESS_TOKEN`` environment variable.
 
@@ -101,20 +100,6 @@ class ManualCopilotAuthenticator(Authenticator):
             dict[str, Any]: The JWT claims decoded from the access token.
         """
         return self._claims
-
-    async def get_claims(self) -> dict[str, Any]:  # pyrit-async-suffix-exempt
-        """
-        Return the JWT claims (deprecated alias of ``get_claims_async``).
-
-        Returns:
-            dict[str, Any]: The JWT claims decoded from the access token.
-        """
-        print_deprecation_message(
-            old_item="ManualCopilotAuthenticator.get_claims",
-            new_item="ManualCopilotAuthenticator.get_claims_async",
-            removed_in="0.16.0",
-        )
-        return await self.get_claims_async()
 
     async def refresh_token_async(self) -> str:
         """

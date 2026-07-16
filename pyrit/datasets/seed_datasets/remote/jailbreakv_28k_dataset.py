@@ -1,13 +1,14 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import asyncio
 import logging
 import pathlib
 import uuid
-import zipfile
 from enum import Enum
-from typing import Literal, Optional
+from typing import Literal
 
+from pyrit.common.safe_extract import safe_extract_zip
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
@@ -81,13 +82,19 @@ class _JailbreakV28KDataset(_RemoteDatasetLoader):
     size: str = "medium"  # default mini split: ~280 examples
     tags: set[str] = {"safety", "multimodal", "jailbreak"}
 
+    # The full JailBreakV_28K.zip is a ~15 GiB image bundle (compression ratio
+    # ~1x, i.e. not a zip bomb) which exceeds safe_extract_zip's 5 GiB default
+    # total-size cap. Raise it so the legitimate dataset extracts; the per-file
+    # size, compression-ratio, and file-count caps still bound a tampered archive.
+    _EXTRACT_MAX_TOTAL_SIZE: int = 32 * 1024**3
+
     def __init__(
         self,
         *,
         source: str = "JailbreakV-28K/JailBreakV-28k",
         zip_dir: str = str(pathlib.Path.home()),
         split: Literal["JailBreakV_28K", "mini_JailBreakV_28K"] = "mini_JailBreakV_28K",
-        harm_categories: Optional[list[_HarmCategory]] = None,
+        harm_categories: list[_HarmCategory] | None = None,
     ) -> None:
         """
         Initialize the JailBreakV-28K dataset loader.
@@ -110,11 +117,15 @@ class _JailbreakV28KDataset(_RemoteDatasetLoader):
         self.filter_categories = harm_categories
 
         if harm_categories is not None:
+            if not harm_categories:
+                raise ValueError(
+                    "`harm_categories` must be a non-empty list (pass None to include all harm categories)"
+                )
             self._validate_enums(harm_categories, _HarmCategory, "harm category")
 
     @property
     def dataset_name(self) -> str:
-        """Return the dataset name."""
+        """The dataset name."""
         return "jailbreakv_28k"
 
     async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
@@ -149,8 +160,12 @@ class _JailbreakV28KDataset(_RemoteDatasetLoader):
         # Only unzip if the target directory does not already exist
         if not zip_extracted_path.exists():
             logger.info(f"Extracting {zip_file_path} to {self.zip_dir}")
-            with zipfile.ZipFile(zip_file_path, "r") as zip_ref:
-                zip_ref.extractall(self.zip_dir)
+            await asyncio.to_thread(
+                safe_extract_zip,
+                source=zip_file_path,
+                dest_dir=self.zip_dir,
+                max_total_size=self._EXTRACT_MAX_TOTAL_SIZE,
+            )
 
         try:
             logger.info(f"Loading JailBreakV-28K dataset from {self.source}")

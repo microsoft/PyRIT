@@ -16,6 +16,7 @@ import os
 import signal
 import subprocess
 import sys
+import tempfile
 from typing import TYPE_CHECKING
 
 from pyrit.cli.api_client import PyRITApiClient
@@ -129,8 +130,9 @@ class ServerLauncher:
     """
 
     def __init__(self) -> None:
-        self._process: subprocess.Popen | None = None  # type: ignore[type-arg]
+        self._process: subprocess.Popen[bytes] | None = None
         self._pid: int | None = None
+        self._log_path: str | None = None
 
     # ------------------------------------------------------------------
     # Health probe
@@ -212,13 +214,22 @@ class ServerLauncher:
         print(f"Starting server at {base_url}...")
         sys.stdout.flush()
 
-        self._process = subprocess.Popen(
-            cmd,
-            creationflags=creation_flags,
-            start_new_session=start_new_session,
-        )
+        # The backend is detached and outlives this process, so it must not inherit
+        # our stdout/stderr. A caller that captures our output (a piped shell, a
+        # Jupyter ``!`` cell, or CI) would otherwise block forever waiting for the
+        # inherited handle to close. Send the child's output to a log file so
+        # startup diagnostics are still available.
+        self._log_path = os.path.join(tempfile.gettempdir(), "pyrit_backend.log")
+        with open(self._log_path, "w", encoding="utf-8") as log_handle:
+            self._process = subprocess.Popen(
+                cmd,
+                stdout=log_handle,
+                stderr=subprocess.STDOUT,
+                creationflags=creation_flags,
+                start_new_session=start_new_session,
+            )
         self._pid = self._process.pid
-        _logger.info("Backend PID: %d", self._pid)
+        _logger.info("Backend PID: %d (logs: %s)", self._pid, self._log_path)
 
         # Wait for health, checking if the process crashed
         for _elapsed in range(startup_timeout):
@@ -226,16 +237,45 @@ class ServerLauncher:
 
             exit_code = self._process.poll()
             if exit_code is not None:
-                raise RuntimeError(f"Server process exited with code {exit_code} during startup.")
+                self._print_log_tail()
+                raise RuntimeError(
+                    f"Server process exited with code {exit_code} during startup. See logs: {self._log_path}"
+                )
 
             if await self.probe_health_async(base_url=base_url):
-                print(f"Server ready (PID {self._pid})")
+                print(f"Server ready (PID {self._pid}). Logs: {self._log_path}")
                 return base_url
 
+        self._print_log_tail()
         raise RuntimeError(
             f"pyrit_backend did not become healthy within {startup_timeout}s. "
-            f"Check the server logs or start it manually with: pyrit_backend"
+            f"Check the server logs ({self._log_path}) or start it manually with: pyrit_backend"
         )
+
+    def _read_log_tail(self, *, max_lines: int = 20) -> str:
+        """
+        Read the last ``max_lines`` lines of the backend log file.
+
+        Returns:
+            str: The tail of the log, or an empty string when the log is
+            unavailable or empty.
+        """
+        if not self._log_path:
+            return ""
+        try:
+            with open(self._log_path, encoding="utf-8", errors="replace") as handle:
+                lines = handle.readlines()
+        except OSError:
+            return ""
+        return "".join(lines[-max_lines:]).rstrip()
+
+    def _print_log_tail(self) -> None:
+        """Echo the tail of the backend log to stderr, if any is available."""
+        tail = self._read_log_tail()
+        if tail:
+            print(f"\n--- pyrit_backend log ({self._log_path}) ---", file=sys.stderr)
+            print(tail, file=sys.stderr)
+            print("--- end of log ---", file=sys.stderr)
 
     # ------------------------------------------------------------------
     # Stop

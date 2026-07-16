@@ -29,7 +29,7 @@ items expose a ``tags`` attribute (``list[str]`` or ``set[str]``).
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Protocol, TypeVar, runtime_checkable
+from typing import TYPE_CHECKING, ClassVar, Protocol, TypeVar, runtime_checkable
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -45,9 +45,6 @@ class Taggable(Protocol):
 
 
 _T = TypeVar("_T", bound=Taggable)
-
-_VALID_OPS = frozenset({"", "and", "or"})
-_OP_FUNC: dict[str, Callable[..., bool]] = {"and": all, "or": any}
 
 
 @dataclass(frozen=True)
@@ -67,6 +64,9 @@ class TagQuery:
         include_any: Tags of which **at least one** must be present (OR).
         exclude_tags: Tags that must **not** be present.
     """
+
+    _VALID_OPS: ClassVar[frozenset[str]] = frozenset({"", "and", "or"})
+    _OP_FUNC: ClassVar[dict[str, Callable[..., bool]]] = {"and": all, "or": any}
 
     include_all: frozenset[str] = frozenset()
     include_any: frozenset[str] = frozenset()
@@ -88,8 +88,8 @@ class TagQuery:
             if not isinstance(val, frozenset):
                 object.__setattr__(self, attr, frozenset(val))
 
-        if self._op not in _VALID_OPS:
-            raise ValueError(f"Invalid TagQuery op {self._op!r}; must be one of {sorted(_VALID_OPS)}")
+        if self._op not in self._VALID_OPS:
+            raise ValueError(f"Invalid TagQuery op {self._op!r}; must be one of {sorted(self._VALID_OPS)}")
         if self._op in ("and", "or") and len(self._children) < 2:
             raise ValueError(f"'{self._op}' TagQuery must have at least 2 children")
         if self._op == "" and self._children:
@@ -166,7 +166,7 @@ class TagQuery:
             Whether the tag set matches.
         """
         if self._op:
-            return _OP_FUNC[self._op](c.matches(tags) for c in self._children)
+            return self._OP_FUNC[self._op](c.matches(tags) for c in self._children)
         return self._matches_leaf(tags)
 
     def _matches_leaf(self, tags: set[str] | frozenset[str]) -> bool:

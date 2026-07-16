@@ -5,23 +5,23 @@
 
 The azure-ai-evaluation red team module uses the scenario framework for attack execution:
 - FoundryExecutionManager creates RedTeamAgent instances per risk category
-- StrategyMapper maps AttackStrategy enum → FoundryStrategy
+- StrategyMapper maps AttackStrategy enum → FoundryTechnique
 - DatasetConfigurationBuilder produces DatasetConfiguration from RAI objectives
 - ScenarioOrchestrator processes ScenarioResult and AttackResult
 - RAIServiceScorer uses AttackScoringConfig for scoring configuration
 """
 
 from pyrit.executor.attack import AttackScoringConfig
-from pyrit.scenario import ScenarioStrategy
-from pyrit.scenario.foundry import FoundryStrategy, RedTeamAgent
+from pyrit.scenario import ScenarioTechnique
+from pyrit.scenario.foundry import FoundryTechnique, RedTeamAgent  # type: ignore[ty:unresolved-import]
 
 
 class TestRedTeamStrategyContract:
-    """Validate FoundryStrategy availability and structure."""
+    """Validate FoundryTechnique availability and structure."""
 
-    def test_foundry_strategy_is_scenario_strategy(self):
-        """FoundryStrategy should extend ScenarioStrategy."""
-        assert issubclass(FoundryStrategy, ScenarioStrategy)
+    def test_foundry_strategy_is_scenario_technique(self):
+        """FoundryTechnique should extend ScenarioTechnique."""
+        assert issubclass(FoundryTechnique, ScenarioTechnique)
 
 
 class TestRedTeamScenarioContract:
@@ -37,7 +37,7 @@ class TestDatasetConfigurationContract:
 
     def test_dataset_configuration_importable(self):
         """DatasetConfigurationBuilder produces DatasetConfiguration."""
-        from pyrit.scenario import DatasetConfiguration  # noqa: F811
+        from pyrit.scenario import DatasetConfiguration
 
         assert DatasetConfiguration is not None
 
@@ -57,7 +57,7 @@ class TestScenarioResultContract:
 
     def test_scenario_result_importable(self):
         """ScenarioOrchestrator reads ScenarioResult."""
-        from pyrit.models.scenario_result import ScenarioResult  # noqa: F811
+        from pyrit.models import ScenarioResult
 
         assert ScenarioResult is not None
 

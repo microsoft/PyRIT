@@ -8,7 +8,7 @@ from pathlib import Path
 
 skip_files = {
     "conf.py",
-    # auxiliary_attacks
+    # executor / gcg
     "1_gcg_azure_ml.py",  # missing required env variables
     # converters
     "2_audio_converters.py",  # requires Azure Speech API key

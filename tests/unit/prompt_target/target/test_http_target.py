@@ -70,7 +70,6 @@ async def test_send_prompt_async(mock_request, mock_http_target, mock_http_respo
         MagicMock(
             converted_value="test_prompt",
             converted_value_data_type="text",
-            prompt_target_identifier=None,
             attack_identifier=None,
             conversation_id="",
             labels={},
@@ -87,6 +86,45 @@ async def test_send_prompt_async(mock_request, mock_http_target, mock_http_respo
         url="https://example.com/",
         headers={"host": "example.com", "content-type": "application/json"},
         content='{"prompt": "test_prompt"}',
+        follow_redirects=True,
+    )
+
+
+@patch("httpx.AsyncClient.request", new_callable=AsyncMock)
+async def test_send_prompt_async_uses_data_for_dict_body(mock_request, mock_http_response, patch_central_database):
+    target = HTTPTarget(http_request="POST / HTTP/1.1\nHost: example.com\n\n")
+    message = MagicMock()
+    message.message_pieces = [
+        MagicMock(
+            converted_value="test_prompt",
+            converted_value_data_type="text",
+            attack_identifier=None,
+            conversation_id="",
+            labels={},
+            prompt_metadata={},
+        )
+    ]
+    mock_request.return_value = mock_http_response
+
+    with patch.object(
+        target,
+        "parse_raw_http_request",
+        return_value=(
+            {"host": "example.com"},
+            {"prompt": "test_prompt"},
+            "https://example.com/",
+            "POST",
+            "HTTP/1.1",
+        ),
+    ):
+        response = await target.send_prompt_async(message=message)
+
+    assert len(response) == 1
+    mock_request.assert_awaited_once_with(
+        method="POST",
+        url="https://example.com/",
+        headers={"host": "example.com"},
+        data={"prompt": "test_prompt"},
         follow_redirects=True,
     )
 
@@ -125,7 +163,6 @@ async def test_send_prompt_async_client_kwargs(patch_central_database):
             MagicMock(
                 converted_value="",
                 converted_value_data_type="text",
-                prompt_target_identifier=None,
                 attack_identifier=None,
                 conversation_id="",
                 labels={},
@@ -164,7 +201,6 @@ async def test_send_prompt_regex_parse_async(mock_request, mock_http_target):
         MagicMock(
             converted_value="test_prompt",
             converted_value_data_type="text",
-            prompt_target_identifier=None,
             attack_identifier=None,
             conversation_id="",
             labels={},
@@ -200,7 +236,6 @@ async def test_send_prompt_async_keeps_original_template(mock_request, mock_http
         MagicMock(
             converted_value="test_prompt",
             converted_value_data_type="text",
-            prompt_target_identifier=None,
             attack_identifier=None,
             conversation_id="",
             labels={},
@@ -228,7 +263,6 @@ async def test_send_prompt_async_keeps_original_template(mock_request, mock_http
         MagicMock(
             converted_value="second_test_prompt",
             converted_value_data_type="text",
-            prompt_target_identifier=None,
             attack_identifier=None,
             conversation_id="",
             labels={},
@@ -285,7 +319,6 @@ async def test_http_target_with_injected_client(patch_central_database):
             MagicMock(
                 converted_value="test_prompt",
                 converted_value_data_type="text",
-                prompt_target_identifier=None,
                 attack_identifier=None,
                 conversation_id="",
                 labels={},

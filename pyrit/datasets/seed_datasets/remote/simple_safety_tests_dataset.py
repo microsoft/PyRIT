@@ -2,12 +2,12 @@
 # Licensed under the MIT license.
 
 import logging
-import warnings
 
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import Modality, SeedDataset, SeedPrompt
+from pyrit.models import Modality, SeedDataset, SeedPrompt, SeedUnion
+from pyrit.models.harm_category import HarmCategory
 
 logger = logging.getLogger(__name__)
 
@@ -34,31 +34,9 @@ class _SimpleSafetyTestsDataset(_RemoteDatasetLoader):
     size: str = "small"  # 100 critical safety test prompts
     tags: frozenset[str] = frozenset({"safety"})
 
-    def __init__(
-        self,
-        *,
-        split: str | None = None,
-    ) -> None:
-        """
-        Initialize the SimpleSafetyTests dataset loader.
-
-        Args:
-            split: **Deprecated.** Upstream ``Bertievidgen/SimpleSafetyTests`` publishes
-                only the ``"test"`` split, so this kwarg has no effect. It will be
-                removed in v0.16.0.
-        """
-        if split is not None:
-            warnings.warn(
-                "'split' is deprecated and will be removed in v0.16.0. "
-                "Upstream Bertievidgen/SimpleSafetyTests publishes only the 'test' "
-                "split, so this kwarg has no effect.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-
     @property
     def dataset_name(self) -> str:
-        """Return the dataset name."""
+        """The dataset name."""
         return "simple_safety_tests"
 
     async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
@@ -95,21 +73,53 @@ class _SimpleSafetyTestsDataset(_RemoteDatasetLoader):
 
         source_url = f"https://huggingface.co/datasets/{self.HF_DATASET_NAME}"
         groups = ["Patronus AI", "University of Oxford", "Bocconi University"]
+        harm_area_alias_overrides: dict[str, list[HarmCategory]] = {
+            "Suicide, Self-Harm, and Eating Disorders": [
+                HarmCategory.SUICIDE,
+                HarmCategory.SELF_HARM,
+                HarmCategory.EATING_DISORDERS,
+            ],
+            "Suicide, Self-Harm and Eating Disorders": [
+                HarmCategory.SUICIDE,
+                HarmCategory.SELF_HARM,
+                HarmCategory.EATING_DISORDERS,
+            ],
+            "Physical Harm": [HarmCategory.VIOLENT_CONTENT, HarmCategory.COORDINATION_HARM],
+            "Physical Harm and Violence": [HarmCategory.VIOLENT_CONTENT, HarmCategory.COORDINATION_HARM],
+            "Violence and Physical Harm": [HarmCategory.VIOLENT_CONTENT, HarmCategory.COORDINATION_HARM],
+            "Child Abuse": [HarmCategory.GROOMING, HarmCategory.SEXUAL_CONTENT, HarmCategory.CHILD_LEAKAGE],
+            "Illegal and Highly Regulated items": [HarmCategory.REGULATED_GOODS, HarmCategory.COORDINATION_HARM],
+            "Illegal Items": [HarmCategory.REGULATED_GOODS, HarmCategory.COORDINATION_HARM],
+            "Scams and Fraud": [HarmCategory.SCAMS, HarmCategory.DECEPTION],
+        }
 
-        seed_prompts = [
-            SeedPrompt(
+        seed_prompts: list[SeedUnion] = []
+        for item in data:
+            # Standardize harm categories
+            standardized_categories = self._standardize_harm_categories(
+                item.get("harm_area"),
+                alias_overrides=harm_area_alias_overrides,
+            )
+
+            metadata: dict[str, str | int] = {}
+            for key, value in item.items():
+                if key == "prompt" or value is None:
+                    continue
+
+                metadata[key] = value if isinstance(value, (str, int)) else str(value)
+
+            seed_prompt = SeedPrompt(
                 value=item["prompt"],
                 data_type="text",
                 dataset_name=self.dataset_name,
-                harm_categories=[item["harm_area"]] if item.get("harm_area") else [],
+                harm_categories=standardized_categories,
                 description=description,
                 source=source_url,
                 authors=authors,
                 groups=groups,
-                metadata={"category": category} if (category := item.get("category")) else {},
+                metadata=metadata if metadata else None,
             )
-            for item in data
-        ]
+            seed_prompts.append(seed_prompt)
 
         logger.info(f"Successfully loaded {len(seed_prompts)} prompts from SimpleSafetyTests dataset")
 

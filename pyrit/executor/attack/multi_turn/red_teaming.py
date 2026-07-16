@@ -6,7 +6,7 @@ from __future__ import annotations
 import enum
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional, Union
+from typing import TYPE_CHECKING, Any
 
 from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
 from pyrit.common.path import EXECUTOR_RED_TEAM_PATH
@@ -14,8 +14,10 @@ from pyrit.common.utils import warn_if_set
 from pyrit.exceptions import ComponentRole, execution_context
 from pyrit.executor.attack.component import (
     ConversationManager,
+    _AdversarialConversationManager,
     get_adversarial_chat_messages,
 )
+from pyrit.executor.attack.component.modality_router import _ModalityFeedbackRouter
 from pyrit.executor.attack.core.attack_config import (
     AttackAdversarialConfig,
     AttackConverterConfig,
@@ -28,14 +30,14 @@ from pyrit.executor.attack.multi_turn.multi_turn_attack_strategy import (
 )
 from pyrit.memory import CentralMemory
 from pyrit.models import (
+    AtomicAttackIdentifier,
     AttackOutcome,
     AttackResult,
+    Conversation,
     ConversationReference,
     ConversationType,
     Message,
     Score,
-    SeedPrompt,
-    build_atomic_attack_identifier,
 )
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import CapabilityName
@@ -80,19 +82,9 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
     4. Using scoring feedback to guide subsequent prompt generation.
     5. Continuing until the objective is achieved or maximum turns are reached.
 
-    The strategy supports customization through system prompts, seed prompts, and prompt converters,
+    The strategy supports customization through system prompts, seed prompts, and converters,
     allowing for various attack techniques and scenarios.
     """
-
-    DEFAULT_ADVERSARIAL_PROMPT_IF_OBJECTIVE_TARGET_IS_BLOCKED = (
-        "Request to target failed: blocked. Please rewrite your prompt to avoid getting blocked next time."
-    )
-
-    DEFAULT_ERR_MSG_IF_OBJECTIVE_TARGET_HAS_NON_TEXT_RESPONSE = (
-        "The attack target does not respond with text output, "
-        "so the scoring rationale is the only textual feedback "
-        "that can be passed to the red teaming chat. "
-    )
 
     @apply_defaults
     def __init__(
@@ -100,9 +92,9 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
         *,
         objective_target: PromptTarget = REQUIRED_VALUE,  # type: ignore[ty:invalid-parameter-default]
         attack_adversarial_config: AttackAdversarialConfig,
-        attack_converter_config: Optional[AttackConverterConfig] = None,
-        attack_scoring_config: Optional[AttackScoringConfig] = None,
-        prompt_normalizer: Optional[PromptNormalizer] = None,
+        attack_converter_config: AttackConverterConfig | None = None,
+        attack_scoring_config: AttackScoringConfig | None = None,
+        prompt_normalizer: PromptNormalizer | None = None,
         max_turns: int = 10,
         score_last_turn_only: bool = False,
     ) -> None:
@@ -153,20 +145,33 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
         except ValueError as exc:
             raise ValueError(f"RedTeamingAttack {exc}") from exc
 
-        system_prompt_template_path = (
-            attack_adversarial_config.system_prompt_path or RTASystemPromptPaths.TEXT_GENERATION.value
+        # Router that decides — based on each target's declared capabilities —
+        # whether prior media should travel back to the adversarial chat or
+        # forward to the objective target, and that fills in adversarial
+        # placeholders when ``next_message`` carries seed media.
+        self._modality_router = _ModalityFeedbackRouter(
+            adversarial_chat=self._adversarial_chat,
+            objective_target=objective_target,
         )
-        self._adversarial_chat_system_prompt_template = SeedPrompt.from_yaml_with_required_parameters(
-            template_path=system_prompt_template_path,
-            required_parameters=["objective"],
-            error_message="Adversarial seed prompt must have an objective",
+
+        # The manager owns adversarial-prompt resolution: it resolves the system prompt, coerces the
+        # first / next-message templates (applying the canonical defaults when unset), and fails fast
+        # when a response schema is declared on both the system prompt and the first message.
+        self._resolved_adversarial = _AdversarialConversationManager.resolve_config(
+            config=attack_adversarial_config,
+            default_system_prompt_path=RTASystemPromptPaths.TEXT_GENERATION.value,
+            system_prompt_required_parameters=["objective"],
+            system_prompt_error_message="Adversarial seed prompt must have an objective",
+            resolve_user_messages=True,
         )
-        self._set_adversarial_chat_seed_prompt(seed_prompt=attack_adversarial_config.seed_prompt)
+        self._adversarial_chat_system_prompt_template = self._resolved_adversarial.system_prompt
+        self._adversarial_chat_first_message = self._resolved_adversarial.first_message
+        self._adversarial_prompt_template = self._resolved_adversarial.next_message_template
 
         # Initialize utilities
         self._prompt_normalizer = prompt_normalizer or PromptNormalizer()
 
-        self._conversation_manager = ConversationManager(attack_identifier=self.get_identifier())
+        self._conversation_manager = ConversationManager()
 
         # set the maximum number of turns for the attack
         if max_turns <= 0:
@@ -175,17 +180,35 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
         self._max_turns = max_turns
         self._score_last_turn_only = score_last_turn_only
 
-    def get_attack_scoring_config(self) -> Optional[AttackScoringConfig]:
+    def get_attack_scoring_config(self) -> AttackScoringConfig | None:
         """
         Get the attack scoring configuration used by this strategy.
 
         Returns:
-            Optional[AttackScoringConfig]: The scoring configuration with objective scorer
+            AttackScoringConfig | None: The scoring configuration with objective scorer
                 and use_score_as_feedback.
         """
         return AttackScoringConfig(
             objective_scorer=self._objective_scorer,
             use_score_as_feedback=self._use_score_as_feedback,
+        )
+
+    def get_attack_adversarial_config(self) -> AttackAdversarialConfig | None:
+        """
+        Get the effective adversarial configuration used by this strategy.
+
+        Returns:
+            AttackAdversarialConfig | None: The adversarial target with its resolved system prompt
+                and first-message seed prompt.
+        """
+        adversarial_chat = getattr(self, "_adversarial_chat", None)
+        if adversarial_chat is None:
+            return None
+        return AttackAdversarialConfig(
+            target=adversarial_chat,
+            system_prompt=self._adversarial_chat_system_prompt_template,
+            first_message=self._adversarial_chat_first_message,
+            adversarial_prompt_template=self._adversarial_prompt_template,
         )
 
     def _validate_context(self, *, context: MultiTurnAttackContext[Any]) -> None:
@@ -207,6 +230,10 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
         for validator, error_msg in validators:
             if not validator():
                 raise ValueError(error_msg)
+
+        # Fail fast if the objective target requires media on turn 0 but
+        # ``next_message`` does not supply any (i.e. edit-only mode without a seed).
+        self._modality_router.validate_first_turn_seed(next_message=context.next_message)
 
     async def _setup_async(self, *, context: MultiTurnAttackContext[Any]) -> None:
         """
@@ -247,22 +274,10 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
             memory_labels=self._memory_labels,
         )
 
-        adversarial_system_prompt = self._adversarial_chat_system_prompt_template.render_template_value(
-            objective=context.objective,
-            max_turns=self._max_turns,
-        )
-        if not adversarial_system_prompt:
-            raise ValueError("Adversarial chat system prompt must be defined")
-
-        # ``set_system_prompt`` rejects any conversation that already has messages,
-        # so it must run before we hydrate the adversarial chat with the swapped
-        # prepended turns below.
-        self._adversarial_chat.set_system_prompt(
-            system_prompt=adversarial_system_prompt,
-            conversation_id=context.session.adversarial_chat_conversation_id,
-            attack_identifier=self.get_identifier(),
-            labels=context.memory_labels,  # deprecated
-        )
+        # The adversarial conversation manager owns rendering and setting the system prompt.
+        # ``set_system_prompt`` rejects any conversation that already has messages, so this must run
+        # before we hydrate the adversarial chat with the swapped prepended turns below.
+        self._build_adversarial_manager(context=context).set_adversarial_system_prompt()
 
         # Set up adversarial chat with prepended conversation
         if context.prepended_conversation:
@@ -270,11 +285,14 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
             adversarial_messages = get_adversarial_chat_messages(
                 prepended_conversation=context.prepended_conversation,
                 adversarial_chat_conversation_id=context.session.adversarial_chat_conversation_id,
-                attack_identifier=self.get_identifier(),
-                adversarial_chat_target_identifier=self._adversarial_chat.get_identifier(),
-                labels=context.memory_labels,
             )
 
+            self._memory.add_conversation_to_memory(
+                conversation=Conversation(
+                    conversation_id=context.session.adversarial_chat_conversation_id,
+                    target_identifier=self._adversarial_chat.get_identifier(),
+                )
+            )
             for msg in adversarial_messages:
                 self._memory.add_message_to_memory(request=msg)
 
@@ -304,12 +322,19 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
         # Track achievement status locally to avoid concurrency issues
         achieved_objective = False
 
+        # Build the adversarial conversation manager once for this execution and reuse it across
+        # turns. Its conversation scope (ids, objective, memory labels) is fixed for the run, so
+        # there is no need to rebuild it each turn.
+        adversarial_manager = self._build_adversarial_manager(context=context)
+
         # Execute conversation turns
         while context.executed_turns < self._max_turns and (self._score_last_turn_only or not achieved_objective):
             logger.info(f"Executing turn {context.executed_turns + 1}/{self._max_turns}")
 
             # Determine what to send next
-            message_to_send = await self._generate_next_prompt_async(context=context)
+            message_to_send = await self._generate_next_prompt_async(
+                context=context, adversarial_manager=adversarial_manager
+            )
 
             # Send the generated message to the objective target
             context.last_response = await self._send_prompt_to_objective_target_async(
@@ -333,7 +358,7 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
 
         # Prepare the result
         return AttackResult(
-            atomic_attack_identifier=build_atomic_attack_identifier(attack_identifier=self.get_identifier()),
+            atomic_attack_identifier=AtomicAttackIdentifier.build(attack_identifier=self.get_identifier()),
             conversation_id=context.session.conversation_id,
             objective=context.objective,
             outcome=(AttackOutcome.SUCCESS if achieved_objective else AttackOutcome.FAILURE),
@@ -348,176 +373,77 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
         """Clean up after attack execution."""
         # Nothing to be done here, no-op
 
-    async def _generate_next_prompt_async(self, context: MultiTurnAttackContext[Any]) -> Message:
+    def _build_adversarial_manager(self, *, context: MultiTurnAttackContext[Any]) -> _AdversarialConversationManager:
         """
-        Generate the next prompt to be sent to the target during the red teaming attack.
+        Build the adversarial conversation manager for this execution.
 
-        This method is called each turn to obtain fresh adversarial text based on previous feedback,
-        error states, or the custom prompt if it is available. It integrates feedback from the
-        scorer when available, and handles blocked or error responses by returning fallback prompts.
+        The manager is scoped to a single run's adversarial conversation — its conversation ids,
+        objective, and memory labels come from ``context``. It holds no per-turn mutable state, so
+        it is rebuilt where needed (setup and the turn loop) rather than threaded through the context.
+
+        Args:
+            context (MultiTurnAttackContext): The attack context supplying the per-run conversation
+                ids, objective, and memory labels.
+
+        Returns:
+            _AdversarialConversationManager: The manager driving this run's adversarial chat.
+        """
+        return _AdversarialConversationManager(
+            adversarial_target=self._adversarial_chat,
+            adversarial_system_prompt=self._adversarial_chat_system_prompt_template,
+            adversarial_first_user_message=self._adversarial_chat_first_message,
+            adversarial_next_user_message=self._adversarial_prompt_template,
+            max_turns=self._max_turns,
+            prompt_normalizer=self._prompt_normalizer,
+            conversation_id=context.session.adversarial_chat_conversation_id,
+            objective=context.objective,
+            objective_target_conversation_id=context.session.conversation_id,
+            attack_strategy_name=self.__class__.__name__,
+            memory_labels=context.memory_labels,
+            modality_router=self._modality_router,
+            use_score_as_feedback=self._use_score_as_feedback,
+        )
+
+    async def _generate_next_prompt_async(
+        self,
+        context: MultiTurnAttackContext[Any],
+        *,
+        adversarial_manager: _AdversarialConversationManager | None = None,
+    ) -> Message:
+        """
+        Generate the next message to send to the objective target this turn.
+
+        Delegates the full adversarial contract to the conversation manager, which owns the bypass
+        path, first-turn vs. subsequent-turn prompt selection, the send/parse/schema/retry cycle, and
+        weaving prior/seed media into the objective message (or filling adversarial placeholders). The
+        returned ``objective_message`` is ready to send as-is.
 
         Args:
             context (MultiTurnAttackContext): The attack context containing the current state and configuration.
+            adversarial_manager (_AdversarialConversationManager | None): The manager driving this
+                run's adversarial chat. Supplied by ``_perform_async``; when ``None`` (e.g. a direct
+                call) it is built on demand from ``context``.
 
         Returns:
-            Message: The message to send to the objective target, preserving multimodal content
-                when provided via next_message.
+            Message: The message to send to the objective target.
 
         Raises:
             ValueError: If no response is received from the adversarial chat.
         """
-        # If custom message provided, use it and bypass adversarial chat generation
-        # Return the full Message to preserve multimodal content (images, audio, etc.)
-        if context.next_message:
-            logger.debug("Using custom message, bypassing adversarial chat")
-            message = context.next_message
-            # Clear to prevent reuse
-            context.next_message = None
-            return message
+        if adversarial_manager is None:
+            adversarial_manager = self._build_adversarial_manager(context=context)
 
-        # Generate prompt using adversarial chat
-        logger.debug(f"Generating prompt for turn {context.executed_turns + 1}")
+        # A caller-supplied ``next_message`` seeds a single turn; clear it so it is not reused.
+        seed_message = context.next_message
+        context.next_message = None
 
-        # Prepare prompt for the adversarial chat
-        prompt_text = await self._build_adversarial_prompt_async(context)
-
-        # Send the prompt to the adversarial chat and get the response
-        logger.debug(f"Sending prompt to adversarial chat: {prompt_text[:50]}...")
-        prompt_message = Message.from_prompt(prompt=prompt_text, role="user")
-
-        with execution_context(
-            component_role=ComponentRole.ADVERSARIAL_CHAT,
-            attack_strategy_name=self.__class__.__name__,
-            attack_identifier=self.get_identifier(),
-            component_identifier=self._adversarial_chat.get_identifier(),
-            objective_target_conversation_id=context.session.conversation_id,
-            objective=context.objective,
-        ):
-            response = await self._prompt_normalizer.send_prompt_async(
-                message=prompt_message,
-                conversation_id=context.session.adversarial_chat_conversation_id,
-                target=self._adversarial_chat,
-                attack_identifier=self.get_identifier(),
-                labels=context.memory_labels,
-            )
-
-        # Check if the response is valid
-        if response is None:
-            raise ValueError("Received no response from adversarial chat")
-
-        # Return as a user message for sending to objective target
-        return Message.from_prompt(prompt=response.get_value(), role="user")
-
-    async def _build_adversarial_prompt_async(
-        self,
-        context: MultiTurnAttackContext[Any],
-    ) -> str:
-        """
-        Build a prompt for the adversarial chat based on the last response.
-
-        Args:
-            context (MultiTurnAttackContext): The attack context containing the current state and configuration.
-
-        Returns:
-            str: The prompt to be sent to the adversarial chat.
-        """
-        # If no last response, return the seed prompt (rendered with objective if template exists)
-        if not context.last_response:
-            return self._adversarial_chat_seed_prompt.render_template_value_silent(objective=context.objective)
-
-        # Get the last assistant piece from the response
-        response_piece = context.last_response.get_piece()
-
-        # Delegate to appropriate handler based on data type
-        handlers = {
-            "text": self._handle_adversarial_text_response,
-            "error": self._handle_adversarial_text_response,
-        }
-
-        handler = handlers.get(response_piece.converted_value_data_type, self._handle_adversarial_file_response)
-
-        return handler(context=context)
-
-    def _handle_adversarial_text_response(self, *, context: MultiTurnAttackContext[Any]) -> str:
-        """
-        Handle the text response from the target by appending any
-        available scoring feedback to the returned text. If the response
-        indicates a block or error, return a fallback message instead.
-
-        Args:
-            context (MultiTurnAttackContext): The attack context containing the response and score.
-
-        Returns:
-            str: The text to be sent to the adversarial chat in the next turn.
-        """
-        if not context.last_response:
-            return "No response available. Please continue."
-
-        response_piece = context.last_response.get_piece()
-
-        if not response_piece.has_error():
-            # if response has no error, we can use the converted value
-            prompt_text = response_piece.converted_value
-            if not prompt_text:
-                logger.warning("Received no converted_value from response")
-                return "The previous response was empty. Please continue."
-
-            # if we have feedback, append it to the prompt
-            # to provide more context to the adversarial chat
-            if self._use_score_as_feedback and context.last_score:
-                prompt_text += f"\n\n{context.last_score.score_rationale}"
-            return prompt_text
-
-        if response_piece.is_blocked():
-            return RedTeamingAttack.DEFAULT_ADVERSARIAL_PROMPT_IF_OBJECTIVE_TARGET_IS_BLOCKED
-
-        return f"Request to target failed: {response_piece.response_error}"
-
-    def _handle_adversarial_file_response(self, *, context: MultiTurnAttackContext[Any]) -> str:
-        """
-        Handle the file response from the target.
-
-        If the response indicates an error, raise a RuntimeError. When scoring is disabled or no
-        scoring rationale is provided, raise a ValueError. Otherwise, return the textual feedback as the prompt.
-
-        Args:
-            context (MultiTurnAttackContext): The attack context containing the response and score.
-
-        Returns:
-            str: The suitable feedback or error message to pass back to the adversarial chat.
-
-        Raises:
-            RuntimeError: If the target response indicates an error.
-            ValueError: If scoring is disabled or no scoring rationale is available.
-        """
-        if not context.last_response:
-            return "No response available. Please continue."
-
-        response_piece = context.last_response.get_piece()
-
-        if response_piece.has_error():
-            raise RuntimeError(
-                "Request to target failed despite the returned data type "
-                f"{response_piece.converted_value_data_type}: "
-                f"{response_piece.response_error}"
-            )
-
-        if not self._use_score_as_feedback:
-            # If scoring is not used as feedback, we cannot use the score rationale
-            # to provide feedback to the adversarial chat
-            raise ValueError(
-                f"{RedTeamingAttack.DEFAULT_ERR_MSG_IF_OBJECTIVE_TARGET_HAS_NON_TEXT_RESPONSE}"
-                "However, the use_score_as_feedback flag is set to False so it cannot be utilized."
-            )
-
-        feedback = context.last_score.score_rationale if context.last_score else None
-        if not feedback:
-            raise ValueError(
-                f"{RedTeamingAttack.DEFAULT_ERR_MSG_IF_OBJECTIVE_TARGET_HAS_NON_TEXT_RESPONSE}"
-                "However, no scoring rationale was provided by the scorer."
-            )
-
-        return feedback
+        turn = await adversarial_manager.get_next_message_async(
+            turn_index=context.executed_turns,
+            seed_message=seed_message,
+            last_response=context.last_response,
+            score=context.last_score,
+        )
+        return turn.objective_message
 
     async def _send_prompt_to_objective_target_async(
         self,
@@ -550,7 +476,6 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
         with execution_context(
             component_role=ComponentRole.OBJECTIVE_TARGET,
             attack_strategy_name=self.__class__.__name__,
-            attack_identifier=self.get_identifier(),
             component_identifier=self._objective_target.get_identifier(),
             objective_target_conversation_id=context.session.conversation_id,
             objective=context.objective,
@@ -562,8 +487,6 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
                 request_converter_configurations=self._request_converters,
                 response_converter_configurations=self._response_converters,
                 target=self._objective_target,
-                labels=context.memory_labels,
-                attack_identifier=self.get_identifier(),
             )
 
         if response is None:
@@ -578,7 +501,7 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
 
         return response
 
-    async def _score_response_async(self, *, context: MultiTurnAttackContext[Any]) -> Optional[Score]:
+    async def _score_response_async(self, *, context: MultiTurnAttackContext[Any]) -> Score | None:
         """
         Evaluate the objective target's response with the objective scorer.
 
@@ -589,7 +512,7 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
             context (MultiTurnAttackContext): The attack context containing the response to score.
 
         Returns:
-            Optional[Score]: The score of the response if available, otherwise None.
+            Score | None: The score of the response if available, otherwise None.
         """
         if not context.last_response:
             logger.warning("No response available in context to score")
@@ -598,7 +521,6 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
         with execution_context(
             component_role=ComponentRole.OBJECTIVE_SCORER,
             attack_strategy_name=self.__class__.__name__,
-            attack_identifier=self.get_identifier(),
             component_identifier=self._objective_scorer.get_identifier(),
             objective_target_conversation_id=context.session.conversation_id,
             objective=context.objective,
@@ -612,20 +534,3 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
 
         objective_scores = scoring_results
         return objective_scores[0] if objective_scores else None
-
-    def _set_adversarial_chat_seed_prompt(self, *, seed_prompt: Union[str, SeedPrompt]) -> None:
-        """
-        Set the seed prompt for the adversarial chat.
-
-        Args:
-            seed_prompt (Union[str, SeedPrompt]): The seed prompt to set for the adversarial chat.
-
-        Raises:
-            ValueError: If the seed prompt is not a string or SeedPrompt object.
-        """
-        if isinstance(seed_prompt, str):
-            self._adversarial_chat_seed_prompt = SeedPrompt(value=seed_prompt, data_type="text", is_jinja_template=True)
-        elif isinstance(seed_prompt, SeedPrompt):
-            self._adversarial_chat_seed_prompt = seed_prompt
-        else:
-            raise ValueError("Seed prompt must be a string or SeedPrompt object.")

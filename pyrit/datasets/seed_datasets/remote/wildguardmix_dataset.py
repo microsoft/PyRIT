@@ -10,6 +10,7 @@ from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
 from pyrit.models import SeedDataset, SeedPrompt
+from pyrit.models.harm_category import HarmCategory
 
 logger = logging.getLogger(__name__)
 
@@ -94,9 +95,69 @@ class _WildGuardMixDataset(_RemoteDatasetLoader):
     """
 
     HF_DATASET_NAME: str = _HF_REPO_ID
+    # WildGuard stores 13 named risk subcategories plus an "others" bucket as
+    # normalized slugs. "benign" is intentionally excluded from harm metadata.
+    harm_categories: list[str] = [
+        "causing_material_harm_by_disseminating_misinformation",
+        "copyright_violations",
+        "cyberattack",
+        "defamation_encouraging_unethical_or_unsafe_actions",
+        "disseminating_false_or_misleading_information_encouraging_disinformation_campaigns",
+        "fraud_assisting_illegal_activities",
+        "mental_health_over-reliance_crisis",
+        "others",
+        "private_information_individual",
+        "sensitive_information_organization_government",
+        "sexual_content",
+        "social_stereotypes_and_unfair_discrimination",
+        "toxic_language_hate_speech",
+        "violence_and_physical_harm",
+    ]
     modalities: list[str] = ["text"]
     size: str = "huge"
     tags: set[str] = {"safety", "jailbreak"}
+    HARM_CATEGORY_ALIAS_OVERRIDES: dict[str, list[HarmCategory]] = {
+        "causing_material_harm_by_disseminating_misinformation": [
+            HarmCategory.INFO_INTEGRITY,
+            HarmCategory.CURRENT_EVENTS_MISINFO,
+        ],
+        "copyright_violations": [HarmCategory.COPYRIGHT],
+        "cyberattack": [HarmCategory.MALWARE, HarmCategory.COORDINATION_HARM],
+        "defamation_encouraging_unethical_or_unsafe_actions": [
+            HarmCategory.REPUTATIONAL_DAMAGE,
+            HarmCategory.DANGEROUS_SITUATIONS,
+        ],
+        "disseminating_false_or_misleading_information_encouraging_disinformation_campaigns": [
+            HarmCategory.INFO_INTEGRITY,
+            HarmCategory.CAMPAIGNING,
+        ],
+        "fraud_assisting_illegal_activities": [
+            HarmCategory.SCAMS,
+            HarmCategory.DECEPTION,
+            HarmCategory.COORDINATION_HARM,
+        ],
+        "mental_health_over-reliance_crisis": [
+            HarmCategory.MENTAL_HEALTH,
+            HarmCategory.EMOTIONAL,
+        ],
+        "others": [HarmCategory.OTHER],
+        "private_information_individual": [HarmCategory.PPI],
+        "sensitive_information_organization_government": [
+            HarmCategory.PROPRIETARY_INFO,
+            HarmCategory.HIGH_RISK_GOVERNMENT,
+        ],
+        "sexual_content": [HarmCategory.SEXUAL_CONTENT],
+        "social_stereotypes_and_unfair_discrimination": [
+            HarmCategory.REPRESENTATIONAL,
+            HarmCategory.HATE_SPEECH,
+        ],
+        "toxic_language_hate_speech": [HarmCategory.HATE_SPEECH],
+        "violence_and_physical_harm": [
+            HarmCategory.VIOLENT_CONTENT,
+            HarmCategory.VIOLENT_THREATS,
+            HarmCategory.COORDINATION_HARM,
+        ],
+    }
 
     def __init__(
         self,
@@ -145,7 +206,7 @@ class _WildGuardMixDataset(_RemoteDatasetLoader):
 
     @property
     def dataset_name(self) -> str:
-        """Return the dataset name."""
+        """The dataset name."""
         return "wildguardmix"
 
     async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
@@ -226,12 +287,20 @@ class _WildGuardMixDataset(_RemoteDatasetLoader):
                     value=prompt_text,
                     data_type="text",
                     dataset_name=self.dataset_name,
-                    harm_categories=[subcategory] if subcategory else [],
+                    harm_categories=(
+                        self._standardize_harm_categories(
+                            subcategory,
+                            alias_overrides=self.HARM_CATEGORY_ALIAS_OVERRIDES,
+                        )
+                        if prompt_harm_label == WildGuardMixPromptHarmLabel.HARMFUL.value
+                        else []
+                    ),
                     source=self.source,
                     authors=_AUTHORS,
                     groups=_GROUPS,
                     metadata={
                         "split": split.value,
+                        "subcategory": subcategory,
                         "adversarial": adversarial_flag,
                         "prompt_harm_label": prompt_harm_label,
                         "response_harm_label": row.get("response_harm_label"),

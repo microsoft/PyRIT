@@ -41,11 +41,16 @@ import logging
 import uuid
 from collections.abc import Awaitable, Callable, Iterable, Iterator
 from contextlib import contextmanager
-from dataclasses import replace
 from pathlib import Path
 
 from pyrit.common.path import DATASETS_PATH
-from pyrit.models import Message, MessagePiece, PromptDataType
+from pyrit.models import (
+    JSON_SCHEMA_METADATA_KEY,
+    Conversation,
+    Message,
+    MessagePiece,
+    PromptDataType,
+)
 from pyrit.prompt_target.common.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_capabilities import (
     CapabilityName,
@@ -141,8 +146,7 @@ def _permissive_configuration(
     merged_modalities = original.capabilities.input_modalities | _TEXT_MODALITY
     if extra_input_modalities is not None:
         merged_modalities = frozenset(merged_modalities | frozenset(extra_input_modalities))
-    permissive_caps = replace(
-        original.capabilities,
+    permissive_caps = TargetCapabilities(
         supports_multi_turn=True,
         supports_multi_message_pieces=True,
         supports_json_schema=True,
@@ -151,6 +155,7 @@ def _permissive_configuration(
         supports_system_prompt=True,
         supports_streaming_audio=True,
         input_modalities=merged_modalities,
+        output_modalities=original.capabilities.output_modalities,
     )
     # Rebuild a fresh configuration from the instance's native capabilities so
     # probes bypass preflight validation without inheriting ADAPT policy or
@@ -293,8 +298,7 @@ async def _probe_system_prompt_async(target: PromptTarget, timeout_s: float, ret
     Probe whether ``target`` accepts a system prompt followed by a user message.
 
     Writes a system-role ``MessagePiece`` directly to ``target._memory``
-    rather than calling ``pyrit.prompt_target.PromptChatTarget.set_system_prompt``
-    (which is only defined on ``PromptChatTarget`` subclasses anyway).
+    rather than calling ``target.set_system_prompt``.
     ``set_system_prompt`` can be overridden by subclasses (e.g. mocks) to do
     nothing or to perform extra work, which would mask whether the underlying
     API actually accepts a system message. A direct memory write also works
@@ -322,6 +326,9 @@ async def _probe_system_prompt_async(target: PromptTarget, timeout_s: float, ret
         prompt_metadata=_probe_metadata(),
     )
     try:
+        target._memory.add_conversation_to_memory(
+            conversation=Conversation(conversation_id=conversation_id, target_identifier=target.get_identifier())
+        )
         target._memory.add_message_to_memory(request=Message(message_pieces=[system_piece]))
     except Exception as exc:
         logger.debug("System-prompt probe could not seed system message: %s", exc)
@@ -406,6 +413,9 @@ async def _probe_multi_turn_async(target: PromptTarget, timeout_s: float, retrie
 
     # Seed memory so the second send sees real prior history.
     try:
+        target._memory.add_conversation_to_memory(
+            conversation=Conversation(conversation_id=conversation_id, target_identifier=target.get_identifier())
+        )
         target._memory.add_message_to_memory(request=Message(message_pieces=[first]))
         assistant_reply = MessagePiece(
             role="assistant",
@@ -499,7 +509,7 @@ async def _probe_json_schema_async(target: PromptTarget, timeout_s: float, retri
         prompt_metadata=_probe_metadata(
             {
                 "response_format": "json",
-                "json_schema": json.dumps(schema),
+                JSON_SCHEMA_METADATA_KEY: json.dumps(schema),
             }
         ),
     )

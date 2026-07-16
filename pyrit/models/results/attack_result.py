@@ -8,12 +8,10 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, TypeVar
 
-from pydantic import AwareDatetime, Field, model_validator
+from pydantic import AwareDatetime, Field, field_serializer
 
-from pyrit.common.deprecation import print_deprecation_message
-from pyrit.models.conversation_reference import ConversationReference, ConversationType
-from pyrit.models.identifiers.atomic_attack_identifier import build_atomic_attack_identifier
 from pyrit.models.identifiers.component_identifier import ComponentIdentifier
+from pyrit.models.messages.conversation_reference import ConversationReference, ConversationType
 from pyrit.models.messages.message_piece import MessagePiece
 from pyrit.models.results.strategy_result import StrategyResult
 from pyrit.models.retry_event import RetryEvent
@@ -95,6 +93,11 @@ class AttackResult(StrategyResult):
     # labels associated with this attack result
     labels: dict[str, str] = Field(default_factory=dict)
 
+    # Harm categories this attack targeted. Auto-populated from the attack's
+    # SeedGroup (the deduplicated union of its seeds' harm_categories) when the
+    # result is produced by an attack strategy.
+    targeted_harm_categories: list[str] = Field(default_factory=list)
+
     # Error information (populated when attack fails with exception)
     error_message: str | None = None
     error_type: str | None = None
@@ -112,59 +115,11 @@ class AttackResult(StrategyResult):
     attribution_parent_id: str | None = None
     attribution_data: dict[str, Any] | None = None
 
-    @model_validator(mode="before")
-    @classmethod
-    def _promote_deprecated_attack_identifier(cls, data: Any) -> Any:
-        """
-        Promote the deprecated ``attack_identifier`` kwarg to ``atomic_attack_identifier``.
-
-        Runs ahead of ``extra="forbid"`` so the legacy kwarg is consumed before
-        Pydantic would reject it. Emits a deprecation warning when present.
-
-        Returns:
-            The input ``data`` with ``attack_identifier`` removed and (when it was
-            set and ``atomic_attack_identifier`` was not) promoted.
-        """
-        if not isinstance(data, dict):
-            return data
-        data = dict(data)
-        attack_identifier = data.pop("attack_identifier", None)
-        if attack_identifier is not None:
-            print_deprecation_message(
-                old_item="AttackResult(attack_identifier=...)",
-                new_item="AttackResult(atomic_attack_identifier=...)",
-                removed_in="0.15.0",
-            )
-            if data.get("atomic_attack_identifier") is None:
-                data["atomic_attack_identifier"] = build_atomic_attack_identifier(
-                    attack_identifier=attack_identifier,
-                )
-        return data
-
-    @property
-    def attack_identifier(self) -> ComponentIdentifier | None:
-        """
-        Deprecated: use ``get_attack_strategy_identifier()`` or ``atomic_attack_identifier`` instead.
-
-        Returns the attack strategy ``ComponentIdentifier`` extracted from
-        ``atomic_attack_identifier``, emitting a deprecation warning.
-
-        Returns:
-            ComponentIdentifier | None: The attack strategy identifier, or ``None``.
-
-        """
-        print_deprecation_message(
-            old_item="AttackResult.attack_identifier",
-            new_item="AttackResult.atomic_attack_identifier or get_attack_strategy_identifier()",
-            removed_in="0.15.0",
-        )
-        return self.get_attack_strategy_identifier()
-
     def get_attack_strategy_identifier(self) -> ComponentIdentifier | None:
         """
         Return the attack strategy identifier from the composite atomic identifier.
 
-        This is the non-deprecated replacement for the ``attack_identifier`` property.
+        This replaces the removed ``attack_identifier`` property.
         Extracts the ``"attack"`` child from the nested ``"attack_technique"`` child
         of ``atomic_attack_identifier``.
 
@@ -246,6 +201,23 @@ class AttackResult(StrategyResult):
         """
         return conversation_id in self.get_all_conversation_ids()
 
+    @field_serializer("related_conversations", when_used="json")
+    def _serialize_related_conversations(
+        self,
+        related_conversations: set[ConversationReference],
+    ) -> list[dict[str, Any]]:
+        return [
+            ref.model_dump(mode="json")
+            for ref in sorted(
+                related_conversations,
+                key=lambda ref: (
+                    ref.conversation_id,
+                    ref.conversation_type.value,
+                    ref.description or "",
+                ),
+            )
+        ]
+
     def __str__(self) -> str:
         """
         Return a concise string representation of this attack result.
@@ -255,97 +227,3 @@ class AttackResult(StrategyResult):
 
         """
         return f"AttackResult: {self.conversation_id}: {self.outcome.value}: {self.objective[:50]}..."
-
-    def to_dict(self) -> dict[str, Any]:
-        """
-        Serialize this attack result to a JSON-compatible dictionary.
-
-        Deprecated: use ``model_dump(mode="json")`` for the canonical Pydantic
-        serialization. This shim preserves the legacy wire shape (base fields
-        only, raw ``metadata``, sorted ``related_conversations``) through the
-        deprecation window.
-
-        Returns:
-            dict[str, Any]: Serialized payload suitable for REST APIs or persistence.
-        """
-        print_deprecation_message(
-            old_item="AttackResult.to_dict()",
-            new_item="AttackResult.model_dump(mode='json')",
-            removed_in="0.16.0",
-        )
-        return {
-            "conversation_id": self.conversation_id,
-            "objective": self.objective,
-            "attack_result_id": self.attack_result_id,
-            "atomic_attack_identifier": (
-                self.atomic_attack_identifier.model_dump() if self.atomic_attack_identifier else None
-            ),
-            "last_response": self.last_response.model_dump(mode="json") if self.last_response else None,
-            "last_score": self.last_score.model_dump(mode="json") if self.last_score else None,
-            "executed_turns": self.executed_turns,
-            "execution_time_ms": self.execution_time_ms,
-            "outcome": self.outcome.value,
-            "outcome_reason": self.outcome_reason,
-            "timestamp": self.timestamp.isoformat(),
-            "related_conversations": sorted(
-                [ref.model_dump(mode="json") for ref in self.related_conversations],
-                key=lambda r: r["conversation_id"],
-            ),
-            "metadata": self.metadata,
-            "labels": self.labels,
-            "error_message": self.error_message,
-            "error_type": self.error_type,
-            "error_traceback": self.error_traceback,
-            "retry_events": [e.model_dump(mode="json") for e in self.retry_events],
-            "total_retries": self.total_retries,
-        }
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> AttackResult:
-        """
-        Reconstruct an AttackResult from a dictionary.
-
-        Deprecated: use ``model_validate(...)`` for the canonical Pydantic
-        deserialization. This shim accepts the legacy ``to_dict()`` wire shape
-        (base fields only) through the deprecation window.
-
-        Args:
-            data (dict[str, Any]): Dictionary as produced by to_dict().
-
-        Returns:
-            AttackResult: Reconstructed instance.
-        """
-        print_deprecation_message(
-            old_item="AttackResult.from_dict(...)",
-            new_item="AttackResult.model_validate(...)",
-            removed_in="0.16.0",
-        )
-        return cls(
-            conversation_id=data["conversation_id"],
-            objective=data["objective"],
-            attack_result_id=data.get("attack_result_id", str(uuid.uuid4())),
-            atomic_attack_identifier=(
-                ComponentIdentifier.model_validate(data["atomic_attack_identifier"])
-                if data.get("atomic_attack_identifier")
-                else None
-            ),
-            last_response=(MessagePiece.model_validate(data["last_response"]) if data.get("last_response") else None),
-            last_score=Score.model_validate(data["last_score"]) if data.get("last_score") else None,
-            executed_turns=data.get("executed_turns", 0),
-            execution_time_ms=data.get("execution_time_ms", 0),
-            outcome=AttackOutcome(data.get("outcome", "undetermined")),
-            outcome_reason=data.get("outcome_reason"),
-            timestamp=(
-                datetime.fromisoformat(data["timestamp"]) if data.get("timestamp") else datetime.now(timezone.utc)
-            ),
-            related_conversations={
-                ConversationReference.model_validate(r) for r in data.get("related_conversations", [])
-            },
-            metadata=data.get("metadata", {}),
-            labels=data.get("labels", {}),
-            error_message=data.get("error_message"),
-            error_type=data.get("error_type"),
-            error_traceback=data.get("error_traceback"),
-            retry_events=[RetryEvent.model_validate(e) for e in data.get("retry_events", [])],
-            total_retries=data.get("total_retries", 0),
-        )

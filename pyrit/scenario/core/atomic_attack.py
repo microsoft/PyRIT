@@ -13,21 +13,21 @@ times when that may not be possible or make sense. So this class exists to
 have a common interface for scenarios.
 """
 
-import logging
-from typing import TYPE_CHECKING, Any, Optional
+from __future__ import annotations
 
-from pyrit.common.deprecation import print_deprecation_message
+import logging
+from typing import TYPE_CHECKING, Any
+
 from pyrit.common.utils import to_sha256
-from pyrit.executor.attack import AttackExecutor, AttackStrategy
-from pyrit.executor.attack.core.attack_executor import AttackExecutorResult
+from pyrit.executor.attack import AttackExecutor
 from pyrit.executor.attack.core.attack_result_attribution import AttackResultAttribution
 from pyrit.memory import CentralMemory
-from pyrit.memory.memory_models import MAX_IDENTIFIER_VALUE_LENGTH
-from pyrit.models import AtomicAttackEvaluationIdentifier, AttackResult, SeedAttackGroup, build_atomic_attack_identifier
-from pyrit.scenario.core.attack_technique import AttackTechnique
+from pyrit.models import AtomicAttackEvaluationIdentifier, AtomicAttackIdentifier, AttackResult, AttackSeedGroup
 
 if TYPE_CHECKING:
+    from pyrit.executor.attack.core.attack_executor import AttackExecutorResult
     from pyrit.prompt_target import PromptTarget
+    from pyrit.scenario.core.attack_technique import AttackTechnique
     from pyrit.score import TrueFalseScorer
 
 logger = logging.getLogger(__name__)
@@ -41,11 +41,11 @@ class AtomicAttack:
     all objectives in a dataset. Multiple AtomicAttacks can be grouped together into
     larger test scenarios for comprehensive security testing and evaluation.
 
-    The AtomicAttack uses SeedAttackGroups as the single source of truth for objectives,
-    prepended conversations, and next messages. Each SeedAttackGroup must have an objective set.
+    The AtomicAttack uses AttackSeedGroups as the single source of truth for objectives,
+    prepended conversations, and next messages. Each AttackSeedGroup must have an objective set.
 
     An ``AttackTechnique`` bundles the attack strategy with an optional
-    ``SeedAttackTechniqueGroup``, cleanly separating "how to attack" from
+    ``AttackTechniqueSeedGroup``, cleanly separating "how to attack" from
     "what to attack" (the objective).
     """
 
@@ -54,12 +54,11 @@ class AtomicAttack:
         *,
         atomic_attack_name: str,
         display_group: str | None = None,
-        attack_technique: AttackTechnique | None = None,
-        attack: AttackStrategy[Any, Any] | None = None,
-        seed_groups: list[SeedAttackGroup],
-        adversarial_chat: Optional["PromptTarget"] = None,
-        objective_scorer: Optional["TrueFalseScorer"] = None,
-        memory_labels: Optional[dict[str, str]] = None,
+        attack_technique: AttackTechnique,
+        seed_groups: list[AttackSeedGroup],
+        adversarial_chat: PromptTarget | None = None,
+        objective_scorer: TrueFalseScorer | None = None,
+        memory_labels: dict[str, str] | None = None,
         **attack_execute_params: Any,
     ) -> None:
         """
@@ -73,11 +72,9 @@ class AtomicAttack:
                 output (console printer, reports).  When ``None``, falls back
                 to ``atomic_attack_name``.
             attack_technique: An AttackTechnique bundling the attack strategy and optional
-                technique seeds. Preferred over the deprecated ``attack`` parameter.
-            attack: **Deprecated.** Will be removed in v0.16.0. The configured attack
-                strategy to execute. Use ``attack_technique`` instead.
+                technique seeds.
             seed_groups: List of seed attack groups. Each must be a
-                ``SeedAttackGroup`` (which guarantees exactly one objective).
+                ``AttackSeedGroup`` (which guarantees exactly one objective).
             adversarial_chat: Optional chat target for generating
                 adversarial prompts or simulated conversations.
             objective_scorer: Optional scorer for evaluating simulated
@@ -87,39 +84,25 @@ class AtomicAttack:
                 execution method.
 
         Raises:
-            ValueError: If seed_groups list is empty, or if neither attack_technique
-                nor attack is provided, or both are provided.
-            TypeError: If any entry of ``seed_groups`` is not a ``SeedAttackGroup``.
+            ValueError: If seed_groups list is empty.
+            TypeError: If any entry of ``seed_groups`` is not a ``AttackSeedGroup``.
         """
         self.atomic_attack_name = atomic_attack_name
         self.display_group = display_group or atomic_attack_name
 
-        if attack_technique is not None and attack is not None:
-            raise ValueError("Provide either attack_technique or attack, not both.")
-
-        if attack_technique is not None:
-            self._attack_technique = attack_technique
-        elif attack is not None:
-            print_deprecation_message(
-                old_item="AtomicAttack(attack=...)",
-                new_item="AtomicAttack(attack_technique=AttackTechnique(attack=...))",
-                removed_in="0.16.0",
-            )
-            self._attack_technique = AttackTechnique(attack=attack)
-        else:
-            raise ValueError("Either attack_technique or attack must be provided.")
+        self._attack_technique = attack_technique
 
         # Validate seed_groups
         if not seed_groups:
             raise ValueError("seed_groups list cannot be empty")
 
-        # Validate that each seed_group is actually a SeedAttackGroup (which Pydantic
+        # Validate that each seed_group is actually a AttackSeedGroup (which Pydantic
         # already ensured holds the AtomicAttack invariant of "exactly one objective"
-        # at construction time). A plain SeedGroup or SeedAttackTechniqueGroup is not
+        # at construction time). A plain SeedGroup or AttackTechniqueSeedGroup is not
         # accepted here even though they share a base class.
         for sg in seed_groups:
-            if not isinstance(sg, SeedAttackGroup):
-                raise TypeError(f"seed_groups must contain SeedAttackGroup instances; got {type(sg).__name__}.")
+            if not isinstance(sg, AttackSeedGroup):
+                raise TypeError(f"seed_groups must contain AttackSeedGroup instances; got {type(sg).__name__}.")
 
         self._seed_groups = seed_groups
         self._validate_unique_objective_hashes()
@@ -187,7 +170,7 @@ class AtomicAttack:
 
     @property
     def attack_technique(self) -> AttackTechnique:
-        """Get the attack technique for this atomic attack."""
+        """The attack technique for this atomic attack."""
         return self._attack_technique
 
     @property
@@ -203,7 +186,7 @@ class AtomicAttack:
         which is what makes it usable as the resume disambiguator alongside
         ``atomic_attack_name``.
         """
-        composite = build_atomic_attack_identifier(
+        composite = AtomicAttackIdentifier.build(
             technique_identifier=self._attack_technique.get_identifier(),
             seed_group=None,
         )
@@ -212,20 +195,20 @@ class AtomicAttack:
     @property
     def objectives(self) -> list[str]:
         """
-        Get the objectives from the seed groups.
+        The objectives from the seed groups.
 
         Returns:
-            List[str]: List of objectives from all seed groups.
+            list[str]: List of objectives from all seed groups.
         """
         return [sg.objective.value for sg in self._seed_groups if sg.objective is not None]
 
     @property
-    def seed_groups(self) -> list[SeedAttackGroup]:
+    def seed_groups(self) -> list[AttackSeedGroup]:
         """
-        Get a copy of the seed groups list for this atomic attack.
+        A copy of the seed groups list for this atomic attack.
 
         Returns:
-            List[SeedAttackGroup]: A copy of the seed groups list.
+            list[AttackSeedGroup]: A copy of the seed groups list.
         """
         return list(self._seed_groups)
 
@@ -248,28 +231,6 @@ class AtomicAttack:
             sg for sg in self._seed_groups if sg.objective is None or to_sha256(sg.objective.value) not in hashes
         ]
 
-    def filter_seed_groups_by_objectives(self, *, remaining_objectives: list[str]) -> None:
-        """
-        Filter seed groups to only those with objectives in the remaining list.
-
-        .. deprecated::
-            Use ``drop_seed_groups_with_hashes`` (or ``keep_seed_groups_with_hashes``)
-            which keys on content-addressed ``objective_sha256`` instead of
-            objective text. Scheduled for removal in 0.16.0.
-
-        Args:
-            remaining_objectives (List[str]): List of objectives that still need to be executed.
-        """
-        print_deprecation_message(
-            old_item="AtomicAttack.filter_seed_groups_by_objectives(remaining_objectives=...)",
-            new_item="AtomicAttack.keep_seed_groups_with_hashes(hashes=...)",
-            removed_in="0.16.0",
-        )
-        remaining_set = set(remaining_objectives)
-        self._seed_groups = [
-            sg for sg in self._seed_groups if sg.objective is not None and sg.objective.value in remaining_set
-        ]
-
     def keep_seed_groups_with_hashes(self, *, hashes: set[str]) -> set[str]:
         """
         Keep only seed groups whose ``objective_sha256`` is in ``hashes``.
@@ -290,7 +251,7 @@ class AtomicAttack:
             no longer exist in the dataset.
         """
         retained: set[str] = set()
-        new_groups: list[SeedAttackGroup] = []
+        new_groups: list[AttackSeedGroup] = []
         for sg in self._seed_groups:
             if sg.objective is None:
                 continue
@@ -306,7 +267,6 @@ class AtomicAttack:
         *,
         executor: AttackExecutor | None = None,
         return_partial_on_failure: bool = True,
-        max_concurrency: int | None = None,
         **attack_params: Any,
     ) -> AttackExecutorResult[AttackResult]:
         """
@@ -329,15 +289,10 @@ class AtomicAttack:
             executor (AttackExecutor | None): Optional ``AttackExecutor`` to run the
                 attack with. When provided, its concurrency budget is used and is
                 shared with anything else holding a reference to it. When ``None``,
-                a fresh ``AttackExecutor(max_concurrency=max_concurrency)`` is created
-                for this call.
+                a fresh ``AttackExecutor(max_concurrency=1)`` is created for this call.
             return_partial_on_failure (bool): If True, returns partial results even when
                 some objectives don't complete execution. If False, raises an exception on
                 any execution failure. Defaults to True.
-            max_concurrency (int | None): **Deprecated.** Will be removed in 0.16.0. Pass
-                ``executor=AttackExecutor(max_concurrency=...)`` instead. Passing any
-                value here emits a ``DeprecationWarning``. When ``executor`` is also
-                provided, this value is silently ignored.
             **attack_params: Additional parameters to pass to the attack strategy.
 
         Returns:
@@ -347,15 +302,8 @@ class AtomicAttack:
         Raises:
             ValueError: If the attack execution fails completely and return_partial_on_failure=False.
         """
-        if max_concurrency is not None:
-            print_deprecation_message(
-                old_item="AtomicAttack.run_async(max_concurrency=...)",
-                new_item="AtomicAttack.run_async(executor=AttackExecutor(max_concurrency=...))",
-                removed_in="0.16.0",
-            )
-
         if executor is None:
-            executor = AttackExecutor(max_concurrency=max_concurrency if max_concurrency is not None else 1)
+            executor = AttackExecutor(max_concurrency=1)
 
         logger.info(
             f"Starting atomic attack execution with {len(self._seed_groups)} seed groups "
@@ -413,8 +361,8 @@ class AtomicAttack:
             return results
 
         except Exception as e:
-            logger.error(f"Atomic attack execution failed: {str(e)}")
-            raise ValueError(f"Failed to execute atomic attack: {str(e)}") from e
+            logger.error(f"Atomic attack '{self.atomic_attack_name}' execution failed: {str(e)}")
+            raise ValueError(f"Failed to execute atomic attack '{self.atomic_attack_name}': {str(e)}") from e
 
     def _enrich_atomic_attack_identifiers(self, *, results: AttackExecutorResult[AttackResult]) -> None:
         """
@@ -433,15 +381,14 @@ class AtomicAttack:
 
         for result, idx in zip(results.completed_results, results.input_indices, strict=True):
             if idx < len(self._seed_groups):
-                identifier = build_atomic_attack_identifier(
+                identifier = AtomicAttackIdentifier.build(
                     technique_identifier=self._attack_technique.get_identifier(),
                     seed_group=self._seed_groups[idx],
                 )
 
                 # Persist the enriched identifier back to the database.
-                # Set eval_hash before truncation so it survives the DB round-trip.
-                if identifier.eval_hash is None:
-                    identifier = identifier.with_eval_hash(AtomicAttackEvaluationIdentifier(identifier).eval_hash)
+                # Stamp eval_hash so it lands in the stored JSON for DB-level filtering.
+                identifier = identifier.with_eval_hash(AtomicAttackEvaluationIdentifier(identifier).eval_hash)
 
                 result.atomic_attack_identifier = identifier
 
@@ -449,8 +396,6 @@ class AtomicAttack:
                     memory.update_attack_result_by_id(
                         attack_result_id=result.attack_result_id,
                         update_fields={
-                            "atomic_attack_identifier": identifier.model_dump(
-                                context={"max_value_length": MAX_IDENTIFIER_VALUE_LENGTH},
-                            ),
+                            "atomic_attack_identifier": identifier.model_dump(),
                         },
                     )

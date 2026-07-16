@@ -113,15 +113,15 @@ class TestMemoryQueryMethodContract:
         memory.dispose_engine()
 
     def test_memory_has_get_conversation(self):
-        """_callback_chat_target.py calls memory.get_conversation(conversation_id=...)."""
+        """_callback_chat_target.py calls memory.get_conversation_messages(conversation_id=...)."""
         memory = SQLiteMemory(db_path=":memory:")
-        assert hasattr(memory, "get_conversation")
-        assert callable(memory.get_conversation)
+        assert hasattr(memory, "get_conversation_messages")
+        assert callable(memory.get_conversation_messages)
         memory.dispose_engine()
 
     def test_get_conversation_returns_list(self, sqlite_instance):
         """get_conversation should return a list (empty for unknown conversation_id)."""
-        result = sqlite_instance.get_conversation(conversation_id="nonexistent-id")
+        result = sqlite_instance.get_conversation_messages(conversation_id="nonexistent-id")
         assert isinstance(result, list)
 
     def test_get_message_pieces_with_labels_returns_list(self, sqlite_instance):

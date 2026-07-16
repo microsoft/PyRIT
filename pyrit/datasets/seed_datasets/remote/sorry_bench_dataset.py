@@ -3,12 +3,14 @@
 
 import logging
 import os
-from typing import Optional
+
+from typing_extensions import override
 
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import Modality, SeedDataset, SeedPrompt
+from pyrit.models import Modality, SeedDataset, SeedPrompt, SeedUnion
+from pyrit.models.harm_category import HarmCategory
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +24,34 @@ class _SorryBenchDataset(_RemoteDatasetLoader):
 
     Reference: [@xie2024sorrybench]
     """
+
+    _AUTHORS = [
+        "Tinghao Xie",
+        "Xiangyu Qi",
+        "Yi Zeng",
+        "Yangsibo Huang",
+        "Udari Madhushani Sehwag",
+        "Kaixuan Huang",
+        "Luxi He",
+        "Boyi Wei",
+        "Dacheng Li",
+        "Ying Sheng",
+        "Ruoxi Jia",
+        "Bo Li",
+        "Kai Li",
+        "Danqi Chen",
+        "Peter Henderson",
+        "Prateek Mittal",
+    ]
+
+    _GROUPS = [
+        "Princeton University",
+        "Virginia Tech",
+        "Stanford University",
+        "UC Berkeley",
+        "University of Illinois Urbana-Champaign",
+        "University of Chicago",
+    ]
 
     # Metadata
     modalities: tuple[Modality, ...] = (Modality.TEXT,)
@@ -103,9 +133,9 @@ class _SorryBenchDataset(_RemoteDatasetLoader):
         self,
         *,
         source: str = "sorry-bench/sorry-bench-202503",
-        categories: Optional[list[str]] = None,
-        prompt_style: Optional[str] = None,
-        token: Optional[str] = None,
+        categories: list[str] | None = None,
+        prompt_style: str | None = None,
+        token: str | None = None,
     ) -> None:
         """
         Initialize the Sorry-Bench dataset loader.
@@ -141,10 +171,12 @@ class _SorryBenchDataset(_RemoteDatasetLoader):
                 )
 
     @property
+    @override
     def dataset_name(self) -> str:
-        """Return the dataset name."""
+        """The dataset name."""
         return "sorry_bench"
 
+    @override
     async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch Sorry-Bench dataset and return as SeedDataset.
@@ -168,19 +200,66 @@ class _SorryBenchDataset(_RemoteDatasetLoader):
                 token=self.token,
             )
 
-            common_metadata = {
-                "dataset_name": self.dataset_name,
-                "authors": ["Sorry-Bench Team"],
-                "description": "Adversarial prompts for testing LLM safety across 44 categories",
-                "source": self.source,
-                "data_type": "text",
-                "name": "Sorry-Bench 2025-03",
+            description = "Adversarial prompts for testing LLM safety across 44 categories"
+            # sorry-bench-202503 stores `category` as a 1-indexed number ("1".."44"),
+            # not the human-readable name. Map it back to the name so filtering,
+            # metadata and harm-category standardization all operate on the label.
+            category_num_to_name = {str(i): name for i, name in enumerate(self.VALID_CATEGORIES, start=1)}
+            harm_category_alias_overrides: dict[str, list[HarmCategory]] = {
+                "personal insulting words": [HarmCategory.HARASSMENT],
+                "social-group insulting words": [HarmCategory.HATE_SPEECH, HarmCategory.REPRESENTATIONAL],
+                "threatening words": [HarmCategory.VIOLENT_THREATS],
+                "lewd and obscene words": [HarmCategory.SEXUAL_CONTENT, HarmCategory.PROFANITY],
+                "libelous words": [HarmCategory.REPUTATIONAL_DAMAGE],
+                "self-harm": [HarmCategory.SELF_HARM],
+                "violent crimes": [HarmCategory.COORDINATION_HARM, HarmCategory.VIOLENT_THREATS],
+                "harassment": [HarmCategory.HARASSMENT],
+                "sexual crimes": [HarmCategory.COORDINATION_HARM, HarmCategory.SEXUAL_CONTENT],
+                "property crimes": [HarmCategory.COORDINATION_HARM],
+                "public order crimes": [HarmCategory.COORDINATION_HARM],
+                "system intrusion": [HarmCategory.MALWARE],
+                "malware code generation": [HarmCategory.MALWARE],
+                "fraud": [HarmCategory.SCAMS, HarmCategory.DECEPTION],
+                "financial crimes": [HarmCategory.SCAMS, HarmCategory.DECEPTION],
+                "ip infringement": [HarmCategory.COPYRIGHT, HarmCategory.TRADEMARK],
+                "pii violations": [HarmCategory.PPI],
+                "illegal crafting": [HarmCategory.COORDINATION_HARM, HarmCategory.REGULATED_GOODS],
+                "terrorism": [HarmCategory.VIOLENT_EXTREMISM],
+                "child-related crimes": [HarmCategory.GROOMING, HarmCategory.SEXUALIZATION],
+                "animal-related crimes": [HarmCategory.COORDINATION_HARM],
+                "environmental crimes": [HarmCategory.COORDINATION_HARM],
+                "evasion of law enforcement": [HarmCategory.COORDINATION_HARM],
+                "human elimination": [HarmCategory.VIOLENT_THREATS, HarmCategory.COORDINATION_HARM],
+                "advice on adult content": [HarmCategory.SEXUAL_CONTENT],
+                "sexual explicit content generation": [HarmCategory.SEXUAL_CONTENT],
+                "non-sexual explicit content generation": [HarmCategory.VIOLENT_CONTENT],
+                "fake news generation": [HarmCategory.INFO_INTEGRITY],
+                "false advertising": [HarmCategory.DECEPTION, HarmCategory.SCAMS],
+                "advice on discrimination behaviors": [HarmCategory.REPRESENTATIONAL, HarmCategory.HATE_SPEECH],
+                "military use": [HarmCategory.MILITARY],
+                "political belief promotion": [HarmCategory.CAMPAIGNING],
+                "ethical belief promotion": [HarmCategory.OTHER],
+                "religion promotion": [HarmCategory.OTHER],
+                "social stereotype promotion": [HarmCategory.REPRESENTATIONAL, HarmCategory.HATE_SPEECH],
+                "extremist content promotion": [HarmCategory.VIOLENT_EXTREMISM],
+                "conspiracy theories promotion": [HarmCategory.INFO_INTEGRITY],
+                "false common knowledge promotion": [HarmCategory.INFO_INTEGRITY],
+                "harmful & unhealthy behaviors promotion": [
+                    HarmCategory.DANGEROUS_SITUATIONS,
+                    HarmCategory.PUBLIC_HEALTH,
+                ],
+                "medical advice": [HarmCategory.HEALTH_DIAGNOSIS, HarmCategory.PUBLIC_HEALTH],
+                "financial advice": [HarmCategory.FINANCIAL_ADVICE],
+                "legal consulting advice": [HarmCategory.LEGAL_ADVICE],
+                "governance decision advice": [HarmCategory.HIGH_RISK_GOVERNMENT],
+                "dangerous machinery operation advice": [HarmCategory.DANGEROUS_SITUATIONS],
             }
 
-            seed_prompts = []
+            seed_prompts: list[SeedUnion] = []
 
             for item in data:
-                category = item.get("category", "")
+                raw_category = str(item.get("category", "")).strip()
+                category = category_num_to_name.get(raw_category, raw_category)
                 item_prompt_style = item.get("prompt_style", "")
                 turns = [t for t in item.get("turns", []) if t is not None]
                 question_id = item.get("question_id")
@@ -201,16 +280,26 @@ class _SorryBenchDataset(_RemoteDatasetLoader):
                 if self.prompt_style != item_prompt_style:
                     continue
 
+                standardized_harm_categories = self._standardize_harm_categories(
+                    category,
+                    alias_overrides=harm_category_alias_overrides,
+                )
                 seed_prompt = SeedPrompt(
                     value=prompt_text,
-                    harm_categories=[category],
-                    groups=[item_prompt_style] if item_prompt_style else [],
+                    data_type="text",
+                    name="Sorry-Bench 2025-03",
+                    dataset_name=self.dataset_name,
+                    harm_categories=standardized_harm_categories,
+                    description=description,
+                    authors=self._AUTHORS,
+                    groups=self._GROUPS,
+                    source=self.source,
                     metadata={
                         "sorry_bench_category": category,
+                        "sorry_bench_category_id": raw_category,
                         "prompt_style": item_prompt_style,
                         "question_id": question_id,
                     },
-                    **common_metadata,  # type: ignore[ty:invalid-argument-type]
                 )
 
                 seed_prompts.append(seed_prompt)

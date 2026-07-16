@@ -5,11 +5,12 @@ from __future__ import annotations
 
 import dataclasses
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Optional, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
-from pyrit.models import Message, SeedAttackGroup, SeedGroup
+from pyrit.models import AttackSeedGroup, Message, SeedGroup
 
 if TYPE_CHECKING:
+    from pyrit.models import SeedUnion
     from pyrit.prompt_target import PromptTarget
     from pyrit.score import TrueFalseScorer
 
@@ -33,13 +34,17 @@ class AttackParameters:
     objective: str
 
     # Optional message to send to the objective target (overrides objective if provided)
-    next_message: Optional[Message] = None
+    next_message: Message | None = None
 
     # Conversation that is automatically prepended to the target model
-    prepended_conversation: Optional[list[Message]] = None
+    prepended_conversation: list[Message] | None = None
 
     # Additional labels that can be applied to the prompts throughout the attack
-    memory_labels: Optional[dict[str, str]] = field(default_factory=dict)
+    memory_labels: dict[str, str] | None = field(default_factory=dict)
+
+    # Harm categories targeted by this attack, derived from the seed group's
+    # seeds. Stamped onto the produced AttackResult.
+    targeted_harm_categories: list[str] = field(default_factory=list)
 
     def __str__(self) -> str:
         """Return a nicely formatted string representation of the attack parameters."""
@@ -77,13 +82,13 @@ class AttackParameters:
     async def from_seed_group_async(
         cls: type[AttackParamsT],
         *,
-        seed_group: SeedAttackGroup,
-        adversarial_chat: Optional[PromptTarget] = None,
-        objective_scorer: Optional[TrueFalseScorer] = None,
+        seed_group: AttackSeedGroup,
+        adversarial_chat: PromptTarget | None = None,
+        objective_scorer: TrueFalseScorer | None = None,
         **overrides: Any,
     ) -> AttackParamsT:
         """
-        Create an AttackParameters instance from a SeedAttackGroup.
+        Create an AttackParameters instance from a AttackSeedGroup.
 
         Extracts standard fields from the seed group and applies any overrides.
         If the seed_group has a simulated conversation config,
@@ -101,7 +106,7 @@ class AttackParameters:
             An instance of this AttackParameters type.
 
         Raises:
-            TypeError: If ``seed_group`` is not a ``SeedAttackGroup``.
+            TypeError: If ``seed_group`` is not a ``AttackSeedGroup``.
             ValueError: If overrides contain invalid fields, or if seed_group has simulated
                 conversation but adversarial_chat/scorer not provided.
         """
@@ -110,9 +115,9 @@ class AttackParameters:
             generate_simulated_conversation_async,
         )
 
-        if not isinstance(seed_group, SeedAttackGroup):
+        if not isinstance(seed_group, AttackSeedGroup):
             raise TypeError(
-                f"seed_group must be a SeedAttackGroup, got {type(seed_group).__name__}. "
+                f"seed_group must be a AttackSeedGroup, got {type(seed_group).__name__}. "
                 "Plain SeedGroup does not enforce the 'exactly one objective' invariant required for an attack."
             )
 
@@ -126,7 +131,7 @@ class AttackParameters:
                 f"{cls.__name__} does not accept parameters: {invalid_fields}. Accepted parameters: {valid_fields}"
             )
 
-        # SeedAttackGroup's Pydantic validator guarantees exactly one objective is present.
+        # AttackSeedGroup's Pydantic validator guarantees exactly one objective is present.
         assert seed_group.objective is not None
 
         # Build params dict, only including fields this class accepts
@@ -137,6 +142,9 @@ class AttackParameters:
 
         if "memory_labels" in valid_fields:
             params["memory_labels"] = {}
+
+        if "targeted_harm_categories" in valid_fields:
+            params["targeted_harm_categories"] = list(seed_group.harm_categories)
 
         # Determine which group to use for extracting prepended_conversation/next_message
         extraction_group: SeedGroup = seed_group
@@ -151,7 +159,7 @@ class AttackParameters:
             if objective_scorer is None:
                 raise ValueError("objective_scorer is required when seed_group has a simulated conversation config")
 
-            # Generate the simulated conversation - returns List[SeedPrompt]
+            # Generate the simulated conversation - returns list[SeedPrompt]
             simulated_prompts = await generate_simulated_conversation_async(
                 objective=seed_group.objective.value,
                 adversarial_chat=adversarial_chat,
@@ -164,7 +172,7 @@ class AttackParameters:
             )
 
             # Merge simulated prompts with existing static prompts from the seed_group
-            all_prompts = list(seed_group.prompts) + simulated_prompts
+            all_prompts: list[SeedUnion] = [*seed_group.prompts, *simulated_prompts]
 
             # Create a temporary prompts-only SeedGroup for extraction
             # This group contains only prompts (no objective, no simulated config)
@@ -203,7 +211,7 @@ class AttackParameters:
             ValueError: If any field_name is not a valid field of this class.
 
         Example:
-            RolePlayAttackParameters = AttackParameters.excluding("next_message", "prepended_conversation")
+            ReducedParameters = AttackParameters.excluding("next_message", "prepended_conversation")
         """
         # Validate all field names exist
         current_fields = {f.name for f in dataclasses.fields(cls)}

@@ -242,6 +242,20 @@ async def test_send_prompt_async_invalid_request(target):
     assert "image_path" in str(excinfo.value)
 
 
+async def test_send_prompt_to_target_raises_without_conversation_id(target):
+    message_piece = MessagePiece(
+        original_value="hello",
+        original_value_data_type="text",
+        converted_value="hello",
+        converted_value_data_type="text",
+        role="user",
+        conversation_id=None,
+    )
+    message = Message(message_pieces=[message_piece])
+    with pytest.raises(ValueError, match="requires a conversation_id"):
+        await target._send_prompt_to_target_async(normalized_conversation=[message])
+
+
 async def test_receive_events_empty_output(target: RealtimeTarget):
     """Test handling of response.done event with empty output array."""
     mock_connection = AsyncMock()
@@ -911,29 +925,6 @@ async def test_send_prompt_audio_path_calls_send_audio_async(target, tmp_path):
     await target._send_prompt_to_target_async(normalized_conversation=[message])
 
     target.send_audio_async.assert_awaited_once()
-
-
-@pytest.mark.parametrize(
-    "alias_name, async_name, args, kwargs, returns_value",
-    [
-        ("send_config", "send_config_async", (), {"conversation_id": "conv"}, False),
-        ("cleanup_target", "cleanup_target_async", (), {}, False),
-        ("cleanup_conversation", "cleanup_conversation_async", (), {"conversation_id": "conv"}, False),
-        ("save_audio", "save_audio_async", (b"audio",), {}, True),
-        ("send_response_create", "send_response_create_async", (), {"conversation_id": "conv"}, False),
-        ("receive_events", "receive_events_async", (), {"conversation_id": "conv"}, True),
-    ],
-)
-async def test_deprecated_alias_delegates_to_async(target, alias_name, async_name, args, kwargs, returns_value):
-    mock_async = AsyncMock(return_value="sentinel")
-    setattr(target, async_name, mock_async)
-
-    with patch("pyrit.prompt_target.openai.openai_realtime_target.print_deprecation_message") as mock_deprecation:
-        result = await getattr(target, alias_name)(*args, **kwargs)
-
-    mock_deprecation.assert_called_once()
-    mock_async.assert_awaited_once()
-    assert result == "sentinel" if returns_value else result is None
 
 
 async def test_cleanup_conversation_async_closes_and_removes(target):

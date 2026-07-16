@@ -6,33 +6,40 @@ import logging
 from collections.abc import Awaitable, Callable, MutableSequence
 from enum import Enum
 from typing import (
+    TYPE_CHECKING,
     Any,
     Literal,
-    Optional,
     cast,
 )
 
 from openai.types.shared import ReasoningEffort
 
-from pyrit.common.data_url_converter import convert_local_image_to_data_url_async
 from pyrit.exceptions import (
     EmptyResponseException,
     PyritException,
     pyrit_target_retry,
 )
+from pyrit.memory.storage import convert_local_image_to_data_url_async
 from pyrit.models import (
     ComponentIdentifier,
+    JsonResponseConfig,
     Message,
     MessagePiece,
     PromptDataType,
     PromptResponseError,
 )
-from pyrit.models.json_response_config import _JsonResponseConfig
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
-from pyrit.prompt_target.common.utils import limit_requests_per_minute, validate_temperature, validate_top_p
+from pyrit.prompt_target.common.utils import (
+    limit_requests_per_minute,
+    validate_temperature,
+    validate_top_p,
+)
 from pyrit.prompt_target.openai.openai_error_handling import _is_content_filter_error
 from pyrit.prompt_target.openai.openai_target import OpenAITarget
+
+if TYPE_CHECKING:
+    from openai.types.responses import ResponseInputImageParam
 
 logger = logging.getLogger(__name__)
 
@@ -91,15 +98,15 @@ class OpenAIResponseTarget(OpenAITarget):
     def __init__(
         self,
         *,
-        custom_functions: Optional[dict[str, ToolExecutor]] = None,
-        max_output_tokens: Optional[int] = None,
-        temperature: Optional[float] = None,
-        top_p: Optional[float] = None,
-        reasoning_effort: Optional[ReasoningEffort] = None,
-        reasoning_summary: Optional[Literal["auto", "concise", "detailed"]] = None,
-        extra_body_parameters: Optional[dict[str, Any]] = None,
+        custom_functions: dict[str, ToolExecutor] | None = None,
+        max_output_tokens: int | None = None,
+        temperature: float | None = None,
+        top_p: float | None = None,
+        reasoning_effort: ReasoningEffort | None = None,
+        reasoning_summary: Literal["auto", "concise", "detailed"] | None = None,
+        extra_body_parameters: dict[str, Any] | None = None,
         fail_on_missing_function: bool = False,
-        custom_configuration: Optional[TargetConfiguration] = None,
+        custom_configuration: TargetConfiguration | None = None,
         **kwargs: Any,
     ) -> None:
         """
@@ -239,7 +246,12 @@ class OpenAIResponseTarget(OpenAITarget):
             }
         if piece.converted_value_data_type == "image_path":
             data_url = await convert_local_image_to_data_url_async(piece.converted_value)
-            return {"type": "input_image", "image_url": {"url": data_url}}
+            image_item: ResponseInputImageParam = {
+                "detail": "auto",
+                "type": "input_image",
+                "image_url": data_url,
+            }
+            return dict(image_item)
         raise ValueError(f"Unsupported piece type for inline content: {piece.converted_value_data_type}")
 
     async def _build_input_for_multi_modal_async(self, conversation: MutableSequence[Message]) -> list[dict[str, Any]]:
@@ -359,7 +371,7 @@ class OpenAIResponseTarget(OpenAITarget):
         return input_items
 
     async def _construct_request_body_async(
-        self, *, conversation: MutableSequence[Message], json_config: _JsonResponseConfig
+        self, *, conversation: MutableSequence[Message], json_config: JsonResponseConfig
     ) -> dict[str, Any]:
         """
         Construct the request body to send to the Responses API.
@@ -396,12 +408,12 @@ class OpenAIResponseTarget(OpenAITarget):
         # Filter out None values
         return {k: v for k, v in body_parameters.items() if v is not None}
 
-    def _build_reasoning_config(self) -> Optional[dict[str, Any]]:
+    def _build_reasoning_config(self) -> dict[str, Any] | None:
         """
         Build the reasoning configuration dict for the Responses API.
 
         Returns:
-            Optional[Dict[str, Any]]: The reasoning config, or None if neither effort nor summary is set.
+            dict[str, Any] | None: The reasoning config, or None if neither effort nor summary is set.
         """
         if self._reasoning_effort is None and self._reasoning_summary is None:
             return None
@@ -413,7 +425,7 @@ class OpenAIResponseTarget(OpenAITarget):
             reasoning["summary"] = self._reasoning_summary
         return reasoning
 
-    def _build_text_format(self, json_config: _JsonResponseConfig) -> Optional[dict[str, Any]]:
+    def _build_text_format(self, json_config: JsonResponseConfig) -> dict[str, Any] | None:
         if not json_config.enabled:
             return None
 
@@ -459,7 +471,7 @@ class OpenAIResponseTarget(OpenAITarget):
 
         return False
 
-    def _extract_partial_content(self, response: Any) -> Optional[str]:
+    def _extract_partial_content(self, response: Any) -> str | None:
         """
         Extract partial content from a Response API response that was content-filtered.
 
@@ -493,7 +505,7 @@ class OpenAIResponseTarget(OpenAITarget):
         except (AttributeError, IndexError, TypeError):
             return None
 
-    def _validate_response(self, response: Any, request: MessagePiece) -> Optional[Message]:
+    def _validate_response(self, response: Any, request: MessagePiece) -> Message | None:
         """
         Validate a Response API response for errors.
 
@@ -584,7 +596,7 @@ class OpenAIResponseTarget(OpenAITarget):
         responses_to_return: list[Message] = []
 
         # Main agentic loop - each back-and-forth creates a new message
-        tool_call_section: Optional[dict[str, Any]] = None
+        tool_call_section: dict[str, Any] | None = None
 
         while True:
             logger.info(f"Sending conversation with {len(working_conversation)} messages to the prompt target")
@@ -625,7 +637,7 @@ class OpenAIResponseTarget(OpenAITarget):
         return responses_to_return
 
     def _parse_response_output_section(
-        self, *, section: Any, message_piece: MessagePiece, error: Optional[PromptResponseError]
+        self, *, section: Any, message_piece: MessagePiece, error: PromptResponseError | None
     ) -> MessagePiece | None:
         """
         Parse model output sections, forwarding tool-calls for the agentic loop.
@@ -717,16 +729,13 @@ class OpenAIResponseTarget(OpenAITarget):
             role="assistant",
             original_value=piece_value,
             conversation_id=message_piece.conversation_id,
-            labels=message_piece.labels,  # deprecated
-            prompt_target_identifier=message_piece.prompt_target_identifier,
-            attack_identifier=message_piece.attack_identifier,
             original_value_data_type=piece_type,
             response_error=error or "none",
         )
 
     # Agentic helpers (module scope)
 
-    def _find_last_pending_tool_call(self, reply: Message) -> Optional[dict[str, Any]]:
+    def _find_last_pending_tool_call(self, reply: Message) -> dict[str, Any] | None:
         """
         Return the last tool-call section in assistant messages, or None.
         Looks for a piece whose value parses as JSON with a 'type' key matching function_call.
@@ -825,7 +834,4 @@ class OpenAIResponseTarget(OpenAITarget):
             ),
             original_value_data_type="function_call_output",
             conversation_id=reference_piece.conversation_id,
-            labels={"call_id": call_id},  # deprecated
-            prompt_target_identifier=reference_piece.prompt_target_identifier,
-            attack_identifier=reference_piece.attack_identifier,
         )

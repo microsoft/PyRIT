@@ -1,10 +1,11 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+from __future__ import annotations
+
 import base64
 import logging
-from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 from azure.ai.contentsafety.aio import ContentSafetyClient
 from azure.ai.contentsafety.models import (
@@ -19,14 +20,8 @@ from azure.core.credentials import AzureKeyCredential
 
 from pyrit.auth import AsyncTokenProviderCredential, ensure_async_token_provider, get_azure_async_token_provider
 from pyrit.common import default_values
-from pyrit.models import (
-    ComponentIdentifier,
-    DataTypeSerializer,
-    Message,
-    MessagePiece,
-    Score,
-    data_serializer_factory,
-)
+from pyrit.memory import DataTypeSerializer, data_serializer_factory
+from pyrit.models import ComponentIdentifier, Message, MessagePiece, Score
 from pyrit.score.float_scale.float_scale_score_aggregator import (
     FloatScaleScorerByCategory,
 )
@@ -34,6 +29,8 @@ from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 
 if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
     from pyrit.score.scorer_evaluation.metrics_type import RegistryUpdateBehavior
     from pyrit.score.scorer_evaluation.scorer_evaluator import ScorerEvalDatasetFiles
     from pyrit.score.scorer_evaluation.scorer_metrics import ScorerMetrics
@@ -68,7 +65,7 @@ class AzureContentFilterScorer(FloatScaleScorer):
     }
 
     @classmethod
-    def _get_eval_files_for_category(cls, category: TextCategory) -> Optional["ScorerEvalDatasetFiles"]:
+    def _get_eval_files_for_category(cls, category: TextCategory) -> ScorerEvalDatasetFiles | None:
         """
         Get the ScorerEvalDatasetFiles for a given harm category.
 
@@ -95,27 +92,27 @@ class AzureContentFilterScorer(FloatScaleScorer):
     def __init__(
         self,
         *,
-        endpoint: Optional[str | None] = None,
-        api_key: Optional[str | Callable[[], str | Awaitable[str]] | None] = None,
-        harm_categories: Optional[list[TextCategory]] = None,
-        validator: Optional[ScorerPromptValidator] = None,
+        endpoint: str | None = None,
+        api_key: str | Callable[[], str | Awaitable[str]] | None = None,
+        harm_categories: list[TextCategory] | None = None,
+        validator: ScorerPromptValidator | None = None,
     ) -> None:
         """
         Initialize an Azure Content Filter Scorer.
 
         Args:
-            endpoint (Optional[str | None]): The endpoint URL for the Azure Content Safety service.
+            endpoint (str | None | None): The endpoint URL for the Azure Content Safety service.
                 Defaults to the `ENDPOINT_URI_ENVIRONMENT_VARIABLE` environment variable.
-            api_key (Optional[str | Callable[[], str | Awaitable[str]] | None]):
+            api_key (str | Callable[[], str | Awaitable[str]] | None | None):
                 The API key for accessing the Azure Content Safety service,
                 or a callable that returns an access token. Both synchronous and asynchronous
                 token providers are supported. Sync providers are automatically wrapped for
                 async compatibility. If not provided (via parameter or environment variable),
                 Entra ID authentication is used automatically.
                 Defaults to the `API_KEY_ENVIRONMENT_VARIABLE` environment variable.
-            harm_categories (Optional[list[TextCategory]]): The harm categories you want to query for as
+            harm_categories (list[TextCategory] | None): The harm categories you want to query for as
                 defined in azure.ai.contentsafety.models.TextCategory. If not provided, defaults to all categories.
-            validator (Optional[ScorerPromptValidator]): Custom validator for the scorer. Defaults to None.
+            validator (ScorerPromptValidator | None): Custom validator for the scorer. Defaults to None.
 
         Raises:
             ValueError: If no endpoint is provided.
@@ -150,7 +147,7 @@ class AzureContentFilterScorer(FloatScaleScorer):
             if callable(self._api_key):
                 # Token provider - create an AsyncTokenCredential wrapper
                 credential = AsyncTokenProviderCredential(self._api_key)  # type: ignore[ty:invalid-argument-type]
-                self._azure_cf_client = ContentSafetyClient(self._endpoint, credential=credential)
+                self._azure_cf_client = ContentSafetyClient(self._endpoint, credential=credential)  # type: ignore[ty:invalid-argument-type]
             else:
                 # String API key
                 if not isinstance(self._api_key, str):
@@ -163,7 +160,7 @@ class AzureContentFilterScorer(FloatScaleScorer):
 
     @property
     def _category_values(self) -> list[str]:
-        """Get the string values of the configured harm categories for API calls."""
+        """The string values of the configured harm categories for API calls."""
         return [category.value for category in self._harm_categories]
 
     def _build_identifier(self) -> ComponentIdentifier:
@@ -181,12 +178,12 @@ class AzureContentFilterScorer(FloatScaleScorer):
 
     async def evaluate_async(
         self,
-        file_mapping: Optional["ScorerEvalDatasetFiles"] = None,
+        file_mapping: ScorerEvalDatasetFiles | None = None,
         *,
         num_scorer_trials: int = 3,
-        update_registry_behavior: "RegistryUpdateBehavior | None" = None,
+        update_registry_behavior: RegistryUpdateBehavior | None = None,
         max_concurrency: int = 10,
-    ) -> Optional["ScorerMetrics"]:
+    ) -> ScorerMetrics | None:
         """
         Evaluate this scorer against human-labeled datasets.
 
@@ -247,7 +244,7 @@ class AzureContentFilterScorer(FloatScaleScorer):
 
         return [text[i : i + self.MAX_TEXT_LENGTH] for i in range(0, len(text), self.MAX_TEXT_LENGTH)]
 
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: Optional[str] = None) -> list[Score]:
+    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
         """
         Evaluate the input text or image using the Azure Content Filter API.
 
@@ -257,7 +254,7 @@ class AzureContentFilterScorer(FloatScaleScorer):
                 In case of an image, the image size must be less than 2048 x 2048 pixels,
                 but more than 50x50 pixels. The data size should not exceed 4 MB. Image must be
                 of type JPEG, PNG, GIF, BMP, TIFF, or WEBP.
-            objective (Optional[str]): The objective for scoring context. Currently not supported for this scorer.
+            objective (str | None): The objective for scoring context. Currently not supported for this scorer.
                 Defaults to None.
 
         Returns:
@@ -343,7 +340,9 @@ class AzureContentFilterScorer(FloatScaleScorer):
             for result in aggregated_results
         ]
 
-    def _build_fallback_score(self, *, message: Message, objective: Optional[str]) -> list[Score]:
+    def _build_fallback_score(
+        self, *, message: Message, objective: str | None, scorer_response_blocked: bool = False
+    ) -> list[Score]:
         """
         Build one neutral ``0.0`` fallback score per configured harm category.
 
@@ -359,7 +358,9 @@ class AzureContentFilterScorer(FloatScaleScorer):
 
         Args:
             message (Message): The message whose first piece is inspected for status.
-            objective (Optional[str]): The objective associated with this scoring call.
+            objective (str | None): The objective associated with this scoring call.
+            scorer_response_blocked (bool): When True, the scorer's own LLM response was
+                blocked by content filtering; reflected in the rationale.
 
         Returns:
             list[Score]: One ``0.0`` ``float_scale`` score per configured harm category,
@@ -373,7 +374,10 @@ class AzureContentFilterScorer(FloatScaleScorer):
         if piece_id is None:
             raise ValueError("Cannot create score: message piece has no id or original_prompt_id")
 
-        if first_piece.is_blocked():
+        if scorer_response_blocked:
+            status = "The scorer's own LLM response was blocked by content filtering (raise_if_scorer_blocks is False)"
+            description = "Scorer response blocked; returning 0.0 per configured category."
+        elif first_piece.is_blocked():
             status = (
                 "The request was blocked by the target (score_blocked_content is False or no partial content available)"
             )

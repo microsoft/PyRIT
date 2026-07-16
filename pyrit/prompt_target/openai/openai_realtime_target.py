@@ -6,21 +6,16 @@ import base64
 import logging
 import re
 import wave
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, Optional
+from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 from openai import AsyncOpenAI
 
-from pyrit.common.deprecation import print_deprecation_message
 from pyrit.exceptions import (
     pyrit_target_retry,
 )
 from pyrit.exceptions.exception_classes import ServerErrorException
-from pyrit.models import (
-    ComponentIdentifier,
-    Message,
-    construct_response_from_request,
-    data_serializer_factory,
-)
+from pyrit.memory import data_serializer_factory
+from pyrit.models import ComponentIdentifier, Message, construct_response_from_request
 from pyrit.prompt_target.common.realtime_audio import (
     RealtimeTargetResult,
     ServerVadConfig,
@@ -36,7 +31,7 @@ from pyrit.prompt_target.openai.openai_target import OpenAITarget
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
-    from pyrit.prompt_normalizer import PromptConverterConfiguration, PromptNormalizer
+    from pyrit.prompt_normalizer import ConverterConfiguration, PromptNormalizer
 
 logger = logging.getLogger(__name__)
 
@@ -87,9 +82,9 @@ class RealtimeTarget(OpenAITarget):
     def __init__(
         self,
         *,
-        voice: Optional[RealTimeVoice] = None,
-        existing_convo: Optional[dict[str, Any]] = None,
-        custom_configuration: Optional[TargetConfiguration] = None,
+        voice: RealTimeVoice | None = None,
+        existing_convo: dict[str, Any] | None = None,
+        custom_configuration: TargetConfiguration | None = None,
         **kwargs: Any,
     ) -> None:
         """
@@ -121,7 +116,7 @@ class RealtimeTarget(OpenAITarget):
 
         self.voice = voice
         self._existing_conversation = existing_convo if existing_convo is not None else {}
-        self._realtime_client: Optional[AsyncOpenAI] = None
+        self._realtime_client: AsyncOpenAI | None = None
 
     def open_streaming_session(
         self,
@@ -129,11 +124,10 @@ class RealtimeTarget(OpenAITarget):
         audio_chunks: "AsyncIterator[bytes]",
         prompt_normalizer: "PromptNormalizer",
         conversation_id: str | None = None,
-        request_converter_configurations: "list[PromptConverterConfiguration] | None" = None,
-        response_converter_configurations: "list[PromptConverterConfiguration] | None" = None,
+        request_converter_configurations: "list[ConverterConfiguration] | None" = None,
+        response_converter_configurations: "list[ConverterConfiguration] | None" = None,
         prepended_conversation: list[Message] | None = None,
         server_vad: bool | ServerVadConfig = True,
-        attack_identifier: "ComponentIdentifier | None" = None,
         persist_prepended_conversation: bool = True,
     ) -> "_OpenAIRealtimeStreamingSession":
         """
@@ -153,9 +147,6 @@ class RealtimeTarget(OpenAITarget):
             server_vad: Server-side voice activity detection. ``True`` (default) enables
                 VAD with default tuning. Pass a ``ServerVadConfig`` for custom tuning, or
                 ``False`` to disable (sending streaming config will then raise).
-            attack_identifier: Stamped on every persisted user / assistant piece for
-                attribution. Pass the caller's identifier so live messages share the
-                provenance contract of prepended messages.
             persist_prepended_conversation: When ``True`` (default), the session writes
                 ``prepended_conversation`` to memory itself. Pass ``False`` when the
                 caller already persisted the prepended conversation (e.g. via
@@ -177,7 +168,6 @@ class RealtimeTarget(OpenAITarget):
             response_converter_configurations=response_converter_configurations,
             prepended_conversation=prepended_conversation,
             server_vad=server_vad,
-            attack_identifier=attack_identifier,
             persist_prepended_conversation=persist_prepended_conversation,
         )
 
@@ -362,7 +352,7 @@ class RealtimeTarget(OpenAITarget):
         resolved_conversation = (
             conversation
             if conversation is not None
-            else list(self._memory.get_conversation(conversation_id=conversation_id))
+            else list(self._memory.get_conversation_messages(conversation_id=conversation_id))
         )
         system_prompt = self._get_system_prompt_from_conversation(conversation=resolved_conversation)
         config_variables = self._set_system_prompt_and_config_vars(system_prompt=system_prompt)
@@ -370,17 +360,6 @@ class RealtimeTarget(OpenAITarget):
         connection = self._get_connection(conversation_id=conversation_id)
         await connection.session.update(session=config_variables)
         logger.info("Session configuration sent")
-
-    async def send_config(  # pyrit-async-suffix-exempt
-        self, *, conversation_id: str, conversation: list[Message] | None = None
-    ) -> None:
-        """Use ``send_config_async`` instead; this is a deprecated alias."""
-        print_deprecation_message(
-            old_item="pyrit.prompt_target.RealtimeTarget.send_config",
-            new_item="pyrit.prompt_target.RealtimeTarget.send_config_async",
-            removed_in="0.16.0",
-        )
-        await self.send_config_async(conversation_id=conversation_id, conversation=conversation)
 
     def _get_system_prompt_from_conversation(self, *, conversation: list[Message]) -> str:
         """
@@ -425,6 +404,9 @@ class RealtimeTarget(OpenAITarget):
         message = normalized_conversation[-1]
         conversation_id = message.message_pieces[0].conversation_id
         request = message.message_pieces[0]
+
+        if not conversation_id:
+            raise ValueError("RealtimeTarget requires a conversation_id on the message being sent.")
 
         if conversation_id not in self._existing_conversation:
             connection = await self._connect_async(conversation_id=conversation_id)
@@ -491,15 +473,6 @@ class RealtimeTarget(OpenAITarget):
                 logger.warning(f"Error closing realtime client: {e}")
             self._realtime_client = None
 
-    async def cleanup_target(self) -> None:  # pyrit-async-suffix-exempt
-        """Use ``cleanup_target_async`` instead; this is a deprecated alias."""
-        print_deprecation_message(
-            old_item="pyrit.prompt_target.RealtimeTarget.cleanup_target",
-            new_item="pyrit.prompt_target.RealtimeTarget.cleanup_target_async",
-            removed_in="0.16.0",
-        )
-        await self.cleanup_target_async()
-
     async def cleanup_conversation_async(self, conversation_id: str) -> None:
         """
         Disconnects from the Realtime API for a specific conversation.
@@ -515,15 +488,6 @@ class RealtimeTarget(OpenAITarget):
             except Exception as e:
                 logger.warning(f"Error closing connection for {conversation_id}: {e}")
             del self._existing_conversation[conversation_id]
-
-    async def cleanup_conversation(self, conversation_id: str) -> None:  # pyrit-async-suffix-exempt
-        """Use ``cleanup_conversation_async`` instead; this is a deprecated alias."""
-        print_deprecation_message(
-            old_item="pyrit.prompt_target.RealtimeTarget.cleanup_conversation",
-            new_item="pyrit.prompt_target.RealtimeTarget.cleanup_conversation_async",
-            removed_in="0.16.0",
-        )
-        await self.cleanup_conversation_async(conversation_id=conversation_id)
 
     async def _connect_async(self, *, conversation_id: str) -> Any:
         """
@@ -550,7 +514,7 @@ class RealtimeTarget(OpenAITarget):
         num_channels: int = 1,
         sample_width: int = 2,
         sample_rate: int = 16000,
-        output_filename: Optional[str] = None,
+        output_filename: str | None = None,
     ) -> str:
         """
         Save audio bytes to a WAV file.
@@ -577,33 +541,6 @@ class RealtimeTarget(OpenAITarget):
 
         return data.value
 
-    async def save_audio(  # pyrit-async-suffix-exempt
-        self,
-        audio_bytes: bytes,
-        num_channels: int = 1,
-        sample_width: int = 2,
-        sample_rate: int = 16000,
-        output_filename: Optional[str] = None,
-    ) -> str:
-        """
-        Use ``save_audio_async`` instead; this is a deprecated alias.
-
-        Returns:
-            str: Same as ``save_audio_async``.
-        """
-        print_deprecation_message(
-            old_item="pyrit.prompt_target.RealtimeTarget.save_audio",
-            new_item="pyrit.prompt_target.RealtimeTarget.save_audio_async",
-            removed_in="0.16.0",
-        )
-        return await self.save_audio_async(
-            audio_bytes,
-            num_channels=num_channels,
-            sample_width=sample_width,
-            sample_rate=sample_rate,
-            output_filename=output_filename,
-        )
-
     async def send_response_create_async(self, conversation_id: str) -> None:
         """
         Send response.create using OpenAI client.
@@ -613,15 +550,6 @@ class RealtimeTarget(OpenAITarget):
         """
         connection = self._get_connection(conversation_id=conversation_id)
         await connection.response.create()
-
-    async def send_response_create(self, conversation_id: str) -> None:  # pyrit-async-suffix-exempt
-        """Use ``send_response_create_async`` instead; this is a deprecated alias."""
-        print_deprecation_message(
-            old_item="pyrit.prompt_target.RealtimeTarget.send_response_create",
-            new_item="pyrit.prompt_target.RealtimeTarget.send_response_create_async",
-            removed_in="0.16.0",
-        )
-        await self.send_response_create_async(conversation_id=conversation_id)
 
     async def receive_events_async(self, conversation_id: str) -> RealtimeTargetResult:
         """
@@ -767,20 +695,6 @@ class RealtimeTarget(OpenAITarget):
         )
         return result
 
-    async def receive_events(self, conversation_id: str) -> RealtimeTargetResult:  # pyrit-async-suffix-exempt
-        """
-        Use ``receive_events_async`` instead; this is a deprecated alias.
-
-        Returns:
-            RealtimeTargetResult: Same as ``receive_events_async``.
-        """
-        print_deprecation_message(
-            old_item="pyrit.prompt_target.RealtimeTarget.receive_events",
-            new_item="pyrit.prompt_target.RealtimeTarget.receive_events_async",
-            removed_in="0.16.0",
-        )
-        return await self.receive_events_async(conversation_id=conversation_id)
-
     def _get_connection(self, *, conversation_id: str) -> Any:
         """
         Get and validate the Realtime API connection for a conversation.
@@ -865,7 +779,7 @@ class RealtimeTarget(OpenAITarget):
             conversation_id: conversation ID
 
         Returns:
-            Tuple[str, RealtimeTargetResult]: Path to saved audio file and the RealtimeTargetResult
+            tuple[str, RealtimeTargetResult]: Path to saved audio file and the RealtimeTargetResult
 
         Raises:
             RuntimeError: If no audio is received from the server.
@@ -913,7 +827,7 @@ class RealtimeTarget(OpenAITarget):
             conversation_id (str): Conversation ID
 
         Returns:
-            Tuple[str, RealtimeTargetResult]: Path to saved audio file and the RealtimeTargetResult
+            tuple[str, RealtimeTargetResult]: Path to saved audio file and the RealtimeTargetResult
 
         Raises:
             Exception: If sending audio fails.

@@ -1,15 +1,14 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-import json
 import logging
 import struct
 from collections.abc import MutableSequence, Sequence
-from contextlib import closing, suppress
+from contextlib import closing
 from datetime import datetime, timedelta, timezone
-from typing import TYPE_CHECKING, Any, Literal, Optional, TypeVar, Union, cast
+from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast
 
-from sqlalchemy import and_, create_engine, event, exists, or_, text
+from sqlalchemy import and_, create_engine, event, exists, text
 from sqlalchemy.engine.base import Engine
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import InstrumentedAttribute, joinedload, sessionmaker
@@ -26,11 +25,8 @@ from pyrit.memory.memory_models import (
     EmbeddingDataEntry,
     PromptMemoryEntry,
 )
-from pyrit.models import (
-    AzureBlobStorageIO,
-    ConversationStats,
-    MessagePiece,
-)
+from pyrit.memory.storage import AzureBlobStorageIO
+from pyrit.models import ConversationStats
 
 if TYPE_CHECKING:
     from azure.core.credentials import AccessToken
@@ -61,12 +57,15 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
     AZURE_STORAGE_ACCOUNT_DB_DATA_CONTAINER_URL: str = "AZURE_STORAGE_ACCOUNT_DB_DATA_CONTAINER_URL"
     AZURE_STORAGE_ACCOUNT_DB_DATA_SAS_TOKEN: str = "AZURE_STORAGE_ACCOUNT_DB_DATA_SAS_TOKEN"
 
+    # Optional environment variable for production connection string to prevent accidental schema migrations on prod
+    AZURE_SQL_DB_CONNECTION_STRING_PROD: str = "AZURE_SQL_DB_CONNECTION_STRING_PROD"
+
     def __init__(
         self,
         *,
-        connection_string: Optional[str] = None,
-        results_container_url: Optional[str] = None,
-        results_sas_token: Optional[str] = None,
+        connection_string: str | None = None,
+        results_container_url: str | None = None,
+        results_sas_token: str | None = None,
         verbose: bool = False,
         skip_schema_migration: bool = False,
         silent: bool = False,
@@ -75,11 +74,11 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
         Initialize an Azure SQL Memory backend.
 
         Args:
-            connection_string (Optional[str]): The connection string for the Azure Sql Database. If not provided,
+            connection_string (str | None): The connection string for the Azure Sql Database. If not provided,
                 it falls back to the 'AZURE_SQL_DB_CONNECTION_STRING' environment variable.
-            results_container_url (Optional[str]): The URL to an Azure Storage Container. If not provided,
+            results_container_url (str | None): The URL to an Azure Storage Container. If not provided,
                 it falls back to the 'AZURE_STORAGE_ACCOUNT_DB_DATA_CONTAINER_URL' environment variable.
-            results_sas_token (Optional[str]): The Shared Access Signature (SAS) token for the storage container.
+            results_sas_token (str | None): The Shared Access Signature (SAS) token for the storage container.
                 If not provided, falls back to the 'AZURE_STORAGE_ACCOUNT_DB_DATA_SAS_TOKEN' environment variable.
             verbose (bool): Whether to enable verbose logging for the database engine. Defaults to False.
             skip_schema_migration (bool): Whether to skip schema migration. Defaults to False.
@@ -93,12 +92,12 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
             env_var_name=self.AZURE_STORAGE_ACCOUNT_DB_DATA_CONTAINER_URL, passed_value=results_container_url
         )
 
-        self._results_container_sas_token: Optional[str] = self._resolve_sas_token(
+        self._results_container_sas_token: str | None = self._resolve_sas_token(
             self.AZURE_STORAGE_ACCOUNT_DB_DATA_SAS_TOKEN, results_sas_token
         )
 
-        self._auth_token: Optional[AccessToken] = None
-        self._auth_token_expiry: Optional[int] = None
+        self._auth_token: AccessToken | None = None
+        self._auth_token_expiry: int | None = None
 
         self.results_path = self._results_container_url
 
@@ -110,22 +109,46 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
         self._enable_azure_authorization()
 
         self.SessionFactory = sessionmaker(bind=self.engine)
-        if not skip_schema_migration:
+
+        prod_connection_string = default_values.get_non_required_value(
+            env_var_name=self.AZURE_SQL_DB_CONNECTION_STRING_PROD
+        )
+
+        is_prod = bool(prod_connection_string) and self._connection_string == prod_connection_string
+        should_migrate = not is_prod and not skip_schema_migration
+
+        if should_migrate:
+            # Non-production: run schema migration (upgrade + check).
             self._run_schema_migration(silent=silent)
+        else:
+            # Production or skip_schema_migration=True: verify schema compatibility
+            # without modifying the database. Logs a warning on mismatch but does not
+            # block startup, so developers on newer code can still query data.
+            from alembic.util.exc import AutogenerateDiffsDetected, CommandError
+
+            try:
+                self._check_schema_migration(silent=silent)
+            except (AutogenerateDiffsDetected, CommandError) as e:
+                logger.warning(
+                    "Schema mismatch detected. "
+                    "Your code models differ from the database schema. "
+                    "This may cause errors if your code references columns or tables that don't exist. "
+                    f"Schema was NOT modified. Details: {e}"
+                )
 
         super().__init__()
 
     @staticmethod
-    def _resolve_sas_token(env_var_name: str, passed_value: Optional[str] = None) -> Optional[str]:
+    def _resolve_sas_token(env_var_name: str, passed_value: str | None = None) -> str | None:
         """
         Resolve the SAS token value, allowing a fallback to None for delegation SAS.
 
         Args:
             env_var_name (str): The environment variable name to look up.
-            passed_value (Optional[str]): A passed-in value for the SAS token.
+            passed_value (str | None): A passed-in value for the SAS token.
 
         Returns:
-            Optional[str]: Resolved SAS token or None if not provided.
+            str | None: Resolved SAS token or None if not provided.
         """
         try:
             return default_values.get_required_value(env_var_name=env_var_name, passed_value=passed_value)
@@ -235,8 +258,7 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
 
         Uses JSON_VALUE() function specific to SQL Azure to query label fields in JSON format.
 
-        Matches if labels are on the PromptMemoryEntry itself OR on any
-        AttackResultEntry that shares the same conversation_id.
+        Matches labels on an AttackResultEntry that shares the same conversation_id.
 
         Args:
             memory_labels (dict[str, str]): Dictionary of label key-value pairs to filter by.
@@ -244,33 +266,14 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
         Returns:
             list: List containing a single SQLAlchemy OR condition with bound parameters.
         """
-        # Build conditions for direct PME label match
-        pme_label_parts: list[str] = []
-        pme_bindparams: dict[str, str] = {}
-        # Build conditions for AR label match (via exists subquery)
         are_label_parts: list[str] = []
         are_bindparams: dict[str, str] = {}
 
         for key, value in memory_labels.items():
-            pme_param = f"pme_ml_{key}"
-            pme_label_parts.append(f"JSON_VALUE(\"PromptMemoryEntries\".labels, '$.{key}') = :{pme_param}")
-            pme_bindparams[pme_param] = str(value)
-
             are_param = f"are_ml_{key}"
             are_label_parts.append(f"JSON_VALUE(\"AttackResultEntries\".labels, '$.{key}') = :{are_param}")
             are_bindparams[are_param] = str(value)
 
-        # Direct PME label match
-        combined_pme = " AND ".join(pme_label_parts)
-        pme_match = and_(
-            PromptMemoryEntry.labels.isnot(None),
-            cast(
-                "ColumnElement[bool]",
-                text(f'ISJSON("PromptMemoryEntries".labels) = 1 AND {combined_pme}').bindparams(**pme_bindparams),
-            ),
-        )
-
-        # AR label match via exists subquery
         combined_are = " AND ".join(are_label_parts)
         are_match = exists().where(
             and_(
@@ -283,16 +286,16 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
             )
         )
 
-        return [or_(pme_match, are_match)]
+        return [are_match]
 
-    def _get_metadata_conditions(self, *, prompt_metadata: dict[str, Union[str, int]]) -> list[TextClause]:
+    def _get_metadata_conditions(self, *, prompt_metadata: dict[str, str | int]) -> list[TextClause]:
         """
         Generate SQL conditions for filtering by prompt metadata.
 
         Uses JSON_VALUE() function specific to SQL Azure to query metadata fields in JSON format.
 
         Args:
-            prompt_metadata (dict[str, Union[str, int]]): Dictionary of metadata key-value pairs to filter by.
+            prompt_metadata (dict[str, str | int]): Dictionary of metadata key-value pairs to filter by.
 
         Returns:
             list: List containing a single SQLAlchemy text condition with bound parameters.
@@ -310,7 +313,7 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
         return [condition]
 
     def _get_message_pieces_prompt_metadata_conditions(
-        self, *, prompt_metadata: dict[str, Union[str, int]]
+        self, *, prompt_metadata: dict[str, str | int]
     ) -> list[TextClause]:
         """
         Generate SQL conditions for filtering message pieces by prompt metadata.
@@ -318,14 +321,14 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
         This is a convenience wrapper around _get_metadata_conditions.
 
         Args:
-            prompt_metadata (dict[str, Union[str, int]]): Dictionary of metadata key-value pairs to filter by.
+            prompt_metadata (dict[str, str | int]): Dictionary of metadata key-value pairs to filter by.
 
         Returns:
             list: List containing SQLAlchemy text conditions with bound parameters.
         """
         return self._get_metadata_conditions(prompt_metadata=prompt_metadata)
 
-    def _get_seed_metadata_conditions(self, *, metadata: dict[str, Union[str, int]]) -> TextClause:
+    def _get_seed_metadata_conditions(self, *, metadata: dict[str, str | int]) -> TextClause:
         """
         Generate SQL condition for filtering seed prompts by metadata.
 
@@ -333,7 +336,7 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
         the first (and only) condition.
 
         Args:
-            metadata (dict[str, Union[str, int]]): Dictionary of metadata key-value pairs to filter by.
+            metadata (dict[str, str | int]): Dictionary of metadata key-value pairs to filter by.
 
         Returns:
             Any: SQLAlchemy text condition with bound parameters.
@@ -403,7 +406,7 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
         Args:
             json_column (InstrumentedAttribute[Any]): The JSON-backed SQLAlchemy field to query.
             property_path (str): The JSON path for the target array.
-            array_element_path (Optional[str]): An optional JSON path applied to each array item before matching.
+            array_element_path (str | None): An optional JSON path applied to each array item before matching.
             array_to_match (Sequence[str]): The array that must match the extracted JSON array values.
                 Combination semantics for multiple entries are controlled by ``match_mode``.
                 If ``array_to_match`` is empty, the condition matches only if the target is also an
@@ -448,49 +451,11 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
         combined = joiner.join(conditions)
         return text(f"""ISJSON("{table_name}".{column_name}) = 1 AND ({combined})""").bindparams(**bindparams_dict)
 
-    def _get_attack_result_harm_category_condition(self, *, targeted_harm_categories: Sequence[str]) -> Any:
-        """
-        Get the SQL Azure implementation for filtering AttackResults by targeted harm categories.
-
-        Uses JSON_QUERY() function specific to SQL Azure to check if categories exist in the JSON array.
-
-        Args:
-            targeted_harm_categories (Sequence[str]): List of harm category strings to filter by.
-
-        Returns:
-            Any: SQLAlchemy exists subquery condition with bound parameters.
-        """
-        # For SQL Azure, we need to use JSON_QUERY to check if a value exists in a JSON array
-        # OPENJSON can parse the array and we check if the category exists
-        # Using parameterized queries for safety
-        harm_conditions = []
-        bindparams_dict = {}
-        for i, category in enumerate(targeted_harm_categories):
-            param_name = f"harm_cat_{i}"
-            # Check if the JSON array contains the category value
-            harm_conditions.append(
-                f"EXISTS(SELECT 1 FROM OPENJSON(targeted_harm_categories) WHERE value = :{param_name})"
-            )
-            bindparams_dict[param_name] = category
-
-        combined_conditions = " AND ".join(harm_conditions)
-
-        return exists().where(
-            and_(
-                PromptMemoryEntry.conversation_id == AttackResultEntry.conversation_id,
-                PromptMemoryEntry.targeted_harm_categories.isnot(None),
-                PromptMemoryEntry.targeted_harm_categories != "",
-                PromptMemoryEntry.targeted_harm_categories != "[]",
-                text(f"ISJSON(targeted_harm_categories) = 1 AND {combined_conditions}").bindparams(**bindparams_dict),
-            )
-        )
-
     def _get_attack_result_label_condition(self, *, labels: dict[str, str | Sequence[str]]) -> Any:
         """
         Azure SQL implementation for filtering AttackResults by labels.
 
-        Matches if labels are on any associated PromptMemoryEntry OR directly
-        on the AttackResultEntry itself.
+        Matches labels directly on the AttackResultEntry.
 
         Uses JSON_VALUE() with parameterized IN clauses. See
         ``MemoryInterface._get_attack_result_label_condition`` for semantics.
@@ -498,10 +463,6 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
         Returns:
             Any: SQLAlchemy condition with bound parameters.
         """
-        # Build conditions for PromptMemoryEntry labels (via exists subquery)
-        pme_label_conditions: list[str] = []
-        pme_bindparams: dict[str, str] = {}
-        # Build conditions for AttackResultEntry labels (direct match)
         are_label_conditions: list[str] = []
         are_bindparams: dict[str, str] = {}
 
@@ -509,36 +470,14 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
             values = [raw_value] if isinstance(raw_value, str) else list(raw_value)
             if not values:
                 continue
-            pme_placeholders = []
             are_placeholders = []
             for idx, v in enumerate(values):
-                pme_param = f"pme_label_{key}_{idx}"
-                pme_placeholders.append(f":{pme_param}")
-                pme_bindparams[pme_param] = str(v)
                 are_param = f"are_label_{key}_{idx}"
                 are_placeholders.append(f":{are_param}")
                 are_bindparams[are_param] = str(v)
-            pme_in = ", ".join(pme_placeholders)
-            pme_label_conditions.append(f"JSON_VALUE(\"PromptMemoryEntries\".labels, '$.{key}') IN ({pme_in})")
             are_in = ", ".join(are_placeholders)
             are_label_conditions.append(f"JSON_VALUE(\"AttackResultEntries\".labels, '$.{key}') IN ({are_in})")
 
-        # PromptMemoryEntry subquery
-        pme_base: list[Any] = [
-            PromptMemoryEntry.conversation_id == AttackResultEntry.conversation_id,
-            PromptMemoryEntry.labels.isnot(None),
-        ]
-        if pme_label_conditions:
-            combined_pme = " AND ".join(pme_label_conditions)
-            pme_base.append(
-                cast(
-                    "ColumnElement[bool]",
-                    text(f'ISJSON("PromptMemoryEntries".labels) = 1 AND {combined_pme}').bindparams(**pme_bindparams),
-                )
-            )
-        pme_match = exists().where(and_(*pme_base))
-
-        # Direct AttackResultEntry label match
         are_parts: list[Any] = [AttackResultEntry.labels.isnot(None)]
         if are_label_conditions:
             combined_are = " AND ".join(are_label_conditions)
@@ -548,9 +487,7 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
                     text(f'ISJSON("AttackResultEntries".labels) = 1 AND {combined_are}').bindparams(**are_bindparams),
                 )
             )
-        are_match = and_(*are_parts)
-
-        return or_(pme_match, are_match)
+        return and_(*are_parts)
 
     def get_unique_attack_class_names(self) -> list[str]:
         """
@@ -600,8 +537,8 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
         Azure SQL implementation: lightweight aggregate stats per conversation.
 
         Executes a single SQL query that returns message count (distinct
-        sequences), a truncated last-message preview, the first non-empty
-        labels dict, and the earliest timestamp for each conversation_id.
+        sequences), a truncated last-message preview, and the earliest
+        timestamp for each conversation_id.
 
         Args:
             conversation_ids (Sequence[str]): The conversation IDs to query.
@@ -632,15 +569,6 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
                     WHERE p2b.conversation_id = pme.conversation_id
                     ORDER BY p2b.sequence DESC, p2b.id DESC
                 ) AS last_data_type,
-                (
-                    SELECT TOP 1 p3.labels
-                    FROM "PromptMemoryEntries" p3
-                    WHERE p3.conversation_id = pme.conversation_id
-                      AND p3.labels IS NOT NULL
-                      AND p3.labels != '{{}}'
-                      AND p3.labels != 'null'
-                    ORDER BY p3.sequence ASC, p3.id ASC
-                ) AS first_labels,
                 MIN(pme.timestamp) AS created_at
             FROM "PromptMemoryEntries" pme
             WHERE pme.conversation_id IN ({placeholders})
@@ -653,12 +581,7 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
 
         result: dict[str, ConversationStats] = {}
         for row in rows:
-            conv_id, msg_count, last_preview, last_data_type, raw_labels, raw_created_at = row
-
-            labels: dict[str, str] = {}
-            if raw_labels and raw_labels not in ("null", "{}"):
-                with suppress(ValueError, TypeError):
-                    labels = json.loads(raw_labels)
+            conv_id, msg_count, last_preview, last_data_type, raw_created_at = row
 
             created_at = None
             if raw_created_at is not None:
@@ -671,7 +594,6 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
                 message_count=msg_count,
                 last_message_preview=last_preview,
                 last_message_data_type=last_data_type,
-                labels=labels,
                 created_at=created_at,
             )
 
@@ -697,28 +619,6 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
             )
             conditions.append(condition)
         return and_(*conditions)
-
-    def add_message_pieces_to_memory(self, *, message_pieces: Sequence[MessagePiece]) -> None:
-        """
-        Insert a list of message pieces into the memory storage.
-
-        Pieces flagged via ``MessagePiece.not_in_memory = True`` are
-        silently filtered out so callers don't need to track persistence policy
-        themselves.
-
-        Args:
-            message_pieces (Sequence[MessagePiece]): A sequence of MessagePiece instances to be added.
-        """
-        # ``not_in_memory`` pieces are ephemeral — typically synthesized inside a
-        # scorer to score arbitrary content that never came through a real
-        # PromptTarget. They have no conversation, target, or attack lineage, so
-        # persisting them would pollute the memory store with rows that don't
-        # tie to any real exchange. Filtering here lets every caller share one
-        # policy instead of guarding each call site.
-        pieces_to_insert = [piece for piece in message_pieces if not piece.not_in_memory]
-        if not pieces_to_insert:
-            return
-        self._insert_entries(entries=[PromptMemoryEntry(entry=piece) for piece in pieces_to_insert])
 
     def dispose_engine(self) -> None:
         """
@@ -800,10 +700,10 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
         self,
         model_class: type[Model],
         *,
-        conditions: Optional[Any] = None,
+        conditions: Any | None = None,
         distinct: bool = False,
         join_scores: bool = False,
-        order_by: Optional[Any] = None,
+        order_by: Any | None = None,
         limit: int | None = None,
     ) -> MutableSequence[Model]:
         """
@@ -827,7 +727,9 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
             try:
                 query = session.query(model_class)
                 if join_scores and model_class == PromptMemoryEntry:
-                    query = query.options(joinedload(PromptMemoryEntry.scores))
+                    query = query.options(
+                        joinedload(PromptMemoryEntry.scores),
+                    )
                 elif model_class == AttackResultEntry:
                     query = query.options(
                         joinedload(AttackResultEntry.last_response).joinedload(PromptMemoryEntry.scores),
@@ -871,7 +773,7 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
                     # attributes from the (potentially stale) detached object
                     # and silently overwrite concurrent updates to columns
                     # that are NOT in update_fields.
-                    entry_in_session = session.get(type(entry), entry.id)
+                    entry_in_session = session.get(type(entry), entry.id)  # type: ignore[ty:unresolved-attribute]
                     if entry_in_session is None:
                         entry_in_session = session.merge(entry)
                     for field, value in update_fields.items():

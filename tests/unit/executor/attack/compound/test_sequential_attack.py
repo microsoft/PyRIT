@@ -3,7 +3,6 @@
 
 """Tests for ``SequentialAttack``."""
 
-from typing import Optional
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -17,7 +16,7 @@ from pyrit.executor.attack.compound import (
 from pyrit.executor.attack.core.attack_executor import AttackExecutor, AttackExecutorResult
 from pyrit.executor.attack.core.attack_parameters import AttackParameters
 from pyrit.executor.attack.core.attack_strategy import AttackContext
-from pyrit.models import AttackOutcome, AttackResult, SeedAttackGroup, SeedObjective
+from pyrit.models import AttackOutcome, AttackResult, AttackSeedGroup, SeedObjective
 
 
 def _make_strategy(*, outcomes: list[AttackOutcome], name: str = "attack") -> MagicMock:
@@ -28,14 +27,14 @@ def _make_strategy(*, outcomes: list[AttackOutcome], name: str = "attack") -> Ma
     return strategy
 
 
-def _make_seed_group(objective: str = "obj") -> SeedAttackGroup:
-    return SeedAttackGroup(seeds=[SeedObjective(value=objective)])
+def _make_seed_group(objective: str = "obj") -> AttackSeedGroup:
+    return AttackSeedGroup(seeds=[SeedObjective(value=objective)])
 
 
 def _make_context(
     *,
     objective: str = "obj",
-    labels: Optional[dict[str, str]] = None,
+    labels: dict[str, str] | None = None,
 ) -> AttackContext[AttackParameters]:
     params_type = AttackParameters.excluding("next_message", "prepended_conversation")
     return AttackContext(params=params_type(objective=objective, memory_labels=labels or {}))
@@ -80,7 +79,7 @@ def target() -> MagicMock:
 
 
 @pytest.fixture
-def seed_group() -> SeedAttackGroup:
+def seed_group() -> AttackSeedGroup:
     return _make_seed_group()
 
 

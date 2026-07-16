@@ -1,14 +1,10 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-import csv
-import json
 import sys
-from pathlib import Path
-from typing import IO, Optional
+from typing import IO
 
-from pyrit.common.deprecation import print_deprecation_message
-from pyrit.models import Message, MessagePiece
+from pyrit.models import Message
 from pyrit.prompt_target.common.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 
@@ -26,7 +22,7 @@ class TextTarget(PromptTarget):
         self,
         *,
         text_stream: IO[str] = sys.stdout,
-        custom_configuration: Optional[TargetConfiguration] = None,
+        custom_configuration: TargetConfiguration | None = None,
     ) -> None:
         """
         Initialize the TextTarget.
@@ -58,53 +54,8 @@ class TextTarget(PromptTarget):
 
         return []
 
-    def import_scores_from_csv(self, csv_file_path: Path) -> list[MessagePiece]:
-        """
-        Import message pieces and their scores from a CSV file.
-
-        Args:
-            csv_file_path (Path): The path to the CSV file containing scores.
-
-        Returns:
-            list[MessagePiece]: A list of message pieces imported from the CSV.
-        """
-        message_pieces = []
-
-        with open(csv_file_path, newline="") as csvfile:
-            csvreader = csv.DictReader(csvfile)
-
-            for row in csvreader:
-                sequence_str = row.get("sequence", None)
-                labels_str = row.get("labels", None)
-                labels = json.loads(labels_str) if labels_str else None
-
-                message_piece = MessagePiece(
-                    role=row["role"],
-                    original_value=row["value"],
-                    original_value_data_type=row.get("data_type", None),
-                    conversation_id=row.get("conversation_id", None),
-                    sequence=int(sequence_str) if sequence_str else 0,
-                    labels=labels,  # deprecated
-                    response_error=row.get("response_error", None),
-                    prompt_target_identifier=self.get_identifier(),
-                )
-                message_pieces.append(message_piece)
-
-        # This is post validation, so the message_pieces should be okay and normalized
-        self._memory.add_message_pieces_to_memory(message_pieces=message_pieces)
-        return message_pieces
-
     def _validate_request(self, *, normalized_conversation: list[Message]) -> None:
         pass
 
     async def cleanup_target_async(self) -> None:
         """Target does not require cleanup."""
-
-    async def cleanup_target(self) -> None:  # pyrit-async-suffix-exempt
-        """Use ``cleanup_target_async`` instead; this is a deprecated alias."""
-        print_deprecation_message(
-            old_item="pyrit.prompt_target.TextTarget.cleanup_target",
-            new_item="pyrit.prompt_target.TextTarget.cleanup_target_async",
-            removed_in="0.16.0",
-        )
-        await self.cleanup_target_async()

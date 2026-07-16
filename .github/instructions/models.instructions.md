@@ -4,6 +4,8 @@ applyTo: "pyrit/models/**"
 
 # `pyrit.models` Guidelines
 
+**Responsibility**: `pyrit.models` is the lightweight, canonical data layer — the core types shared across components (and preferred in REST) so representations don't drift. It depends only on lightweight Python (the standard library and pydantic) and `pyrit.common`.
+
 ## Import Boundary
 
 PyRIT enforces a two-layer rule for its foundational packages. `pyrit.common`

@@ -1,7 +1,6 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from typing import Optional
 
 from pyrit.models import ComponentIdentifier, Score
 from pyrit.score.float_scale.float_scale_score_aggregator import (
@@ -17,7 +16,7 @@ _TEST_SCORER_ID = ComponentIdentifier(
 )
 
 
-def _mk_score(val: float, *, category: Optional[list[str]] = None, prr_id: str = "1", rationale: str = "") -> Score:
+def _mk_score(val: float, *, category: list[str] | None = None, prr_id: str = "1", rationale: str = "") -> Score:
     """Helper to create a float scale score."""
     return Score(
         score_value=str(val),

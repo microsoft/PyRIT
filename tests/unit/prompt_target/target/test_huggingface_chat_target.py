@@ -16,7 +16,7 @@ from pyrit.prompt_target import HuggingFaceChatTarget
 
 def is_torch_installed():
     try:
-        import torch  # noqa: F401
+        import torch  # type: ignore[ty:unresolved-import]  # noqa: F401
 
         return True
     except ModuleNotFoundError:
@@ -201,7 +201,7 @@ async def test_send_prompt_async():
 async def test_missing_chat_template_error():
     hf_chat = HuggingFaceChatTarget(model_id="test_model", use_cuda=False)
     await hf_chat.load_model_and_tokenizer_async()
-    hf_chat.tokenizer.chat_template = None
+    hf_chat.tokenizer.chat_template = None  # type: ignore[ty:invalid-assignment]
 
     message_piece = MessagePiece(
         role="user",
@@ -570,7 +570,7 @@ async def test_effective_generation_config_in_metadata():
 
     response = await target.send_prompt_async(message=message)
     metadata = response[0].message_pieces[0].prompt_metadata
-    effective_config = json.loads(metadata["effective_generation_config"])
+    effective_config = json.loads(metadata["effective_generation_config"])  # type: ignore[ty:invalid-argument-type]
 
     assert effective_config["top_k"] == 40
     assert effective_config["do_sample"] is True
@@ -578,15 +578,3 @@ async def test_effective_generation_config_in_metadata():
     assert effective_config["temperature"] == 1.0
     # Model defaults should also be present
     assert effective_config["eos_token_id"] == 2
-
-
-@pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
-async def test_load_model_and_tokenizer_emits_deprecation_warning_and_delegates():
-    target = HuggingFaceChatTarget(model_id="test_model", use_cuda=False)
-    # Await the background task to avoid warnings about pending coroutines
-    await target.load_model_and_tokenizer_task
-
-    with patch.object(target, "load_model_and_tokenizer_async", new=AsyncMock()) as mock_async:
-        with pytest.warns(DeprecationWarning, match="load_model_and_tokenizer_async"):
-            await target.load_model_and_tokenizer()
-    mock_async.assert_awaited_once()

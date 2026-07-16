@@ -12,7 +12,7 @@ from unit.mocks import get_sample_conversations, openai_chat_response_json_dict
 
 from pyrit.executor.attack.core.attack_strategy import AttackStrategy
 from pyrit.memory.memory_interface import MemoryInterface
-from pyrit.models import ComponentIdentifier, Message, MessagePiece
+from pyrit.models import ChatMessageRole, ComponentIdentifier, Message, MessagePiece, flatten_to_message_pieces
 from pyrit.prompt_target import OpenAIChatTarget
 from pyrit.prompt_target.common.target_capabilities import (
     CapabilityHandlingPolicy,
@@ -26,7 +26,7 @@ from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 @pytest.fixture
 def sample_entries() -> MutableSequence[MessagePiece]:
     conversations = get_sample_conversations()
-    return Message.flatten_to_message_pieces(conversations)
+    return flatten_to_message_pieces(conversations)
 
 
 @pytest.fixture
@@ -60,8 +60,6 @@ def test_set_system_prompt(azure_openai_target: OpenAIChatTarget, mock_attack_st
     azure_openai_target.set_system_prompt(
         system_prompt="system prompt",
         conversation_id="1",
-        attack_identifier=mock_attack_strategy.get_identifier(),
-        labels={},
     )
 
     chats = azure_openai_target._memory.get_message_pieces(conversation_id="1")
@@ -76,8 +74,6 @@ async def test_set_system_prompt_adds_memory(
     azure_openai_target.set_system_prompt(
         system_prompt="system prompt",
         conversation_id="1",
-        attack_identifier=mock_attack_strategy.get_identifier(),
-        labels={},
     )
 
     chats = azure_openai_target._memory.get_message_pieces(conversation_id="1")
@@ -110,8 +106,6 @@ async def test_send_prompt_with_system_calls_chat_complete(
         azure_openai_target.set_system_prompt(
             system_prompt="system prompt",
             conversation_id="1",
-            attack_identifier=mock_attack_strategy.get_identifier(),
-            labels={},
         )
 
         request = sample_entries[0]
@@ -163,13 +157,10 @@ async def test_send_prompt_async_with_delay(
 # ---------------------------------------------------------------------------
 
 _LINEAGE_CONVERSATION_ID = "original-conv-id-12345"
-_LINEAGE_LABELS = {"op_name": "test_op", "user_id": "user42"}
-_LINEAGE_ATTACK_IDENTIFIER = ComponentIdentifier(class_name="TestAttack", class_module="tests.attacks")
-_LINEAGE_PROMPT_TARGET_IDENTIFIER = ComponentIdentifier(class_name="OpenAIChatTarget", class_module="pyrit")
 _LINEAGE_PROMPT_METADATA = {"scenario": "test_scenario", "turn": 3}
 
 
-def _make_lineage_piece(*, role: str, content: str) -> MessagePiece:
+def _make_lineage_piece(*, role: ChatMessageRole, content: str) -> MessagePiece:
     return MessagePiece(
         role=role,
         conversation_id=_LINEAGE_CONVERSATION_ID,
@@ -177,14 +168,11 @@ def _make_lineage_piece(*, role: str, content: str) -> MessagePiece:
         converted_value=content,
         original_value_data_type="text",
         converted_value_data_type="text",
-        labels=dict(_LINEAGE_LABELS),
-        prompt_target_identifier=_LINEAGE_PROMPT_TARGET_IDENTIFIER,
-        attack_identifier=_LINEAGE_ATTACK_IDENTIFIER,
         prompt_metadata=dict(_LINEAGE_PROMPT_METADATA),
     )
 
 
-def _make_lineage_message(*, role: str, content: str) -> Message:
+def _make_lineage_message(*, role: ChatMessageRole, content: str) -> Message:
     return Message(message_pieces=[_make_lineage_piece(role=role, content=content)])
 
 
@@ -205,7 +193,7 @@ def _make_mock_chat_completion(content: str = "response") -> MagicMock:
 async def test_history_squash_preserves_metadata_on_normalized_message():
     """
     After history squash, _propagate_lineage should restore the original request's
-    metadata (conversation_id, labels, attack_identifier) onto the squashed message.
+    conversation ID and prompt metadata onto the squashed message.
     """
     target = OpenAIChatTarget(
         model_name="gpt-4o",
@@ -231,7 +219,7 @@ async def test_history_squash_preserves_metadata_on_normalized_message():
     user_msg = _make_lineage_message(role="user", content="follow-up question")
 
     mock_memory = MagicMock(spec=MemoryInterface)
-    mock_memory.get_conversation.return_value = [history_msg]
+    mock_memory.get_conversation_messages.return_value = [history_msg]
     target._memory = mock_memory
 
     normalized = await target._get_normalized_conversation_async(message=user_msg)
@@ -241,9 +229,6 @@ async def test_history_squash_preserves_metadata_on_normalized_message():
     normalized_piece = normalized[0].message_pieces[0]
 
     assert normalized_piece.conversation_id == _LINEAGE_CONVERSATION_ID
-    assert normalized_piece.labels == _LINEAGE_LABELS
-    assert normalized_piece.attack_identifier == _LINEAGE_ATTACK_IDENTIFIER
-    assert normalized_piece.prompt_target_identifier == _LINEAGE_PROMPT_TARGET_IDENTIFIER
     assert normalized_piece.prompt_metadata == _LINEAGE_PROMPT_METADATA
 
 
@@ -251,8 +236,8 @@ async def test_history_squash_preserves_metadata_on_normalized_message():
 async def test_response_preserves_metadata_after_history_squash():
     """
     End-to-end: after history squash the response must carry the original
-    request's conversation_id, labels, and attack_identifier — not the
-    random values created by the normalizer.
+    request's conversation ID and prompt metadata, not the random values
+    created by the normalizer.
     """
     target = OpenAIChatTarget(
         model_name="gpt-4o",
@@ -278,7 +263,7 @@ async def test_response_preserves_metadata_after_history_squash():
     user_msg = _make_lineage_message(role="user", content="follow-up question")
 
     mock_memory = MagicMock(spec=MemoryInterface)
-    mock_memory.get_conversation.return_value = [history_msg]
+    mock_memory.get_conversation_messages.return_value = [history_msg]
     target._memory = mock_memory
 
     mock_completion = _make_mock_chat_completion("target response")
@@ -290,9 +275,6 @@ async def test_response_preserves_metadata_after_history_squash():
     response_piece = response_messages[0].message_pieces[0]
 
     assert response_piece.conversation_id == _LINEAGE_CONVERSATION_ID
-    assert response_piece.labels == _LINEAGE_LABELS
-    assert response_piece.attack_identifier == _LINEAGE_ATTACK_IDENTIFIER
-    assert response_piece.prompt_target_identifier == _LINEAGE_PROMPT_TARGET_IDENTIFIER
     assert response_piece.prompt_metadata == _LINEAGE_PROMPT_METADATA
 
 
@@ -326,7 +308,7 @@ async def test_system_squash_preserves_metadata():
     user_msg = _make_lineage_message(role="user", content="hello")
 
     mock_memory = MagicMock(spec=MemoryInterface)
-    mock_memory.get_conversation.return_value = [system_msg]
+    mock_memory.get_conversation_messages.return_value = [system_msg]
     target._memory = mock_memory
 
     normalized = await target._get_normalized_conversation_async(message=user_msg)
@@ -337,9 +319,6 @@ async def test_system_squash_preserves_metadata():
     normalized_piece = normalized[0].message_pieces[0]
 
     assert normalized_piece.conversation_id == _LINEAGE_CONVERSATION_ID
-    assert normalized_piece.labels == _LINEAGE_LABELS
-    assert normalized_piece.attack_identifier == _LINEAGE_ATTACK_IDENTIFIER
-    assert normalized_piece.prompt_target_identifier == _LINEAGE_PROMPT_TARGET_IDENTIFIER
     assert normalized_piece.prompt_metadata == _LINEAGE_PROMPT_METADATA
 
 
@@ -379,7 +358,7 @@ async def test_history_squash_propagates_lineage_to_all_pieces():
     )
 
     mock_memory = MagicMock(spec=MemoryInterface)
-    mock_memory.get_conversation.return_value = [history_msg]
+    mock_memory.get_conversation_messages.return_value = [history_msg]
     target._memory = mock_memory
 
     normalized = await target._get_normalized_conversation_async(message=user_msg)
@@ -388,9 +367,6 @@ async def test_history_squash_propagates_lineage_to_all_pieces():
 
     for piece in normalized[0].message_pieces:
         assert piece.conversation_id == _LINEAGE_CONVERSATION_ID
-        assert piece.labels == _LINEAGE_LABELS
-        assert piece.attack_identifier == _LINEAGE_ATTACK_IDENTIFIER
-        assert piece.prompt_target_identifier == _LINEAGE_PROMPT_TARGET_IDENTIFIER
         assert piece.prompt_metadata == _LINEAGE_PROMPT_METADATA
 
 
@@ -398,9 +374,9 @@ async def test_history_squash_propagates_lineage_to_all_pieces():
 async def test_conversation_id_stamped_on_all_but_full_lineage_only_on_last():
     """
     conversation_id is stamped on every normalized message (including new ones
-    created by the normalizer).  Full lineage (labels, attack_identifier, etc.)
-    is only propagated to the last message.  Earlier messages keep their own
-    metadata.  A warning is logged when the normalizer increases message count.
+    created by the normalizer). Full lineage is only propagated to the last
+    message. Earlier messages keep their own metadata. A warning is logged when
+    the normalizer increases message count.
     """
     target = OpenAIChatTarget(
         model_name="gpt-4o",
@@ -410,13 +386,12 @@ async def test_conversation_id_stamped_on_all_but_full_lineage_only_on_last():
 
     history_msg = _make_lineage_message(role="assistant", content="previous answer")
     # Give history distinct metadata to verify it's preserved.
-    history_msg.message_pieces[0].labels = {"original": "history_labels"}
     history_msg.message_pieces[0].prompt_metadata = {"original": "history_meta"}
 
     user_msg = _make_lineage_message(role="user", content="hello")
 
     mock_memory = MagicMock(spec=MemoryInterface)
-    mock_memory.get_conversation.return_value = [history_msg]
+    mock_memory.get_conversation_messages.return_value = [history_msg]
     target._memory = mock_memory
 
     # Simulate a normalizer that inserts a new message with a random conversation_id.
@@ -444,21 +419,88 @@ async def test_conversation_id_stamped_on_all_but_full_lineage_only_on_last():
                 assert piece.conversation_id == _LINEAGE_CONVERSATION_ID
 
         # History message's other metadata should be untouched.
-        assert normalized[0].message_pieces[0].labels == {"original": "history_labels"}
         assert normalized[0].message_pieces[0].prompt_metadata == {"original": "history_meta"}
 
         # New middle message should NOT have full lineage overwritten.
-        assert normalized[1].message_pieces[0].labels == {}
+        assert normalized[1].message_pieces[0].prompt_metadata == {}
 
         # Last message should carry full lineage.
         last_piece = normalized[-1].message_pieces[0]
-        assert last_piece.labels == _LINEAGE_LABELS
-        assert last_piece.attack_identifier == _LINEAGE_ATTACK_IDENTIFIER
-        assert last_piece.prompt_target_identifier == _LINEAGE_PROMPT_TARGET_IDENTIFIER
         assert last_piece.prompt_metadata == _LINEAGE_PROMPT_METADATA
 
         # Warning should fire because message count increased (2 → 3).
         mock_warn.assert_called_once()
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_json_schema_stripped_for_non_schema_target_survives_lineage():
+    """
+    Regression: for a non-schema target (default ADAPT) the embedded json_schema is
+    removed by JsonSchemaNormalizer and must NOT be re-introduced by
+    _propagate_lineage copying the original (unstripped) request metadata back onto
+    the normalized message.
+    """
+    target = OpenAIChatTarget(
+        model_name="gpt-4o",
+        endpoint="https://mock.azure.com/",
+        api_key="mock-api-key",
+    )
+    assert target.configuration.capabilities.supports_json_schema is False
+
+    piece = MessagePiece(
+        role="user",
+        conversation_id=_LINEAGE_CONVERSATION_ID,
+        original_value="score this",
+        converted_value="score this",
+        original_value_data_type="text",
+        converted_value_data_type="text",
+        prompt_metadata={"response_format": "json", "json_schema": {"type": "object"}},
+    )
+    user_msg = Message(message_pieces=[piece])
+
+    mock_memory = MagicMock(spec=MemoryInterface)
+    mock_memory.get_conversation_messages.return_value = []
+    target._memory = mock_memory
+
+    normalized = await target._get_normalized_conversation_async(message=user_msg)
+
+    last_piece = normalized[-1].message_pieces[0]
+    assert "json_schema" not in last_piece.prompt_metadata
+    assert last_piece.prompt_metadata.get("response_format") == "json"
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_json_schema_only_metadata_fully_stripped_survives_lineage():
+    """
+    Regression: even when json_schema is the ONLY metadata key, the strip leaves empty
+    metadata and _propagate_lineage must not restore the original json_schema (the piece
+    is the same logical piece, identified by id, so its stripped metadata is authoritative).
+    """
+    target = OpenAIChatTarget(
+        model_name="gpt-4o",
+        endpoint="https://mock.azure.com/",
+        api_key="mock-api-key",
+    )
+
+    piece = MessagePiece(
+        role="user",
+        conversation_id=_LINEAGE_CONVERSATION_ID,
+        original_value="score this",
+        converted_value="score this",
+        original_value_data_type="text",
+        converted_value_data_type="text",
+        prompt_metadata={"json_schema": {"type": "object"}},
+    )
+    user_msg = Message(message_pieces=[piece])
+
+    mock_memory = MagicMock(spec=MemoryInterface)
+    mock_memory.get_conversation_messages.return_value = []
+    target._memory = mock_memory
+
+    normalized = await target._get_normalized_conversation_async(message=user_msg)
+
+    last_piece = normalized[-1].message_pieces[0]
+    assert "json_schema" not in last_piece.prompt_metadata
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -475,7 +517,7 @@ async def test_no_warning_when_message_count_unchanged():
     user_msg = _make_lineage_message(role="user", content="hello")
 
     mock_memory = MagicMock(spec=MemoryInterface)
-    mock_memory.get_conversation.return_value = []
+    mock_memory.get_conversation_messages.return_value = []
     target._memory = mock_memory
 
     with patch.object(target.configuration, "normalize_async", new_callable=AsyncMock) as mock_normalize:
@@ -490,7 +532,7 @@ async def test_no_warning_when_message_count_unchanged():
 
 
 # ---------------------------------------------------------------------------
-# _create_identifier — target configuration in the identifier
+# _create_identifier — capabilities are NOT part of the identifier
 # ---------------------------------------------------------------------------
 
 
@@ -514,7 +556,7 @@ def _make_identifier_target(
 
 
 @pytest.mark.usefixtures("patch_central_database")
-def test_identifier_includes_capability_params():
+def test_identifier_excludes_capability_params():
     target = _make_identifier_target(
         capabilities=TargetCapabilities(
             supports_multi_turn=True,
@@ -527,36 +569,25 @@ def test_identifier_includes_capability_params():
     )
 
     params = target.get_identifier().params
-    target_config = params["target_configuration"]
-    capabilities = target_config["capabilities"]
 
-    # Config-derived fields are nested under ``target_configuration``, not
-    # spread at the top level — guards against accidental re-flattening.
+    # Capabilities can change with deployment configuration, so they are
+    # deliberately not part of a target's identity.
+    assert "target_configuration" not in params
     assert "supports_multi_turn" not in params
-    assert set(target_config.keys()) == {"capabilities", "capability_policy", "normalization_pipeline"}
-
-    assert capabilities["supports_multi_turn"] is True
-    assert capabilities["supports_multi_message_pieces"] is True
-    assert capabilities["supports_json_schema"] is True
-    assert capabilities["supports_json_output"] is True
-    assert capabilities["supports_editable_history"] is False
-    assert capabilities["supports_system_prompt"] is True
-    assert capabilities["input_modalities"] == [["text"]]
-    assert capabilities["output_modalities"] == [["text"]]
-    assert isinstance(target_config["capability_policy"], dict)
-    assert isinstance(target_config["normalization_pipeline"], list)
 
 
 @pytest.mark.usefixtures("patch_central_database")
-def test_identifier_differs_when_capabilities_differ():
+def test_identifier_same_when_capabilities_differ():
     a = _make_identifier_target(capabilities=TargetCapabilities(supports_json_schema=False))
     b = _make_identifier_target(capabilities=TargetCapabilities(supports_json_schema=True))
 
-    assert a.get_identifier().hash != b.get_identifier().hash
+    # Capabilities are not part of identity, so differing capabilities alone
+    # must not change the identifier hash.
+    assert a.get_identifier().hash == b.get_identifier().hash
 
 
 @pytest.mark.usefixtures("patch_central_database")
-def test_identifier_differs_when_policy_differs():
+def test_identifier_same_when_policy_differs():
     capabilities = TargetCapabilities(supports_multi_turn=False, supports_system_prompt=False)
     a = _make_identifier_target(
         capabilities=capabilities,
@@ -577,7 +608,8 @@ def test_identifier_differs_when_policy_differs():
         ),
     )
 
-    assert a.get_identifier().hash != b.get_identifier().hash
+    # Handling policy is part of the (non-identity) configuration, not identity.
+    assert a.get_identifier().hash == b.get_identifier().hash
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -596,7 +628,7 @@ def test_identifier_is_deterministic_across_instances():
 
 
 @pytest.mark.usefixtures("patch_central_database")
-def test_identifier_differs_when_normalizer_overrides_differ():
+def test_identifier_same_when_normalizer_overrides_differ():
     from pyrit.message_normalizer import GenericSystemSquashNormalizer, MessageListNormalizer
     from pyrit.models import Message
     from pyrit.prompt_target.common.target_capabilities import CapabilityName
@@ -632,7 +664,8 @@ def test_identifier_differs_when_normalizer_overrides_differ():
         custom_configuration=custom_cfg,
     )
 
-    assert a.get_identifier().hash != b.get_identifier().hash
+    # The resolved normalization pipeline is configuration, not identity.
+    assert a.get_identifier().hash == b.get_identifier().hash
 
 
 def test_apply_capabilities_replaces_capabilities_and_preserves_policy(patch_central_database):

@@ -8,16 +8,16 @@ import pytest
 
 from pyrit.memory import MemoryInterface
 from pyrit.models import (
+    AtomicAttackIdentifier,
     AttackOutcome,
     AttackResult,
     ComponentIdentifier,
+    ConversationReference,
     ConversationType,
     Message,
     MessagePiece,
     Score,
-    build_atomic_attack_identifier,
 )
-from pyrit.models.conversation_reference import ConversationReference
 from pyrit.output.attack_result.markdown import MarkdownAttackResultMemoryPrinter
 
 
@@ -57,7 +57,7 @@ def printer(patch_central_database):
 def attack_result():
     return AttackResult(
         objective="Test objective",
-        atomic_attack_identifier=build_atomic_attack_identifier(attack_identifier=_attack_id()),
+        atomic_attack_identifier=AtomicAttackIdentifier.build(attack_identifier=_attack_id()),
         conversation_id="conv-main",
         executed_turns=3,
         execution_time_ms=1500,
@@ -374,24 +374,3 @@ async def test_write_async_adversarial_with_no_messages(printer, attack_result, 
 async def test_write_async_include_adversarial_with_no_refs(printer, attack_result, capsys):
     await printer.write_async(attack_result, include_adversarial_conversation=True)
     assert "## Adversarial Conversation" not in capsys.readouterr().out
-
-
-# --- deprecated aliases ---
-
-
-async def test_print_result_async_emits_deprecation_warning(printer, attack_result, capsys):
-    with pytest.warns(DeprecationWarning, match="print_result_async"):
-        await printer.print_result_async(attack_result)
-    assert "Attack Result: SUCCESS" in capsys.readouterr().out
-
-
-async def test_output_conversation_async_emits_deprecation_warning(printer, attack_result, capsys):
-    with pytest.warns(DeprecationWarning, match="output_conversation_async"):
-        await printer.output_conversation_async(attack_result)
-    assert "*No conversation found for ID: conv-main*" in capsys.readouterr().out
-
-
-async def test_print_summary_async_emits_deprecation_warning(printer, attack_result, capsys):
-    with pytest.warns(DeprecationWarning, match="print_summary_async"):
-        await printer.print_summary_async(attack_result)
-    assert "## Attack Summary" in capsys.readouterr().out

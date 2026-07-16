@@ -24,7 +24,7 @@ def _train_rows():
             "prompt_harm_label": "harmful",
             "response_harm_label": None,
             "response_refusal_label": None,
-            "subcategory": "drugs",
+            "subcategory": "fraud_assisting_illegal_activities",
         },
         {
             "prompt": "How do I cook a chicken curry?",
@@ -42,7 +42,7 @@ def _train_rows():
             "prompt_harm_label": "harmful",
             "response_harm_label": "harmful",
             "response_refusal_label": "compliance",
-            "subcategory": "weapons",
+            "subcategory": "violence_and_physical_harm",
         },
         {
             "prompt": "Train-only vanilla harmful prompt-only.",
@@ -51,7 +51,7 @@ def _train_rows():
             "prompt_harm_label": "harmful",
             "response_harm_label": None,
             "response_refusal_label": None,
-            "subcategory": "violence",
+            "subcategory": "violence_and_physical_harm",
         },
     ]
 
@@ -66,7 +66,7 @@ def _test_rows():
             "prompt_harm_label": "harmful",
             "response_harm_label": "unharmful",
             "response_refusal_label": "refusal",
-            "subcategory": "weapons",
+            "subcategory": "violence_and_physical_harm",
         },
         {
             "prompt": "Test-only adversarial harmful.",
@@ -75,7 +75,7 @@ def _test_rows():
             "prompt_harm_label": "harmful",
             "response_harm_label": "harmful",
             "response_refusal_label": "compliance",
-            "subcategory": "violence",
+            "subcategory": "violence_and_physical_harm",
         },
         {
             "prompt": "Test-only benign companion.",
@@ -167,6 +167,8 @@ class TestWildGuardMixDataset:
 
         assert len(dataset.seeds) == 1
         assert dataset.seeds[0].metadata["prompt_harm_label"] == "unharmful"
+        assert dataset.seeds[0].metadata["subcategory"] == "benign"
+        assert dataset.seeds[0].harm_categories == []
 
     async def test_filter_by_adversarial_vanilla_only(self):
         loader = _WildGuardMixDataset(
@@ -200,17 +202,80 @@ class TestWildGuardMixDataset:
         assert len(dataset.seeds) == 1
         seed = dataset.seeds[0]
         assert seed.dataset_name == "wildguardmix"
-        assert seed.harm_categories == ["violence"]
+        assert seed.harm_categories == ["VIOLENT_CONTENT", "VIOLENT_THREATS", "COORDINATION_HARM"]
         assert seed.source == "https://huggingface.co/datasets/allenai/wildguardmix"
         assert "Allen Institute for AI" in seed.groups
         assert seed.metadata == {
             "split": "wildguardtest",
+            "subcategory": "violence_and_physical_harm",
             "adversarial": True,
             "prompt_harm_label": "harmful",
             "response_harm_label": "harmful",
             "response_refusal_label": "compliance",
             "has_response": True,
         }
+
+    @pytest.mark.parametrize(
+        ("raw_category", "expected_categories"),
+        [
+            (
+                "causing_material_harm_by_disseminating_misinformation",
+                ["INFO_INTEGRITY", "CURRENT_EVENTS_MISINFO"],
+            ),
+            ("copyright_violations", ["COPYRIGHT"]),
+            ("cyberattack", ["MALWARE", "COORDINATION_HARM"]),
+            (
+                "defamation_encouraging_unethical_or_unsafe_actions",
+                ["REPUTATIONAL_DAMAGE", "DANGEROUS_SITUATIONS"],
+            ),
+            (
+                "disseminating_false_or_misleading_information_encouraging_disinformation_campaigns",
+                ["INFO_INTEGRITY", "CAMPAIGNING"],
+            ),
+            (
+                "fraud_assisting_illegal_activities",
+                ["SCAMS", "DECEPTION", "COORDINATION_HARM"],
+            ),
+            (
+                "mental_health_over-reliance_crisis",
+                ["MENTAL_HEALTH", "EMOTIONAL"],
+            ),
+            ("others", ["OTHER"]),
+            ("private_information_individual", ["PPI"]),
+            (
+                "sensitive_information_organization_government",
+                ["PROPRIETARY_INFO", "HIGH_RISK_GOVERNMENT"],
+            ),
+            ("sexual_content", ["SEXUAL_CONTENT"]),
+            (
+                "social_stereotypes_and_unfair_discrimination",
+                ["REPRESENTATIONAL", "HATE_SPEECH"],
+            ),
+            ("toxic_language_hate_speech", ["HATE_SPEECH"]),
+            (
+                "violence_and_physical_harm",
+                ["VIOLENT_CONTENT", "VIOLENT_THREATS", "COORDINATION_HARM"],
+            ),
+        ],
+    )
+    def test_harm_categories_are_standardized(
+        self,
+        raw_category: str,
+        expected_categories: list[str],
+    ) -> None:
+        loader = _WildGuardMixDataset(splits=[WildGuardMixSplit.TEST])
+        row = dict(_test_rows()[1], subcategory=raw_category)
+
+        seeds = loader._rows_to_seeds(rows=[row], split=WildGuardMixSplit.TEST)
+
+        assert len(seeds) == 1
+        assert seeds[0].harm_categories == expected_categories
+        assert seeds[0].metadata["subcategory"] == raw_category
+
+    def test_declared_harm_categories_match_aliases(self) -> None:
+        loader = _WildGuardMixDataset()
+
+        assert set(loader.harm_categories) == set(loader.HARM_CATEGORY_ALIAS_OVERRIDES)
 
     async def test_empty_after_filter_raises(self):
         # Restrict to vanilla only — test rows are either vanilla+unharmful or
@@ -253,20 +318,20 @@ class TestWildGuardMixDataset:
         loader = _WildGuardMixDataset(token="explicit-token")
         assert loader.token == "explicit-token"
 
-    def test_token_env_fallback(self, monkeypatch):
-        monkeypatch.setenv("HUGGINGFACE_TOKEN", "env-token")
-        loader = _WildGuardMixDataset()
-        assert loader.token == "env-token"
+    def test_token_env_fallback(self):
+        with patch.dict("os.environ", {"HUGGINGFACE_TOKEN": "env-token"}):
+            loader = _WildGuardMixDataset()
+            assert loader.token == "env-token"
 
-    def test_token_explicit_overrides_env(self, monkeypatch):
-        monkeypatch.setenv("HUGGINGFACE_TOKEN", "env-token")
-        loader = _WildGuardMixDataset(token="explicit-token")
-        assert loader.token == "explicit-token"
+    def test_token_explicit_overrides_env(self):
+        with patch.dict("os.environ", {"HUGGINGFACE_TOKEN": "env-token"}):
+            loader = _WildGuardMixDataset(token="explicit-token")
+            assert loader.token == "explicit-token"
 
-    def test_token_none_when_no_env(self, monkeypatch):
-        monkeypatch.delenv("HUGGINGFACE_TOKEN", raising=False)
-        loader = _WildGuardMixDataset()
-        assert loader.token is None
+    def test_token_none_when_no_env(self):
+        with patch.dict("os.environ", {}, clear=True):
+            loader = _WildGuardMixDataset()
+            assert loader.token is None
 
     async def test_token_forwarded_to_hf_fetch(self):
         loader = _WildGuardMixDataset(splits=[WildGuardMixSplit.TEST], token="fwd-token")

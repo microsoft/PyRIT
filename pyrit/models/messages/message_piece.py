@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, Literal, Optional
+from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from pydantic import (
@@ -16,8 +16,6 @@ from pydantic import (
     model_validator,
 )
 
-from pyrit.common.deprecation import print_deprecation_message
-from pyrit.models.data_type_serializer import data_serializer_factory
 from pyrit.models.literals import (  # noqa: TC001  (runtime-required by Pydantic field annotations)
     ChatMessageRole,
     PromptDataType,
@@ -25,59 +23,15 @@ from pyrit.models.literals import (  # noqa: TC001  (runtime-required by Pydanti
 )
 from pyrit.models.score import (  # noqa: TC001  (runtime-required by Pydantic field annotations)
     ComponentIdentifierField,
-    Score,
 )
 
 if TYPE_CHECKING:
     from pyrit.models.messages.message import Message
 
 
-# Deprecated kwargs whose presence in ``MessagePiece(...)`` should emit a
-# ``DeprecationWarning``. Each entry is ``(kwarg_name, removed_in)``. Kept here
-# (rather than embedded in the validator body) to make the deprecation surface
-# easy to read and update.
-#
-# These can be deleted entirely once their ``removed_in`` releases ship — the
-# Pydantic field definitions and ``extra="forbid"`` config will then reject
-# the kwargs naturally.
-_DEPRECATED_KWARGS: tuple[tuple[str, str], ...] = (
-    ("labels", "0.16.0"),
-    ("scorer_identifier", "0.15.0"),
-    ("scores", "0.15.0"),
-    ("targeted_harm_categories", "0.15.0"),
-)
-
-
-# ``ComponentIdentifierField`` (and ``Score``) are imported from ``pyrit.models.score``
-# above. Both round-trip through the flat dict storage shape via their own Pydantic
-# serializers, so no local annotated aliases are needed here.
-
-
-def __getattr__(name: str) -> Any:
-    """
-    Lazily resolve deprecated module-level aliases.
-
-    Args:
-        name: The attribute name being accessed.
-
-    Returns:
-        The resolved alias (currently only ``Originator``).
-
-    Raises:
-        AttributeError: If ``name`` is not a known deprecated alias.
-    """
-    if name == "Originator":
-        print_deprecation_message(
-            old_item="pyrit.models.message_piece.Originator",
-            new_item=(
-                "inline Literal['attack', 'converter', 'undefined', 'scorer'] "
-                "(the type alias is being removed; the originator field itself is "
-                "deprecated and will be removed in 0.15.0)"
-            ),
-            removed_in="0.15.0",
-        )
-        return Literal["attack", "converter", "undefined", "scorer"]
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+# ``ComponentIdentifierField`` is imported from ``pyrit.models.score`` above.
+# It round-trips through the flat dict storage shape via its own Pydantic
+# serializer, so no local annotated alias is needed here.
 
 
 class MessagePiece(BaseModel):
@@ -95,28 +49,21 @@ class MessagePiece(BaseModel):
         validate_assignment=False,
     )
 
-    id: uuid.UUID = Field(default_factory=uuid4)  # noqa: A003
+    id: uuid.UUID = Field(default_factory=uuid4)
     role: ChatMessageRole
-    conversation_id: str = Field(default_factory=lambda: str(uuid4()))
+    conversation_id: str | None = None
     sequence: int = -1
     timestamp: AwareDatetime = Field(default_factory=lambda: datetime.now(tz=timezone.utc))
     original_value: str
     original_value_data_type: PromptDataType = "text"
-    original_value_sha256: Optional[str] = None
+    original_value_sha256: str | None = None
     converted_value: str = ""
     converted_value_data_type: PromptDataType = "text"
-    converted_value_sha256: Optional[str] = None
+    converted_value_sha256: str | None = None
     response_error: PromptResponseError = "none"
-    originator: Literal["attack", "converter", "undefined", "scorer"] = "undefined"
-    original_prompt_id: Optional[uuid.UUID] = None
-    labels: dict[str, Any] = Field(default_factory=dict)
-    targeted_harm_categories: list[str] = Field(default_factory=list)
+    original_prompt_id: uuid.UUID | None = None
     prompt_metadata: dict[str, Any] = Field(default_factory=dict)
     converter_identifiers: list[ComponentIdentifierField] = Field(default_factory=list)
-    prompt_target_identifier: Optional[ComponentIdentifierField] = None
-    attack_identifier: Optional[ComponentIdentifierField] = None
-    scorer_identifier: Optional[ComponentIdentifierField] = None
-    scores: list[Score] = Field(default_factory=list)
 
     # When True, the memory layer skips persisting this piece. Used for ephemeral
     # pieces a scorer creates to score arbitrary content; ``exclude=True`` keeps
@@ -127,34 +74,6 @@ class MessagePiece(BaseModel):
     # ------------------------------------------------------------------ #
     # Validators
     # ------------------------------------------------------------------ #
-    @model_validator(mode="before")
-    @classmethod
-    def _warn_on_deprecated_kwargs(cls, data: Any) -> Any:
-        """
-        Emit DeprecationWarning for each deprecated kwarg explicitly passed.
-
-        Returns:
-            The (unchanged) input ``data`` so validation can continue.
-        """
-        if not isinstance(data, dict):
-            return data
-        for kwarg, removed_in in _DEPRECATED_KWARGS:
-            if data.get(kwarg) is not None:
-                print_deprecation_message(
-                    old_item=f"MessagePiece(..., {kwarg}=...)",
-                    new_item="MessagePiece(...)",
-                    removed_in=removed_in,
-                )
-        # ``originator`` is special: only warn when the caller explicitly
-        # opts into a non-default value.
-        if data.get("originator", "undefined") != "undefined":
-            print_deprecation_message(
-                old_item="MessagePiece(..., originator=...)",
-                new_item="MessagePiece(...)",
-                removed_in="0.15.0",
-            )
-        return data
-
     @model_validator(mode="before")
     @classmethod
     def _mirror_original_to_converted(cls, data: Any) -> Any:
@@ -220,17 +139,13 @@ class MessagePiece(BaseModel):
         Copy lineage metadata from ``source`` onto this piece.
 
         Lineage fields are the metadata that tie a piece back to its originating
-        conversation, attack, and target. Mutable containers (``labels``,
-        ``prompt_metadata``) are shallow-copied so that mutations on one piece
-        do not affect others.
+        conversation. Mutable containers (``prompt_metadata``) are shallow-copied
+        so that mutations on one piece do not affect others.
 
         Args:
             source: The piece whose lineage will be copied onto ``self``.
         """
         self.conversation_id = source.conversation_id
-        self.labels = dict(source.labels)
-        self.attack_identifier = source.attack_identifier
-        self.prompt_target_identifier = source.prompt_target_identifier
         self.prompt_metadata = dict(source.prompt_metadata)
 
     def has_error(self) -> bool:
@@ -252,76 +167,45 @@ class MessagePiece(BaseModel):
         return self.response_error == "blocked"
 
     # ------------------------------------------------------------------ #
-    # Deprecated method shims (removed in 0.16.0)
+    # Adversarial placeholder support
     # ------------------------------------------------------------------ #
-    def to_dict(self) -> dict[str, Any]:
-        """
-        Return a JSON-mode dict representation (DEPRECATED — use ``model_dump``).
-
-        Returns:
-            A JSON-mode dict representation of the piece (same as
-            ``self.model_dump(mode="json")``).
-        """
-        print_deprecation_message(
-            old_item="MessagePiece.to_dict()",
-            new_item='MessagePiece.model_dump(mode="json")',
-            removed_in="0.16.0",
-        )
-        return self.model_dump(mode="json")
-
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> MessagePiece:
+    def adversarial_placeholder(cls, *, role: ChatMessageRole = "user") -> MessagePiece:
         """
-        Construct a MessagePiece from a dict (DEPRECATED — use ``model_validate``).
+        Build a placeholder text piece that signals the adversarial chat will
+        generate the text content at this position.
+
+        Intended for use inside ``AttackParameters.next_message`` when combining
+        a user-supplied seed (e.g. a base image to edit) with adversarial-generated
+        text on turn 1 of a multi-turn attack. A consumer that walks the message
+        pieces can call ``is_adversarial_placeholder`` to detect a slot and
+        replace its value with the generated text before sending the message.
 
         Args:
-            data: A dict matching the MessagePiece field schema.
+            role: The chat role to assign to the piece. Defaults to ``"user"``.
 
         Returns:
-            A new ``MessagePiece`` (same as ``cls.model_validate(data)``).
+            A text ``MessagePiece`` flagged via ``prompt_metadata``.
         """
-        print_deprecation_message(
-            old_item="MessagePiece.from_dict()",
-            new_item="MessagePiece.model_validate()",
-            removed_in="0.16.0",
+        return cls(
+            role=role,
+            original_value="",
+            original_value_data_type="text",
+            prompt_metadata={"adversarial_placeholder": True},
         )
-        return cls.model_validate(data)
 
-    def set_piece_not_in_database(self) -> None:
+    def is_adversarial_placeholder(self) -> bool:
         """
-        Mark this piece as ephemeral (DEPRECATED — set ``not_in_memory`` directly).
+        Return ``True`` when this piece is a placeholder for adversarial-generated text.
 
-        Example::
+        Detection is based on the ``adversarial_placeholder`` flag set by
+        ``adversarial_placeholder``. Plain pieces (created without the flag)
+        always return ``False``.
 
-            piece.not_in_memory = True
+        Returns:
+            ``True`` if this piece should be filled in by an adversarial chat.
         """
-        print_deprecation_message(
-            old_item="MessagePiece.set_piece_not_in_database()",
-            new_item="MessagePiece.not_in_memory = True",
-            removed_in="0.16.0",
-        )
-        self.not_in_memory = True
-
-    async def set_sha256_values_async(self) -> None:
-        """
-        Compute SHA256 hash values for original and converted payloads.
-
-        Async because blob payloads may need to be fetched. Must be called
-        explicitly after construction.
-        """
-        original_serializer = data_serializer_factory(
-            category="prompt-memory-entries",
-            data_type=self.original_value_data_type,
-            value=self.original_value,
-        )
-        self.original_value_sha256 = await original_serializer.get_sha256_async()
-
-        converted_serializer = data_serializer_factory(
-            category="prompt-memory-entries",
-            data_type=self.converted_value_data_type,
-            value=self.converted_value,
-        )
-        self.converted_value_sha256 = await converted_serializer.get_sha256_async()
+        return bool(self.prompt_metadata.get("adversarial_placeholder"))
 
 
 def sort_message_pieces(message_pieces: list[MessagePiece]) -> list[MessagePiece]:
@@ -341,4 +225,7 @@ def sort_message_pieces(message_pieces: list[MessagePiece]) -> list[MessagePiece
         convo_id: min(x.timestamp for x in message_pieces if x.conversation_id == convo_id)
         for convo_id in {x.conversation_id for x in message_pieces}
     }
-    return sorted(message_pieces, key=lambda x: (earliest_timestamps[x.conversation_id], x.conversation_id, x.sequence))
+    return sorted(
+        message_pieces,
+        key=lambda x: (earliest_timestamps[x.conversation_id], x.conversation_id or "", x.sequence),
+    )

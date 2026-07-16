@@ -1,5 +1,6 @@
 import { render, screen, fireEvent } from '@testing-library/react'
 import { FluentProvider, webLightTheme } from '@fluentui/react-components'
+import { makeTarget } from '@/test-utils/targetFixtures'
 import TargetTable from './TargetTable'
 import type { TargetInstance } from '../../types'
 
@@ -12,7 +13,7 @@ const TestWrapper: React.FC<{ children: React.ReactNode }> = ({ children }) => (
 )
 
 const sampleTargets: TargetInstance[] = [
-  {
+  makeTarget({
     target_registry_name: 'openai_chat_gpt4',
     target_type: 'OpenAIChatTarget',
     endpoint: 'https://api.openai.com',
@@ -27,8 +28,8 @@ const sampleTargets: TargetInstance[] = [
       supported_input_modalities: ['text', 'image_path'],
       supported_output_modalities: ['text'],
     },
-  },
-  {
+  }),
+  makeTarget({
     target_registry_name: 'azure_image_dalle',
     target_type: 'AzureImageTarget',
     endpoint: 'https://azure.openai.com',
@@ -43,13 +44,13 @@ const sampleTargets: TargetInstance[] = [
       supported_input_modalities: ['text'],
       supported_output_modalities: ['image_path'],
     },
-  },
-  {
+  }),
+  makeTarget({
     target_registry_name: 'text_target_basic',
     target_type: 'TextTarget',
     endpoint: null,
     model_name: null,
-  },
+  }),
 ]
 
 describe('TargetTable', () => {
@@ -211,7 +212,7 @@ describe('TargetTable', () => {
   })
 
   it('should render modality icons in canonical order: text, image, audio, video, reasoning, function_call, tool_call', () => {
-    const target: TargetInstance = {
+    const target: TargetInstance = makeTarget({
       target_registry_name: 'multi_modal',
       target_type: 'CustomTarget',
       endpoint: null,
@@ -235,7 +236,7 @@ describe('TargetTable', () => {
         ],
         supported_output_modalities: ['text'],
       },
-    }
+    })
     render(
       <TestWrapper>
         <TargetTable {...defaultProps} targets={[target]} />
@@ -256,7 +257,7 @@ describe('TargetTable', () => {
 
   it('should display target_specific_params when present', () => {
     const targetWithParams: TargetInstance[] = [
-      {
+      makeTarget({
         target_registry_name: 'param_target',
         target_type: 'OpenAIResponseTarget',
         endpoint: 'https://api.openai.com',
@@ -265,7 +266,7 @@ describe('TargetTable', () => {
           reasoning_effort: 'high',
           max_output_tokens: 4096,
         },
-      },
+      }),
     ]
 
     render(
@@ -280,13 +281,13 @@ describe('TargetTable', () => {
 
   it('should show tooltip for model with different underlying model', () => {
     const targetWithUnderlying: TargetInstance[] = [
-      {
+      makeTarget({
         target_registry_name: 'azure_deployment',
         target_type: 'OpenAIChatTarget',
         endpoint: 'https://azure.openai.com',
         model_name: 'my-gpt4o-deployment',
         underlying_model_name: 'gpt-4o',
-      },
+      }),
     ]
 
     render(
@@ -343,5 +344,58 @@ describe('TargetTable', () => {
     )
 
     expect(screen.queryByText('Filter by type:')).not.toBeInTheDocument()
+  })
+
+  it('should show expand button for RoundRobinTarget with inner targets', () => {
+    const rrTarget: TargetInstance = makeTarget({
+      target_registry_name: 'rr_gpt4o',
+      target_type: 'RoundRobinTarget',
+      model_name: 'gpt-4o',
+      target_specific_params: { weights: [1, 1] },
+      inner_targets: [
+        {
+          target_registry_name: 'inner_a',
+          target_type: 'OpenAIChatTarget',
+          endpoint: 'https://a.openai.azure.com',
+          model_name: 'gpt-4o',
+        },
+        {
+          target_registry_name: 'inner_b',
+          target_type: 'OpenAIChatTarget',
+          endpoint: 'https://b.openai.azure.com',
+          model_name: 'gpt-4o',
+        },
+      ],
+    })
+
+    render(
+      <TestWrapper>
+        <TargetTable {...defaultProps} targets={[rrTarget]} />
+      </TestWrapper>
+    )
+
+    // Expand button should be present
+    const expandButton = screen.getByLabelText('Expand inner targets')
+    expect(expandButton).toBeInTheDocument()
+
+    // Inner targets are not visible before expanding
+    expect(screen.queryByText('https://a.openai.azure.com')).not.toBeInTheDocument()
+
+    // Click to expand
+    fireEvent.click(expandButton)
+
+    // Inner targets should now be visible
+    expect(screen.getByText('https://a.openai.azure.com')).toBeInTheDocument()
+    expect(screen.getByText('https://b.openai.azure.com')).toBeInTheDocument()
+  })
+
+  it('should not show expand button for regular targets', () => {
+    render(
+      <TestWrapper>
+        <TargetTable {...defaultProps} targets={[sampleTargets[0]]} />
+      </TestWrapper>
+    )
+
+    expect(screen.queryByLabelText('Expand inner targets')).not.toBeInTheDocument()
   })
 })

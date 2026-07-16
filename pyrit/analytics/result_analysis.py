@@ -4,7 +4,7 @@
 from collections import defaultdict
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 from pyrit.models import (
     AttackOutcome,
@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 class AttackStats:
     """Statistics for attack analysis results."""
 
-    success_rate: Optional[float]
+    success_rate: float | None
     total_decided: int
     successes: int
     failures: int
@@ -118,7 +118,7 @@ def get_cached_results_for_technique(
     *,
     technique_eval_hash: str,
     objective_target_eval_hash: str,
-    additional_filters: Optional[Sequence[IdentifierFilter]] = None,
+    additional_filters: Sequence[IdentifierFilter] | None = None,
 ) -> list[AttackResult]:
     """
     Return cached AttackResults matching a (technique × objective target) pair.
@@ -144,7 +144,7 @@ def get_cached_results_for_technique(
             (also exposed as ``AtomicAttack.technique_eval_hash``).
         objective_target_eval_hash (str): Behavioral eval hash of the objective
             target, as produced by ``ObjectiveTargetEvaluationIdentifier.eval_hash``.
-        additional_filters (Optional[Sequence[IdentifierFilter]]): Extra
+        additional_filters (Sequence[IdentifierFilter] | None): Extra
             ``IdentifierFilter`` predicates appended to the SQL pre-filter.
             Defaults to None.
 
@@ -170,7 +170,7 @@ def get_cached_results_for_technique(
     return matches
 
 
-def _objective_target_eval_hash_for(attack_result: AttackResult) -> Optional[str]:
+def _objective_target_eval_hash_for(attack_result: AttackResult) -> str | None:
     """
     Return the ObjectiveTargetEvaluationIdentifier eval hash for a result.
 
@@ -182,7 +182,7 @@ def _objective_target_eval_hash_for(attack_result: AttackResult) -> Optional[str
             ``atomic_attack_identifier`` tree should be inspected.
 
     Returns:
-        Optional[str]: The ``ObjectiveTargetEvaluationIdentifier.eval_hash``
+        str | None: The ``ObjectiveTargetEvaluationIdentifier.eval_hash``
             computed from the persisted objective-target identifier, or
             ``None`` when the identifier tree is missing expected nodes
             (e.g. legacy rows or atomic attacks without a distinct objective
