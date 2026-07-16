@@ -167,6 +167,11 @@ class PromptNormalizer:
         # Only apply response converters to the last message (final response)
         # Intermediate messages are tool calls/outputs that don't need conversion
         for i, resp in enumerate(responses):
+            # A response belongs to the conversation it answers. Real targets already stamp this
+            # (via construct_response_from_request), matching the request pieces stamped above;
+            # enforcing it here keeps the persisted conversation coherent regardless of target.
+            for piece in resp.message_pieces:
+                piece.conversation_id = conversation_id
             is_last = i == len(responses) - 1
             if is_last:
                 await self.convert_values_async(
