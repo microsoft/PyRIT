@@ -199,7 +199,7 @@ class WebInjectionTechnique(ScenarioTechnique):
         return {"all", "default", "exfil", "xss"}
 
     @classmethod
-    def default(cls) -> "WebInjectionTechnique":
+    def default(cls) -> WebInjectionTechnique:
         """Return the default technique (``DEFAULT``) used when the caller selects nothing."""
         return cls.DEFAULT
 
