@@ -24,13 +24,17 @@ from pyrit.setup.initialization import (
 )
 
 if TYPE_CHECKING:
-    from pyrit.setup.initializers.pyrit_initializer import PyRITInitializer
+    from pyrit.setup.pyrit_initializer import PyRITInitializer
 
 
 # Type alias for YAML-serializable values that can be passed as initializer args
 # This matches what YAML can represent: primitives, lists, and nested dicts
 YamlPrimitive = str | int | float | bool | None
 YamlValue = YamlPrimitive | list["YamlValue"] | dict[str, "YamlValue"]
+
+
+class _RemovedConfigurationOptionError(ValueError):
+    """Raised when a configuration contains an option removed at the v1 boundary."""
 
 
 @dataclass
@@ -60,35 +64,6 @@ class ServerConfig:
 
 
 @dataclass
-class ScenarioConfig:
-    """
-    Configuration for a scenario referenced by a config file.
-
-    Attributes:
-        name: Scenario name (registered in ScenarioRegistry; normalized to snake_case).
-        args: Optional map of scenario-declared parameter values.
-    """
-
-    name: str
-    args: dict[str, YamlValue] | None = None
-
-
-def _scenario_config_to_dict(config: ScenarioConfig) -> dict[str, Any]:
-    """
-    Serialize a ``ScenarioConfig`` back to the YAML-style dict shape.
-
-    Args:
-        config (ScenarioConfig): The config to serialize.
-
-    Returns:
-        dict[str, Any]: ``{"name": ..., "args": ...}`` (args omitted when empty).
-    """
-    if config.args:
-        return {"name": config.name, "args": config.args}
-    return {"name": config.name}
-
-
-@dataclass
 class ConfigurationLoader(YamlLoadable):
     """
     Loader for PyRIT configuration from YAML files.
@@ -111,10 +86,11 @@ class ConfigurationLoader(YamlLoadable):
         memory_db_type: sqlite
 
         initializers:
-          - simple
-          - name: airt
+          - scorer
+          - name: target
             args:
-              some_param: value
+              tags:
+                - default
 
         initialization_scripts:
           - /path/to/custom_initializer.py
@@ -144,7 +120,6 @@ class ConfigurationLoader(YamlLoadable):
     silent: bool = False
     operator: str | None = None
     operation: str | None = None
-    scenario: str | dict[str, Any] | None = None
     max_concurrent_scenario_runs: int = 3
     allow_custom_initializers: bool = False
     server: dict[str, Any] | None = None
@@ -154,7 +129,6 @@ class ConfigurationLoader(YamlLoadable):
         """Validate and normalize the configuration after loading."""
         self._normalize_memory_db_type()
         self._normalize_initializers()
-        self._normalize_scenario()
         self._normalize_server()
 
     def _normalize_memory_db_type(self) -> None:
@@ -215,45 +189,6 @@ class ConfigurationLoader(YamlLoadable):
                 raise ValueError(f"Initializer entry must be a string or dict, got: {type(entry).__name__}")
         self._initializer_configs = normalized
 
-    def _normalize_scenario(self) -> None:
-        """
-        Normalize the optional ``scenario`` block to a ``ScenarioConfig``.
-
-        Accepts:
-        - ``None``: no scenario configured at the config-file layer.
-        - ``"name"``: shorthand for ``ScenarioConfig(name="name", args=None)``.
-        - ``{"name": "name", "args": {...}}``: full form. ``args`` is optional.
-
-        The name is normalized to snake_case (matching initializer naming).
-
-        Raises:
-            ValueError: For any other shape.
-        """
-        if self.scenario is None:
-            self._scenario_config: ScenarioConfig | None = None
-            return
-
-        if isinstance(self.scenario, str):
-            self._scenario_config = ScenarioConfig(name=class_name_to_snake_case(self.scenario, suffix="Scenario"))
-            return
-
-        if isinstance(self.scenario, dict):
-            if "name" not in self.scenario:
-                raise ValueError(f"Scenario configuration must have a 'name' field. Got: {self.scenario}")
-            name = self.scenario["name"]
-            if not isinstance(name, str):
-                raise ValueError(f"Scenario 'name' must be a string. Got: {type(name).__name__}")
-            args = self.scenario.get("args")
-            if args is not None and not isinstance(args, dict):
-                raise ValueError(f"Scenario 'args' must be a dict or omitted. Got: {type(args).__name__}")
-            self._scenario_config = ScenarioConfig(
-                name=class_name_to_snake_case(name, suffix="Scenario"),
-                args=args,
-            )
-            return
-
-        raise ValueError(f"Scenario entry must be a string or dict, got: {type(self.scenario).__name__}")
-
     def _normalize_server(self) -> None:
         """
         Normalize the optional ``server`` block to a ``ServerConfig``.
@@ -281,11 +216,6 @@ class ConfigurationLoader(YamlLoadable):
         """The normalized ``server:`` block, or ``None`` when not configured."""
         return self._server_config
 
-    @property
-    def scenario_config(self) -> ScenarioConfig | None:
-        """The normalized ``scenario:`` block, or ``None`` when not configured."""
-        return self._scenario_config
-
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "ConfigurationLoader":
         """
@@ -298,8 +228,14 @@ class ConfigurationLoader(YamlLoadable):
             A new ConfigurationLoader instance.
 
         Raises:
+            _RemovedConfigurationOptionError: If the removed ``scenario`` block is present.
             ValueError: If ``extensions`` is present but not a dict.
         """
+        if "scenario" in data:
+            raise _RemovedConfigurationOptionError(
+                "The 'scenario' configuration block is no longer supported. "
+                "Pass the scenario name positionally and its parameters as CLI flags."
+            )
         # Filter out None values only - empty lists are meaningful ("load nothing")
         filtered_data = {k: v for k, v in data.items() if v is not None}
         known_fields = set(cls.__dataclass_fields__.keys())
@@ -347,6 +283,7 @@ class ConfigurationLoader(YamlLoadable):
 
         Raises:
             FileNotFoundError: If an explicitly specified config_file does not exist.
+            _RemovedConfigurationOptionError: If the removed ``scenario`` block is present.
             ValueError: If the configuration is invalid.
         """
         import logging
@@ -384,8 +321,8 @@ class ConfigurationLoader(YamlLoadable):
                     config_data["operator"] = default_config.operator
                 if default_config.operation:
                     config_data["operation"] = default_config.operation
-                if default_config._scenario_config is not None:
-                    config_data["scenario"] = _scenario_config_to_dict(default_config._scenario_config)
+            except _RemovedConfigurationOptionError:
+                raise
             except Exception as e:
                 logger.warning(f"Failed to load default config file {default_config_path}: {e}")
 
@@ -410,13 +347,6 @@ class ConfigurationLoader(YamlLoadable):
                 config_data["operator"] = explicit_config.operator
             if explicit_config.operation:
                 config_data["operation"] = explicit_config.operation
-            # Explicit config wins over default config for scenario block too.
-            config_data["scenario"] = (
-                _scenario_config_to_dict(explicit_config._scenario_config)
-                if explicit_config._scenario_config is not None
-                else None
-            )
-
         # 3. Apply overrides (non-None values take precedence)
         # Convert Sequence to list to match dataclass field types
         if memory_db_type is not None:
@@ -478,19 +408,13 @@ class ConfigurationLoader(YamlLoadable):
         logging.getLogger(__name__).info("Running %d initializer(s)...", len(self._initializer_configs))
 
         for config in self._initializer_configs:
-            initializer_class = registry.get_class(config.name)
-            if initializer_class is None:
-                available = ", ".join(sorted(registry.get_names()))
+            try:
+                instance = registry.create_and_configure(config.name, initializer_params=config.args)
+            except KeyError as exc:
+                available = ", ".join(sorted(registry.get_class_names()))
                 raise ValueError(
                     f"Initializer '{config.name}' not found in registry.\nAvailable initializers: {available}"
-                )
-
-            # Instantiate and set params if provided
-            instance = initializer_class()
-            if config.args:
-                instance.set_params_from_args(args=config.args)
-                # Validate params early against supported_parameters to fail fast
-                instance._validate_params(params=instance.params)
+                ) from exc
 
             resolved.append(instance)
 

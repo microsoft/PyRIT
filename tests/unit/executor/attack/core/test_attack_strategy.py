@@ -2,6 +2,7 @@
 # Licensed under the MIT license.
 
 import logging
+from dataclasses import replace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -92,6 +93,47 @@ def mock_logger():
 def event_handler(mock_logger):
     """Create an event handler for testing"""
     return _DefaultAttackStrategyEventHandler(logger=mock_logger)
+
+
+def test_next_message_override_can_clear_parameter_value_and_survive_copy():
+    """An explicit None override must not fall back to the immutable parameter after copying."""
+
+    class TestAttackContext(AttackContext):
+        pass
+
+    seed_message = Message.from_prompt(prompt="seed", role="user")
+    context = TestAttackContext(
+        params=AttackParameters(
+            objective="Test objective",
+            next_message=seed_message,
+        )
+    )
+
+    assert context.next_message is seed_message
+
+    context.next_message = None
+
+    assert context.next_message is None
+    assert context.duplicate().next_message is None
+    assert replace(context).next_message is None
+
+
+def test_next_message_override_constructor_value_takes_precedence():
+    """A directly supplied override must take precedence over the immutable parameter."""
+
+    class TestAttackContext(AttackContext):
+        pass
+
+    seed_message = Message.from_prompt(prompt="seed", role="user")
+    context = TestAttackContext(
+        params=AttackParameters(
+            objective="Test objective",
+            next_message=seed_message,
+        ),
+        _next_message_override=None,
+    )
+
+    assert context.next_message is None
 
 
 @pytest.fixture
@@ -914,14 +956,14 @@ class TestCreateIdentifierAdversarial:
 
     def test_adversarial_target_added_as_child(self, mock_objective_target):
         adv = _adv_target()
-        config = AttackAdversarialConfig(target=adv, system_prompt=None, seed_prompt=None)
+        config = AttackAdversarialConfig(target=adv, system_prompt=None, first_message=None)
         strategy = _IdentityTestStrategy(objective_target=mock_objective_target, adversarial_config=config)
         identifier = strategy.get_identifier()
         assert identifier.children["adversarial_chat"] == adv.get_identifier.return_value
 
     def test_target_only_config_omits_prompt_params(self, mock_objective_target):
         """A target-only config (no prompts) emits the child but no prompt params."""
-        config = AttackAdversarialConfig(target=_adv_target(), system_prompt=None, seed_prompt=None)
+        config = AttackAdversarialConfig(target=_adv_target(), system_prompt=None, first_message=None)
         strategy = _IdentityTestStrategy(objective_target=mock_objective_target, adversarial_config=config)
         identifier = strategy.get_identifier()
         assert "adversarial_chat" in identifier.children
@@ -930,15 +972,15 @@ class TestCreateIdentifierAdversarial:
 
     def test_system_prompt_string_stored_in_params(self, mock_objective_target):
         config = AttackAdversarialConfig(
-            target=_adv_target(), system_prompt="persona {{ objective }}", seed_prompt=None
+            target=_adv_target(), system_prompt="persona {{ objective }}", first_message=None
         )
         strategy = _IdentityTestStrategy(objective_target=mock_objective_target, adversarial_config=config)
         identifier = strategy.get_identifier()
         assert identifier.params["adversarial_system_prompt"] == "persona {{ objective }}"
 
-    def test_seed_prompt_seedprompt_value_stored_in_params(self, mock_objective_target):
+    def test_first_message_seedprompt_value_stored_in_params(self, mock_objective_target):
         seed = SeedPrompt(value="seed {{ objective }}", data_type="text", parameters=["objective"])
-        config = AttackAdversarialConfig(target=_adv_target(), system_prompt=None, seed_prompt=seed)
+        config = AttackAdversarialConfig(target=_adv_target(), system_prompt=None, first_message=seed)
         strategy = _IdentityTestStrategy(objective_target=mock_objective_target, adversarial_config=config)
         identifier = strategy.get_identifier()
         assert identifier.params["adversarial_seed_prompt"] == "seed {{ objective }}"
@@ -947,25 +989,25 @@ class TestCreateIdentifierAdversarial:
         adv = _adv_target()
         s1 = _IdentityTestStrategy(
             objective_target=mock_objective_target,
-            adversarial_config=AttackAdversarialConfig(target=adv, system_prompt="persona A", seed_prompt=None),
+            adversarial_config=AttackAdversarialConfig(target=adv, system_prompt="persona A", first_message=None),
         )
         s2 = _IdentityTestStrategy(
             objective_target=mock_objective_target,
-            adversarial_config=AttackAdversarialConfig(target=adv, system_prompt="persona B", seed_prompt=None),
+            adversarial_config=AttackAdversarialConfig(target=adv, system_prompt="persona B", first_message=None),
         )
         id1, id2 = s1.get_identifier(), s2.get_identifier()
         assert id1.hash != id2.hash
         assert _eval_hash(id1) != _eval_hash(id2)
 
-    def test_different_seed_prompt_changes_full_and_eval_hash(self, mock_objective_target):
+    def test_different_first_message_changes_full_and_eval_hash(self, mock_objective_target):
         adv = _adv_target()
         s1 = _IdentityTestStrategy(
             objective_target=mock_objective_target,
-            adversarial_config=AttackAdversarialConfig(target=adv, system_prompt=None, seed_prompt="first A"),
+            adversarial_config=AttackAdversarialConfig(target=adv, system_prompt=None, first_message="first A"),
         )
         s2 = _IdentityTestStrategy(
             objective_target=mock_objective_target,
-            adversarial_config=AttackAdversarialConfig(target=adv, system_prompt=None, seed_prompt="first B"),
+            adversarial_config=AttackAdversarialConfig(target=adv, system_prompt=None, first_message="first B"),
         )
         id1, id2 = s1.get_identifier(), s2.get_identifier()
         assert id1.hash != id2.hash
@@ -976,13 +1018,13 @@ class TestCreateIdentifierAdversarial:
         s1 = _IdentityTestStrategy(
             objective_target=mock_objective_target,
             adversarial_config=AttackAdversarialConfig(
-                target=_adv_target(model_name="gpt-4o"), system_prompt=None, seed_prompt=None
+                target=_adv_target(model_name="gpt-4o"), system_prompt=None, first_message=None
             ),
         )
         s2 = _IdentityTestStrategy(
             objective_target=mock_objective_target,
             adversarial_config=AttackAdversarialConfig(
-                target=_adv_target(model_name="gpt-3.5"), system_prompt=None, seed_prompt=None
+                target=_adv_target(model_name="gpt-3.5"), system_prompt=None, first_message=None
             ),
         )
         assert _eval_hash(s1.get_identifier()) != _eval_hash(s2.get_identifier())
@@ -992,13 +1034,13 @@ class TestCreateIdentifierAdversarial:
         s1 = _IdentityTestStrategy(
             objective_target=mock_objective_target,
             adversarial_config=AttackAdversarialConfig(
-                target=_adv_target(extra_params={"endpoint": "https://a.com"}), system_prompt=None, seed_prompt=None
+                target=_adv_target(extra_params={"endpoint": "https://a.com"}), system_prompt=None, first_message=None
             ),
         )
         s2 = _IdentityTestStrategy(
             objective_target=mock_objective_target,
             adversarial_config=AttackAdversarialConfig(
-                target=_adv_target(extra_params={"endpoint": "https://b.com"}), system_prompt=None, seed_prompt=None
+                target=_adv_target(extra_params={"endpoint": "https://b.com"}), system_prompt=None, first_message=None
             ),
         )
         assert _eval_hash(s1.get_identifier()) == _eval_hash(s2.get_identifier())
@@ -1008,6 +1050,6 @@ class TestCreateIdentifierAdversarial:
         plain = _IdentityTestStrategy(objective_target=mock_objective_target, adversarial_config=None)
         adversarial = _IdentityTestStrategy(
             objective_target=mock_objective_target,
-            adversarial_config=AttackAdversarialConfig(target=_adv_target(), system_prompt=None, seed_prompt=None),
+            adversarial_config=AttackAdversarialConfig(target=_adv_target(), system_prompt=None, first_message=None),
         )
         assert plain.get_identifier().hash != adversarial.get_identifier().hash

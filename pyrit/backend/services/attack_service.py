@@ -15,6 +15,7 @@ ARCHITECTURE:
 - AI-generated attacks may have multiple related conversations
 """
 
+import logging
 import mimetypes
 import uuid
 from collections.abc import Sequence
@@ -31,6 +32,7 @@ from pyrit.backend.mappers import (
     request_piece_to_pyrit_message_piece,
     request_to_pyrit_message,
 )
+from pyrit.backend.models import DEFAULT_MEDIA_EXTENSIONS
 from pyrit.backend.models.attacks import (
     AddMessageRequest,
     AddMessageResponse,
@@ -43,6 +45,8 @@ from pyrit.backend.models.attacks import (
     CreateAttackResponse,
     CreateConversationRequest,
     CreateConversationResponse,
+    MessagePieceRequest,
+    PrependedMessageRequest,
     UpdateAttackRequest,
     UpdateMainConversationRequest,
     UpdateMainConversationResponse,
@@ -56,14 +60,17 @@ from pyrit.models import (
     AttackIdentifier,
     AttackOutcome,
     AttackResult,
+    AttackTechniqueIdentifier,
     ComponentIdentifier,
     Conversation,
     ConversationStats,
     ConversationType,
-    MessagePiece,
+    ConverterIdentifier,
     PromptDataType,
 )
-from pyrit.prompt_normalizer import PromptConverterConfiguration, PromptNormalizer
+from pyrit.prompt_normalizer import ConverterConfiguration, PromptNormalizer
+
+logger = logging.getLogger(__name__)
 
 
 class AttackService:
@@ -201,7 +208,7 @@ class AttackService:
         Get all unique attack type names from stored attack results.
 
         Delegates to the memory layer which extracts distinct class_name
-        values from the attack_identifier JSON column via SQL.
+        values from the atomic_attack_identifier JSON column via SQL.
 
         Returns:
             Sorted list of unique attack type names.
@@ -213,7 +220,7 @@ class AttackService:
         Get all unique converter type names used across attack results.
 
         Delegates to the memory layer which extracts distinct converter
-        type names from the attack_identifier JSON column via SQL.
+        type names from the atomic_attack_identifier JSON column via SQL.
 
         Returns:
             Sorted list of unique converter type names.
@@ -283,8 +290,8 @@ class AttackService:
         Creates an AttackResult with a new conversation_id.  When
         ``source_conversation_id`` and ``cutoff_index`` are provided the
         backend duplicates messages up to and including the cutoff turn,
-        applies the new labels, and maps assistant roles to
-        ``simulated_assistant`` so the branched context is inert.
+        stores the new labels on the attack result, and maps assistant roles
+        to ``simulated_assistant`` so the branched context is inert.
 
         Returns:
             CreateAttackResponse with the new attack's ID and creation time.
@@ -312,7 +319,6 @@ class AttackService:
             conversation_id = self._duplicate_conversation_up_to(
                 source_conversation_id=request.source_conversation_id,
                 cutoff_index=request.cutoff_index,
-                labels_override=labels,
                 remap_assistant_to_simulated=True,
                 target_identifier=target_identifier,
             )
@@ -341,12 +347,21 @@ class AttackService:
         # Store in memory
         self._memory.add_attack_results_to_memory(attack_results=[attack_result])
 
-        # Store prepended conversation messages if provided
-        if request.prepended_conversation:
+        # Store prepended conversation messages if provided. A system_prompt is lowered to a
+        # single system-role message at the front, composing with any prepended_conversation.
+        prepended = list(request.prepended_conversation or [])
+        if request.system_prompt:
+            prepended.insert(
+                0,
+                PrependedMessageRequest(
+                    role="system",
+                    pieces=[MessagePieceRequest(original_value=request.system_prompt)],
+                ),
+            )
+        if prepended:
             await self._store_prepended_messages_async(
                 conversation_id=conversation_id,
-                prepended=request.prepended_conversation,
-                labels=labels,  # deprecated
+                prepended=prepended,
                 target_identifier=target_identifier,
             )
 
@@ -592,7 +607,7 @@ class AttackService:
         main_conversation_id = ar.conversation_id
 
         self._validate_target_match(attack_identifier=ar.get_attack_strategy_identifier(), request=request)
-        self._validate_operator_match(conversation_id=main_conversation_id, request=request)
+        self._validate_operator_match(attack_result=ar, request=request)
 
         msg_conversation_id = request.target_conversation_id
 
@@ -611,29 +626,38 @@ class AttackService:
         existing = self._memory.get_message_pieces(conversation_id=msg_conversation_id)
         sequence = max((p.sequence for p in existing), default=-1) + 1
 
-        attack_labels = self._resolve_labels(
-            conversation_id=msg_conversation_id,
-            main_conversation_id=main_conversation_id,
-            existing_pieces=existing,
-            request_labels=request.labels,
-        )
-
         if request.send:
             assert target_registry_name is not None  # validated above
-            await self._send_and_store_message_async(
-                conversation_id=msg_conversation_id,
-                target_registry_name=target_registry_name,
-                request=request,
-                sequence=sequence,
-                labels=attack_labels,  # deprecated
-            )
+            try:
+                await self._send_and_store_message_async(
+                    conversation_id=msg_conversation_id,
+                    target_registry_name=target_registry_name,
+                    request=request,
+                    sequence=sequence,
+                )
+            except Exception:
+                # PromptNormalizer persists a full error piece (response_error +
+                # traceback) to memory *before* re-raising. Surface that stored
+                # piece inline so the send (POST) response matches the
+                # conversation-reload (GET) view instead of collapsing to a
+                # generic 500. If no new error piece was stored (the failure
+                # happened before the send, e.g. target lookup), re-raise so the
+                # route still reports a real error.
+                prior_ids = {p.id for p in existing}
+                current_pieces = self._memory.get_message_pieces(conversation_id=msg_conversation_id)
+                if not any(p.id not in prior_ids and p.has_error() for p in current_pieces):
+                    raise
+                logger.exception(
+                    "Send failed for attack '%s' conversation '%s'; surfacing stored error piece.",
+                    attack_result_id,
+                    msg_conversation_id,
+                )
         else:
             existing_metadata = self._memory._get_conversation(conversation_id=msg_conversation_id)
             await self._store_message_only_async(
                 conversation_id=msg_conversation_id,
                 request=request,
                 sequence=sequence,
-                labels=attack_labels,  # deprecated
                 target_identifier=existing_metadata.target_identifier if existing_metadata else None,
             )
 
@@ -687,58 +711,27 @@ class AttackService:
                 f"Create a new attack to use a different target."
             )
 
-    def _validate_operator_match(self, *, conversation_id: str, request: AddMessageRequest) -> None:
+    def _validate_operator_match(self, *, attack_result: AttackResult, request: AddMessageRequest) -> None:
         """
-        Validate that the request operator matches existing messages' operator.
+        Validate that the request operator matches the attack result's operator.
 
         Raises:
-            ValueError: If the operator in the request doesn't match existing messages.
+            ValueError: If the operator in the request doesn't match the attack result.
         """
         if not request.labels:
             return
 
-        existing_pieces = self._memory.get_message_pieces(conversation_id=conversation_id)
-        existing_operator = next(
-            (p.labels.get("operator") for p in existing_pieces if p.labels and p.labels.get("operator")),
-            None,
-        )
-        if not existing_operator:
+        attack_operator = attack_result.labels.get("operator")
+        if not attack_operator:
             return
 
         request_operator = request.labels.get("operator")
-        if request_operator and request_operator != existing_operator:
+        if request_operator and request_operator != attack_operator:
             raise ValueError(
-                f"Operator mismatch: attack belongs to operator '{existing_operator}' "
+                f"Operator mismatch: attack belongs to operator '{attack_operator}' "
                 f"but request is from '{request_operator}'. "
                 f"Create a new attack to continue."
             )
-
-    def _resolve_labels(
-        self,
-        *,
-        conversation_id: str,
-        main_conversation_id: str,
-        existing_pieces: Sequence[MessagePiece],
-        request_labels: dict[str, str] | None,
-    ) -> dict[str, str]:
-        """
-        Resolve labels for a new message by inheriting from existing pieces.
-
-        Tries the target conversation first, falls back to the main conversation,
-        then falls back to labels provided explicitly in the request.
-
-        Returns:
-            dict[str, str]: Resolved labels for the new message.
-        """
-        attack_labels: dict[str, str] | None = next(
-            (p.labels for p in existing_pieces if p.labels and len(p.labels) > 0), None
-        )
-        if not attack_labels:
-            main_pieces = self._memory.get_message_pieces(conversation_id=main_conversation_id)
-            attack_labels = next((p.labels for p in main_pieces if p.labels and len(p.labels) > 0), None)
-        if not attack_labels:
-            attack_labels = dict(request_labels) if request_labels else {}
-        return attack_labels
 
     async def _update_attack_after_message_async(
         self, *, attack_result_id: str, ar: AttackResult, request: AddMessageRequest
@@ -753,49 +746,95 @@ class AttackService:
 
         if request.converter_ids:
             converter_objs = get_converter_service().get_converter_objects_for_ids(converter_ids=request.converter_ids)
-            new_converter_ids = [c.get_identifier() for c in converter_objs]
+            new_converter_ids = [
+                ConverterIdentifier.from_component_identifier(c.get_identifier()) for c in converter_objs
+            ]
             aid = ar.get_attack_strategy_identifier()
-            if aid:
-                existing_converters: list[ComponentIdentifier] = list(aid.get_child_list("request_converters"))
-                existing_hashes = {c.hash for c in existing_converters}
-                merged = existing_converters + [c for c in new_converter_ids if c.hash not in existing_hashes]
-                new_children = dict(aid.children)
-                if merged:
-                    new_children["request_converters"] = merged
-                new_aid = ComponentIdentifier(
-                    class_name=aid.class_name,
-                    class_module=aid.class_module,
-                    params=dict(aid.params),
-                    children=new_children,
-                )
-                if ar.atomic_attack_identifier:
-                    atomic = ComponentIdentifier.model_validate(ar.atomic_attack_identifier.model_dump())
-                    atomic_children = dict(atomic.children)
-                    # Navigate into attack_technique child to update the nested attack child.
-                    technique = atomic_children.get("attack_technique")
-                    if isinstance(technique, ComponentIdentifier):
-                        tech_children = dict(technique.children)
-                        tech_children["attack"] = new_aid
-                        atomic_children["attack_technique"] = ComponentIdentifier(
-                            class_name=technique.class_name,
-                            class_module=technique.class_module,
-                            params=dict(technique.params),
-                            children=tech_children,
-                        )
-                    else:
-                        # Fallback for pre-nesting rows with children["attack"] directly.
-                        atomic_children["attack"] = new_aid
-                    new_atomic = ComponentIdentifier(
-                        class_name=atomic.class_name,
-                        class_module=atomic.class_module,
-                        params=dict(atomic.params),
-                        children=atomic_children,
+            if aid and ar.atomic_attack_identifier:
+                attack_id = AttackIdentifier.from_component_identifier(aid)
+                existing_hashes = {c.hash for c in attack_id.request_converters}
+                additions = [c for c in new_converter_ids if c.hash not in existing_hashes]
+                if additions:
+                    new_attack_id = self._replace_request_converters(
+                        attack_id, request_converters=[*attack_id.request_converters, *additions]
+                    )
+                    new_atomic = self._replace_attack_in_atomic(
+                        AtomicAttackIdentifier.from_component_identifier(ar.atomic_attack_identifier),
+                        attack=new_attack_id,
                     )
                     update_fields["atomic_attack_identifier"] = new_atomic.model_dump()
 
         self._memory.update_attack_result_by_id(
             attack_result_id=attack_result_id,
             update_fields=update_fields,
+        )
+
+    @staticmethod
+    def _replace_request_converters(
+        attack_id: AttackIdentifier, *, request_converters: list[ConverterIdentifier]
+    ) -> AttackIdentifier:
+        """
+        Return a copy of ``attack_id`` with its request-converter pipeline replaced.
+
+        Reconstructed through the constructor (not ``model_copy``) so the
+        after-validator re-mirrors the typed converters into ``children`` and
+        recomputes the content hash. All other params/children/attributes are
+        preserved, so the identifier hashes identically apart from the converters.
+
+        Returns:
+            AttackIdentifier: A new identifier with the given request converters.
+        """
+        return AttackIdentifier(
+            class_name=attack_id.class_name,
+            class_module=attack_id.class_module,
+            params=dict(attack_id.params),
+            children=dict(attack_id.children),
+            attributes=dict(attack_id.attributes),
+            request_converters=request_converters,
+        )
+
+    @staticmethod
+    def _replace_attack_in_atomic(
+        atomic: AtomicAttackIdentifier, *, attack: AttackIdentifier
+    ) -> AtomicAttackIdentifier:
+        """
+        Return a copy of ``atomic`` with its nested attack strategy replaced.
+
+        Handles both the current nested shape (``atomic -> attack_technique ->
+        attack``) and the legacy flat shape (``atomic -> attack``). Everything
+        else is preserved so the composite identifier hashes identically apart
+        from the swapped attack node.
+
+        Returns:
+            AtomicAttackIdentifier: A new composite identifier wrapping ``attack``.
+        """
+        technique = atomic.attack_technique
+        if technique is not None:
+            new_technique = AttackTechniqueIdentifier(
+                class_name=technique.class_name,
+                class_module=technique.class_module,
+                params=dict(technique.params),
+                children=dict(technique.children),
+                attributes=dict(technique.attributes),
+                attack=attack,
+            )
+            return AtomicAttackIdentifier(
+                class_name=atomic.class_name,
+                class_module=atomic.class_module,
+                params=dict(atomic.params),
+                children=dict(atomic.children),
+                attributes=dict(atomic.attributes),
+                attack_technique=new_technique,
+            )
+        # Legacy flat shape: the attack strategy lives in children["attack"].
+        atomic_children = dict(atomic.children)
+        atomic_children["attack"] = attack
+        return AtomicAttackIdentifier(
+            class_name=atomic.class_name,
+            class_module=atomic.class_module,
+            params=dict(atomic.params),
+            children=atomic_children,
+            attributes=dict(atomic.attributes),
         )
 
     # ========================================================================
@@ -834,7 +873,6 @@ class AttackService:
         *,
         source_conversation_id: str,
         cutoff_index: int,
-        labels_override: dict[str, str] | None = None,
         remap_assistant_to_simulated: bool = False,
         target_identifier: ComponentIdentifier | None = None,
     ) -> str:
@@ -848,9 +886,6 @@ class AttackService:
         Args:
             source_conversation_id: The conversation to copy from.
             cutoff_index: Include messages with sequence <= cutoff_index.
-            labels_override: When provided, the duplicated pieces' labels are
-                replaced with these values.  Used when branching into a new
-                attack that belongs to a different operator.
             remap_assistant_to_simulated: When True, pieces with role
                 ``assistant`` are changed to ``simulated_assistant`` so the
                 branched context is inert and won't confuse the target.
@@ -868,11 +903,6 @@ class AttackService:
 
         # Apply optional overrides to the fresh pieces before persisting
         for piece in all_pieces:
-            if labels_override is not None:
-                # TODO: ``labels`` is slated to move from MessagePiece onto
-                # AttackResult. Revisit this once that lands so we set labels
-                # on the attack result instead of mutating each piece.
-                piece.labels = dict(labels_override)
             if remap_assistant_to_simulated and piece.api_role == "assistant":
                 piece.role = "simulated_assistant"
 
@@ -935,21 +965,25 @@ class AttackService:
             except (OSError, ValueError):
                 pass
 
-            # Derive file extension from the MIME type sent by the frontend
-            ext = None
-            if piece.mime_type:
-                ext = mimetypes.guess_extension(piece.mime_type, strict=False)
-            if not ext:
-                ext = ".bin"
-
             # Strip data URI prefix if present (e.g. "data:image/png;base64,...")
             # The backend itself returns data URIs from pyrit_messages_to_dto_async,
             # so the client may echo them back.
             value = piece.original_value
+            data_uri_mime_type = None
             if value.startswith("data:"):
                 # Format: data:<mime>;base64,<payload>
-                _, _, payload = value.partition(",")
+                header, _, payload = value.partition(",")
+                data_uri_mime_type = header.split(":", 1)[1].split(";", 1)[0] if ":" in header else None
                 value = payload
+
+            # Derive file extension from MIME metadata, then fall back to data_type.
+            ext = None
+            if piece.mime_type:
+                ext = mimetypes.guess_extension(piece.mime_type, strict=False)
+            if not ext and data_uri_mime_type:
+                ext = mimetypes.guess_extension(data_uri_mime_type, strict=False)
+            if not ext:
+                ext = DEFAULT_MEDIA_EXTENSIONS.get(piece.data_type, ".bin")
 
             serializer = data_serializer_factory(
                 category="prompt-memory-entries",
@@ -967,7 +1001,6 @@ class AttackService:
         *,
         conversation_id: str,
         prepended: list[Any],
-        labels: dict[str, str] | None = None,  # deprecated
         target_identifier: ComponentIdentifier | None = None,
     ) -> None:
         """Store prepended conversation messages in memory."""
@@ -983,7 +1016,6 @@ class AttackService:
                     role=msg.role,
                     conversation_id=conversation_id,
                     sequence=seq,
-                    labels=labels,  # deprecated
                 )
                 self._memory.add_message_pieces_to_memory(message_pieces=[piece])
 
@@ -994,7 +1026,6 @@ class AttackService:
         target_registry_name: str,
         request: AddMessageRequest,
         sequence: int,
-        labels: dict[str, str] | None = None,  # deprecated
     ) -> None:
         """Send message to target via normalizer and store response."""
         target_obj = get_target_service().get_target_object(target_registry_name=target_registry_name)
@@ -1009,7 +1040,6 @@ class AttackService:
             request=request,
             conversation_id=conversation_id,
             sequence=sequence,
-            labels=labels,  # deprecated
         )
 
         converter_configs = self._get_converter_configs(request)
@@ -1020,7 +1050,6 @@ class AttackService:
             target=target_obj,
             conversation_id=conversation_id,
             request_converter_configurations=converter_configs,
-            labels=labels,
         )
         # PromptNormalizer stores both request and response in memory automatically
 
@@ -1030,7 +1059,6 @@ class AttackService:
         conversation_id: str,
         request: AddMessageRequest,
         sequence: int,
-        labels: dict[str, str] | None = None,  # deprecated
         target_identifier: ComponentIdentifier | None = None,
     ) -> None:
         """Store message without sending (send=False)."""
@@ -1044,7 +1072,6 @@ class AttackService:
                 role=request.role,
                 conversation_id=conversation_id,
                 sequence=sequence,
-                labels=labels,  # deprecated
             )
             self._memory.add_message_pieces_to_memory(message_pieces=[piece])
 
@@ -1087,19 +1114,19 @@ class AttackService:
                 vp.prompt_metadata["video_id"] = video_id
                 return
 
-    def _get_converter_configs(self, request: AddMessageRequest) -> list[PromptConverterConfiguration]:
+    def _get_converter_configs(self, request: AddMessageRequest) -> list[ConverterConfiguration]:
         """
         Get converter configurations if needed.
 
         Returns:
-            List of PromptConverterConfiguration for the converters.
+            List of ConverterConfiguration for the converters.
         """
         has_preconverted = any(p.converted_value is not None for p in request.pieces)
         if has_preconverted or not request.converter_ids:
             return []
 
         converters = get_converter_service().get_converter_objects_for_ids(converter_ids=request.converter_ids)
-        return PromptConverterConfiguration.from_converters(converters=converters)
+        return ConverterConfiguration.from_converters(converters=converters)
 
 
 # ============================================================================

@@ -201,3 +201,6 @@ doc/_autosummary/
 
 # Custom user instructions
 .github/instructions/user-custom.instructions.md
+
+# Impeccable skill local cache
+.impeccable/

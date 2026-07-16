@@ -6,6 +6,7 @@ import logging
 from collections.abc import Awaitable, Callable, MutableSequence
 from enum import Enum
 from typing import (
+    TYPE_CHECKING,
     Any,
     Literal,
     cast,
@@ -21,12 +22,12 @@ from pyrit.exceptions import (
 from pyrit.memory.storage import convert_local_image_to_data_url_async
 from pyrit.models import (
     ComponentIdentifier,
+    JsonResponseConfig,
     Message,
     MessagePiece,
     PromptDataType,
     PromptResponseError,
 )
-from pyrit.prompt_target.common.json_response_config import _JsonResponseConfig
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.prompt_target.common.utils import (
@@ -36,6 +37,9 @@ from pyrit.prompt_target.common.utils import (
 )
 from pyrit.prompt_target.openai.openai_error_handling import _is_content_filter_error
 from pyrit.prompt_target.openai.openai_target import OpenAITarget
+
+if TYPE_CHECKING:
+    from openai.types.responses import ResponseInputImageParam
 
 logger = logging.getLogger(__name__)
 
@@ -242,7 +246,12 @@ class OpenAIResponseTarget(OpenAITarget):
             }
         if piece.converted_value_data_type == "image_path":
             data_url = await convert_local_image_to_data_url_async(piece.converted_value)
-            return {"type": "input_image", "image_url": {"url": data_url}}
+            image_item: ResponseInputImageParam = {
+                "detail": "auto",
+                "type": "input_image",
+                "image_url": data_url,
+            }
+            return dict(image_item)
         raise ValueError(f"Unsupported piece type for inline content: {piece.converted_value_data_type}")
 
     async def _build_input_for_multi_modal_async(self, conversation: MutableSequence[Message]) -> list[dict[str, Any]]:
@@ -362,7 +371,7 @@ class OpenAIResponseTarget(OpenAITarget):
         return input_items
 
     async def _construct_request_body_async(
-        self, *, conversation: MutableSequence[Message], json_config: _JsonResponseConfig
+        self, *, conversation: MutableSequence[Message], json_config: JsonResponseConfig
     ) -> dict[str, Any]:
         """
         Construct the request body to send to the Responses API.
@@ -416,7 +425,7 @@ class OpenAIResponseTarget(OpenAITarget):
             reasoning["summary"] = self._reasoning_summary
         return reasoning
 
-    def _build_text_format(self, json_config: _JsonResponseConfig) -> dict[str, Any] | None:
+    def _build_text_format(self, json_config: JsonResponseConfig) -> dict[str, Any] | None:
         if not json_config.enabled:
             return None
 
@@ -720,7 +729,6 @@ class OpenAIResponseTarget(OpenAITarget):
             role="assistant",
             original_value=piece_value,
             conversation_id=message_piece.conversation_id,
-            labels=message_piece.labels,  # deprecated
             original_value_data_type=piece_type,
             response_error=error or "none",
         )
@@ -826,5 +834,4 @@ class OpenAIResponseTarget(OpenAITarget):
             ),
             original_value_data_type="function_call_output",
             conversation_id=reference_piece.conversation_id,
-            labels={"call_id": call_id},  # deprecated
         )

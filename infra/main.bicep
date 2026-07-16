@@ -68,8 +68,8 @@ param sqlDatabaseName string
 // Note: operator and operation are per-user settings configured in the GUI,
 // not deployment-level config.
 
-@description('PyRIT initializer to run. Default "target, airt" registers target configs + attack defaults.')
-param pyritInitializer string = 'target, airt'
+@description('PyRIT initializer to run. Default "target" registers target configs.')
+param pyritInitializer string = 'target'
 
 @description('Key Vault secret name containing the .env file contents (all endpoints, models, and API keys). The secret is mounted as an env var and PyRIT parses it at startup.')
 param envSecretName string = 'env-global'

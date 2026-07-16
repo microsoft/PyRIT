@@ -11,9 +11,11 @@ import hashlib
 import uuid
 from unittest.mock import patch
 
+from unit.mocks import make_scenario_result
+
 from pyrit.memory import MemoryInterface
 from pyrit.memory.memory_models import PromptMemoryEntry
-from pyrit.models import AttackResult, ComponentIdentifier, MessagePiece, ScenarioIdentifier, ScenarioResult, Score
+from pyrit.models import AttackResult, ComponentIdentifier, MessagePiece, ScenarioResult, Score
 
 # Use the class attribute for the batch limit in tests
 _MAX_BIND_VARS = MemoryInterface._MAX_BIND_VARS
@@ -48,7 +50,7 @@ def _create_score(message_piece_id: str) -> Score:
         score_category=["test"],
         score_rationale="test rationale",
         score_metadata={},
-        scorer_class_identifier=ComponentIdentifier.from_dict({"__type__": "TestScorer"}),
+        scorer_class_identifier=ComponentIdentifier.model_validate({"__type__": "TestScorer"}),
         message_piece_id=message_piece_id,
     )
 
@@ -58,13 +60,10 @@ def _create_scenario_result(
     attack_results: dict[str, list[AttackResult]] | None = None,
 ) -> ScenarioResult:
     """Create a sample scenario result for testing."""
-    return ScenarioResult(
-        scenario_identifier=ScenarioIdentifier(
-            name=name,
-            description="test",
-            scenario_version=1,
-            init_data={},
-        ),
+    return make_scenario_result(
+        scenario_name=name,
+        scenario_description="test",
+        scenario_version=1,
         objective_target_identifier=ComponentIdentifier(class_name="TestTarget", class_module="test"),
         attack_results=attack_results or {},
         objective_scorer_identifier=ComponentIdentifier(class_name="TestScorer", class_module="test"),

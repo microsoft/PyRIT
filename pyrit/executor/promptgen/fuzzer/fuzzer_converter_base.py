@@ -7,24 +7,25 @@ import uuid
 from typing import Any
 
 from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
+from pyrit.converter import Converter, ConverterResult
 from pyrit.exceptions import (
     InvalidJsonException,
     pyrit_json_retry,
     remove_markdown_json,
 )
 from pyrit.models import (
+    JsonResponseConfig,
     Message,
     MessagePiece,
     PromptDataType,
     SeedPrompt,
 )
-from pyrit.prompt_converter import ConverterResult, PromptConverter
 from pyrit.prompt_target import PromptTarget
 
 logger = logging.getLogger(__name__)
 
 
-class FuzzerConverter(PromptConverter):
+class FuzzerConverter(Converter):
     """
     Base class for GPTFUZZER converters.
 
@@ -87,7 +88,7 @@ class FuzzerConverter(PromptConverter):
         )
 
         formatted_prompt = f"===={self.template_label} BEGINS====\n{prompt}\n===={self.template_label} ENDS===="
-        prompt_metadata: dict[str, str | int] = {"response_format": "json"}
+        prompt_metadata = JsonResponseConfig(enabled=True).to_metadata()
         request = Message(
             message_pieces=[
                 MessagePiece(

@@ -16,7 +16,7 @@ from pyrit.models import (
     register_common_json_schema,
     unregister_common_json_schema,
 )
-from pyrit.models import json_schema_definition as jsd
+from pyrit.models.target import json_schema_definition as jsd
 
 
 @pytest.fixture

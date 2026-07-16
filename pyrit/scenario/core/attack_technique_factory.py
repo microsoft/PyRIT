@@ -4,15 +4,14 @@
 """
 AttackTechniqueFactory — Self-describing deferred constructor for AttackTechnique instances.
 
-Captures technique-specific configuration (name, strategy tags, attack class,
+Captures technique-specific configuration (name, technique tags, attack class,
 attack-class kwargs, optional adversarial chat, optional seed technique) at
 construction time. Scenarios produce fresh, fully-constructed attacks by calling
 ``create()`` with scenario-specific params (objective target, scorer).
 
 The canonical place to register factories is the
-``ScenarioTechniqueInitializer`` in
-``pyrit.setup.initializers.components.scenario_techniques``. New initializers
-register additional factories by calling
+``TechniqueInitializer`` in ``pyrit.setup.initializers.techniques``. New
+initializers register additional factories by calling
 ``AttackTechniqueRegistry.register_from_factories(...)``.
 """
 
@@ -26,17 +25,13 @@ from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Union
 
-from pyrit.common.deprecation import print_deprecation_message
 from pyrit.common.path import EXECUTOR_SEED_PROMPT_PATH
 from pyrit.executor.attack import PromptSendingAttack
-from pyrit.executor.attack.core.attack_config import (
-    AttackAdversarialConfig,
-    AttackScoringConfig,
-)
+from pyrit.executor.attack.core.attack_config import AttackAdversarialConfig, AttackConverterConfig, AttackScoringConfig
 from pyrit.models import (
+    AttackTechniqueSeedGroup,
     ComponentIdentifier,
     Identifiable,
-    SeedAttackTechniqueGroup,
     SeedIdentifier,
     SeedPrompt,
     SeedSimulatedConversation,
@@ -47,7 +42,7 @@ from pyrit.scenario.core.scenario_target_defaults import get_default_adversarial
 
 if TYPE_CHECKING:
     from pyrit.executor.attack import AttackStrategy
-    from pyrit.executor.attack.core.attack_config import AttackConverterConfig
+    from pyrit.prompt_normalizer import ConverterConfiguration
     from pyrit.prompt_target import PromptTarget
 
 logger = logging.getLogger(__name__)
@@ -65,7 +60,7 @@ class AttackTechniqueFactory(Identifiable):
     """
     A self-describing factory that produces AttackTechnique instances on demand.
 
-    Captures technique-specific configuration (name, strategy tags, converters,
+    Captures technique-specific configuration (name, technique tags, converters,
     adversarial config, tree depth, etc.) at construction time. Produces fresh,
     fully-constructed attacks by calling the real constructor with the captured
     params plus scenario-specific objective_target and scoring config.
@@ -79,13 +74,13 @@ class AttackTechniqueFactory(Identifiable):
         *,
         name: str,
         attack_class: type[AttackStrategy[Any, Any]],
-        strategy_tags: list[str] | None = None,
+        description: str | None = None,
+        technique_tags: list[str] | None = None,
         attack_kwargs: dict[str, Any] | None = None,
         adversarial_chat: PromptTarget | None = None,
         adversarial_system_prompt: str | SeedPrompt | None = None,
         adversarial_seed_prompt: SeedPrompt | str | None = None,
-        adversarial_config: AttackAdversarialConfig | None = None,
-        seed_technique: SeedAttackTechniqueGroup | None = None,
+        seed_technique: AttackTechniqueSeedGroup | None = None,
         uses_adversarial: bool | None = None,
         scorer_override_policy: ScorerOverridePolicy = ScorerOverridePolicy.WARN,
     ) -> None:
@@ -94,9 +89,12 @@ class AttackTechniqueFactory(Identifiable):
 
         Args:
             name: Registry name for this technique. This is used as the
-                scenario strategy name.
+                scenario technique name.
             attack_class: The AttackStrategy subclass to instantiate.
-            strategy_tags: Tags controlling which ``ScenarioStrategy``
+            description: Short human-readable summary of what the technique does.
+                Purely descriptive metadata — it does not affect the technique's
+                behavioral identity.
+            technique_tags: Tags controlling which ``ScenarioTechnique``
                 aggregates include this technique (e.g. ``"single_turn"``,
                 ``"multi_turn"``, ``"default"``).
             attack_kwargs: Keyword arguments to pass to the attack constructor.
@@ -115,12 +113,6 @@ class AttackTechniqueFactory(Identifiable):
                 ``str``) used to generate the adversarial chat's first message.
                 Combined with the resolved target like
                 ``adversarial_system_prompt``.
-            adversarial_config: Deprecated. A pre-built ``AttackAdversarialConfig``
-                whose target and prompts are unpacked into ``adversarial_chat``,
-                ``adversarial_system_prompt``, and ``adversarial_seed_prompt``.
-                Mutually exclusive with those newer parameters. Prefer passing
-                ``adversarial_chat`` directly; this parameter will be removed in a
-                future release.
             seed_technique: Optional technique seed group attached to created
                 techniques.
             uses_adversarial: Whether this technique drives an adversarial
@@ -136,36 +128,13 @@ class AttackTechniqueFactory(Identifiable):
                 or if the attack class constructor uses ``**kwargs``.
             ValueError: If ``objective_target`` or
                 ``attack_adversarial_config`` is included in ``attack_kwargs``,
-                if the deprecated ``adversarial_config`` is combined with
-                ``adversarial_chat`` / ``adversarial_system_prompt`` /
-                ``adversarial_seed_prompt``, or if ``uses_adversarial=False``
-                while an adversarial chat or prompt is wired.
+                or if ``uses_adversarial=False`` while an adversarial chat or
+                prompt is wired.
         """
-        if adversarial_config is not None:
-            if (
-                adversarial_chat is not None
-                or adversarial_system_prompt is not None
-                or adversarial_seed_prompt is not None
-            ):
-                raise ValueError(
-                    f"Factory '{name}': the deprecated 'adversarial_config' cannot be combined with "
-                    f"'adversarial_chat', 'adversarial_system_prompt', or 'adversarial_seed_prompt'. "
-                    f"Pass only the newer parameters."
-                )
-            print_deprecation_message(
-                old_item="AttackTechniqueFactory(adversarial_config=...)",
-                new_item="adversarial_chat (with optional adversarial_system_prompt / adversarial_seed_prompt)",
-                removed_in="0.16.0",
-            )
-            adversarial_chat = adversarial_config.target
-            adversarial_system_prompt = adversarial_config.system_prompt
-            if adversarial_system_prompt is None and adversarial_config.system_prompt_path is not None:
-                adversarial_system_prompt = SeedPrompt.from_yaml_file(adversarial_config.system_prompt_path)
-            adversarial_seed_prompt = adversarial_config.seed_prompt
-
         self._name = name
         self._attack_class = attack_class
-        self._strategy_tags = list(strategy_tags) if strategy_tags else []
+        self._description = description
+        self._technique_tags = list(technique_tags) if technique_tags else []
         self._attack_kwargs = dict(attack_kwargs) if attack_kwargs else {}
         self._adversarial_chat = adversarial_chat
         self._adversarial_system_prompt = adversarial_system_prompt
@@ -187,20 +156,22 @@ class AttackTechniqueFactory(Identifiable):
         *,
         name: str,
         attack_class: type[AttackStrategy[Any, Any]] | None = None,
+        description: str | None = None,
         adversarial_chat_system_prompt_path: str | Path | None = None,
+        simulated_target_system_prompt_path: str | Path | None = None,
         next_message_system_prompt_path: str | Path | None = None,
+        final_user_message: str | None = None,
         num_turns: int = 3,
-        strategy_tags: list[str] | None = None,
+        technique_tags: list[str] | None = None,
         attack_kwargs: dict[str, Any] | None = None,
         adversarial_chat: PromptTarget | None = None,
-        adversarial_config: AttackAdversarialConfig | None = None,
         uses_adversarial: bool | None = None,
         scorer_override_policy: ScorerOverridePolicy = ScorerOverridePolicy.WARN,
     ) -> AttackTechniqueFactory:
         """
         Alternative constructor that builds a ``SeedSimulatedConversation`` inline.
 
-        Wraps a single ``SeedSimulatedConversation`` in a ``SeedAttackTechniqueGroup``
+        Wraps a single ``SeedSimulatedConversation`` in a ``AttackTechniqueSeedGroup``
         and assigns it as ``seed_technique`` so callers don't have to construct
         both manually. All other parameters are forwarded to ``__init__``.
 
@@ -210,15 +181,28 @@ class AttackTechniqueFactory(Identifiable):
                 ``EXECUTOR_SEED_PROMPT_PATH/red_teaming/{name}.yaml``.
             attack_class: The AttackStrategy subclass to instantiate. Defaults to
                 ``PromptSendingAttack``.
+            description: Short human-readable summary of what the technique does.
+                Forwarded to the factory constructor as descriptive metadata.
             adversarial_chat_system_prompt_path: Path to the YAML file containing
                 the adversarial chat system prompt for the simulated conversation.
                 Defaults to ``EXECUTOR_SEED_PROMPT_PATH/red_teaming/{name}.yaml``.
+            simulated_target_system_prompt_path: Optional path to the YAML file
+                containing the system prompt for the simulated target (the
+                assistant side of the generated conversation). When ``None``,
+                ``SeedSimulatedConversation`` falls back to its compliant default.
             next_message_system_prompt_path: Optional path to the YAML file
                 containing the system prompt for generating a final user message
                 after the simulated conversation. Defaults to
-                ``NextMessageSystemPromptPaths.DIRECT.value``.
+                ``NextMessageSystemPromptPaths.DIRECT.value``. Ignored (forced to
+                ``None``) when ``final_user_message`` is provided.
+            final_user_message: Optional fixed final user message. When provided,
+                a static ``SeedPrompt`` carrying this text is appended after the
+                simulated conversation (so it becomes the ``next_message``) and no
+                LLM-generated next message is used. This supports techniques like
+                context compliance whose final turn is a hardcoded affirmation
+                (e.g. ``"yes."``) rather than an LLM-generated message.
             num_turns: Number of simulated conversation turns. Defaults to 3.
-            strategy_tags: Tags controlling which ``ScenarioStrategy`` aggregates
+            technique_tags: Tags controlling which ``ScenarioTechnique`` aggregates
                 include this technique (e.g. ``"single_turn"``, ``"multi_turn"``,
                 ``"default"``). Forwarded to the factory constructor.
             attack_kwargs: Keyword arguments forwarded to the attack constructor.
@@ -229,9 +213,6 @@ class AttackTechniqueFactory(Identifiable):
                 technique. When ``None`` (the default), the adversarial target is
                 resolved lazily at ``create()`` time. Forwarded to the factory
                 constructor.
-            adversarial_config: Deprecated. A pre-built ``AttackAdversarialConfig``;
-                mutually exclusive with ``adversarial_chat``. Forwarded to the
-                factory constructor, which unpacks it. Prefer ``adversarial_chat``.
             uses_adversarial: Whether this technique drives an adversarial chat
                 during execution. ``None`` auto-derives from the attack class
                 constructor signature and seed-technique shape. Forwarded to
@@ -249,25 +230,51 @@ class AttackTechniqueFactory(Identifiable):
             attack_class = PromptSendingAttack
         if adversarial_chat_system_prompt_path is None:
             adversarial_chat_system_prompt_path = Path(EXECUTOR_SEED_PROMPT_PATH) / "red_teaming" / f"{name}.yaml"
-        if next_message_system_prompt_path is None:
+
+        # A fixed final user message and an LLM-generated next message are mutually
+        # exclusive: when a fixed message is supplied it becomes the next_message via
+        # a static SeedPrompt, so no next-message generation prompt is used.
+        if final_user_message is not None:
+            next_message_system_prompt_path = None
+        elif next_message_system_prompt_path is None:
             next_message_system_prompt_path = NextMessageSystemPromptPaths.DIRECT.value
 
-        seed_technique = SeedAttackTechniqueGroup(
-            seeds=[
-                SeedSimulatedConversation(
-                    adversarial_chat_system_prompt_path=Path(adversarial_chat_system_prompt_path),
-                    next_message_system_prompt_path=Path(next_message_system_prompt_path),
-                    num_turns=num_turns,
-                ),
-            ],
-        )
+        simulated_conversation_kwargs: dict[str, Any] = {
+            "adversarial_chat_system_prompt_path": Path(adversarial_chat_system_prompt_path),
+            "num_turns": num_turns,
+        }
+        if simulated_target_system_prompt_path is not None:
+            simulated_conversation_kwargs["simulated_target_system_prompt_path"] = Path(
+                simulated_target_system_prompt_path
+            )
+        if next_message_system_prompt_path is not None:
+            simulated_conversation_kwargs["next_message_system_prompt_path"] = Path(next_message_system_prompt_path)
+
+        simulated_conversation = SeedSimulatedConversation(**simulated_conversation_kwargs)
+
+        seeds: list[Any] = [simulated_conversation]
+        if final_user_message is not None:
+            # Append the fixed final turn immediately after the simulated conversation's
+            # sequence range so it is extracted as the next_message (see
+            # AttackParameters.from_seed_group_async).
+            seeds.append(
+                SeedPrompt(
+                    value=final_user_message,
+                    role="user",
+                    data_type="text",
+                    sequence=simulated_conversation.sequence_range.stop,
+                    is_general_technique=True,
+                )
+            )
+
+        seed_technique = AttackTechniqueSeedGroup(seeds=seeds)
         return cls(
             name=name,
             attack_class=attack_class,
-            strategy_tags=strategy_tags,
+            description=description,
+            technique_tags=technique_tags,
             attack_kwargs=attack_kwargs,
             adversarial_chat=adversarial_chat,
-            adversarial_config=adversarial_config,
             seed_technique=seed_technique,
             uses_adversarial=uses_adversarial,
             scorer_override_policy=scorer_override_policy,
@@ -362,22 +369,38 @@ class AttackTechniqueFactory(Identifiable):
         return self._name
 
     @property
-    def strategy_tags(self) -> list[str]:
-        """Tags controlling which ``ScenarioStrategy`` aggregates include this technique."""
-        return list(self._strategy_tags)
+    def description(self) -> str | None:
+        """Short human-readable summary of what the technique does, or None."""
+        return self._description
+
+    @property
+    def technique_tags(self) -> list[str]:
+        """Tags controlling which ``ScenarioTechnique`` aggregates include this technique."""
+        return list(self._technique_tags)
 
     @property
     def tags(self) -> list[str]:
-        """Alias for ``strategy_tags`` exposing the Taggable interface (used by ``TagQuery.filter``)."""
-        return list(self._strategy_tags)
+        """Alias for ``technique_tags`` exposing the Taggable interface (used by ``TagQuery.filter``)."""
+        return list(self._technique_tags)
+
+    def add_technique_tags(self, *tags: str) -> None:
+        """
+        Append technique tags, skipping any already present.
+
+        Args:
+            *tags: Technique tags to add to this factory.
+        """
+        for tag in tags:
+            if tag not in self._technique_tags:
+                self._technique_tags.append(tag)
 
     @property
     def attack_class(self) -> type[AttackStrategy[Any, Any]]:
-        """The attack strategy class this factory produces."""
+        """The attack technique class this factory produces."""
         return self._attack_class
 
     @property
-    def seed_technique(self) -> SeedAttackTechniqueGroup | None:
+    def seed_technique(self) -> AttackTechniqueSeedGroup | None:
         """The optional technique seed group."""
         return self._seed_technique
 
@@ -385,6 +408,26 @@ class AttackTechniqueFactory(Identifiable):
     def adversarial_chat(self) -> PromptTarget | None:
         """The adversarial chat target baked into this factory, or None."""
         return self._adversarial_chat
+
+    def resolve_adversarial_chat(self) -> PromptTarget | None:
+        """
+        Resolve the adversarial chat target an ``AtomicAttack`` needs to expand this technique.
+
+        A baked ``adversarial_chat`` always wins. Otherwise, when the technique's seed group
+        carries a simulated conversation (built via ``with_simulated_conversation``), the default
+        adversarial target is resolved lazily here — mirroring how ``create()`` resolves the target
+        for the attack's own ``attack_adversarial_config``. Techniques without a simulated
+        conversation seed do not need one and return ``None``.
+
+        Returns:
+            PromptTarget | None: The adversarial chat target for the ``AtomicAttack``, or ``None``
+            when the technique does not drive a simulated conversation.
+        """
+        if self._adversarial_chat is not None:
+            return self._adversarial_chat
+        if self._seed_technique is not None and self._seed_technique.has_simulated_conversation:
+            return get_default_adversarial_target()
+        return None
 
     @property
     def uses_adversarial(self) -> bool:
@@ -404,8 +447,8 @@ class AttackTechniqueFactory(Identifiable):
         adversarial_chat: PromptTarget | None = None,
         adversarial_system_prompt: str | SeedPrompt | None = None,
         adversarial_seed_prompt: SeedPrompt | str | None = None,
-        attack_adversarial_config_override: AttackAdversarialConfig | None = None,
         attack_converter_config_override: AttackConverterConfig | None = None,
+        extra_request_converters: list[ConverterConfiguration] | None = None,
     ) -> AttackTechnique:
         """
         Create a fresh AttackTechnique bound to the given target.
@@ -444,38 +487,26 @@ class AttackTechniqueFactory(Identifiable):
             adversarial_seed_prompt: Optional seed prompt (``SeedPrompt`` or
                 ``str``) for the adversarial chat's first message. Only valid when
                 the factory did not bake a custom adversarial prompt.
-            attack_adversarial_config_override: Deprecated. A pre-built
-                ``AttackAdversarialConfig`` whose target is used as the create-time
-                ``adversarial_chat``. Mutually exclusive with ``adversarial_chat``.
-                Prefer ``adversarial_chat``.
             attack_converter_config_override: When non-None, replaces any
                 converter config baked into the factory.  Only forwarded if
                 the attack class constructor accepts ``attack_converter_config``.
+            extra_request_converters: Optional request converters to append on
+                top of the technique's existing request converters (whether baked
+                into the factory or supplied via
+                ``attack_converter_config_override``).  Unlike
+                ``attack_converter_config_override`` these are additive and never
+                replace the existing converters.  Only forwarded if the attack
+                class constructor accepts ``attack_converter_config``.
 
         Returns:
-            A fresh AttackTechnique with a newly-constructed attack strategy.
+            A fresh AttackTechnique with a newly-constructed attack technique.
 
         Raises:
-            ValueError: If ``adversarial_chat`` is combined with the deprecated
-                ``attack_adversarial_config_override``, if a create-time
-                adversarial chat is supplied while the factory already baked one,
-                or if ``scorer_override_policy`` is RAISE and the override config
-                is incompatible with the attack's type annotation.
+            ValueError: If a create-time adversarial chat is supplied while the
+                factory already baked one, or if ``scorer_override_policy`` is RAISE
+                and the scenario scorer is incompatible with the attack's type annotation.
         """
-        if attack_adversarial_config_override is not None:
-            if adversarial_chat is not None:
-                raise ValueError(
-                    f"Factory '{self._name}': 'attack_adversarial_config_override' (deprecated) cannot be "
-                    f"combined with 'adversarial_chat'. Pass only 'adversarial_chat'."
-                )
-            print_deprecation_message(
-                old_item="AttackTechniqueFactory.create(attack_adversarial_config_override=...)",
-                new_item="adversarial_chat",
-                removed_in="0.16.0",
-            )
-            create_time_target: PromptTarget | None = attack_adversarial_config_override.target
-        else:
-            create_time_target = adversarial_chat
+        create_time_target: PromptTarget | None = adversarial_chat
 
         if create_time_target is not None and self._adversarial_chat is not None:
             raise ValueError(
@@ -510,10 +541,18 @@ class AttackTechniqueFactory(Identifiable):
                 create_time_target=create_time_target,
                 create_time_system_prompt=adversarial_system_prompt,
                 create_time_seed_prompt=adversarial_seed_prompt,
-                override=attack_adversarial_config_override,
             )
         if attack_converter_config_override is not None and "attack_converter_config" in accepted_params:
             kwargs["attack_converter_config"] = attack_converter_config_override
+
+        if extra_request_converters and "attack_converter_config" in accepted_params:
+            existing = kwargs.get("attack_converter_config")
+            base_request = list(existing.request_converters) if existing else []
+            base_response = list(existing.response_converters) if existing else []
+            kwargs["attack_converter_config"] = AttackConverterConfig(
+                request_converters=base_request + list(extra_request_converters),
+                response_converters=base_response,
+            )
 
         attack = self._attack_class(**kwargs)
         return AttackTechnique(attack=attack, seed_technique=self._seed_technique)
@@ -524,7 +563,6 @@ class AttackTechniqueFactory(Identifiable):
         create_time_target: PromptTarget | None = None,
         create_time_system_prompt: str | SeedPrompt | None = None,
         create_time_seed_prompt: SeedPrompt | str | None = None,
-        override: AttackAdversarialConfig | None = None,
     ) -> AttackAdversarialConfig:
         """
         Build the adversarial config for a created attack, resolving the target lazily.
@@ -533,16 +571,13 @@ class AttackTechniqueFactory(Identifiable):
         ``adversarial_chat``, then the lazily-resolved default adversarial target. (The
         factory never bakes a target *and* receives a create-time one — ``create()`` raises
         on that conflict.) The factory's custom ``adversarial_system_prompt`` /
-        ``adversarial_seed_prompt`` take precedence over the create-time values and the
-        deprecated override's, so a technique keeps its bespoke persona while a scenario can
-        still supply the target.
+        ``adversarial_seed_prompt`` take precedence over the create-time values, so a
+        technique keeps its bespoke persona while a scenario can still supply the target.
 
         Args:
             create_time_target: An adversarial target supplied at ``create()`` time.
             create_time_system_prompt: An adversarial system prompt supplied at ``create()`` time.
             create_time_seed_prompt: An adversarial seed prompt supplied at ``create()`` time.
-            override: Deprecated adversarial config supplied at ``create()`` time whose
-                prompts are used as a fallback for a technique that didn't set its own.
 
         Returns:
             AttackAdversarialConfig: Config wrapping the resolved adversarial chat target.
@@ -556,19 +591,12 @@ class AttackTechniqueFactory(Identifiable):
 
         system_prompt = self._adversarial_system_prompt or create_time_system_prompt
         seed_prompt = self._adversarial_seed_prompt or create_time_seed_prompt
-        if override is not None:
-            if system_prompt is None:
-                system_prompt = override.system_prompt
-                if system_prompt is None and override.system_prompt_path is not None:
-                    system_prompt = SeedPrompt.from_yaml_file(override.system_prompt_path)
-            if seed_prompt is None:
-                seed_prompt = override.seed_prompt
 
         config_kwargs: dict[str, Any] = {"target": target}
         if system_prompt is not None:
             config_kwargs["system_prompt"] = system_prompt
         if seed_prompt is not None:
-            config_kwargs["seed_prompt"] = seed_prompt
+            config_kwargs["first_message"] = seed_prompt
         return AttackAdversarialConfig(**config_kwargs)
 
     def _get_accepted_params(self) -> set[str]:
@@ -676,7 +704,7 @@ class AttackTechniqueFactory(Identifiable):
     @staticmethod
     def _unwrap_optional(annotation: Any) -> type | None:
         """
-        Unwrap ``X | None``, ``X | None``, or ``X | None`` to extract X.
+        Unwrap a union containing one concrete type and ``None`` to extract the concrete type.
 
         Returns:
             The inner type X, or None if the annotation cannot be unwrapped to a single type.
@@ -747,8 +775,8 @@ class AttackTechniqueFactory(Identifiable):
             "kwargs": kwargs_for_id,
             "uses_adversarial": self._uses_adversarial,
         }
-        if self._strategy_tags:
-            params["strategy_tags"] = list(self._strategy_tags)
+        if self._technique_tags:
+            params["technique_tags"] = list(self._technique_tags)
         if self._adversarial_chat is not None:
             params["adversarial_chat"] = self._serialize_value(self._adversarial_chat)
         if self._adversarial_system_prompt is not None:

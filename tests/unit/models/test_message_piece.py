@@ -4,7 +4,6 @@
 import os
 import tempfile
 import uuid
-import warnings
 from collections.abc import MutableSequence
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
@@ -12,17 +11,19 @@ from unittest.mock import patch
 import pytest
 from unit.mocks import get_sample_conversations
 
+from pyrit.converter import Base64Converter
+from pyrit.memory.storage.serializers import set_message_piece_sha256_async
 from pyrit.models import (
     ComponentIdentifier,
     Message,
     MessagePiece,
     Score,
     construct_response_from_request,
+    flatten_to_message_pieces,
     group_conversation_message_pieces_by_sequence,
     group_message_pieces_into_conversations,
     sort_message_pieces,
 )
-from pyrit.prompt_converter import Base64Converter
 
 
 @pytest.fixture
@@ -66,7 +67,7 @@ def test_converters_serialize():
     converter = entry.converter_identifiers[0]
 
     assert converter.class_name == "Base64Converter"
-    assert converter.class_module == "pyrit.prompt_converter.base64_converter"
+    assert converter.class_module == "pyrit.converter.base64_converter"
 
 
 async def test_hashes_generated():
@@ -75,7 +76,7 @@ async def test_hashes_generated():
         original_value="Hello1",
         converted_value="Hello2",
     )
-    await entry.set_sha256_values_async()
+    await set_message_piece_sha256_async(entry)
     assert entry.original_value_sha256 == "948edbe7ede5aa7423476ae29dcd7d61e7711a071aea0d83698377effa896525"
     assert entry.converted_value_sha256 == "be98c2510e417405647facb89399582fc499c3de4452b3014857f92e6baad9a9"
 
@@ -94,7 +95,7 @@ async def test_hashes_generated_files():
             original_value_data_type="image_path",
             converted_value_data_type="audio_path",
         )
-        await entry.set_sha256_values_async()
+        await set_message_piece_sha256_async(entry)
         assert entry.original_value_sha256 == "948edbe7ede5aa7423476ae29dcd7d61e7711a071aea0d83698377effa896525"
         assert entry.converted_value_sha256 == "948edbe7ede5aa7423476ae29dcd7d61e7711a071aea0d83698377effa896525"
 
@@ -294,7 +295,7 @@ def test_group_conversation_message_pieces(sample_conversations: MutableSequence
     all_pieces: list[MessagePiece] = []
     for response in sample_conversations:
         if response.message_pieces[0].conversation_id == sample_conversations[0].message_pieces[0].conversation_id:
-            pieces = response.flatten_to_message_pieces([response])
+            pieces = flatten_to_message_pieces([response])
             all_pieces.extend(pieces)
 
     # Filter to get pieces from the same conversation
@@ -311,7 +312,7 @@ def test_group_conversation_message_pieces_multiple_groups(
     # Get pieces from the first conversation
     all_pieces: list[MessagePiece] = []
     for response in sample_conversations:
-        pieces = response.flatten_to_message_pieces([response])
+        pieces = flatten_to_message_pieces([response])
         all_pieces.extend(pieces)
 
     # Filter to get pieces from the same conversation and add another piece
@@ -352,7 +353,7 @@ async def test_message_piece_sets_original_sha256():
     )
 
     entry.original_value = "newvalue"
-    await entry.set_sha256_values_async()
+    await set_message_piece_sha256_async(entry)
     assert entry.original_value_sha256 == "70e01503173b8e904d53b40b3ebb3bded5e5d3add087d3463a4b1abe92f1a8ca"
 
 
@@ -362,7 +363,7 @@ async def test_message_piece_sets_converted_sha256():
         original_value="Hello",
     )
     entry.converted_value = "newvalue"
-    await entry.set_sha256_values_async()
+    await set_message_piece_sha256_async(entry)
     assert entry.converted_value_sha256 == "70e01503173b8e904d53b40b3ebb3bded5e5d3add087d3463a4b1abe92f1a8ca"
 
 
@@ -650,12 +651,11 @@ def test_message_piece_to_dict():
         converted_value="Hello",
         conversation_id="test_conversation",
         sequence=1,
-        labels={"label1": "value1"},
         prompt_metadata={"key": "metadata"},
         converter_identifiers=[
             ComponentIdentifier(
                 class_name="Base64Converter",
-                class_module="pyrit.prompt_converter.base64_converter",
+                class_module="pyrit.converter.base64_converter",
                 params={"supported_input_types": ["text"], "supported_output_types": ["text"]},
             )
         ],
@@ -674,7 +674,6 @@ def test_message_piece_to_dict():
         "conversation_id",
         "sequence",
         "timestamp",
-        "labels",
         "prompt_metadata",
         "converter_identifiers",
         "original_value_data_type",
@@ -696,9 +695,8 @@ def test_message_piece_to_dict():
     assert result["sequence"] == entry.sequence
     # Pydantic v2 serializes UTC datetimes with a trailing "Z" rather than "+00:00".
     assert result["timestamp"] == entry.timestamp.isoformat().replace("+00:00", "Z")
-    assert result["labels"] == entry.labels
     assert result["prompt_metadata"] == entry.prompt_metadata
-    assert result["converter_identifiers"] == [conv.to_dict() for conv in entry.converter_identifiers]
+    assert result["converter_identifiers"] == [conv.model_dump(mode="json") for conv in entry.converter_identifiers]
     assert result["original_value_data_type"] == entry.original_value_data_type
     assert result["original_value"] == entry.original_value
     assert result["original_value_sha256"] == entry.original_value_sha256
@@ -801,6 +799,41 @@ def test_message_piece_has_error_and_is_blocked_consistency():
     )
     assert blocked_entry.is_blocked() is True
     assert blocked_entry.has_error() is True
+
+
+def test_adversarial_placeholder_factory_defaults():
+    piece = MessagePiece.adversarial_placeholder()
+
+    assert piece.role == "user"
+    assert piece.original_value == ""
+    assert piece.original_value_data_type == "text"
+    assert piece.is_adversarial_placeholder() is True
+    assert piece.prompt_metadata.get("adversarial_placeholder") is True
+
+
+@pytest.mark.parametrize("role", ["user", "assistant", "system"])
+def test_adversarial_placeholder_factory_custom_role(role):
+    piece = MessagePiece.adversarial_placeholder(role=role)
+
+    assert piece.role == role
+    assert piece.is_adversarial_placeholder() is True
+
+
+def test_is_adversarial_placeholder_returns_false_for_plain_piece():
+    plain = MessagePiece(role="user", original_value="hello")
+
+    assert plain.is_adversarial_placeholder() is False
+    assert "adversarial_placeholder" not in plain.prompt_metadata
+
+
+def test_is_adversarial_placeholder_returns_false_when_flag_is_false():
+    piece = MessagePiece(
+        role="user",
+        original_value="",
+        prompt_metadata={"adversarial_placeholder": False},
+    )
+
+    assert piece.is_adversarial_placeholder() is False
 
     # Test that not all errors are blocks
     error_entry = MessagePiece(
@@ -916,7 +949,7 @@ def test_to_dict_from_dict_roundtrip():
     )
     converter_id = ComponentIdentifier(
         class_name="Base64Converter",
-        class_module="pyrit.prompt_converter",
+        class_module="pyrit.converter",
     )
     score = Score(
         score_value="true",
@@ -995,7 +1028,7 @@ class TestCopyLineageFrom:
         assert target.conversation_id == "conv-A"
         assert target.prompt_metadata == {"k": "v"}
 
-    def test_labels_and_metadata_are_shallow_copied(self) -> None:
+    def test__metadata_are_shallow_copied(self) -> None:
         source = self._make_piece()
         source.prompt_metadata = {"meta": "1"}
 
@@ -1058,7 +1091,6 @@ class TestPhase3PydanticMigration:
             "converted_value_sha256",
             "response_error",
             "original_prompt_id",
-            "labels",
             "prompt_metadata",
             "converter_identifiers",
         ]
@@ -1068,7 +1100,6 @@ class TestPhase3PydanticMigration:
         assert d["conversation_id"] == conv_id
         assert d["sequence"] == 2
         assert d["timestamp"] == ts.isoformat().replace("+00:00", "Z")
-        assert d["labels"] == {}
         assert d["prompt_metadata"] == {}
         assert d["converter_identifiers"] == []
         assert d["original_value_data_type"] == "text"
@@ -1089,102 +1120,3 @@ class TestPhase3PydanticMigration:
         with pytest.raises(Exception) as exc_info:
             MessagePiece(role="user", original_value="hello", typo_field="oops")
         assert "typo_field" in str(exc_info.value) or "Extra" in str(exc_info.value)
-
-
-class TestMessagePieceDeprecationWarnings:
-    """Tests for deprecation warnings on parameters scheduled for removal."""
-
-    def _emit_deprecation_msgs(self, **kwargs) -> list[warnings.WarningMessage]:
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            MessagePiece(role="user", original_value="hello", **kwargs)
-        return [x for x in w if issubclass(x.category, DeprecationWarning)]
-
-    def test_labels_emits_deprecation_warning(self):
-        msgs = self._emit_deprecation_msgs(labels={"k": "v"})
-        assert any("labels" in str(m.message) for m in msgs)
-
-    def test_labels_omitted_no_warning(self):
-        msgs = self._emit_deprecation_msgs()
-        assert not any("labels" in str(m.message) for m in msgs)
-
-    def test_labels_empty_dict_no_warning(self):
-        """An explicit empty ``labels={}`` (the field default) must not warn.
-
-        Internal call sites forward ``labels=<source>.labels`` which is ``{}`` on
-        the happy path; this regression-guards that such forwarding stays silent.
-        """
-        msgs = self._emit_deprecation_msgs(labels={})
-        assert not any("labels" in str(m.message) for m in msgs)
-
-    def test_construct_response_from_request_default_labels_no_warning(self):
-        """``construct_response_from_request`` on a request with default labels is silent.
-
-        Reproduces the reported false positive: every response construction warned
-        because the request's default ``labels={}`` was forwarded through the
-        ``MessagePiece`` constructor.
-        """
-        request = MessagePiece(role="user", original_value="hello", conversation_id="conv-1")
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            construct_response_from_request(request=request, response_text_pieces=["hi"])
-        deprecation_msgs = [w for w in caught if issubclass(w.category, DeprecationWarning)]
-        assert not any("labels" in str(m.message) for m in deprecation_msgs)
-
-    def test_memory_load_roundtrip_does_not_emit_deprecation_warnings(self) -> None:
-        """Reconstructing a MessagePiece from PromptMemoryEntry must not emit deprecations.
-
-        The memory-layer load path assigns deprecated ``labels`` post-construction so the
-        deprecation-kwarg validator is not triggered. This regression-guards that pattern.
-        """
-        from pyrit.memory.memory_models import PromptMemoryEntry
-
-        piece = MessagePiece(
-            role="user",
-            original_value="hello",
-            conversation_id="conv-deprec",
-        )
-        piece.labels = {"k": "v"}
-
-        entry = PromptMemoryEntry(entry=piece)
-
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            reconstructed = entry.get_message_piece()
-
-        deprecation_msgs = [w for w in caught if issubclass(w.category, DeprecationWarning)]
-        assert deprecation_msgs == [], [str(m.message) for m in deprecation_msgs]
-        assert reconstructed.labels == {"k": "v"}
-
-
-class TestMessagePieceDeprecatedMethodShims:
-    """Tests for the deprecated method shims scheduled for removal in 0.16.0."""
-
-    def test_to_dict_emits_warning_and_matches_model_dump(self) -> None:
-        piece = MessagePiece(role="user", original_value="hello")
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            result = piece.to_dict()
-        msgs = [w for w in caught if issubclass(w.category, DeprecationWarning)]
-        assert any("to_dict" in str(m.message) for m in msgs)
-        assert result == piece.model_dump(mode="json")
-
-    def test_from_dict_emits_warning_and_matches_model_validate(self) -> None:
-        piece = MessagePiece(role="user", original_value="hello")
-        serialized = piece.model_dump(mode="json")
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            reconstructed = MessagePiece.from_dict(serialized)
-        msgs = [w for w in caught if issubclass(w.category, DeprecationWarning)]
-        assert any("from_dict" in str(m.message) for m in msgs)
-        assert reconstructed.model_dump(mode="json") == serialized
-
-    def test_set_piece_not_in_database_emits_warning_and_sets_flag(self) -> None:
-        piece = MessagePiece(role="user", original_value="hello")
-        assert piece.not_in_memory is False
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            piece.set_piece_not_in_database()
-        msgs = [w for w in caught if issubclass(w.category, DeprecationWarning)]
-        assert any("set_piece_not_in_database" in str(m.message) for m in msgs)
-        assert piece.not_in_memory is True

@@ -3,7 +3,7 @@
 
 import os
 
-from pyrit.prompt_converter import (
+from pyrit.converter import (
     AzureSpeechAudioToTextConverter,
     AzureSpeechTextToAudioConverter,
 )

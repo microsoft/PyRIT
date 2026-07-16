@@ -21,7 +21,7 @@ Classes that want to participate in the default value system use the `@apply_def
 ```python
 from pyrit.common.apply_defaults import apply_defaults
 
-class MyConverter(PromptConverter):
+class MyConverter(Converter):
     @apply_defaults
     def __init__(self, *, converter_target: PromptTarget | None = None, temperature: float | None = None):
         self.converter_target = converter_target

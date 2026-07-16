@@ -7,6 +7,7 @@ from pyrit.executor.attack.core.attack_config import (
     AttackAdversarialConfig,
     AttackConverterConfig,
     AttackScoringConfig,
+    resolve_adversarial_json_schema,
     resolve_adversarial_system_prompt,
 )
 from pyrit.executor.attack.core.attack_executor import AttackExecutor, AttackExecutorResult
@@ -33,5 +34,6 @@ __all__ = [
     "AttackStrategyResultT",
     "AttackExecutor",
     "AttackExecutorResult",
+    "resolve_adversarial_json_schema",
     "resolve_adversarial_system_prompt",
 ]

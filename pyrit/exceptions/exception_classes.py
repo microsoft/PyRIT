@@ -205,6 +205,21 @@ class EmptyResponseException(BadRequestException):
         super().__init__(status_code=status_code, message=message)
 
 
+class ScorerLLMResponseBlockedException(BadRequestException):
+    """Exception raised when a scorer's own LLM response is blocked by content filtering."""
+
+    def __init__(self, *, status_code: int = 400, message: str = "Scorer LLM response blocked") -> None:
+        """
+        Initialize a scorer-response-blocked exception.
+
+        Args:
+            status_code (int): Status code for the error.
+            message (str): Error message.
+
+        """
+        super().__init__(status_code=status_code, message=message)
+
+
 class InvalidJsonException(PyritException):
     """Exception class for blocked content errors."""
 

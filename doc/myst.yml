@@ -107,6 +107,10 @@ project:
             - file: code/executor/5_workflow.ipynb
             - file: code/executor/6_benchmark.ipynb
             - file: code/executor/7_promptgen.ipynb
+            - file: code/executor/8_modality_feedback.ipynb
+            - file: code/executor/gcg/0_gcg.ipynb
+              children:
+                - file: code/executor/gcg/1_gcg_azure_ml.ipynb
         - file: code/targets/0_prompt_targets.md
           children:
             - file: code/targets/1_openai_chat_target.ipynb
@@ -161,9 +165,6 @@ project:
             - file: code/setup/2_resiliency.ipynb
             - file: code/setup/default_values.md
             - file: code/setup/pyrit_initializer.ipynb
-        - file: code/auxiliary_attacks/0_auxiliary_attacks.ipynb
-          children:
-            - file: code/auxiliary_attacks/1_gcg_azure_ml.ipynb
         - file: code/scenarios/0_scenarios.ipynb
           children:
             - file: code/scenarios/0_attack_techniques.ipynb
@@ -179,7 +180,6 @@ project:
       children:
         - file: api/pyrit_analytics.md
         - file: api/pyrit_auth.md
-        - file: api/pyrit_auxiliary_attacks.md
         - file: api/pyrit_cli_api_client.md
         - file: api/pyrit_cli_pyrit_scan.md
         - file: api/pyrit_cli_pyrit_shell.md
@@ -192,12 +192,11 @@ project:
         - file: api/pyrit_executor_core.md
         - file: api/pyrit_executor_promptgen.md
         - file: api/pyrit_executor_workflow.md
-        - file: api/pyrit_identifiers.md
         - file: api/pyrit_memory.md
         - file: api/pyrit_message_normalizer.md
         - file: api/pyrit_models.md
         - file: api/pyrit_output.md
-        - file: api/pyrit_prompt_converter.md
+        - file: api/pyrit_converter.md
         - file: api/pyrit_prompt_normalizer.md
         - file: api/pyrit_prompt_target.md
         - file: api/pyrit_registry.md
@@ -207,6 +206,7 @@ project:
         - file: api/pyrit_show_versions.md
     - file: blog/README.md
       children:
+        - file: blog/2026_07_09_scenarios.md
         - file: blog/2026_04_14_scoring_scorers.md
         - file: blog/2025_06_06.md
         - file: blog/2025_03_03.md

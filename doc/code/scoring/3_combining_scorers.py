@@ -6,8 +6,9 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.19.1
+#       jupytext_version: 1.19.4
 # ---
+
 # %% [markdown]
 # # Combining & Stacking Scorers
 # %% [markdown]
@@ -131,7 +132,7 @@ print(f"[conversation] persona breach across turns -> {score.get_value()}")
 # own system prompt and JSON schema instead of writing a new class:
 #
 # - `SelfAskGeneralTrueFalseScorer` for boolean questions.
-# - `SelfAskGeneralFloatScaleScorer` for custom numeric scales (`min_value`/`max_value`).
+# - `SelfAskGeneralFloatScaleScorer` with a `NumericRange` for custom numeric ranges.
 #
 # Both accept a `system_prompt_format_string` with `{objective}` placeholders and a
 # `rationale_output_key`, so you can shape the scoring criteria without leaving Python.

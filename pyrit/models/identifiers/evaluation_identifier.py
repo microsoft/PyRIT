@@ -18,6 +18,8 @@ This module provides:
 * ``AtomicAttackEvaluationIdentifier`` — attack-domain concrete subclass.
 * ``ObjectiveTargetEvaluationIdentifier`` — leaf-target subclass used by the
   analytics layer to key cached results by behavioral target configuration.
+* ``ScenarioEvaluationIdentifier`` — scenario-domain concrete subclass used to
+  key a scenario run's behavioral identity (for resume drift detection).
 """
 
 from __future__ import annotations
@@ -30,6 +32,7 @@ from pyrit.models.identifiers.atomic_attack_identifier import AtomicAttackIdenti
 from pyrit.models.identifiers.attack_identifier import AttackIdentifier
 from pyrit.models.identifiers.component_identifier import ComponentIdentifier, config_hash
 from pyrit.models.identifiers.evaluation_markers import EvalMarker, Exclude, Include, Unwrap
+from pyrit.models.identifiers.scenario_identifier import ScenarioIdentifier
 from pyrit.models.identifiers.scorer_identifier import ScorerIdentifier
 from pyrit.models.identifiers.target_identifier import TargetIdentifier
 
@@ -241,8 +244,6 @@ def compute_eval_hash(
             identifier = inner[0]
 
     if not child_eval_rules and own_rule is None:
-        if identifier.hash is None:
-            raise RuntimeError("hash should be set by __post_init__")
         return identifier.hash
 
     eval_dict = _build_eval_dict(
@@ -465,24 +466,20 @@ class EvaluationIdentifier:
 
     def __init__(self, identifier: ComponentIdentifier) -> None:
         """
-        Wrap a ComponentIdentifier and resolve its eval hash.
+        Wrap a ComponentIdentifier and compute its eval hash.
 
-        If the identifier carries an ``eval_hash`` (preserved from a prior
-        DB round-trip or set by the scorer), that value is used directly.
-        Otherwise the eval hash is computed from the identifier's params
-        and children using the subclass's ``CHILD_EVAL_RULES``, ``OWN_RULE``,
-        and ``ROOT_UNWRAP_CHILD``.
+        The eval hash is always computed fresh from the identifier's params and
+        children using the subclass's ``CHILD_EVAL_RULES``, ``OWN_RULE``, and
+        ``ROOT_UNWRAP_CHILD`` — any ``eval_hash`` already carried on the
+        identifier (e.g. a value read back from storage) is never trusted.
         """
         self._identifier = identifier
-        if identifier.eval_hash is not None:
-            self._eval_hash = identifier.eval_hash
-        else:
-            self._eval_hash = compute_eval_hash(
-                identifier,
-                child_eval_rules=self.CHILD_EVAL_RULES,
-                own_rule=self.OWN_RULE,
-                root_unwrap_child=self.ROOT_UNWRAP_CHILD,
-            )
+        self._eval_hash = compute_eval_hash(
+            identifier,
+            child_eval_rules=self.CHILD_EVAL_RULES,
+            own_rule=self.OWN_RULE,
+            root_unwrap_child=self.ROOT_UNWRAP_CHILD,
+        )
 
     @property
     def identifier(self) -> ComponentIdentifier:
@@ -535,6 +532,21 @@ class ObjectiveTargetEvaluationIdentifier(EvaluationIdentifier):
     """
 
     EVAL_ROOT: ClassVar[type[ComponentIdentifier] | None] = TargetIdentifier
+
+
+class ScenarioEvaluationIdentifier(EvaluationIdentifier):
+    """
+    Evaluation identity for scenarios.
+
+    Rules are derived from ``ScenarioIdentifier``'s field markers: the definition
+    ``version`` and resolved ``techniques`` / ``datasets`` feed the hash, the
+    resolved scenario ``params`` are included, and the ``objective_target`` /
+    ``objective_scorer`` children contribute their full behavioral projection.
+    Two runs of the same scenario definition with the same configuration produce
+    the same eval hash, which backs resume drift detection.
+    """
+
+    EVAL_ROOT: ClassVar[type[ComponentIdentifier] | None] = ScenarioIdentifier
 
 
 def compute_inner_attack_eval_hash(*, attack: AttackStrategy[Any, Any]) -> str:

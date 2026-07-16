@@ -290,18 +290,18 @@ class SeedGroup(BaseModel):
 
     @property
     def prompts(self) -> Sequence[SeedPrompt]:
-        """Get all SeedPrompt instances from this group."""
+        """All SeedPrompt instances from this group."""
         return [seed for seed in self.seeds if isinstance(seed, SeedPrompt)]
 
     @property
     def objective(self) -> SeedObjective | None:
-        """Get the objective for this group."""
+        """The objective for this group."""
         return self._get_objective()
 
     @property
     def harm_categories(self) -> list[str]:
         """
-        Returns a deduplicated list of all harm categories from all seeds.
+        A deduplicated list of all harm categories from all seeds.
 
         Returns:
             List of harm categories with duplicates removed.
@@ -319,7 +319,7 @@ class SeedGroup(BaseModel):
 
     @property
     def simulated_conversation_config(self) -> SeedSimulatedConversation | None:
-        """Get the simulated conversation configuration if set."""
+        """The simulated conversation configuration if set."""
         return self._get_simulated_conversation()
 
     @property
@@ -334,7 +334,7 @@ class SeedGroup(BaseModel):
     @property
     def prepended_conversation(self) -> list[Message] | None:
         """
-        Returns Messages that should be prepended as conversation history.
+        Messages that should be prepended as conversation history.
 
         Returns all messages except the last user sequence.
 
@@ -364,7 +364,7 @@ class SeedGroup(BaseModel):
     @property
     def next_message(self) -> Message | None:
         """
-        Returns a Message containing only the last turn's prompts if it's a user message.
+        A Message containing only the last turn's prompts if it's a user message.
 
         Returns:
             Message for the current/last turn if user role, or None otherwise.
@@ -391,7 +391,7 @@ class SeedGroup(BaseModel):
     @property
     def user_messages(self) -> list[Message]:
         """
-        Returns all prompts as user Messages, one per sequence.
+        All prompts as user Messages, one per sequence.
 
         Returns:
             All user messages in sequence order, or empty list if no prompts.

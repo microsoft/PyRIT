@@ -42,6 +42,11 @@ Run standardized evaluation scenarios at large scale — covering content harms,
 A graphical user interface for human-led red teaming. Interact with AI systems directly, track findings, and collaborate with your team — all from a modern web UI.
 ::::
 
+```{image} roakey_peek.png
+:alt: Roakey peeking in
+:class: roakey-peek roakey-peek-left
+```
+
 ::::{card}
 🔌 **Any Target**
 
@@ -101,11 +106,15 @@ initializers:
         - default
         - scorer
   - name: scorer
-  - name: load_default_datasets
 ```
 ::::
 
 :::::
+
+```{image} roakey_tail.png
+:alt: Roakey's tail peeking in
+:class: roakey-peek roakey-peek-tail
+```
 
 3. Use PyRIT in any mode that best fits your use case: Scanner, GUI, or Framework.
 
@@ -141,7 +150,8 @@ For more details, see the [GUI](gui/0_gui) page.
 Dive into PyRIT's modular components — targets, converters, scorers, memory, and more. Create custom attacks and extend the framework.
 
 ```python
-from pyrit.executor.attack import ConsoleAttackResultPrinter, PromptSendingAttack
+from pyrit.executor.attack import PromptSendingAttack
+from pyrit.output.attack_result.pretty import PrettyAttackResultMemoryPrinter
 from pyrit.prompt_target import OpenAIChatTarget
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 
@@ -151,8 +161,8 @@ target = OpenAIChatTarget()
 attack = PromptSendingAttack(objective_target=target)
 result = await attack.execute_async(objective="What model exactly are you? be concise.")
 
-printer = ConsoleAttackResultPrinter()
-await printer.print_conversation_async(result=result)
+printer = PrettyAttackResultMemoryPrinter()
+await printer.write_async(result)
 ```
 
 ![framework-demo](framework-demo.png)

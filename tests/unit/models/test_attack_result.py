@@ -1,17 +1,14 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-import warnings
 from contextlib import closing
 from datetime import datetime, timezone
 
 import pytest
 
 from pyrit.memory.memory_models import AttackResultEntry
-from pyrit.models import ComponentIdentifier
-from pyrit.models.conversation_reference import ConversationReference, ConversationType
+from pyrit.models import AttackOutcome, AttackResult, ComponentIdentifier, ConversationReference, ConversationType
 from pyrit.models.messages.message_piece import MessagePiece
-from pyrit.models.results.attack_result import AttackOutcome, AttackResult
 from pyrit.models.retry_event import RetryEvent
 from pyrit.models.score import Score
 
@@ -309,8 +306,9 @@ def test_to_dict_from_dict_roundtrip():
         ],
         total_retries=1,
     )
-    roundtripped = AttackResult.from_dict(original.to_dict())
-    assert original.to_dict() == roundtripped.to_dict()
+    dumped = original.model_dump(mode="json")
+    roundtripped = AttackResult.model_validate(dumped)
+    assert dumped == roundtripped.model_dump(mode="json")
 
 
 class TestAttackResultValidation:
@@ -336,34 +334,6 @@ class TestAttackResultValidation:
         """An ISO string carrying an offset is parsed without altering the instant."""
         result = AttackResult(conversation_id="c1", objective="test", timestamp="2026-01-01T12:00:00+00:00")
         assert result.timestamp == datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
-
-
-class TestAttackResultLegacyDictDeprecation:
-    """to_dict()/from_dict() are retained as deprecated shims and must warn."""
-
-    def test_to_dict_emits_deprecation_warning(self) -> None:
-        result = AttackResult(conversation_id="c1", objective="test")
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            result.to_dict()
-
-        deprecation_warnings = [w for w in caught if issubclass(w.category, DeprecationWarning)]
-        assert len(deprecation_warnings) >= 1
-        assert "to_dict" in str(deprecation_warnings[0].message).lower()
-
-    def test_from_dict_emits_deprecation_warning(self) -> None:
-        result = AttackResult(conversation_id="c1", objective="test")
-        with warnings.catch_warnings(record=True):
-            warnings.simplefilter("always")
-            payload = result.to_dict()
-
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            AttackResult.from_dict(payload)
-
-        deprecation_warnings = [w for w in caught if issubclass(w.category, DeprecationWarning)]
-        assert len(deprecation_warnings) >= 1
-        assert "from_dict" in str(deprecation_warnings[0].message).lower()
 
 
 class TestAttackResultDuplicate:
@@ -394,24 +364,3 @@ class TestAttackResultDuplicate:
         assert copy.backtrack_count == 3
         copy.backtrack_count = 9
         assert original.backtrack_count == 3
-
-
-class TestAttackResultShim:
-    """The relocated module must be importable from the legacy path silently."""
-
-    def test_shim_reexports_same_classes_silently(self) -> None:
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            from pyrit.models.attack_result import AttackOutcome as ShimOutcome
-            from pyrit.models.attack_result import AttackResult as ShimResult
-
-        assert ShimResult is AttackResult
-        assert ShimOutcome is AttackOutcome
-        deprecation_warnings = [w for w in caught if issubclass(w.category, DeprecationWarning)]
-        assert len(deprecation_warnings) == 0, "Shim import must be silent"
-
-    def test_shim_getattr_reexports_dynamic_names(self) -> None:
-        """The module __getattr__ falls through to the relocated module."""
-        import pyrit.models.attack_result as shim
-
-        assert shim.AttackResultT is not None

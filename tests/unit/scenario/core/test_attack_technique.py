@@ -6,12 +6,12 @@
 from unittest.mock import MagicMock
 
 from pyrit.executor.attack import AttackStrategy
-from pyrit.models import ComponentIdentifier, SeedAttackTechniqueGroup, SeedPrompt
+from pyrit.models import AttackTechniqueSeedGroup, ComponentIdentifier, SeedPrompt
 from pyrit.scenario.core.attack_technique import AttackTechnique
 
 
-def _make_technique_seeds() -> SeedAttackTechniqueGroup:
-    return SeedAttackTechniqueGroup(
+def _make_technique_seeds() -> AttackTechniqueSeedGroup:
+    return AttackTechniqueSeedGroup(
         seeds=[
             SeedPrompt(value="technique1", data_type="text", is_general_technique=True),
             SeedPrompt(value="technique2", data_type="text", is_general_technique=True),

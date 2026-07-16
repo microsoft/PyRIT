@@ -8,11 +8,11 @@ from typing import Any
 
 from pyrit.common.apply_defaults import apply_defaults
 from pyrit.common.path import CONVERTER_SEED_PROMPT_PATH
+from pyrit.converter.converter import ConverterResult
 from pyrit.executor.promptgen.fuzzer.fuzzer_converter_base import (
     FuzzerConverter,
 )
-from pyrit.models import Message, MessagePiece, PromptDataType, SeedPrompt
-from pyrit.prompt_converter.prompt_converter import ConverterResult
+from pyrit.models import JsonResponseConfig, Message, MessagePiece, PromptDataType, SeedPrompt
 from pyrit.prompt_target import PromptTarget
 
 
@@ -89,7 +89,7 @@ class FuzzerCrossOverConverter(FuzzerConverter):
             f"\n====TEMPLATE 2 BEGINS====\n{random.choice(self.prompt_templates)}\n====TEMPLATE 2 ENDS====\n"
         )
 
-        prompt_metadata: dict[str, str | int] = {"response_format": "json"}
+        prompt_metadata = JsonResponseConfig(enabled=True).to_metadata()
         request = Message(
             message_pieces=[
                 MessagePiece(
