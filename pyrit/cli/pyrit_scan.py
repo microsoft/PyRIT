@@ -18,6 +18,7 @@ import sys
 from argparse import ArgumentParser, Namespace, RawDescriptionHelpFormatter
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, get_args, get_origin
+from urllib.parse import urlparse
 
 from pyrit.cli._cli_args import (
     ARG_HELP,
@@ -444,8 +445,6 @@ async def _resolve_server_url_async(*, parsed_args: Namespace) -> str | None:
 
     # Auto-start if requested
     if parsed_args.start_server:
-        from urllib.parse import urlparse
-
         parsed_url = urlparse(base_url)
         if (
             parsed_url.scheme != "http"
@@ -515,8 +514,6 @@ async def _handle_stop_server_async(*, parsed_args: Namespace) -> int:
     Returns:
         int: Exit code (always ``0``).
     """
-    from urllib.parse import urlparse
-
     from pyrit.cli._server_launcher import ServerLauncher, stop_server_on_port
 
     base_url = _resolve_configured_server_url(parsed_args=parsed_args)
