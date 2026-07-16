@@ -17,6 +17,7 @@ AttackPrompt = attack_manager_mod.AttackPrompt
 PromptManager = attack_manager_mod.PromptManager
 EvaluateAttack = attack_manager_mod.EvaluateAttack
 IndividualPromptAttack = attack_manager_mod.IndividualPromptAttack
+ModelWorker = attack_manager_mod.ModelWorker
 ProgressiveMultiPromptAttack = attack_manager_mod.ProgressiveMultiPromptAttack
 get_embedding_layer = attack_manager_mod.get_embedding_layer
 get_embedding_matrix = attack_manager_mod.get_embedding_matrix
@@ -503,6 +504,30 @@ class TestGetWorkersChatTemplateValidation:
         with patch.object(attack_manager_mod.AutoTokenizer, "from_pretrained", return_value=bare_tokenizer):
             with pytest.raises(ValueError, match="no chat_template configured"):
                 get_workers(params)
+
+
+def test_model_worker_uses_model_device_dispatch() -> None:
+    model = MagicMock()
+    moved_model = MagicMock()
+    evaluated_model = MagicMock()
+    model.to.return_value = moved_model
+    moved_model.eval.return_value = evaluated_model
+
+    with (
+        patch.object(attack_manager_mod.AutoModelForCausalLM, "from_pretrained", return_value=model),
+        patch.object(attack_manager_mod.mp, "JoinableQueue", side_effect=[MagicMock(), MagicMock()]),
+    ):
+        worker = ModelWorker(
+            model_path="fake/model",
+            token="",
+            model_kwargs={},
+            tokenizer=MagicMock(),
+            device="cpu",
+        )
+
+    model.to.assert_called_once_with(torch.device("cpu"))
+    moved_model.eval.assert_called_once_with()
+    assert worker.model is evaluated_model
 
 
 class _Queue:
