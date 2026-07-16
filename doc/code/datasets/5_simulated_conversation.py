@@ -74,7 +74,6 @@ print(f"Generated {len(simulated_conversation_prompts)} messages")
 simulated_conversation = SeedGroup(seeds=simulated_conversation_prompts)
 
 # View the conversation prefix (N-1 turns)
-# Note: print_messages_async was deprecated. Using output_attack_async instead.
 # For direct message printing, use: from pyrit.output import output_conversation_async
 
 print(f"\nPrepended conversation messages: {len(simulated_conversation.prepended_conversation)}")

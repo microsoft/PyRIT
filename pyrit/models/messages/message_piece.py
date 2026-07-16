@@ -62,7 +62,6 @@ class MessagePiece(BaseModel):
     converted_value_sha256: str | None = None
     response_error: PromptResponseError = "none"
     original_prompt_id: uuid.UUID | None = None
-    labels: dict[str, Any] = Field(default_factory=dict)
     prompt_metadata: dict[str, Any] = Field(default_factory=dict)
     converter_identifiers: list[ComponentIdentifierField] = Field(default_factory=list)
 
@@ -140,15 +139,13 @@ class MessagePiece(BaseModel):
         Copy lineage metadata from ``source`` onto this piece.
 
         Lineage fields are the metadata that tie a piece back to its originating
-        conversation. Mutable containers (``labels``,
-        ``prompt_metadata``) are shallow-copied so that mutations on one piece
-        do not affect others.
+        conversation. Mutable containers (``prompt_metadata``) are shallow-copied
+        so that mutations on one piece do not affect others.
 
         Args:
             source: The piece whose lineage will be copied onto ``self``.
         """
         self.conversation_id = source.conversation_id
-        self.labels = dict(source.labels)
         self.prompt_metadata = dict(source.prompt_metadata)
 
     def has_error(self) -> bool:

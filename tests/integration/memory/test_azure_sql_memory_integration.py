@@ -299,54 +299,50 @@ async def test_get_attack_results_by_labels(azuresql_instance: AzureSQLMemory):
     ]
 
     with cleanup_conversation_data(azuresql_instance, conversation_ids):
-        # Create message pieces with labels
+        # Create message pieces for the attack conversations
         piece1 = MessagePiece(
             conversation_id=conversation_ids[0],
             role="user",
             original_value="Test 1",
             converted_value="Test 1",
-            labels={
-                "op_id": f"op123_{test_id}",
-                "category": "test",
-                "priority": "high",
-            },
         )
         piece2 = MessagePiece(
             conversation_id=conversation_ids[1],
             role="user",
             original_value="Test 2",
             converted_value="Test 2",
-            labels={"op_id": f"op123_{test_id}", "category": "test"},
         )
         piece3 = MessagePiece(
             conversation_id=conversation_ids[2],
             role="user",
             original_value="Test 3",
             converted_value="Test 3",
-            labels={"op_id": f"op456_{test_id}"},
         )
 
         azuresql_instance.add_message_pieces_to_memory(message_pieces=[piece1, piece2, piece3])
 
-        # Create attack results
+        # Create attack results with labels
         atomic_id = get_test_atomic_attack_identifier()
         result1 = AttackResult(
             conversation_id=conversation_ids[0],
             objective="Test objective 1",
             atomic_attack_identifier=atomic_id,
             outcome=AttackOutcome.SUCCESS,
+            labels={"op_id": f"op123_{test_id}", "category": "test", "priority": "high"},
         )
         result2 = AttackResult(
             conversation_id=conversation_ids[1],
             objective="Test objective 2",
             atomic_attack_identifier=atomic_id,
             outcome=AttackOutcome.SUCCESS,
+            labels={"op_id": f"op123_{test_id}", "category": "test", "priority": "low"},
         )
         result3 = AttackResult(
             conversation_id=conversation_ids[2],
             objective="Test objective 3",
             atomic_attack_identifier=atomic_id,
             outcome=AttackOutcome.FAILURE,
+            labels={"op_id": f"op456_{test_id}", "category": "test", "priority": "high"},
         )
 
         azuresql_instance.add_attack_results_to_memory(attack_results=[result1, result2, result3])

@@ -105,7 +105,7 @@ adversarial_config = AttackAdversarialConfig(
 
 scorer = SelfAskTrueFalseScorer.from_question(
     chat_target=OpenAIChatTarget(),
-    question=TrueFalseQuestion.from_yaml(Path("../../../assets/demo_scorer_definitions/check_fraud_classifier.yaml")),
+    question=TrueFalseQuestion.from_yaml(Path("./check_fraud_classifier.yaml")),
 )
 scoring_config = AttackScoringConfig(
     objective_scorer=scorer,

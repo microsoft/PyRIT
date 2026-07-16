@@ -939,7 +939,7 @@ class TestPromptGeneration:
         # Mock no response
         mock_prompt_normalizer.send_prompt_async.return_value = None
 
-        with pytest.raises(ValueError, match="No response received from adversarial chat"):
+        with pytest.raises(ValueError, match="No response received for conversation ID"):
             await attack._generate_next_prompt_async(context=basic_context)
 
     async def test_generate_next_prompt_forwards_seed_media_and_schema_to_adversarial_chat(

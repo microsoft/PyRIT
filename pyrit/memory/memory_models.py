@@ -48,6 +48,7 @@ from pyrit.models import (
     ComponentIdentifier,
     Conversation,
     ConversationReference,
+    ConversationRetry,
     ConversationType,
     ConverterIdentifier,
     EvaluationIdentifier,
@@ -262,7 +263,6 @@ class PromptMemoryEntry(Base):
     conversation_id = mapped_column(String, nullable=False)
     sequence = mapped_column(INTEGER, nullable=False)
     timestamp = mapped_column(UTCDateTime, nullable=False)
-    labels: Mapped[dict[str, str]] = mapped_column(JSON)
     prompt_metadata: Mapped[dict[str, str | int]] = mapped_column(JSON)
     converter_identifiers: Mapped[list[dict[str, str]] | None] = mapped_column(JSON)
     response_error: Mapped[Literal["blocked", "none", "processing", "unknown"]] = mapped_column(String, nullable=True)
@@ -309,7 +309,6 @@ class PromptMemoryEntry(Base):
         self.conversation_id = entry.conversation_id
         self.sequence = entry.sequence
         self.timestamp = entry.timestamp
-        self.labels = entry.labels
         self.prompt_metadata = entry.prompt_metadata
         self.converter_identifiers = [identifier.model_dump() for identifier in entry.converter_identifiers]
 
@@ -337,7 +336,7 @@ class PromptMemoryEntry(Base):
         stored_version = self.pyrit_version or LEGACY_PYRIT_VERSION
         converter_ids = _load_identifiers(self.converter_identifiers, pyrit_version=stored_version)
 
-        message_piece = MessagePiece(
+        return MessagePiece(
             role=self.role,
             original_value=self.original_value,
             original_value_sha256=self.original_value_sha256,
@@ -354,12 +353,6 @@ class PromptMemoryEntry(Base):
             original_prompt_id=self.original_prompt_id,
             timestamp=self.timestamp,
         )
-        # Assign deprecated ``labels`` container post-construction so the DB-load
-        # path does not trip the ``MessagePiece`` deprecation-kwarg validator.
-        # ``validate_assignment=False`` on the model makes this assignment bypass
-        # the model_validator entirely.
-        message_piece.labels = self.labels or {}
-        return message_piece
 
     def __str__(self) -> str:
         """
@@ -1017,6 +1010,10 @@ class ConversationEntry(Base):
         String(64), ForeignKey(f"{TargetIdentifierEntry.__tablename__}.hash"), nullable=True
     )
 
+    # JSON-serialized list of ConversationRetry records (turns that were retried in
+    # this conversation). Nullable for backwards compatibility with existing databases.
+    retries: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
+
     # Version of PyRIT used when this entry was created. Nullable for backwards
     # compatibility with existing databases.
     pyrit_version = mapped_column(String, nullable=True)
@@ -1031,6 +1028,7 @@ class ConversationEntry(Base):
         self.conversation_id = conversation.conversation_id
         self.target_identifier = conversation.target_identifier.model_dump() if conversation.target_identifier else None
         self.target_identifier_hash = conversation.target_identifier.hash if conversation.target_identifier else None
+        self.retries = [retry.model_dump(mode="json") for retry in conversation.retries] or None
         self.pyrit_version = pyrit.__version__
 
     def get_conversation(self) -> Conversation:
@@ -1042,7 +1040,12 @@ class ConversationEntry(Base):
         """
         stored_version = self.pyrit_version or LEGACY_PYRIT_VERSION
         target_id = _load_identifier(self.target_identifier, pyrit_version=stored_version)
-        return Conversation(conversation_id=self.conversation_id, target_identifier=target_id)
+        retries = [ConversationRetry.model_validate(retry) for retry in self.retries or []]
+        return Conversation(
+            conversation_id=self.conversation_id,
+            target_identifier=target_id,
+            retries=retries,
+        )
 
 
 class EmbeddingDataEntry(Base):
@@ -1096,7 +1099,6 @@ class ScoreEntry(Base):
     )
     prompt_request_response_id = mapped_column(CustomUUID, ForeignKey(f"{PromptMemoryEntry.__tablename__}.id"))
     timestamp = mapped_column(UTCDateTime, nullable=False)
-    task = mapped_column(String, nullable=True)  # Deprecated: Use objective instead
     objective = mapped_column(String, nullable=True)
     # Version of PyRIT used when this score was created
     # Nullable for backwards compatibility with existing databases
@@ -1128,9 +1130,6 @@ class ScoreEntry(Base):
         self.scorer_identifier_hash = normalized_scorer.hash if normalized_scorer else None
         self.prompt_request_response_id = entry.message_piece_id if entry.message_piece_id else None
         self.timestamp = entry.timestamp
-        # Store in both columns for backward compatibility
-        # New code should only read from objective
-        self.task = entry.objective
         self.objective = entry.objective
         self.pyrit_version = pyrit.__version__
 
@@ -1752,9 +1751,8 @@ class ScenarioResultEntry(Base):
     Represents a scenario execution result in the database.
 
     This class stores the high-level metadata and results of a PyRIT scenario execution,
-    including references to all attack results generated during the scenario run. The actual
-    AttackResult objects are stored separately in AttackResultEntries and can be retrieved
-    using the conversation IDs stored here.
+    AttackResult objects are stored separately in AttackResultEntries and linked to their
+    parent scenario through attribution_parent_id.
 
     Attributes:
         __tablename__ (str): The name of the database table ("ScenarioResultEntries").
@@ -1770,9 +1768,6 @@ class ScenarioResultEntry(Base):
         objective_scorer_identifier (dict): Optional identifier for the scorer used to evaluate results.
         scenario_run_state (str): Current execution state of the scenario
             (one of CREATED, IN_PROGRESS, COMPLETED, FAILED, CANCELLED).
-        attack_results_json (str): JSON-serialized dictionary mapping attack names to conversation IDs.
-            Format: {"attack_name": ["conversation_id1", "conversation_id2", ...]}.
-            The full AttackResult objects are stored in AttackResultEntries and can be queried by conversation_id.
         labels (dict): Optional key-value pairs for categorization and filtering.
         number_tries (int): Number of times run_async has been called on this scenario (incremented at each run).
         completion_time (DateTime): When the scenario execution completed.
@@ -1782,7 +1777,6 @@ class ScenarioResultEntry(Base):
         get_scenario_result(): Returns a ScenarioResult object with scenario metadata.
             Note: attack_results will be empty. Use memory_interface.get_scenario_results()
             to automatically populate AttackResults from the database.
-        get_conversation_ids_by_attack_name(): Returns the mapping of attack names to conversation IDs.
         __str__(): Returns a human-readable string representation.
     """
 
@@ -1806,7 +1800,6 @@ class ScenarioResultEntry(Base):
     objective_target_identifier: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
     objective_scorer_identifier: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     scenario_run_state: Mapped[str] = mapped_column(String, nullable=False, default="CREATED")
-    attack_results_json: Mapped[str] = mapped_column(Unicode, nullable=False)
     display_group_map_json: Mapped[str | None] = mapped_column(Unicode, nullable=True)
     labels: Mapped[dict[str, str] | None] = mapped_column(JSON, nullable=True)
     number_tries: Mapped[int] = mapped_column(INTEGER, nullable=False, default=0)
@@ -1865,13 +1858,6 @@ class ScenarioResultEntry(Base):
         self.number_tries = entry.number_tries
         self.completion_time = entry.completion_time
 
-        # Serialize attack_results: dict[str, list[AttackResult]] -> dict[str, list[str]]
-        # Store only conversation_ids - the full AttackResults can be queried from the database
-        serialized_attack_results = {}
-        for attack_name, results in entry.attack_results.items():
-            serialized_attack_results[attack_name] = [result.conversation_id for result in results]
-        self.attack_results_json = json.dumps(serialized_attack_results)
-
         # Serialize display_group_map if present
         self.display_group_map_json = json.dumps(entry.display_group_map) if entry.display_group_map else None
 
@@ -1929,16 +1915,6 @@ class ScenarioResultEntry(Base):
             error_type=self.error_type,
             metadata=dict(self.scenario_metadata) if self.scenario_metadata else {},
         )
-
-    def get_conversation_ids_by_attack_name(self) -> dict[str, list[str]]:
-        """
-        Get the conversation IDs grouped by attack name.
-
-        Returns:
-            Dictionary mapping attack names to lists of conversation IDs
-        """
-        result: dict[str, list[str]] = json.loads(self.attack_results_json)
-        return result
 
     def __str__(self) -> str:
         """

@@ -136,9 +136,7 @@ red_teaming_llm = OpenAIChatTarget()
 scoring_target = OpenAIChatTarget()
 
 scorer = SelfAskTrueFalseScorer.from_question(
-    question=TrueFalseQuestion.from_yaml(
-        Path("../../../assets/demo_scorer_definitions/molotov_cocktail_image_classifier.yaml")
-    ),
+    question=TrueFalseQuestion.from_yaml(Path("./molotov_cocktail_image_classifier.yaml")),
     chat_target=scoring_target,
 )
 scoring_config = AttackScoringConfig(

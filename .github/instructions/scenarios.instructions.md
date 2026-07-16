@@ -14,7 +14,7 @@ All scenarios inherit from `Scenario` (ABC) and must:
 
 1. **Define `VERSION`** as a class constant (increment on breaking changes)
 2. **Optionally declare `BASELINE_ATTACK_POLICY`** (defaults to `BaselineAttackPolicy.Enabled` — a baseline `PromptSendingAttack` is prepended and callers can opt out per run by setting `include_baseline=False` in the run params, see "Run Parameters" below):
-   - `BaselineAttackPolicy.Disabled` — baseline supported but off by default (e.g. `Jailbreak`, where templates dominate the run).
+   - `BaselineAttackPolicy.Disabled` — baseline supported but off by default (e.g. `garak.doctor`, where the harm-probe technique set dominates the run).
    - `BaselineAttackPolicy.Forbidden` — baseline is meaningless for this scenario's comparison axis (e.g. `AdversarialBenchmark`, which compares against gold-standard answers). Supplying `include_baseline=True` raises `ValueError`.
 3. **Pass `technique_class`, `default_technique`, and `default_dataset_config` to `super().__init__()`:**
 

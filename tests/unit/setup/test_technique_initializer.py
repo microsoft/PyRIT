@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from pyrit.common.path import EXECUTOR_RED_TEAM_PATH, EXECUTOR_SEED_PROMPT_PATH
-from pyrit.executor.attack import PAIRAttack, PromptSendingAttack, RedTeamingAttack
+from pyrit.executor.attack import PAIRAttack, PromptSendingAttack, RedTeamingAttack, SkeletonKeyAttack
 from pyrit.models import SeedPrompt
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry import TargetRegistry
@@ -39,7 +39,7 @@ CORE_TECHNIQUE_NAMES: list[str] = [
     "flip",
 ]
 
-EXTRA_TECHNIQUE_NAMES: list[str] = ["pair", "violent_durian"]
+EXTRA_TECHNIQUE_NAMES: list[str] = ["pair", "skeleton_key", "violent_durian"]
 
 PERSONA_CRESCENDO_TECHNIQUE_NAMES: list[str] = [
     "crescendo_movie_director",
@@ -119,6 +119,18 @@ class TestExtraGroupCatalog:
     def test_pair_uses_pair_attack(self):
         factory = next(f for f in extra.get_technique_factories() if f.name == "pair")
         assert factory.attack_class is PAIRAttack
+
+    def test_skeleton_key_uses_skeleton_key_attack(self):
+        factory = next(f for f in extra.get_technique_factories() if f.name == "skeleton_key")
+        assert factory.attack_class is SkeletonKeyAttack
+
+    def test_skeleton_key_tagged_single_turn(self):
+        factory = next(f for f in extra.get_technique_factories() if f.name == "skeleton_key")
+        assert factory.technique_tags == ["single_turn"]
+
+    def test_skeleton_key_is_non_adversarial(self):
+        factory = next(f for f in extra.get_technique_factories() if f.name == "skeleton_key")
+        assert factory.uses_adversarial is False
 
 
 # ---------------------------------------------------------------------------
@@ -435,6 +447,7 @@ class TestTechniqueInitializerRegistration:
 
         names = set(AttackTechniqueRegistry.get_registry_singleton().instances.get_names())
         assert set(CORE_TECHNIQUE_NAMES) <= names
+        assert "skeleton_key" not in names
         assert "pair" not in names
         assert "violent_durian" not in names
 
@@ -451,7 +464,7 @@ class TestTechniqueInitializerRegistration:
         await init.initialize_async()
 
         names = set(AttackTechniqueRegistry.get_registry_singleton().instances.get_names())
-        assert {"pair", "violent_durian"} <= names
+        assert {"skeleton_key", "pair", "violent_durian"} <= names
 
     async def test_all_tag_registers_everything(self, mock_adversarial_target):
         init = TechniqueInitializer()

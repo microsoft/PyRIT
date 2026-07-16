@@ -704,7 +704,7 @@ class AttackTechniqueFactory(Identifiable):
     @staticmethod
     def _unwrap_optional(annotation: Any) -> type | None:
         """
-        Unwrap ``X | None``, ``X | None``, or ``X | None`` to extract X.
+        Unwrap a union containing one concrete type and ``None`` to extract the concrete type.
 
         Returns:
             The inner type X, or None if the annotation cannot be unwrapped to a single type.

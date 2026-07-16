@@ -6,7 +6,7 @@
 from typing import Any
 
 from pyrit.scenario.scenarios.airt.cyber import Cyber, _build_cyber_technique
-from pyrit.scenario.scenarios.airt.jailbreak import Jailbreak, JailbreakTechnique
+from pyrit.scenario.scenarios.airt.jailbreak import Jailbreak, _build_jailbreak_technique
 from pyrit.scenario.scenarios.airt.leakage import Leakage, _build_leakage_technique
 from pyrit.scenario.scenarios.airt.psychosocial import Psychosocial, PsychosocialTechnique
 from pyrit.scenario.scenarios.airt.rapid_response import RapidResponse, _build_rapid_response_technique
@@ -29,6 +29,8 @@ def __getattr__(name: str) -> Any:
         return _build_leakage_technique()
     if name == "CyberTechnique":
         return _build_cyber_technique()
+    if name == "JailbreakTechnique":
+        return _build_jailbreak_technique()
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 

@@ -1510,8 +1510,6 @@ class TestEdgeCasesAndErrorHandling:
         manager = ConversationManager()
         conversation_id = str(uuid.uuid4())
 
-        # Add metadata to piece
-        sample_user_piece.labels = {"test": "label"}
         sample_user_piece.prompt_metadata = {"key": "value", "count": 1}
         context = _TestAttackContext(params=AttackParameters(objective="Test objective"))
         context.prepended_conversation = [Message(message_pieces=[sample_user_piece])]
@@ -1525,7 +1523,6 @@ class TestEdgeCasesAndErrorHandling:
         stored = manager.get_conversation(conversation_id)
         assert len(stored) == 1
         processed_piece = stored[0].message_pieces[0]
-        assert processed_piece.labels == {"test": "label"}
         assert processed_piece.prompt_metadata == {"key": "value", "count": 1}
 
     async def test_preserves_original_and_converted_values(
