@@ -34,7 +34,6 @@
 # FigStep [@gong2025figstep],
 # HarmBench [@mazeika2024harmbench],
 # HarmfulQA [@bhardwaj2023harmfulqa],
-# In-The-Wild Jailbreaks [@shen2023donotanything],
 # JailbreakBench [@chao2024jailbreakbench],
 # JailbreakV-28K [@luo2024jailbreakv],
 # LLM-LAT [@sheshadri2024lat],

@@ -108,10 +108,6 @@ from pyrit.datasets.seed_datasets.remote.strong_reject_dataset import _StrongRej
 from pyrit.datasets.seed_datasets.remote.tdc23_redteaming_dataset import _TDC23RedteamingDataset
 from pyrit.datasets.seed_datasets.remote.toxic_chat_dataset import _ToxicChatDataset
 from pyrit.datasets.seed_datasets.remote.transphobia_awareness_dataset import _TransphobiaAwarenessDataset
-from pyrit.datasets.seed_datasets.remote.trustairlab_in_the_wild_jailbreak_dataset import (
-    TrustAIRLabPlatform,
-    _TrustAIRLabInTheWildJailbreakDataset,
-)
 from pyrit.datasets.seed_datasets.remote.visual_leak_bench_dataset import (
     VisualLeakBenchCategory,
     VisualLeakBenchPIIType,
@@ -150,7 +146,6 @@ __all__ = [
     "PromptIntelSeverity",
     "SGXSTestLabel",
     "SIUOCategory",
-    "TrustAIRLabPlatform",
     "VLGuardCategory",
     "VLGuardSubcategory",
     "VLGuardSubset",
@@ -223,7 +218,6 @@ __all__ = [
     "_TDC23RedteamingDataset",
     "_ToxicChatDataset",
     "_TransphobiaAwarenessDataset",
-    "_TrustAIRLabInTheWildJailbreakDataset",
     "_VLGuardDataset",
     "_VLSUMultimodalDataset",
     "_VisualLeakBenchDataset",
