@@ -13,6 +13,7 @@ import {
   SettingsRegular,
   HistoryRegular,
   PersonFeedbackRegular,
+  OpenRegular,
   WeatherMoonRegular,
   WeatherSunnyRegular,
 } from '@fluentui/react-icons'
@@ -105,6 +106,17 @@ export default function Navigation({ currentView, onNavigate, onOpenFeedback }: 
         title="Feedback"
         aria-label="Feedback"
         onClick={onOpenFeedback}
+      />
+      <Button
+        as="a"
+        className={styles.navButton}
+        appearance="subtle"
+        icon={<OpenRegular />}
+        title="Security"
+        aria-label="Security"
+        href="https://github.com/microsoft/PyRIT/security/policy"
+        target="_blank"
+        rel="noreferrer"
       />
       <Menu
         checkedValues={{ [THEME_MENU_NAME]: [mode] }}
