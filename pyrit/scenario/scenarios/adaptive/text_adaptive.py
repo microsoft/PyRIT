@@ -70,7 +70,7 @@ def _build_text_adaptive_technique() -> type[ScenarioTechnique]:
     return AttackTechniqueRegistry.build_technique_class_from_factories(  # type: ignore[return-value, ty:invalid-return-type]
         class_name="TextAdaptiveTechnique",
         factories=factories,
-        default_technique_names={"role_play_movie_script", "many_shot"},
+        default_names={"role_play_movie_script", "many_shot"},
     )
 
 

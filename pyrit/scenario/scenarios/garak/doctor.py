@@ -82,7 +82,7 @@ def _build_doctor_technique() -> type[ScenarioTechnique]:
     return AttackTechniqueRegistry.build_technique_class_from_factories(  # type: ignore[return-value, ty:invalid-return-type]
         class_name="DoctorTechnique",
         factories=DOCTOR_FACTORIES,
-        default_technique_names={"policy_puppetry", "policy_puppetry_leet"},
+        default_names={"policy_puppetry", "policy_puppetry_leet"},
     )
 
 

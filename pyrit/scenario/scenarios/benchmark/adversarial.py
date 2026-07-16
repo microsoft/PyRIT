@@ -62,7 +62,7 @@ def _build_benchmark_technique() -> type[ScenarioTechnique]:
     return AttackTechniqueRegistry.build_technique_class_from_factories(  # type: ignore[ty:invalid-return-type]
         class_name="BenchmarkTechnique",
         factories=factories,
-        default="light",
+        default_tags={"light"},
     )
 
 

@@ -66,7 +66,7 @@ def _build_leakage_technique() -> type[ScenarioTechnique]:
     return AttackTechniqueRegistry.build_technique_class_from_factories(  # type: ignore[return-value, ty:invalid-return-type]
         class_name="LeakageTechnique",
         factories=all_factories,
-        default_technique_names={"role_play_movie_script", "many_shot", "first_letter", "image"},
+        default_names={"role_play_movie_script", "many_shot", "first_letter", "image"},
     )
 
 

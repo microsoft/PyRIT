@@ -53,7 +53,7 @@ def _build_cyber_technique() -> type[ScenarioTechnique]:
     return AttackTechniqueRegistry.build_technique_class_from_factories(  # type: ignore[ty:invalid-return-type]
         class_name="CyberTechnique",
         factories=factories,
-        default_technique_names=_CYBER_DEFAULT_TECHNIQUE_NAMES,
+        default_names=_CYBER_DEFAULT_TECHNIQUE_NAMES,
     )
 
 

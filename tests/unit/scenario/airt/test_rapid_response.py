@@ -165,12 +165,15 @@ class TestRapidResponseBasic:
         ):
             assert RapidResponse()._technique_class is strat
 
-    def test_get_default_technique_returns_light(self, mock_objective_scorer):
+    def test_get_default_technique_returns_default(self, mock_objective_scorer):
         strat = _technique_class()
         with patch(
             "pyrit.scenario.core.scenario.Scenario._get_default_objective_scorer", return_value=mock_objective_scorer
         ):
-            assert RapidResponse()._default_technique == strat.LIGHT
+            default = RapidResponse()._default_technique
+        assert default == strat.DEFAULT
+        # DEFAULT is built from default_tags={"light"}, so it expands to the light-tagged techniques.
+        assert strat.expand({strat.DEFAULT}) == strat.expand({strat.LIGHT})
 
     def test_default_dataset_config_has_all_harm_datasets(self, mock_objective_scorer):
         with patch(
@@ -221,9 +224,9 @@ class TestRapidResponseBasic:
         scenario = RapidResponse()
         scenario.set_params_from_args(args={"objective_target": mock_objective_target})
         await scenario.initialize_async()
-        # Default is the LIGHT aggregate; it expands to every light-tagged technique.
+        # Default is the DEFAULT aggregate (built from light tags); it expands to every light-tagged technique.
         strat = _technique_class()
-        expected = len(strat.expand({strat.LIGHT}))
+        expected = len(strat.expand({strat.DEFAULT}))
         assert expected > 2
         assert len(scenario._scenario_techniques) == expected
 
@@ -315,8 +318,9 @@ class TestRapidResponseAttackGeneration:
             mock_objective_scorer=mock_objective_scorer,
         )
         technique_classes = {type(a.attack_technique.attack) for a in attacks}
-        # Default is the LIGHT aggregate: it includes many_shot, context_compliance, and the
-        # simulated-conversation role_play_* variants, but excludes the slow TAP attack.
+        # Default is the DEFAULT aggregate (built from light tags): it includes many_shot,
+        # context_compliance, and the simulated-conversation role_play_* variants, but excludes
+        # the slow TAP attack.
         assert ManyShotJailbreakAttack in technique_classes
         assert ContextComplianceAttack in technique_classes
         assert TreeOfAttacksWithPruningAttack not in technique_classes
@@ -436,7 +440,7 @@ class TestRapidResponseAttackGeneration:
             assert len(extra) == 1
 
     async def test_attack_count_is_techniques_times_datasets(self, mock_objective_target, mock_objective_scorer):
-        """With 2 datasets and the LIGHT default, expect (light techniques) x 2 atomic attacks."""
+        """With 2 datasets and the DEFAULT (light) default, expect (light techniques) x 2 atomic attacks."""
         two_datasets = {
             "hate": _make_seed_groups("hate"),
             "violence": _make_seed_groups("violence"),
@@ -447,7 +451,7 @@ class TestRapidResponseAttackGeneration:
             seed_groups=two_datasets,
         )
         strat = _technique_class()
-        expected = len(strat.expand({strat.LIGHT})) * 2
+        expected = len(strat.expand({strat.DEFAULT})) * 2
         assert len(attacks) == expected
 
     async def test_atomic_attack_names_are_unique_compound_keys(self, mock_objective_target, mock_objective_scorer):

@@ -50,7 +50,7 @@ def _build_rapid_response_technique() -> type[ScenarioTechnique]:
     return AttackTechniqueRegistry.build_technique_class_from_factories(  # type: ignore[ty:invalid-return-type]
         class_name="RapidResponseTechnique",
         factories=factories,
-        default="light",
+        default_tags={"light"},
     )
 
 
