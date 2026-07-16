@@ -409,6 +409,26 @@ class AttackTechniqueFactory(Identifiable):
         """The adversarial chat target baked into this factory, or None."""
         return self._adversarial_chat
 
+    def resolve_adversarial_chat(self) -> PromptTarget | None:
+        """
+        Resolve the adversarial chat target an ``AtomicAttack`` needs to expand this technique.
+
+        A baked ``adversarial_chat`` always wins. Otherwise, when the technique's seed group
+        carries a simulated conversation (built via ``with_simulated_conversation``), the default
+        adversarial target is resolved lazily here — mirroring how ``create()`` resolves the target
+        for the attack's own ``attack_adversarial_config``. Techniques without a simulated
+        conversation seed do not need one and return ``None``.
+
+        Returns:
+            PromptTarget | None: The adversarial chat target for the ``AtomicAttack``, or ``None``
+            when the technique does not drive a simulated conversation.
+        """
+        if self._adversarial_chat is not None:
+            return self._adversarial_chat
+        if self._seed_technique is not None and self._seed_technique.has_simulated_conversation:
+            return get_default_adversarial_target()
+        return None
+
     @property
     def uses_adversarial(self) -> bool:
         """Whether this technique drives an adversarial chat during execution."""

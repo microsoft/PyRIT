@@ -7,28 +7,38 @@ import logging
 import re
 import uuid
 import weakref
-from collections.abc import MutableSequence, Sequence
+from collections.abc import Iterator, MutableSequence, Sequence
 from contextlib import closing
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, TypeVar
 
 from sqlalchemy import MetaData, and_, not_, or_, select
 from sqlalchemy.engine.base import Engine
-from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.orm.attributes import InstrumentedAttribute
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
+from sqlalchemy.orm.attributes import InstrumentedAttribute, flag_modified
 
 if TYPE_CHECKING:
     from pyrit.memory.memory_embedding import MemoryEmbedding
 
 from pyrit.memory.memory_models import (
+    AtomicAttackIdentifierEntry,
+    AttackIdentifierEntry,
     AttackResultEntry,
+    AttackTechniqueIdentifierEntry,
     Base,
+    ComponentIdentifierEntry,
     ConversationEntry,
+    ConverterIdentifierEntry,
     EmbeddingDataEntry,
+    PromptConverterIdentifierEntry,
     PromptMemoryEntry,
+    ScenarioIdentifierEntry,
     ScenarioResultEntry,
     ScoreEntry,
+    ScorerIdentifierEntry,
     SeedEntry,
+    SeedIdentifierEntry,
+    TargetIdentifierEntry,
 )
 from pyrit.memory.storage import (
     DataTypeSerializer,
@@ -37,19 +47,30 @@ from pyrit.memory.storage import (
     set_seed_sha256_async,
 )
 from pyrit.models import (
+    AtomicAttackIdentifier,
+    AttackIdentifier,
     AttackResult,
+    AttackTechniqueIdentifier,
+    ComponentIdentifier,
     Conversation,
+    ConversationRetry,
+    ConversationRetryReason,
     ConversationStats,
+    ConverterIdentifier,
     IdentifierFilter,
     IdentifierType,
     Message,
     MessagePiece,
+    ScenarioIdentifier,
     ScenarioResult,
     Score,
+    ScorerIdentifier,
     Seed,
     SeedDataset,
     SeedGroup,
+    SeedIdentifier,
     SeedType,
+    TargetIdentifier,
     group_conversation_message_pieces_by_sequence,
     sort_message_pieces,
 )
@@ -61,6 +82,7 @@ logger = logging.getLogger(__name__)
 
 
 Model = TypeVar("Model")
+IdentifierModel = TypeVar("IdentifierModel", bound=ComponentIdentifier)
 
 
 class MemoryInterface(abc.ABC):
@@ -395,20 +417,39 @@ class MemoryInterface(abc.ABC):
         self._validate_persistable_conversation_ids(message_pieces=pieces_to_insert)
         self._add_message_pieces_to_memory(message_pieces=pieces_to_insert)
 
-    @abc.abstractmethod
     def _add_message_pieces_to_memory(self, *, message_pieces: Sequence[MessagePiece]) -> None:
         """
         Persist already-validated message pieces to the backing store.
 
         Called by ``add_message_pieces_to_memory`` after ``not_in_memory`` pieces are
-        filtered out and conversation_ids are validated. Implementations only translate
-        the pieces into storage rows and insert them; they must not re-filter or
-        re-validate.
+        filtered out and conversation_ids are validated.
 
         Args:
             message_pieces (Sequence[MessagePiece]): Persistable pieces (none flagged
                 ``not_in_memory``), each carrying a non-empty ``conversation_id``.
+
+        Raises:
+            SQLAlchemyError: If the message pieces or converter identifiers cannot be persisted.
         """
+        entries = [PromptMemoryEntry(entry=piece) for piece in message_pieces]
+        with closing(self.get_session()) as session:
+            try:
+                for piece, entry in zip(message_pieces, entries, strict=True):
+                    for position, identifier in enumerate(piece.converter_identifiers):
+                        converter_identifier = ConverterIdentifier.from_component_identifier(identifier)
+                        self._persist_identifier(session=session, identifier=converter_identifier)
+                        entry.converter_identifier_links.append(
+                            PromptConverterIdentifierEntry(
+                                position=position,
+                                converter_identifier_hash=converter_identifier.hash,
+                            )
+                        )
+                session.add_all(entries)
+                session.commit()
+            except SQLAlchemyError as e:
+                session.rollback()
+                logger.exception(f"Error inserting prompt memory entries: {e}")
+                raise
 
     @staticmethod
     def _validate_persistable_conversation_ids(*, message_pieces: Sequence[MessagePiece]) -> None:
@@ -459,6 +500,13 @@ class MemoryInterface(abc.ABC):
             try:
                 existing = session.get(ConversationEntry, conversation.conversation_id)
                 if existing is None:
+                    if conversation.target_identifier is not None:
+                        self._persist_target_identifier(
+                            session=session,
+                            target_identifier=TargetIdentifier.from_component_identifier(
+                                conversation.target_identifier
+                            ),
+                        )
                     session.add(entry)
                 elif (
                     entry.target_identifier is not None
@@ -475,6 +523,503 @@ class MemoryInterface(abc.ABC):
                 session.rollback()
                 logger.exception(f"Error registering conversation {conversation.conversation_id}: {e}")
                 raise
+
+    def add_conversation_retry(self, *, conversation_id: str, sequence: int, reason: ConversationRetryReason) -> None:
+        """
+        Append a retry record to the conversation-scoped metadata for ``conversation_id``.
+
+        Records that a turn had to be retried (e.g. because its response failed JSON
+        validation and was rolled back out of memory). The conversation's ``Conversations``
+        row is updated in place; if no row exists yet it is created. This is distinct from
+        the insert-only ``_insert_conversation``.
+
+        Args:
+            conversation_id (str): The conversation whose turn was retried.
+            sequence (int): The sequence the retried turn's request occupies.
+            reason (ConversationRetryReason): Why the turn was retried.
+
+        Raises:
+            SQLAlchemyError: If the database update fails; the transaction is rolled back first.
+        """
+        record = ConversationRetry(sequence=sequence, reason=reason).model_dump(mode="json")
+        with closing(self.get_session()) as session:
+            try:
+                entry = session.get(ConversationEntry, str(conversation_id))
+                if entry is None:
+                    entry = ConversationEntry(conversation=Conversation(conversation_id=str(conversation_id)))
+                    session.add(entry)
+                entry.retries = [*(entry.retries or []), record]
+                flag_modified(entry, "retries")
+                session.commit()
+            except SQLAlchemyError as e:
+                session.rollback()
+                logger.exception(f"Error recording retry for conversation {conversation_id}: {e}")
+                raise
+
+    def delete_conversation_pieces_after_sequence(self, *, conversation_id: str, sequence: int) -> int:
+        """
+        Delete all message pieces in a conversation whose sequence is greater than ``sequence``.
+
+        Rolls a conversation back to a baseline so a failed turn can be resent on a clean
+        history. Dependent ``EmbeddingData`` rows for the deleted pieces are removed first to
+        avoid orphaned foreign keys. Pieces at or below ``sequence`` (e.g. the system prompt
+        and any prior good turns) are left intact.
+
+        Args:
+            conversation_id (str): The conversation to roll back.
+            sequence (int): The baseline sequence; pieces with a greater sequence are deleted.
+
+        Returns:
+            int: The number of ``PromptMemoryEntries`` deleted.
+
+        Raises:
+            SQLAlchemyError: If the deletion fails; the transaction is rolled back first.
+        """
+        with closing(self.get_session()) as session:
+            try:
+                pieces = (
+                    session.query(PromptMemoryEntry)
+                    .filter(
+                        PromptMemoryEntry.conversation_id == str(conversation_id),
+                        PromptMemoryEntry.sequence > sequence,
+                    )
+                    .all()
+                )
+                if not pieces:
+                    return 0
+                piece_ids = [piece.id for piece in pieces]
+                session.query(EmbeddingDataEntry).filter(EmbeddingDataEntry.id.in_(piece_ids)).delete(
+                    synchronize_session=False
+                )
+                for piece in pieces:
+                    session.delete(piece)
+                session.commit()
+                return len(pieces)
+            except SQLAlchemyError as e:
+                session.rollback()
+                logger.exception(f"Error deleting conversation pieces for {conversation_id}: {e}")
+                raise
+
+    @classmethod
+    def _persist_target_identifier(cls, *, session: Any, target_identifier: TargetIdentifier) -> None:
+        """
+        Persist ``target_identifier`` and its inner targets as content-addressed rows.
+
+        Dependencies are persisted before the target row, whose ordered child edges
+        reference those rows by content hash. Identifier rows are immutable and keyed
+        by their content hash, so an identical target reused across many conversations
+        maps to a single row.
+
+        If the row already exists it was fully persisted before (children and edges
+        included, since rows are immutable), so this returns early. Otherwise the row and
+        its child edges are inserted inside a savepoint. If an ``IntegrityError`` occurs,
+        it is treated as a concurrent duplicate only when a fresh lookup confirms that
+        the identifier hash now exists; all other integrity failures are re-raised.
+
+        Args:
+            session (Any): The active SQLAlchemy session (the caller's transaction).
+            target_identifier (TargetIdentifier): The target identifier to persist.
+        """
+        cls._persist_identifier(session=session, identifier=target_identifier)
+
+    @classmethod
+    def _persist_identifier(cls, *, session: Any, identifier: ComponentIdentifier) -> None:
+        entry_type = cls._get_identifier_entry_type(identifier)
+        if session.get(entry_type, identifier.hash) is not None:
+            return
+
+        for dependency in cls._iter_identifier_dependencies(identifier):
+            cls._persist_identifier(session=session, identifier=dependency)
+
+        try:
+            with session.begin_nested():
+                session.add(entry_type.from_domain_model(identifier))
+                session.flush()
+        except IntegrityError:
+            with session.no_autoflush:
+                existing_entry = session.get(entry_type, identifier.hash, populate_existing=True)
+            if existing_entry is None:
+                raise
+
+    @staticmethod
+    def _get_identifier_entry_type(identifier: ComponentIdentifier) -> type[ComponentIdentifierEntry[Any]]:
+        if isinstance(identifier, AtomicAttackIdentifier):
+            return AtomicAttackIdentifierEntry
+        if isinstance(identifier, AttackTechniqueIdentifier):
+            return AttackTechniqueIdentifierEntry
+        if isinstance(identifier, AttackIdentifier):
+            return AttackIdentifierEntry
+        if isinstance(identifier, SeedIdentifier):
+            return SeedIdentifierEntry
+        if isinstance(identifier, TargetIdentifier):
+            return TargetIdentifierEntry
+        if isinstance(identifier, ConverterIdentifier):
+            return ConverterIdentifierEntry
+        if isinstance(identifier, ScorerIdentifier):
+            return ScorerIdentifierEntry
+        if isinstance(identifier, ScenarioIdentifier):
+            return ScenarioIdentifierEntry
+        raise TypeError(f"Identifier type {type(identifier).__name__} does not have a persistence entry.")
+
+    @staticmethod
+    def _iter_identifier_dependencies(identifier: ComponentIdentifier) -> Iterator[ComponentIdentifier]:
+        for field_name in identifier.promoted_child_field_names():
+            child = getattr(identifier, field_name)
+            if isinstance(child, ComponentIdentifier):
+                yield child
+            elif isinstance(child, list):
+                yield from (item for item in child if isinstance(item, ComponentIdentifier))
+
+    def _get_identifiers(
+        self,
+        *,
+        identifier_type: type[IdentifierModel],
+        entry_type: type[ComponentIdentifierEntry[Any]],
+        identifier_hashes: Sequence[str] | None,
+        filters: dict[str, Any],
+    ) -> Sequence[IdentifierModel]:
+        if identifier_hashes is not None and not identifier_hashes:
+            return []
+
+        list_filters = {name: value for name, value in filters.items() if isinstance(value, list)}
+        conditions = [
+            getattr(entry_type, name) == value
+            for name, value in filters.items()
+            if value is not None and name not in list_filters
+        ]
+        if identifier_hashes is not None:
+            entries = self._execute_batched_query(
+                entry_type,
+                batch_column=entry_type.hash,
+                batch_values=identifier_hashes,
+                other_conditions=conditions,
+                order_by=entry_type.hash,
+            )
+        else:
+            entries = self._query_entries(
+                entry_type,
+                conditions=and_(*conditions) if conditions else None,
+                order_by=entry_type.hash,
+            )
+
+        entries = [
+            entry
+            for entry in entries
+            if all(
+                getattr(entry, name) is not None and sorted(getattr(entry, name)) == sorted(value)
+                for name, value in list_filters.items()
+            )
+        ]
+        identifiers: list[IdentifierModel] = []
+        seen_hashes: set[str] = set()
+        for entry in sorted(entries, key=lambda item: item.hash):
+            if entry.hash in seen_hashes:
+                continue
+            if entry.identifier_json is None:
+                raise ValueError(f"Identifier row {entry.hash} in {entry_type.__tablename__} has no identifier JSON.")
+            identifier = identifier_type.model_validate(entry.identifier_json)
+            if identifier.hash != entry.hash:
+                raise ValueError(
+                    f"Identifier row {entry.hash} in {entry_type.__tablename__} does not match its stored JSON hash."
+                )
+            identifiers.append(identifier)
+            seen_hashes.add(entry.hash)
+        return identifiers
+
+    def get_target_identifiers(
+        self,
+        *,
+        identifier_hashes: Sequence[str] | None = None,
+        class_name: str | None = None,
+        endpoint: str | None = None,
+        model_name: str | None = None,
+        underlying_model_name: str | None = None,
+        temperature: float | None = None,
+        top_p: float | None = None,
+        max_requests_per_minute: int | None = None,
+        supported_auth_modes: Sequence[str] | None = None,
+    ) -> Sequence[TargetIdentifier]:
+        """
+        Retrieve target identifiers using exact normalized-column filters.
+
+        Args:
+            identifier_hashes (Sequence[str] | None): Content hashes to include.
+            class_name (str | None): Component class name to match.
+            endpoint (str | None): Target endpoint to match.
+            model_name (str | None): Target model name to match.
+            underlying_model_name (str | None): Underlying model name to match.
+            temperature (float | None): Temperature to match.
+            top_p (float | None): Top-p value to match.
+            max_requests_per_minute (int | None): Request limit to match.
+            supported_auth_modes (Sequence[str] | None): Authentication modes to match exactly, in any order.
+
+        Returns:
+            Sequence[TargetIdentifier]: Matching identifiers ordered by content hash.
+        """
+        return self._get_identifiers(
+            identifier_type=TargetIdentifier,
+            entry_type=TargetIdentifierEntry,
+            identifier_hashes=identifier_hashes,
+            filters={
+                "class_name": class_name,
+                "endpoint": endpoint,
+                "model_name": model_name,
+                "underlying_model_name": underlying_model_name,
+                "temperature": temperature,
+                "top_p": top_p,
+                "max_requests_per_minute": max_requests_per_minute,
+                "supported_auth_modes": list(supported_auth_modes) if supported_auth_modes is not None else None,
+            },
+        )
+
+    def get_converter_identifiers(
+        self,
+        *,
+        identifier_hashes: Sequence[str] | None = None,
+        class_name: str | None = None,
+        supported_input_types: Sequence[str] | None = None,
+        supported_output_types: Sequence[str] | None = None,
+        converter_target_hash: str | None = None,
+        sub_converter_hash: str | None = None,
+    ) -> Sequence[ConverterIdentifier]:
+        """
+        Retrieve converter identifiers using exact normalized-column filters.
+
+        Args:
+            identifier_hashes (Sequence[str] | None): Content hashes to include.
+            class_name (str | None): Component class name to match.
+            supported_input_types (Sequence[str] | None): Input types to match exactly, in any order.
+            supported_output_types (Sequence[str] | None): Output types to match exactly, in any order.
+            converter_target_hash (str | None): Converter target hash to match.
+            sub_converter_hash (str | None): Nested converter hash to match.
+
+        Returns:
+            Sequence[ConverterIdentifier]: Matching identifiers ordered by content hash.
+        """
+        return self._get_identifiers(
+            identifier_type=ConverterIdentifier,
+            entry_type=ConverterIdentifierEntry,
+            identifier_hashes=identifier_hashes,
+            filters={
+                "class_name": class_name,
+                "supported_input_types": (list(supported_input_types) if supported_input_types is not None else None),
+                "supported_output_types": (
+                    list(supported_output_types) if supported_output_types is not None else None
+                ),
+                "converter_target_hash": converter_target_hash,
+                "sub_converter_hash": sub_converter_hash,
+            },
+        )
+
+    def get_scorer_identifiers(
+        self,
+        *,
+        identifier_hashes: Sequence[str] | None = None,
+        class_name: str | None = None,
+        scorer_type: str | None = None,
+        score_aggregator: str | None = None,
+        prompt_target_hash: str | None = None,
+    ) -> Sequence[ScorerIdentifier]:
+        """
+        Retrieve scorer identifiers using exact normalized-column filters.
+
+        Args:
+            identifier_hashes (Sequence[str] | None): Content hashes to include.
+            class_name (str | None): Component class name to match.
+            scorer_type (str | None): Scorer type to match.
+            score_aggregator (str | None): Score aggregator to match.
+            prompt_target_hash (str | None): Scorer target hash to match.
+
+        Returns:
+            Sequence[ScorerIdentifier]: Matching identifiers ordered by content hash.
+        """
+        return self._get_identifiers(
+            identifier_type=ScorerIdentifier,
+            entry_type=ScorerIdentifierEntry,
+            identifier_hashes=identifier_hashes,
+            filters={
+                "class_name": class_name,
+                "scorer_type": scorer_type,
+                "score_aggregator": score_aggregator,
+                "prompt_target_hash": prompt_target_hash,
+            },
+        )
+
+    def get_scenario_identifiers(
+        self,
+        *,
+        identifier_hashes: Sequence[str] | None = None,
+        class_name: str | None = None,
+        version: int | None = None,
+        techniques: Sequence[str] | None = None,
+        datasets: Sequence[str] | None = None,
+        objective_target_hash: str | None = None,
+        objective_scorer_hash: str | None = None,
+    ) -> Sequence[ScenarioIdentifier]:
+        """
+        Retrieve scenario identifiers using exact normalized-column filters.
+
+        Args:
+            identifier_hashes (Sequence[str] | None): Content hashes to include.
+            class_name (str | None): Component class name to match.
+            version (int | None): Scenario definition version to match.
+            techniques (Sequence[str] | None): Technique names to match exactly, in any order.
+            datasets (Sequence[str] | None): Dataset names to match exactly, in any order.
+            objective_target_hash (str | None): Objective target hash to match.
+            objective_scorer_hash (str | None): Objective scorer hash to match.
+
+        Returns:
+            Sequence[ScenarioIdentifier]: Matching identifiers ordered by content hash.
+        """
+        return self._get_identifiers(
+            identifier_type=ScenarioIdentifier,
+            entry_type=ScenarioIdentifierEntry,
+            identifier_hashes=identifier_hashes,
+            filters={
+                "class_name": class_name,
+                "version": version,
+                "techniques": list(techniques) if techniques is not None else None,
+                "datasets": list(datasets) if datasets is not None else None,
+                "objective_target_hash": objective_target_hash,
+                "objective_scorer_hash": objective_scorer_hash,
+            },
+        )
+
+    def get_seed_identifiers(
+        self,
+        *,
+        identifier_hashes: Sequence[str] | None = None,
+        class_name: str | None = None,
+        value: str | None = None,
+        value_sha256: str | None = None,
+        data_type: str | None = None,
+        dataset_name: str | None = None,
+        is_general_technique: bool | None = None,
+    ) -> Sequence[SeedIdentifier]:
+        """
+        Retrieve seed identifiers using exact normalized-column filters.
+
+        Args:
+            identifier_hashes (Sequence[str] | None): Content hashes to include.
+            class_name (str | None): Component class name to match.
+            value (str | None): Seed value to match.
+            value_sha256 (str | None): Seed value hash to match.
+            data_type (str | None): Seed data type to match.
+            dataset_name (str | None): Dataset name to match.
+            is_general_technique (bool | None): General-technique flag to match.
+
+        Returns:
+            Sequence[SeedIdentifier]: Matching identifiers ordered by content hash.
+        """
+        return self._get_identifiers(
+            identifier_type=SeedIdentifier,
+            entry_type=SeedIdentifierEntry,
+            identifier_hashes=identifier_hashes,
+            filters={
+                "class_name": class_name,
+                "value": value,
+                "value_sha256": value_sha256,
+                "data_type": data_type,
+                "dataset_name": dataset_name,
+                "is_general_technique": is_general_technique,
+            },
+        )
+
+    def get_attack_identifiers(
+        self,
+        *,
+        identifier_hashes: Sequence[str] | None = None,
+        class_name: str | None = None,
+        adversarial_system_prompt: str | None = None,
+        adversarial_seed_prompt: str | None = None,
+        objective_target_hash: str | None = None,
+        adversarial_chat_hash: str | None = None,
+        objective_scorer_hash: str | None = None,
+    ) -> Sequence[AttackIdentifier]:
+        """
+        Retrieve attack identifiers using exact normalized-column filters.
+
+        Args:
+            identifier_hashes (Sequence[str] | None): Content hashes to include.
+            class_name (str | None): Component class name to match.
+            adversarial_system_prompt (str | None): Adversarial system prompt to match.
+            adversarial_seed_prompt (str | None): Adversarial seed prompt to match.
+            objective_target_hash (str | None): Objective target hash to match.
+            adversarial_chat_hash (str | None): Adversarial chat target hash to match.
+            objective_scorer_hash (str | None): Objective scorer hash to match.
+
+        Returns:
+            Sequence[AttackIdentifier]: Matching identifiers ordered by content hash.
+        """
+        return self._get_identifiers(
+            identifier_type=AttackIdentifier,
+            entry_type=AttackIdentifierEntry,
+            identifier_hashes=identifier_hashes,
+            filters={
+                "class_name": class_name,
+                "adversarial_system_prompt": adversarial_system_prompt,
+                "adversarial_seed_prompt": adversarial_seed_prompt,
+                "objective_target_hash": objective_target_hash,
+                "adversarial_chat_hash": adversarial_chat_hash,
+                "objective_scorer_hash": objective_scorer_hash,
+            },
+        )
+
+    def get_attack_technique_identifiers(
+        self,
+        *,
+        identifier_hashes: Sequence[str] | None = None,
+        class_name: str | None = None,
+        attack_identifier_hash: str | None = None,
+    ) -> Sequence[AttackTechniqueIdentifier]:
+        """
+        Retrieve attack technique identifiers using exact normalized-column filters.
+
+        Args:
+            identifier_hashes (Sequence[str] | None): Content hashes to include.
+            class_name (str | None): Component class name to match.
+            attack_identifier_hash (str | None): Attack identifier hash to match.
+
+        Returns:
+            Sequence[AttackTechniqueIdentifier]: Matching identifiers ordered by content hash.
+        """
+        return self._get_identifiers(
+            identifier_type=AttackTechniqueIdentifier,
+            entry_type=AttackTechniqueIdentifierEntry,
+            identifier_hashes=identifier_hashes,
+            filters={
+                "class_name": class_name,
+                "attack_identifier_hash": attack_identifier_hash,
+            },
+        )
+
+    def get_atomic_attack_identifiers(
+        self,
+        *,
+        identifier_hashes: Sequence[str] | None = None,
+        class_name: str | None = None,
+        attack_technique_identifier_hash: str | None = None,
+    ) -> Sequence[AtomicAttackIdentifier]:
+        """
+        Retrieve atomic attack identifiers using exact normalized-column filters.
+
+        Args:
+            identifier_hashes (Sequence[str] | None): Content hashes to include.
+            class_name (str | None): Component class name to match.
+            attack_technique_identifier_hash (str | None): Attack technique hash to match.
+
+        Returns:
+            Sequence[AtomicAttackIdentifier]: Matching identifiers ordered by content hash.
+        """
+        return self._get_identifiers(
+            identifier_type=AtomicAttackIdentifier,
+            entry_type=AtomicAttackIdentifierEntry,
+            identifier_hashes=identifier_hashes,
+            filters={
+                "class_name": class_name,
+                "attack_technique_identifier_hash": attack_technique_identifier_hash,
+            },
+        )
 
     @abc.abstractmethod
     def _add_embeddings_to_memory(self, *, embedding_data: Sequence[EmbeddingDataEntry]) -> None:
@@ -804,6 +1349,9 @@ class MemoryInterface(abc.ABC):
         Persisting the score even without a piece is intentional: aggregate
         analytics (e.g. refusal rate over a batch) still want the score row
         even when the scored content was never a real conversation turn.
+
+        Raises:
+            SQLAlchemyError: If the score or identifier rows cannot be persisted.
         """
         for score in scores:
             if score.message_piece_id:
@@ -815,7 +1363,26 @@ class MemoryInterface(abc.ABC):
                 # auto-link score to the original prompt id if the prompt is a duplicate
                 if pieces[0].original_prompt_id != pieces[0].id:
                     score.message_piece_id = pieces[0].original_prompt_id  # type: ignore[ty:invalid-assignment]
-        self._insert_entries(entries=[ScoreEntry(entry=score) for score in scores])
+        entries = [ScoreEntry(entry=score) for score in scores]
+        with closing(self.get_session()) as session:
+            try:
+                for entry in entries:
+                    if entry.scorer_class_identifier:
+                        self._persist_scorer_identifier(
+                            session=session,
+                            scorer_identifier=ScorerIdentifier.model_validate(entry.scorer_class_identifier),
+                        )
+                session.add_all(entries)
+                session.commit()
+            except SQLAlchemyError as e:
+                session.rollback()
+                logger.exception(f"Error inserting scores: {e}")
+                raise
+
+    @classmethod
+    def _persist_scorer_identifier(cls, *, session: Any, scorer_identifier: ScorerIdentifier) -> None:
+        """Persist a complete scorer graph and its target dependencies."""
+        cls._persist_identifier(session=session, identifier=scorer_identifier)
 
     def get_scores(
         self,
@@ -1771,6 +2338,14 @@ class MemoryInterface(abc.ABC):
         entries = [AttackResultEntry(entry=attack_result) for attack_result in attack_results]
         with closing(self.get_session()) as session:
             try:
+                for attack_result in attack_results:
+                    if attack_result.atomic_attack_identifier is not None:
+                        self._persist_identifier(
+                            session=session,
+                            identifier=AtomicAttackIdentifier.from_component_identifier(
+                                attack_result.atomic_attack_identifier
+                            ),
+                        )
                 session.add_all(entries)
                 session.commit()
             except SQLAlchemyError:
@@ -2127,10 +2702,28 @@ class MemoryInterface(abc.ABC):
 
         Args:
             scenario_results: Sequence of ScenarioResult objects to store in the database.
+
+        Raises:
+            SQLAlchemyError: If a scenario result or identifier graph cannot be persisted.
         """
-        self._insert_entries(
-            entries=[ScenarioResultEntry(entry=scenario_result) for scenario_result in scenario_results]
-        )
+        entries = [ScenarioResultEntry(entry=scenario_result) for scenario_result in scenario_results]
+        with closing(self.get_session()) as session:
+            try:
+                for scenario_result in scenario_results:
+                    self._persist_scenario_identifier(
+                        session=session,
+                        scenario_identifier=scenario_result.scenario_identifier,
+                    )
+                session.add_all(entries)
+                session.commit()
+            except SQLAlchemyError:
+                session.rollback()
+                raise
+
+    @classmethod
+    def _persist_scenario_identifier(cls, *, session: Any, scenario_identifier: ScenarioIdentifier) -> None:
+        """Persist a scenario identifier and its target and scorer dependencies."""
+        cls._persist_identifier(session=session, identifier=scenario_identifier)
 
     def update_scenario_run_state(
         self,

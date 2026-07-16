@@ -868,6 +868,57 @@ class TestCustomAdversarialPrompt:
             )
 
 
+class TestResolveAdversarialChat:
+    class _AdversarialAttack:
+        def __init__(self, *, objective_target=None, attack_scoring_config=None, attack_adversarial_config=None):
+            self.attack_adversarial_config = attack_adversarial_config
+
+        def get_identifier(self):
+            return ComponentIdentifier(class_name="_AdversarialAttack", class_module="test")
+
+    def test_returns_baked_adversarial_chat(self):
+        """A baked adversarial_chat is returned without resolving a default."""
+        target = MagicMock(spec=PromptTarget)
+        factory = AttackTechniqueFactory(
+            name="durian",
+            attack_class=self._AdversarialAttack,
+            adversarial_chat=target,
+        )
+        with patch(
+            "pyrit.scenario.core.attack_technique_factory.get_default_adversarial_target",
+        ) as mock_default:
+            assert factory.resolve_adversarial_chat() is target
+        mock_default.assert_not_called()
+
+    def test_returns_none_for_non_adversarial_technique(self):
+        """A technique with no baked chat and no simulated conversation needs no adversarial chat."""
+        factory = AttackTechniqueFactory(name="durian", attack_class=_StubAttack)
+        with patch(
+            "pyrit.scenario.core.attack_technique_factory.get_default_adversarial_target",
+        ) as mock_default:
+            assert factory.resolve_adversarial_chat() is None
+        mock_default.assert_not_called()
+
+    def test_simulated_conversation_resolves_default_lazily(self):
+        """A simulated-conversation technique with no baked chat resolves the default target."""
+        from pyrit.common.path import EXECUTOR_SEED_PROMPT_PATH
+
+        factory = AttackTechniqueFactory.with_simulated_conversation(
+            name="role_play_movie_script",
+            adversarial_chat_system_prompt_path=(
+                EXECUTOR_SEED_PROMPT_PATH / "red_teaming" / "role_play" / "role_play_movie_script.yaml"
+            ),
+            num_turns=2,
+        )
+        default_target = MagicMock(spec=PromptTarget)
+        with patch(
+            "pyrit.scenario.core.attack_technique_factory.get_default_adversarial_target",
+            return_value=default_target,
+        ) as mock_default:
+            assert factory.resolve_adversarial_chat() is default_target
+        mock_default.assert_called_once()
+
+
 class TestUnwrapOptional:
     """Tests for AttackTechniqueFactory._unwrap_optional static method."""
 

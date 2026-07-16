@@ -163,7 +163,7 @@ class InsecureCodeScorer(FloatScaleScorer):
             params={
                 "system_prompt_template": self._system_prompt,
                 "harm_categories": self._harm_categories,
-                "response_json_schema": self._response_handler.response_schema,
+                "response_json_schema": self._response_handler.json_response_config.json_schema,
             },
             prompt_target=self._prompt_target.get_identifier(),
         )

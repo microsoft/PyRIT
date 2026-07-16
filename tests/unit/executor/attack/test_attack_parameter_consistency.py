@@ -36,8 +36,8 @@ from pyrit.models import (
     PromptDataType,
     Score,
     SeedPrompt,
+    get_common_json_schema,
 )
-from pyrit.models.json_schema_definition import get_common_json_schema
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import PromptTarget
 from pyrit.score import FloatScaleThresholdScorer, TrueFalseScorer

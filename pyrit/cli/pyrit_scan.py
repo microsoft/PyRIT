@@ -682,8 +682,10 @@ async def _poll_until_terminal_async(
 
     terminal_states = {ScenarioRunState.COMPLETED, ScenarioRunState.FAILED, ScenarioRunState.CANCELLED}
 
+    seen_retry_attack_ids: set[str] = set()
     while True:
         run = await client.get_scenario_run_async(scenario_result_id=scenario_result_id)
+        _output.print_scenario_retry_warnings(run=run, seen_attack_ids=seen_retry_attack_ids)
         _output.print_scenario_run_progress(run=run, total_techniques=total_techniques)
         if run.status in terminal_states:
             return run

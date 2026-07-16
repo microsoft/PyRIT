@@ -13,8 +13,14 @@ from unit.mocks import get_mock_target_identifier
 from pyrit.exceptions.exception_classes import InvalidJsonException
 from pyrit.memory import CentralMemory
 from pyrit.memory.memory_interface import MemoryInterface
-from pyrit.models import COMMON_JSON_SCHEMAS, JSON_SCHEMA_METADATA_KEY, Message, MessagePiece, SeedPrompt
-from pyrit.prompt_target.common.json_response_config import _JsonResponseConfig
+from pyrit.models import (
+    COMMON_JSON_SCHEMAS,
+    JSON_SCHEMA_METADATA_KEY,
+    JsonResponseConfig,
+    Message,
+    MessagePiece,
+    SeedPrompt,
+)
 from pyrit.score import JsonSchemaResponseHandler, RefusalScorerPaths, SelfAskRefusalScorer
 
 
@@ -274,8 +280,8 @@ async def test_refusal_scorer_loads_response_json_schema(scorer_path: RefusalSco
         system_prompt=SeedPrompt.from_yaml_file(scorer_path.value),
     )
 
-    assert scorer._response_handler.response_schema is not None
-    assert scorer._response_handler.response_schema == EXPECTED_REFUSAL_RESPONSE_JSON_SCHEMA
+    assert scorer._response_handler.json_response_config.json_schema is not None
+    assert scorer._response_handler.json_response_config.json_schema == EXPECTED_REFUSAL_RESPONSE_JSON_SCHEMA
 
 
 async def test_refusal_scorer_passes_response_json_schema_to_target(
@@ -334,7 +340,7 @@ async def test_refusal_scorer_identifier_includes_schema(scorer_path: RefusalSco
 async def test_refusal_scorer_metadata_round_trips_through_json_response_config(
     scorer_true_false_response: Message, patch_central_database
 ):
-    """The prompt_metadata produced by the scorer must be consumable by _JsonResponseConfig."""
+    """The prompt_metadata produced by the scorer must be consumable by JsonResponseConfig."""
     chat_target = MagicMock()
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     chat_target.send_prompt_async = AsyncMock(return_value=[scorer_true_false_response])
@@ -345,7 +351,7 @@ async def test_refusal_scorer_metadata_round_trips_through_json_response_config(
     _, kwargs = chat_target.send_prompt_async.call_args
     metadata = kwargs["message"].message_pieces[0].prompt_metadata
 
-    config = _JsonResponseConfig.from_metadata(metadata=metadata)
+    config = JsonResponseConfig.from_metadata(metadata=metadata)
     assert config.enabled is True
     assert config.json_schema == EXPECTED_REFUSAL_RESPONSE_JSON_SCHEMA
 

@@ -2,6 +2,7 @@
 # Licensed under the MIT license.
 
 import ast
+import json
 import os
 import tempfile
 import uuid
@@ -804,6 +805,547 @@ def test_conversations_migration_downgrade_restores_columns():
                 cols_down = {c["name"] for c in inspect(connection).get_columns("PromptMemoryEntries")}
                 assert "prompt_target_identifier" in cols_down
                 assert "attack_identifier" in cols_down
+        finally:
+            engine.dispose()
+
+
+# =============================================================================
+# Backfill tests for identifier persistence (e5f7a9c1b3d2)
+# =============================================================================
+
+
+def test_identifier_migrations_are_nullable_and_best_effort_with_malformed_json():
+    """Malformed retained identifiers do not block upgrades and leave nullable links unset."""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        engine = create_engine(f"sqlite:///{os.path.join(temp_dir, 'identifier-best-effort.db')}")
+        try:
+            with engine.begin() as connection:
+                config = _config_for(connection)
+                command.upgrade(config, "d4e6f8a0b2c4")
+                connection.execute(
+                    text('INSERT INTO "Conversations" (conversation_id, target_identifier) VALUES (:id, :value)'),
+                    {"id": "malformed-conversation", "value": "not-json"},
+                )
+                score_id = str(uuid.uuid4())
+                connection.execute(
+                    text(
+                        'INSERT INTO "ScoreEntries" '
+                        "(id, score_value, score_type, score_metadata, scorer_class_identifier, timestamp) "
+                        "VALUES (:id, 'True', 'true_false', '{}', 'not-json', '2026-07-13')"
+                    ),
+                    {"id": score_id},
+                )
+                result_id = str(uuid.uuid4())
+                connection.execute(
+                    text(
+                        'INSERT INTO "ScenarioResultEntries" '
+                        "(id, scenario_name, scenario_version, pyrit_version, scenario_identifier, "
+                        "objective_target_identifier, scenario_run_state, attack_results_json, number_tries, "
+                        "completion_time, timestamp) VALUES (:id, 'Scenario', 1, '0.10.0', 'not-json', '{}', "
+                        "'COMPLETED', '{}', 1, '2026-07-13', '2026-07-13')"
+                    ),
+                    {"id": result_id},
+                )
+                prompt_id = str(uuid.uuid4())
+                connection.execute(
+                    text(
+                        'INSERT INTO "PromptMemoryEntries" '
+                        "(id, role, conversation_id, sequence, timestamp, labels, prompt_metadata, "
+                        "converter_identifiers, original_value_data_type, original_value, converted_value_data_type, "
+                        "original_prompt_id) VALUES (:id, 'user', 'conversation', 0, '2026-07-13', '{}', '{}', "
+                        "'not-json', 'text', 'prompt', 'text', :id)"
+                    ),
+                    {"id": prompt_id},
+                )
+                attack_result_id = str(uuid.uuid4())
+                connection.execute(
+                    text(
+                        'INSERT INTO "AttackResultEntries" '
+                        "(id, conversation_id, objective, atomic_attack_identifier, executed_turns, execution_time_ms, "
+                        "outcome, timestamp) VALUES (:id, 'conversation', 'objective', 'not-json', 0, 0, "
+                        "'undetermined', '2026-07-13')"
+                    ),
+                    {"id": attack_result_id},
+                )
+
+                command.upgrade(config, "e5f7a9c1b3d2")
+
+                assert (
+                    connection.execute(
+                        text(
+                            'SELECT target_identifier_hash FROM "Conversations" '
+                            "WHERE conversation_id = 'malformed-conversation'"
+                        )
+                    ).scalar_one()
+                    is None
+                )
+                assert (
+                    connection.execute(
+                        text('SELECT scorer_identifier_hash FROM "ScoreEntries" WHERE id = :id'),
+                        {"id": score_id},
+                    ).scalar_one()
+                    is None
+                )
+                assert (
+                    connection.execute(
+                        text('SELECT scenario_identifier_hash FROM "ScenarioResultEntries" WHERE id = :id'),
+                        {"id": result_id},
+                    ).scalar_one()
+                    is None
+                )
+                assert connection.execute(text('SELECT COUNT(*) FROM "PromptConverterIdentifiers"')).scalar_one() == 0
+                assert (
+                    connection.execute(
+                        text('SELECT atomic_attack_identifier_hash FROM "AttackResultEntries" WHERE id = :id'),
+                        {"id": attack_result_id},
+                    ).scalar_one()
+                    is None
+                )
+
+                for table_name in (
+                    "TargetIdentifiers",
+                    "ScorerIdentifiers",
+                    "ScenarioIdentifiers",
+                    "ConverterIdentifiers",
+                    "SeedIdentifiers",
+                    "AttackIdentifiers",
+                    "AttackTechniqueIdentifiers",
+                    "AtomicAttackIdentifiers",
+                ):
+                    columns = {column["name"]: column for column in inspect(connection).get_columns(table_name)}
+                    assert columns["hash"]["nullable"] is False
+                    assert columns["class_name"]["nullable"] is True
+                    assert columns["class_module"]["nullable"] is True
+                    assert columns["identifier_json"]["nullable"] is True
+        finally:
+            engine.dispose()
+
+
+def test_identifier_migration_reuses_edges_and_rolls_back_conflicting_row():
+    """Repeated graphs reuse edges while a conflicting row is isolated in its savepoint."""
+    child_hash = "a" * 64
+    conflicting_child_hash = "b" * 64
+    parent_hash = "c" * 64
+    healthy_hash = "d" * 64
+    child = {"hash": child_hash, "class_name": "Child", "class_module": "test"}
+    parent = {
+        "hash": parent_hash,
+        "class_name": "Parent",
+        "class_module": "test",
+        "children": {"targets": [child]},
+    }
+    conflicting_parent = {
+        **parent,
+        "children": {"targets": [{"hash": conflicting_child_hash, "class_name": "OtherChild", "class_module": "test"}]},
+    }
+    healthy = {"hash": healthy_hash, "class_name": "Healthy", "class_module": "test"}
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        engine = create_engine(f"sqlite:///{os.path.join(temp_dir, 'identifier-row-savepoints.db')}")
+        try:
+            with engine.begin() as connection:
+                config = _config_for(connection)
+                command.upgrade(config, "d4e6f8a0b2c4")
+                insert_statement = text(
+                    'INSERT INTO "Conversations" (conversation_id, target_identifier) VALUES (:id, :identifier)'
+                )
+                for conversation_id, identifier in (
+                    ("01-original", parent),
+                    ("02-duplicate", parent),
+                    ("03-conflict", conflicting_parent),
+                    ("04-healthy", healthy),
+                ):
+                    connection.execute(
+                        insert_statement,
+                        {"id": conversation_id, "identifier": json.dumps(identifier)},
+                    )
+
+                command.upgrade(config, "e5f7a9c1b3d2")
+
+                links = connection.execute(
+                    text('SELECT conversation_id, target_identifier_hash FROM "Conversations" ORDER BY conversation_id')
+                ).fetchall()
+                target_hashes = set(connection.execute(text('SELECT hash FROM "TargetIdentifiers"')).scalars())
+                edges = connection.execute(
+                    text('SELECT parent_hash, position, child_hash FROM "TargetIdentifierChildren"')
+                ).fetchall()
+
+            assert links == [
+                ("01-original", parent_hash),
+                ("02-duplicate", parent_hash),
+                ("03-conflict", None),
+                ("04-healthy", healthy_hash),
+            ]
+            assert target_hashes == {child_hash, parent_hash, healthy_hash}
+            assert edges == [(parent_hash, 0, child_hash)]
+        finally:
+            engine.dispose()
+
+
+def test_identifier_migration_downgrade_drops_link_constraints_and_columns():
+    """Downgrade removes identifier foreign keys before removing their columns."""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        engine = create_engine(f"sqlite:///{os.path.join(temp_dir, 'identifier-downgrade.db')}")
+        try:
+            with engine.begin() as connection:
+                config = _config_for(connection)
+                command.upgrade(config, "e5f7a9c1b3d2")
+                command.downgrade(config, "d4e6f8a0b2c4")
+
+                assert "target_identifier_hash" not in {
+                    column["name"] for column in inspect(connection).get_columns("Conversations")
+                }
+                assert "TargetIdentifiers" not in set(inspect(connection).get_table_names())
+        finally:
+            engine.dispose()
+
+
+def test_identifier_migrations_do_not_import_domain_models():
+    """Frozen identifier migrations operate on retained JSON rather than current domain models."""
+    versions_dir = Path(__file__).resolve().parents[3] / "pyrit" / "memory" / "alembic" / "versions"
+    revision_names = ("e5f7a9c1b3d2_add_identifiers_tables.py",)
+
+    for revision_name in revision_names:
+        source = (versions_dir / revision_name).read_text(encoding="utf-8")
+        assert "from pyrit.models" not in source
+        assert "import pyrit.models" not in source
+
+
+def test_scorer_identifier_migration_backfills_graph_and_score_link():
+    """Existing scorer JSON is materialized and linked without changing its content identity."""
+    from pyrit.models import ComponentIdentifier
+
+    prompt_target = ComponentIdentifier(
+        class_name="OpenAIChatTarget",
+        class_module="pyrit.prompt_target",
+        params={"endpoint": "https://example.test"},
+    )
+    sub_scorer = ComponentIdentifier(
+        class_name="SelfAskScorer",
+        class_module="pyrit.score",
+        children={"prompt_target": prompt_target},
+    )
+    composite = ComponentIdentifier(
+        class_name="CompositeScorer",
+        class_module="pyrit.score",
+        params={"scorer_type": "true_false", "score_aggregator": "AND_"},
+        children={"sub_scorers": [sub_scorer]},
+    )
+    score_id = str(uuid.uuid4())
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        engine = create_engine(f"sqlite:///{os.path.join(temp_dir, 'scorer-backfill.db')}")
+        try:
+            with engine.begin() as connection:
+                config = _config_for(connection)
+                command.upgrade(config, "d4e6f8a0b2c4")
+                connection.execute(
+                    text(
+                        'INSERT INTO "ScoreEntries" '
+                        "(id, score_value, score_type, score_metadata, scorer_class_identifier, timestamp) "
+                        "VALUES (:id, 'True', 'true_false', '{}', :identifier, '2026-07-13')"
+                    ),
+                    {"id": score_id, "identifier": json.dumps(composite.model_dump())},
+                )
+
+                command.upgrade(config, "e5f7a9c1b3d2")
+
+                score_hash = connection.execute(
+                    text('SELECT scorer_identifier_hash FROM "ScoreEntries" WHERE id = :id'),
+                    {"id": score_id},
+                ).scalar_one()
+                scorer_rows = connection.execute(
+                    text('SELECT hash, scorer_type, score_aggregator, prompt_target_hash FROM "ScorerIdentifiers"')
+                ).fetchall()
+                target_hashes = connection.execute(text('SELECT hash FROM "TargetIdentifiers"')).scalars().all()
+                scorer_child = connection.execute(
+                    text('SELECT parent_hash, position, child_hash FROM "ScorerIdentifierChildren"')
+                ).one()
+
+            assert score_hash == composite.hash
+            assert {row[0] for row in scorer_rows} == {composite.hash, sub_scorer.hash}
+            root_row = next(row for row in scorer_rows if row[0] == composite.hash)
+            sub_scorer_row = next(row for row in scorer_rows if row[0] == sub_scorer.hash)
+            assert root_row[1:] == ("true_false", "AND_", None)
+            assert sub_scorer_row[3] == prompt_target.hash
+            assert target_hashes == [prompt_target.hash]
+            assert scorer_child == (composite.hash, 0, sub_scorer.hash)
+        finally:
+            engine.dispose()
+
+
+# =============================================================================
+# Backfill tests for converter identifier persistence
+# =============================================================================
+
+
+def test_converter_identifier_migration_backfills_graph_and_prompt_links():
+    """Existing converter JSON is normalized with dependencies and ordered prompt links."""
+    from pyrit.models import ConverterIdentifier, TargetIdentifier
+
+    target = TargetIdentifier(
+        class_name="ConverterTarget",
+        class_module="pyrit.prompt_target",
+        model_name="converter-model",
+    )
+    nested = ConverterIdentifier(
+        class_name="NestedConverter",
+        class_module="pyrit.prompt_converter",
+        supported_input_types=["text"],
+        supported_output_types=["text"],
+        converter_target=target,
+    )
+    converter = ConverterIdentifier(
+        class_name="CompositeConverter",
+        class_module="pyrit.prompt_converter",
+        supported_input_types=["text"],
+        supported_output_types=["text"],
+        sub_converter=nested,
+    )
+    prompt_id = uuid.uuid4()
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        engine = create_engine(f"sqlite:///{os.path.join(temp_dir, 'converter-backfill.db')}")
+        try:
+            with engine.begin() as connection:
+                config = _config_for(connection)
+                command.upgrade(config, "d4e6f8a0b2c4")
+                connection.execute(
+                    text(
+                        'INSERT INTO "PromptMemoryEntries" '
+                        "(id, role, conversation_id, sequence, timestamp, labels, prompt_metadata, "
+                        "converter_identifiers, original_value_data_type, original_value, "
+                        "converted_value_data_type, original_prompt_id, pyrit_version) "
+                        "VALUES (:id, 'user', 'conversation', 0, '2026-07-13', '{}', '{}', :identifiers, "
+                        "'text', 'prompt', 'text', :id, '0.10.0')"
+                    ),
+                    {
+                        "id": str(prompt_id),
+                        "identifiers": json.dumps([converter.model_dump(), nested.model_dump()]),
+                    },
+                )
+
+                command.upgrade(config, "e5f7a9c1b3d2")
+
+                converter_rows = connection.execute(
+                    text('SELECT hash, converter_target_hash, sub_converter_hash FROM "ConverterIdentifiers"')
+                ).fetchall()
+                target_hashes = connection.execute(text('SELECT hash FROM "TargetIdentifiers"')).scalars().all()
+                links = connection.execute(
+                    text(
+                        'SELECT position, converter_identifier_hash FROM "PromptConverterIdentifiers" ORDER BY position'
+                    )
+                ).fetchall()
+
+            assert {row[0] for row in converter_rows} == {converter.hash, nested.hash}
+            root_row = next(row for row in converter_rows if row[0] == converter.hash)
+            nested_row = next(row for row in converter_rows if row[0] == nested.hash)
+            assert root_row[2] == nested.hash
+            assert nested_row[1] == target.hash
+            assert target_hashes == [target.hash]
+            assert links == [(0, converter.hash), (1, nested.hash)]
+        finally:
+            engine.dispose()
+
+
+# =============================================================================
+# Backfill tests for scenario identifier persistence
+# =============================================================================
+
+
+def test_scenario_identifier_migration_backfills_dependencies_and_result_link():
+    """Scenario-only target and scorer graphs are materialized before the scenario row."""
+    from pyrit.models import ScenarioIdentifier, ScorerIdentifier, TargetIdentifier
+
+    target = TargetIdentifier(
+        class_name="ObjectiveTarget",
+        class_module="pyrit.prompt_target",
+        model_name="objective-model",
+    )
+    scorer_target = TargetIdentifier(
+        class_name="ScorerTarget",
+        class_module="pyrit.prompt_target",
+        model_name="scorer-model",
+    )
+    scorer = ScorerIdentifier(
+        class_name="SelfAskScorer",
+        class_module="pyrit.score",
+        scorer_type="true_false",
+        prompt_target=scorer_target,
+    )
+    scenario = ScenarioIdentifier(
+        class_name="TestScenario",
+        class_module="pyrit.scenario",
+        version=3,
+        techniques=["TechniqueA"],
+        datasets=["DatasetA"],
+        objective_target=target,
+        objective_scorer=scorer,
+    )
+    result_id = str(uuid.uuid4())
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        engine = create_engine(f"sqlite:///{os.path.join(temp_dir, 'scenario-backfill.db')}")
+        try:
+            with engine.begin() as connection:
+                config = _config_for(connection)
+                command.upgrade(config, "d4e6f8a0b2c4")
+                connection.execute(
+                    text(
+                        'INSERT INTO "ScenarioResultEntries" '
+                        "(id, scenario_name, scenario_version, pyrit_version, scenario_identifier, "
+                        "objective_target_identifier, objective_scorer_identifier, scenario_run_state, "
+                        "attack_results_json, number_tries, completion_time, timestamp) "
+                        "VALUES (:id, 'TestScenario', 3, '0.10.0', :scenario, :target, :scorer, "
+                        "'COMPLETED', '{}', 1, '2026-07-13', '2026-07-13')"
+                    ),
+                    {
+                        "id": result_id,
+                        "scenario": json.dumps(scenario.model_dump()),
+                        "target": json.dumps(target.model_dump()),
+                        "scorer": json.dumps(scorer.model_dump()),
+                    },
+                )
+
+                command.upgrade(config, "e5f7a9c1b3d2")
+
+                result_hash = connection.execute(
+                    text('SELECT scenario_identifier_hash FROM "ScenarioResultEntries" WHERE id = :id'),
+                    {"id": result_id},
+                ).scalar_one()
+                scenario_row = connection.execute(
+                    text(
+                        "SELECT hash, version, techniques, datasets, objective_target_hash, objective_scorer_hash "
+                        'FROM "ScenarioIdentifiers"'
+                    )
+                ).one()
+                target_hashes = set(connection.execute(text('SELECT hash FROM "TargetIdentifiers"')).scalars())
+                scorer_row = connection.execute(text('SELECT hash, prompt_target_hash FROM "ScorerIdentifiers"')).one()
+
+            assert result_hash == scenario.hash
+            assert scenario_row == (
+                scenario.hash,
+                3,
+                json.dumps(["TechniqueA"]),
+                json.dumps(["DatasetA"]),
+                target.hash,
+                scorer.hash,
+            )
+            assert target_hashes == {target.hash, scorer_target.hash}
+            assert scorer_row == (scorer.hash, scorer_target.hash)
+        finally:
+            engine.dispose()
+
+
+# =============================================================================
+# Backfill tests for attack identifier persistence
+# =============================================================================
+
+
+def test_attack_identifier_migration_backfills_graph_and_result_link():
+    """Atomic attack JSON is normalized with dependencies and ordered seed links."""
+    from pyrit.models import (
+        AtomicAttackIdentifier,
+        AttackIdentifier,
+        AttackTechniqueIdentifier,
+        ConverterIdentifier,
+        ScorerIdentifier,
+        SeedIdentifier,
+        TargetIdentifier,
+    )
+
+    target = TargetIdentifier(class_name="Target", class_module="pyrit.prompt_target", model_name="model")
+    scorer = ScorerIdentifier(class_name="Scorer", class_module="pyrit.score", scorer_type="true_false")
+    converter = ConverterIdentifier(
+        class_name="Converter",
+        class_module="pyrit.prompt_converter",
+        supported_input_types=["text"],
+        supported_output_types=["text"],
+    )
+    technique_seed = SeedIdentifier(
+        class_name="Seed",
+        class_module="pyrit.models",
+        value="technique seed",
+        data_type="text",
+    )
+    dataset_seed = SeedIdentifier(
+        class_name="Seed",
+        class_module="pyrit.models",
+        value="dataset seed",
+        data_type="text",
+    )
+    attack = AttackIdentifier(
+        class_name="Attack",
+        class_module="pyrit.executor.attack",
+        objective_target=target,
+        objective_scorer=scorer,
+        request_converters=[converter],
+    )
+    technique = AttackTechniqueIdentifier(
+        class_name="AttackTechnique",
+        class_module="pyrit.scenario.core.attack_technique",
+        attack=attack,
+        technique_seeds=[technique_seed],
+    )
+    atomic = AtomicAttackIdentifier(
+        class_name="AtomicAttack",
+        class_module="pyrit.scenario.core.atomic_attack",
+        attack_technique=technique,
+        seed_identifiers=[technique_seed, dataset_seed],
+    )
+    result_id = str(uuid.uuid4())
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        engine = create_engine(f"sqlite:///{os.path.join(temp_dir, 'attack-backfill.db')}")
+        try:
+            with engine.begin() as connection:
+                config = _config_for(connection)
+                command.upgrade(config, "d4e6f8a0b2c4")
+                connection.execute(
+                    text(
+                        'INSERT INTO "AttackResultEntries" '
+                        "(id, conversation_id, objective, atomic_attack_identifier, objective_sha256, "
+                        "executed_turns, execution_time_ms, outcome, timestamp, pyrit_version) "
+                        "VALUES (:id, 'conversation', 'objective', :identifier, 'sha', 1, 0, "
+                        "'success', '2026-07-13', '0.10.0')"
+                    ),
+                    {"id": result_id, "identifier": json.dumps(atomic.model_dump())},
+                )
+
+                command.upgrade(config, "e5f7a9c1b3d2")
+
+                result_hash = connection.execute(
+                    text('SELECT atomic_attack_identifier_hash FROM "AttackResultEntries" WHERE id = :id'),
+                    {"id": result_id},
+                ).scalar_one()
+                atomic_row = connection.execute(
+                    text('SELECT hash, attack_technique_identifier_hash FROM "AtomicAttackIdentifiers"')
+                ).one()
+                technique_row = connection.execute(
+                    text('SELECT hash, attack_identifier_hash FROM "AttackTechniqueIdentifiers"')
+                ).one()
+                attack_row = connection.execute(
+                    text('SELECT hash, objective_target_hash, objective_scorer_hash FROM "AttackIdentifiers"')
+                ).one()
+                seed_hashes = set(connection.execute(text('SELECT hash FROM "SeedIdentifiers"')).scalars())
+                atomic_seed_hashes = (
+                    connection.execute(
+                        text('SELECT seed_identifier_hash FROM "AtomicAttackSeedIdentifiers" ORDER BY position')
+                    )
+                    .scalars()
+                    .all()
+                )
+                request_converter_hash = connection.execute(
+                    text('SELECT converter_identifier_hash FROM "AttackRequestConverterIdentifiers"')
+                ).scalar_one()
+
+            assert result_hash == atomic.hash
+            assert atomic_row == (atomic.hash, technique.hash)
+            assert technique_row == (technique.hash, attack.hash)
+            assert attack_row == (attack.hash, target.hash, scorer.hash)
+            assert seed_hashes == {technique_seed.hash, dataset_seed.hash}
+            assert atomic_seed_hashes == [technique_seed.hash, dataset_seed.hash]
+            assert request_converter_hash == converter.hash
         finally:
             engine.dispose()
 

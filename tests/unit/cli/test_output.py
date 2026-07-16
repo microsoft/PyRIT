@@ -16,11 +16,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from pyrit.cli import _output
 from pyrit.models import Parameter, ScenarioRunState, TargetCapabilities, TargetIdentifier
 from pyrit.models.catalog import (
+    AttackErrorSummary,
+    AttackRetrySummary,
     RegisteredInitializer,
     RegisteredScenario,
     ScenarioRunSummary,
     TargetInstance,
 )
+from pyrit.models.retry_event import RetryEvent
 from unit.mocks import make_scenario_result
 
 # ---------------------------------------------------------------------------
@@ -379,13 +382,14 @@ def test_print_scenario_run_progress_with_known_totals(capsys):
     )
     _output.print_scenario_run_progress(run=run, total_techniques=4)
     captured = capsys.readouterr()
-    assert "techniques: 2/4" in captured.out
-    assert "5/10" in captured.out
+    assert "techniques: 2/4 (50%)" in captured.out
     assert "IN_PROGRESS" in captured.out
     assert "30%" in captured.out
+    # Attacks are no longer surfaced in the progress line.
+    assert "attacks" not in captured.out
 
 
-def test_print_scenario_run_progress_no_total_attacks(capsys):
+def test_print_scenario_run_progress_no_techniques(capsys):
     run = _make_run(
         status=ScenarioRunState.CREATED,
         total_attacks=0,
@@ -395,7 +399,7 @@ def test_print_scenario_run_progress_no_total_attacks(capsys):
     )
     _output.print_scenario_run_progress(run=run, total_techniques=0)
     captured = capsys.readouterr()
-    assert "attacks: 0" in captured.out
+    assert "techniques: 0" in captured.out
     assert "CREATED" in captured.out
 
 
@@ -413,10 +417,90 @@ def test_print_scenario_run_progress_techniques_done_only(capsys):
 
 
 # ---------------------------------------------------------------------------
-# print_scenario_run_summary
+# print_scenario_retry_warnings
 # ---------------------------------------------------------------------------
 
 
+def _make_retry_event(**overrides) -> RetryEvent:
+    defaults = {
+        "attempt_number": 2,
+        "function_name": "_score_value_with_llm_async",
+        "exception_type": "RateLimitError",
+        "exception_message": "429 Too Many Requests\nsecond line",
+        "component_role": "objective_scorer",
+        "component_name": "TrueFalseScorer",
+        "endpoint": "https://example.openai.azure.com/",
+    }
+    defaults.update(overrides)
+    return RetryEvent(**defaults)
+
+
+def test_print_scenario_retry_warnings_prints_new_attacks(capsys):
+    run = _make_run(
+        status=ScenarioRunState.IN_PROGRESS,
+        attack_retries=[
+            AttackRetrySummary(
+                attack_result_id="ar-1",
+                atomic_attack_name="baseline_airt_hate",
+                retries=[_make_retry_event()],
+            )
+        ],
+    )
+    seen: set[str] = set()
+    _output.print_scenario_retry_warnings(run=run, seen_attack_ids=seen)
+    out = capsys.readouterr().out
+    assert "retry #2" in out
+    assert "baseline_airt_hate" in out
+    assert "objective scorer TrueFalseScorer" in out
+    assert "endpoint https://example.openai.azure.com/" in out
+    assert "RateLimitError" in out
+    assert "429 Too Many Requests" in out
+    # Only the first line of the exception message is shown.
+    assert "second line" not in out
+    assert "ar-1" in seen
+
+
+def test_print_scenario_retry_warnings_dedupes_across_polls(capsys):
+    attack = AttackRetrySummary(
+        attack_result_id="ar-1",
+        atomic_attack_name="baseline",
+        retries=[_make_retry_event()],
+    )
+    run = _make_run(status=ScenarioRunState.IN_PROGRESS, attack_retries=[attack])
+    seen: set[str] = set()
+    _output.print_scenario_retry_warnings(run=run, seen_attack_ids=seen)
+    capsys.readouterr()  # discard first print
+    # Second poll returns the same attack; nothing new should print.
+    _output.print_scenario_retry_warnings(run=run, seen_attack_ids=seen)
+    assert capsys.readouterr().out == ""
+
+
+def test_print_scenario_retry_warnings_noop_when_empty(capsys):
+    run = _make_run(status=ScenarioRunState.IN_PROGRESS, attack_retries=[])
+    _output.print_scenario_retry_warnings(run=run, seen_attack_ids=set())
+    assert capsys.readouterr().out == ""
+
+
+def test_print_scenario_retry_warnings_without_context(capsys):
+    run = _make_run(
+        status=ScenarioRunState.IN_PROGRESS,
+        attack_retries=[
+            AttackRetrySummary(
+                attack_result_id="ar-2",
+                atomic_attack_name="crescendo",
+                retries=[_make_retry_event(component_role="", component_name=None, endpoint=None)],
+            )
+        ],
+    )
+    _output.print_scenario_retry_warnings(run=run, seen_attack_ids=set())
+    out = capsys.readouterr().out
+    assert "retry #2 [crescendo]: RateLimitError" in out
+    assert " on " not in out
+
+
+# ---------------------------------------------------------------------------
+# print_scenario_run_summary
+# ---------------------------------------------------------------------------
 def test_print_scenario_run_summary_completed(capsys):
     run = _make_run(
         scenario_name="test_sc",
@@ -434,6 +518,9 @@ def test_print_scenario_run_summary_completed(capsys):
     assert "COMPLETED" in captured.out
     assert "40%" in captured.out
     assert "s1, s2" in captured.out
+    # The count is relabeled and the redundant "Completed" line is gone.
+    assert "Attack Results: 5" in captured.out
+    assert "Completed:" not in captured.out
 
 
 def test_print_scenario_run_summary_with_error(capsys):
@@ -450,6 +537,55 @@ def test_print_scenario_run_summary_with_error(capsys):
     captured = capsys.readouterr()
     assert "Error:" in captured.out
     assert "boom" in captured.out
+
+
+def test_print_scenario_run_summary_lists_failed_attacks(capsys):
+    run = _make_run(
+        scenario_name="failing",
+        status=ScenarioRunState.COMPLETED,
+        total_attacks=4,
+        completed_attacks=4,
+        objective_achieved_rate=75,
+        failed_attacks=[
+            AttackErrorSummary(
+                atomic_attack_name="baseline_airt_hate",
+                objective="do the bad thing",
+                error_type="RateLimitError",
+                error_message="429 Too Many Requests\nsecond line ignored",
+                total_retries=3,
+            )
+        ],
+    )
+    _output.print_scenario_run_summary(run=run)
+    out = capsys.readouterr().out
+    assert "Failed Attacks (1):" in out
+    assert "baseline_airt_hate" in out
+    assert "RateLimitError" in out
+    assert "429 Too Many Requests" in out
+    assert "[3 retries]" in out
+    # Only the first line of a multi-line message is shown.
+    assert "second line ignored" not in out
+
+
+def test_print_scenario_run_summary_shows_retry_pressure(capsys):
+    run = _make_run(
+        scenario_name="stressed",
+        status=ScenarioRunState.COMPLETED,
+        total_attacks=6,
+        completed_attacks=6,
+        objective_achieved_rate=100,
+        total_retries=9,
+    )
+    _output.print_scenario_run_summary(run=run)
+    out = capsys.readouterr().out
+    assert "Retries:" in out
+    assert "9" in out
+
+
+def test_print_scenario_run_summary_hides_retry_line_when_zero(capsys):
+    run = _make_run(status=ScenarioRunState.COMPLETED, total_retries=0)
+    _output.print_scenario_run_summary(run=run)
+    assert "Retries:" not in capsys.readouterr().out
 
 
 # ---------------------------------------------------------------------------

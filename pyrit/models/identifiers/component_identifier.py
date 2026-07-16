@@ -346,6 +346,35 @@ class ComponentIdentifier(BaseModel):
         return tuple(n for n in cls._promoted_fields() if cls._is_child_field(cls.model_fields[n].annotation))
 
     @classmethod
+    def promoted_scalar_field_names(cls) -> tuple[str, ...]:
+        """
+        Get names of this identifier's promoted scalar (param) fields — the DB-column projection.
+
+        Returns:
+            tuple[str, ...]: Promoted scalar field names.
+        """
+        return cls._promoted_param_fields()
+
+    @classmethod
+    def promoted_child_field_names(cls) -> tuple[str, ...]:
+        """
+        Get names of this identifier's promoted child fields.
+
+        Returns:
+            tuple[str, ...]: Promoted child field names.
+        """
+        return cls._promoted_child_fields()
+
+    def promoted_scalar_values(self) -> dict[str, Any]:
+        """
+        Get this identifier's promoted scalar fields as ``{name: value}`` (children/targets excluded).
+
+        Returns:
+            dict[str, Any]: Promoted scalar field names and values.
+        """
+        return {name: getattr(self, name) for name in self._promoted_param_fields()}
+
+    @classmethod
     def get_reference_component_types(cls) -> dict[str, ComponentType]:
         """
         Map constructor-arg names to the component family each reference resolves to.
