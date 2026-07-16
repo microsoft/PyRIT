@@ -45,7 +45,11 @@ def get_technique_factories() -> list[AttackTechniqueFactory]:
 
     Factories that need an adversarial chat target do not bake one in; the
     default adversarial target is resolved lazily inside
-    ``AttackTechniqueFactory.create`` via ``get_default_adversarial_target()``.
+    ``AttackTechniqueFactory.create`` (for the attack's own
+    ``attack_adversarial_config``) and inside
+    ``AttackTechniqueFactory.resolve_adversarial_chat`` (for the ``AtomicAttack``
+    that expands a simulated-conversation seed), both via
+    ``get_default_adversarial_target()``.
 
     Returns:
         list[AttackTechniqueFactory]: The core scenario techniques.

@@ -326,7 +326,6 @@ class TestPromptSending:
         )
 
         test_message = Message.from_prompt(prompt="test prompt", role="user")
-        basic_context.memory_labels = {"test": "label"}
         mock_prompt_normalizer.send_prompt_async.return_value = sample_response
 
         result = await attack._send_prompt_to_objective_target_async(
@@ -335,7 +334,6 @@ class TestPromptSending:
 
         assert result == sample_response
         mock_prompt_normalizer.send_prompt_async.assert_called_once()
-        assert test_message.message_pieces[0].labels == basic_context.memory_labels
 
     async def test_send_prompt_handles_none_response(self, mock_target, mock_prompt_normalizer, basic_context):
         mock_prompt_normalizer.send_prompt_async.return_value = None

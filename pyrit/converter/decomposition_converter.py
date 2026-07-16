@@ -14,8 +14,8 @@ from pyrit.common.path import CONVERTER_SEED_PROMPT_PATH
 from pyrit.converter.converter import Converter, ConverterResult
 from pyrit.exceptions import InvalidJsonException, pyrit_json_retry, remove_markdown_json
 from pyrit.models import (
-    JSON_SCHEMA_METADATA_KEY,
     ComponentIdentifier,
+    JsonResponseConfig,
     Message,
     MessagePiece,
     PromptDataType,
@@ -236,9 +236,10 @@ class DecompositionConverter(Converter):
             conversation_id=conversation_id,
         )
 
-        prompt_metadata: dict[str, Any] = {"response_format": "json"}
-        if self._decomposition_prompt.response_json_schema is not None:
-            prompt_metadata[JSON_SCHEMA_METADATA_KEY] = self._decomposition_prompt.response_json_schema
+        prompt_metadata = JsonResponseConfig(
+            enabled=True,
+            json_schema=self._decomposition_prompt.response_json_schema,
+        ).to_metadata()
 
         request = Message(
             message_pieces=[

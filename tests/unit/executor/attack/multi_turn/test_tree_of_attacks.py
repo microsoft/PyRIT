@@ -1578,22 +1578,6 @@ class TestTreeOfAttacksNode:
         with pytest.raises(InvalidJsonException, match="Invalid JSON"):
             await node._send_to_adversarial_chat_async(prompt_text="x")
 
-    async def test_send_initial_prompt_to_target_applies_memory_labels(self, node_components):
-        """Test that memory labels are applied to initial prompts."""
-        node = _TreeOfAttacksNode(**node_components)
-        node._objective = "test"
-        # None -> the manager resolves the canonical adversarial_chat schema on the bypass path.
-        node._adversarial_chat_system_seed_prompt.response_json_schema = None
-        node._initial_prompt = Message.from_prompt(prompt="initial prompt", role="user")
-        response = Message.from_prompt(prompt="target response", role="assistant")
-        node._prompt_normalizer.send_prompt_async = AsyncMock(return_value=response)
-
-        result = await node._send_initial_prompt_to_target_async()
-
-        assert result == response
-        sent_message = node._prompt_normalizer.send_prompt_async.call_args.kwargs["message"]
-        assert sent_message.message_pieces[0].labels == node._memory_labels
-
     async def test_node_send_prompt_json_error_handling(self, node_components):
         """Test handling of JSON parsing errors in send_prompt_async."""
         prompt_normalizer = MagicMock(spec=PromptNormalizer)

@@ -167,6 +167,11 @@ class PromptNormalizer:
         # Only apply response converters to the last message (final response)
         # Intermediate messages are tool calls/outputs that don't need conversion
         for i, resp in enumerate(responses):
+            # A response belongs to the conversation it answers. Real targets already stamp this
+            # (via construct_response_from_request), matching the request pieces stamped above;
+            # enforcing it here keeps the persisted conversation coherent regardless of target.
+            for piece in resp.message_pieces:
+                piece.conversation_id = conversation_id
             is_last = i == len(responses) - 1
             if is_last:
                 await self.convert_values_async(
@@ -183,7 +188,6 @@ class PromptNormalizer:
         *,
         requests: list[NormalizerRequest],
         target: PromptTarget,
-        labels: dict[str, str] | None = None,
         batch_size: int = 10,
     ) -> list[Message]:
         """
@@ -192,19 +196,12 @@ class PromptNormalizer:
         Args:
             requests (list[NormalizerRequest]): A list of NormalizerRequest objects to be sent.
             target (PromptTarget): The target to which the prompts are sent.
-            labels (dict[str, str] | None, optional): A dictionary of labels to attach to each request's
-                message pieces. Defaults to None.
             batch_size (int, optional): The number of prompts to include in each batch. Defaults to 10.
 
         Returns:
             list[Message]: A list of Message objects representing the responses
                 received for each prompt.
         """
-        if labels:
-            for request in requests:
-                for piece in request.message.message_pieces:
-                    piece.labels = labels
-
         batch_items: list[list[Any]] = [
             [request.message for request in requests],
             [request.request_converter_configurations for request in requests],

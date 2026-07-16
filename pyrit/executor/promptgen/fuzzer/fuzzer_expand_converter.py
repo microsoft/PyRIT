@@ -10,7 +10,7 @@ from pyrit.converter.converter import ConverterResult
 from pyrit.executor.promptgen.fuzzer.fuzzer_converter_base import (
     FuzzerConverter,
 )
-from pyrit.models import Message, MessagePiece, PromptDataType, SeedPrompt
+from pyrit.models import JsonResponseConfig, Message, MessagePiece, PromptDataType, SeedPrompt
 from pyrit.prompt_target import PromptTarget
 
 
@@ -62,7 +62,7 @@ class FuzzerExpandConverter(FuzzerConverter):
 
         formatted_prompt = f"===={self.template_label} BEGINS====\n{prompt}\n===={self.template_label} ENDS===="
 
-        prompt_metadata: dict[str, str | int] = {"response_format": "json"}
+        prompt_metadata = JsonResponseConfig(enabled=True).to_metadata()
         request = Message(
             message_pieces=[
                 MessagePiece(

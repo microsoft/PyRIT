@@ -252,7 +252,6 @@ async def test_conversation_history_scorer_preserves_metadata(patch_central_data
         role="assistant",
         original_value="Response",
         conversation_id=conversation_id,
-        labels={"test": "label"},
         sequence=1,
     )
 
@@ -287,7 +286,6 @@ async def test_conversation_history_scorer_preserves_metadata(patch_central_data
 
     assert called_piece.id == message_piece.id
     assert called_piece.conversation_id == message_piece.conversation_id
-    assert called_piece.labels == message_piece.labels
 
 
 async def test_conversation_scorer_persists_scores_exactly_once(patch_central_database):

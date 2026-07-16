@@ -346,7 +346,7 @@ class MatrixAtomicAttackBuilder:
                             attack_technique=attack_technique,
                             seed_groups=compatible_groups,
                             adversarial_chat=(
-                                target_instance if target_instance is not None else factory.adversarial_chat
+                                target_instance if target_instance is not None else factory.resolve_adversarial_chat()
                             ),
                             objective_scorer=cast("TrueFalseScorer", self._objective_scorer),
                             memory_labels=self._memory_labels,

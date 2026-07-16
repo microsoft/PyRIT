@@ -237,18 +237,45 @@ class ServerLauncher:
 
             exit_code = self._process.poll()
             if exit_code is not None:
+                self._print_log_tail()
                 raise RuntimeError(
                     f"Server process exited with code {exit_code} during startup. See logs: {self._log_path}"
                 )
 
             if await self.probe_health_async(base_url=base_url):
-                print(f"Server ready (PID {self._pid})")
+                print(f"Server ready (PID {self._pid}). Logs: {self._log_path}")
                 return base_url
 
+        self._print_log_tail()
         raise RuntimeError(
             f"pyrit_backend did not become healthy within {startup_timeout}s. "
             f"Check the server logs ({self._log_path}) or start it manually with: pyrit_backend"
         )
+
+    def _read_log_tail(self, *, max_lines: int = 20) -> str:
+        """
+        Read the last ``max_lines`` lines of the backend log file.
+
+        Returns:
+            str: The tail of the log, or an empty string when the log is
+            unavailable or empty.
+        """
+        if not self._log_path:
+            return ""
+        try:
+            with open(self._log_path, encoding="utf-8", errors="replace") as handle:
+                lines = handle.readlines()
+        except OSError:
+            return ""
+        return "".join(lines[-max_lines:]).rstrip()
+
+    def _print_log_tail(self) -> None:
+        """Echo the tail of the backend log to stderr, if any is available."""
+        tail = self._read_log_tail()
+        if tail:
+            print(f"\n--- pyrit_backend log ({self._log_path}) ---", file=sys.stderr)
+            print(tail, file=sys.stderr)
+            print("--- end of log ---", file=sys.stderr)
 
     # ------------------------------------------------------------------
     # Stop

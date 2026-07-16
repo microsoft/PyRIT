@@ -13,8 +13,8 @@
 #
 # Sometimes a scenario needs a custom parameter that a user can set without
 # editing source code (`max_turns`, dataset names, feature flags, etc.).
-# Scenarios can declare typed parameters that flow from CLI flags or YAML
-# config into `self.params`.
+# Scenarios can declare typed parameters that flow from CLI flags into
+# `self.params`.
 #
 # This is different from [Common Scenario Parameters](./1_common_scenario_parameters.ipynb),
 # which covers the framework-level configuration surface (datasets, techniques,
@@ -32,7 +32,7 @@
 # ```python
 # @classmethod
 # def additional_parameters(cls) -> list[Parameter]:
-#     """Declare custom parameters this scenario accepts from the CLI / config file."""
+#     """Declare custom parameters this scenario accepts from the CLI."""
 #     return [
 #         Parameter(
 #             name="max_turns",
@@ -62,7 +62,7 @@ for param in Scam.supported_parameters():
 # %% [markdown]
 # Each declaration lives inside the scenario class body, in the
 # `additional_parameters()` classmethod. End users don't construct `Parameter`
-# objects themselves; they pass values via CLI flags or YAML config.
+# objects themselves; they pass values via CLI flags.
 #
 # Each `Parameter` carries:
 #
@@ -155,34 +155,6 @@ for p in example_declarations:
 # # ...
 # #   --max-turns MAX_TURNS  Conversation turn cap
 # ```
-
-# %% [markdown]
-# ## Setting a parameter from a YAML config file
-#
-# A `scenario:` block names the scenario and supplies parameter values. CLI
-# flags override matching keys; absent keys fall back to YAML, then to the
-# declared default. See [.pyrit_conf_example](../../../.pyrit_conf_example)
-# for a complete config file with this and other supported sections.
-#
-# ```yaml
-# # ~/.pyrit/.pyrit_conf
-# scenario:
-#   name: airt.scam
-#   args:
-#     max_turns: 10
-# ```
-
-# %% [markdown]
-# A few invocation shapes from the CLI:
-#
-# ```bash
-# pyrit_scan --config-file my_config.yaml                          # config provides scenario name
-# pyrit_scan airt.scam --config-file my_config.yaml                # CLI confirms the name
-# pyrit_scan airt.scam --config-file my_config.yaml --max-turns 7  # CLI args win per-key
-# ```
-#
-# `pyrit_shell` supports the YAML form when the scenario name is supplied
-# explicitly (`run airt.scam ...`).
 #
 # ## Discovering parameters via --list-scenarios
 #

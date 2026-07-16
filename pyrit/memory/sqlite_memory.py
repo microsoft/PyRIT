@@ -1,10 +1,9 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-import json
 import logging
 from collections.abc import MutableSequence, Sequence
-from contextlib import closing, suppress
+from contextlib import closing
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal, TypeVar
@@ -28,7 +27,7 @@ from pyrit.memory.memory_models import (
     ScenarioResultEntry,
 )
 from pyrit.memory.storage import DiskStorageIO
-from pyrit.models import ConversationStats, MessagePiece
+from pyrit.models import ConversationStats
 
 logger = logging.getLogger(__name__)
 
@@ -148,26 +147,19 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
         Returns:
             list: A list of SQLAlchemy conditions.
         """
-        per_key_pme_conditions = []
         per_key_are_conditions = []
         for key, value in memory_labels.items():
-            pme_col = func.json_extract(PromptMemoryEntry.labels, f"$.{key}")
-            per_key_pme_conditions.append(pme_col == str(value))
             are_col = func.json_extract(AttackResultEntry.labels, f"$.{key}")
             per_key_are_conditions.append(are_col == str(value))
-
-        pme_match = and_(
-            PromptMemoryEntry.labels.isnot(None),
-            *per_key_pme_conditions,
-        )
-        are_match = exists().where(
-            and_(
-                AttackResultEntry.conversation_id == PromptMemoryEntry.conversation_id,
-                AttackResultEntry.labels.isnot(None),
-                *per_key_are_conditions,
+        return [
+            exists().where(
+                and_(
+                    AttackResultEntry.conversation_id == PromptMemoryEntry.conversation_id,
+                    AttackResultEntry.labels.isnot(None),
+                    *per_key_are_conditions,
+                )
             )
-        )
-        return [or_(pme_match, are_match)]
+        ]
 
     def _get_message_pieces_prompt_metadata_conditions(
         self, *, prompt_metadata: dict[str, str | int]
@@ -291,16 +283,6 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
         joiner = " OR " if match_mode == "any" else " AND "
         combined = joiner.join(conditions)
         return text(f"({combined})").bindparams(**bindparams_dict)
-
-    def _add_message_pieces_to_memory(self, *, message_pieces: Sequence[MessagePiece]) -> None:
-        """
-        Persist already-validated message pieces to the SQLite store.
-
-        Args:
-            message_pieces (Sequence[MessagePiece]): Persistable pieces (filtered and
-                validated by ``add_message_pieces_to_memory``).
-        """
-        self._insert_entries(entries=[PromptMemoryEntry(entry=piece) for piece in message_pieces])
 
     def _add_embeddings_to_memory(self, *, embedding_data: Sequence[EmbeddingDataEntry]) -> None:
         """
@@ -493,8 +475,7 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
         SQLite implementation for filtering AttackResults by labels.
         Uses json_extract() function specific to SQLite.
 
-        Matches if labels are on any associated PromptMemoryEntry OR directly
-        on the AttackResultEntry itself.
+        Matches labels directly on the AttackResultEntry.
 
         Keys are AND-combined. For each key, a string value is an equality match;
         a sequence value is an OR-within-key match (any listed value matches).
@@ -503,29 +484,18 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
         Returns:
             Any: A SQLAlchemy condition for filtering by labels.
         """
-        per_key_pme_conditions = []
         per_key_are_conditions = []
         for key, raw_value in labels.items():
             values = [raw_value] if isinstance(raw_value, str) else list(raw_value)
             if not values:
                 continue
-            pme_col = func.json_extract(PromptMemoryEntry.labels, f"$.{key}")
-            per_key_pme_conditions.append(pme_col.in_(values))
             are_col = func.json_extract(AttackResultEntry.labels, f"$.{key}")
             per_key_are_conditions.append(are_col.in_(values))
 
-        pme_match = exists().where(
-            and_(
-                PromptMemoryEntry.conversation_id == AttackResultEntry.conversation_id,
-                PromptMemoryEntry.labels.isnot(None),
-                and_(*per_key_pme_conditions),
-            )
-        )
-        are_match = and_(
+        return and_(
             AttackResultEntry.labels.isnot(None),
             *per_key_are_conditions,
         )
-        return or_(pme_match, are_match)
 
     def get_unique_attack_class_names(self) -> list[str]:
         """
@@ -571,8 +541,8 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
         SQLite implementation: lightweight aggregate stats per conversation.
 
         Executes a single SQL query that returns message count (distinct
-        sequences), a truncated last-message preview, the first non-empty
-        labels dict, and the earliest timestamp for each conversation_id.
+        sequences), a truncated last-message preview, and the earliest
+        timestamp for each conversation_id.
 
         Args:
             conversation_ids: The conversation IDs to query.
@@ -605,16 +575,6 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
                     ORDER BY p2b.sequence DESC, p2b.id DESC
                     LIMIT 1
                 ) AS last_data_type,
-                (
-                    SELECT p3.labels
-                    FROM "PromptMemoryEntries" p3
-                    WHERE p3.conversation_id = pme.conversation_id
-                      AND p3.labels IS NOT NULL
-                      AND p3.labels != '{{}}'
-                      AND p3.labels != 'null'
-                    ORDER BY p3.sequence ASC, p3.id ASC
-                    LIMIT 1
-                ) AS first_labels,
                 MIN(pme.timestamp) AS created_at
             FROM "PromptMemoryEntries" pme
             WHERE pme.conversation_id IN ({placeholders})
@@ -627,12 +587,7 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
 
         result: dict[str, ConversationStats] = {}
         for row in rows:
-            conv_id, msg_count, last_preview, last_data_type, raw_labels, raw_created_at = row
-
-            labels: dict[str, str] = {}
-            if raw_labels and raw_labels not in ("null", "{}"):
-                with suppress(ValueError, TypeError):
-                    labels = json.loads(raw_labels)
+            conv_id, msg_count, last_preview, last_data_type, raw_created_at = row
 
             created_at = None
             if raw_created_at is not None:
@@ -645,7 +600,6 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
                 message_count=msg_count,
                 last_message_preview=last_preview,
                 last_message_data_type=last_data_type,
-                labels=labels,
                 created_at=created_at,
             )
 

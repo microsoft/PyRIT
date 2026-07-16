@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from pyrit.models.parameter import Parameter
 from pyrit.models.results.scenario_result import ScenarioRunState
+from pyrit.models.retry_event import RetryEvent
 
 # Authoritative set of dataset seed filters exposed over the run request surface. Each entry
 # is used verbatim as a ``MemoryInterface.get_seeds`` keyword argument, so a filter key IS the
@@ -115,6 +116,26 @@ class RunScenarioRequest(BaseModel):
         return value
 
 
+class AttackErrorSummary(BaseModel):
+    """A single errored attack result surfaced in a run summary."""
+
+    atomic_attack_name: str = Field(..., description="Atomic-attack cell that errored")
+    objective: str = Field("", description="Objective that was being attempted")
+    error_type: str | None = Field(None, description="Exception class name")
+    error_message: str | None = Field(None, description="Exception message")
+    total_retries: int = Field(0, ge=0, description="Retry attempts recorded for this attack")
+
+
+class AttackRetrySummary(BaseModel):
+    """Retry events recorded for one attack result, for near-real-time CLI display."""
+
+    attack_result_id: str = Field(..., description="Stable ID of the attack result (used to de-duplicate)")
+    atomic_attack_name: str = Field(..., description="Atomic-attack cell that retried")
+    retries: list[RetryEvent] = Field(
+        default_factory=list, description="Retry attempts, each with component role/name, endpoint, and exception"
+    )
+
+
 class ScenarioRunSummary(BaseModel):
     """Response for a scenario run (status + result details)."""
 
@@ -130,5 +151,16 @@ class ScenarioRunSummary(BaseModel):
     total_attacks: int = Field(0, ge=0, description="Total number of attack results persisted for this run")
     completed_attacks: int = Field(0, ge=0, description="Number of attacks that reached a terminal outcome")
     objective_achieved_rate: int = Field(0, ge=0, le=100, description="Success rate as percentage (0-100)")
+    failed_attacks: list[AttackErrorSummary] = Field(
+        default_factory=list,
+        description="Individual attack results that errored, surfaced regardless of overall run status",
+    )
+    attack_retries: list[AttackRetrySummary] = Field(
+        default_factory=list,
+        description="Per-attack retry events, surfaced as each attack result lands so the CLI can stream warnings",
+    )
+    total_retries: int = Field(
+        0, ge=0, description="Total retry attempts recorded across all attack results (endpoint-stress signal)"
+    )
     labels: dict[str, str] = Field(default_factory=dict, description="Labels attached to this run")
     completed_at: datetime | None = Field(None, description="When the scenario finished")
