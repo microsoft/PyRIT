@@ -303,9 +303,9 @@ class TestScenarioTechniqueFactoriesValid:
     def test_factory_attack_class_accepts_objective_target(self, factory: AttackTechniqueFactory):
         """Every attack class must accept ``objective_target`` (required at create time)."""
         sig = inspect.signature(factory.attack_class.__init__)
-        assert "objective_target" in sig.parameters, (
-            f"{factory.attack_class.__name__} is missing required 'objective_target' parameter"
-        )
+        assert (
+            "objective_target" in sig.parameters
+        ), f"{factory.attack_class.__name__} is missing required 'objective_target' parameter"
 
     def test_factory_names_are_unique(self):
         """No two factories should share the same name."""
@@ -578,3 +578,76 @@ class TestScorerOverrideTypeInference:
 
         assert technique is not None
         assert not any("does not accept" in record.message for record in caplog.records)
+
+
+def _make_pool() -> list[AttackTechniqueFactory]:
+    """A small pool of tagged factories for exercising the technique-class builder."""
+    return [
+        AttackTechniqueFactory(name="alpha", attack_class=_StubAttack, technique_tags=["light", "single_turn"]),
+        AttackTechniqueFactory(name="beta", attack_class=_StubAttack, technique_tags=["light", "multi_turn"]),
+        AttackTechniqueFactory(name="gamma", attack_class=_StubAttack, technique_tags=["multi_turn"]),
+    ]
+
+
+class TestBuildTechniqueClassFromFactories:
+    """Tests for the ``build_technique_class_from_factories`` default/aggregate contract."""
+
+    def test_catalog_tags_auto_promote_to_aggregates(self):
+        """Every catalog tag in the pool becomes a selectable aggregate expanding to its techniques."""
+        cls = AttackTechniqueRegistry.build_technique_class_from_factories(
+            class_name="AutoAggTechnique",
+            factories=_make_pool(),
+        )
+        aggregates = cls.get_aggregate_tags()
+        assert {"all", "light", "single_turn", "multi_turn"} <= aggregates
+        assert {c.value for c in cls.expand({cls("light")})} == {"alpha", "beta"}
+
+    def test_default_tags_builds_default_aggregate_and_default_returns_it(self):
+        """``default_tags`` builds the DEFAULT aggregate; ``default()`` returns it, expanding to tagged techniques."""
+        cls = AttackTechniqueRegistry.build_technique_class_from_factories(
+            class_name="DefaultTagsTechnique",
+            factories=_make_pool(),
+            default_tags={"light"},
+        )
+        assert cls.default() == cls("default")
+        assert {c.value for c in cls.expand({cls.default()})} == {"alpha", "beta"}
+
+    def test_default_names_builds_default_aggregate_from_names(self):
+        """``default_names`` builds the DEFAULT aggregate from exact names."""
+        cls = AttackTechniqueRegistry.build_technique_class_from_factories(
+            class_name="DefaultNamesTechnique",
+            factories=_make_pool(),
+            default_names={"gamma"},
+        )
+        assert cls.default() == cls("default")
+        assert {c.value for c in cls.expand({cls.default()})} == {"gamma"}
+
+    def test_no_default_leaves_attribute_unset_and_falls_back_to_all(self):
+        """With no default, the builder records nothing and ``default()`` owns the single ALL fallback."""
+        cls = AttackTechniqueRegistry.build_technique_class_from_factories(
+            class_name="NoDefaultTechnique",
+            factories=_make_pool(),
+        )
+        assert not hasattr(cls, "_default_technique_value")
+        assert "default" not in cls.get_aggregate_tags()
+        assert cls.default() == cls["ALL"]
+
+    def test_default_selection_matching_nothing_falls_back_to_all(self):
+        """A default set that matches no pool technique builds no DEFAULT and falls back to ALL."""
+        cls = AttackTechniqueRegistry.build_technique_class_from_factories(
+            class_name="EmptyDefaultTechnique",
+            factories=_make_pool(),
+            default_tags={"nonexistent"},
+        )
+        assert not hasattr(cls, "_default_technique_value")
+        assert cls.default() == cls["ALL"]
+
+    def test_both_default_tags_and_names_raises(self):
+        """``default_tags`` and ``default_names`` are mutually exclusive."""
+        with pytest.raises(ValueError, match="at most one of default_tags or default_names"):
+            AttackTechniqueRegistry.build_technique_class_from_factories(
+                class_name="BothDefaultsTechnique",
+                factories=_make_pool(),
+                default_tags={"light"},
+                default_names={"gamma"},
+            )
