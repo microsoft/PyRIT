@@ -188,7 +188,6 @@ class PromptNormalizer:
         *,
         requests: list[NormalizerRequest],
         target: PromptTarget,
-        labels: dict[str, str] | None = None,
         batch_size: int = 10,
     ) -> list[Message]:
         """
@@ -197,19 +196,12 @@ class PromptNormalizer:
         Args:
             requests (list[NormalizerRequest]): A list of NormalizerRequest objects to be sent.
             target (PromptTarget): The target to which the prompts are sent.
-            labels (dict[str, str] | None, optional): A dictionary of labels to attach to each request's
-                message pieces. Defaults to None.
             batch_size (int, optional): The number of prompts to include in each batch. Defaults to 10.
 
         Returns:
             list[Message]: A list of Message objects representing the responses
                 received for each prompt.
         """
-        if labels:
-            for request in requests:
-                for piece in request.message.message_pieces:
-                    piece.labels = labels
-
         batch_items: list[list[Any]] = [
             [request.message for request in requests],
             [request.request_converter_configurations for request in requests],

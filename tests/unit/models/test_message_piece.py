@@ -651,7 +651,6 @@ def test_message_piece_to_dict():
         converted_value="Hello",
         conversation_id="test_conversation",
         sequence=1,
-        labels={"label1": "value1"},
         prompt_metadata={"key": "metadata"},
         converter_identifiers=[
             ComponentIdentifier(
@@ -675,7 +674,6 @@ def test_message_piece_to_dict():
         "conversation_id",
         "sequence",
         "timestamp",
-        "labels",
         "prompt_metadata",
         "converter_identifiers",
         "original_value_data_type",
@@ -697,7 +695,6 @@ def test_message_piece_to_dict():
     assert result["sequence"] == entry.sequence
     # Pydantic v2 serializes UTC datetimes with a trailing "Z" rather than "+00:00".
     assert result["timestamp"] == entry.timestamp.isoformat().replace("+00:00", "Z")
-    assert result["labels"] == entry.labels
     assert result["prompt_metadata"] == entry.prompt_metadata
     assert result["converter_identifiers"] == [conv.model_dump(mode="json") for conv in entry.converter_identifiers]
     assert result["original_value_data_type"] == entry.original_value_data_type
@@ -1031,7 +1028,7 @@ class TestCopyLineageFrom:
         assert target.conversation_id == "conv-A"
         assert target.prompt_metadata == {"k": "v"}
 
-    def test_labels_and_metadata_are_shallow_copied(self) -> None:
+    def test__metadata_are_shallow_copied(self) -> None:
         source = self._make_piece()
         source.prompt_metadata = {"meta": "1"}
 
@@ -1094,7 +1091,6 @@ class TestPhase3PydanticMigration:
             "converted_value_sha256",
             "response_error",
             "original_prompt_id",
-            "labels",
             "prompt_metadata",
             "converter_identifiers",
         ]
@@ -1104,7 +1100,6 @@ class TestPhase3PydanticMigration:
         assert d["conversation_id"] == conv_id
         assert d["sequence"] == 2
         assert d["timestamp"] == ts.isoformat().replace("+00:00", "Z")
-        assert d["labels"] == {}
         assert d["prompt_metadata"] == {}
         assert d["converter_identifiers"] == []
         assert d["original_value_data_type"] == "text"

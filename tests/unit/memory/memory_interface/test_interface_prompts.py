@@ -244,8 +244,6 @@ def test_duplicate_conversation_pieces_not_score(sqlite_instance: MemoryInterfac
     conversation_id = str(uuid4())
     prompt_id_1 = uuid4()
     prompt_id_2 = uuid4()
-    attack1 = PromptSendingAttack(objective_target=get_mock_target())
-    memory_labels = {"sample": "label"}
     pieces = [
         MessagePiece(
             id=prompt_id_1,
@@ -254,7 +252,6 @@ def test_duplicate_conversation_pieces_not_score(sqlite_instance: MemoryInterfac
             converted_value="Hello, how are you?",
             conversation_id=conversation_id,
             sequence=0,
-            labels=memory_labels,
         ),
         MessagePiece(
             id=prompt_id_2,
@@ -263,7 +260,6 @@ def test_duplicate_conversation_pieces_not_score(sqlite_instance: MemoryInterfac
             converted_value="I'm fine, thank you!",
             conversation_id=conversation_id,
             sequence=0,
-            labels=memory_labels,
         ),
     ]
     # Ensure that the original prompt id defaults to the id of the piece
@@ -304,7 +300,6 @@ def test_duplicate_conversation_pieces_not_score(sqlite_instance: MemoryInterfac
 
     for piece in new_pieces:
         assert piece.id not in (prompt_id_1, prompt_id_2)
-    assert len(sqlite_instance.get_prompt_scores(labels=memory_labels)) == 2
 
     # The duplicate prompts ids should not have scores so only two scores are returned
     assert len(sqlite_instance.get_prompt_scores(prompt_ids=[str(prompt_id_1), str(prompt_id_2)] + new_pieces_ids)) == 2
@@ -371,8 +366,6 @@ def test_duplicate_conversation_excluding_last_turn_not_score(sqlite_instance: M
     conversation_id = str(uuid4())
     prompt_id_1 = uuid4()
     prompt_id_2 = uuid4()
-    attack1 = PromptSendingAttack(objective_target=get_mock_target())
-    memory_labels = {"sample": "label"}
     pieces = [
         MessagePiece(
             id=prompt_id_1,
@@ -381,7 +374,6 @@ def test_duplicate_conversation_excluding_last_turn_not_score(sqlite_instance: M
             converted_value="Hello, how are you?",
             conversation_id=conversation_id,
             sequence=0,
-            labels=memory_labels,
         ),
         MessagePiece(
             id=prompt_id_2,
@@ -390,7 +382,6 @@ def test_duplicate_conversation_excluding_last_turn_not_score(sqlite_instance: M
             converted_value="I'm fine, thank you!",
             conversation_id=conversation_id,
             sequence=1,
-            labels=memory_labels,
         ),
         MessagePiece(
             role="user",
@@ -398,7 +389,6 @@ def test_duplicate_conversation_excluding_last_turn_not_score(sqlite_instance: M
             converted_value="That's good.",
             conversation_id=conversation_id,
             sequence=2,
-            labels=memory_labels,
         ),
         MessagePiece(
             role="assistant",
@@ -406,7 +396,6 @@ def test_duplicate_conversation_excluding_last_turn_not_score(sqlite_instance: M
             converted_value="Thanks.",
             conversation_id=conversation_id,
             sequence=3,
-            labels=memory_labels,
         ),
     ]
     # Ensure that the original prompt id defaults to the id of the piece
@@ -447,7 +436,6 @@ def test_duplicate_conversation_excluding_last_turn_not_score(sqlite_instance: M
     assert new_pieces[1].original_prompt_id == prompt_id_2
     assert new_pieces[0].id != prompt_id_1
     assert new_pieces[1].id != prompt_id_2
-    assert len(sqlite_instance.get_prompt_scores(labels=memory_labels)) == 2
     # The duplicate prompts ids should not have scores so only two scores are returned
     assert len(sqlite_instance.get_prompt_scores(prompt_ids=[str(prompt_id_1), str(prompt_id_2)] + new_pieces_ids)) == 2
 
@@ -923,154 +911,6 @@ def test_insert_prompt_memories_not_inserts_embedding(
         assert mock_embedding.assert_not_called
 
 
-def test_get_message_pieces_labels(sqlite_instance: MemoryInterface):
-    labels = {"operation": "op1", "operator": "name1", "harm_category": "dummy1"}
-    entries = [
-        PromptMemoryEntry(
-            entry=MessagePiece(
-                conversation_id=str(uuid4()),
-                role="user",
-                original_value="Hello 1",
-                labels=labels,
-            )
-        ),
-        PromptMemoryEntry(
-            entry=MessagePiece(
-                conversation_id=str(uuid4()),
-                role="assistant",
-                original_value="Hello 2",
-                labels=labels,
-            )
-        ),
-        PromptMemoryEntry(
-            entry=MessagePiece(
-                conversation_id=str(uuid4()),
-                role="user",
-                original_value="Hello 3",
-            )
-        ),
-    ]
-
-    sqlite_instance._insert_entries(entries=entries)
-
-    retrieved_entries = sqlite_instance.get_message_pieces(labels=labels)
-
-    assert len(retrieved_entries) == 2  # Two entries should have the specific memory labels
-    for retrieved_entry in retrieved_entries:
-        assert "operation" in retrieved_entry.labels
-        assert "operator" in retrieved_entry.labels
-        assert "harm_category" in retrieved_entry.labels
-
-
-def test_get_message_pieces_labels_falls_back_to_attack_result_labels(sqlite_instance: MemoryInterface):
-    """PMEs without labels are returned when a matching AttackResultEntry shares the conversation_id."""
-    from pyrit.memory.memory_models import AttackResultEntry
-    from pyrit.models import AttackOutcome, AttackResult
-
-    conv_id = str(uuid.uuid4())
-    labels = {"operation": "op1", "operator": "name1"}
-
-    # PME with NO labels
-    pme = PromptMemoryEntry(
-        entry=MessagePiece(
-            role="user",
-            original_value="Hello from AR",
-            conversation_id=conv_id,
-        )
-    )
-    # AttackResultEntry with labels sharing the same conversation_id
-    ar = AttackResult(
-        conversation_id=conv_id,
-        objective="test",
-        outcome=AttackOutcome.SUCCESS,
-        labels=labels,
-    )
-    are = AttackResultEntry(entry=ar)
-
-    sqlite_instance._insert_entries(entries=[pme, are])
-
-    retrieved = sqlite_instance.get_message_pieces(labels=labels)
-    assert len(retrieved) == 1
-    assert retrieved[0].original_value == "Hello from AR"
-
-
-def test_get_message_pieces_labels_returns_pme_and_ar_label_matches(sqlite_instance: MemoryInterface):
-    """Both PMEs with direct labels and PMEs matched via AR labels are returned."""
-    from pyrit.memory.memory_models import AttackResultEntry
-    from pyrit.models import AttackOutcome, AttackResult
-
-    labels = {"operation": "op1"}
-
-    # PME with direct labels
-    pme_direct = PromptMemoryEntry(
-        entry=MessagePiece(
-            conversation_id=str(uuid4()),
-            role="user",
-            original_value="Direct label",
-            labels=labels,
-        )
-    )
-    # PME without labels, but associated AR has labels
-    conv_id = str(uuid.uuid4())
-    pme_via_ar = PromptMemoryEntry(
-        entry=MessagePiece(
-            role="user",
-            original_value="Via AR label",
-            conversation_id=conv_id,
-        )
-    )
-    ar = AttackResult(
-        conversation_id=conv_id,
-        objective="test",
-        outcome=AttackOutcome.SUCCESS,
-        labels=labels,
-    )
-    are = AttackResultEntry(entry=ar)
-
-    # PME with no labels and no matching AR
-    pme_no_match = PromptMemoryEntry(
-        entry=MessagePiece(
-            conversation_id=str(uuid4()),
-            role="user",
-            original_value="No match",
-        )
-    )
-
-    sqlite_instance._insert_entries(entries=[pme_direct, pme_via_ar, are, pme_no_match])
-
-    retrieved = sqlite_instance.get_message_pieces(labels=labels)
-    assert len(retrieved) == 2
-    original_values = {r.original_value for r in retrieved}
-    assert original_values == {"Direct label", "Via AR label"}
-
-
-def test_get_message_pieces_labels_no_match_when_ar_labels_differ(sqlite_instance: MemoryInterface):
-    """PMEs are NOT returned when the AR labels don't match the query."""
-    from pyrit.memory.memory_models import AttackResultEntry
-    from pyrit.models import AttackOutcome, AttackResult
-
-    conv_id = str(uuid.uuid4())
-    pme = PromptMemoryEntry(
-        entry=MessagePiece(
-            role="user",
-            original_value="Unmatched",
-            conversation_id=conv_id,
-        )
-    )
-    ar = AttackResult(
-        conversation_id=conv_id,
-        objective="test",
-        outcome=AttackOutcome.SUCCESS,
-        labels={"operation": "other_op"},
-    )
-    are = AttackResultEntry(entry=ar)
-
-    sqlite_instance._insert_entries(entries=[pme, are])
-
-    retrieved = sqlite_instance.get_message_pieces(labels={"operation": "op1"})
-    assert len(retrieved) == 0
-
-
 def test_get_message_pieces_metadata(sqlite_instance: MemoryInterface):
     metadata: dict[str, str | int] = {"key1": "value1", "key2": "value2"}
     entries = [
@@ -1281,43 +1121,6 @@ def test_get_message_pieces_by_hash(sqlite_instance: MemoryInterface):
     assert len(retrieved_entries) == 2
     assert_original_value_in_list("Hello 1", retrieved_entries)
     assert_original_value_in_list("Hello 2", retrieved_entries)
-
-
-def test_get_message_pieces_with_non_matching_memory_labels(sqlite_instance: MemoryInterface):
-    attack = PromptSendingAttack(objective_target=get_mock_target())
-    labels = {"operation": "op1", "operator": "name1", "harm_category": "dummy1"}
-    entries = [
-        PromptMemoryEntry(
-            entry=MessagePiece(
-                conversation_id="123",
-                role="user",
-                original_value="Hello 1",
-                labels=labels,
-            )
-        ),
-        PromptMemoryEntry(
-            entry=MessagePiece(
-                conversation_id="456",
-                role="assistant",
-                original_value="Hello 2",
-                labels=labels,
-            )
-        ),
-        PromptMemoryEntry(
-            entry=MessagePiece(
-                conversation_id="789",
-                role="user",
-                original_value="Hello 3",
-                converted_value="Hello 1",
-            )
-        ),
-    ]
-
-    sqlite_instance._insert_entries(entries=entries)
-    labels = {"nonexistent_key": "nonexiststent_value"}
-    retrieved_entries = sqlite_instance.get_message_pieces(labels=labels)
-
-    assert len(retrieved_entries) == 0  # zero entries found since invalid memory labels passed
 
 
 def test_get_message_pieces_sorts(
@@ -1597,8 +1400,7 @@ def test_get_message_pieces_by_attack_identifier_filter(sqlite_instance: MemoryI
     attack1 = PromptSendingAttack(objective_target=get_mock_target())
 
     # IdentifierType.ATTACK is no longer stamped on message pieces, so the piece-level
-    # identifier filter rejects it. Attack filtering now goes through get_attack_results
-    # or the deprecated attack_id parameter.
+    # identifier filter rejects it. Attack filtering now goes through get_attack_results.
     with pytest.raises(ValueError, match="does not support identifier type"):
         sqlite_instance.get_message_pieces(
             identifier_filters=[

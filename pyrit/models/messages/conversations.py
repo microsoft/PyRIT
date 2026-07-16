@@ -236,7 +236,6 @@ def construct_response_from_request(
                 role="assistant",
                 original_value=resp_text,
                 conversation_id=request.conversation_id,
-                labels=request.labels,
                 original_value_data_type=response_type,
                 converted_value_data_type=response_type,
                 prompt_metadata=prompt_metadata or {},

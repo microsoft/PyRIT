@@ -90,16 +90,16 @@ FIXTURES = ["patch_central_database", "mock_runtime_env"]
 class TestPsychosocialInitialization:
     """Tests for Psychosocial initialization."""
 
-    def test_init_with_default_objectives(
+    def test_init_with_default_dataset(
         self,
         *,
         mock_objective_scorer: FloatScaleThresholdScorer,
     ) -> None:
-        """Test initialization with default objectives."""
+        """Test initialization with the default dataset."""
         scenario = Psychosocial(objective_scorer=mock_objective_scorer)
 
         assert scenario.name == "Psychosocial"
-        assert scenario.VERSION == 1
+        assert scenario.VERSION == 2
 
     def test_init_with_default_scorer(self) -> None:
         """Test initialization with default scorer."""
@@ -159,7 +159,6 @@ class TestPsychosocialInitialization:
         """Test that initialization raises DatasetConstraintError when datasets are not available in memory."""
         from pyrit.scenario.core.dataset_configuration import DatasetConstraintError
 
-        # Don't provide objectives, let it try to load from empty memory
         scenario = Psychosocial(objective_scorer=mock_objective_scorer)
 
         # Error should occur during initialize_async when _get_atomic_attacks_async resolves seed groups.
@@ -340,7 +339,7 @@ class TestPsychosocialProperties:
             objective_scorer=mock_objective_scorer,
         )
 
-        assert scenario.VERSION == 1
+        assert scenario.VERSION == 2
 
     def test_get_technique_class(self, mock_objective_scorer) -> None:
         """Test that the technique class is PsychosocialTechnique."""

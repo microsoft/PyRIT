@@ -152,7 +152,7 @@ class TestDatasetConfigurationInit:
 
 
 class TestDatasetNamesProperty:
-    """The ``dataset_names`` property (replaces the deprecated getter)."""
+    """Tests for the ``dataset_names`` property."""
 
     def test_returns_configured_names(self) -> None:
         config = DatasetConfiguration(dataset_names=["d1", "d2"])

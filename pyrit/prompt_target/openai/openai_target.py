@@ -241,7 +241,7 @@ class OpenAITarget(PromptTarget):
             f"Old Azure URL format detected {issue_desc}. "
             f"Current URL: {url}. "
             f"Recommended format: {suggested_url} {recommendation}. "
-            f"Old format URLs will be deprecated in a future release. "
+            "Use the recommended format for compatibility with current Azure OpenAI clients. "
             f"See https://learn.microsoft.com/en-us/azure/ai-services/openai/api-version-deprecation "
             "for more information."
         )

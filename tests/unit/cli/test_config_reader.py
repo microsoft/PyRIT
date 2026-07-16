@@ -14,7 +14,7 @@ from pyrit.cli._config_reader import (
     DEFAULT_SERVER_URL,
     ConfigError,
     read_server_url,
-    warn_on_client_ignored_blocks,
+    validate_client_config,
 )
 
 
@@ -107,17 +107,17 @@ def test_read_server_url_empty_string_treated_as_missing(tmp_path):
         assert read_server_url(config_file=empty) is None
 
 
-def test_warn_on_client_ignored_blocks_prints_deprecation(tmp_path, capsys):
+def test_validate_client_config_rejects_removed_scenario_block(tmp_path):
     cfg = tmp_path / "conf.yaml"
     cfg.write_text("scenario:\n  name: test\n", encoding="utf-8")
     with patch.object(_config_reader, "_DEFAULT_CONFIG_FILE", tmp_path / "missing.yaml"):
-        warn_on_client_ignored_blocks(config_file=cfg)
-    assert "Deprecation" in capsys.readouterr().out
+        with pytest.raises(ConfigError, match="'scenario' is no longer supported"):
+            validate_client_config(config_file=cfg)
 
 
-def test_warn_on_client_ignored_blocks_raises_on_malformed_yaml(tmp_path):
+def test_validate_client_config_raises_on_malformed_yaml(tmp_path):
     bad = tmp_path / "bad.yaml"
     bad.write_text(": :\nnot yaml: [unbalanced\n", encoding="utf-8")
     with patch.object(_config_reader, "_DEFAULT_CONFIG_FILE", tmp_path / "missing.yaml"):
         with pytest.raises(ConfigError, match="not valid YAML"):
-            warn_on_client_ignored_blocks(config_file=bad)
+            validate_client_config(config_file=bad)

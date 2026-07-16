@@ -1372,7 +1372,7 @@ class MemoryInterface(abc.ABC):
         """
         Return sorted unique attack class names from all stored attack results.
 
-        Extracts class_name from the attack_identifier JSON column via a
+        Extracts class_name from the atomic_attack_identifier JSON column via a
         database-level DISTINCT query.
 
         Returns:
@@ -1384,8 +1384,8 @@ class MemoryInterface(abc.ABC):
         """
         Return sorted unique converter class names used across all attack results.
 
-        Extracts class_name values from the request_converter_identifiers array
-        within the attack_identifier JSON column via a database-level query.
+        Extracts class_name values from the nested request_converters array
+        within the atomic_attack_identifier JSON column via a database-level query.
 
         Returns:
             Sorted list of unique converter class name strings.
@@ -1979,21 +1979,6 @@ class MemoryInterface(abc.ABC):
             logger.error(f"Failed to update entries with conversation_id {conversation_id}.")
         return success
 
-    def update_labels_by_conversation_id(self, *, conversation_id: str, labels: dict[str, Any]) -> bool:
-        """
-        Update the labels of prompt entries in memory for a given conversation ID.
-
-        Args:
-            conversation_id (str): The conversation ID of the entries to be updated.
-            labels (dict): New dictionary of labels.
-
-        Returns:
-            bool: True if the update was successful, False otherwise.
-        """
-        return self.update_prompt_entries_by_conversation_id(
-            conversation_id=conversation_id, update_fields={"labels": labels}
-        )
-
     def update_prompt_metadata_by_conversation_id(
         self, *, conversation_id: str, prompt_metadata: dict[str, str | int]
     ) -> bool:
@@ -2536,8 +2521,8 @@ class MemoryInterface(abc.ABC):
             outcome (str | None, optional): The outcome to filter by (success, failure, undetermined).
                 Defaults to None.
             attack_classes (Sequence[str] | None, optional): Filter by exact attack class_name in
-                attack_identifier. Returns attacks matching ANY of the listed class names (OR logic,
-                case-sensitive). An empty sequence applies no filter. Defaults to None.
+                atomic_attack_identifier. Returns attacks matching ANY of the listed class names
+                (OR logic, case-sensitive). An empty sequence applies no filter. Defaults to None.
             atomic_attack_eval_hashes (Sequence[str] | None, optional): Filter by behavioral
                 equivalence hash on ``atomic_attack_identifier.eval_hash`` (auto-stamped on persistence
                 by ``AtomicAttackEvaluationIdentifier``). Returns results matching ANY of the listed
@@ -2745,12 +2730,6 @@ class MemoryInterface(abc.ABC):
         """
         Return all unique label key-value pairs across attack results.
 
-        Labels may live on ``PromptMemoryEntry.labels`` (joined via
-        conversation_id) **or** directly on ``AttackResultEntry.labels``.
-        Both sources are queried (OR logic, mirroring the label filter
-        behaviour in ``get_attack_results``), and unique key-value pairs
-        are aggregated in Python.
-
         Returns:
             dict[str, list[str]]: Mapping of label keys to sorted lists of
             unique values.
@@ -2758,24 +2737,11 @@ class MemoryInterface(abc.ABC):
         label_values: dict[str, set[str]] = {}
 
         with closing(self.get_session()) as session:
-            # Labels from PromptMemoryEntry linked to an attack
-            pme_rows = (
-                session.query(PromptMemoryEntry.labels)
-                .join(
-                    AttackResultEntry,
-                    PromptMemoryEntry.conversation_id == AttackResultEntry.conversation_id,
-                )
-                .filter(PromptMemoryEntry.labels.isnot(None))
-                .distinct()
-                .all()
-            )
-
-            # Labels directly on AttackResultEntry
             are_rows = (
                 session.query(AttackResultEntry.labels).filter(AttackResultEntry.labels.isnot(None)).distinct().all()
             )
 
-        for (labels,) in (*pme_rows, *are_rows):
+        for (labels,) in are_rows:
             if not isinstance(labels, dict):
                 continue
             for key, value in labels.items():
@@ -2827,11 +2793,7 @@ class MemoryInterface(abc.ABC):
         Update the run state of an existing scenario result.
 
         Performs a targeted UPDATE of only the state/error columns instead of
-        rebuilding the entire ``ScenarioResultEntry`` row. The full-row rebuild
-        used to read the stored row, mutate the ScenarioResult, and re-serialize
-        every column — including ``attack_results_json`` which is being phased
-        out and could be stale during the deprecation window. A targeted UPDATE
-        avoids clobbering manifest data and is also cheaper.
+        rebuilding the entire ``ScenarioResultEntry`` row.
 
         Args:
             scenario_result_id (str): The ID of the scenario result to update.

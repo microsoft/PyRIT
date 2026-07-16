@@ -10,6 +10,7 @@ import pytest
 
 from pyrit.memory import MemoryInterface, PromptMemoryEntry
 from pyrit.models import (
+    AttackResult,
     ComponentIdentifier,
     IdentifierFilter,
     IdentifierType,
@@ -50,7 +51,13 @@ def test_get_scores_by_label(sqlite_instance: MemoryInterface, sample_conversati
     sqlite_instance.add_scores_to_memory(scores=[score])
 
     # Fetch the score we just added by label
-    db_score = sqlite_instance.get_prompt_scores(labels=sample_conversations[0].labels)
+    labels = {"sample": "label"}
+    conversation_id = sample_conversations[0].conversation_id
+    assert conversation_id is not None
+    sqlite_instance.add_attack_results_to_memory(
+        attack_results=[AttackResult(conversation_id=conversation_id, objective="Test objective", labels=labels)]
+    )
+    db_score = sqlite_instance.get_prompt_scores(labels=labels)
 
     assert len(db_score) == 1
     assert db_score[0].score_value == score.score_value
@@ -251,6 +258,7 @@ def test_add_score_duplicate_prompt(sqlite_instance: MemoryInterface):
 
 def test_get_scores_by_memory_labels(sqlite_instance: MemoryInterface):
     prompt_id = uuid4()
+    conversation_id = str(uuid4())
     pieces = [
         MessagePiece(
             id=prompt_id,
@@ -258,8 +266,7 @@ def test_get_scores_by_memory_labels(sqlite_instance: MemoryInterface):
             original_value="original prompt text",
             converted_value="Hello, how are you?",
             sequence=0,
-            labels={"sample": "label"},
-            conversation_id=str(uuid4()),
+            conversation_id=conversation_id,
         )
     ]
     sqlite_instance.add_message_pieces_to_memory(message_pieces=pieces)
@@ -275,6 +282,11 @@ def test_get_scores_by_memory_labels(sqlite_instance: MemoryInterface):
         message_piece_id=prompt_id,
     )
     sqlite_instance.add_scores_to_memory(scores=[score])
+    sqlite_instance.add_attack_results_to_memory(
+        attack_results=[
+            AttackResult(conversation_id=conversation_id, objective="Test objective", labels={"sample": "label"})
+        ]
+    )
 
     # Fetch the score we just added
     db_score = sqlite_instance.get_prompt_scores(labels={"sample": "label"})

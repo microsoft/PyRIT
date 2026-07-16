@@ -66,7 +66,6 @@ from pyrit.models import (
     ConversationStats,
     ConversationType,
     ConverterIdentifier,
-    MessagePiece,
     PromptDataType,
 )
 from pyrit.prompt_normalizer import ConverterConfiguration, PromptNormalizer
@@ -209,7 +208,7 @@ class AttackService:
         Get all unique attack type names from stored attack results.
 
         Delegates to the memory layer which extracts distinct class_name
-        values from the attack_identifier JSON column via SQL.
+        values from the atomic_attack_identifier JSON column via SQL.
 
         Returns:
             Sorted list of unique attack type names.
@@ -221,7 +220,7 @@ class AttackService:
         Get all unique converter type names used across attack results.
 
         Delegates to the memory layer which extracts distinct converter
-        type names from the attack_identifier JSON column via SQL.
+        type names from the atomic_attack_identifier JSON column via SQL.
 
         Returns:
             Sorted list of unique converter type names.
@@ -291,8 +290,8 @@ class AttackService:
         Creates an AttackResult with a new conversation_id.  When
         ``source_conversation_id`` and ``cutoff_index`` are provided the
         backend duplicates messages up to and including the cutoff turn,
-        applies the new labels, and maps assistant roles to
-        ``simulated_assistant`` so the branched context is inert.
+        stores the new labels on the attack result, and maps assistant roles
+        to ``simulated_assistant`` so the branched context is inert.
 
         Returns:
             CreateAttackResponse with the new attack's ID and creation time.
@@ -320,7 +319,6 @@ class AttackService:
             conversation_id = self._duplicate_conversation_up_to(
                 source_conversation_id=request.source_conversation_id,
                 cutoff_index=request.cutoff_index,
-                labels_override=labels,
                 remap_assistant_to_simulated=True,
                 target_identifier=target_identifier,
             )
@@ -364,7 +362,6 @@ class AttackService:
             await self._store_prepended_messages_async(
                 conversation_id=conversation_id,
                 prepended=prepended,
-                labels=labels,
                 target_identifier=target_identifier,
             )
 
@@ -610,7 +607,7 @@ class AttackService:
         main_conversation_id = ar.conversation_id
 
         self._validate_target_match(attack_identifier=ar.get_attack_strategy_identifier(), request=request)
-        self._validate_operator_match(conversation_id=main_conversation_id, request=request)
+        self._validate_operator_match(attack_result=ar, request=request)
 
         msg_conversation_id = request.target_conversation_id
 
@@ -629,13 +626,6 @@ class AttackService:
         existing = self._memory.get_message_pieces(conversation_id=msg_conversation_id)
         sequence = max((p.sequence for p in existing), default=-1) + 1
 
-        attack_labels = self._resolve_labels(
-            conversation_id=msg_conversation_id,
-            main_conversation_id=main_conversation_id,
-            existing_pieces=existing,
-            request_labels=request.labels,
-        )
-
         if request.send:
             assert target_registry_name is not None  # validated above
             try:
@@ -644,7 +634,6 @@ class AttackService:
                     target_registry_name=target_registry_name,
                     request=request,
                     sequence=sequence,
-                    labels=attack_labels,
                 )
             except Exception:
                 # PromptNormalizer persists a full error piece (response_error +
@@ -669,7 +658,6 @@ class AttackService:
                 conversation_id=msg_conversation_id,
                 request=request,
                 sequence=sequence,
-                labels=attack_labels,
                 target_identifier=existing_metadata.target_identifier if existing_metadata else None,
             )
 
@@ -723,58 +711,27 @@ class AttackService:
                 f"Create a new attack to use a different target."
             )
 
-    def _validate_operator_match(self, *, conversation_id: str, request: AddMessageRequest) -> None:
+    def _validate_operator_match(self, *, attack_result: AttackResult, request: AddMessageRequest) -> None:
         """
-        Validate that the request operator matches existing messages' operator.
+        Validate that the request operator matches the attack result's operator.
 
         Raises:
-            ValueError: If the operator in the request doesn't match existing messages.
+            ValueError: If the operator in the request doesn't match the attack result.
         """
         if not request.labels:
             return
 
-        existing_pieces = self._memory.get_message_pieces(conversation_id=conversation_id)
-        existing_operator = next(
-            (p.labels.get("operator") for p in existing_pieces if p.labels and p.labels.get("operator")),
-            None,
-        )
-        if not existing_operator:
+        attack_operator = attack_result.labels.get("operator")
+        if not attack_operator:
             return
 
         request_operator = request.labels.get("operator")
-        if request_operator and request_operator != existing_operator:
+        if request_operator and request_operator != attack_operator:
             raise ValueError(
-                f"Operator mismatch: attack belongs to operator '{existing_operator}' "
+                f"Operator mismatch: attack belongs to operator '{attack_operator}' "
                 f"but request is from '{request_operator}'. "
                 f"Create a new attack to continue."
             )
-
-    def _resolve_labels(
-        self,
-        *,
-        conversation_id: str,
-        main_conversation_id: str,
-        existing_pieces: Sequence[MessagePiece],
-        request_labels: dict[str, str] | None,
-    ) -> dict[str, str]:
-        """
-        Resolve labels for a new message by inheriting from existing pieces.
-
-        Tries the target conversation first, falls back to the main conversation,
-        then falls back to labels provided explicitly in the request.
-
-        Returns:
-            dict[str, str]: Resolved labels for the new message.
-        """
-        attack_labels: dict[str, str] | None = next(
-            (p.labels for p in existing_pieces if p.labels and len(p.labels) > 0), None
-        )
-        if not attack_labels:
-            main_pieces = self._memory.get_message_pieces(conversation_id=main_conversation_id)
-            attack_labels = next((p.labels for p in main_pieces if p.labels and len(p.labels) > 0), None)
-        if not attack_labels:
-            attack_labels = dict(request_labels) if request_labels else {}
-        return attack_labels
 
     async def _update_attack_after_message_async(
         self, *, attack_result_id: str, ar: AttackResult, request: AddMessageRequest
@@ -916,7 +873,6 @@ class AttackService:
         *,
         source_conversation_id: str,
         cutoff_index: int,
-        labels_override: dict[str, str] | None = None,
         remap_assistant_to_simulated: bool = False,
         target_identifier: ComponentIdentifier | None = None,
     ) -> str:
@@ -930,9 +886,6 @@ class AttackService:
         Args:
             source_conversation_id: The conversation to copy from.
             cutoff_index: Include messages with sequence <= cutoff_index.
-            labels_override: When provided, the duplicated pieces' labels are
-                replaced with these values.  Used when branching into a new
-                attack that belongs to a different operator.
             remap_assistant_to_simulated: When True, pieces with role
                 ``assistant`` are changed to ``simulated_assistant`` so the
                 branched context is inert and won't confuse the target.
@@ -950,11 +903,6 @@ class AttackService:
 
         # Apply optional overrides to the fresh pieces before persisting
         for piece in all_pieces:
-            if labels_override is not None:
-                # TODO: ``labels`` is slated to move from MessagePiece onto
-                # AttackResult. Revisit this once that lands so we set labels
-                # on the attack result instead of mutating each piece.
-                piece.labels = dict(labels_override)
             if remap_assistant_to_simulated and piece.api_role == "assistant":
                 piece.role = "simulated_assistant"
 
@@ -1053,7 +1001,6 @@ class AttackService:
         *,
         conversation_id: str,
         prepended: list[Any],
-        labels: dict[str, str] | None = None,
         target_identifier: ComponentIdentifier | None = None,
     ) -> None:
         """Store prepended conversation messages in memory."""
@@ -1070,8 +1017,6 @@ class AttackService:
                     conversation_id=conversation_id,
                     sequence=seq,
                 )
-                if labels:
-                    piece.labels = labels
                 self._memory.add_message_pieces_to_memory(message_pieces=[piece])
 
     async def _send_and_store_message_async(
@@ -1081,7 +1026,6 @@ class AttackService:
         target_registry_name: str,
         request: AddMessageRequest,
         sequence: int,
-        labels: dict[str, str] | None = None,
     ) -> None:
         """Send message to target via normalizer and store response."""
         target_obj = get_target_service().get_target_object(target_registry_name=target_registry_name)
@@ -1097,9 +1041,6 @@ class AttackService:
             conversation_id=conversation_id,
             sequence=sequence,
         )
-        if labels:
-            for piece in pyrit_message.message_pieces:
-                piece.labels = labels
 
         converter_configs = self._get_converter_configs(request)
 
@@ -1118,7 +1059,6 @@ class AttackService:
         conversation_id: str,
         request: AddMessageRequest,
         sequence: int,
-        labels: dict[str, str] | None = None,
         target_identifier: ComponentIdentifier | None = None,
     ) -> None:
         """Store message without sending (send=False)."""
@@ -1133,8 +1073,6 @@ class AttackService:
                 conversation_id=conversation_id,
                 sequence=sequence,
             )
-            if labels:
-                piece.labels = labels
             self._memory.add_message_pieces_to_memory(message_pieces=[piece])
 
     def _resolve_video_remix_metadata(self, request: AddMessageRequest) -> None:

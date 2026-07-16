@@ -1586,6 +1586,36 @@ async def test_score_value_with_llm_skips_reasoning_piece(good_json, patch_centr
     assert result.score_rationale == "Valid response"
 
 
+async def test_score_value_with_llm_without_system_prompt(good_json, patch_central_database):
+    chat_target = MagicMock(PromptTarget)
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+    response_message = Message(
+        message_pieces=[
+            MessagePiece(
+                role="assistant",
+                original_value=good_json,
+                conversation_id="test-convo",
+            )
+        ]
+    )
+    chat_target.send_prompt_async = AsyncMock(return_value=[response_message])
+    scorer = MockScorer()
+
+    await _run_llm_scoring_async(
+        chat_target=chat_target,
+        response_handler=JsonSchemaResponseHandler(),
+        scorer_identifier=scorer.get_identifier(),
+        system_prompt=None,
+        value="message_value",
+        data_type="text",
+        scored_prompt_id="123",
+        category="category",
+        objective="task",
+    )
+
+    chat_target.set_system_prompt.assert_not_called()
+
+
 async def test_score_value_with_llm_raises_when_scorer_response_blocked(patch_central_database):
     """When the scorer's own LLM response is blocked, the transport raises ScorerLLMResponseBlockedException."""
     from pyrit.exceptions import ScorerLLMResponseBlockedException

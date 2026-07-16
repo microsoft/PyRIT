@@ -105,6 +105,16 @@ def test_init_with_no_additional_request_headers_var_raises():
         OpenAIChatTarget(model_name="gpt-4", endpoint="", api_key="xxxxx", headers="")
 
 
+def test_init_with_removed_max_tokens_raises(patch_central_database):
+    with pytest.raises(TypeError, match="max_tokens"):
+        OpenAIChatTarget(
+            model_name="gpt-4",
+            endpoint="https://mock.azure.com/",
+            api_key="mock-api-key",
+            max_tokens=100,
+        )
+
+
 async def test_build_chat_messages_for_multi_modal(target: OpenAIChatTarget):
     image_request = get_image_message_piece()
     entries = [
@@ -210,7 +220,6 @@ async def test_construct_request_body_removes_empty_values(
     jrc = JsonResponseConfig.from_metadata(metadata=None)
     body = await target._construct_request_body_async(conversation=[request], json_config=jrc)
     assert "max_completion_tokens" not in body
-    assert "max_tokens" not in body
     assert "temperature" not in body
     assert "top_p" not in body
     assert "frequency_penalty" not in body
@@ -282,7 +291,6 @@ async def test_send_prompt_async_empty_response_adds_to_memory(openai_response_j
                 converted_value="hello",
                 original_value_data_type="text",
                 converted_value_data_type="text",
-                labels={"test": "test"},
             ),
             MessagePiece(
                 role="user",
@@ -291,7 +299,6 @@ async def test_send_prompt_async_empty_response_adds_to_memory(openai_response_j
                 converted_value=tmp_file_name,
                 original_value_data_type="image_path",
                 converted_value_data_type="image_path",
-                labels={"test": "test"},
             ),
         ]
     )
@@ -388,7 +395,6 @@ async def test_send_prompt_async(openai_response_json: dict, patch_central_datab
                 converted_value="hello",
                 original_value_data_type="text",
                 converted_value_data_type="text",
-                labels={"test": "test"},
             ),
             MessagePiece(
                 role="user",
@@ -397,7 +403,6 @@ async def test_send_prompt_async(openai_response_json: dict, patch_central_datab
                 converted_value=tmp_file_name,
                 original_value_data_type="image_path",
                 converted_value_data_type="image_path",
-                labels={"test": "test"},
             ),
         ]
     )
@@ -449,7 +454,6 @@ async def test_send_prompt_async_empty_response_retries(openai_response_json: di
                 converted_value="hello",
                 original_value_data_type="text",
                 converted_value_data_type="text",
-                labels={"test": "test"},
             ),
             MessagePiece(
                 role="user",
@@ -458,7 +462,6 @@ async def test_send_prompt_async_empty_response_retries(openai_response_json: di
                 converted_value=tmp_file_name,
                 original_value_data_type="image_path",
                 converted_value_data_type="image_path",
-                labels={"test": "test"},
             ),
         ]
     )

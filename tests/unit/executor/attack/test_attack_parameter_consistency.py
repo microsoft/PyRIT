@@ -1005,44 +1005,6 @@ class TestMultiTurnTurnCounting:
 
 
 # =============================================================================
-# Test Class: memory_labels Propagation
-# =============================================================================
-
-
-@pytest.mark.usefixtures("patch_central_database")
-class TestMemoryLabelsPropagation:
-    """
-    Tests verifying that memory_labels are properly propagated through attacks.
-
-    memory_labels should be passed to all prompts sent via the target.
-    """
-
-    async def test_prompt_sending_attack_propagates_memory_labels(
-        self, mock_chat_target: MagicMock, sample_response: Message, sqlite_instance
-    ) -> None:
-        """Test that PromptSendingAttack propagates memory_labels to prompts."""
-        attack = PromptSendingAttack(objective_target=mock_chat_target)
-
-        mock_normalizer = MagicMock(spec=PromptNormalizer)
-        mock_normalizer.send_prompt_async = AsyncMock(return_value=sample_response)
-        attack._prompt_normalizer = mock_normalizer
-
-        test_labels = {"test_key": "test_value", "attack_type": "prompt_sending"}
-
-        await attack.execute_async(
-            objective="Test objective",
-            memory_labels=test_labels,
-        )
-
-        call_args = mock_normalizer.send_prompt_async.call_args
-        sent_message = call_args.kwargs["message"]
-        passed_labels = sent_message.message_pieces[0].labels
-
-        assert passed_labels, "Labels should be stamped on the sent message pieces"
-        assert passed_labels["test_key"] == "test_value"
-
-
-# =============================================================================
 # Test Class: Adversarial Chat Context Injection
 # =============================================================================
 

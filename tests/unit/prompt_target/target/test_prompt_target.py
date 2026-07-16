@@ -12,7 +12,7 @@ from unit.mocks import get_sample_conversations, openai_chat_response_json_dict
 
 from pyrit.executor.attack.core.attack_strategy import AttackStrategy
 from pyrit.memory.memory_interface import MemoryInterface
-from pyrit.models import ComponentIdentifier, Message, MessagePiece, flatten_to_message_pieces
+from pyrit.models import ChatMessageRole, ComponentIdentifier, Message, MessagePiece, flatten_to_message_pieces
 from pyrit.prompt_target import OpenAIChatTarget
 from pyrit.prompt_target.common.target_capabilities import (
     CapabilityHandlingPolicy,
@@ -157,11 +157,10 @@ async def test_send_prompt_async_with_delay(
 # ---------------------------------------------------------------------------
 
 _LINEAGE_CONVERSATION_ID = "original-conv-id-12345"
-_LINEAGE_LABELS = {"op_name": "test_op", "user_id": "user42"}
 _LINEAGE_PROMPT_METADATA = {"scenario": "test_scenario", "turn": 3}
 
 
-def _make_lineage_piece(*, role: str, content: str) -> MessagePiece:
+def _make_lineage_piece(*, role: ChatMessageRole, content: str) -> MessagePiece:
     return MessagePiece(
         role=role,
         conversation_id=_LINEAGE_CONVERSATION_ID,
@@ -169,12 +168,11 @@ def _make_lineage_piece(*, role: str, content: str) -> MessagePiece:
         converted_value=content,
         original_value_data_type="text",
         converted_value_data_type="text",
-        labels=dict(_LINEAGE_LABELS),
         prompt_metadata=dict(_LINEAGE_PROMPT_METADATA),
     )
 
 
-def _make_lineage_message(*, role: str, content: str) -> Message:
+def _make_lineage_message(*, role: ChatMessageRole, content: str) -> Message:
     return Message(message_pieces=[_make_lineage_piece(role=role, content=content)])
 
 
@@ -195,7 +193,7 @@ def _make_mock_chat_completion(content: str = "response") -> MagicMock:
 async def test_history_squash_preserves_metadata_on_normalized_message():
     """
     After history squash, _propagate_lineage should restore the original request's
-    metadata (conversation_id, labels, attack_identifier) onto the squashed message.
+    conversation ID and prompt metadata onto the squashed message.
     """
     target = OpenAIChatTarget(
         model_name="gpt-4o",
@@ -231,7 +229,6 @@ async def test_history_squash_preserves_metadata_on_normalized_message():
     normalized_piece = normalized[0].message_pieces[0]
 
     assert normalized_piece.conversation_id == _LINEAGE_CONVERSATION_ID
-    assert normalized_piece.labels == _LINEAGE_LABELS
     assert normalized_piece.prompt_metadata == _LINEAGE_PROMPT_METADATA
 
 
@@ -239,8 +236,8 @@ async def test_history_squash_preserves_metadata_on_normalized_message():
 async def test_response_preserves_metadata_after_history_squash():
     """
     End-to-end: after history squash the response must carry the original
-    request's conversation_id, labels, and attack_identifier — not the
-    random values created by the normalizer.
+    request's conversation ID and prompt metadata, not the random values
+    created by the normalizer.
     """
     target = OpenAIChatTarget(
         model_name="gpt-4o",
@@ -278,7 +275,6 @@ async def test_response_preserves_metadata_after_history_squash():
     response_piece = response_messages[0].message_pieces[0]
 
     assert response_piece.conversation_id == _LINEAGE_CONVERSATION_ID
-    assert response_piece.labels == _LINEAGE_LABELS
     assert response_piece.prompt_metadata == _LINEAGE_PROMPT_METADATA
 
 
@@ -323,7 +319,6 @@ async def test_system_squash_preserves_metadata():
     normalized_piece = normalized[0].message_pieces[0]
 
     assert normalized_piece.conversation_id == _LINEAGE_CONVERSATION_ID
-    assert normalized_piece.labels == _LINEAGE_LABELS
     assert normalized_piece.prompt_metadata == _LINEAGE_PROMPT_METADATA
 
 
@@ -372,7 +367,6 @@ async def test_history_squash_propagates_lineage_to_all_pieces():
 
     for piece in normalized[0].message_pieces:
         assert piece.conversation_id == _LINEAGE_CONVERSATION_ID
-        assert piece.labels == _LINEAGE_LABELS
         assert piece.prompt_metadata == _LINEAGE_PROMPT_METADATA
 
 
@@ -380,9 +374,9 @@ async def test_history_squash_propagates_lineage_to_all_pieces():
 async def test_conversation_id_stamped_on_all_but_full_lineage_only_on_last():
     """
     conversation_id is stamped on every normalized message (including new ones
-    created by the normalizer).  Full lineage (labels, attack_identifier, etc.)
-    is only propagated to the last message.  Earlier messages keep their own
-    metadata.  A warning is logged when the normalizer increases message count.
+    created by the normalizer). Full lineage is only propagated to the last
+    message. Earlier messages keep their own metadata. A warning is logged when
+    the normalizer increases message count.
     """
     target = OpenAIChatTarget(
         model_name="gpt-4o",
@@ -392,7 +386,6 @@ async def test_conversation_id_stamped_on_all_but_full_lineage_only_on_last():
 
     history_msg = _make_lineage_message(role="assistant", content="previous answer")
     # Give history distinct metadata to verify it's preserved.
-    history_msg.message_pieces[0].labels = {"original": "history_labels"}
     history_msg.message_pieces[0].prompt_metadata = {"original": "history_meta"}
 
     user_msg = _make_lineage_message(role="user", content="hello")
@@ -426,15 +419,13 @@ async def test_conversation_id_stamped_on_all_but_full_lineage_only_on_last():
                 assert piece.conversation_id == _LINEAGE_CONVERSATION_ID
 
         # History message's other metadata should be untouched.
-        assert normalized[0].message_pieces[0].labels == {"original": "history_labels"}
         assert normalized[0].message_pieces[0].prompt_metadata == {"original": "history_meta"}
 
         # New middle message should NOT have full lineage overwritten.
-        assert normalized[1].message_pieces[0].labels == {}
+        assert normalized[1].message_pieces[0].prompt_metadata == {}
 
         # Last message should carry full lineage.
         last_piece = normalized[-1].message_pieces[0]
-        assert last_piece.labels == _LINEAGE_LABELS
         assert last_piece.prompt_metadata == _LINEAGE_PROMPT_METADATA
 
         # Warning should fire because message count increased (2 → 3).

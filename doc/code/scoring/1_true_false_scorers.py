@@ -201,13 +201,16 @@ print(f"[category] value={scored.get_value()} category={scored.score_category}")
 #
 # ## External classifier integrations
 #
-# Two true/false scorers wrap hosted services rather than reasoning with a generative LLM:
+# Three true/false scorers wrap hosted services rather than reasoning with a generative LLM:
 #
 # - **`PromptShieldScorer`** — wraps `PromptShieldTarget` (Azure Prompt Shield jailbreak
 #   classifier); returns True if an attack is detected in the prompt or any document.
 # - **`GandalfScorer`** — checks whether a Gandalf challenge password was revealed.
+# - **`LlamaGuardScorer`** — sends text to a `PromptTarget` serving Llama Guard and returns
+#   True for unsafe content, with violated policy categories in the score metadata. Its
+#   bundled defaults follow the Meta Llama Guard 3 8B S1-S14 contract.
 #
-# Both need their respective endpoints/credentials even though they are not "self-ask".
+# All three need their respective endpoints/credentials even though they are not "self-ask".
 # %% [markdown]
 # ## Multimodal scorers
 #

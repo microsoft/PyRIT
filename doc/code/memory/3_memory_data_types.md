@@ -108,20 +108,19 @@ Seeds are organized into [`SeedGroup`](../../../pyrit/models/seeds/seed_group.py
 - **`score_rationale`**: Explanation of why the score was assigned
 - **`scorer_class_identifier`**: Information about the scorer that generated this score
 - **`message_piece_id`**: The ID of the piece/response being scored
-- **`task`**: The original attacker's objective being evaluated
+- **`objective`**: The original attacker's objective being evaluated
 - **`score_metadata`**: Custom metadata specific to the scorer
 
 Scores enable automated evaluation of attack success, content harmfulness, and other metrics throughout PyRIT's red teaming workflows.
 
 ## AttackResults
 
-[`AttackResult`](../../../pyrit/models/attack_result.py) objects encapsulate the complete outcome of an attack execution, including metrics, evidence, and success determination. When an attack is run, the AttackResult is added to the database and can be queried later.
+[`AttackResult`](../../../pyrit/models/results/attack_result.py) objects encapsulate the complete outcome of an attack execution, including metrics, evidence, and success determination. When an attack is run, the AttackResult is added to the database and can be queried later.
 
 **Key Fields:**
 
 - **`conversation_id`**: The conversation that produced this result
 - **`objective`**: Natural-language description of the attacker's goal
-- **`attack_identifier`**: `ComponentIdentifier` identifying the attack strategy used
 - **`atomic_attack_identifier`**: Composite `ComponentIdentifier` combining the attack technique with seed identifiers from the dataset (see [ComponentIdentifiers](#componentidentifiers) below)
 - **`last_response`**: The final `MessagePiece` generated in the attack
 - **`last_score`**: The final score assigned to the last response

@@ -674,6 +674,155 @@ def test_memory_migrations_head_command(capsys):
 
 
 # =============================================================================
+# v1 compatibility-column removal (24b44ef076b6)
+# =============================================================================
+
+
+_V1_CLEANUP_REV = "24b44ef076b6"
+_V1_CLEANUP_PREV_REV = "e5f7a9c1b3d2"
+
+
+def test_v1_cleanup_migration_drops_compatibility_columns_and_preserves_rows():
+    """The v1 upgrade removes only the superseded columns."""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        engine = create_engine(f"sqlite:///{os.path.join(temp_dir, 'v1-cleanup.db')}")
+        try:
+            with engine.begin() as connection:
+                config = _config_for(connection)
+                command.upgrade(config, _V1_CLEANUP_PREV_REV)
+
+                score_id = str(uuid.uuid4())
+                scenario_id = str(uuid.uuid4())
+                connection.execute(
+                    text(
+                        'INSERT INTO "ScoreEntries" '
+                        "(id, score_value, score_type, score_metadata, scorer_class_identifier, "
+                        "timestamp, task, objective) "
+                        "VALUES (:id, 'true', 'true_false', '{}', '{}', '2026-07-14', "
+                        "'legacy objective', 'canonical objective')"
+                    ),
+                    {"id": score_id},
+                )
+                connection.execute(
+                    text(
+                        'INSERT INTO "ScenarioResultEntries" '
+                        "(id, scenario_name, scenario_version, pyrit_version, scenario_identifier, "
+                        "objective_target_identifier, scenario_run_state, attack_results_json, "
+                        "number_tries, completion_time, timestamp) "
+                        "VALUES (:id, 'Cleanup', 1, '1.0.0', '{}', '{}', 'COMPLETED', "
+                        "'{}', 0, '2026-07-14', '2026-07-14')"
+                    ),
+                    {"id": scenario_id},
+                )
+
+                command.upgrade(config, _V1_CLEANUP_REV)
+
+                score_columns = {column["name"] for column in inspect(connection).get_columns("ScoreEntries")}
+                scenario_columns = {
+                    column["name"] for column in inspect(connection).get_columns("ScenarioResultEntries")
+                }
+                objective = connection.execute(
+                    text('SELECT objective FROM "ScoreEntries" WHERE id = :id'), {"id": score_id}
+                ).scalar_one()
+                scenario_name = connection.execute(
+                    text('SELECT scenario_name FROM "ScenarioResultEntries" WHERE id = :id'),
+                    {"id": scenario_id},
+                ).scalar_one()
+
+            assert "task" not in score_columns
+            assert "attack_results_json" not in scenario_columns
+            assert objective == "canonical objective"
+            assert scenario_name == "Cleanup"
+        finally:
+            engine.dispose()
+
+
+def test_v1_cleanup_downgrade_restores_and_backfills_compatibility_columns():
+    """Downgrade reconstructs task and attack-results manifests for older code."""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        engine = create_engine(f"sqlite:///{os.path.join(temp_dir, 'v1-downgrade.db')}")
+        try:
+            with engine.begin() as connection:
+                config = _config_for(connection)
+                command.upgrade(config, _V1_CLEANUP_REV)
+
+                score_id = str(uuid.uuid4())
+                scenario_id = str(uuid.uuid4())
+                empty_scenario_id = str(uuid.uuid4())
+                connection.execute(
+                    text(
+                        'INSERT INTO "ScoreEntries" '
+                        "(id, score_value, score_type, score_metadata, scorer_class_identifier, "
+                        "timestamp, objective) "
+                        "VALUES (:id, 'true', 'true_false', '{}', '{}', '2026-07-14', 'restored objective')"
+                    ),
+                    {"id": score_id},
+                )
+                for current_id, scenario_name in (
+                    (scenario_id, "With attacks"),
+                    (empty_scenario_id, "Without attacks"),
+                ):
+                    connection.execute(
+                        text(
+                            'INSERT INTO "ScenarioResultEntries" '
+                            "(id, scenario_name, scenario_version, pyrit_version, scenario_identifier, "
+                            "objective_target_identifier, scenario_run_state, number_tries, "
+                            "completion_time, timestamp) "
+                            "VALUES (:id, :name, 1, '1.0.0', '{}', '{}', 'COMPLETED', "
+                            "0, '2026-07-14', '2026-07-14')"
+                        ),
+                        {"id": current_id, "name": scenario_name},
+                    )
+
+                attack_rows = (
+                    ("conv-alpha-1", "alpha", "2026-07-14 10:00:00"),
+                    ("conv-beta", "beta", "2026-07-14 10:01:00"),
+                    ("conv-alpha-2", "alpha", "2026-07-14 10:02:00"),
+                )
+                for conversation_id, parent_collection, timestamp in attack_rows:
+                    connection.execute(
+                        text(
+                            'INSERT INTO "AttackResultEntries" '
+                            "(id, conversation_id, objective, executed_turns, execution_time_ms, outcome, "
+                            "timestamp, attribution_parent_id, attribution_data) "
+                            "VALUES (:id, :conversation_id, 'objective', 1, 0, 'success', "
+                            ":timestamp, :scenario_id, :attribution_data)"
+                        ),
+                        {
+                            "id": str(uuid.uuid4()),
+                            "conversation_id": conversation_id,
+                            "timestamp": timestamp,
+                            "scenario_id": scenario_id,
+                            "attribution_data": json.dumps({"parent_collection": parent_collection}),
+                        },
+                    )
+
+                command.downgrade(config, _V1_CLEANUP_PREV_REV)
+
+                restored_task = connection.execute(
+                    text('SELECT task FROM "ScoreEntries" WHERE id = :id'), {"id": score_id}
+                ).scalar_one()
+                manifests = dict(
+                    connection.execute(text('SELECT id, attack_results_json FROM "ScenarioResultEntries"')).fetchall()
+                )
+                score_columns = {column["name"] for column in inspect(connection).get_columns("ScoreEntries")}
+                scenario_columns = {
+                    column["name"] for column in inspect(connection).get_columns("ScenarioResultEntries")
+                }
+
+            assert "task" in score_columns
+            assert "attack_results_json" in scenario_columns
+            assert restored_task == "restored objective"
+            assert json.loads(manifests[scenario_id]) == {
+                "alpha": ["conv-alpha-1", "conv-alpha-2"],
+                "beta": ["conv-beta"],
+            }
+            assert json.loads(manifests[empty_scenario_id]) == {}
+        finally:
+            engine.dispose()
+
+
+# =============================================================================
 # Backfill tests for the Conversations table migration (b2f4c6a8d1e3)
 # =============================================================================
 
