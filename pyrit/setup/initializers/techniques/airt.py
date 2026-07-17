@@ -40,6 +40,7 @@ def get_technique_factories() -> list[AttackTechniqueFactory]:
         AttackTechniqueFactory(
             name="first_letter",
             attack_class=PromptSendingAttack,
+            description="Obfuscates the objective by asking for it encoded as the first letter of each word.",
             technique_tags=["single_turn", "airt", "leakage"],
             attack_kwargs={
                 "attack_converter_config": AttackConverterConfig(
@@ -50,6 +51,7 @@ def get_technique_factories() -> list[AttackTechniqueFactory]:
         AttackTechniqueFactory(
             name="image",
             attack_class=PromptSendingAttack,
+            description="Carries the objective text inside a blank image so it bypasses text-only input handling.",
             technique_tags=["single_turn", "airt", "leakage"],
             attack_kwargs={
                 "attack_converter_config": AttackConverterConfig(

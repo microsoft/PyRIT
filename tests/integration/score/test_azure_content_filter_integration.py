@@ -46,7 +46,6 @@ async def test_azure_content_filter_scorer_image_integration(memory) -> None:
         # Architecture diagram should have low harm scores across all categories
         max_score = max(float(s.score_value) for s in scores)
         assert max_score < 0.5, "Architecture diagram should have low harm scores"
-        await scorer.cleanup_scorer_async()
 
 
 async def test_azure_content_filter_scorer_long_text_chunking_integration(memory) -> None:
@@ -78,7 +77,6 @@ async def test_azure_content_filter_scorer_long_text_chunking_integration(memory
         # Long benign text should still have low scores
         max_score = max(float(s.score_value) for s in scores)
         assert max_score > 0, "text should have > 0 score"
-        await scorer.cleanup_scorer_async()
 
 
 @pytest.mark.run_only_if_all_tests
@@ -107,7 +105,6 @@ async def test_azure_content_filter_scorer_image_with_api_key(memory) -> None:
 
         max_score = max(float(s.score_value) for s in scores)
         assert max_score < 0.5, "Architecture diagram should have low harm scores"
-        await scorer.cleanup_scorer_async()
 
 
 @pytest.mark.run_only_if_all_tests
@@ -139,4 +136,3 @@ async def test_azure_content_filter_scorer_text_with_api_key(memory) -> None:
 
         max_score = max(float(s.score_value) for s in scores)
         assert max_score > 0, "text should have > 0 score"
-        await scorer.cleanup_scorer_async()

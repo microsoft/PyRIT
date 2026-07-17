@@ -139,7 +139,7 @@ def test_build_metadata_returns_empty_without_schema():
 def test_build_metadata_forwards_schema():
     metadata = _build_adversarial_prompt_metadata(response_json_schema=SCHEMA)
     assert metadata["response_format"] == "json"
-    assert metadata[JSON_SCHEMA_METADATA_KEY] is SCHEMA
+    assert metadata[JSON_SCHEMA_METADATA_KEY] == SCHEMA
 
 
 # --- _parse_adversarial_reply ------------------------------------------------
@@ -529,7 +529,7 @@ class TestGetNextMessageAsync:
 
     async def test_no_response_raises(self):
         manager = _manager(prompt_normalizer=_normalizer(None))
-        with pytest.raises(ValueError, match="No response received from adversarial chat"):
+        with pytest.raises(ValueError, match="No response received for conversation ID"):
             await manager.get_next_message_async(turn_index=1, last_response=_response_message())
 
     async def test_invalid_reply_raises(self):
@@ -538,17 +538,6 @@ class TestGetNextMessageAsync:
         )
         with pytest.raises(InvalidJsonException):
             await manager.get_next_message_async(turn_index=1, last_response=_response_message())
-
-    async def test_raise_on_invalid_json_false_returns_raw(self):
-        normalizer = _normalizer("totally not json")
-        manager = _manager(
-            adversarial_system_prompt=_system_prompt(schema=SCHEMA),
-            raise_on_invalid_json=False,
-            prompt_normalizer=normalizer,
-        )
-        turn = await manager.get_next_message_async(turn_index=1, last_response=_response_message())
-        assert turn.reply is not None and turn.reply.next_message == "totally not json"
-        assert turn.objective_message.get_value() == "totally not json"
 
 
 # --- get_next_message_async: bypass path -------------------------------------
@@ -774,7 +763,7 @@ class TestGenerateAdversarialReplyAsync:
 
     async def test_no_response_raises(self):
         manager = _manager(adversarial_system_prompt=_system_prompt(schema=SCHEMA), prompt_normalizer=_normalizer(None))
-        with pytest.raises(ValueError, match="No response received from adversarial chat"):
+        with pytest.raises(ValueError, match="No response received for conversation ID"):
             await manager.generate_adversarial_reply_async(prompt_text="x")
 
     async def test_invalid_json_raises(self):

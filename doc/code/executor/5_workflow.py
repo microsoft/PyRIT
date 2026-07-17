@@ -10,7 +10,7 @@
 # ---
 
 # %% [markdown]
-# # 4. Workflows
+# # Workflows
 #
 # Workflows orchestrate attacks that involve more than a single target exchange — they wire together an *attack setup* step, an external *processing* step, and scoring. The canonical example is a **Cross-domain Prompt Injection Attack (XPIA)**, where an adversary plants instructions in content (a web page, a resume, an email) that a separate AI system later ingests and acts on.
 #

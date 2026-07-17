@@ -28,7 +28,6 @@ from pyrit.models import AttackSeedGroup
 from pyrit.prompt_normalizer import ConverterConfiguration
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
-from pyrit.scenario.core.scenario_target_defaults import get_default_adversarial_target
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
@@ -217,7 +216,8 @@ class MatrixAtomicAttackBuilder:
     ``build`` with the per-run grid. The builder owns:
 
     - seed-technique compatibility filtering (``AttackSeedGroup.filter_compatible``),
-    - adversarial-target resolution and the ``factory.create(...)`` call,
+    - the ``factory.create(...)`` call, forwarding an adversarial target when the
+      adversarial-target axis is active,
     - ``AtomicAttack`` construction with naming and display-group stamping, and
     - optional baseline emission using the same resolved seed groups.
 
@@ -283,9 +283,8 @@ class MatrixAtomicAttackBuilder:
                 ``(name, instance)`` pairs adding an adversarial-target axis. When set,
                 each technique is swept across every target and the target instance is
                 forwarded to ``factory.create(adversarial_chat=...)``. When ``None``, the
-                axis is collapsed and the builder carries each factory's baked
-                or lazily resolved adversarial target into both the technique and
-                its ``AtomicAttack``.
+                axis is collapsed and each factory uses its own (possibly lazy)
+                adversarial target.
             name_fn (Callable[[MatrixCombo], str] | None): Builds each ``atomic_attack_name``.
                 Defaults to ``"{technique}_{dataset}"`` (or ``"{technique}__{target}_{dataset}"``
                 when an adversarial-target axis is active).
@@ -328,27 +327,13 @@ class MatrixAtomicAttackBuilder:
                     if compatible_groups is None:
                         continue
 
-                    resolved_adversarial_chat = (
-                        target_instance if target_instance is not None else factory.adversarial_chat
+                    create_adversarial = {"adversarial_chat": target_instance} if target_instance is not None else {}
+                    attack_technique = factory.create(
+                        objective_target=self._objective_target,
+                        attack_scoring_config=scoring_config,
+                        extra_request_converters=extra_request_converters,
+                        **create_adversarial,
                     )
-                    create_adversarial_chat = target_instance
-                    if resolved_adversarial_chat is None and factory.uses_adversarial:
-                        resolved_adversarial_chat = get_default_adversarial_target()
-                        create_adversarial_chat = resolved_adversarial_chat
-
-                    if create_adversarial_chat is not None:
-                        attack_technique = factory.create(
-                            objective_target=self._objective_target,
-                            attack_scoring_config=scoring_config,
-                            adversarial_chat=create_adversarial_chat,
-                            extra_request_converters=extra_request_converters,
-                        )
-                    else:
-                        attack_technique = factory.create(
-                            objective_target=self._objective_target,
-                            attack_scoring_config=scoring_config,
-                            extra_request_converters=extra_request_converters,
-                        )
 
                     combo = MatrixCombo(
                         technique_name=technique_name,
@@ -360,7 +345,9 @@ class MatrixAtomicAttackBuilder:
                             atomic_attack_name=name_fn(combo),
                             attack_technique=attack_technique,
                             seed_groups=compatible_groups,
-                            adversarial_chat=resolved_adversarial_chat,
+                            adversarial_chat=(
+                                target_instance if target_instance is not None else factory.resolve_adversarial_chat()
+                            ),
                             objective_scorer=cast("TrueFalseScorer", self._objective_scorer),
                             memory_labels=self._memory_labels,
                             display_group=display_group_fn(combo),

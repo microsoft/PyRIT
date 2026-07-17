@@ -376,7 +376,6 @@ class Scorer(Identifiable, abc.ABC):
             converted_value_data_type="text",
             conversation_id=piece.conversation_id,
             sequence=piece.sequence,
-            labels=piece.labels,
             prompt_metadata=piece.prompt_metadata,
             converter_identifiers=list(piece.converter_identifiers),  # type: ignore[arg-type]
             response_error="none",

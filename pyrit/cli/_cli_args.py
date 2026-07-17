@@ -14,7 +14,6 @@ argument parsing before the full runtime is initialised.
 from __future__ import annotations
 
 import argparse
-import copy
 import dataclasses
 import inspect
 import json
@@ -33,7 +32,6 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from pyrit.models.parameter import Parameter
-    from pyrit.setup.configuration_loader import ScenarioConfig
 
 # ---------------------------------------------------------------------------
 # Database type constants
@@ -788,43 +786,3 @@ def add_common_arguments(parser: argparse.ArgumentParser) -> None:
         default=logging.WARNING,
         help="Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL) (default: WARNING)",
     )
-
-
-# Module-level logger (stdlib only — no heavy deps)
-_logger = logging.getLogger(__name__)
-
-
-def merge_config_scenario_args(
-    *,
-    config_scenario: ScenarioConfig | None,
-    effective_scenario_name: str,
-    cli_args: dict[str, Any],
-) -> dict[str, Any]:
-    """
-    Merge config-file scenario args with CLI scenario args (CLI wins per-key).
-
-    When ``config_scenario.name`` does not match ``effective_scenario_name``, the
-    config args are skipped with a warning so users are not silently surprised.
-    Mutable values are deep-copied so they don't leak across runs.
-
-    Args:
-        config_scenario (ScenarioConfig | None): The ``scenario:`` block from
-            the layered config, or ``None`` when not configured.
-        effective_scenario_name (str): The scenario about to run (CLI wins).
-        cli_args (dict[str, Any]): Scenario args supplied on the CLI.
-
-    Returns:
-        dict[str, Any]: The merged scenario-args dict to pass to ``set_params_from_args``.
-    """
-    merged: dict[str, Any] = {}
-    if config_scenario and config_scenario.args:
-        if config_scenario.name == effective_scenario_name:
-            merged.update(copy.deepcopy(config_scenario.args))
-        else:
-            _logger.warning(
-                "Config args for scenario '%s' not applied while running '%s'.",
-                config_scenario.name,
-                effective_scenario_name,
-            )
-    merged.update(cli_args)
-    return merged

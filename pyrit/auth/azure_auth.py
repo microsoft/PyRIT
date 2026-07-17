@@ -170,61 +170,6 @@ class AsyncTokenProviderCredential:
         await self.close()
 
 
-class AzureAsyncTokenProvider:
-    """Managed async bearer-token provider backed by an Azure credential."""
-
-    def __init__(self, *, scope: str) -> None:
-        """
-        Initialize the provider.
-
-        Args:
-            scope: Azure resource scope used to request bearer tokens.
-        """
-        self._credential = AsyncDefaultAzureCredential()
-        self._token_provider = get_async_bearer_token_provider(self._credential, scope)
-        self._consumer_count = 0
-        self._closed = False
-
-    async def __call__(self) -> str:
-        """
-        Return a bearer token.
-
-        Returns:
-            The current bearer token.
-
-        Raises:
-            RuntimeError: If the provider has already been closed.
-        """
-        if self._closed:
-            raise RuntimeError("Azure async token provider is closed")
-        return str(await self._token_provider())
-
-    def acquire(self) -> None:
-        """
-        Register a consumer that owns this provider.
-
-        Raises:
-            RuntimeError: If the provider has already been closed.
-        """
-        if self._closed:
-            raise RuntimeError("Azure async token provider is closed")
-        self._consumer_count += 1
-
-    async def release_async(self) -> None:
-        """Release a consumer and close the credential after the final release."""
-        if self._consumer_count == 0:
-            return
-        self._consumer_count -= 1
-        if self._consumer_count == 0:
-            await self.close_async()
-
-    async def close_async(self) -> None:
-        """Close the underlying Azure credential."""
-        if not self._closed:
-            await self._credential.close()
-            self._closed = True
-
-
 def ensure_async_token_provider(
     api_key: str | Callable[[], str | Awaitable[str]] | None,
 ) -> str | Callable[[], Awaitable[str]] | None:
@@ -430,7 +375,7 @@ def get_azure_token_provider(scope: str) -> Callable[[], str]:
         raise
 
 
-def get_azure_async_token_provider(scope: str) -> AzureAsyncTokenProvider:
+def get_azure_async_token_provider(scope: str) -> Callable[[], Awaitable[str]]:
     """
     Get an asynchronous Azure token provider using AsyncDefaultAzureCredential.
 
@@ -441,14 +386,14 @@ def get_azure_async_token_provider(scope: str) -> AzureAsyncTokenProvider:
         scope (str): The Azure token scope (e.g., 'https://cognitiveservices.azure.com/.default').
 
     Returns:
-        Managed async callable that returns bearer tokens.
+        Async callable that returns bearer tokens.
 
     Example:
         >>> token_provider = get_azure_async_token_provider('https://cognitiveservices.azure.com/.default')
         >>> token = await token_provider()  # Get current token (in async context)
     """
     try:
-        return AzureAsyncTokenProvider(scope=scope)
+        return get_async_bearer_token_provider(AsyncDefaultAzureCredential(), scope)
     except Exception as e:
         logger.error(f"Failed to obtain async token provider for '{scope}': {e}")
         raise
@@ -474,7 +419,7 @@ def get_default_azure_scope(endpoint: str) -> str:
     return "https://cognitiveservices.azure.com/.default"
 
 
-def get_azure_openai_auth(endpoint: str) -> AzureAsyncTokenProvider:
+def get_azure_openai_auth(endpoint: str) -> Callable[[], Awaitable[str]]:
     """
     Get an async Azure token provider for OpenAI endpoints.
 

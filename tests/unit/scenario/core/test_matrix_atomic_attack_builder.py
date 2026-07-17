@@ -34,13 +34,7 @@ from pyrit.scenario.core.scenario_context import ScenarioContext
 from pyrit.score import TrueFalseScorer
 
 
-def _mock_factory(
-    *,
-    name: str,
-    seed_technique=None,
-    adversarial_chat=None,
-    uses_adversarial: bool = False,
-) -> MagicMock:
+def _mock_factory(*, name: str, seed_technique=None, adversarial_chat=None) -> MagicMock:
     """Build a controllable ``AttackTechniqueFactory`` stand-in.
 
     ``create`` returns a fresh sentinel ``AttackTechnique`` so callers can assert
@@ -50,7 +44,10 @@ def _mock_factory(
     factory.name = name
     factory.seed_technique = seed_technique
     factory.adversarial_chat = adversarial_chat
-    factory.uses_adversarial = uses_adversarial
+    # Mirror the real factory: with no simulated-conversation seed, resolution returns
+    # whatever adversarial_chat was baked (possibly None). Tests that exercise the
+    # simulated-conversation lazy path override this return value explicitly.
+    factory.resolve_adversarial_chat.return_value = adversarial_chat
     factory.create.return_value = MagicMock(name=f"{name}_technique")
     return factory
 
@@ -177,21 +174,19 @@ class TestMatrixAdversarialForwarding:
         assert "adversarial_chat" not in factory.create.call_args.kwargs
         assert result[0]._adversarial_chat is baked
 
-    def test_no_target_axis_resolves_lazy_adversarial_chat(self):
+    def test_no_target_axis_stamps_factory_resolved_adversarial_chat(self):
+        # A simulated-conversation technique with no baked adversarial_chat resolves the
+        # default lazily via factory.resolve_adversarial_chat(); the builder must stamp that
+        # onto the AtomicAttack so seed-group expansion has an adversarial chat to use.
         builder = _builder()
         resolved = MagicMock(spec=PromptTarget)
-        factory = _mock_factory(name="tech", uses_adversarial=True)
-        with patch(
-            "pyrit.scenario.core.matrix_atomic_attack_builder.get_default_adversarial_target",
-            return_value=resolved,
-        ) as mock_default:
-            result = builder.build(
-                technique_factories={"tech": factory},
-                dataset_groups={"ds": [_seed_group(objective="o1")]},
-            )
-
-        mock_default.assert_called_once_with()
-        assert factory.create.call_args.kwargs["adversarial_chat"] is resolved
+        factory = _mock_factory(name="tech")
+        factory.resolve_adversarial_chat.return_value = resolved
+        result = builder.build(
+            technique_factories={"tech": factory},
+            dataset_groups={"ds": [_seed_group(objective="o1")]},
+        )
+        assert "adversarial_chat" not in factory.create.call_args.kwargs
         assert result[0]._adversarial_chat is resolved
 
 

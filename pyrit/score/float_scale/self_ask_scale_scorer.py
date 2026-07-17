@@ -187,7 +187,7 @@ class SelfAskScaleScorer(FloatScaleScorer):
                 "system_prompt_template": self._system_prompt,
                 "user_prompt_template": "objective: {objective}\nresponse: {response}",
                 "scale": self._scale.model_dump(exclude_none=True),
-                "response_json_schema": self._response_handler.response_schema,
+                "response_json_schema": self._response_handler.json_response_config.json_schema,
             },
             prompt_target=self._prompt_target.get_identifier(),
         )

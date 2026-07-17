@@ -14,8 +14,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from unit.mocks import get_mock_target_identifier
 
-from pyrit.models import COMMON_JSON_SCHEMAS, Message, MessagePiece
-from pyrit.models.json_schema_definition import JSON_SCHEMA_METADATA_KEY
+from pyrit.models import COMMON_JSON_SCHEMAS, JSON_SCHEMA_METADATA_KEY, Message, MessagePiece
 from pyrit.score import (
     ContentClassifier,
     ContentClassifierPaths,
@@ -78,12 +77,12 @@ def _loaded_schema(scorer):
     """Return the response schema regardless of where the scorer stores it.
 
     The composition-migrated true/false scorer keeps it on its response handler
-    (``_response_handler.response_schema``); the other, not-yet-migrated scorers still expose
-    ``_response_json_schema`` directly.
+    (``_response_handler.json_response_config.json_schema``); the other, not-yet-migrated scorers
+    still expose ``_response_json_schema`` directly.
     """
     handler = getattr(scorer, "_response_handler", None)
     if handler is not None:
-        return handler.response_schema
+        return handler.json_response_config.json_schema
     return scorer._response_json_schema
 
 

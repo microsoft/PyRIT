@@ -472,7 +472,6 @@ class RealtimeTarget(OpenAITarget):
             except Exception as e:
                 logger.warning(f"Error closing realtime client: {e}")
             self._realtime_client = None
-        await super()._cleanup_target_async()
 
     async def cleanup_conversation_async(self, conversation_id: str) -> None:
         """

@@ -9,7 +9,7 @@
 # ---
 
 # %% [markdown]
-# # Round Robin Target
+# # Round Robin Target - optional
 #
 # The `RoundRobinTarget` distributes requests across multiple inner targets using weighted round-robin
 # selection. This is useful for load-balancing across multiple deployments of the same model (e.g.,

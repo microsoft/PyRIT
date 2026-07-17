@@ -9,7 +9,7 @@
 # ---
 
 # %% [markdown]
-# # 4. OpenAI Video Target
+# # OpenAI Video Target
 #
 # `OpenAIVideoTarget` supports three modes:
 # - **Text-to-video**: Generate a video from a text prompt.

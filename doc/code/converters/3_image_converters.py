@@ -9,7 +9,7 @@
 # ---
 
 # %% [markdown]
-# # 3. Image Converters
+# # Image Converters
 #
 # Image converters enable transformations between text and images, as well as image-to-image modifications. These converters support various use cases from adding text overlays to sophisticated visual attacks.
 #

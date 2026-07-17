@@ -2,7 +2,6 @@
 # Licensed under the MIT license.
 
 import asyncio
-import sys
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Literal
@@ -42,12 +41,7 @@ class StdoutSink(Sink):
         Args:
             data (str): The text to print.
         """
-        encoding = sys.stdout.encoding or "utf-8"
-        try:
-            data.encode(encoding)
-        except (LookupError, UnicodeEncodeError):
-            data = data.encode(encoding, errors="replace").decode(encoding)
-        sys.stdout.write(data)
+        print(data, end="")
 
 
 class FileSink(Sink):

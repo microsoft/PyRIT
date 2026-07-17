@@ -3,10 +3,9 @@
 
 from __future__ import annotations
 
-import asyncio
 import base64
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from azure.ai.contentsafety.aio import ContentSafetyClient
 from azure.ai.contentsafety.models import (
@@ -19,12 +18,7 @@ from azure.ai.contentsafety.models import (
 )
 from azure.core.credentials import AzureKeyCredential
 
-from pyrit.auth import (
-    AsyncTokenProviderCredential,
-    AzureAsyncTokenProvider,
-    ensure_async_token_provider,
-    get_azure_async_token_provider,
-)
+from pyrit.auth import AsyncTokenProviderCredential, ensure_async_token_provider, get_azure_async_token_provider
 from pyrit.common import default_values
 from pyrit.memory import DataTypeSerializer, data_serializer_factory
 from pyrit.models import ComponentIdentifier, Message, MessagePiece, Score
@@ -146,9 +140,6 @@ class AzureContentFilterScorer(FloatScaleScorer):
             )
 
         # Ensure api_key is async-compatible (wrap sync token providers if needed)
-        self._managed_token_provider = (
-            resolved_api_key if isinstance(resolved_api_key, AzureAsyncTokenProvider) else None
-        )
         self._api_key = ensure_async_token_provider(resolved_api_key)
 
         # Create ContentSafetyClient with appropriate credential
@@ -164,23 +155,8 @@ class AzureContentFilterScorer(FloatScaleScorer):
                 self._azure_cf_client = ContentSafetyClient(self._endpoint, AzureKeyCredential(self._api_key))
         else:
             raise ValueError("Please provide the Azure Content Safety endpoint")
-        if self._managed_token_provider:
-            self._managed_token_provider.acquire()
-        self._is_closed = False
 
         super().__init__(validator=validator or self._DEFAULT_VALIDATOR)
-
-    async def cleanup_scorer_async(self) -> None:
-        """Close the Content Safety client and managed Azure token provider."""
-        if self._is_closed:
-            return
-
-        cleanup_tasks: list[Awaitable[Any]] = [self._azure_cf_client.close()]
-        if self._managed_token_provider:
-            cleanup_tasks.append(self._managed_token_provider.release_async())
-            self._managed_token_provider = None
-        await asyncio.gather(*cleanup_tasks)
-        self._is_closed = True
 
     @property
     def _category_values(self) -> list[str]:

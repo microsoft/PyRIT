@@ -11,6 +11,7 @@ from pyrit.common.path import HARM_DEFINITION_PATH, SCORER_LIKERT_PATH
 from pyrit.exceptions import InvalidJsonException
 from pyrit.models import (
     ComponentIdentifier,
+    JsonResponseConfig,
     JsonSchemaDefinition,
     MessagePiece,
     Score,
@@ -209,14 +210,9 @@ class _LikertScaleResponseHandler(ResponseHandler):
         self._score_values = frozenset(entry.score_value for entry in likert_scale.entries)
 
     @property
-    def response_format(self) -> str | None:
-        """The wrapped handler's response-format hint."""
-        return self._response_handler.response_format
-
-    @property
-    def response_schema(self) -> JsonSchemaDefinition | None:
-        """The wrapped handler's response schema."""
-        return self._response_handler.response_schema
+    def json_response_config(self) -> JsonResponseConfig:
+        """The wrapped handler's JSON-response request."""
+        return self._response_handler.json_response_config
 
     def parse(
         self,
@@ -382,7 +378,7 @@ class SelfAskLikertScorer(FloatScaleScorer):
             params={
                 "system_prompt_template": self._system_prompt,
                 "likert_scale": self._likert_scale.model_dump(),
-                "response_json_schema": self._response_handler.response_schema,
+                "response_json_schema": self._response_handler.json_response_config.json_schema,
             },
             prompt_target=self._prompt_target.get_identifier(),
         )

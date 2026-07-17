@@ -60,6 +60,13 @@ from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.true_false.decoding_scorer import DecodingScorer
 from pyrit.score.true_false.float_scale_threshold_scorer import FloatScaleThresholdScorer
 from pyrit.score.true_false.gandalf_scorer import GandalfScorer
+from pyrit.score.true_false.llamaguard_parser import LLAMAGUARD_3_CATEGORY_CODES, parse_llamaguard_response
+from pyrit.score.true_false.llamaguard_policy import LlamaGuardCategory, LlamaGuardPolicy
+from pyrit.score.true_false.llamaguard_scorer import (
+    LlamaGuardMessageRole,
+    LlamaGuardScorer,
+    render_llamaguard_prompt,
+)
 from pyrit.score.true_false.prompt_shield_scorer import PromptShieldScorer
 from pyrit.score.true_false.question_answer_scorer import QuestionAnswerScorer
 from pyrit.score.true_false.regex.anthrax_keyword_scorer import AnthraxKeywordScorer
@@ -180,6 +187,11 @@ __all__ = [
     "LikertScale",
     "LikertScaleEntry",
     "LikertScalePaths",
+    "LLAMAGUARD_3_CATEGORY_CODES",
+    "LlamaGuardCategory",
+    "LlamaGuardMessageRole",
+    "LlamaGuardPolicy",
+    "LlamaGuardScorer",
     "MarkdownInjectionScorer",
     "MethKeywordScorer",
     "MetricsType",
@@ -190,6 +202,7 @@ __all__ = [
     "ObjectiveScorerEvaluator",
     "ObjectiveScorerMetrics",
     "OpenRedirectOutputScorer",
+    "parse_llamaguard_response",
     "PathTraversalOutputScorer",
     "PlagiarismMetric",
     "PlagiarismScorer",
@@ -199,6 +212,7 @@ __all__ = [
     "RegistryUpdateBehavior",
     "render_category_system_prompt",
     "render_insecure_code_system_prompt",
+    "render_llamaguard_prompt",
     "render_likert_system_prompt",
     "render_scale_system_prompt",
     "render_true_false_system_prompt",

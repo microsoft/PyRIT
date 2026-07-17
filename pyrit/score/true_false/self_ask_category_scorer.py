@@ -16,6 +16,7 @@ from pyrit.common.path import SCORER_CONTENT_CLASSIFIERS_PATH
 from pyrit.exceptions import InvalidJsonException
 from pyrit.models import (
     ComponentIdentifier,
+    JsonResponseConfig,
     JsonSchemaDefinition,
     MessagePiece,
     Score,
@@ -144,14 +145,9 @@ class _ContentClassifierResponseHandler(ResponseHandler):
         self._fallback_category = content_classifier.no_category_found
 
     @property
-    def response_format(self) -> str | None:
-        """The wrapped handler's response-format hint."""
-        return self._response_handler.response_format
-
-    @property
-    def response_schema(self) -> JsonSchemaDefinition | None:
-        """The wrapped handler's response schema."""
-        return self._response_handler.response_schema
+    def json_response_config(self) -> JsonResponseConfig:
+        """The wrapped handler's JSON-response request."""
+        return self._response_handler.json_response_config
 
     def parse(
         self,
@@ -329,7 +325,7 @@ class SelfAskCategoryScorer(TrueFalseScorer):
             params={
                 "system_prompt_template": self._system_prompt,
                 "content_classifier": self._content_classifier.model_dump(),
-                "response_json_schema": self._response_handler.response_schema,
+                "response_json_schema": self._response_handler.json_response_config.json_schema,
             },
             score_aggregator=self._score_aggregator.__name__,  # type: ignore[ty:unresolved-attribute]
             prompt_target=self._prompt_target.get_identifier(),

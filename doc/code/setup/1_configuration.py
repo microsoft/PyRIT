@@ -10,7 +10,7 @@
 # ---
 
 # %% [markdown]
-# # 1. Configuration
+# # Configuration
 #
 # Before running PyRIT, you need to call the `initialize_pyrit_async` function which will set up your configuration.
 #
