@@ -8,12 +8,12 @@ from pyrit.models import Message, MessagePiece
 
 class GenericSystemSquashNormalizer(MessageListNormalizer[Message]):
     """
-    Normalizer that combines system messages with the first user message using generic instruction tags.
+    Normalizer that combines system messages with the following user message using generic instruction tags.
     """
 
     async def normalize_async(self, messages: list[Message]) -> list[Message]:
         """
-        Return messages with all system messages combined into the first user message.
+        Return messages with each system message combined into the following user message.
 
         The format uses generic instruction tags:
         ### Instructions ###
@@ -25,7 +25,7 @@ class GenericSystemSquashNormalizer(MessageListNormalizer[Message]):
             messages: The list of messages to normalize.
 
         Returns:
-            Messages with system instructions squashed into the first user message.
+            Messages with system instructions squashed into the following user message.
 
         Raises:
             ValueError: If the messages list is empty.
@@ -37,33 +37,82 @@ class GenericSystemSquashNormalizer(MessageListNormalizer[Message]):
         if not system_messages:
             return list(messages)
 
-        system_content = "\n\n".join(
-            piece.converted_value for message in system_messages for piece in message.message_pieces
-        )
-        non_system_messages = [message for message in messages if message.api_role != "system"]
+        system_messages_by_user_index: dict[int, list[Message]] = {}
+        attached_system_indexes: set[int] = set()
+        next_user_index: int | None = None
+        for index in range(len(messages) - 1, -1, -1):
+            message = messages[index]
+            if message.api_role == "user":
+                next_user_index = index
+            elif message.api_role == "system" and next_user_index is not None:
+                system_messages_by_user_index.setdefault(next_user_index, []).insert(0, message)
+                attached_system_indexes.add(index)
 
-        if not non_system_messages:
-            return [
-                build_squashed_user_message(
-                    new_message_content=system_content,
-                    source_messages=system_messages,
+        result: list[Message] = []
+        index = 0
+        while index < len(messages):
+            message = messages[index]
+            if message.api_role == "system":
+                if index in attached_system_indexes:
+                    index += 1
+                    continue
+
+                orphan_system_messages = [message]
+                index += 1
+                while index < len(messages) and messages[index].api_role == "system":
+                    orphan_system_messages.append(messages[index])
+                    index += 1
+                result.append(
+                    build_squashed_user_message(
+                        new_message_content=self._get_system_content(orphan_system_messages),
+                        source_messages=orphan_system_messages,
+                    )
                 )
-            ]
+                continue
 
-        user_message_index = next(
-            (i for i, message in enumerate(non_system_messages) if message.api_role == "user"),
-            -1,
-        )
-        if user_message_index == -1:
-            return [
-                build_squashed_user_message(
-                    new_message_content=system_content,
-                    source_messages=system_messages,
+            if message.api_role == "user" and index in system_messages_by_user_index:
+                result.append(
+                    self._squash_system_messages_into_user(
+                        system_messages=system_messages_by_user_index[index],
+                        user_message=message,
+                    )
                 )
-            ] + non_system_messages
+            else:
+                result.append(message)
+            index += 1
 
-        # Combine system with the first user message, preserving non-text pieces (e.g. images) and their order.
-        user_message = non_system_messages[user_message_index]
+        return result
+
+    @staticmethod
+    def _get_system_content(system_messages: list[Message]) -> str:
+        """
+        Combine system-message pieces in message order.
+
+        Args:
+            system_messages: The system messages to combine.
+
+        Returns:
+            The combined system-message content.
+        """
+        return "\n\n".join(piece.converted_value for message in system_messages for piece in message.message_pieces)
+
+    def _squash_system_messages_into_user(
+        self,
+        *,
+        system_messages: list[Message],
+        user_message: Message,
+    ) -> Message:
+        """
+        Merge system instructions into a user message while preserving its pieces.
+
+        Args:
+            system_messages: The system messages to merge.
+            user_message: The following user message.
+
+        Returns:
+            The user message with the system instructions applied.
+        """
+        system_content = self._get_system_content(system_messages)
         # Propagate prompt_metadata from the user message's first piece so downstream normalizers
         # (e.g. JsonSchemaNormalizer) still see request-level metadata after squashing.
         propagated_metadata = dict(user_message.message_pieces[0].prompt_metadata)
@@ -98,10 +147,4 @@ class GenericSystemSquashNormalizer(MessageListNormalizer[Message]):
                 + list(user_message.message_pieces[text_piece_index + 1 :])
             )
 
-        squashed_message = Message(message_pieces=squashed_pieces)
-
-        return (
-            non_system_messages[:user_message_index]
-            + [squashed_message]
-            + non_system_messages[user_message_index + 1 :]
-        )
+        return Message(message_pieces=squashed_pieces)

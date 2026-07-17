@@ -41,18 +41,34 @@ async def test_generic_squash_multiple_system_messages_in_order():
     assert result[0].get_value() == "### Instructions ###\n\nPolicy\n\nPersona\n\n######\n\nQuestion"
 
 
-async def test_generic_squash_removes_system_messages_after_non_system_messages():
+async def test_generic_squash_applies_system_messages_to_following_user():
     messages = [
-        _make_message("assistant", "Prior response"),
+        _make_message("user", "First question"),
         _make_message("system", "Policy"),
-        _make_message("user", "Question"),
-        _make_message("system", "Persona"),
+        _make_message("user", "Second question"),
     ]
 
     result = await GenericSystemSquashNormalizer().normalize_async(messages)
 
-    assert [message.api_role for message in result] == ["assistant", "user"]
-    assert result[1].get_value() == "### Instructions ###\n\nPolicy\n\nPersona\n\n######\n\nQuestion"
+    assert [message.api_role for message in result] == ["user", "user"]
+    assert result[0].get_value() == "First question"
+    assert result[1].get_value() == "### Instructions ###\n\nPolicy\n\n######\n\nSecond question"
+
+
+async def test_generic_squash_converts_orphan_system_messages_in_place():
+    messages = [
+        _make_message("user", "Question"),
+        _make_message("system", "Policy"),
+        _make_message("system", "Persona"),
+        _make_message("assistant", "Prior response"),
+    ]
+
+    result = await GenericSystemSquashNormalizer().normalize_async(messages)
+
+    assert [message.api_role for message in result] == ["user", "user", "assistant"]
+    assert result[0].get_value() == "Question"
+    assert result[1].get_value() == "Policy\n\nPersona"
+    assert result[2].get_value() == "Prior response"
 
 
 async def test_generic_squash_system_message_empty_list():
