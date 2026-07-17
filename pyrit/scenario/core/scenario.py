@@ -709,6 +709,7 @@ class Scenario(ABC):
         the **full, deterministic** dataset (sampling is bypassed on the resume branch of
         ``initialize_async``), so restricting each atomic attack's seed_groups to the
         persisted set here reconstructs exactly the objectives the first run committed to.
+        Per-objective atomic attacks outside that subset are removed before scheduling.
         If any persisted hash is no longer present in the dataset, refuse to resume — that
         now signals the dataset itself genuinely changed, not a random resample drift.
 
@@ -726,8 +727,11 @@ class Scenario(ABC):
 
         persisted_hashes: set[str] = set(persisted)
         retained: set[str] = set()
+        retained_attacks: list[AtomicAttack] = []
         for aa in self._atomic_attacks:
             retained |= aa.keep_seed_groups_with_hashes(hashes=persisted_hashes)
+            if aa.seed_groups:
+                retained_attacks.append(aa)
 
         missing = persisted_hashes - retained
         if missing:
@@ -738,6 +742,8 @@ class Scenario(ABC):
                 f"(missing examples: {', '.join(h[:12] + '...' for h in sample)}). "
                 f"Either restore the missing objectives or drop scenario_result_id to start a new scenario."
             )
+
+        self._atomic_attacks = retained_attacks
 
     def _build_baseline_atomic_attack(self, *, seed_groups: list[AttackSeedGroup]) -> AtomicAttack:
         """
@@ -946,8 +952,8 @@ class Scenario(ABC):
         reuses the same population for every atomic attack and the baseline — so sampling
         under ``max_dataset_size`` stays consistent across all of them.
 
-        Override to inject seeds from an alternate source or to filter the resolved groups
-        before attacks are built.
+        Override to inject seeds from an alternate source (e.g. deprecated ``objectives``)
+        or to filter the resolved groups before attacks are built.
 
         Args:
             apply_sampling (bool): When True (default), apply ``max_dataset_size`` sampling.

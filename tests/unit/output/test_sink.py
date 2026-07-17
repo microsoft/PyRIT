@@ -31,6 +31,17 @@ async def test_stdout_sink_no_trailing_newline(capsys):
     assert captured.out == "line1line2"
 
 
+async def test_stdout_sink_replaces_unsupported_unicode():
+    stdout = MagicMock()
+    stdout.encoding = "cp1252"
+    sink = StdoutSink()
+
+    with patch("pyrit.output.sink.sys.stdout", stdout):
+        await sink.write_async("📊─")
+
+    stdout.write.assert_called_once_with("??")
+
+
 async def test_file_sink_writes_to_file():
     with tempfile.NamedTemporaryFile(delete=False, suffix=".txt") as f:
         path = Path(f.name)
