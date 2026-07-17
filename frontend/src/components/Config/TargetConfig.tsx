@@ -73,7 +73,7 @@ export default function TargetConfig({ activeTarget, onSetActiveTarget }: Target
   }, [fetchTargets])
 
   return (
-    <div className={styles.root}>
+    <div className={styles.root} data-testid="target-config">
       <div className={styles.header}>
         <div className={styles.headerLeft}>
           <Text size={600} weight="semibold">Target Configuration</Text>
@@ -83,6 +83,7 @@ export default function TargetConfig({ activeTarget, onSetActiveTarget }: Target
         </div>
         <div className={styles.headerActions}>
           <Button
+            className={styles.headerAction}
             appearance="subtle"
             icon={<ArrowSyncRegular />}
             onClick={fetchTargets}
@@ -91,6 +92,7 @@ export default function TargetConfig({ activeTarget, onSetActiveTarget }: Target
             Refresh
           </Button>
           <Button
+            className={styles.headerAction}
             appearance="primary"
             icon={<AddRegular />}
             onClick={() => setDialogOpen(true)}
