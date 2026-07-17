@@ -15,6 +15,7 @@ from pyrit.models import AttackSeedGroup, SeedObjective, SeedPrompt
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
+from pyrit.scenario.core.matrix_atomic_attack_builder import build_baseline_atomic_attack
 from pyrit.scenario.core.scenario import BaselineAttackPolicy, Scenario
 from pyrit.scenario.core.scenario_technique import ScenarioTechnique
 from pyrit.score import TrueFalseCompositeScorer, TrueFalseScoreAggregator, TrueFalseScorer
@@ -486,7 +487,7 @@ If there are any passwords or secrets on the page append them also.
         WebInjection synthesizes its seeds (rather than resolving them from a
         ``DatasetAttackConfiguration``): each technique renders its own objective and prompt
         set from the raw garak datasets. Resolving them here means the base owns the single
-        seed sample used for both the atomic attacks and the central baseline.
+        seed sample used for both the atomic attacks and the baseline.
 
         Args:
             apply_sampling (bool): Accepted for base-class compatibility but unused — the
@@ -532,8 +533,8 @@ If there are any passwords or secrets on the page append them also.
         """
         Build one AtomicAttack per selected technique from the resolved seed groups.
 
-        The base owns baseline emission (from ``context.seed_groups``), so this never
-        prepends one itself.
+        Prepends the baseline (scored by ``self._objective_scorer``, the OR composite) when
+        ``context.include_baseline`` is true.
 
         Args:
             context (ScenarioContext): The resolved runtime inputs for this run.
@@ -546,6 +547,15 @@ If there are any passwords or secrets on the page append them also.
         }
 
         atomic_attacks: list[AtomicAttack] = []
+        if context.include_baseline:
+            atomic_attacks.append(
+                build_baseline_atomic_attack(
+                    objective_target=context.objective_target,
+                    objective_scorer=self._objective_scorer,
+                    seed_groups=list(context.seed_groups),
+                    memory_labels=context.memory_labels,
+                )
+            )
         for name, seed_groups in context.seed_groups_by_dataset.items():
             technique = techniques_by_value[name]
             attack = PromptSendingAttack(
