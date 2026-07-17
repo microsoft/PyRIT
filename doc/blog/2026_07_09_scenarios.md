@@ -119,10 +119,10 @@ flowchart TB
     AT -->|"registered (with tags)"| Reg["AttackTechniqueRegistry"]
     Reg -->|"TagQuery"| Strat["ScenarioTechnique"]
 
-    Strat -->|"--techniques"| Sc["Scenario<br/>(e.g. RapidResponse)"]
-    DS[("scenario datasets")] --> Sc
+    Strat -->|"--techniques"| Sc["Scenario (e.g. RapidResponse)"]
+    DS[(scenario datasets)] --> Sc
 
-    Sc -->|"technique × dataset"| AA["AtomicAttack"]
+    Sc -->|"technique x dataset"| AA["AtomicAttack"]
     AA -->|"AttackExecutor"| Res["ScenarioResult"]
 ```
 
