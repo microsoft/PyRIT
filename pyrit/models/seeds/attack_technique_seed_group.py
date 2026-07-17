@@ -41,6 +41,12 @@ class AttackTechniqueSeedGroup(SeedGroup):
         value is wrapped verbatim (``is_jinja_template=False``), so any literal
         ``{{ ... }}`` in ``system_prompt`` is preserved rather than re-rendered.
 
+        The seed is placed at ``sequence=-1`` so the system framing orders ahead of any
+        user turn. Without it, merging this technique via ``AttackSeedGroup.with_technique``
+        onto a seed group that carries a user prompt at the default ``sequence=0`` would
+        raise ``Inconsistent roles found for sequence 0`` (one ``sequence`` maps to one
+        ``Message``, which requires a single role).
+
         Args:
             system_prompt (str): The system-role instruction text.
             insertion_index (int | None): Where to insert the seed when merging into a
@@ -50,7 +56,9 @@ class AttackTechniqueSeedGroup(SeedGroup):
             AttackTechniqueSeedGroup: A group with a single general-technique system seed.
         """
         return cls(
-            seeds=[SeedPrompt(value=system_prompt, data_type="text", role="system", is_general_technique=True)],
+            seeds=[
+                SeedPrompt(value=system_prompt, data_type="text", role="system", is_general_technique=True, sequence=-1)
+            ],
             insertion_index=insertion_index,
         )
 
