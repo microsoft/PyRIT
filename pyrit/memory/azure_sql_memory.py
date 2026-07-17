@@ -3,15 +3,15 @@
 
 import logging
 import struct
-from collections.abc import MutableSequence, Sequence
+from collections.abc import Sequence
 from contextlib import closing
 from datetime import datetime, timedelta, timezone
-from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from sqlalchemy import and_, create_engine, event, exists, text
 from sqlalchemy.engine.base import Engine
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.orm import InstrumentedAttribute, joinedload, sessionmaker
+from sqlalchemy.orm import InstrumentedAttribute, sessionmaker
 from sqlalchemy.orm.session import Session
 from sqlalchemy.sql.expression import ColumnElement, TextClause
 
@@ -21,8 +21,6 @@ from pyrit.common.singleton import Singleton
 from pyrit.memory.memory_interface import MemoryInterface
 from pyrit.memory.memory_models import (
     AttackResultEntry,
-    Base,
-    EmbeddingDataEntry,
     PromptMemoryEntry,
 )
 from pyrit.memory.storage import AzureBlobStorageIO
@@ -32,8 +30,6 @@ if TYPE_CHECKING:
     from azure.core.credentials import AccessToken
 
 logger = logging.getLogger(__name__)
-
-Model = TypeVar("Model")
 
 
 class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
@@ -245,12 +241,6 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
 
             # add the encoded token
             cparams["attrs_before"] = {self.SQL_COPT_SS_ACCESS_TOKEN: packed_azure_token}
-
-    def _add_embeddings_to_memory(self, *, embedding_data: Sequence[EmbeddingDataEntry]) -> None:
-        """
-        Insert embedding data into memory storage.
-        """
-        self._insert_entries(entries=embedding_data)
 
     def _get_message_pieces_memory_label_conditions(self, *, memory_labels: dict[str, str]) -> list[Any]:
         """
@@ -620,73 +610,6 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
             conditions.append(condition)
         return and_(*conditions)
 
-    def dispose_engine(self) -> None:
-        """
-        Dispose the engine and clean up resources.
-        """
-        if self.engine:
-            self.engine.dispose()
-            # During interpreter shutdown, logging handler streams may already be closed,
-            # causing the framework to print "Logging error" to stderr (GH-1520).
-            # Temporarily suppress logging errors for this teardown message.
-            previous_raise = logging.raiseExceptions
-            logging.raiseExceptions = False
-            try:
-                logger.info("Engine disposed successfully.")
-            finally:
-                logging.raiseExceptions = previous_raise
-
-    def get_all_embeddings(self) -> Sequence[EmbeddingDataEntry]:
-        """
-        Fetch all entries from the specified table and returns them as model instances.
-
-        Returns:
-            Sequence[EmbeddingDataEntry]: A sequence of EmbeddingDataEntry instances representing all stored embeddings.
-        """
-        result: Sequence[EmbeddingDataEntry] = self._query_entries(EmbeddingDataEntry)
-        return result
-
-    def _insert_entry(self, entry: Base) -> None:
-        """
-        Insert an entry into the Table.
-
-        Args:
-            entry: An instance of a SQLAlchemy model to be added to the Table.
-
-        Raises:
-            SQLAlchemyError: If the insertion fails.
-        """
-        with closing(self.get_session()) as session:
-            try:
-                session.add(entry)
-                session.commit()
-            except SQLAlchemyError as e:
-                session.rollback()
-                logger.exception(f"Error inserting entry into the table: {e}")
-                raise
-
-    # The following methods are not part of MemoryInterface, but seem
-    # common between SQLAlchemy-based implementations, regardless of engine.
-    # Perhaps we should find a way to refactor
-    def _insert_entries(self, *, entries: Sequence[Base]) -> None:
-        """
-        Insert multiple entries into the database.
-
-        Args:
-            entries (Sequence[Base]): A sequence of SQLAlchemy model instances to insert.
-
-        Raises:
-            SQLAlchemyError: If the insertion fails.
-        """
-        with closing(self.get_session()) as session:
-            try:
-                session.add_all(entries)
-                session.commit()
-            except SQLAlchemyError as e:
-                session.rollback()
-                logger.exception(f"Error inserting multiple entries into the table: {e}")
-                raise
-
     def get_session(self) -> Session:
         """
         Provide a session for database operations.
@@ -695,99 +618,3 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
             Session: A new SQLAlchemy session bound to the configured engine.
         """
         return self.SessionFactory()
-
-    def _query_entries(
-        self,
-        model_class: type[Model],
-        *,
-        conditions: Any | None = None,
-        distinct: bool = False,
-        join_scores: bool = False,
-        order_by: Any | None = None,
-        limit: int | None = None,
-    ) -> MutableSequence[Model]:
-        """
-        Fetch data from the specified table model with optional conditions.
-
-        Args:
-            model_class: The SQLAlchemy model class to query.
-            conditions: SQLAlchemy filter conditions (Optional).
-            distinct: Flag to return distinct rows (defaults to False).
-            join_scores: Flag to join the scores table with entries (defaults to False).
-            order_by: SQLAlchemy order_by clause (Optional).
-            limit (int | None): Maximum number of rows to return. Defaults to None (no limit).
-
-        Returns:
-            List of model instances representing the rows fetched from the table.
-
-        Raises:
-            SQLAlchemyError: If the query fails.
-        """
-        with closing(self.get_session()) as session:
-            try:
-                query = session.query(model_class)
-                if join_scores and model_class == PromptMemoryEntry:
-                    query = query.options(
-                        joinedload(PromptMemoryEntry.scores),
-                    )
-                elif model_class == AttackResultEntry:
-                    query = query.options(
-                        joinedload(AttackResultEntry.last_response).joinedload(PromptMemoryEntry.scores),
-                        joinedload(AttackResultEntry.last_score),
-                    )
-                if conditions is not None:
-                    query = query.filter(conditions)
-                if order_by is not None:
-                    query = query.order_by(order_by)
-                if distinct:
-                    query = query.distinct()
-                if limit is not None:
-                    query = query.limit(limit)
-                return query.all()
-            except SQLAlchemyError as e:
-                logger.exception(f"Error fetching data from table {model_class.__tablename__}: {e}")  # type: ignore[ty:unresolved-attribute]
-                raise
-
-    def _update_entries(self, *, entries: MutableSequence[Base], update_fields: dict[str, Any]) -> bool:
-        """
-        Update the given entries with the specified field values.
-
-        Args:
-            entries (Sequence[Base]): A list of SQLAlchemy model instances to be updated.
-            update_fields (dict): A dictionary of field names and their new values.
-
-        Returns:
-            bool: True if the update was successful, False otherwise.
-
-        Raises:
-            ValueError: If 'update_fields' is empty.
-            SQLAlchemyError: If the update fails.
-        """
-        if not update_fields:
-            raise ValueError("update_fields must be provided to update prompt entries.")
-        with closing(self.get_session()) as session:
-            try:
-                for entry in entries:
-                    # Load a fresh copy by primary key so we only touch the
-                    # requested fields.  Using merge() would copy ALL
-                    # attributes from the (potentially stale) detached object
-                    # and silently overwrite concurrent updates to columns
-                    # that are NOT in update_fields.
-                    entry_in_session = session.get(type(entry), entry.id)  # type: ignore[ty:unresolved-attribute]
-                    if entry_in_session is None:
-                        entry_in_session = session.merge(entry)
-                    for field, value in update_fields.items():
-                        if field in vars(entry_in_session):
-                            setattr(entry_in_session, field, value)
-                        else:
-                            session.rollback()
-                            raise ValueError(
-                                f"Field '{field}' does not exist in the table \
-                                            '{entry_in_session.__tablename__}'. Rolling back changes..."
-                            )
-                session.commit()
-                return True
-            except SQLAlchemyError as e:
-                session.rollback()
-                logger.exception(f"Error updating entries: {e}")
-                raise

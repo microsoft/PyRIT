@@ -10,7 +10,7 @@
 # ---
 
 # %% [markdown]
-# # 1. Text-to-Text Converters
+# # Text-to-Text Converters
 #
 # Text-to-text converters transform text input into modified text output. These converters are the most common type and include encoding schemes, obfuscation techniques, and LLM-based transformations.
 #

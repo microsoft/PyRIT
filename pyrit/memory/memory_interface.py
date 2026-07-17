@@ -15,7 +15,9 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal, TypeVar
 from sqlalchemy import MetaData, and_, not_, or_, select
 from sqlalchemy.engine.base import Engine
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
+from sqlalchemy.orm import joinedload
 from sqlalchemy.orm.attributes import InstrumentedAttribute, flag_modified
+from sqlalchemy.orm.session import Session
 
 if TYPE_CHECKING:
     from pyrit.memory.memory_embedding import MemoryEmbedding
@@ -311,11 +313,15 @@ class MemoryInterface(abc.ABC):
             Any: A database-specific SQLAlchemy condition.
         """
 
-    @abc.abstractmethod
     def get_all_embeddings(self) -> Sequence[EmbeddingDataEntry]:
         """
         Load all EmbeddingData from the memory storage handler.
+
+        Returns:
+            Sequence[EmbeddingDataEntry]: All stored embedding entries.
         """
+        result: Sequence[EmbeddingDataEntry] = self._query_entries(EmbeddingDataEntry)
+        return result
 
     @abc.abstractmethod
     def _init_storage_io(self) -> None:
@@ -1021,13 +1027,12 @@ class MemoryInterface(abc.ABC):
             },
         )
 
-    @abc.abstractmethod
     def _add_embeddings_to_memory(self, *, embedding_data: Sequence[EmbeddingDataEntry]) -> None:
         """
         Insert embedding data into memory storage.
         """
+        self._insert_entries(entries=embedding_data)
 
-    @abc.abstractmethod
     def _query_entries(
         self,
         model_class: type[Model],
@@ -1051,7 +1056,32 @@ class MemoryInterface(abc.ABC):
 
         Returns:
             List of model instances representing the rows fetched from the table.
+
+        Raises:
+            SQLAlchemyError: If the query fails.
         """
+        with closing(self.get_session()) as session:
+            try:
+                query = session.query(model_class)
+                if join_scores and model_class == PromptMemoryEntry:
+                    query = query.options(joinedload(PromptMemoryEntry.scores))
+                elif model_class == AttackResultEntry:
+                    query = query.options(
+                        joinedload(AttackResultEntry.last_response).joinedload(PromptMemoryEntry.scores),
+                        joinedload(AttackResultEntry.last_score),
+                    )
+                if conditions is not None:
+                    query = query.filter(conditions)
+                if order_by is not None:
+                    query = query.order_by(order_by)
+                if distinct:
+                    query = query.distinct()
+                if limit is not None:
+                    query = query.limit(limit)
+                return query.all()
+            except SQLAlchemyError as e:
+                logger.exception(f"Error fetching data from table {model_class.__tablename__}: {e}")  # type: ignore[ty:unresolved-attribute]
+                raise
 
     def _execute_batched_query(
         self,
@@ -1208,21 +1238,46 @@ class MemoryInterface(abc.ABC):
 
         return results
 
-    @abc.abstractmethod
     def _insert_entry(self, entry: Base) -> None:
         """
         Insert an entry into the Table.
 
         Args:
             entry: An instance of a SQLAlchemy model to be added to the Table.
+
+        Raises:
+            SQLAlchemyError: If the insertion fails.
         """
+        with closing(self.get_session()) as session:
+            try:
+                session.add(entry)
+                session.commit()
+            except SQLAlchemyError as e:
+                session.rollback()
+                logger.exception(f"Error inserting entry into the table: {e}")
+                raise
 
-    @abc.abstractmethod
     def _insert_entries(self, *, entries: Sequence[Base]) -> None:
-        """Insert multiple entries into the database."""
+        """
+        Insert multiple entries into the database.
+
+        Args:
+            entries (Sequence[Base]): A sequence of SQLAlchemy model instances to insert.
+
+        Raises:
+            SQLAlchemyError: If the insertion fails.
+        """
+        with closing(self.get_session()) as session:
+            try:
+                session.add_all(entries)
+                session.commit()
+            except SQLAlchemyError as e:
+                session.rollback()
+                logger.exception(f"Error inserting multiple entries into the table: {e}")
+                raise
 
     @abc.abstractmethod
-    def get_session(self) -> Any:
+    def get_session(self) -> Session:
         """
         Provide a SQLAlchemy session for transactional operations.
 
@@ -1253,7 +1308,6 @@ class MemoryInterface(abc.ABC):
                 logger.exception(f"Error updating entry in the table: {e}")
                 raise
 
-    @abc.abstractmethod
     def _update_entries(self, *, entries: MutableSequence[Base], update_fields: dict[str, Any]) -> bool:
         """
         Update the given entries with the specified field values.
@@ -1261,7 +1315,36 @@ class MemoryInterface(abc.ABC):
         Args:
             entries (Sequence[Base]): A list of SQLAlchemy model instances to be updated.
             update_fields (dict): A dictionary of field names and their new values.
+
+        Returns:
+            bool: True if the update was successful.
+
+        Raises:
+            ValueError: If update_fields is empty or contains an unknown field.
+            SQLAlchemyError: If the update fails.
         """
+        if not update_fields:
+            raise ValueError("update_fields must be provided to update prompt entries.")
+        with closing(self.get_session()) as session:
+            try:
+                for entry in entries:
+                    entry_in_session = session.get(type(entry), entry.id)  # type: ignore[ty:unresolved-attribute]
+                    if entry_in_session is None:
+                        entry_in_session = session.merge(entry)
+                    for field, value in update_fields.items():
+                        if field not in vars(entry_in_session):
+                            session.rollback()
+                            raise ValueError(
+                                f"Field '{field}' does not exist in the table '{entry_in_session.__tablename__}'. "
+                                "Rolling back changes..."
+                            )
+                        setattr(entry_in_session, field, value)
+                session.commit()
+                return True
+            except SQLAlchemyError as e:
+                session.rollback()
+                logger.exception(f"Error updating entries: {e}")
+                raise
 
     @abc.abstractmethod
     def _get_attack_result_label_condition(self, *, labels: dict[str, str | Sequence[str]]) -> Any:
@@ -1964,11 +2047,18 @@ class MemoryInterface(abc.ABC):
             raise RuntimeError("Engine is not initialized")
         reset_database(engine=self.engine)
 
-    @abc.abstractmethod
     def dispose_engine(self) -> None:
         """
         Dispose the engine and clean up resources.
         """
+        if self.engine:
+            self.engine.dispose()
+            previous_raise = logging.raiseExceptions
+            logging.raiseExceptions = False
+            try:
+                logger.info("Engine disposed successfully.")
+            finally:
+                logging.raiseExceptions = previous_raise
 
     def cleanup(self) -> None:
         """

@@ -8,7 +8,7 @@
 #       jupytext_version: 1.17.3
 # ---
 # %% [markdown]
-# # 5. Memory Labels and Advanced Memory Queries
+# # Memory Labels and Advanced Memory Queries
 #
 # This notebook covers two ways to filter and retrieve data from PyRIT's memory:
 #
