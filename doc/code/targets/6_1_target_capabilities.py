@@ -9,7 +9,7 @@
 # ---
 
 # %% [markdown]
-# # 6.1 Target Capabilities
+# # Target Capabilities
 #
 # Every `PromptTarget` carries a `TargetConfiguration` that declares what it natively supports, what to do
 # when a capability is missing, and how to adapt the conversation when adaptation is permitted. This notebook

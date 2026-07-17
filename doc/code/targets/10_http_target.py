@@ -9,7 +9,7 @@
 # ---
 
 # %% [markdown]
-# # 10. HTTP Target
+# # HTTP Target
 # This notebook shows how to interact with the HTTP Target:
 #
 #

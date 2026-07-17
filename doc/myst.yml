@@ -124,9 +124,10 @@ project:
             - file: code/targets/8_non_llm_targets.ipynb
             - file: code/targets/9_rate_limiting.ipynb
             - file: code/targets/10_http_target.ipynb
-            - file: code/targets/10_1_playwright_target.ipynb
-            - file: code/targets/10_2_playwright_target_copilot.ipynb
-            - file: code/targets/10_3_websocket_copilot_target.ipynb
+              children:
+                - file: code/targets/10_1_playwright_target.ipynb
+                - file: code/targets/10_2_playwright_target_copilot.ipynb
+                - file: code/targets/10_3_websocket_copilot_target.ipynb
             - file: code/targets/11_message_normalizer.ipynb
             - file: code/targets/open_ai_completions.ipynb
             - file: code/targets/prompt_shield_target.ipynb

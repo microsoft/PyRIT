@@ -165,29 +165,40 @@ await output_scenario_async(scenario_result)
 # %% [markdown]
 # ## Jailbreak
 #
-# Tests target resilience against template-based jailbreak attacks using various prompt injection
-# templates.
+# Tests target resilience against jailbreak templates. A run crosses three selectors: the harmful
+# objectives (**dataset**, HarmBench), the **techniques** each jailbreak is delivered through, and
+# which **jailbreaks** to run. Two deliveries are on by default: `prompt_sending` renders the
+# objective inline into the template as a request converter (target-agnostic), and
+# `jailbreak_system_prompt` sets the template as a native system prompt with the objective sent as
+# the user turn (only for targets that natively support editable history + system prompts — it is
+# skipped for incapable targets). Registry techniques like `role_play_*`, `many_shot`, and `tap` are
+# opt-in. Results are grouped by jailbreak template, and a baseline (the un-jailbroken objective) is
+# included by default so complying with the bare objective is itself visible.
 #
 # ```bash
 # pyrit_scan airt.jailbreak \
-#   --initializers target \
+#   --initializers target load_default_datasets \
 #   --target openai_chat \
-#   --techniques prompt_sending \
+#   --dataset-names harmbench \
 #   --max-dataset-size 1
 # ```
 #
-# **Available techniques:** ALL, SIMPLE, COMPLEX, PromptSending, ManyShot, SkeletonKey, RolePlay
+# **Available techniques:** ALL, DEFAULT (`prompt_sending` + `jailbreak_system_prompt`), plus registry
+# techniques (`role_play_*`, `many_shot`, `tap`, …). By default a small random sample of jailbreak
+# templates runs; pass `num_jailbreaks` (random count) or `jailbreak_names` (explicit) to widen or
+# pin the selection.
 
 # %%
 from pyrit.scenario.airt import Jailbreak, JailbreakTechnique
 
-dataset_config = DatasetAttackConfiguration(dataset_names=["airt_harms"], max_dataset_size=1)
+dataset_config = DatasetAttackConfiguration(dataset_names=["harmbench"], max_dataset_size=1)
 
 scenario = Jailbreak()
 scenario.set_params_from_args(  # type: ignore
     args={
         "objective_target": objective_target,
-        "scenario_techniques": [JailbreakTechnique.PromptSending],
+        "scenario_techniques": [JailbreakTechnique.DEFAULT],
+        "jailbreak_names": ["aim.yaml"],
         "dataset_config": dataset_config,
     }
 )
