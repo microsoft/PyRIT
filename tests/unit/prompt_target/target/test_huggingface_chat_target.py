@@ -3,6 +3,8 @@
 
 import json
 from asyncio import Task
+from collections.abc import Coroutine
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -92,9 +94,12 @@ class AwaitableTask(AsyncMock):
 
 @pytest.fixture(autouse=True)
 def mock_create_task():
+    def _close_coroutine(coroutine: Coroutine[Any, Any, None]) -> AwaitableTask:
+        coroutine.close()
+        return AwaitableTask(spec=Task)
+
     with patch("asyncio.create_task") as mock_task:
-        # Return an AwaitableTask that can be awaited
-        mock_task.return_value = AwaitableTask(spec=Task)
+        mock_task.side_effect = _close_coroutine
         yield mock_task
 
 
