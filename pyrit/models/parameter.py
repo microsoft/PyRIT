@@ -244,7 +244,10 @@ class Parameter(BaseModel):
         """
         if self.reference is not None or self.opaque:
             return raw_value
-        param_type = _unwrap_optional(self.param_type)
+        param_type = self.param_type
+        if raw_value is None and type(None) in get_args(param_type):
+            return None
+        param_type = _unwrap_optional(param_type)
         if param_type is None:
             return copy.deepcopy(raw_value)
         if get_origin(param_type) is list:

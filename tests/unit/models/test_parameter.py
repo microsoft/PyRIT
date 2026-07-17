@@ -305,6 +305,11 @@ class TestCoerceValueLists:
 class TestCoerceValuePassthrough:
     """Reference / arbitrary / None param_types pass through unchanged."""
 
+    @pytest.mark.parametrize("param_type", [int | None, _Speed | None, list[str] | None])
+    def test_optional_type_accepts_none(self, param_type: object) -> None:
+        p = Parameter(name="value", description="d", param_type=param_type)
+        assert p.coerce_value(None) is None
+
     def test_param_type_none_returns_distinct_object(self) -> None:
         raw = ["a", "b"]
         coerced = Parameter(name="opts", description="d").coerce_value(raw)
