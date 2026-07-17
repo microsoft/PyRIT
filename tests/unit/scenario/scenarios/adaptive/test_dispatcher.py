@@ -232,10 +232,10 @@ class TestBuildAttackAsync:
         execution_group = attack._child_attacks[0].seed_group
         system_prompts = [p for p in execution_group.prompts if p.role == "system"]
         assert len(system_prompts) == 1
-        assert system_prompts[0].sequence == -1
-        # System framing sorts ahead of the sequence-0 user turn.
+        # System framing is normalized to sequence 0; the base user turn shifts to 1.
+        assert system_prompts[0].sequence == 0
         assert execution_group.prompts[0].role == "system"
-        assert [p.sequence for p in execution_group.prompts] == [-1, 0]
+        assert [(p.role, p.sequence) for p in execution_group.prompts] == [("system", 0), ("user", 1)]
 
 
 @pytest.mark.usefixtures("patch_central_database")

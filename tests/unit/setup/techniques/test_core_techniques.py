@@ -53,7 +53,8 @@ class TestFlipTechnique:
         Regression for the adaptive scenario: the ``flip`` system seed used to default to
         sequence 0 and collided with a user prompt at sequence 0 (as in the ``airt_hate``
         multi-turn ``escalating_discrimination`` group), raising ``Inconsistent roles found
-        for sequence 0``.
+        for sequence 0``. The leading system seed is now normalized to sequence 0 on merge
+        and the user turn shifts to sequence 1.
         """
         factory = _flip_factory()
         base = AttackSeedGroup(
@@ -67,8 +68,10 @@ class TestFlipTechnique:
 
         system_prompts = [p for p in merged.prompts if p.role == "system"]
         assert len(system_prompts) == 1
-        assert system_prompts[0].sequence == -1
+        # The leading system seed is normalized to sequence 0; the user turn shifts to 1.
+        assert system_prompts[0].sequence == 0
         assert merged.prompts[0].role == "system"
+        assert [p.sequence for p in merged.prompts if p.role == "user"] == [1]
 
     async def test_sends_flipped_framed_objective_and_prepends_system_prompt(self):
         target = MockPromptTarget()

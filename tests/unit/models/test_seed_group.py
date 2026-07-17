@@ -619,8 +619,8 @@ class TestAttackSeedGroupWithTechnique:
         Reproduces the adaptive-scenario failure: merging the ``flip`` technique (a
         ``from_system_prompt`` system seed) onto a multi-turn objective group whose opening
         turn is a ``user`` prompt at sequence 0 raised ``Inconsistent roles found for
-        sequence 0``. The system seed is ordered at sequence -1 so it sits ahead of the
-        user turn.
+        sequence 0``. The leading system seed is normalized to sequence 0 and the existing
+        turns shift up (user 0 -> 1, assistant 1 -> 2, ...).
         """
         base = AttackSeedGroup(
             seeds=[
@@ -637,10 +637,15 @@ class TestAttackSeedGroupWithTechnique:
         merged._check_invariants()  # should not raise
         system_prompts = [p for p in merged.prompts if p.role == "system"]
         assert len(system_prompts) == 1
-        assert system_prompts[0].sequence == -1
-        # System framing sorts ahead of the sequence-0 user turn.
+        # The leading system seed is normalized to sequence 0 and the base turns shift up.
+        assert system_prompts[0].sequence == 0
         assert merged.prompts[0].role == "system"
-        assert [p.sequence for p in merged.prompts] == [-1, 0, 1, 2]
+        assert [(p.role, p.sequence) for p in merged.prompts] == [
+            ("system", 0),
+            ("user", 1),
+            ("assistant", 2),
+            ("user", 3),
+        ]
 
     def test_raises_when_technique_has_simulated_conversation_and_prompts_overlap(self):
         """Merging a technique with SeedSimulatedConversation into a group with overlapping prompts raises."""
