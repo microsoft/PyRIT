@@ -389,6 +389,24 @@ def test_print_scenario_run_progress_with_known_totals(capsys):
     assert "attacks" not in captured.out
 
 
+def test_print_scenario_run_progress_uses_ascii_for_limited_console():
+    run = _make_run(
+        status=ScenarioRunState.IN_PROGRESS,
+        total_attacks=10,
+        completed_attacks=5,
+        objective_achieved_rate=30,
+        techniques_used=["s1"],
+    )
+    stdout = MagicMock()
+    stdout.encoding = "cp1252"
+
+    with patch.object(_output.sys, "stdout", stdout):
+        _output.print_scenario_run_progress(run=run, total_techniques=2)
+
+    line = stdout.write.call_args.args[0]
+    assert "[###############---------------]" in line
+
+
 def test_print_scenario_run_progress_no_techniques(capsys):
     run = _make_run(
         status=ScenarioRunState.CREATED,
