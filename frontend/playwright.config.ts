@@ -4,6 +4,7 @@ const CI_SEEDED_MODE =
   !!process.env.CI && process.env.E2E_SEEDED_MODE === "true";
 const E2E_BACKEND_PORT = process.env.PYRIT_E2E_BACKEND_PORT ?? "18000";
 const E2E_BACKEND_URL = `http://127.0.0.1:${E2E_BACKEND_PORT}`;
+const E2E_FRONTEND_URL = "http://127.0.0.1:3000";
 
 export default defineConfig({
   testDir: "./e2e",
@@ -19,7 +20,7 @@ export default defineConfig({
   timeout: 30000,
 
   use: {
-    baseURL: "http://localhost:3000",
+    baseURL: E2E_FRONTEND_URL,
     trace: "on-first-retry",
     screenshot: "only-on-failure",
     // Pre-set localStorage so the onboarding tour doesn't auto-start and
@@ -28,7 +29,7 @@ export default defineConfig({
       cookies: [],
       origins: [
         {
-          origin: "http://localhost:3000",
+          origin: E2E_FRONTEND_URL,
           localStorage: [
             { name: "pyrit-tour-completed", value: "true" },
           ],
@@ -77,7 +78,7 @@ export default defineConfig({
           command: "npx vite --host 127.0.0.1 --port 3000 --strictPort",
           env: { PYRIT_BACKEND_URL: E2E_BACKEND_URL },
           // Use 127.0.0.1 to avoid Node.js 17+ resolving localhost to IPv6 ::1
-          url: "http://127.0.0.1:3000",
+          url: E2E_FRONTEND_URL,
           reuseExistingServer: false,
           timeout: 120_000,
         },
@@ -87,7 +88,7 @@ export default defineConfig({
         command: process.env.CI
           ? "npx vite --port 3000"
           : "python dev.py",
-        url: "http://127.0.0.1:3000",
+        url: E2E_FRONTEND_URL,
         reuseExistingServer: !process.env.CI,
         timeout: 120_000,
       },
