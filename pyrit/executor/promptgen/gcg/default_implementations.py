@@ -230,27 +230,31 @@ class LengthPreservingFilter:
     ``pyrit/executor/promptgen/gcg/attack/base/attack_manager.py``.
     """
 
-    def __init__(self, *, enabled: bool = True, **legacy_options: bool) -> None:
+    def __init__(self, *, enabled: bool | None = None, **legacy_options: bool) -> None:
         """
         Initialize the filter.
 
         Args:
-            enabled (bool): When True, drop candidates that equal
+            enabled (bool | None): When True, drop candidates that equal
                 ``current_control`` or re-tokenize to a different length,
                 padding the result with the last accepted candidate. When
                 False, decode every row and return them all unchanged.
-                Defaults to True.
+                Defaults to None, which enables filtering unless the legacy
+                ``filter`` option is supplied.
             **legacy_options (bool): Supports the legacy ``filter`` keyword.
 
         Raises:
-            TypeError: If an unknown option is provided.
+            TypeError: If both ``enabled`` and ``filter`` are provided or an
+                unknown option is provided.
         """
         if "filter" in legacy_options:
+            if enabled is not None:
+                raise TypeError("Specify either 'enabled' or 'filter', not both")
             enabled = legacy_options.pop("filter")
         if legacy_options:
             unexpected = next(iter(legacy_options))
             raise TypeError(f"Unexpected LengthPreservingFilter option: {unexpected}")
-        self._filter = enabled
+        self._filter = True if enabled is None else enabled
 
     def filter_candidates(
         self,
