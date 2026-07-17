@@ -10,7 +10,7 @@
 # ---
 
 # %% [markdown]
-# # 6. Prompt Generators
+# # Prompt Generators
 #
 # Prompt generators don't drive a conversation with a system under test — they *produce* attack prompts that you can feed into other attacks or scenarios. They're heterogeneous in how they use a target: `AnecdoctorGenerator` uses the model you pass simply to *generate* misinformation-style content (optionally augmented with a knowledge graph), while `GPTFuzzer` actually probes a target with candidate jailbreak templates and scores the responses to evolve variants that evade defenses.
 
