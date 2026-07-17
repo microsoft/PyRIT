@@ -5,9 +5,7 @@ from __future__ import annotations
 
 import abc
 import asyncio
-import json
 import logging
-import uuid
 from abc import abstractmethod
 from typing import (
     TYPE_CHECKING,
@@ -16,12 +14,7 @@ from typing import (
     cast,
 )
 
-from pyrit.exceptions import (
-    InvalidJsonException,
-    PyritException,
-    ScorerLLMResponseBlockedException,
-    remove_markdown_json,
-)
+from pyrit.exceptions import PyritException, ScorerLLMResponseBlockedException
 from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import (
     ChatMessageRole,
@@ -34,7 +27,6 @@ from pyrit.models import (
     ScorerIdentifier,
     ScoreType,
 )
-from pyrit.prompt_normalizer import PromptNormalizer, send_json_with_retry_async
 from pyrit.prompt_target.batch_helper import batch_task_async
 from pyrit.prompt_target.common.target_requirements import TargetRequirements
 
@@ -727,118 +719,6 @@ class Scorer(Identifiable, abc.ABC):
                 for piece in conversation
                 if piece.sequence == last_prompt.sequence - 1 and piece.original_value_data_type == "text"
             ]
-        )
-
-    def _get_prior_user_turn_text(self, *, message_piece: MessagePiece) -> str | None:
-        """
-        Retrieve the concatenated text of the user-turn that preceded ``message_piece``.
-
-        Looks up the conversation in memory and returns the text of every text-typed
-        user piece whose ``sequence`` is exactly one less than ``message_piece.sequence``.
-        Each piece's ``converted_value`` is preferred over its ``original_value`` so the
-        post-converter text the target actually received is what the caller sees.
-
-        Args:
-            message_piece (MessagePiece): The message piece whose prior user turn should
-                be retrieved (typically an assistant response being scored).
-
-        Returns:
-            str | None: The concatenated user-turn text (pieces joined by newlines),
-                or ``None`` if no prior user turn can be located (no ``conversation_id``,
-                empty conversation, memory backend error, or no matching pieces).
-        """
-        if not message_piece.conversation_id:
-            return None
-        try:
-            conversation = self._memory.get_message_pieces(conversation_id=message_piece.conversation_id)
-        except Exception:  # pragma: no cover - defensive; depends on memory backend availability
-            return None
-        if not conversation:
-            return None
-
-        prior_sequence = message_piece.sequence - 1
-        texts = [
-            (piece.converted_value or piece.original_value or "")
-            for piece in conversation
-            if piece.sequence == prior_sequence
-            and piece.api_role == "user"
-            and piece.converted_value_data_type == "text"
-        ]
-        non_empty = [t for t in texts if t]
-        if not non_empty:
-            return None
-        return "\n".join(non_empty)
-
-    async def _invoke_llm_judge_async(
-        self,
-        *,
-        prompt_target: PromptTarget,
-        system_prompt: str,
-        user_prompt: str,
-    ) -> dict[str, Any]:
-        """
-        Send a pre-rendered judge prompt to a chat target and return the parsed JSON reply.
-
-        Use this when a custom scorer needs to dispatch a single-turn LLM call with a fully
-        rendered system + user prompt and expects a JSON object back. Unlike
-        ``_score_value_with_llm``, this helper makes no assumptions about the JSON schema
-        of the reply — the caller owns interpretation. Malformed JSON is retried on a clean
-        conversation by ``send_json_with_retry_async``.
-
-        Args:
-            prompt_target (PromptTarget): The chat target to send the judge prompt to.
-            system_prompt (str): Fully rendered system prompt for the judge.
-            user_prompt (str): Fully rendered user prompt for the judge.
-
-        Returns:
-            dict[str, Any]: The parsed JSON object the judge returned.
-
-        Raises:
-            InvalidJsonException: If the reply contains no text piece, is not valid JSON, or
-                does not decode to a JSON object after the retry budget is exhausted.
-        """
-        conversation_id = str(uuid.uuid4())
-        prompt_target.set_system_prompt(
-            system_prompt=system_prompt,
-            conversation_id=conversation_id,
-        )
-        request = Message(
-            message_pieces=[
-                MessagePiece(
-                    role="user",
-                    original_value=user_prompt,
-                    original_value_data_type="text",
-                    converted_value_data_type="text",
-                    conversation_id=conversation_id,
-                    prompt_metadata={"response_format": "json"},
-                )
-            ]
-        )
-
-        def _parse(response: Message) -> dict[str, Any]:
-            text_piece = next(
-                (piece for piece in response.message_pieces if piece.converted_value_data_type == "text"),
-                None,
-            )
-            if text_piece is None:
-                raise InvalidJsonException(message="Judge response contained no text piece.")
-
-            raw = remove_markdown_json(text_piece.converted_value)
-            try:
-                parsed = json.loads(raw)
-            except json.JSONDecodeError as ex:
-                raise InvalidJsonException(message=f"Judge returned non-JSON output: {raw}") from ex
-
-            if not isinstance(parsed, dict):
-                raise InvalidJsonException(message=f"Judge returned non-object JSON: {raw}")
-            return parsed
-
-        return await send_json_with_retry_async(
-            normalizer=PromptNormalizer(),
-            target=prompt_target,
-            message=request,
-            conversation_id=conversation_id,
-            parse=_parse,
         )
 
     @staticmethod

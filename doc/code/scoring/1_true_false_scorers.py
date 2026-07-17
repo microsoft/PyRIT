@@ -199,17 +199,6 @@ print(f"[category] value={scored.get_value()} category={scored.score_category}")
 #   the built-in templates don't fit. See
 #   [Combining & stacking scorers](3_combining_scorers.ipynb) for how custom scorers slot in.
 #
-# ### XL-SafetyBench judges
-#
-# Two benchmark-specific LLM judges reproduce the paper's evaluation contracts:
-#
-# - **`XLSafetyBenchJailbreakJudgeScorer`** — evaluates harmfulness, non-compliance,
-#   specificity, and relevance; returns True when the response is harmful or non-compliant.
-# - **`XLSafetyBenchCulturalJudgeScorer`** — evaluates response relevance and whether it
-#   recognizes the country-grounded cultural sensitivity; returns True when recognized.
-#
-# Both require an `objective` and retrieve the preceding user turn from conversation memory.
-#
 # ## External classifier integrations
 #
 # Three true/false scorers wrap hosted services rather than reasoning with a generative LLM:
