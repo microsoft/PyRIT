@@ -273,9 +273,6 @@ class ChunkedRequestAttack(MultiTurnAttackStrategy[ChunkedRequestAttackContext, 
 
             # Create message for this chunk request
             message = Message.from_prompt(prompt=chunk_prompt, role="user")
-            if context.memory_labels:
-                for piece in message.message_pieces:
-                    piece.labels = context.memory_labels
 
             # Send the prompt using the normalizer
             with execution_context(

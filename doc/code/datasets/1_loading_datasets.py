@@ -9,7 +9,7 @@
 # ---
 
 # %% [markdown]
-# # 1. Loading Built-in Datasets
+# # Loading Built-in Datasets
 #
 # PyRIT includes many built-in datasets to help you get started with AI red teaming. While PyRIT aims to be unopinionated about what constitutes harmful content, it provides easy mechanisms to use datasets—whether built-in, community-contributed, or your own custom datasets.
 #

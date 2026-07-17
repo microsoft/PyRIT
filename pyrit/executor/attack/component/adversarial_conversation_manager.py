@@ -845,10 +845,6 @@ class _AdversarialConversationManager:
                 prompt_metadata=prompt_metadata or None,
             )
 
-        if self._memory_labels:
-            for piece in message.message_pieces:
-                piece.labels = self._memory_labels
-
         schema = self._response_json_schema
 
         def _parse(response: Message) -> AdversarialReply:

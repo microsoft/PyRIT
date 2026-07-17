@@ -9,7 +9,7 @@
 #       jupytext_version: 1.19.0
 # ---
 # %% [markdown]
-# # 7. AML Chat Targets
+# # AML Chat Targets
 #
 # This code shows how to use Azure Machine Learning (AML) managed online endpoints with PyRIT.
 #

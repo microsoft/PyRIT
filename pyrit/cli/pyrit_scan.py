@@ -866,12 +866,10 @@ def main(args: list[str] | None = None) -> int:
 
     logging.basicConfig(level=parsed_args.log_level)
 
-    # Surface a one-line deprecation when the layered config contains blocks
-    # the thin CLI no longer reads (e.g. `scenario:`). The server still honors them.
-    from pyrit.cli._config_reader import ConfigError, warn_on_client_ignored_blocks
+    from pyrit.cli._config_reader import ConfigError, validate_client_config
 
     try:
-        warn_on_client_ignored_blocks(config_file=parsed_args.config_file)
+        validate_client_config(config_file=parsed_args.config_file)
         return asyncio.run(_run_async(parsed_args=parsed_args))
     except ConfigError as exc:
         print(f"Error: {exc}", file=sys.stderr)

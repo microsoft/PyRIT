@@ -749,13 +749,10 @@ def _make_attack_result_for_scenario(
 def test_get_scenario_results_loads_attack_results_via_foreign_key(
     sqlite_instance: MemoryInterface,
 ):
-    """When AttackResultEntry rows carry the attribution_parent_id foreign key,
-    hydration picks them up directly — without needing the legacy
-    attack_results_json manifest. This is the path that makes mid-AtomicAttack
-    interruption-recovery work."""
+    """Hydration loads AttackResults through the attribution_parent_id foreign key."""
     scenario_result = create_scenario_result(
         name="ForeignKey-only Scenario",
-        attack_results={},  # manifest intentionally empty
+        attack_results={},
     )
     sqlite_instance.add_scenario_results_to_memory(scenario_results=[scenario_result])
 
@@ -847,15 +844,13 @@ def test_delete_scenario_sets_attack_result_foreign_key_to_null(
         assert entry.attribution_data == {"parent_collection": "a"}
 
 
-def test_update_scenario_run_state_targeted_update_preserves_manifest(
+def test_update_scenario_run_state_updates_state_and_error_fields(
     sqlite_instance: MemoryInterface,
 ):
-    """update_scenario_run_state must be a targeted UPDATE — it must not
-    re-serialize the whole row and clobber the manifest column during the
-    deprecation window."""
+    """update_scenario_run_state updates persisted state and error details."""
     scenario_result = create_scenario_result(
         name="Targeted Update",
-        attack_results={"a": []},  # baseline manifest
+        attack_results={"a": []},
     )
     sqlite_instance.add_scenario_results_to_memory(scenario_results=[scenario_result])
     sid = str(scenario_result.id)
