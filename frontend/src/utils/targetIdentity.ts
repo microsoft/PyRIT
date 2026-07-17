@@ -1,4 +1,4 @@
-import type { TargetInstance } from '../types'
+import type { TargetInfo, TargetInstance } from '../types'
 
 /**
  * Helpers for reading a target's identity off its embedded `identifier`.
@@ -48,4 +48,11 @@ export function targetEndpoint(target: TargetInstance): string | null {
 /** The ComponentIdentifier content hash used for duplicate detection. */
 export function targetIdentifierHash(target: TargetInstance): string | null {
   return target.identifier.hash ?? null
+}
+
+/** Whether persisted attack target information identifies the active target. */
+export function targetInfoMatchesTarget(targetInfo: TargetInfo, target: TargetInstance): boolean {
+  const persistedHash = targetInfo.identifier_hash
+  const activeHash = targetIdentifierHash(target)
+  return Boolean(persistedHash && activeHash && persistedHash === activeHash)
 }

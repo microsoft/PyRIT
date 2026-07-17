@@ -120,6 +120,7 @@ jest.mock("./components/Chat/ChatWindow", () => {
     attackResultId,
     conversationId,
     activeConversationId,
+    attackTarget,
     onConversationCreated,
     onSelectConversation,
     labels,
@@ -129,6 +130,7 @@ jest.mock("./components/Chat/ChatWindow", () => {
     attackResultId: string | null;
     conversationId: string | null;
     activeConversationId: string | null;
+    attackTarget?: { identifier_hash?: string | null } | null;
     onConversationCreated: (attackResultId: string, conversationId: string) => void;
     onSelectConversation: (convId: string) => void;
     labels: Record<string, string>;
@@ -139,6 +141,7 @@ jest.mock("./components/Chat/ChatWindow", () => {
         <span data-testid="conversation-id">{conversationId ?? "none"}</span>
         <span data-testid="active-conversation-id">{activeConversationId ?? "none"}</span>
         <span data-testid="has-target">{activeTarget ? "yes" : "no"}</span>
+        <span data-testid="attack-target-hash">{attackTarget?.identifier_hash ?? "none"}</span>
         <span data-testid="labels-operator">{labels.operator ?? ""}</span>
         <span data-testid="labels-json">{JSON.stringify(labels)}</span>
         <button onClick={onNewAttack} data-testid="new-attack">
@@ -185,6 +188,7 @@ jest.mock("./components/Config/TargetConfig", () => {
             onSetActiveTarget(makeTarget({
               target_registry_name: "test_target",
               target_type: "OpenAIChatTarget",
+              identifier_hash: "test-target-hash",
             }))
           }
           data-testid="set-target"
@@ -384,6 +388,17 @@ describe("App", () => {
 
     fireEvent.click(screen.getByTestId("set-conversation"));
     expect(screen.getByTestId("conversation-id")).toHaveTextContent("conv-123");
+  });
+
+  it("retains the active target identifier when creating an attack", () => {
+    renderApp();
+
+    fireEvent.click(screen.getByTestId("nav-config"));
+    fireEvent.click(screen.getByTestId("set-target"));
+    fireEvent.click(screen.getByTestId("nav-chat"));
+    fireEvent.click(screen.getByTestId("set-conversation"));
+
+    expect(screen.getByTestId("attack-target-hash")).toHaveTextContent("test-target-hash");
   });
 
   it("clears conversationId on new attack", () => {

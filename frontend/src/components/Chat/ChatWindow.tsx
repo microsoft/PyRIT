@@ -19,7 +19,7 @@ import { attacksApi } from '../../services/api'
 import { toApiError } from '../../services/errors'
 import { buildMessagePieces, backendMessagesToFrontend } from '../../utils/messageMapper'
 import type { Message, MessageAttachment, TargetInstance, TargetInfo } from '../../types'
-import { targetEndpoint, targetModelName, targetType } from '../../utils/targetIdentity'
+import { targetInfoMatchesTarget } from '../../utils/targetIdentity'
 import type { ViewName } from '../Sidebar/Navigation'
 import { useChatWindowStyles } from './ChatWindow.styles'
 
@@ -543,11 +543,10 @@ export default function ChatWindow({
   // from the currently configured target, prevent sending new messages.
   // The user can "Continue with your target" to branch into a new attack with their target.
   const isCrossTargetLocked = Boolean(
-    attackResultId && attackTarget && activeTarget && (
-      attackTarget.target_type !== targetType(activeTarget) ||
-      (attackTarget.endpoint ?? '') !== (targetEndpoint(activeTarget) ?? '') ||
-      (attackTarget.model_name ?? '') !== (targetModelName(activeTarget) ?? '')
-    )
+    attackResultId &&
+    attackTarget &&
+    activeTarget &&
+    !targetInfoMatchesTarget(attackTarget, activeTarget)
   )
 
   // "Continue with your target" — clone the current conversation into a new attack

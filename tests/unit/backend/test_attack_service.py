@@ -118,6 +118,33 @@ def _make_matching_target_mock() -> MagicMock:
     return mock_target
 
 
+def _make_round_robin_identifier(
+    *,
+    second_model_name: str = "e2e-dummy-model",
+    weights: tuple[int, int] = (1, 1),
+) -> ComponentIdentifier:
+    """Create a composite target identifier with no root endpoint or model."""
+    return ComponentIdentifier(
+        class_name="RoundRobinTarget",
+        class_module="pyrit.prompt_target.round_robin_target",
+        params={"weights": list(weights)},
+        children={
+            "targets": [
+                ComponentIdentifier(
+                    class_name="TextTarget",
+                    class_module="pyrit.prompt_target",
+                    params={"model_name": "e2e-dummy-model"},
+                ),
+                ComponentIdentifier(
+                    class_name="TextTarget",
+                    class_module="pyrit.prompt_target",
+                    params={"model_name": second_model_name},
+                ),
+            ]
+        },
+    )
+
+
 def make_mock_piece(
     *,
     conversation_id: str,
@@ -2709,6 +2736,67 @@ class TestAddMessageGuards:
 
             result = await attack_service.add_message_async(attack_result_id="test-id", request=request)
             assert result.attack is not None
+
+    def test_allows_matching_round_robin_target(self, attack_service) -> None:
+        """Equivalent composite identifiers should pass target validation."""
+        stored_target_id = _make_round_robin_identifier()
+        request_target = MagicMock()
+        request_target.get_identifier.return_value = _make_round_robin_identifier()
+        attack_identifier = ComponentIdentifier(
+            class_name="ManualAttack",
+            class_module="pyrit.executor.attack",
+            children={"objective_target": stored_target_id},
+        )
+        request = AddMessageRequest(
+            pieces=[MessagePieceRequest(original_value="Hello")],
+            target_conversation_id="attack-1",
+            send=True,
+            target_registry_name="round-robin",
+        )
+
+        with patch("pyrit.backend.services.attack_service.get_target_service") as mock_get_target_svc:
+            mock_get_target_svc.return_value.get_target_object.return_value = request_target
+
+            attack_service._validate_target_match(attack_identifier=attack_identifier, request=request)
+
+    @pytest.mark.parametrize(
+        ("second_model_name", "weights"),
+        [
+            ("different-model", (1, 1)),
+            ("e2e-dummy-model", (2, 1)),
+        ],
+        ids=["inner-target", "weights"],
+    )
+    def test_rejects_incompatible_round_robin_target(
+        self,
+        attack_service,
+        second_model_name: str,
+        weights: tuple[int, int],
+    ) -> None:
+        """Composite differences should be rejected despite identical nullable root fields."""
+        stored_target_id = _make_round_robin_identifier()
+        request_target = MagicMock()
+        request_target.get_identifier.return_value = _make_round_robin_identifier(
+            second_model_name=second_model_name,
+            weights=weights,
+        )
+        attack_identifier = ComponentIdentifier(
+            class_name="ManualAttack",
+            class_module="pyrit.executor.attack",
+            children={"objective_target": stored_target_id},
+        )
+        request = AddMessageRequest(
+            pieces=[MessagePieceRequest(original_value="Hello")],
+            target_conversation_id="attack-1",
+            send=True,
+            target_registry_name="round-robin",
+        )
+
+        with patch("pyrit.backend.services.attack_service.get_target_service") as mock_get_target_svc:
+            mock_get_target_svc.return_value.get_target_object.return_value = request_target
+
+            with pytest.raises(ValueError, match="Target mismatch"):
+                attack_service._validate_target_match(attack_identifier=attack_identifier, request=request)
 
     async def test_rejects_mismatched_operator(self, attack_service, mock_memory) -> None:
         """Should raise ValueError when request operator differs from attack operator."""

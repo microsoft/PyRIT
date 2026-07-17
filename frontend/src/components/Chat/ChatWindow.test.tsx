@@ -1646,6 +1646,7 @@ describe("ChatWindow Integration", () => {
       target_type: "AzureOpenAIChatTarget",
       endpoint: "https://azure.openai.com",
       model_name: "gpt-4o",
+      identifier_hash: "different-target-hash",
     };
 
     render(
@@ -1667,6 +1668,7 @@ describe("ChatWindow Integration", () => {
       target_type: mockTarget.identifier.class_name,
       endpoint: mockTarget.identifier.endpoint,
       model_name: mockTarget.identifier.model_name,
+      identifier_hash: mockTarget.identifier.hash,
     };
 
     render(
@@ -1681,6 +1683,76 @@ describe("ChatWindow Integration", () => {
     );
 
     expect(screen.queryByTestId("cross-target-banner")).not.toBeInTheDocument();
+  });
+
+  it("should keep a historical Round Robin attack writable when the identifier hash matches", () => {
+    const roundRobinTarget = makeTarget({
+      target_registry_name: "round-robin",
+      target_type: "RoundRobinTarget",
+      endpoint: null,
+      model_name: null,
+      identifier_hash: "round-robin-hash",
+      inner_targets: [
+        { target_registry_name: "inner-a", model_name: "e2e-dummy-model" },
+        { target_registry_name: "inner-b", model_name: "e2e-dummy-model" },
+      ],
+    });
+    const historicalTarget: TargetInfo = {
+      target_type: "RoundRobinTarget",
+      endpoint: null,
+      model_name: null,
+      identifier_hash: "round-robin-hash",
+    };
+
+    render(
+      <TestWrapper>
+        <ChatWindow
+          {...defaultProps}
+          activeTarget={roundRobinTarget}
+          attackResultId="ar-round-robin"
+          conversationId="conv-round-robin"
+          attackTarget={historicalTarget}
+        />
+      </TestWrapper>
+    );
+
+    expect(screen.queryByTestId("cross-target-banner")).not.toBeInTheDocument();
+    expect(screen.getByTestId("chat-input")).toBeEnabled();
+  });
+
+  it("should lock a historical Round Robin attack when the composite identifier hash differs", () => {
+    const roundRobinTarget = makeTarget({
+      target_registry_name: "round-robin",
+      target_type: "RoundRobinTarget",
+      endpoint: null,
+      model_name: null,
+      identifier_hash: "active-round-robin-hash",
+      inner_targets: [
+        { target_registry_name: "inner-a", model_name: "e2e-dummy-model" },
+        { target_registry_name: "inner-b", model_name: "e2e-dummy-model" },
+      ],
+    });
+    const historicalTarget: TargetInfo = {
+      target_type: "RoundRobinTarget",
+      endpoint: null,
+      model_name: null,
+      identifier_hash: "different-round-robin-hash",
+    };
+
+    render(
+      <TestWrapper>
+        <ChatWindow
+          {...defaultProps}
+          activeTarget={roundRobinTarget}
+          attackResultId="ar-round-robin"
+          conversationId="conv-round-robin"
+          attackTarget={historicalTarget}
+        />
+      </TestWrapper>
+    );
+
+    expect(screen.getByTestId("cross-target-banner")).toBeInTheDocument();
+    expect(screen.queryByTestId("chat-input")).not.toBeInTheDocument();
   });
 
   it("should auto-open conversation panel when relatedConversationCount > 0", async () => {
