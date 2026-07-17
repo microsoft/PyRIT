@@ -55,6 +55,7 @@
 # ToxicChat [@lin2023toxicchat],
 # VLSU [@palaskar2025vlsu],
 # VLGuard [@zong2024vlguard],
+# XL-SafetyBench [@choi2026xlsafetybench],
 # XSTest [@rottger2023xstest],
 # AILuminate [@ghosh2025ailuminate],
 # Transphobia Awareness [@scheuerman2025transphobia],
