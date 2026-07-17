@@ -8,7 +8,7 @@
 #       jupytext_version: 1.19.0
 # ---
 # %% [markdown]
-# # 5. OpenAI TTS Target
+# # OpenAI TTS Target
 #
 # This example shows how to use the TTS (audio) target to convert text to speech.
 # %%

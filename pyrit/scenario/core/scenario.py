@@ -946,8 +946,8 @@ class Scenario(ABC):
         reuses the same population for every atomic attack and the baseline — so sampling
         under ``max_dataset_size`` stays consistent across all of them.
 
-        Override to inject seeds from an alternate source (e.g. deprecated ``objectives``)
-        or to filter the resolved groups before attacks are built.
+        Override to inject seeds from an alternate source or to filter the resolved groups
+        before attacks are built.
 
         Args:
             apply_sampling (bool): When True (default), apply ``max_dataset_size`` sampling.

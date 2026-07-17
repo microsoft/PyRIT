@@ -9,7 +9,7 @@
 # ---
 
 # %% [markdown]
-# # 3. OpenAI Image Target
+# # OpenAI Image Target
 #
 # `OpenAIImageTarget` supports two different modes:
 # - Generating a brand new image from a text prompt.

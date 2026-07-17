@@ -295,20 +295,12 @@ class HuggingFaceChatTarget(PromptTarget):
                         Path(cache_dir),
                     )
 
-                # Load the tokenizer and model from the specified directory
+                # Load the tokenizer and model from the downloaded local snapshot.
                 logger.info(f"Loading model {self.model_id} from cache path: {cache_dir}...")
-                self.tokenizer = AutoTokenizer.from_pretrained(
-                    self.model_id or "", cache_dir=cache_dir, trust_remote_code=self.trust_remote_code
-                )
-                self.model = AutoModelForCausalLM.from_pretrained(
-                    self.model_id or "",
-                    cache_dir=cache_dir,
-                    trust_remote_code=self.trust_remote_code,
-                    **optional_model_kwargs,
-                )
+                self._load_from_path(str(cache_dir), **optional_model_kwargs)
 
             # Move the model to the correct device
-            self.model = cast("Any", self.model).to(self.device)
+            self.model = self.model.to(self.device)
 
             # Debug prints to check types
             logger.info(f"Model loaded: {type(self.model)}")

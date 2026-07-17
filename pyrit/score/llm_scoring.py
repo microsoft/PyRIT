@@ -29,7 +29,7 @@ if TYPE_CHECKING:
 async def _run_llm_scoring_async(
     *,
     chat_target: PromptTarget,
-    system_prompt: str,
+    system_prompt: str | None,
     response_handler: ResponseHandler,
     value: str,
     data_type: PromptDataType,
@@ -43,7 +43,7 @@ async def _run_llm_scoring_async(
     """
     Perform a single scoring round-trip against an LLM target and delegate parsing.
 
-    This is the shared LLM evaluation mechanism: it sets the system prompt on the target, sends
+    This is the shared LLM evaluation mechanism: it optionally sets a system prompt on the target, sends
     the value to be scored (forwarding ``response_handler.json_response_config`` so targets that
     support structured output can enforce it), and delegates parsing and validation to
     ``response_handler``. The round-trip is routed through a ``PromptNormalizer`` via
@@ -63,7 +63,8 @@ async def _run_llm_scoring_async(
 
     Args:
         chat_target (PromptTarget): The target LLM to send the message to.
-        system_prompt (str): The system-level prompt that guides the target LLM.
+        system_prompt (str | None): The system-level prompt that guides the target LLM. When None,
+            the request is sent without configuring a system prompt.
         response_handler (ResponseHandler): Owns the response contract: supplies the optional
             response schema and turns the target's raw text into an ``UnvalidatedScore``.
         value (str): The content to be scored (e.g. text, image path, audio path).
@@ -102,10 +103,11 @@ async def _run_llm_scoring_async(
     """
     conversation_id = str(uuid.uuid4())
 
-    chat_target.set_system_prompt(
-        system_prompt=system_prompt,
-        conversation_id=conversation_id,
-    )
+    if system_prompt is not None:
+        chat_target.set_system_prompt(
+            system_prompt=system_prompt,
+            conversation_id=conversation_id,
+        )
     # Forward the JSON-response request (format and any schema together) via the handler's
     # canonical config; the target's normalization pipeline omits the schema when it cannot
     # natively enforce one.

@@ -626,10 +626,8 @@ class TestTextAdaptiveBaselinePolicy:
 
     async def test_baseline_emitted_at_index_zero_by_default(self, mock_objective_target, mock_objective_scorer):
         """
-        Under ``BASELINE_ATTACK_POLICY = Enabled`` (the default), the override
-        must explicitly prepend a baseline atomic at index 0 so the legacy
-        deprecation-rescue branch in ``Scenario.initialize_async`` (slated
-        for removal in 0.16.0) is bypassed and no DeprecationWarning fires.
+        Under ``BASELINE_ATTACK_POLICY = Enabled`` (the default), the base
+        scenario must prepend a baseline atomic attack at index 0.
         """
         groups = {"violence": [_make_seed_group(value="obj", harm_categories=["violence"])]}
         with patch.object(

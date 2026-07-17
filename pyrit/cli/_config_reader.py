@@ -19,11 +19,6 @@ _DEFAULT_CONFIG_FILE = _DEFAULT_CONFIG_DIR / ".pyrit_conf"
 
 DEFAULT_SERVER_URL = "http://localhost:8000"
 
-# Top-level config blocks the thin CLI does not read (server picks them up).
-# Surfacing them here lets us warn users whose configs still drive scenario
-# selection or scenario args from disk.
-_CLIENT_IGNORED_BLOCKS = ("scenario",)
-
 
 class ConfigError(Exception):
     """
@@ -100,17 +95,16 @@ def read_server_url(*, config_file: Path | None = None) -> str | None:
     return url
 
 
-def warn_on_client_ignored_blocks(*, config_file: Path | None = None) -> None:
+def validate_client_config(*, config_file: Path | None = None) -> None:
     """
-    Emit a one-line deprecation notice if the layered config contains blocks
-    the thin CLI ignores (e.g. ``scenario:``). The server still honors these.
+    Validate that layered config files do not contain removed client options.
 
     Args:
         config_file: Optional overlay path; the default ``~/.pyrit/.pyrit_conf``
             is always checked when present.
 
     Raises:
-        ConfigError: If a config file exists but is malformed.
+        ConfigError: If a config file is malformed or contains a removed option.
     """
     import yaml
 
@@ -124,13 +118,11 @@ def warn_on_client_ignored_blocks(*, config_file: Path | None = None) -> None:
         data = _load_config_mapping(path=p, yaml_module=yaml)
         if data is None:
             continue
-        for block in _CLIENT_IGNORED_BLOCKS:
-            if block in data:
-                print(
-                    f"Deprecation: '{block}:' block in {p} is ignored by the CLI "
-                    f"(pass the scenario name positionally instead). "
-                    f"The backend server still reads this block."
-                )
+        if "scenario" in data:
+            raise ConfigError(
+                f"Config file {p}: 'scenario' is no longer supported. "
+                "Pass the scenario name positionally and its parameters as CLI flags."
+            )
 
 
 def _extract_server_url(*, path: Path, yaml_module: Any) -> str | None:

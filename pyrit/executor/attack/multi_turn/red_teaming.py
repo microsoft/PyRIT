@@ -286,10 +286,6 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
                 prepended_conversation=context.prepended_conversation,
                 adversarial_chat_conversation_id=context.session.adversarial_chat_conversation_id,
             )
-            if context.memory_labels:
-                for msg in adversarial_messages:
-                    for piece in msg.message_pieces:
-                        piece.labels = context.memory_labels
 
             self._memory.add_conversation_to_memory(
                 conversation=Conversation(
@@ -485,9 +481,6 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
             objective=context.objective,
         ):
             # Send the message to the target
-            if context.memory_labels:
-                for piece in message.message_pieces:
-                    piece.labels = context.memory_labels
             response = await self._prompt_normalizer.send_prompt_async(
                 message=message,
                 conversation_id=context.session.conversation_id,

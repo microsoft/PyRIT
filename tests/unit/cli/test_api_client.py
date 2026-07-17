@@ -168,9 +168,20 @@ def test_get_client_raises_when_not_opened():
 
 
 async def test_health_check_returns_true_on_200(client, mock_httpx_client):
-    mock_httpx_client.get.return_value = _make_response(status_code=200)
+    mock_httpx_client.get.return_value = _make_response(
+        status_code=200,
+        json_data={"status": "healthy", "service": "pyrit-backend"},
+    )
     assert await client.health_check_async() is True
     mock_httpx_client.get.assert_awaited_once_with("/api/health")
+
+
+async def test_health_check_returns_false_for_unrelated_service(client, mock_httpx_client):
+    mock_httpx_client.get.return_value = _make_response(
+        status_code=200,
+        json_data={"status": "ok", "service": "another-service"},
+    )
+    assert await client.health_check_async() is False
 
 
 async def test_health_check_returns_false_on_non_200(client, mock_httpx_client):

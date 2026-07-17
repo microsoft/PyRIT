@@ -731,7 +731,6 @@ class OpenAIResponseTarget(OpenAITarget):
             role="assistant",
             original_value=piece_value,
             conversation_id=message_piece.conversation_id,
-            labels=message_piece.labels,
             original_value_data_type=piece_type,
             response_error=error or "none",
         )
@@ -837,5 +836,4 @@ class OpenAIResponseTarget(OpenAITarget):
             ),
             original_value_data_type="function_call_output",
             conversation_id=reference_piece.conversation_id,
-            labels={"call_id": call_id},
         )

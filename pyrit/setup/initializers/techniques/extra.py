@@ -10,7 +10,7 @@ Opt-in techniques that are not part of the default ``core`` set. Exposes
 """
 
 from pyrit.common.path import EXECUTOR_RED_TEAM_PATH
-from pyrit.executor.attack import PAIRAttack, RedTeamingAttack
+from pyrit.executor.attack import PAIRAttack, RedTeamingAttack, SkeletonKeyAttack
 from pyrit.models import SeedPrompt
 from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
 
@@ -28,6 +28,11 @@ def get_technique_factories() -> list[AttackTechniqueFactory]:
             attack_class=PAIRAttack,
             description="Runs the PAIR algorithm, using an adversarial model to iteratively rewrite jailbreak prompts.",
             technique_tags=["multi_turn"],
+        ),
+        AttackTechniqueFactory(
+            name="skeleton_key",
+            attack_class=SkeletonKeyAttack,
+            technique_tags=["single_turn"],
         ),
         AttackTechniqueFactory(
             name="violent_durian",
