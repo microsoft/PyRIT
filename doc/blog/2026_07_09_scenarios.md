@@ -28,8 +28,6 @@ Let's say you want a wide read on a new target. The broadest scenario in the cat
 pyrit_scan airt.rapid_response --target my_target
 ```
 
-Watch the [scanner walkthrough](./2026_07_09_scanner_walkthrough.mp4) to see how to select and run a scenario from the command line.
-
 That one command does a lot. Behind the scenes, initializers populate the registries (techniques, targets, datasets); the CLI resolves `airt.rapid_response` and `my_target`, instantiates `RapidResponse`, and runs it. Out of the box (using the default configuration for techniques ie `--techniques default`) it sends `role_play` and `many_shot` attacks plus a baseline pass — across seven AIRT harm categories: hate, fairness, violence, sexual, harassment, misinformation, leakage. Switch to `--techniques single_turn` to swap in the single-turn pool — `role_play`, `context_compliance`, `crescendo_simulated`, plus the persona-driven crescendo variants (`crescendo_movie_director`, `crescendo_history_lecture`, `crescendo_journalist_interview`). `--techniques multi_turn` picks up the multi-turn pool instead: `many_shot`, `tap`, `pair`, and `red_teaming`.
 
 When it finishes you get a `ScenarioResult` persisted to memory, a pretty-printed summary at the end, and — because every `AttackResult` is stamped with a scenario-run ID — the ability to resume the same run later, diff against last quarter's, or ask memory "how did this target do on `RapidResponse` across our last ten scans?"
@@ -41,6 +39,8 @@ scenario = RapidResponse()
 await scenario.initialize_async(objective_target=target)
 result = await scenario.run_async()
 ```
+
+Watch the [scanner walkthrough](./2026_07_09_scanner_walkthrough.mp4) to see how to select and run a scenario from the command line.
 
 `RapidResponse` is a natural jumping-off point. You run it to map *where* your target struggles — and then you pivot to a focused scenario to dig into *why*.
 
