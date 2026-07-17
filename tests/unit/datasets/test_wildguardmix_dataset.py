@@ -127,6 +127,8 @@ class TestWildGuardMixDataset:
         splits_seen = {seed.metadata["split"] for seed in dataset.seeds}
         assert splits_seen == {"wildguardtrain", "wildguardtest"}
         assert all(seed.metadata["adversarial"] is True for seed in dataset.seeds)
+        train_seed = next(seed for seed in dataset.seeds if seed.metadata["split"] == "wildguardtrain")
+        assert train_seed.metadata["has_response"] is False
 
     async def test_splits_train_only(self):
         loader = _WildGuardMixDataset(splits=[WildGuardMixSplit.TRAIN])
