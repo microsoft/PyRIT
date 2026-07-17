@@ -170,7 +170,11 @@ class PrettyScenarioResultPrinter(ScenarioResultPrinterBase):
         lines.append(self._format_colored(f"{self._indent}🎯 Target Information", Style.BRIGHT))
         target_id = result.objective_target_identifier
         target_type = target_id.class_name if target_id else "Unknown"
-        target_model = target_id.params.get("model_name", "Unknown") if target_id else "Unknown"
+        target_model = (
+            (target_id.params.get("underlying_model_name") or target_id.params.get("model_name") or "Unknown")
+            if target_id
+            else "Unknown"
+        )
         target_endpoint = target_id.params.get("endpoint", "Unknown") if target_id else "Unknown"
 
         lines.append(self._format_colored(f"{self._indent * 2}• Target Type: {target_type}", Fore.CYAN))
