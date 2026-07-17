@@ -1,19 +1,51 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-"""Helpers that operate on collections of ``Message`` / ``MessagePiece``."""
+"""``Conversation`` model plus helpers that operate on collections of ``Message`` / ``MessagePiece``."""
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Optional, Union
+from typing import TYPE_CHECKING
 
+from pydantic import BaseModel, ConfigDict, Field
+
+from pyrit.models.messages.conversation_retry import (  # noqa: TC001  (runtime-required by Pydantic field annotations)
+    ConversationRetry,
+)
 from pyrit.models.messages.message import Message
 from pyrit.models.messages.message_piece import MessagePiece
+from pyrit.models.score import (  # noqa: TC001  (runtime-required by Pydantic field annotations)
+    ComponentIdentifierField,
+)
 
 if TYPE_CHECKING:
     from collections.abc import MutableSequence, Sequence
 
     from pyrit.models.literals import PromptDataType, PromptResponseError
+
+
+class Conversation(BaseModel):
+    """
+    Conversation-scoped metadata shared by every piece in a conversation.
+
+    A ``Conversation`` records state that belongs to the conversation as a whole
+    rather than to any individual ``MessagePiece`` -- most importantly the target
+    the conversation is held with, plus the record of any turns that were retried.
+    Persisting the per-conversation identifiers once here (instead of stamping them
+    onto every piece/row) is what keeps ``MessagePiece`` small.
+    """
+
+    model_config = ConfigDict(
+        arbitrary_types_allowed=True,
+        extra="forbid",
+        validate_assignment=False,
+    )
+
+    conversation_id: str
+    target_identifier: ComponentIdentifierField | None = None
+
+    # Turns that were retried (rolled back out of memory and resent) in this conversation.
+    retries: list[ConversationRetry] = Field(default_factory=list)
 
 
 def get_all_values(messages: Sequence[Message]) -> list[str]:
@@ -158,7 +190,7 @@ def group_message_pieces_into_conversations(
         return []
 
     # Group pieces by conversation ID
-    conversations: dict[str, list[MessagePiece]] = {}
+    conversations: dict[str | None, list[MessagePiece]] = {}
     for piece in message_pieces:
         conv_id = piece.conversation_id
         if conv_id not in conversations:
@@ -178,7 +210,7 @@ def construct_response_from_request(
     request: MessagePiece,
     response_text_pieces: list[str],
     response_type: PromptDataType = "text",
-    prompt_metadata: Optional[dict[str, Union[str, int]]] = None,
+    prompt_metadata: dict[str, str | int] | None = None,
     error: PromptResponseError = "none",
 ) -> Message:
     """
@@ -188,7 +220,7 @@ def construct_response_from_request(
         request (MessagePiece): Source request message piece.
         response_text_pieces (list[str]): Response values to include.
         response_type (PromptDataType): Data type for original and converted response values.
-        prompt_metadata (Optional[Dict[str, Union[str, int]]]): Additional metadata to merge.
+        prompt_metadata (dict[str, str | int] | None): Additional metadata to merge.
         error (PromptResponseError): Error classification for the response.
 
     Returns:
@@ -204,9 +236,6 @@ def construct_response_from_request(
                 role="assistant",
                 original_value=resp_text,
                 conversation_id=request.conversation_id,
-                labels=request.labels,
-                prompt_target_identifier=request.prompt_target_identifier,
-                attack_identifier=request.attack_identifier,
                 original_value_data_type=response_type,
                 converted_value_data_type=response_type,
                 prompt_metadata=prompt_metadata or {},

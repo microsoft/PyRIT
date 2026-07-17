@@ -6,7 +6,8 @@ from __future__ import annotations
 import inspect
 import logging
 import time
-from typing import TYPE_CHECKING, Any, Union, cast
+from typing import TYPE_CHECKING, Any, cast
+from urllib.parse import urlparse
 
 import msal
 from azure.core.credentials import AccessToken
@@ -32,6 +33,54 @@ from pyrit.auth.authenticator import Authenticator
 
 logger = logging.getLogger(__name__)
 
+# Recognised Azure OpenAI / AI Foundry hostname suffixes. Used for strict
+# endpoint validation before an Entra ID bearer token is minted, so a token is
+# only ever issued for a known Microsoft-operated endpoint (a substring check
+# such as ``"azure" in endpoint`` is not sufficient — anyone can host a domain
+# that merely contains "azure").
+_AZURE_OPENAI_HOSTNAME_SUFFIXES = (
+    ".openai.azure.com",
+    ".ai.azure.com",
+    ".services.ai.azure.com",
+    ".cognitiveservices.azure.com",
+)
+
+# Recognised Azure Machine Learning managed online endpoint hostname suffixes.
+_AZURE_ML_HOSTNAME_SUFFIXES = (".inference.ml.azure.com",)
+
+
+def is_azure_openai_endpoint(endpoint: str | None) -> bool:
+    """
+    Return True if ``endpoint`` resolves to a known Azure OpenAI / AI Foundry host.
+
+    Uses a strict hostname-suffix check (not a substring search) so an Entra ID
+    token is only minted for a Microsoft-operated endpoint.
+
+    Args:
+        endpoint (str | None): The endpoint URL to validate.
+
+    Returns:
+        bool: True if the endpoint's hostname ends with a recognised Azure suffix.
+    """
+    hostname = (urlparse(endpoint or "").hostname or "").lower()
+    return any(hostname.endswith(suffix) for suffix in _AZURE_OPENAI_HOSTNAME_SUFFIXES)
+
+
+def is_azure_ml_endpoint(endpoint: str | None) -> bool:
+    """
+    Return True if ``endpoint`` resolves to a known AML managed online host.
+
+    Uses a strict hostname-suffix check (not a substring search).
+
+    Args:
+        endpoint (str | None): The endpoint URL to validate.
+
+    Returns:
+        bool: True if the endpoint's hostname ends with a recognised AML suffix.
+    """
+    hostname = (urlparse(endpoint or "").hostname or "").lower()
+    return any(hostname.endswith(suffix) for suffix in _AZURE_ML_HOSTNAME_SUFFIXES)
+
 
 class TokenProviderCredential:
     """
@@ -41,7 +90,7 @@ class TokenProviderCredential:
     get_azure_token_provider) and Azure SDK clients that require a TokenCredential object.
     """
 
-    def __init__(self, token_provider: Callable[[], Union[str, Callable[..., Any]]]) -> None:
+    def __init__(self, token_provider: Callable[[], str | Callable[..., Any]]) -> None:
         """
         Initialize TokenProviderCredential.
 
@@ -75,7 +124,7 @@ class AsyncTokenProviderCredential:
     async clients that require an AsyncTokenCredential object (with async def get_token).
     """
 
-    def __init__(self, token_provider: Callable[[], Union[str, Awaitable[str]]]) -> None:
+    def __init__(self, token_provider: Callable[[], str | Awaitable[str]]) -> None:
         """
         Initialize AsyncTokenProviderCredential.
 
@@ -394,14 +443,14 @@ def get_azure_openai_auth(endpoint: str) -> Callable[[], Awaitable[str]]:
     return get_azure_async_token_provider(scope)
 
 
-def get_speech_config(resource_id: Union[str, None], key: Union[str, None], region: str) -> speechsdk.SpeechConfig:
+def get_speech_config(resource_id: str | None, key: str | None, region: str) -> speechsdk.SpeechConfig:
     """
     Get the speech config using key/region pair (for key auth scenarios) or resource_id/region pair
     (for Entra auth scenarios).
 
     Args:
-        resource_id (Union[str, None]): The resource ID to get the token for.
-        key (Union[str, None]): The Azure Speech key
+        resource_id (str | None): The resource ID to get the token for.
+        key (str | None): The Azure Speech key
         region (str): The region to get the token for.
 
     Returns:
@@ -412,7 +461,8 @@ def get_speech_config(resource_id: Union[str, None], key: Union[str, None], regi
         ValueError: If neither key/region nor resource_id/region is provided.
     """
     try:
-        import azure.cognitiveservices.speech as speechsdk  # noqa: F811
+        # Runtime import; the TYPE_CHECKING binding at module top is for type annotations only.
+        import azure.cognitiveservices.speech as speechsdk
     except ModuleNotFoundError as e:
         logger.error(
             "Could not import azure.cognitiveservices.speech. "
@@ -436,8 +486,8 @@ def get_speech_config(resource_id: Union[str, None], key: Union[str, None], regi
 async def get_speech_config_async(
     *,
     token_provider: Callable[[], str | Awaitable[str]] | None,
-    resource_id: Union[str, None],
-    key: Union[str, None],
+    resource_id: str | None,
+    key: str | None,
     region: str,
 ) -> speechsdk.SpeechConfig:
     """
@@ -463,7 +513,8 @@ async def get_speech_config_async(
     """
     if token_provider:
         try:
-            import azure.cognitiveservices.speech as speechsdk  # noqa: F811
+            # Runtime import; the TYPE_CHECKING binding at module top is for type annotations only.
+            import azure.cognitiveservices.speech as speechsdk
         except ModuleNotFoundError as e:
             logger.error(
                 "Could not import azure.cognitiveservices.speech. "
@@ -495,7 +546,8 @@ def get_speech_config_from_default_azure_credential(resource_id: str, region: st
         ModuleNotFoundError: If azure.cognitiveservices.speech is not installed.
     """
     try:
-        import azure.cognitiveservices.speech as speechsdk  # noqa: F811
+        # Runtime import; the TYPE_CHECKING binding at module top is for type annotations only.
+        import azure.cognitiveservices.speech as speechsdk
     except ModuleNotFoundError as e:
         logger.error(
             "Could not import azure.cognitiveservices.speech. "

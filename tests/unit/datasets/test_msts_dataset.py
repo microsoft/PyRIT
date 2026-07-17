@@ -258,6 +258,8 @@ async def test_metadata_includes_msts_fields(english_rows):
     assert text_prompt.metadata["subsubcategory"] == ""
     assert text_prompt.metadata["image_license"] == "CC0"
     assert text_prompt.metadata["original_image_url"] == "https://example.com/img.jpg"
+    # "Mass violence" subcategory resolves more precisely than the "Violent Crimes" bucket.
+    assert text_prompt.harm_categories == ["VIOLENT_CONTENT", "VIOLENT_EXTREMISM"]
 
 
 async def test_metadata_handles_none_nullable_fields():
@@ -288,6 +290,8 @@ async def test_metadata_handles_none_nullable_fields():
     assert text_prompt.metadata["image_license"] == ""
     assert text_prompt.metadata["subcategory"] == ""
     assert text_prompt.metadata["subsubcategory"] == ""
+    # With no subcategory, harm categories fall back to the hazard_category mapping.
+    assert text_prompt.harm_categories == ["VIOLENT_CONTENT"]
 
 
 def test_infer_image_extension_from_url():

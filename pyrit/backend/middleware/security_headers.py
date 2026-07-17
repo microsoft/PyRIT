@@ -15,6 +15,7 @@ Applied headers:
 """
 
 import logging
+from typing import ClassVar
 
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.requests import Request
@@ -23,29 +24,29 @@ from starlette.types import ASGIApp
 
 logger = logging.getLogger(__name__)
 
-# Swagger / ReDoc paths — these load scripts and styles from CDN,
-# so CSP is skipped in dev mode (production disables these routes entirely).
-_DOCS_PATHS = {"/docs", "/redoc", "/openapi.json"}
-
-# CSP for API responses — as strict as possible.
-_API_CSP = "default-src 'none'; frame-ancestors 'none'"
-
-# CSP for frontend SPA — allows self-hosted scripts and Fluent UI / Griffel
-# runtime style injection ('unsafe-inline' for style-src only).
-_FRONTEND_CSP = (
-    "default-src 'self'; "
-    "script-src 'self'; "
-    "style-src 'self' 'unsafe-inline'; "
-    "img-src 'self' data: https://*.blob.core.windows.net; "
-    "media-src 'self' https://*.blob.core.windows.net; "
-    "font-src 'self' data:; "
-    "connect-src 'self' https://login.microsoftonline.com; "
-    "frame-ancestors 'none'"
-)
-
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     """Inject security response headers on every request."""
+
+    # Swagger / ReDoc paths — these load scripts and styles from CDN,
+    # so CSP is skipped in dev mode (production disables these routes entirely).
+    _DOCS_PATHS: ClassVar[set[str]] = {"/docs", "/redoc", "/openapi.json"}
+
+    # CSP for API responses — as strict as possible.
+    _API_CSP: ClassVar[str] = "default-src 'none'; frame-ancestors 'none'"
+
+    # CSP for frontend SPA — allows self-hosted scripts and Fluent UI / Griffel
+    # runtime style injection ('unsafe-inline' for style-src only).
+    _FRONTEND_CSP: ClassVar[str] = (
+        "default-src 'self'; "
+        "script-src 'self'; "
+        "style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data: https://*.blob.core.windows.net; "
+        "media-src 'self' https://*.blob.core.windows.net; "
+        "font-src 'self' data:; "
+        "connect-src 'self' https://login.microsoftonline.com; "
+        "frame-ancestors 'none'"
+    )
 
     def __init__(self, app: ASGIApp, dev_mode: bool = False) -> None:
         """
@@ -84,11 +85,11 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 
         # --- Path-dependent headers ---
         if path.startswith("/api"):
-            response.headers["Content-Security-Policy"] = _API_CSP
+            response.headers["Content-Security-Policy"] = self._API_CSP
             response.headers["Cache-Control"] = "no-store"
-        elif self._dev_mode and path in _DOCS_PATHS:
+        elif self._dev_mode and path in self._DOCS_PATHS:
             pass  # No CSP — Swagger/ReDoc load from CDN
         else:
-            response.headers["Content-Security-Policy"] = _FRONTEND_CSP
+            response.headers["Content-Security-Policy"] = self._FRONTEND_CSP
 
         return response

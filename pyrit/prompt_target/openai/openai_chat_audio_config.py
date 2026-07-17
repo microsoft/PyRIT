@@ -8,7 +8,7 @@ from typing import Any, Literal
 # OpenAI SDK: openai/types/chat/chat_completion_audio_param.py voice field
 # SDK Literal includes: alloy, ash, ballad, coral, echo, sage, shimmer, verse, marin, cedar
 # SDK docstring also lists: fable, nova, onyx (we include these for completeness)
-# Note: SDK uses Union[str, Literal[...]] so any string is accepted by the API.
+# Note: SDK uses str | Literal[...] so any string is accepted by the API.
 ChatAudioVoice = Literal[
     "alloy", "ash", "ballad", "coral", "echo", "fable", "nova", "onyx", "sage", "shimmer", "verse", "marin", "cedar"
 ]

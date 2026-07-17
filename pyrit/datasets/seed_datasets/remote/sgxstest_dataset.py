@@ -8,7 +8,7 @@ from enum import Enum
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import Modality, SeedDataset, SeedObjective
+from pyrit.models import Modality, SeedDataset, SeedObjective, SeedUnion
 
 logger = logging.getLogger(__name__)
 
@@ -74,7 +74,6 @@ class _SGXSTestDataset(_RemoteDatasetLoader):
         self,
         *,
         label: SGXSTestLabel = SGXSTestLabel.UNSAFE,
-        split: str = "train",
         token: str | None = None,
     ) -> None:
         """
@@ -84,8 +83,6 @@ class _SGXSTestDataset(_RemoteDatasetLoader):
             label: Which subset of prompts to load. Defaults to ``SGXSTestLabel.UNSAFE``
                 (the truly-harmful prompts). Use ``SGXSTestLabel.SAFE`` for the
                 over-refusal targets or ``SGXSTestLabel.ALL`` for the full 200-prompt set.
-            split: Dataset split to load. Defaults to "train" (the only split currently
-                published by the upstream dataset).
             token: Hugging Face authentication token. If not provided, reads from
                 the HUGGINGFACE_TOKEN env var.
 
@@ -95,12 +92,11 @@ class _SGXSTestDataset(_RemoteDatasetLoader):
         self._validate_enum(value=label, enum_cls=SGXSTestLabel, label="label")
 
         self.label = label
-        self.split = split
         self.token = token if token is not None else os.environ.get("HUGGINGFACE_TOKEN")
 
     @property
     def dataset_name(self) -> str:
-        """Return the dataset name."""
+        """The dataset name."""
         return "sgxstest"
 
     async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
@@ -122,7 +118,7 @@ class _SGXSTestDataset(_RemoteDatasetLoader):
 
         data = await self._fetch_from_huggingface_async(
             dataset_name=self.HF_DATASET_NAME,
-            split=self.split,
+            split="train",
             cache=cache,
             token=self.token,
         )
@@ -149,11 +145,14 @@ class _SGXSTestDataset(_RemoteDatasetLoader):
         source_url = f"https://huggingface.co/datasets/{self.HF_DATASET_NAME}"
         groups = ["Walled AI", "DeCLaRe Lab, Singapore University of Technology and Design"]
 
-        seed_objectives = [
+        seed_objectives: list[SeedUnion] = [
             SeedObjective(
                 value=item["prompt"],
                 dataset_name=self.dataset_name,
-                harm_categories=[item["category"]] if item.get("category") else [],
+                # SGXSTest's `category` is an XSTest-style linguistic hazard type (homonym,
+                # figurative language, safe context, ...), not a harm. It's preserved in
+                # metadata; harm_categories is left empty (over-refusal contrast set).
+                harm_categories=[],
                 description=description,
                 source=source_url,
                 authors=authors,

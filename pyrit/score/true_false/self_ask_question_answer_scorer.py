@@ -3,12 +3,16 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 from pyrit.common.path import SCORER_SEED_PROMPT_PATH
-from pyrit.common.utils import verify_and_resolve_path
+from pyrit.score.llm_scoring import _run_llm_scoring_async
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
-from pyrit.score.true_false.self_ask_true_false_scorer import SelfAskTrueFalseScorer
+from pyrit.score.true_false.self_ask_true_false_scorer import (
+    SelfAskTrueFalseScorer,
+    TrueFalseQuestion,
+    render_true_false_system_prompt,
+)
 from pyrit.score.true_false.true_false_score_aggregator import (
     TrueFalseAggregatorFunc,
     TrueFalseScoreAggregator,
@@ -17,8 +21,9 @@ from pyrit.score.true_false.true_false_score_aggregator import (
 if TYPE_CHECKING:
     import pathlib
 
-    from pyrit.models import MessagePiece, Score, UnvalidatedScore
+    from pyrit.models import MessagePiece, Score
     from pyrit.prompt_target import PromptTarget
+    from pyrit.score.response_handler import ResponseHandler
 
 
 class SelfAskQuestionAnswerScorer(SelfAskTrueFalseScorer):
@@ -38,8 +43,9 @@ class SelfAskQuestionAnswerScorer(SelfAskTrueFalseScorer):
         self,
         *,
         chat_target: PromptTarget,
-        true_false_question_path: Optional[pathlib.Path] = None,
-        validator: Optional[ScorerPromptValidator] = None,
+        true_false_question_path: pathlib.Path | None = None,
+        response_handler: ResponseHandler | None = None,
+        validator: ScorerPromptValidator | None = None,
         score_aggregator: TrueFalseAggregatorFunc = TrueFalseScoreAggregator.OR,
     ) -> None:
         """
@@ -49,31 +55,36 @@ class SelfAskQuestionAnswerScorer(SelfAskTrueFalseScorer):
             chat_target (PromptTarget): The chat target to use for the scorer. Must satisfy
                 CHAT_TARGET_REQUIREMENTS (multi-turn + editable history capabilities,
                 possibly via normalization-pipeline adaptation).
-            true_false_question_path (Optional[pathlib.Path]): The path to the true/false question file.
+            true_false_question_path (pathlib.Path | None): The path to the true/false question file.
                 Defaults to None, which uses the default question_answering.yaml file.
-            validator (Optional[ScorerPromptValidator]): Custom validator. Defaults to None.
+            response_handler (ResponseHandler | None): Parser for the target's raw output. Defaults
+                to None (uses ``JsonSchemaResponseHandler``).
+            validator (ScorerPromptValidator | None): Custom validator. Defaults to None.
             score_aggregator (TrueFalseAggregatorFunc): The aggregator function to use.
                 Defaults to TrueFalseScoreAggregator.OR.
         """
         if not true_false_question_path:
             true_false_question_path = SCORER_SEED_PROMPT_PATH / "true_false_question" / "question_answering.yaml"
 
-        true_false_question_path = verify_and_resolve_path(true_false_question_path)
+        question = TrueFalseQuestion.from_yaml(true_false_question_path)
+        system_prompt = render_true_false_system_prompt(question=question)
 
         super().__init__(
             chat_target=chat_target,
-            true_false_question_path=true_false_question_path,
+            system_prompt=system_prompt,
+            question=question,
+            response_handler=response_handler,
             validator=validator,
             score_aggregator=score_aggregator,
         )
 
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: Optional[str] = None) -> list[Score]:
+    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
         """
         Score the message piece using question answering evaluation.
 
         Args:
             message_piece (MessagePiece): The answer given by the target to be scored.
-            objective (Optional[str]): The objective, which usually contains the question and the correct answer.
+            objective (str | None): The objective, which usually contains the question and the correct answer.
                 Defaults to None.
 
         Returns:
@@ -84,15 +95,16 @@ class SelfAskQuestionAnswerScorer(SelfAskTrueFalseScorer):
             f"Evaluate if the response is correct:\n{message_piece.converted_value}"
         )
 
-        unvalidated_score: UnvalidatedScore = await self._score_value_with_llm_async(
-            prompt_target=self._prompt_target,
+        unvalidated_score = await _run_llm_scoring_async(
+            chat_target=self._prompt_target,
             system_prompt=self._system_prompt,
-            message_value=prompt,
-            message_data_type="text",
+            response_handler=self._response_handler,
+            value=prompt,
+            data_type="text",
             scored_prompt_id=message_piece.id,
+            scorer_identifier=self.get_identifier(),
             category=self._score_category,
             objective=objective,
-            attack_identifier=message_piece.attack_identifier,
         )
 
         score = unvalidated_score.to_score(score_value=unvalidated_score.raw_score_value, score_type="true_false")

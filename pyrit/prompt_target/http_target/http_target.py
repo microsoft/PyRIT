@@ -6,7 +6,7 @@ import json
 import logging
 import re
 from collections.abc import Callable
-from typing import Any, Optional
+from typing import Any
 
 import httpx
 
@@ -34,14 +34,15 @@ class HTTPTarget(PromptTarget):
 
     def __init__(
         self,
+        *,
         http_request: str,
         prompt_regex_string: str = "{PROMPT}",
         use_tls: bool = True,
-        callback_function: Optional[Callable[..., Any]] = None,
-        max_requests_per_minute: Optional[int] = None,
-        client: Optional[httpx.AsyncClient] = None,
+        callback_function: Callable[..., Any] | None = None,
+        max_requests_per_minute: int | None = None,
+        client: httpx.AsyncClient | None = None,
         model_name: str = "",
-        custom_configuration: Optional[TargetConfiguration] = None,
+        custom_configuration: TargetConfiguration | None = None,
         **httpx_client_kwargs: Any,
     ) -> None:
         """
@@ -108,7 +109,7 @@ class HTTPTarget(PromptTarget):
         http_request: str,
         prompt_regex_string: str = "{PROMPT}",
         callback_function: Callable[..., Any] | None = None,
-        max_requests_per_minute: Optional[int] = None,
+        max_requests_per_minute: int | None = None,
     ) -> "HTTPTarget":
         """
         Alternative constructor that accepts a pre-configured httpx client.
@@ -184,23 +185,22 @@ class HTTPTarget(PromptTarget):
             cleanup_client = True
 
         try:
-            match http_body:
-                case dict():
-                    response = await client.request(
-                        method=http_method,
-                        url=url,
-                        headers=header_dict,
-                        data=http_body,
-                        follow_redirects=True,
-                    )
-                case str():
-                    response = await client.request(
-                        method=http_method,
-                        url=url,
-                        headers=header_dict,
-                        content=http_body,
-                        follow_redirects=True,
-                    )
+            if isinstance(http_body, dict):
+                response = await client.request(
+                    method=http_method,
+                    url=url,
+                    headers=header_dict,
+                    data=http_body,
+                    follow_redirects=True,
+                )
+            else:
+                response = await client.request(
+                    method=http_method,
+                    url=url,
+                    headers=header_dict,
+                    content=http_body,
+                    follow_redirects=True,
+                )
 
             response_content = response.content
 

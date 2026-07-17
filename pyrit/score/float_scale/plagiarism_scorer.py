@@ -3,7 +3,6 @@
 
 import re
 from enum import Enum
-from typing import Optional
 
 import numpy as np
 
@@ -35,10 +34,11 @@ class PlagiarismScorer(FloatScaleScorer):
 
     def __init__(
         self,
+        *,
         reference_text: str,
         metric: PlagiarismMetric = PlagiarismMetric.LCS,
         n: int = 5,
-        validator: Optional[ScorerPromptValidator] = None,
+        validator: ScorerPromptValidator | None = None,
     ) -> None:
         """
         Initialize the PlagiarismScorer.
@@ -47,7 +47,7 @@ class PlagiarismScorer(FloatScaleScorer):
             reference_text (str): The reference text to compare against.
             metric (PlagiarismMetric): The plagiarism detection metric to use. Defaults to PlagiarismMetric.LCS.
             n (int): The n-gram size for n-gram similarity. Defaults to 5.
-            validator (Optional[ScorerPromptValidator]): Custom validator for the scorer. Defaults to None.
+            validator (ScorerPromptValidator | None): Custom validator for the scorer. Defaults to None.
         """
         super().__init__(validator=validator or self._DEFAULT_VALIDATOR)
 
@@ -75,7 +75,7 @@ class PlagiarismScorer(FloatScaleScorer):
         Tokenize text using whitespace-based tokenization (case-insensitive).
 
         Returns:
-            List[str]: List of lowercase tokens with punctuation removed.
+            list[str]: List of lowercase tokens with punctuation removed.
         """
         text = text.lower()
         text = re.sub(r"[^\w\s]", "", text)
@@ -164,13 +164,13 @@ class PlagiarismScorer(FloatScaleScorer):
 
         raise ValueError("metric must be 'lcs', 'levenshtein', or 'jaccard'")
 
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: Optional[str] = None) -> list[Score]:
+    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
         """
         Scores the AI response against the reference text using the specified metric.
 
         Args:
             message_piece (MessagePiece): The piece to score.
-            objective (Optional[str]): Not applicable for this scorer.
+            objective (str | None): Not applicable for this scorer.
 
         Returns:
             list[Score]: A list containing the computed score.

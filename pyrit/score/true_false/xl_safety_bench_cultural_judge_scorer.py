@@ -14,7 +14,7 @@ Reference: https://github.com/AIM-Intelligence/XL-SafetyBench/blob/main/scripts/
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 from pyrit.common.path import SCORER_SEED_PROMPT_PATH
 from pyrit.exceptions import InvalidJsonException
@@ -126,9 +126,9 @@ class XLSafetyBenchCulturalJudgeScorer(TrueFalseScorer):
         self,
         *,
         chat_target: PromptTarget,
-        validator: Optional[ScorerPromptValidator] = None,
+        validator: ScorerPromptValidator | None = None,
         score_aggregator: TrueFalseAggregatorFunc = TrueFalseScoreAggregator.OR,
-        category: Optional[list[str]] = None,
+        category: list[str] | None = None,
     ) -> None:
         """
         Initialize the XL-SafetyBench Cultural judge scorer.
@@ -163,18 +163,16 @@ class XLSafetyBenchCulturalJudgeScorer(TrueFalseScorer):
             params={
                 "system_prompt_template": _XL_CULTURAL_JUDGE_SYSTEM_PROMPT.value,
                 "user_prompt_template": _XL_CULTURAL_JUDGE_USER_PROMPT.value,
-                "score_aggregator": self._score_aggregator.__name__,  # type: ignore[ty:unresolved-attribute]
             },
-            children={
-                "prompt_target": self._prompt_target.get_identifier(),
-            },
+            score_aggregator=self._score_aggregator.__name__,  # type: ignore[ty:unresolved-attribute]
+            prompt_target=self._prompt_target.get_identifier(),
         )
 
     async def _score_piece_async(
         self,
         message_piece: MessagePiece,
         *,
-        objective: Optional[str] = None,
+        objective: str | None = None,
     ) -> list[Score]:
         """
         Score a single response piece using the XL-SafetyBench cultural judge.
@@ -220,7 +218,6 @@ class XLSafetyBenchCulturalJudgeScorer(TrueFalseScorer):
             prompt_target=self._prompt_target,
             system_prompt=system_prompt,
             user_prompt=user_prompt,
-            attack_identifier=message_piece.attack_identifier,
         )
 
         cultural_aware_flag = _coerce_binary(parsed.get("cultural_aware_flag"), field="cultural_aware_flag")

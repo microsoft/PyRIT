@@ -1,4 +1,4 @@
-# 3. Memory Types
+# Memory Types
 
 There are several types of data you can retrieve from memory at any point in time using the `MemoryInterface`.
 
@@ -23,13 +23,7 @@ One of the most fundamental data structures in PyRIT is [MessagePiece](../../../
 - **`labels`**: Dictionary of labels for categorization and filtering
 - **`prompt_metadata`**: Component-specific metadata (e.g., blob URIs, document types)
 - **`converter_identifiers`**: List of converters applied to transform the prompt
-- **`prompt_target_identifier`**: Information about the target that received this prompt
-- **`attack_identifier`**: Information about the attack that generated this prompt
-- **`scorer_identifier`**: Information about the scorer that evaluated this prompt
 - **`response_error`**: Error status (e.g., `none`, `blocked`, `processing`)
-- **`originator`**: Source of the prompt (`attack`, `converter`, `scorer`, `undefined`)
-- **`scores`**: List of `Score` objects associated with this piece
-- **`targeted_harm_categories`**: Harm categories associated with the prompt
 - **`timestamp`**: When the piece was created
 
 This rich context allows PyRIT to track the full lifecycle of each interaction, including transformations, targeting, scoring, and error handling.
@@ -53,6 +47,8 @@ This rich context allows PyRIT to track the full lifecycle of each interaction, 
 ### Conversation Structure
 
 A conversation is a list of `Messages` that share the same `conversation_id`. The sequence of the `MessagePieces` and their corresponding `Messages` dictates the order of the conversation.
+
+A conversation is always held with a single target. That target's identifier is recorded once per conversation in the `Conversations` table (`target_identifier`) rather than on every `MessagePiece`. Use `memory._get_conversation(conversation_id=...)` to retrieve it.
 
 Here is a sample conversation made up of three `Messages` which all share the same conversation ID. The first `Message` is the `system` message, followed by a multi-modal `user` prompt with a text `MessagePiece` and an image `MessagePiece`, and finally the `assistant` response in the form of a text `MessagePiece`.
 
@@ -94,9 +90,9 @@ All seed types inherit from [`Seed`](../../../pyrit/models/seeds/seed.py), which
 
 Seeds are organized into [`SeedGroup`](../../../pyrit/models/seeds/seed_group.py) containers that enforce consistency (shared `prompt_group_id`, valid role sequences, no duplicate sequence numbers). Two specialized subclasses add further constraints:
 
-- [`SeedAttackGroup`](../../../pyrit/models/seeds/seed_attack_group.py) — Requires exactly one `SeedObjective`. Represents a complete attack specification: an objective plus optional prompts or simulated conversation config.
+- [`AttackSeedGroup`](../../../pyrit/models/seeds/attack_seed_group.py) — Requires exactly one `SeedObjective`. Represents a complete attack specification: an objective plus optional prompts or simulated conversation config.
 
-- [`SeedAttackTechniqueGroup`](../../../pyrit/models/seeds/seed_attack_technique_group.py) — All seeds must have `is_general_technique=True` and no `SeedObjective` is allowed. Represents reusable attack techniques (jailbreaks, role-plays, etc.) that can be composed with any objective.
+- [`AttackTechniqueSeedGroup`](../../../pyrit/models/seeds/attack_technique_seed_group.py) — All seeds must have `is_general_technique=True` and no `SeedObjective` is allowed. Represents reusable attack techniques (jailbreaks, role-plays, etc.) that can be composed with any objective.
 
 
 ## Scores
@@ -112,20 +108,19 @@ Seeds are organized into [`SeedGroup`](../../../pyrit/models/seeds/seed_group.py
 - **`score_rationale`**: Explanation of why the score was assigned
 - **`scorer_class_identifier`**: Information about the scorer that generated this score
 - **`message_piece_id`**: The ID of the piece/response being scored
-- **`task`**: The original attacker's objective being evaluated
+- **`objective`**: The original attacker's objective being evaluated
 - **`score_metadata`**: Custom metadata specific to the scorer
 
 Scores enable automated evaluation of attack success, content harmfulness, and other metrics throughout PyRIT's red teaming workflows.
 
 ## AttackResults
 
-[`AttackResult`](../../../pyrit/models/attack_result.py) objects encapsulate the complete outcome of an attack execution, including metrics, evidence, and success determination. When an attack is run, the AttackResult is added to the database and can be queried later.
+[`AttackResult`](../../../pyrit/models/results/attack_result.py) objects encapsulate the complete outcome of an attack execution, including metrics, evidence, and success determination. When an attack is run, the AttackResult is added to the database and can be queried later.
 
 **Key Fields:**
 
 - **`conversation_id`**: The conversation that produced this result
 - **`objective`**: Natural-language description of the attacker's goal
-- **`attack_identifier`**: `ComponentIdentifier` identifying the attack strategy used
 - **`atomic_attack_identifier`**: Composite `ComponentIdentifier` combining the attack technique with seed identifiers from the dataset (see [ComponentIdentifiers](#componentidentifiers) below)
 - **`last_response`**: The final `MessagePiece` generated in the attack
 - **`last_score`**: The final score assigned to the last response
@@ -135,6 +130,7 @@ Scores enable automated evaluation of attack success, content harmfulness, and o
 - **`outcome_reason`**: Optional explanation for the outcome
 - **`related_conversations`**: Set of related conversation references
 - **`metadata`**: Arbitrary metadata about the attack execution
+- **`targeted_harm_categories`**: Harm categories this attack targeted, auto-populated from the attack's seed group
 
 `AttackResult` objects provide comprehensive reporting on attack campaigns, enabling analysis of red teaming effectiveness and vulnerability identification.
 
@@ -153,7 +149,7 @@ Identifiers are content-addressed: the same configuration always produces the sa
 
 ### Composite Identifiers
 
-For atomic attacks, `build_atomic_attack_identifier` composes a tree of identifiers:
+For atomic attacks, `AtomicAttackIdentifier.build` composes a tree of identifiers:
 
 - **`attack_technique`** — the attack strategy and its children (target, converters, scorer, technique seeds)
 - **`seed_identifiers`** — all seeds from the seed group, for traceability
@@ -161,3 +157,11 @@ For atomic attacks, `build_atomic_attack_identifier` composes a tree of identifi
 ### Eval Hashing
 
 [`EvaluationIdentifier`](../../../pyrit/identifiers/evaluation_identifier.py) subclasses wrap a `ComponentIdentifier` and compute a separate **eval hash** that strips operational params (like endpoint URLs) so the same logical configuration on different deployments produces the same hash. This enables grouping equivalent runs for evaluation comparison.
+
+What feeds the eval hash is declared **on the strongly-typed identifier fields themselves**, via `Evaluate.*` markers attached as [`typing.Annotated`](https://docs.python.org/3/library/typing.html#typing.Annotated) metadata. This keeps the identifier classes the single source of truth — you change what an eval hash includes by editing the field, not a separate rules table:
+
+- `Evaluate.Include()` — keep this field in the eval hash (the default for an unmarked field). On a param, `fallback="model_name"` substitutes another param's value when this one is empty. On a child, `only_params={...}` restricts the child subtree to those params.
+- `Evaluate.Exclude()` — drop the field (param or child) from the eval hash. Operational target params like `endpoint`, `model_name`, and `max_requests_per_minute` are excluded this way.
+- `Evaluate.Unwrap()` — mark a wrapper passthrough slot (e.g. `TargetIdentifier.targets`). A multi-target like `RoundRobinTarget` is "looked through" to its inner target, so it eval-hashes the same as the bare inner target.
+
+For example, `TargetIdentifier` excludes `endpoint` but includes `temperature`, and the `ObjectiveTargetEvaluationIdentifier` / `ScorerEvaluationIdentifier` / `AtomicAttackEvaluationIdentifier` subclasses derive their engine rules from these markers (via `derive_eval_config`). Markers affect **only** the eval hash — the identity `hash` always keeps distinct components (e.g. a wrapper vs. its inner target) distinct.

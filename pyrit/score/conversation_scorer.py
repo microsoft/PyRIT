@@ -1,16 +1,17 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-import uuid
 from abc import ABC, abstractmethod
-from typing import Optional, cast
-from uuid import UUID
+from typing import TYPE_CHECKING, cast
 
 from pyrit.models import ComponentIdentifier, Message, MessagePiece, Score
 from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
 from pyrit.score.scorer import Scorer
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
+
+if TYPE_CHECKING:
+    from uuid import UUID
 
 
 class ConversationScorer(Scorer, ABC):
@@ -32,7 +33,7 @@ class ConversationScorer(Scorer, ABC):
         enforce_all_pieces_valid=False,
     )
 
-    async def _score_async(self, message: Message, *, objective: Optional[str] = None) -> list[Score]:
+    async def _score_async(self, message: Message, *, objective: str | None = None) -> list[Score]:
         """
         Scores the entire conversation history by concatenating all messages and passing to the wrapped scorer.
 
@@ -44,10 +45,15 @@ class ConversationScorer(Scorer, ABC):
         conversation, even when the triggering turn was blocked or errored; the wrapped
         scorer's fallback only fires when the rendered conversation is genuinely unscoreable.
 
+        The wrapped scorer is invoked via its protected ``_score_async`` so it does not
+        persist its own copy of the scores. The outer ``Scorer.score_async`` that invoked
+        this method persists the returned scores exactly once, keyed to the original
+        ``message_piece_id``.
+
         Args:
             message (Message): A message from the conversation to be scored.
                 The conversation ID from the first message piece is used to retrieve the full conversation from memory.
-            objective (Optional[str]): Optional objective to evaluate against.
+            objective (str | None): Optional objective to evaluate against.
 
         Returns:
             list[Score]: List of Score objects from the underlying scorer
@@ -62,7 +68,9 @@ class ConversationScorer(Scorer, ABC):
         conversation_id = message.message_pieces[0].conversation_id
 
         # Retrieve the full conversation from memory using the conversation_id
-        conversation = self._memory.get_conversation(conversation_id=conversation_id)
+        conversation = (
+            self._memory.get_conversation_messages(conversation_id=conversation_id) if conversation_id else []
+        )
 
         if not conversation:
             raise ValueError(f"Conversation with ID {conversation_id} not found in memory.")
@@ -101,13 +109,9 @@ class ConversationScorer(Scorer, ABC):
                     converted_value=conversation_text,
                     id=original_piece.id,
                     conversation_id=original_piece.conversation_id,
-                    labels=original_piece.labels,  # deprecated
-                    prompt_target_identifier=original_piece.prompt_target_identifier,
-                    attack_identifier=original_piece.attack_identifier,
                     original_value_data_type="text",
                     converted_value_data_type="text",
                     response_error="none",
-                    originator=original_piece.originator,
                     original_prompt_id=(
                         cast("UUID", original_piece.original_prompt_id)
                         if isinstance(original_piece.original_prompt_id, str)
@@ -119,16 +123,12 @@ class ConversationScorer(Scorer, ABC):
         )
 
         wrapped_scorer = self._get_wrapped_scorer()
-        scores = await wrapped_scorer.score_async(message=conversation_message, objective=objective)
+        # Call the wrapped scorer's protected ``_score_async`` rather than the public
+        # ``score_async`` so the wrapped scorer does not persist its own copy of the
+        # scores.
+        return await wrapped_scorer._score_async(message=conversation_message, objective=objective)
 
-        # Generate new IDs for the scores to avoid ID collisions when the wrapped scorer's
-        # scores are already in the database
-        for score in scores:
-            score.id = uuid.uuid4()
-
-        return scores
-
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: Optional[str] = None) -> list[Score]:
+    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
         """
         Not used - ConversationScorer operates at conversation level via _score_async.
 
@@ -159,7 +159,7 @@ class ConversationScorer(Scorer, ABC):
 def create_conversation_scorer(
     *,
     scorer: Scorer,
-    validator: Optional[ScorerPromptValidator] = None,
+    validator: ScorerPromptValidator | None = None,
 ) -> Scorer:
     """
     Create a ConversationScorer that inherits from the same type as the wrapped scorer.
@@ -171,7 +171,7 @@ def create_conversation_scorer(
     Args:
         scorer (Scorer): The scorer to wrap for conversation-level evaluation.
             Must be an instance of FloatScaleScorer or TrueFalseScorer.
-        validator (Optional[ScorerPromptValidator]): Optional validator override.
+        validator (ScorerPromptValidator | None): Optional validator override.
             If not provided, uses the wrapped scorer's validator.
 
     Returns:
@@ -181,13 +181,13 @@ def create_conversation_scorer(
         ValueError: If the scorer is not an instance of FloatScaleScorer or TrueFalseScorer.
 
     Example:
-        >>> float_scorer = SelfAskLikertScorer(chat_target=target, likert_scale=scale)
+        >>> float_scorer = SelfAskLikertScorer.from_likert_scale(chat_target=target, likert_scale=scale)
         >>> conversation_scorer = create_conversation_scorer(scorer=float_scorer)
         >>> isinstance(conversation_scorer, FloatScaleScorer)  # True
         >>> isinstance(conversation_scorer, ConversationScorer)  # True
     """
     # Determine the base class of the wrapped scorer
-    scorer_base_class: Optional[type[Scorer]] = None
+    scorer_base_class: type[Scorer] | None = None
 
     if isinstance(scorer, FloatScaleScorer):
         scorer_base_class = FloatScaleScorer
@@ -220,9 +220,7 @@ def create_conversation_scorer(
                 ComponentIdentifier: The identifier for this scorer.
             """
             return self._create_identifier(
-                children={
-                    "sub_scorers": [self._wrapped_scorer.get_identifier()],
-                },
+                sub_scorers=[self._wrapped_scorer.get_identifier()],
             )
 
     return DynamicConversationScorer()

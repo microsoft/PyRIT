@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react'
 import {
+  Button,
   Text,
   Tooltip,
 } from '@fluentui/react-components'
+import { QuestionCircleRegular } from '@fluentui/react-icons'
 import { versionApi } from '../../services/api'
 import Navigation, { type ViewName } from '../Sidebar/Navigation'
 import { UserAccountButton } from '../UserAccountButton'
@@ -12,16 +14,16 @@ interface MainLayoutProps {
   children: React.ReactNode
   currentView: ViewName
   onNavigate: (view: ViewName) => void
-  onToggleTheme: () => void
-  isDarkMode: boolean
+  onOpenFeedback: () => void
+  onStartTour?: () => void
 }
 
 export default function MainLayout({
   children,
   currentView,
   onNavigate,
-  onToggleTheme,
-  isDarkMode,
+  onOpenFeedback,
+  onStartTour,
 }: MainLayoutProps) {
   const styles = useMainLayoutStyles()
   const [version, setVersion] = useState<string>('Loading...')
@@ -48,6 +50,17 @@ export default function MainLayout({
         </Tooltip>
         <Text className={styles.title}>Co-PyRIT</Text>
         <Text className={styles.subtitle}>Python Risk Identification Tool</Text>
+        <div className={styles.spacer} />
+        {onStartTour && (
+          <Button
+            appearance="subtle"
+            icon={<QuestionCircleRegular />}
+            onClick={onStartTour}
+            data-testid="start-tour"
+          >
+            Take a tour
+          </Button>
+        )}
         <UserAccountButton />
       </div>
       <div className={styles.contentArea}>
@@ -55,8 +68,7 @@ export default function MainLayout({
           <Navigation
             currentView={currentView}
             onNavigate={onNavigate}
-            onToggleTheme={onToggleTheme}
-            isDarkMode={isDarkMode}
+            onOpenFeedback={onOpenFeedback}
           />
         </aside>
         <main className={styles.main}>{children}</main>

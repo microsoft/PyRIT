@@ -10,7 +10,7 @@
 # ---
 
 # %% [markdown]
-# # 6. Azure SQL Memory
+# # Azure SQL Memory
 #
 # The memory AzureSQL database can be thought of as a normalized source of truth. The memory module is the primary way pyrit keeps track of requests and responses to targets and scores. Most of this is done automatically. All attacks write to memory for later retrieval. All scorers also write to memory when scoring.
 #
@@ -73,11 +73,11 @@ message_list = [
     ),
 ]
 
-memory.add_message_to_memory(request=Message([message_list[0]]))
-memory.add_message_to_memory(request=Message([message_list[1]]))
-memory.add_message_to_memory(request=Message([message_list[2]]))
+memory.add_message_to_memory(request=Message(message_pieces=[message_list[0]]))
+memory.add_message_to_memory(request=Message(message_pieces=[message_list[1]]))
+memory.add_message_to_memory(request=Message(message_pieces=[message_list[2]]))
 
-entries = memory.get_conversation(conversation_id=conversation_id)
+entries = memory.get_conversation_messages(conversation_id=conversation_id)
 
 for entry in entries:
     print(entry)

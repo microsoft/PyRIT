@@ -4,6 +4,7 @@
 """Exception classes, retry helpers, and execution context utilities."""
 
 from pyrit.exceptions.exception_classes import (
+    CONTENT_FILTER_MARKERS,
     BadRequestException,
     EmptyResponseException,
     ExperimentalWarning,
@@ -11,6 +12,7 @@ from pyrit.exceptions.exception_classes import (
     MissingPromptPlaceholderException,
     PyritException,
     RateLimitException,
+    ScorerLLMResponseBlockedException,
     get_retry_max_num_attempts,
     handle_bad_request_exception,
     pyrit_custom_result_retry,
@@ -40,6 +42,7 @@ __all__ = [
     "clear_execution_context",
     "clear_retry_collector",
     "ComponentRole",
+    "CONTENT_FILTER_MARKERS",
     "EmptyResponseException",
     "ExecutionContext",
     "ExecutionContextManager",
@@ -58,6 +61,7 @@ __all__ = [
     "RateLimitException",
     "remove_markdown_json",
     "RetryCollector",
+    "ScorerLLMResponseBlockedException",
     "set_execution_context",
     "set_retry_collector",
     "execution_context",

@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from pyrit.converter import Base64Converter
 from pyrit.executor.attack import (
     AttackConverterConfig,
     AttackParameters,
@@ -19,8 +20,7 @@ from pyrit.models import (
     ComponentIdentifier,
     SeedPrompt,
 )
-from pyrit.prompt_converter import Base64Converter
-from pyrit.prompt_normalizer import PromptConverterConfiguration, PromptNormalizer
+from pyrit.prompt_normalizer import ConverterConfiguration, PromptNormalizer
 from pyrit.prompt_target import PromptTarget
 from pyrit.score import TrueFalseScorer
 
@@ -387,7 +387,7 @@ class TestManyShotJailbreakAttackWithConverters:
         mock_fetch_dataset.return_value = sample_many_shot_examples
 
         converter_config = AttackConverterConfig(
-            request_converters=PromptConverterConfiguration.from_converters(converters=[Base64Converter()])
+            request_converters=ConverterConfiguration.from_converters(converters=[Base64Converter()])
         )
 
         attack = ManyShotJailbreakAttack(

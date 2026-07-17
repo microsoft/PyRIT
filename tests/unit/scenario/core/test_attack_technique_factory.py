@@ -3,20 +3,22 @@
 
 """Tests for the AttackTechniqueFactory class."""
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
+from pyrit.converter import Base64Converter, ROT13Converter
 from pyrit.executor.attack.core.attack_config import AttackConverterConfig, AttackScoringConfig
 from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
-from pyrit.models import ComponentIdentifier, Identifiable, SeedAttackTechniqueGroup, SeedPrompt
+from pyrit.models import AttackTechniqueSeedGroup, ComponentIdentifier, Identifiable, SeedPrompt
+from pyrit.prompt_normalizer import ConverterConfiguration
 from pyrit.prompt_target import PromptTarget
 from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory, ScorerOverridePolicy
 
 
-def _make_seed_technique() -> SeedAttackTechniqueGroup:
-    return SeedAttackTechniqueGroup(
+def _make_seed_technique() -> AttackTechniqueSeedGroup:
+    return AttackTechniqueSeedGroup(
         seeds=[
             SeedPrompt(value="technique1", data_type="text", is_general_technique=True),
         ]
@@ -67,6 +69,35 @@ class TestFactoryInit:
         factory = AttackTechniqueFactory(name="test", attack_class=_StubAttack, seed_technique=seeds)
 
         assert factory.seed_technique is seeds
+
+    def test_init_description_defaults_to_none(self):
+        factory = AttackTechniqueFactory(name="test", attack_class=_StubAttack)
+
+        assert factory.description is None
+
+    def test_init_stores_description(self):
+        factory = AttackTechniqueFactory(
+            name="test",
+            attack_class=_StubAttack,
+            description="Does the thing.",
+        )
+
+        assert factory.description == "Does the thing."
+
+    def test_with_simulated_conversation_forwards_description(self):
+        factory = AttackTechniqueFactory.with_simulated_conversation(
+            name="crescendo_journalist_interview",
+            description="Staged as a journalist interview.",
+        )
+
+        assert factory.description == "Staged as a journalist interview."
+
+    def test_description_does_not_affect_identifier(self):
+        """Description is decorative metadata and must not change the behavioral identity hash."""
+        with_desc = AttackTechniqueFactory(name="test", attack_class=_StubAttack, description="Does the thing.")
+        without_desc = AttackTechniqueFactory(name="test", attack_class=_StubAttack)
+
+        assert with_desc.get_identifier().hash == without_desc.get_identifier().hash
 
     def test_validate_kwargs_accepts_valid_params(self):
         """All valid kwarg names should pass without error."""
@@ -282,6 +313,67 @@ class TestFactoryCreate:
         assert not technique.attack.adversarial_was_passed
         assert not technique.attack.converter_was_passed
 
+    def test_create_appends_extra_request_converters_without_baked(self):
+        """``extra_request_converters`` become the request converters when none are baked."""
+        factory = AttackTechniqueFactory(name="test", attack_class=_StubAttack)
+        target = MagicMock(spec=PromptTarget)
+        extra = ConverterConfiguration.from_converters(converters=[Base64Converter()])
+
+        technique = factory.create(
+            objective_target=target,
+            attack_scoring_config=self._scoring(),
+            extra_request_converters=extra,
+        )
+
+        cfg = technique.attack.attack_converter_config
+        assert cfg.request_converters == extra
+        assert cfg.response_converters == []
+
+    def test_create_appends_extra_request_converters_on_top_of_baked(self):
+        """``extra_request_converters`` are appended after baked request converters; responses are preserved."""
+        baked_request = ConverterConfiguration.from_converters(converters=[Base64Converter()])
+        baked_response = ConverterConfiguration.from_converters(converters=[ROT13Converter()])
+        baked = AttackConverterConfig(request_converters=baked_request, response_converters=baked_response)
+        factory = AttackTechniqueFactory(
+            name="test",
+            attack_class=_StubAttack,
+            attack_kwargs={"attack_converter_config": baked},
+        )
+        target = MagicMock(spec=PromptTarget)
+        extra = ConverterConfiguration.from_converters(converters=[Base64Converter()])
+
+        technique = factory.create(
+            objective_target=target,
+            attack_scoring_config=self._scoring(),
+            extra_request_converters=extra,
+        )
+
+        cfg = technique.attack.attack_converter_config
+        assert cfg.request_converters == baked_request + extra
+        assert cfg.response_converters == baked_response
+
+    def test_create_extra_request_converters_skipped_when_unsupported(self):
+        """Attacks that don't accept ``attack_converter_config`` silently ignore extras."""
+
+        class _NoConverterAttack:
+            def __init__(self, *, objective_target, attack_scoring_config=None):
+                self.objective_target = objective_target
+
+            def get_identifier(self):
+                return ComponentIdentifier(class_name="_NoConverterAttack", class_module="test")
+
+        factory = AttackTechniqueFactory(name="test", attack_class=_NoConverterAttack, uses_adversarial=False)
+        target = MagicMock(spec=PromptTarget)
+        extra = ConverterConfiguration.from_converters(converters=[Base64Converter()])
+
+        technique = factory.create(
+            objective_target=target,
+            attack_scoring_config=self._scoring(),
+            extra_request_converters=extra,
+        )
+
+        assert isinstance(technique, AttackTechnique)
+
 
 class TestFactoryIdentifier:
     """Tests for AttackTechniqueFactory._build_identifier()."""
@@ -399,10 +491,10 @@ class TestFactoryIdentifier:
 
     def test_different_seed_techniques_produce_different_hashes(self):
         """Two factories differing only by seed_technique must have different hashes."""
-        seed1 = SeedAttackTechniqueGroup(
+        seed1 = AttackTechniqueSeedGroup(
             seeds=[SeedPrompt(value="technique_a", data_type="text", is_general_technique=True)],
         )
-        seed2 = SeedAttackTechniqueGroup(
+        seed2 = AttackTechniqueSeedGroup(
             seeds=[SeedPrompt(value="technique_b", data_type="text", is_general_technique=True)],
         )
         factory1 = AttackTechniqueFactory(name="test", attack_class=_StubAttack, seed_technique=seed1)
@@ -565,6 +657,266 @@ class TestScorerPolicy:
 
         with pytest.raises(ValueError, match="error detail"):
             factory._apply_scorer_policy("error detail")
+
+
+class TestCustomAdversarialPrompt:
+    """Tests for the adversarial_system_prompt / adversarial_seed_prompt params."""
+
+    class _AdversarialAttack:
+        def __init__(self, *, objective_target, attack_scoring_config=None, attack_adversarial_config=None):
+            self.objective_target = objective_target
+            self.attack_scoring_config = attack_scoring_config
+            self.attack_adversarial_config = attack_adversarial_config
+
+        def get_identifier(self):
+            return ComponentIdentifier(class_name="_AdversarialAttack", class_module="test")
+
+    @staticmethod
+    def _scoring():
+        return MagicMock(spec=AttackScoringConfig)
+
+    def test_custom_prompt_implies_uses_adversarial(self):
+        factory = AttackTechniqueFactory(
+            name="durian",
+            attack_class=_StubAttack,
+            adversarial_system_prompt="custom {{ objective }}",
+        )
+        assert factory.uses_adversarial is True
+
+    def test_custom_seed_prompt_implies_uses_adversarial(self):
+        factory = AttackTechniqueFactory(
+            name="durian",
+            attack_class=_StubAttack,
+            adversarial_seed_prompt=SeedPrompt(value="hi {{ objective }}", data_type="text", parameters=["objective"]),
+        )
+        assert factory.uses_adversarial is True
+
+    def test_custom_prompt_with_baked_chat_coexist(self):
+        """A baked adversarial_chat and custom prompts can be combined freely."""
+        target = MagicMock(spec=PromptTarget)
+        seed = SeedPrompt(value="hi {{ objective }}", data_type="text", parameters=["objective"])
+        factory = AttackTechniqueFactory(
+            name="durian",
+            attack_class=self._AdversarialAttack,
+            adversarial_chat=target,
+            adversarial_system_prompt="sys {{ objective }}",
+            adversarial_seed_prompt=seed,
+        )
+        technique = factory.create(objective_target=MagicMock(spec=PromptTarget), attack_scoring_config=self._scoring())
+        config = technique.attack.attack_adversarial_config
+        assert config.target is target
+        assert config.system_prompt == "sys {{ objective }}"
+        assert config.first_message is seed
+
+    def test_adversarial_chat_implies_uses_adversarial(self):
+        target = MagicMock(spec=PromptTarget)
+        factory = AttackTechniqueFactory(
+            name="durian",
+            attack_class=_StubAttack,
+            adversarial_chat=target,
+        )
+        assert factory.uses_adversarial is True
+        assert factory.adversarial_chat is target
+
+    def test_adversarial_chat_used_as_default_target(self):
+        """When no override is given, the baked adversarial_chat is used (no lazy default)."""
+        target = MagicMock(spec=PromptTarget)
+        factory = AttackTechniqueFactory(
+            name="durian",
+            attack_class=self._AdversarialAttack,
+            adversarial_chat=target,
+        )
+        with patch(
+            "pyrit.scenario.core.attack_technique_factory.get_default_adversarial_target",
+        ) as mock_default:
+            technique = factory.create(
+                objective_target=MagicMock(spec=PromptTarget), attack_scoring_config=self._scoring()
+            )
+        mock_default.assert_not_called()
+        assert technique.attack.attack_adversarial_config.target is target
+
+    def test_create_adversarial_chat_conflicts_with_baked_raises(self):
+        """create() must not supply an adversarial_chat when the factory baked one."""
+        baked = MagicMock(spec=PromptTarget)
+        factory = AttackTechniqueFactory(
+            name="durian",
+            attack_class=self._AdversarialAttack,
+            adversarial_chat=baked,
+        )
+        with pytest.raises(ValueError, match="already baked"):
+            factory.create(
+                objective_target=MagicMock(spec=PromptTarget),
+                attack_scoring_config=self._scoring(),
+                adversarial_chat=MagicMock(spec=PromptTarget),
+            )
+
+    def test_adversarial_chat_with_uses_adversarial_false_raises(self):
+        with pytest.raises(ValueError, match="uses_adversarial=False"):
+            AttackTechniqueFactory(
+                name="durian",
+                attack_class=_StubAttack,
+                adversarial_chat=MagicMock(spec=PromptTarget),
+                uses_adversarial=False,
+            )
+
+    def test_custom_prompt_with_uses_adversarial_false_raises(self):
+        with pytest.raises(ValueError, match="uses_adversarial=False"):
+            AttackTechniqueFactory(
+                name="durian",
+                attack_class=_StubAttack,
+                adversarial_system_prompt="custom {{ objective }}",
+                uses_adversarial=False,
+            )
+
+    def test_lazy_resolution_attaches_custom_prompts(self):
+        seed = SeedPrompt(value="durian {{ objective }}", data_type="text", parameters=["objective"])
+        factory = AttackTechniqueFactory(
+            name="durian",
+            attack_class=self._AdversarialAttack,
+            adversarial_system_prompt="durian sys {{ objective }}",
+            adversarial_seed_prompt=seed,
+        )
+        fallback = MagicMock(spec=PromptTarget)
+        with patch(
+            "pyrit.scenario.core.attack_technique_factory.get_default_adversarial_target",
+            return_value=fallback,
+        ):
+            technique = factory.create(
+                objective_target=MagicMock(spec=PromptTarget), attack_scoring_config=self._scoring()
+            )
+
+        config = technique.attack.attack_adversarial_config
+        assert config.target is fallback
+        assert config.system_prompt == "durian sys {{ objective }}"
+        assert config.first_message is seed
+
+    def test_create_adversarial_chat_is_combined_with_custom_prompts(self):
+        seed = SeedPrompt(value="durian {{ objective }}", data_type="text", parameters=["objective"])
+        factory = AttackTechniqueFactory(
+            name="durian",
+            attack_class=self._AdversarialAttack,
+            adversarial_system_prompt="durian sys {{ objective }}",
+            adversarial_seed_prompt=seed,
+        )
+        create_target = MagicMock(spec=PromptTarget)
+
+        technique = factory.create(
+            objective_target=MagicMock(spec=PromptTarget),
+            attack_scoring_config=self._scoring(),
+            adversarial_chat=create_target,
+        )
+
+        config = technique.attack.attack_adversarial_config
+        # The create-time target is used; the technique keeps its custom prompts.
+        assert config.target is create_target
+        assert config.system_prompt == "durian sys {{ objective }}"
+        assert config.first_message is seed
+
+    def test_create_adversarial_chat_used_as_target(self):
+        """A create-time adversarial_chat fills the lazy slot (no default resolution)."""
+        factory = AttackTechniqueFactory(
+            name="durian",
+            attack_class=self._AdversarialAttack,
+        )
+        create_target = MagicMock(spec=PromptTarget)
+        with patch(
+            "pyrit.scenario.core.attack_technique_factory.get_default_adversarial_target",
+        ) as mock_default:
+            technique = factory.create(
+                objective_target=MagicMock(spec=PromptTarget),
+                attack_scoring_config=self._scoring(),
+                adversarial_chat=create_target,
+            )
+        mock_default.assert_not_called()
+        assert technique.attack.attack_adversarial_config.target is create_target
+
+    def test_identifier_distinguishes_custom_system_prompt(self):
+        f1 = AttackTechniqueFactory(
+            name="durian", attack_class=self._AdversarialAttack, adversarial_system_prompt="a {{ objective }}"
+        )
+        f2 = AttackTechniqueFactory(
+            name="durian", attack_class=self._AdversarialAttack, adversarial_system_prompt="b {{ objective }}"
+        )
+        assert f1.get_identifier().hash != f2.get_identifier().hash
+
+    def test_identifier_distinguishes_custom_seed_prompt_object(self):
+        """A SeedPrompt adversarial_seed_prompt is serialized by value, so different prompts differ."""
+        f1 = AttackTechniqueFactory(
+            name="durian",
+            attack_class=self._AdversarialAttack,
+            adversarial_seed_prompt=SeedPrompt(value="a {{ objective }}", data_type="text", parameters=["objective"]),
+        )
+        f2 = AttackTechniqueFactory(
+            name="durian",
+            attack_class=self._AdversarialAttack,
+            adversarial_seed_prompt=SeedPrompt(value="b {{ objective }}", data_type="text", parameters=["objective"]),
+        )
+        assert f1.get_identifier().hash != f2.get_identifier().hash
+
+    def test_create_custom_prompt_conflicts_with_baked_raises(self):
+        """create() must not supply adversarial prompts when the factory baked a custom one."""
+        factory = AttackTechniqueFactory(
+            name="durian",
+            attack_class=self._AdversarialAttack,
+            adversarial_system_prompt="baked {{ objective }}",
+        )
+        with pytest.raises(ValueError, match="custom adversarial prompt is already baked"):
+            factory.create(
+                objective_target=MagicMock(spec=PromptTarget),
+                attack_scoring_config=self._scoring(),
+                adversarial_system_prompt="create-time {{ objective }}",
+            )
+
+
+class TestResolveAdversarialChat:
+    class _AdversarialAttack:
+        def __init__(self, *, objective_target=None, attack_scoring_config=None, attack_adversarial_config=None):
+            self.attack_adversarial_config = attack_adversarial_config
+
+        def get_identifier(self):
+            return ComponentIdentifier(class_name="_AdversarialAttack", class_module="test")
+
+    def test_returns_baked_adversarial_chat(self):
+        """A baked adversarial_chat is returned without resolving a default."""
+        target = MagicMock(spec=PromptTarget)
+        factory = AttackTechniqueFactory(
+            name="durian",
+            attack_class=self._AdversarialAttack,
+            adversarial_chat=target,
+        )
+        with patch(
+            "pyrit.scenario.core.attack_technique_factory.get_default_adversarial_target",
+        ) as mock_default:
+            assert factory.resolve_adversarial_chat() is target
+        mock_default.assert_not_called()
+
+    def test_returns_none_for_non_adversarial_technique(self):
+        """A technique with no baked chat and no simulated conversation needs no adversarial chat."""
+        factory = AttackTechniqueFactory(name="durian", attack_class=_StubAttack)
+        with patch(
+            "pyrit.scenario.core.attack_technique_factory.get_default_adversarial_target",
+        ) as mock_default:
+            assert factory.resolve_adversarial_chat() is None
+        mock_default.assert_not_called()
+
+    def test_simulated_conversation_resolves_default_lazily(self):
+        """A simulated-conversation technique with no baked chat resolves the default target."""
+        from pyrit.common.path import EXECUTOR_SEED_PROMPT_PATH
+
+        factory = AttackTechniqueFactory.with_simulated_conversation(
+            name="role_play_movie_script",
+            adversarial_chat_system_prompt_path=(
+                EXECUTOR_SEED_PROMPT_PATH / "red_teaming" / "role_play" / "role_play_movie_script.yaml"
+            ),
+            num_turns=2,
+        )
+        default_target = MagicMock(spec=PromptTarget)
+        with patch(
+            "pyrit.scenario.core.attack_technique_factory.get_default_adversarial_target",
+            return_value=default_target,
+        ) as mock_default:
+            assert factory.resolve_adversarial_chat() is default_target
+        mock_default.assert_called_once()
 
 
 class TestUnwrapOptional:

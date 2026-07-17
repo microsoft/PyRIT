@@ -47,10 +47,10 @@ class TestScorerUtilities:
     """Validate scorer utility classes used by azure-ai-evaluation."""
 
     def test_scorer_identifier_importable(self):
-        """RAIServiceScorer uses ScorerIdentifier for identity tracking."""
-        from pyrit.models import ScorerIdentifier
+        """RAIServiceScorer uses ScorerEvaluationIdentifier for identity tracking."""
+        from pyrit.models.identifiers import ScorerEvaluationIdentifier
 
-        assert ScorerIdentifier is not None
+        assert ScorerEvaluationIdentifier is not None
 
     def test_scorer_prompt_validator_instantiable(self):
         """ScorerPromptValidator should accept supported_data_types kwarg."""

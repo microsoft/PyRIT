@@ -3,7 +3,7 @@
 
 import json
 import logging
-from typing import Any, Optional
+from typing import Any
 
 from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
 from pyrit.common.path import DATASETS_PATH, JAILBREAK_TEMPLATES_PATH
@@ -50,17 +50,17 @@ class ManyShotJailbreakAttack(PromptSendingAttack):
         self,
         *,
         objective_target: PromptTarget = REQUIRED_VALUE,  # type: ignore[ty:invalid-parameter-default]
-        attack_converter_config: Optional[AttackConverterConfig] = None,
-        attack_scoring_config: Optional[AttackScoringConfig] = None,
-        prompt_normalizer: Optional[PromptNormalizer] = None,
+        attack_converter_config: AttackConverterConfig | None = None,
+        attack_scoring_config: AttackScoringConfig | None = None,
+        prompt_normalizer: PromptNormalizer | None = None,
         max_attempts_on_failure: int = 0,
         example_count: int = 100,
-        many_shot_examples: Optional[list[dict[str, str]]] = None,
+        many_shot_examples: list[dict[str, str]] | None = None,
     ) -> None:
         """
         Args:
             objective_target (PromptTarget): The target system to attack.
-            attack_converter_config (AttackConverterConfig, Optional): Configuration for the prompt converters.
+            attack_converter_config (AttackConverterConfig, Optional): Configuration for the converters.
             attack_scoring_config (AttackScoringConfig, Optional): Configuration for scoring components.
             prompt_normalizer (PromptNormalizer, Optional): Normalizer for handling prompts.
             max_attempts_on_failure (int, Optional): Maximum number of attempts to retry on failure. Defaults to 0.

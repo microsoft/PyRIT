@@ -6,14 +6,12 @@ import logging
 import tempfile
 import uuid
 from pathlib import Path
-from typing import Optional
 
 import av
 
-from pyrit.common.deprecation import print_deprecation_message
+from pyrit.converter import AzureSpeechAudioToTextConverter
 from pyrit.memory import CentralMemory
 from pyrit.models import MessagePiece, Score
-from pyrit.prompt_converter import AzureSpeechAudioToTextConverter
 from pyrit.score.scorer import Scorer
 
 logger = logging.getLogger(__name__)
@@ -89,7 +87,7 @@ def _audio_to_wav(input_path: str, *, sample_rate: int, channels: int) -> str:
     return output_path
 
 
-class AudioTranscriptHelper:  # noqa: B024
+class AudioTranscriptHelper:
     """
     Abstract base class for audio scorers that process audio by transcribing and scoring the text.
 
@@ -107,7 +105,6 @@ class AudioTranscriptHelper:  # noqa: B024
         self,
         *,
         text_capable_scorer: Scorer,
-        use_entra_auth: Optional[bool] = None,
     ) -> None:
         """
         Initialize the base audio scorer.
@@ -115,25 +112,10 @@ class AudioTranscriptHelper:  # noqa: B024
         Args:
             text_capable_scorer (Scorer): A scorer capable of processing text that will be used to score
                 the transcribed audio content.
-            use_entra_auth (bool, Optional): **Deprecated.** Will be removed in 0.15.0.
-                Authentication is now configured on the underlying
-                ``AzureSpeechAudioToTextConverter`` via its ``azure_speech_key`` parameter:
-                pass a string API key (or set ``AZURE_SPEECH_KEY``) for key auth, a callable
-                token provider for Entra ID with a custom token, or omit it to use Entra ID
-                via ``DefaultAzureCredential``.
 
         Raises:
             ValueError: If text_capable_scorer does not support text data type.
         """
-        if use_entra_auth is not None:
-            print_deprecation_message(
-                old_item="AudioTranscriptHelper(use_entra_auth=...)",
-                new_item=(
-                    "AudioTranscriptHelper(...) (configure auth on the underlying "
-                    "AzureSpeechAudioToTextConverter via azure_speech_key)"
-                ),
-                removed_in="0.15.0",
-            )
         self._validate_text_scorer(text_capable_scorer)
         self.text_scorer = text_capable_scorer
 
@@ -154,13 +136,13 @@ class AudioTranscriptHelper:  # noqa: B024
                 f"Supported types: {scorer._validator._supported_data_types}"
             )
 
-    async def _score_audio_async(self, *, message_piece: MessagePiece, objective: Optional[str] = None) -> list[Score]:
+    async def _score_audio_async(self, *, message_piece: MessagePiece, objective: str | None = None) -> list[Score]:
         """
         Transcribe audio and score the transcript.
 
         Args:
             message_piece (MessagePiece): The message piece containing the audio file path.
-            objective (Optional[str]): Optional objective description for scoring.
+            objective (str | None): Optional objective description for scoring.
 
         Returns:
             List of scores for the transcribed audio.
@@ -193,6 +175,7 @@ class AudioTranscriptHelper:  # noqa: B024
             original_prompt_id=original_prompt_id,
             converted_value=transcript,
             converted_value_data_type="text",
+            conversation_id=message_piece.conversation_id,
         )
 
         text_message = text_piece.to_message()
@@ -267,7 +250,7 @@ class AudioTranscriptHelper:  # noqa: B024
             channels=self._DEFAULT_CHANNELS,
         )
 
-    def _extract_audio_from_video(self, video_path: str) -> Optional[str]:
+    def _extract_audio_from_video(self, video_path: str) -> str | None:
         """
         Extract audio track from a video file.
 
@@ -281,7 +264,7 @@ class AudioTranscriptHelper:  # noqa: B024
         return AudioTranscriptHelper.extract_audio_from_video(video_path)
 
     @staticmethod
-    def extract_audio_from_video(video_path: str) -> Optional[str]:
+    def extract_audio_from_video(video_path: str) -> str | None:
         """
         Extract audio track from a video file (static version).
 

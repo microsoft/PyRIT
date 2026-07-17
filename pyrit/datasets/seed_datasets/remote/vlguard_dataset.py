@@ -6,21 +6,25 @@ import json
 import logging
 import os
 import uuid
-import zipfile
 from enum import Enum
 from pathlib import Path
+from typing import TYPE_CHECKING, ClassVar
 
 from huggingface_hub import hf_hub_download
+from typing_extensions import override
 
 from pyrit.common.path import DB_DATA_PATH
+from pyrit.common.safe_extract import safe_extract_zip
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
 from pyrit.models import Modality, SeedDataset, SeedPrompt
+from pyrit.models.harm_category import HarmCategory
+
+if TYPE_CHECKING:
+    from pyrit.models.seeds.seed_group import SeedUnion
 
 logger = logging.getLogger(__name__)
-
-_HF_REPO_ID = "ys-zong/VLGuard"
 
 
 class VLGuardCategory(Enum):
@@ -90,9 +94,35 @@ class _VLGuardDataset(_RemoteDatasetLoader):
     https://huggingface.co/datasets/ys-zong/VLGuard before use, and provide
     a HuggingFace token.
 
-    Reference: https://arxiv.org/abs/2402.02207
+    Reference: [@zong2024vlguard]
     Paper: Safety Fine-Tuning at (Almost) No Cost: A Baseline for Vision Large Language Models (ICML 2024)
     """
+
+    HARM_SUBCATEGORY_ALIAS_OVERRIDES: dict[str, list[HarmCategory]] = {
+        "personal data": [HarmCategory.PPI],
+        "professional advice": [
+            HarmCategory.LEGAL_ADVICE,
+            HarmCategory.FINANCIAL_ADVICE,
+            HarmCategory.HEALTH_DIAGNOSIS,
+        ],
+        "political": [HarmCategory.CAMPAIGNING],
+        "sexually explicit": [HarmCategory.SEXUAL_CONTENT],
+        "violence": [HarmCategory.VIOLENT_CONTENT],
+        "disinformation": [HarmCategory.INFO_INTEGRITY],
+        "sex": [HarmCategory.REPRESENTATIONAL, HarmCategory.HATE_SPEECH],
+        "race": [HarmCategory.REPRESENTATIONAL, HarmCategory.HATE_SPEECH],
+    }
+    _HF_REPO_ID: ClassVar[str] = "ys-zong/VLGuard"
+
+    _AUTHORS = [
+        "Yongshuo Zong",
+        "Ondrej Bohdal",
+        "Tingyang Yu",
+        "Yongxin Yang",
+        "Timothy Hospedales",
+    ]
+
+    _GROUPS = ["University of Edinburgh", "EPFL"]
 
     # Metadata
     modalities: tuple[Modality, ...] = (Modality.TEXT, Modality.IMAGE)
@@ -122,9 +152,11 @@ class _VLGuardDataset(_RemoteDatasetLoader):
         self.subset = subset
         self.categories = categories
         self.token = token if token is not None else os.environ.get("HUGGINGFACE_TOKEN")
-        self.source = f"https://huggingface.co/datasets/{_HF_REPO_ID}"
+        self.source = f"https://huggingface.co/datasets/{self._HF_REPO_ID}"
 
         if categories is not None:
+            if not categories:
+                raise ValueError("`categories` must be a non-empty list (pass None to include all categories)")
             valid_categories = {cat.value for cat in VLGuardCategory}
             invalid_categories = {
                 cat.value if isinstance(cat, VLGuardCategory) else cat for cat in categories
@@ -133,10 +165,12 @@ class _VLGuardDataset(_RemoteDatasetLoader):
                 raise ValueError(f"Invalid VLGuard categories: {', '.join(invalid_categories)}")
 
     @property
+    @override
     def dataset_name(self) -> str:
-        """Return the dataset name."""
+        """The dataset name."""
         return "vlguard"
 
+    @override
     async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch VLGuard multimodal examples and return as SeedDataset.
@@ -155,7 +189,7 @@ class _VLGuardDataset(_RemoteDatasetLoader):
 
         metadata, image_dir = await self._download_dataset_files_async(cache=cache)
 
-        prompts: list[SeedPrompt] = []
+        prompts: list[SeedUnion] = []
 
         for example in metadata:
             image_filename = example.get("image")
@@ -192,13 +226,17 @@ class _VLGuardDataset(_RemoteDatasetLoader):
                 continue
 
             group_id = uuid.uuid4()
+            standardized_harm_categories = self._standardize_harm_categories(
+                subcategory,
+                alias_overrides=self.HARM_SUBCATEGORY_ALIAS_OVERRIDES,
+            )
 
             text_prompt = SeedPrompt(
                 value=instruction,
                 data_type="text",
                 name="VLGuard Text",
                 dataset_name=self.dataset_name,
-                harm_categories=[category],
+                harm_categories=standardized_harm_categories,
                 description=f"Text component of VLGuard multimodal prompt ({self.subset.value}).",
                 source=self.source,
                 prompt_group_id=group_id,
@@ -206,9 +244,13 @@ class _VLGuardDataset(_RemoteDatasetLoader):
                 metadata={
                     "category": category,
                     "subcategory": subcategory,
+                    "harmful_category": category,
+                    "harmful_subcategory": subcategory,
                     "subset": self.subset.value,
                     "safe_image": is_safe,
                 },
+                authors=self._AUTHORS,
+                groups=self._GROUPS,
             )
 
             image_prompt = SeedPrompt(
@@ -216,7 +258,7 @@ class _VLGuardDataset(_RemoteDatasetLoader):
                 data_type="image_path",
                 name="VLGuard Image",
                 dataset_name=self.dataset_name,
-                harm_categories=[category],
+                harm_categories=standardized_harm_categories,
                 description=f"Image component of VLGuard multimodal prompt ({self.subset.value}).",
                 source=self.source,
                 prompt_group_id=group_id,
@@ -224,10 +266,14 @@ class _VLGuardDataset(_RemoteDatasetLoader):
                 metadata={
                     "category": category,
                     "subcategory": subcategory,
+                    "harmful_category": category,
+                    "harmful_subcategory": subcategory,
                     "subset": self.subset.value,
                     "safe_image": is_safe,
                     "original_filename": image_filename,
                 },
+                authors=self._AUTHORS,
+                groups=self._GROUPS,
             )
 
             prompts.append(text_prompt)
@@ -287,14 +333,14 @@ class _VLGuardDataset(_RemoteDatasetLoader):
 
         def _download_sync() -> tuple[str, str]:
             json_file = hf_hub_download(
-                repo_id=_HF_REPO_ID,
+                repo_id=self._HF_REPO_ID,
                 filename="test.json",
                 repo_type="dataset",
                 local_dir=str(cache_dir),
                 token=self.token,
             )
             zip_file = hf_hub_download(
-                repo_id=_HF_REPO_ID,
+                repo_id=self._HF_REPO_ID,
                 filename="test.zip",
                 repo_type="dataset",
                 local_dir=str(cache_dir),
@@ -308,8 +354,7 @@ class _VLGuardDataset(_RemoteDatasetLoader):
         zip_path = cache_dir / "test.zip"
         if zip_path.exists():
             logger.info("Extracting VLGuard test images...")
-            with zipfile.ZipFile(str(zip_path), "r") as zf:
-                zf.extractall(str(cache_dir))
+            await asyncio.to_thread(safe_extract_zip, source=zip_path, dest_dir=cache_dir)
 
         with open(json_path, encoding="utf-8") as f:
             metadata = json.load(f)

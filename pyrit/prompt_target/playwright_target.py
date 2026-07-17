@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from typing import TYPE_CHECKING, Optional, Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from pyrit.models import (
     Message,
@@ -14,7 +14,7 @@ from pyrit.prompt_target.common.utils import limit_requests_per_minute
 
 # Avoid errors for users who don't have playwright installed
 if TYPE_CHECKING:
-    from playwright.async_api import Page
+    from playwright.async_api import Page  # type: ignore[ty:unresolved-import]
 else:
     Page = None
 
@@ -71,8 +71,8 @@ class PlaywrightTarget(PromptTarget):
         *,
         interaction_func: InteractionFunction,
         page: "Page",
-        max_requests_per_minute: Optional[int] = None,
-        custom_configuration: Optional[TargetConfiguration] = None,
+        max_requests_per_minute: int | None = None,
+        custom_configuration: TargetConfiguration | None = None,
     ) -> None:
         """
         Initialize the Playwright target.

@@ -2,11 +2,13 @@
 # Licensed under the MIT license.
 
 import logging
+from dataclasses import replace
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from pyrit.exceptions.retry_collector import RetryCollector
+from pyrit.executor.attack.core.attack_config import AttackAdversarialConfig
 from pyrit.executor.attack.core.attack_parameters import AttackParameters
 from pyrit.executor.attack.core.attack_strategy import (
     AttackContext,
@@ -20,6 +22,11 @@ from pyrit.models import (
     AttackResult,
     ComponentIdentifier,
     Message,
+    SeedPrompt,
+)
+from pyrit.models.identifiers import (
+    AtomicAttackEvaluationIdentifier,
+    AtomicAttackIdentifier,
 )
 from pyrit.models.retry_event import RetryEvent
 from pyrit.prompt_target import PromptTarget
@@ -86,6 +93,47 @@ def mock_logger():
 def event_handler(mock_logger):
     """Create an event handler for testing"""
     return _DefaultAttackStrategyEventHandler(logger=mock_logger)
+
+
+def test_next_message_override_can_clear_parameter_value_and_survive_copy():
+    """An explicit None override must not fall back to the immutable parameter after copying."""
+
+    class TestAttackContext(AttackContext):
+        pass
+
+    seed_message = Message.from_prompt(prompt="seed", role="user")
+    context = TestAttackContext(
+        params=AttackParameters(
+            objective="Test objective",
+            next_message=seed_message,
+        )
+    )
+
+    assert context.next_message is seed_message
+
+    context.next_message = None
+
+    assert context.next_message is None
+    assert context.duplicate().next_message is None
+    assert replace(context).next_message is None
+
+
+def test_next_message_override_constructor_value_takes_precedence():
+    """A directly supplied override must take precedence over the immutable parameter."""
+
+    class TestAttackContext(AttackContext):
+        pass
+
+    seed_message = Message.from_prompt(prompt="seed", role="user")
+    context = TestAttackContext(
+        params=AttackParameters(
+            objective="Test objective",
+            next_message=seed_message,
+        ),
+        _next_message_override=None,
+    )
+
+    assert context.next_message is None
 
 
 @pytest.fixture
@@ -426,7 +474,11 @@ class TestDefaultAttackStrategyEventHandler:
 
             sample_context = MagicMock()
             sample_context.start_time = 100.0
-            sample_result = MagicMock(spec=AttackResult)
+            sample_result = AttackResult(
+                conversation_id="conv-id",
+                objective="test objective",
+                outcome=AttackOutcome.SUCCESS,
+            )
 
             event_data = StrategyEventData(
                 event=StrategyEvent.ON_POST_EXECUTE,
@@ -692,6 +744,80 @@ class TestDefaultAttackStrategyEventHandler:
             "parent_collection": "atomic_err",
         }
 
+    async def test_on_post_execute_stamps_targeted_harm_categories(self, sample_attack_result, mock_memory):
+        """Harm categories from context.params are stamped onto the persisted result."""
+
+        class TestAttackContext(AttackContext):
+            pass
+
+        params = AttackParameters(
+            objective="Test harmful objective",
+            targeted_harm_categories=["violence", "hate"],
+        )
+        context = TestAttackContext(params=params)
+        context.start_time = 100.0
+
+        with patch("pyrit.memory.central_memory.CentralMemory.get_memory_instance", return_value=mock_memory):
+            handler = _DefaultAttackStrategyEventHandler()
+            event_data = StrategyEventData(
+                event=StrategyEvent.ON_POST_EXECUTE,
+                strategy_name="TestStrategy",
+                strategy_id="test-id",
+                context=context,
+                result=sample_attack_result,
+            )
+            await handler.on_event_async(event_data)
+
+        assert sorted(sample_attack_result.targeted_harm_categories) == ["hate", "violence"]
+
+    async def test_on_post_execute_no_harm_categories_leaves_empty(
+        self, sample_attack_context, sample_attack_result, mock_memory
+    ):
+        """With no harm categories on params, the result's list stays empty."""
+        with patch("pyrit.memory.central_memory.CentralMemory.get_memory_instance", return_value=mock_memory):
+            handler = _DefaultAttackStrategyEventHandler()
+            sample_attack_context.start_time = 100.0
+
+            event_data = StrategyEventData(
+                event=StrategyEvent.ON_POST_EXECUTE,
+                strategy_name="TestStrategy",
+                strategy_id="test-id",
+                context=sample_attack_context,
+                result=sample_attack_result,
+            )
+            await handler.on_event_async(event_data)
+
+        assert sample_attack_result.targeted_harm_categories == []
+
+    async def test_on_error_stamps_targeted_harm_categories(self, mock_memory):
+        """Error AttackResults must also carry the targeted harm categories."""
+
+        class TestAttackContext(AttackContext):
+            pass
+
+        params = AttackParameters(
+            objective="Test harmful objective",
+            targeted_harm_categories=["self_harm"],
+        )
+        context = TestAttackContext(params=params)
+        context.start_time = 100.0
+
+        with patch("pyrit.memory.central_memory.CentralMemory.get_memory_instance", return_value=mock_memory):
+            handler = _DefaultAttackStrategyEventHandler()
+            event_data = StrategyEventData(
+                event=StrategyEvent.ON_ERROR,
+                strategy_name="TestStrategy",
+                strategy_id="test-id",
+                context=context,
+                error=RuntimeError("boom"),
+            )
+            await handler.on_event_async(event_data)
+
+        call = mock_memory.add_attack_results_to_memory.call_args
+        persisted = call.kwargs["attack_results"][0]
+        assert persisted.outcome == AttackOutcome.ERROR
+        assert persisted.targeted_harm_categories == ["self_harm"]
+
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestAttackStrategyIntegration:
@@ -769,3 +895,161 @@ class TestAttackStrategyIntegration:
         # The default handler should still be present
         assert len(strategy._event_handlers) == 1
         assert "_DefaultAttackStrategyEventHandler" in strategy._event_handlers
+
+
+def _adv_target(*, model_name: str = "gpt-adv", extra_params: dict | None = None) -> PromptTarget:
+    """Build a mock adversarial chat target whose identifier carries the given params."""
+    target = MagicMock(spec=PromptTarget)
+    params: dict = {"model_name": model_name}
+    if extra_params:
+        params.update(extra_params)
+    target.get_identifier.return_value = ComponentIdentifier(class_name="AdvChat", class_module="test", params=params)
+    return target
+
+
+class _IdentityTestStrategy(AttackStrategy):
+    """Minimal concrete strategy that exposes a settable adversarial config for identity tests."""
+
+    def __init__(self, *, objective_target, adversarial_config=None):
+        super().__init__(context_type=AttackContext, objective_target=objective_target)
+        self._test_adversarial_config = adversarial_config
+
+    def _validate_context(self, *, context):
+        pass
+
+    async def _setup_async(self, *, context):
+        pass
+
+    async def _perform_async(self, *, context):
+        return AttackResult(
+            conversation_id="c",
+            objective="o",
+            outcome=AttackOutcome.SUCCESS,
+            outcome_reason="ok",
+            execution_time_ms=0,
+            executed_turns=1,
+        )
+
+    async def _teardown_async(self, *, context):
+        pass
+
+    def get_attack_adversarial_config(self):
+        return self._test_adversarial_config
+
+
+def _eval_hash(attack_identifier: ComponentIdentifier) -> str:
+    composite = AtomicAttackIdentifier.build(attack_identifier=attack_identifier)
+    return AtomicAttackEvaluationIdentifier(composite).eval_hash
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestCreateIdentifierAdversarial:
+    """Tests for adversarial config wiring into the attack identifier (component + eval hash)."""
+
+    def test_base_returns_none_omits_adversarial_child_and_params(self, mock_objective_target):
+        """When get_attack_adversarial_config() returns None, no adversarial child/params appear."""
+        strategy = _IdentityTestStrategy(objective_target=mock_objective_target, adversarial_config=None)
+        identifier = strategy.get_identifier()
+        assert "adversarial_chat" not in identifier.children
+        assert "adversarial_system_prompt" not in identifier.params
+        assert "adversarial_seed_prompt" not in identifier.params
+
+    def test_adversarial_target_added_as_child(self, mock_objective_target):
+        adv = _adv_target()
+        config = AttackAdversarialConfig(target=adv, system_prompt=None, first_message=None)
+        strategy = _IdentityTestStrategy(objective_target=mock_objective_target, adversarial_config=config)
+        identifier = strategy.get_identifier()
+        assert identifier.children["adversarial_chat"] == adv.get_identifier.return_value
+
+    def test_target_only_config_omits_prompt_params(self, mock_objective_target):
+        """A target-only config (no prompts) emits the child but no prompt params."""
+        config = AttackAdversarialConfig(target=_adv_target(), system_prompt=None, first_message=None)
+        strategy = _IdentityTestStrategy(objective_target=mock_objective_target, adversarial_config=config)
+        identifier = strategy.get_identifier()
+        assert "adversarial_chat" in identifier.children
+        assert "adversarial_system_prompt" not in identifier.params
+        assert "adversarial_seed_prompt" not in identifier.params
+
+    def test_system_prompt_string_stored_in_params(self, mock_objective_target):
+        config = AttackAdversarialConfig(
+            target=_adv_target(), system_prompt="persona {{ objective }}", first_message=None
+        )
+        strategy = _IdentityTestStrategy(objective_target=mock_objective_target, adversarial_config=config)
+        identifier = strategy.get_identifier()
+        assert identifier.params["adversarial_system_prompt"] == "persona {{ objective }}"
+
+    def test_first_message_seedprompt_value_stored_in_params(self, mock_objective_target):
+        seed = SeedPrompt(value="seed {{ objective }}", data_type="text", parameters=["objective"])
+        config = AttackAdversarialConfig(target=_adv_target(), system_prompt=None, first_message=seed)
+        strategy = _IdentityTestStrategy(objective_target=mock_objective_target, adversarial_config=config)
+        identifier = strategy.get_identifier()
+        assert identifier.params["adversarial_seed_prompt"] == "seed {{ objective }}"
+
+    def test_different_system_prompt_changes_full_and_eval_hash(self, mock_objective_target):
+        adv = _adv_target()
+        s1 = _IdentityTestStrategy(
+            objective_target=mock_objective_target,
+            adversarial_config=AttackAdversarialConfig(target=adv, system_prompt="persona A", first_message=None),
+        )
+        s2 = _IdentityTestStrategy(
+            objective_target=mock_objective_target,
+            adversarial_config=AttackAdversarialConfig(target=adv, system_prompt="persona B", first_message=None),
+        )
+        id1, id2 = s1.get_identifier(), s2.get_identifier()
+        assert id1.hash != id2.hash
+        assert _eval_hash(id1) != _eval_hash(id2)
+
+    def test_different_first_message_changes_full_and_eval_hash(self, mock_objective_target):
+        adv = _adv_target()
+        s1 = _IdentityTestStrategy(
+            objective_target=mock_objective_target,
+            adversarial_config=AttackAdversarialConfig(target=adv, system_prompt=None, first_message="first A"),
+        )
+        s2 = _IdentityTestStrategy(
+            objective_target=mock_objective_target,
+            adversarial_config=AttackAdversarialConfig(target=adv, system_prompt=None, first_message="first B"),
+        )
+        id1, id2 = s1.get_identifier(), s2.get_identifier()
+        assert id1.hash != id2.hash
+        assert _eval_hash(id1) != _eval_hash(id2)
+
+    def test_different_adversarial_model_changes_eval_hash(self, mock_objective_target):
+        """model_name is in the adversarial_chat eval allowlist -> different eval hash."""
+        s1 = _IdentityTestStrategy(
+            objective_target=mock_objective_target,
+            adversarial_config=AttackAdversarialConfig(
+                target=_adv_target(model_name="gpt-4o"), system_prompt=None, first_message=None
+            ),
+        )
+        s2 = _IdentityTestStrategy(
+            objective_target=mock_objective_target,
+            adversarial_config=AttackAdversarialConfig(
+                target=_adv_target(model_name="gpt-3.5"), system_prompt=None, first_message=None
+            ),
+        )
+        assert _eval_hash(s1.get_identifier()) != _eval_hash(s2.get_identifier())
+
+    def test_adversarial_endpoint_does_not_change_eval_hash(self, mock_objective_target):
+        """endpoint is NOT in the adversarial_chat eval allowlist -> same eval hash."""
+        s1 = _IdentityTestStrategy(
+            objective_target=mock_objective_target,
+            adversarial_config=AttackAdversarialConfig(
+                target=_adv_target(extra_params={"endpoint": "https://a.com"}), system_prompt=None, first_message=None
+            ),
+        )
+        s2 = _IdentityTestStrategy(
+            objective_target=mock_objective_target,
+            adversarial_config=AttackAdversarialConfig(
+                target=_adv_target(extra_params={"endpoint": "https://b.com"}), system_prompt=None, first_message=None
+            ),
+        )
+        assert _eval_hash(s1.get_identifier()) == _eval_hash(s2.get_identifier())
+
+    def test_adversarial_presence_changes_hash_vs_none(self, mock_objective_target):
+        """An attack with an adversarial child must not collide with one that has none."""
+        plain = _IdentityTestStrategy(objective_target=mock_objective_target, adversarial_config=None)
+        adversarial = _IdentityTestStrategy(
+            objective_target=mock_objective_target,
+            adversarial_config=AttackAdversarialConfig(target=_adv_target(), system_prompt=None, first_message=None),
+        )
+        assert plain.get_identifier().hash != adversarial.get_identifier().hash

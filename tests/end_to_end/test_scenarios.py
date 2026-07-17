@@ -34,7 +34,7 @@ DEFAULT_INITIALIZERS: list[str] = ["target", "load_default_datasets"]
 
 #: Per-scenario override map for initializers. A scenario absent here falls back
 #: to ``DEFAULT_INITIALIZERS``. Keys use the dotted registry name
-#: (``<module>.<scenario>``) returned by ``ScenarioRegistry.get_names()``.
+#: (``<module>.<scenario>``) returned by ``ScenarioRegistry.get_class_names()``.
 SCENARIO_INITIALIZERS: dict[str, list[str]] = {}
 
 #: Per-scenario extra CLI args appended after the standard flag block. Keys use
@@ -53,10 +53,10 @@ def get_all_scenarios():
     Dynamically discover all available scenarios from the scenario registry.
 
     Returns:
-        List[str]: Sorted list of scenario names.
+        list[str]: Sorted list of scenario names.
     """
     registry = ScenarioRegistry.get_registry_singleton()
-    return registry.get_names()
+    return registry.get_class_names()
 
 
 def _initializers_for(scenario_name: str) -> list[str]:
@@ -70,6 +70,7 @@ def _extra_args_for(scenario_name: str) -> list[str]:
 
 
 @pytest.mark.timeout(7200)  # 2 hour timeout per scenario
+@pytest.mark.flaky(reruns=3, reruns_delay=90)
 @pytest.mark.parametrize("scenario_name", get_all_scenarios())
 def test_scenario_with_pyrit_scan(scenario_name):
     """

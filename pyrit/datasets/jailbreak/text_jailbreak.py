@@ -5,7 +5,7 @@ import logging
 import random
 import threading
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from pyrit.common.path import JAILBREAK_TEMPLATES_PATH
 from pyrit.models import SeedPrompt
@@ -18,7 +18,7 @@ class TextJailBreak:
     A class that manages jailbreak datasets (like DAN, etc.).
     """
 
-    _template_cache: Optional[dict[str, list[Path]]] = None
+    _template_cache: dict[str, list[Path]] | None = None
     _cache_lock: threading.Lock = threading.Lock()
 
     @classmethod
@@ -30,7 +30,7 @@ class TextJailBreak:
         by filename so duplicate names across subdirectories are detectable.
 
         Returns:
-            Dict[str, List[Path]]: Mapping of filename to list of matching paths.
+            dict[str, list[Path]]: Mapping of filename to list of matching paths.
         """
         result: dict[str, list[Path]] = {}
         for path in JAILBREAK_TEMPLATES_PATH.rglob("*.yaml"):
@@ -46,7 +46,7 @@ class TextJailBreak:
         Thread-safe: uses a lock to prevent concurrent scans from racing.
 
         Returns:
-            Dict[str, List[Path]]: Cached mapping of filename to list of matching paths.
+            dict[str, list[Path]]: Cached mapping of filename to list of matching paths.
         """
         if cls._template_cache is None:
             with cls._cache_lock:
@@ -85,7 +85,7 @@ class TextJailBreak:
         Return a flat list of all cached template file paths.
 
         Returns:
-            List[Path]: All template paths (excluding multi_parameter), in no particular order.
+            list[Path]: All template paths (excluding multi_parameter), in no particular order.
 
         Raises:
             ValueError: If no templates are available.
@@ -99,9 +99,9 @@ class TextJailBreak:
     def __init__(
         self,
         *,
-        template_path: Optional[str] = None,
-        template_file_name: Optional[str] = None,
-        string_template: Optional[str] = None,
+        template_path: str | None = None,
+        template_file_name: str | None = None,
+        string_template: str | None = None,
         random_template: bool = False,
         **kwargs: Any,
     ) -> None:
@@ -208,7 +208,7 @@ class TextJailBreak:
             self.template.value = self.template.render_template_value_silent(**kwargs)
 
     @classmethod
-    def get_jailbreak_templates(cls, num_templates: Optional[int] = None) -> list[str]:
+    def get_jailbreak_templates(cls, num_templates: int | None = None) -> list[str]:
         """
         Retrieve all jailbreaks from the JAILBREAK_TEMPLATES_PATH.
 
@@ -216,7 +216,7 @@ class TextJailBreak:
             num_templates (int, optional): Number of jailbreak templates to return. None to get all.
 
         Returns:
-            List[str]: List of jailbreak template file names.
+            list[str]: List of jailbreak template file names.
 
         Raises:
             ValueError: If no jailbreak templates are found in the jailbreak directory.

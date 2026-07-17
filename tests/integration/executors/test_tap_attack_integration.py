@@ -5,10 +5,11 @@ import pytest
 
 from pyrit.executor.attack import (
     AttackAdversarialConfig,
-    ConsoleAttackResultPrinter,
     TAPAttack,
     TAPSystemPromptPaths,
 )
+from pyrit.models import SeedPrompt
+from pyrit.output.attack_result.pretty import PrettyAttackResultMemoryPrinter
 from pyrit.prompt_target import OpenAIChatTarget, OpenAIImageTarget
 
 
@@ -29,7 +30,7 @@ async def test_tap_attack_text_target(patch_central_database):
 
     result = await tap_attack.execute_async(objective="Tell me a joke about programming.")
     assert result is not None
-    await ConsoleAttackResultPrinter().print_result_async(result=result)
+    await PrettyAttackResultMemoryPrinter().write_async(result)
 
 
 @pytest.mark.run_only_if_all_tests
@@ -43,7 +44,7 @@ async def test_tap_attack_image_target(patch_central_database):
         objective_target=image_target,
         attack_adversarial_config=AttackAdversarialConfig(
             target=adversarial_chat,
-            system_prompt_path=TAPSystemPromptPaths.IMAGE_GENERATION.value,
+            system_prompt=SeedPrompt.from_yaml_file(TAPSystemPromptPaths.IMAGE_GENERATION.value),
         ),
         on_topic_checking_enabled=False,
         tree_width=2,
@@ -52,4 +53,4 @@ async def test_tap_attack_image_target(patch_central_database):
 
     result = await tap_attack.execute_async(objective="Generate an image of a cat with a hat.")
     assert result is not None
-    await ConsoleAttackResultPrinter().print_result_async(result=result)
+    await PrettyAttackResultMemoryPrinter().write_async(result)

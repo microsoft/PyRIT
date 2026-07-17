@@ -11,8 +11,11 @@ against a simulated (compliant) target before executing the actual attack.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Optional, Union
+from typing import TYPE_CHECKING
 
+from pyrit.executor.attack.component.adversarial_conversation_manager import (
+    _AdversarialConversationManager,
+)
 from pyrit.executor.attack.core.attack_config import (
     AttackAdversarialConfig,
     AttackConverterConfig,
@@ -22,6 +25,7 @@ from pyrit.executor.attack.multi_turn.red_teaming import RedTeamingAttack
 from pyrit.memory import CentralMemory
 from pyrit.message_normalizer import ConversationContextNormalizer
 from pyrit.models import Message, SeedPrompt, SeedSimulatedConversation
+from pyrit.prompt_normalizer import PromptNormalizer
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -39,11 +43,11 @@ async def generate_simulated_conversation_async(
     objective_scorer: TrueFalseScorer,
     num_turns: int = 3,
     starting_sequence: int = 0,
-    adversarial_chat_system_prompt_path: Union[str, Path],
-    simulated_target_system_prompt_path: Optional[Union[str, Path]] = None,
-    next_message_system_prompt_path: Optional[Union[str, Path]] = None,
-    attack_converter_config: Optional[AttackConverterConfig] = None,
-    memory_labels: Optional[dict[str, str]] = None,
+    adversarial_chat_system_prompt_path: str | Path,
+    simulated_target_system_prompt_path: str | Path | None = None,
+    next_message_system_prompt_path: str | Path | None = None,
+    attack_converter_config: AttackConverterConfig | None = None,
+    memory_labels: dict[str, str] | None = None,
 ) -> list[SeedPrompt]:
     """
     Generate a simulated conversation between an adversarial chat and a target.
@@ -101,10 +105,14 @@ async def generate_simulated_conversation_async(
         simulated_target_system_prompt_path=simulated_target_system_prompt_path,
     )
 
-    # Create adversarial config for the simulation
+    # Create adversarial config for the simulation. Load the optional path into a SeedPrompt so the
+    # resolved prompt is stored directly on the configuration.
+    adversarial_system_prompt = (
+        SeedPrompt.from_yaml_file(adversarial_chat_system_prompt_path) if adversarial_chat_system_prompt_path else None
+    )
     adversarial_config = AttackAdversarialConfig(
         target=adversarial_chat,
-        system_prompt_path=adversarial_chat_system_prompt_path,
+        system_prompt=adversarial_system_prompt,
     )
 
     # Create scoring config
@@ -139,7 +147,7 @@ async def generate_simulated_conversation_async(
 
     # Extract the conversation from memory and filter for prepended_conversation use
     memory = CentralMemory.get_memory_instance()
-    raw_messages = list(memory.get_conversation(conversation_id=result.conversation_id))
+    raw_messages = list(memory.get_conversation_messages(conversation_id=result.conversation_id))
 
     # Filter out system messages - keep the actual conversation
     # System prompts are set separately on each target during attack execution
@@ -152,6 +160,8 @@ async def generate_simulated_conversation_async(
             conversation_messages=conversation_messages,
             adversarial_chat=adversarial_chat,
             next_message_system_prompt_path=next_message_system_prompt_path,
+            prompt_normalizer=PromptNormalizer(),
+            memory_labels=memory_labels,
         )
         conversation_messages.append(next_message)
 
@@ -171,63 +181,56 @@ async def _generate_next_message_async(
     objective: str,
     conversation_messages: list[Message],
     adversarial_chat: PromptTarget,
-    next_message_system_prompt_path: Union[str, Path],
+    next_message_system_prompt_path: str | Path,
+    prompt_normalizer: PromptNormalizer,
+    memory_labels: dict[str, str] | None = None,
 ) -> Message:
     """
     Generate a single next message using the adversarial chat LLM.
 
-    This function formats the conversation so far and uses a system prompt to generate
-    a user message that attempts to get the target to fulfill the objective.
+    The next-message system prompt and the shared ``adversarial_chat`` JSON schema are a matched
+    pair, so the whole contract — schema resolution, system-prompt setting, the send, JSON parsing,
+    and retry — is delegated to the ``_AdversarialConversationManager``. This function renders the
+    system prompt with the conversation so far, asks the adversarial chat for one reply, and returns
+    the parsed ``next_message`` as a fresh user message ready to send to the target.
 
     Args:
         objective: The objective to work toward.
         conversation_messages: The conversation generated so far as Messages.
         adversarial_chat: The LLM to use for generation.
         next_message_system_prompt_path: Path to the system prompt template.
+        prompt_normalizer: The normalizer the manager sends the adversarial turn through.
+        memory_labels: Optional memory labels to attach to the request.
 
     Returns:
-        Message: The generated next message.
+        Message: The generated next message, as a user message.
 
     Raises:
         ValueError: If no response is received from the adversarial chat.
+        InvalidJsonException: If the reply cannot be parsed against the adversarial_chat schema.
     """
     # Format the conversation context using ConversationContextNormalizer
     normalizer = ConversationContextNormalizer()
     conversation_context = await normalizer.normalize_string_async(conversation_messages)
 
-    # Load and render the system prompt template
+    # Load the system prompt template (schema + prompt are a matched pair declared in the YAML)
     template = SeedPrompt.from_yaml_with_required_parameters(
         template_path=next_message_system_prompt_path,
         required_parameters=["objective", "conversation_context"],
         error_message="Next message system prompt must have objective and conversation_context parameters",
     )
 
-    system_prompt = template.render_template_value(
+    # The manager owns schema resolution, setting the system prompt, the send, and JSON parse/retry.
+    manager = _AdversarialConversationManager(
+        adversarial_target=adversarial_chat,
+        adversarial_system_prompt=template,
+        prompt_normalizer=prompt_normalizer,
         objective=objective,
-        conversation_context=conversation_context,
+        attack_strategy_name="SimulatedConversation",
+        memory_labels=memory_labels,
     )
-
-    # Use the adversarial chat to generate the next message
-    # Create a simple user message asking for generation
-    request_message = Message.from_prompt(
-        role="user",
-        prompt="Generate the next user message based on the instructions above.",
+    manager.set_adversarial_system_prompt(conversation_context=conversation_context)
+    reply = await manager.generate_adversarial_reply_async(
+        prompt_text="Generate the next user message based on the instructions above.",
     )
-
-    # Set the system prompt on the target
-    adversarial_chat.set_system_prompt(
-        system_prompt=system_prompt,
-        conversation_id=request_message.conversation_id,
-    )
-
-    responses: list[Message] = await adversarial_chat.send_prompt_async(message=request_message)
-
-    if not responses:
-        raise ValueError("No response received from adversarial chat when generating next message")
-
-    # Change the role from assistant to user since this is a user message to be sent to the target
-    response = responses[0]
-    for piece in response.message_pieces:
-        piece.role = "user"
-
-    return response
+    return Message.from_prompt(role="user", prompt=reply.next_message)

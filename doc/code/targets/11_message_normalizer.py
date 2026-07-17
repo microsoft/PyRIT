@@ -9,7 +9,7 @@
 # ---
 
 # %% [markdown]
-# # 11. MessageNormalizer
+# # MessageNormalizer
 #
 # MessageNormalizers convert PyRIT's `Message` format into other formats that specific targets require. Different LLMs and APIs expect messages in different formats:
 #
@@ -23,8 +23,8 @@
 # ## Base Classes
 #
 # There are two base normalizer types:
-# - **`MessageListNormalizer[T]`**: Converts `List[Message]` → `List[T]` (e.g., to `ChatMessage` objects)
-# - **`MessageStringNormalizer`**: Converts `List[Message]` → `str` (e.g., to ChatML format)
+# - **`MessageListNormalizer[T]`**: Converts `list[Message]` → `list[T]` (e.g., to `ChatMessage` objects)
+# - **`MessageStringNormalizer`**: Converts `list[Message]` → `str` (e.g., to ChatML format)
 #
 # Some normalizers implement both interfaces.
 

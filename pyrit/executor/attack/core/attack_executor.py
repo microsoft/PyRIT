@@ -14,7 +14,6 @@ from typing import (
     TYPE_CHECKING,
     Any,
     Generic,
-    Optional,
     TypeVar,
 )
 
@@ -25,7 +24,7 @@ from pyrit.executor.attack.core.attack_strategy import (
     AttackStrategyContextT,
     AttackStrategyResultT,
 )
-from pyrit.models import SeedAttackGroup
+from pyrit.models import AttackSeedGroup
 
 if TYPE_CHECKING:
     from pyrit.prompt_target import PromptTarget
@@ -92,7 +91,7 @@ class AttackExecutorResult(Generic[AttackResultT]):
 
     @property
     def exceptions(self) -> list[BaseException]:
-        """Get all exceptions from incomplete objectives."""
+        """All exceptions from incomplete objectives."""
         return [exception for _, exception in self.incomplete_objectives]
 
     def raise_if_incomplete(self) -> None:
@@ -145,8 +144,8 @@ class AttackExecutor:
         # and then run it under more than one ``asyncio.run(...)`` invocation. By
         # constructing the semaphore inside ``_get_semaphore()`` and rebuilding when the
         # running loop changes, one AttackExecutor instance is safe to reuse across loops.
-        self._semaphore: Optional[asyncio.Semaphore] = None
-        self._semaphore_loop: Optional[asyncio.AbstractEventLoop] = None
+        self._semaphore: asyncio.Semaphore | None = None
+        self._semaphore_loop: asyncio.AbstractEventLoop | None = None
 
     def _get_semaphore(self) -> asyncio.Semaphore:
         """
@@ -171,23 +170,23 @@ class AttackExecutor:
         self,
         *,
         attack: AttackStrategy[AttackStrategyContextT, AttackStrategyResultT],
-        seed_groups: Sequence[SeedAttackGroup],
-        adversarial_chat: Optional["PromptTarget"] = None,
-        objective_scorer: Optional["TrueFalseScorer"] = None,
-        field_overrides: Optional[Sequence[dict[str, Any]]] = None,
+        seed_groups: Sequence[AttackSeedGroup],
+        adversarial_chat: "PromptTarget | None" = None,
+        objective_scorer: "TrueFalseScorer | None" = None,
+        field_overrides: Sequence[dict[str, Any]] | None = None,
         return_partial_on_failure: bool = False,
-        attribution: Optional[AttackResultAttribution] = None,
+        attribution: AttackResultAttribution | None = None,
         **broadcast_fields: Any,
     ) -> AttackExecutorResult[AttackStrategyResultT]:
         """
-        Execute attacks in parallel, extracting parameters from SeedAttackGroups.
+        Execute attacks in parallel, extracting parameters from AttackSeedGroups.
 
         Uses the attack's params_type.from_seed_group() to extract parameters,
         automatically handling which fields the attack accepts.
 
         Args:
             attack: The attack strategy to execute.
-            seed_groups: SeedAttackGroups containing objectives and optional prompts.
+            seed_groups: AttackSeedGroups containing objectives and optional prompts.
             adversarial_chat: Optional chat target for generating adversarial prompts
                 or simulated conversations. Required when seed groups contain
                 SeedSimulatedConversation configurations.
@@ -228,7 +227,7 @@ class AttackExecutor:
         # This can take time if the SeedSimulatedConversation generation is included
         semaphore = self._get_semaphore()
 
-        async def build_params_async(i: int, sg: SeedAttackGroup) -> AttackParameters:
+        async def build_params_async(i: int, sg: AttackSeedGroup) -> AttackParameters:
             async with semaphore:
                 combined_overrides = dict(broadcast_fields)
                 if field_overrides is not None:
@@ -254,9 +253,9 @@ class AttackExecutor:
         *,
         attack: AttackStrategy[AttackStrategyContextT, AttackStrategyResultT],
         objectives: Sequence[str],
-        field_overrides: Optional[Sequence[dict[str, Any]]] = None,
+        field_overrides: Sequence[dict[str, Any]] | None = None,
         return_partial_on_failure: bool = False,
-        attribution: Optional[AttackResultAttribution] = None,
+        attribution: AttackResultAttribution | None = None,
         **broadcast_fields: Any,
     ) -> AttackExecutorResult[AttackStrategyResultT]:
         """
@@ -323,7 +322,7 @@ class AttackExecutor:
         attack: AttackStrategy[AttackStrategyContextT, AttackStrategyResultT],
         params_list: Sequence[AttackParameters],
         return_partial_on_failure: bool = False,
-        attribution: Optional[AttackResultAttribution] = None,
+        attribution: AttackResultAttribution | None = None,
     ) -> AttackExecutorResult[AttackStrategyResultT]:
         """
         Execute attacks in parallel with a list of pre-built parameters.

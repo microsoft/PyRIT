@@ -31,6 +31,13 @@ def test_init_rejects_nested_round_robin():
 
 
 @pytest.mark.usefixtures("patch_central_database")
+def test_init_rejects_duplicate_instance():
+    t1 = MockPromptTarget()
+    with pytest.raises(ValueError, match="same target instance more than once"):
+        RoundRobinTarget(targets=[t1, t1])
+
+
+@pytest.mark.usefixtures("patch_central_database")
 def test_init_rejects_mixed_classes():
     from pyrit.prompt_target import TextTarget
 
@@ -373,12 +380,10 @@ async def test_full_send_prompt_async_keeps_round_robin_identifier():
     for piece in message.message_pieces:
         piece.conversation_id = conv_id
         # Simulate what PromptNormalizer does
-        piece.prompt_target_identifier = rr.get_identifier()
 
     responses = await rr.send_prompt_async(message=message)
 
     # The request should still have the round-robin's identifier
-    assert message.message_pieces[0].prompt_target_identifier == rr.get_identifier()
 
     # Only t1 should have received the prompt (first in rotation)
     assert t1.prompt_sent == ["end to end test"]

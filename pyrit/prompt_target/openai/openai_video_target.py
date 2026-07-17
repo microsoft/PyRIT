@@ -4,21 +4,15 @@
 import logging
 from mimetypes import guess_type
 from pathlib import Path
-from typing import Any, Optional, Union, cast
+from typing import Any, cast
 
 from openai.types import VideoSeconds, VideoSize
 
 from pyrit.exceptions import (
     pyrit_target_retry,
 )
-from pyrit.models import (
-    ComponentIdentifier,
-    DataTypeSerializer,
-    Message,
-    MessagePiece,
-    construct_response_from_request,
-    data_serializer_factory,
-)
+from pyrit.memory import DataTypeSerializer, data_serializer_factory
+from pyrit.models import ComponentIdentifier, Message, MessagePiece, construct_response_from_request
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.prompt_target.common.utils import limit_requests_per_minute
@@ -67,7 +61,7 @@ class OpenAIVideoTarget(OpenAITarget):
         *,
         resolution_dimensions: VideoSize = "1280x720",
         n_seconds: int | VideoSeconds = 4,
-        custom_configuration: Optional[TargetConfiguration] = None,
+        custom_configuration: TargetConfiguration | None = None,
         **kwargs: Any,
     ) -> None:
         """
@@ -428,7 +422,7 @@ class OpenAIVideoTarget(OpenAITarget):
         )
 
     async def _save_video_response_async(
-        self, *, request: MessagePiece, video_data: bytes, video_id: Optional[str] = None
+        self, *, request: MessagePiece, video_data: bytes, video_id: str | None = None
     ) -> Message:
         """
         Save video data to storage and construct response.
@@ -449,7 +443,7 @@ class OpenAIVideoTarget(OpenAITarget):
         logger.info(f"Video saved to: {video_path}")
 
         # Include video_id in metadata for chaining (e.g., remix the generated video later)
-        prompt_metadata: Optional[dict[str, Union[str, int]]] = {"video_id": video_id} if video_id else None
+        prompt_metadata: dict[str, str | int] | None = {"video_id": video_id} if video_id else None
 
         # Construct response
         return construct_response_from_request(

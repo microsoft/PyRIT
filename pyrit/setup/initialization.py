@@ -1,23 +1,19 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
+import io
 import logging
 import pathlib
 from collections.abc import Sequence
-from typing import TYPE_CHECKING, Any, Literal, Optional, Union, get_args
+from typing import TYPE_CHECKING, Any, Literal, get_args
 
 import dotenv
 
 from pyrit.common import path
 from pyrit.common.apply_defaults import reset_default_values
-from pyrit.memory import (
-    AzureSQLMemory,
-    CentralMemory,
-    MemoryInterface,
-    SQLiteMemory,
-)
+from pyrit.memory import AzureSQLMemory, CentralMemory, MemoryInterface, SQLiteMemory
 
 if TYPE_CHECKING:
-    from pyrit.setup.initializers.pyrit_initializer import PyRITInitializer
+    from pyrit.setup.pyrit_initializer import PyRITInitializer
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +23,7 @@ AZURE_SQL = "AzureSQL"
 MemoryDatabaseType = Literal["InMemory", "SQLite", "AzureSQL"]
 
 
-def _load_environment_files(env_files: Optional[Sequence[pathlib.Path]], *, silent: bool = False) -> None:
+def _load_environment_files(env_files: Sequence[pathlib.Path] | None, *, silent: bool = False) -> None:
     """
     Load environment files in the order they are provided.
     Later files override values from earlier files.
@@ -95,95 +91,67 @@ def _print_msg(message: str, quiet: bool, log: bool) -> None:
         logger.info(message)
 
 
-def _load_initializers_from_scripts(
-    *, script_paths: Sequence[Union[str, pathlib.Path]]
-) -> Sequence["PyRITInitializer"]:
+def _parse_akv_secret_url(secret_url: str) -> tuple[str, str, str | None]:
     """
-    Load PyRITInitializer instances from external Python files.
-
-    Each script file should contain one or more PyRITInitializer classes. All classes
-    that inherit from PyRITInitializer will be automatically discovered and instantiated.
+    Parse an AKV secret URL into vault URL, secret name, and optional version.
 
     Args:
-        script_paths (Sequence[Union[str, pathlib.Path]]): Sequence of file paths to Python scripts to load.
+        secret_url (str): Full AKV secret URL in the format
+            ``https://{vault}.vault.azure.net/secrets/{name}[/{version}]``.
 
     Returns:
-        Sequence[PyRITInitializer]: List of PyRITInitializer instances loaded from the scripts.
+        tuple[str, str, str | None]: (vault_url, secret_name, secret_version)
 
     Raises:
-        FileNotFoundError: If a script path does not exist.
-        ValueError: If a script path is not a Python file or doesn't contain valid initializers.
-
-    Example:
-        Script content should be a subclass of PyRITInitializer e.g. like SimpleInitializer
+        ValueError: If the URL does not match the expected format.
     """
-    # Import here to avoid circular imports
-    from pyrit.setup.initializers.pyrit_initializer import PyRITInitializer
+    parts = secret_url.split("/secrets/")
+    if len(parts) != 2:
+        raise ValueError(
+            f"Invalid AKV secret URL: '{secret_url}'. "
+            "Expected format: https://{{vault}}.vault.azure.net/secrets/{{name}}[/{{version}}]"
+        )
+    vault_url = parts[0]
+    name_parts = parts[1].rstrip("/").split("/")
+    secret_name = name_parts[0]
+    secret_version = name_parts[1] if len(name_parts) > 1 else None
+    return vault_url, secret_name, secret_version
 
-    loaded_initializers = []
 
-    for script_path in script_paths:
-        # Convert to Path object if string
-        script = pathlib.Path(script_path)
+async def _load_env_from_akv_async(*, secret_urls: Sequence[str], silent: bool = False) -> None:
+    """
+    Load environment variables from Azure Key Vault secrets.
 
-        # Validate the script exists
-        if not script.exists():
-            raise FileNotFoundError(f"Initialization script not found: {script}")
+    Each secret's value is treated as the full contents of a ``.env`` file and
+    parsed accordingly. Later secrets override values from earlier ones.
 
-        # Validate it's a Python file
-        if script.suffix != ".py":
-            raise ValueError(f"Initialization script must be a Python file (.py): {script}")
+    Authentication uses ``DefaultAzureCredential``, which silently tries managed
+    identity, Azure CLI, VS Code credentials, etc., and falls back to interactive
+    browser authentication when running locally.
 
-        logger.info(f"Loading initializers from script: {script}")
+    Args:
+        secret_urls (Sequence[str]): Sequence of AKV secret URLs to load, each in
+            the format ``https://{vault}.vault.azure.net/secrets/{name}[/{version}]``.
+        silent (bool): If True, suppresses print statements. Defaults to False.
 
-        # Load the script as a module
-        try:
-            import importlib.util
+    Raises:
+        ImportError: If ``azure-keyvault-secrets`` is not installed.
+        ValueError: If a secret URL is malformed.
+    """
+    if not secret_urls:
+        return
+    from azure.identity.aio import DefaultAzureCredential
+    from azure.keyvault.secrets.aio import SecretClient
 
-            spec = importlib.util.spec_from_file_location(f"init_script_{script.stem}", script)
-            if spec is None or spec.loader is None:
-                raise ValueError(f"Could not load initialization script: {script}")
-
-            module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(module)
-
-            # Auto-discover PyRITInitializer subclasses in the module
-            script_initializers = []
-
-            # Look for all PyRITInitializer subclasses defined in the module
-            for name in dir(module):
-                obj = getattr(module, name)
-                # Check if it's a class, is a subclass of PyRITInitializer,
-                # and is not the base class itself
-                if (
-                    isinstance(obj, type)
-                    and issubclass(obj, PyRITInitializer)
-                    and obj is not PyRITInitializer
-                    and obj.__module__ == module.__name__
-                ):
-                    try:
-                        # Instantiate the initializer class
-                        initializer = obj()
-                        script_initializers.append(initializer)
-                        logger.debug(f"Found and instantiated {name} in {script.name}")
-                    except Exception as e:
-                        logger.warning(f"Could not instantiate {name} from {script.name}: {e}")
-                        # Continue to try other classes rather than failing completely
-
-            if not script_initializers:
-                raise ValueError(
-                    f"Initialization script {script} must contain at least one PyRITInitializer subclass. "
-                    f"Define a class that inherits from PyRITInitializer."
-                )
-
-            loaded_initializers.extend(script_initializers)
-            logger.debug(f"Loaded {len(script_initializers)} initializer(s) from {script.name}")
-
-        except Exception as e:
-            logger.error(f"Error loading initializers from script {script}: {e}")
-            raise
-
-    return loaded_initializers
+    credential = DefaultAzureCredential()
+    for secret_url in secret_urls:
+        _print_msg(f"Loading environment from AKV secret: {secret_url}", quiet=silent, log=True)
+        vault_url, secret_name, secret_version = _parse_akv_secret_url(secret_url)
+        client = SecretClient(vault_url=vault_url, credential=credential)
+        secret = await client.get_secret(secret_name, version=secret_version)
+        if secret.value:
+            dotenv.load_dotenv(stream=io.StringIO(secret.value), override=True)
+            _print_msg(f"Loaded environment from AKV secret: {secret_url}", quiet=silent, log=True)
 
 
 async def _execute_initializers_async(*, initializers: Sequence["PyRITInitializer"]) -> None:
@@ -200,7 +168,7 @@ async def _execute_initializers_async(*, initializers: Sequence["PyRITInitialize
         Exception: If an initializer's validation or initialization fails.
     """
     # Import here to avoid circular imports
-    from pyrit.setup.initializers.pyrit_initializer import PyRITInitializer
+    from pyrit.setup.pyrit_initializer import PyRITInitializer
 
     # Validate all initializers first
     for initializer in initializers:
@@ -228,11 +196,13 @@ async def _execute_initializers_async(*, initializers: Sequence["PyRITInitialize
 
 
 async def initialize_pyrit_async(
-    memory_db_type: Union[MemoryDatabaseType, str],
+    memory_db_type: MemoryDatabaseType | str,
     *,
-    initialization_scripts: Optional[Sequence[Union[str, pathlib.Path]]] = None,
-    initializers: Optional[Sequence["PyRITInitializer"]] = None,
-    env_files: Optional[Sequence[pathlib.Path]] = None,
+    initialization_scripts: Sequence[str | pathlib.Path] | None = None,
+    initializers: Sequence["PyRITInitializer"] | None = None,
+    load_defaults: bool = True,
+    env_files: Sequence[pathlib.Path] | None = None,
+    env_akv_ref: Sequence[str] | None = None,
     silent: bool = False,
     **memory_instance_kwargs: Any,
 ) -> None:
@@ -242,21 +212,36 @@ async def initialize_pyrit_async(
     Args:
         memory_db_type (MemoryDatabaseType): The MemoryDatabaseType string literal which indicates the memory
             instance to use for central memory. Options include "InMemory", "SQLite", and "AzureSQL".
-        initialization_scripts (Optional[Sequence[Union[str, pathlib.Path]]]): Optional sequence of Python script paths
-            that contain PyRITInitializer classes. Each script must define either a get_initializers() function
-            or an 'initializers' variable that returns/contains a list of PyRITInitializer instances.
-        initializers (Optional[Sequence[PyRITInitializer]]): Optional sequence of PyRITInitializer instances
+        initialization_scripts (Sequence[str | pathlib.Path] | None): Optional sequence of Python script paths
+            that define PyRITInitializer subclasses. Every initializer subclass defined in each file is
+            loaded and executed. Loading is handled by the InitializerRegistry.
+        initializers (Sequence[PyRITInitializer] | None): Optional sequence of PyRITInitializer instances
             to execute directly. These provide type-safe, validated configuration with clear documentation.
-        env_files (Optional[Sequence[pathlib.Path]]): Optional sequence of environment file paths to load
+        load_defaults (bool): If True (default) AND the caller supplies neither ``initializers`` nor
+            ``initialization_scripts``, a default initializer set is run so a bare
+            ``initialize_pyrit_async(...)`` yields a usable environment: the core attack-technique catalog
+            (``TechniqueInitializer``, populating the AttackTechniqueRegistry) plus the available default
+            targets (``TargetInitializer``, registering whatever endpoints are configured via env vars).
+            Supplying any initializer or script means the caller owns setup, so the defaults are skipped;
+            set this to False to also skip them on a bare call (e.g. to start from an empty state). Only the
+            ``core`` techniques and ``default`` targets are loaded — ``extra`` / per-source technique groups
+            and ``scorer`` target variants remain opt-in.
+        env_files (Sequence[pathlib.Path] | None): Optional sequence of environment file paths to load
             in order. If not provided, will load default .env and .env.local files from PyRIT home if they exist.
             All paths must be valid pathlib.Path objects.
+        env_akv_ref (Sequence[str] | None): Optional sequence of Azure Key Vault secret URLs to load.
+            Each secret's value must be the full contents of a .env file. Loaded before ``env_files``
+            so local files take precedence over AKV. Requires ``azure-keyvault-secrets``.
         silent (bool): If True, suppresses print statements about environment file loading and
             schema migration. Defaults to False.
-        **memory_instance_kwargs (Optional[Any]): Additional keyword arguments to pass to the memory instance.
+        **memory_instance_kwargs (Any | None): Additional keyword arguments to pass to the memory instance.
 
     Raises:
         ValueError: If an unsupported memory_db_type is provided or if env_files contains non-existent files.
     """
+    if env_akv_ref:
+        await _load_env_from_akv_async(secret_urls=env_akv_ref, silent=silent)
+
     _load_environment_files(env_files=env_files, silent=silent)
 
     # Reset all default values before executing initialization scripts
@@ -284,13 +269,27 @@ async def initialize_pyrit_async(
 
     CentralMemory.set_memory_instance(memory)
 
-    # Combine directly provided initializers with those loaded from scripts
-    all_initializers = list(initializers) if initializers else []
+    # Combine directly provided initializers with those loaded from scripts.
+    all_initializers: list[PyRITInitializer] = list(initializers) if initializers else []
 
-    # Load additional initializers from scripts
+    # Load additional initializers from scripts — the registry owns turning
+    # external script files into initializer instances.
     if initialization_scripts:
-        script_initializers = _load_initializers_from_scripts(script_paths=initialization_scripts)
+        from pyrit.registry import InitializerRegistry
+
+        registry = InitializerRegistry.get_registry_singleton()
+        script_initializers = registry.create_from_script_paths(script_paths=initialization_scripts)
         all_initializers.extend(script_initializers)
+
+    # When the caller supplies nothing, fall back to the default initializer set so a
+    # bare initialize_pyrit_async(...) yields a usable environment (core techniques +
+    # available default targets). Supplying any initializer/script means the caller owns
+    # setup, so defaults are skipped; load_defaults=False skips them even on a bare call.
+    if load_defaults and not all_initializers:
+        from pyrit.setup.initializers.targets import TargetInitializer
+        from pyrit.setup.initializers.techniques import TechniqueInitializer
+
+        all_initializers = [TechniqueInitializer(), TargetInitializer()]
 
     # Execute all initializers in order
     if all_initializers:

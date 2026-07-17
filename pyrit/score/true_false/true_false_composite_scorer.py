@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 import asyncio
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from pyrit.prompt_target import PromptTarget
@@ -36,7 +36,7 @@ class TrueFalseCompositeScorer(TrueFalseScorer):
             aggregator (TrueFalseAggregatorFunc): Aggregation function to combine child scores
                 (e.g., ``TrueFalseScoreAggregator.AND``, ``TrueFalseScoreAggregator.OR``,
                 ``TrueFalseScoreAggregator.MAJORITY``).
-            scorers (List[TrueFalseScorer]): The constituent true/false scorers to invoke.
+            scorers (list[TrueFalseScorer]): The constituent true/false scorers to invoke.
 
         Raises:
             ValueError: If no scorers are provided.
@@ -63,15 +63,11 @@ class TrueFalseCompositeScorer(TrueFalseScorer):
             ComponentIdentifier: The identifier for this scorer.
         """
         return self._create_identifier(
-            params={
-                "score_aggregator": self._score_aggregator.__name__,  # type: ignore[ty:unresolved-attribute]
-            },
-            children={
-                "sub_scorers": [s.get_identifier() for s in self._scorers],
-            },
+            score_aggregator=self._score_aggregator.__name__,  # type: ignore[ty:unresolved-attribute]
+            sub_scorers=[s.get_identifier() for s in self._scorers],
         )
 
-    def get_chat_target(self) -> Optional["PromptTarget"]:
+    def get_chat_target(self) -> "PromptTarget | None":
         """Return the chat target from the first sub-scorer that has one."""
         for scorer in self._scorers:
             target = scorer.get_chat_target()
@@ -83,16 +79,16 @@ class TrueFalseCompositeScorer(TrueFalseScorer):
         self,
         message: Message,
         *,
-        objective: Optional[str] = None,
-        role_filter: Optional[ChatMessageRole] = None,
+        objective: str | None = None,
+        role_filter: ChatMessageRole | None = None,
     ) -> list[Score]:
         """
         Score a request/response by combining results from all constituent scorers.
 
         Args:
             message (Message): The request/response to score.
-            objective (Optional[str]): Scoring objective or context.
-            role_filter (Optional[ChatMessageRole]): Optional filter for message roles. Defaults to None.
+            objective (str | None): Scoring objective or context.
+            role_filter (ChatMessageRole | None): Optional filter for message roles. Defaults to None.
 
         Returns:
             list[Score]: A single-element list with the aggregated true/false score.
@@ -140,13 +136,13 @@ class TrueFalseCompositeScorer(TrueFalseScorer):
 
         return [return_score]
 
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: Optional[str] = None) -> list[Score]:
+    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
         """
         Composite scorers do not support piecewise scoring.
 
         Args:
             message_piece (MessagePiece): Unused.
-            objective (Optional[str]): Unused.
+            objective (str | None): Unused.
 
         Raises:
             NotImplementedError: Always, since composite scoring operates at the response level.

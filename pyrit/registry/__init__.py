@@ -3,50 +3,51 @@
 
 """Registry module for PyRIT class and object registries."""
 
-from pyrit.registry.base import RegistryProtocol
-from pyrit.registry.class_registries import (
-    BaseClassRegistry,
-    ClassEntry,
+from pyrit.registry.components import (
+    AttackTechniqueMetadata,
+    AttackTechniqueRegistry,
+    ConverterMetadata,
+    ConverterRegistry,
     InitializerMetadata,
     InitializerRegistry,
     ScenarioMetadata,
-    ScenarioParameterMetadata,
     ScenarioRegistry,
-)
-from pyrit.registry.discovery import (
-    discover_in_directory,
-    discover_in_package,
-    discover_subclasses_in_loaded_modules,
-)
-from pyrit.registry.object_registries import (
-    AttackTechniqueRegistry,
-    BaseInstanceRegistry,
-    ConverterRegistry,
-    RegistryEntry,
-    RetrievableInstanceRegistry,
+    ScorerMetadata,
     ScorerRegistry,
+    TargetMetadata,
     TargetRegistry,
 )
+from pyrit.registry.discovery import discover_in_directory
+from pyrit.registry.instance_registry import (
+    DefaultInstanceRegistry,
+    InstanceRegistry,
+    RegistryEntry,
+    SupportsInstances,
+)
+from pyrit.registry.registry import ParamBagRegistry, Registry
+from pyrit.registry.registry_metadata import RegistryMetadata
 from pyrit.registry.tag_query import TagQuery
 
 __all__ = [
     "AttackTechniqueRegistry",
-    "BaseClassRegistry",
-    "BaseInstanceRegistry",
+    "AttackTechniqueMetadata",
     "ConverterRegistry",
-    "RetrievableInstanceRegistry",
-    "ClassEntry",
+    "ConverterMetadata",
+    "DefaultInstanceRegistry",
+    "InstanceRegistry",
+    "ParamBagRegistry",
+    "Registry",
+    "RegistryMetadata",
+    "SupportsInstances",
     "discover_in_directory",
-    "discover_in_package",
-    "discover_subclasses_in_loaded_modules",
     "InitializerMetadata",
     "InitializerRegistry",
     "RegistryEntry",
-    "RegistryProtocol",
     "ScenarioMetadata",
-    "ScenarioParameterMetadata",
     "ScenarioRegistry",
     "ScorerRegistry",
+    "ScorerMetadata",
     "TargetRegistry",
+    "TargetMetadata",
     "TagQuery",
 ]

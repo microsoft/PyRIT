@@ -1,6 +1,6 @@
 # PyRIT-specific configs
 submodules/
-results/
+/results/
 dbdata/
 eval/
 default_memory.json.memory
@@ -201,3 +201,6 @@ doc/_autosummary/
 
 # Custom user instructions
 .github/instructions/user-custom.instructions.md
+
+# Impeccable skill local cache
+.impeccable/

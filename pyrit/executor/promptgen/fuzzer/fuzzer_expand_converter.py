@@ -3,15 +3,14 @@
 
 import pathlib
 import uuid
-from typing import Optional
 
 from pyrit.common.apply_defaults import apply_defaults
 from pyrit.common.path import CONVERTER_SEED_PROMPT_PATH
+from pyrit.converter.converter import ConverterResult
 from pyrit.executor.promptgen.fuzzer.fuzzer_converter_base import (
     FuzzerConverter,
 )
-from pyrit.models import Message, MessagePiece, PromptDataType, SeedPrompt
-from pyrit.prompt_converter.prompt_converter import ConverterResult
+from pyrit.models import JsonResponseConfig, Message, MessagePiece, PromptDataType, SeedPrompt
 from pyrit.prompt_target import PromptTarget
 
 
@@ -24,8 +23,8 @@ class FuzzerExpandConverter(FuzzerConverter):
     def __init__(
         self,
         *,
-        converter_target: Optional[PromptTarget] = None,
-        prompt_template: Optional[SeedPrompt] = None,
+        converter_target: PromptTarget | None = None,
+        prompt_template: SeedPrompt | None = None,
     ) -> None:
         """Initialize the expand converter with optional chat target and prompt template."""
         prompt_template = (
@@ -59,12 +58,11 @@ class FuzzerExpandConverter(FuzzerConverter):
         self.converter_target.set_system_prompt(
             system_prompt=self.system_prompt,
             conversation_id=conversation_id,
-            attack_identifier=None,
         )
 
         formatted_prompt = f"===={self.template_label} BEGINS====\n{prompt}\n===={self.template_label} ENDS===="
 
-        prompt_metadata: dict[str, str | int] = {"response_format": "json"}
+        prompt_metadata = JsonResponseConfig(enabled=True).to_metadata()
         request = Message(
             message_pieces=[
                 MessagePiece(
@@ -73,7 +71,6 @@ class FuzzerExpandConverter(FuzzerConverter):
                     converted_value=formatted_prompt,
                     conversation_id=conversation_id,
                     sequence=1,
-                    prompt_target_identifier=self.converter_target.get_identifier(),
                     original_value_data_type=input_type,
                     converted_value_data_type=input_type,
                     converter_identifiers=[self.get_identifier()],

@@ -3,10 +3,13 @@
 
 from typing import Literal
 
+from typing_extensions import override
+
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import Modality, SeedDataset, SeedObjective
+from pyrit.models import Modality, SeedDataset, SeedObjective, SeedUnion
+from pyrit.models.harm_category import HarmCategory
 
 
 class _HarmBenchDataset(_RemoteDatasetLoader):
@@ -45,10 +48,12 @@ class _HarmBenchDataset(_RemoteDatasetLoader):
         self.source_type: Literal["public_url", "file"] = source_type
 
     @property
+    @override
     def dataset_name(self) -> str:
-        """Return the dataset name."""
+        """The dataset name."""
         return "harmbench"
 
+    @override
     async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch HarmBench dataset and return as SeedDataset.
@@ -73,7 +78,19 @@ class _HarmBenchDataset(_RemoteDatasetLoader):
         )
 
         # Validate and process examples
-        seeds = []
+        harm_category_alias_overrides: dict[str, list[HarmCategory]] = {
+            "chemical_biological": [HarmCategory.CBRN],
+            "cybercrime_intrusion": [HarmCategory.COORDINATION_HARM, HarmCategory.MALWARE],
+            "cybercrime": [HarmCategory.COORDINATION_HARM, HarmCategory.MALWARE],
+            "harassment_bullying": [HarmCategory.HARASSMENT],
+            "illegal": [HarmCategory.COORDINATION_HARM],
+            "illegal_activity": [HarmCategory.COORDINATION_HARM],
+            "misinformation_disinformation": [HarmCategory.INFO_INTEGRITY],
+            "harmful": [HarmCategory.OTHER],
+            "copyright": [HarmCategory.COPYRIGHT],
+        }
+
+        seeds: list[SeedUnion] = []
         for example in examples:
             # Check for missing keys in the example
             missing_keys = required_keys - example.keys()
@@ -83,18 +100,34 @@ class _HarmBenchDataset(_RemoteDatasetLoader):
             # Extract data
             category = example["SemanticCategory"]
 
+            # Standardize harm categories
+            standardized_categories = self._standardize_harm_categories(
+                category,
+                alias_overrides=harm_category_alias_overrides,
+            )
+
+            metadata: dict[str, str | int] = {key: value for key, value in example.items() if key != "Behavior"}
+
             # Create SeedPrompt
             seed_prompt = SeedObjective(
                 value=example["Behavior"],
                 name="HarmBench Examples",
                 dataset_name=self.dataset_name,
-                harm_categories=[category],
+                harm_categories=standardized_categories,
                 description=(
                     "A dataset of HarmBench examples containing various categories such as chemical, "
                     "biological, illegal activities, etc."
                 ),
                 source="https://github.com/centerforaisafety/HarmBench",
                 authors=["Mantas Mazeika", "Long Phan", "Xuwang Yin", "Andy Zou", "Zifan Wang", "Norman Mu"],
+                metadata=metadata,
+                groups=[
+                    "University of Illinois Urbana-Champaign",
+                    "Center for AI Safety",
+                    "Carnegie Mellon University",
+                    "University of California, Berkeley",
+                    "Microsoft",
+                ],
             )
             seeds.append(seed_prompt)
 

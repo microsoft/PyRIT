@@ -8,7 +8,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from enum import Enum
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
@@ -128,7 +128,7 @@ _COUNTRY_INFO: dict[XLSafetyBenchCountry, _CountryInfo] = {
 }
 
 
-def _resolve_countries(countries: Optional[list[XLSafetyBenchCountry]]) -> list[XLSafetyBenchCountry]:
+def _resolve_countries(countries: list[XLSafetyBenchCountry] | None) -> list[XLSafetyBenchCountry]:
     """
     Validate and normalize the requested list of country filters.
 
@@ -165,10 +165,10 @@ def _resolve_countries(countries: Optional[list[XLSafetyBenchCountry]]) -> list[
 
 def _resolve_category_filter(
     *,
-    categories: Optional[Sequence[Enum]],
+    categories: Sequence[Enum] | None,
     enum_cls: type[Enum],
     label: str,
-) -> Optional[set[str]]:
+) -> set[str] | None:
     """
     Validate a category filter and return the set of allowed category strings.
 
@@ -333,8 +333,8 @@ class _XLSafetyBenchJailbreakDataset(_RemoteDatasetLoader):
     def __init__(
         self,
         *,
-        countries: Optional[list[XLSafetyBenchCountry]] = None,
-        categories: Optional[list[XLSafetyBenchJailbreakCategory]] = None,
+        countries: list[XLSafetyBenchCountry] | None = None,
+        categories: list[XLSafetyBenchJailbreakCategory] | None = None,
     ) -> None:
         """
         Initialize the XL-SafetyBench Jailbreak dataset loader.
@@ -359,7 +359,7 @@ class _XLSafetyBenchJailbreakDataset(_RemoteDatasetLoader):
 
     @property
     def dataset_name(self) -> str:
-        """Return the dataset name."""
+        """The dataset name."""
         return "xl_safety_bench_jailbreak"
 
     async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
@@ -509,8 +509,8 @@ class _XLSafetyBenchJailbreakObjectivesDataset(_RemoteDatasetLoader):
     def __init__(
         self,
         *,
-        countries: Optional[list[XLSafetyBenchCountry]] = None,
-        categories: Optional[list[XLSafetyBenchJailbreakCategory]] = None,
+        countries: list[XLSafetyBenchCountry] | None = None,
+        categories: list[XLSafetyBenchJailbreakCategory] | None = None,
     ) -> None:
         """
         Initialize the XL-SafetyBench Jailbreak Objectives dataset loader.
@@ -535,7 +535,7 @@ class _XLSafetyBenchJailbreakObjectivesDataset(_RemoteDatasetLoader):
 
     @property
     def dataset_name(self) -> str:
-        """Return the dataset name."""
+        """The dataset name."""
         return "xl_safety_bench_jailbreak_objectives"
 
     async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
@@ -680,8 +680,8 @@ class _XLSafetyBenchCulturalDataset(_RemoteDatasetLoader):
     def __init__(
         self,
         *,
-        countries: Optional[list[XLSafetyBenchCountry]] = None,
-        categories: Optional[list[XLSafetyBenchCulturalCategory]] = None,
+        countries: list[XLSafetyBenchCountry] | None = None,
+        categories: list[XLSafetyBenchCulturalCategory] | None = None,
         language_mode: XLSafetyBenchLanguageMode = XLSafetyBenchLanguageMode.LOCAL,
     ) -> None:
         """
@@ -715,7 +715,7 @@ class _XLSafetyBenchCulturalDataset(_RemoteDatasetLoader):
 
     @property
     def dataset_name(self) -> str:
-        """Return the dataset name."""
+        """The dataset name."""
         return "xl_safety_bench_cultural"
 
     async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
@@ -890,7 +890,7 @@ def _make_jailbreak_country_sibling(country: XLSafetyBenchCountry, class_suffix:
     def init_impl(
         self: _XLSafetyBenchJailbreakDataset,
         *,
-        categories: Optional[list[XLSafetyBenchJailbreakCategory]] = None,
+        categories: list[XLSafetyBenchJailbreakCategory] | None = None,
     ) -> None:
         _XLSafetyBenchJailbreakDataset.__init__(self, countries=[country], categories=categories)
 
@@ -904,7 +904,7 @@ def _make_jailbreak_country_sibling(country: XLSafetyBenchCountry, class_suffix:
             "__doc__": f"Sibling loader pinned to the {class_suffix} split of XL-SafetyBench Jailbreak.",
             "size": "medium",
             "__init__": init_impl,
-            "dataset_name": property(dataset_name_getter, doc="Return the dataset name."),
+            "dataset_name": property(dataset_name_getter, doc="The dataset name."),
         },
     )
     cls.__module__ = __name__
@@ -933,7 +933,7 @@ def _make_cultural_country_sibling(country: XLSafetyBenchCountry, class_suffix: 
     def init_impl(
         self: _XLSafetyBenchCulturalDataset,
         *,
-        categories: Optional[list[XLSafetyBenchCulturalCategory]] = None,
+        categories: list[XLSafetyBenchCulturalCategory] | None = None,
         language_mode: XLSafetyBenchLanguageMode = XLSafetyBenchLanguageMode.LOCAL,
     ) -> None:
         _XLSafetyBenchCulturalDataset.__init__(
@@ -953,12 +953,35 @@ def _make_cultural_country_sibling(country: XLSafetyBenchCountry, class_suffix: 
             "__doc__": f"Sibling loader pinned to the {class_suffix} split of XL-SafetyBench Cultural.",
             "size": "medium",
             "__init__": init_impl,
-            "dataset_name": property(dataset_name_getter, doc="Return the dataset name."),
+            "dataset_name": property(dataset_name_getter, doc="The dataset name."),
         },
     )
     cls.__module__ = __name__
     cls.__qualname__ = class_name
     return cls
+
+
+_XLSafetyBenchJailbreakFranceDataset: type[_XLSafetyBenchJailbreakDataset]
+_XLSafetyBenchJailbreakGermanyDataset: type[_XLSafetyBenchJailbreakDataset]
+_XLSafetyBenchJailbreakIndiaDataset: type[_XLSafetyBenchJailbreakDataset]
+_XLSafetyBenchJailbreakIndonesiaDataset: type[_XLSafetyBenchJailbreakDataset]
+_XLSafetyBenchJailbreakJapanDataset: type[_XLSafetyBenchJailbreakDataset]
+_XLSafetyBenchJailbreakSouthKoreaDataset: type[_XLSafetyBenchJailbreakDataset]
+_XLSafetyBenchJailbreakSpainDataset: type[_XLSafetyBenchJailbreakDataset]
+_XLSafetyBenchJailbreakTurkeyDataset: type[_XLSafetyBenchJailbreakDataset]
+_XLSafetyBenchJailbreakUnitedArabEmiratesDataset: type[_XLSafetyBenchJailbreakDataset]
+_XLSafetyBenchJailbreakUnitedStatesDataset: type[_XLSafetyBenchJailbreakDataset]
+
+_XLSafetyBenchCulturalFranceDataset: type[_XLSafetyBenchCulturalDataset]
+_XLSafetyBenchCulturalGermanyDataset: type[_XLSafetyBenchCulturalDataset]
+_XLSafetyBenchCulturalIndiaDataset: type[_XLSafetyBenchCulturalDataset]
+_XLSafetyBenchCulturalIndonesiaDataset: type[_XLSafetyBenchCulturalDataset]
+_XLSafetyBenchCulturalJapanDataset: type[_XLSafetyBenchCulturalDataset]
+_XLSafetyBenchCulturalSouthKoreaDataset: type[_XLSafetyBenchCulturalDataset]
+_XLSafetyBenchCulturalSpainDataset: type[_XLSafetyBenchCulturalDataset]
+_XLSafetyBenchCulturalTurkeyDataset: type[_XLSafetyBenchCulturalDataset]
+_XLSafetyBenchCulturalUnitedArabEmiratesDataset: type[_XLSafetyBenchCulturalDataset]
+_XLSafetyBenchCulturalUnitedStatesDataset: type[_XLSafetyBenchCulturalDataset]
 
 
 def _register_country_siblings() -> None:

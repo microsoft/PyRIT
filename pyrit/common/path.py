@@ -59,12 +59,13 @@ DATASETS_PATH = pathlib.Path(PYRIT_PATH, "datasets").resolve()
 EXECUTOR_SEED_PROMPT_PATH = pathlib.Path(DATASETS_PATH, "executors").resolve()
 EXECUTOR_RED_TEAM_PATH = pathlib.Path(EXECUTOR_SEED_PROMPT_PATH, "red_teaming").resolve()
 EXECUTOR_SIMULATED_TARGET_PATH = pathlib.Path(EXECUTOR_SEED_PROMPT_PATH, "simulated_target").resolve()
-CONVERTER_SEED_PROMPT_PATH = pathlib.Path(DATASETS_PATH, "prompt_converters").resolve()
+CONVERTER_SEED_PROMPT_PATH = pathlib.Path(DATASETS_PATH, "converters").resolve()
 SCORER_SEED_PROMPT_PATH = pathlib.Path(DATASETS_PATH, "score").resolve()
 SCORER_CONTENT_CLASSIFIERS_PATH = pathlib.Path(SCORER_SEED_PROMPT_PATH, "content_classifiers").resolve()
 SCORER_LIKERT_PATH = pathlib.Path(SCORER_SEED_PROMPT_PATH, "likert").resolve()
 SCORER_SCALES_PATH = pathlib.Path(SCORER_SEED_PROMPT_PATH, "scales").resolve()
 HARM_DEFINITION_PATH = pathlib.Path(DATASETS_PATH, "harm_definition").resolve()
+JSON_SCHEMAS_PATH = pathlib.Path(DATASETS_PATH, "json_schemas").resolve()
 
 JAILBREAK_TEMPLATES_PATH = pathlib.Path(DATASETS_PATH, "jailbreak", "templates").resolve()
 
@@ -85,6 +86,7 @@ PATHS_DICT = {
     "docs_path": DOCS_PATH,
     "harm_definition_path": HARM_DEFINITION_PATH,
     "jailbreak_templates_path": JAILBREAK_TEMPLATES_PATH,
+    "json_schemas_path": JSON_SCHEMAS_PATH,
     "likert_path": SCORER_LIKERT_PATH,
     "log_path": LOG_PATH,
     "pyrit_home_path": HOME_PATH,

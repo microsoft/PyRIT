@@ -11,14 +11,14 @@ from openai import RateLimitError
 from unit.mocks import get_sample_conversations
 
 from pyrit.exceptions import EmptyResponseException, RateLimitException
-from pyrit.models import Message, MessagePiece
+from pyrit.models import Message, MessagePiece, flatten_to_message_pieces
 from pyrit.prompt_target import AzureMLChatTarget
 
 
 @pytest.fixture
 def sample_conversations() -> MutableSequence[MessagePiece]:
     conversations = get_sample_conversations()
-    return Message.flatten_to_message_pieces(conversations)
+    return flatten_to_message_pieces(conversations)
 
 
 @pytest.fixture
@@ -52,6 +52,35 @@ def test_initialization_with_no_api_raises():
     os.environ[AzureMLChatTarget.endpoint_uri_environment_variable] = ""
     with pytest.raises(ValueError):
         AzureMLChatTarget(api_key="xxxxx")
+
+
+def test_no_key_recognized_aml_endpoint_auto_mints_entra(patch_central_database):
+    """With no key and a recognized *.inference.ml.azure.com endpoint, the target
+    auto-mints an Entra token provider for the AML scope."""
+
+    async def _provider() -> str:
+        return "aml-entra-token"
+
+    with (
+        patch.dict(os.environ, {AzureMLChatTarget.api_key_environment_variable: ""}),
+        patch(
+            "pyrit.prompt_target.azure_ml_chat_target.get_azure_async_token_provider",
+            return_value=_provider,
+        ) as mock_provider,
+    ):
+        target = AzureMLChatTarget(endpoint="https://my-aml.region.inference.ml.azure.com/score")
+
+    mock_provider.assert_called_once_with(AzureMLChatTarget._AZURE_ML_SCOPE)
+    assert target._api_key_provider is _provider
+    assert target._api_key == ""
+
+
+def test_no_key_non_aml_endpoint_raises(patch_central_database):
+    """With no key and an endpoint that is not a recognized AML host, the target
+    refuses to mint a bearer token."""
+    with patch.dict(os.environ, {AzureMLChatTarget.api_key_environment_variable: ""}):
+        with pytest.raises(ValueError, match="recognized Azure ML"):
+            AzureMLChatTarget(endpoint="https://example.com/score")
 
 
 async def test_complete_chat_async(aml_online_chat: AzureMLChatTarget):
@@ -107,7 +136,7 @@ async def test_complete_chat_async_bad_json_response(aml_online_chat: AzureMLCha
 
 async def test_send_prompt_async_bad_request_error_adds_to_memory(aml_online_chat: AzureMLChatTarget):
     mock_memory = MagicMock()
-    mock_memory.get_conversation.return_value = []
+    mock_memory.get_conversation_messages.return_value = []
     mock_memory.add_message_to_memory = AsyncMock()
 
     aml_online_chat._memory = mock_memory
@@ -123,7 +152,7 @@ async def test_send_prompt_async_bad_request_error_adds_to_memory(aml_online_cha
 
     with pytest.raises(HTTPStatusError) as bre:
         await aml_online_chat.send_prompt_async(message=message)
-        aml_online_chat._memory.get_conversation.assert_called_once_with(conversation_id="123")
+        aml_online_chat._memory.get_conversation_messages.assert_called_once_with(conversation_id="123")
         aml_online_chat._memory.add_message_to_memory.assert_called_once_with(request=message)
 
     assert str(bre.value) == "Bad Request"
@@ -131,7 +160,7 @@ async def test_send_prompt_async_bad_request_error_adds_to_memory(aml_online_cha
 
 async def test_send_prompt_async_rate_limit_exception_adds_to_memory(aml_online_chat: AzureMLChatTarget):
     mock_memory = MagicMock()
-    mock_memory.get_conversation.return_value = []
+    mock_memory.get_conversation_messages.return_value = []
     mock_memory.add_message_to_memory = AsyncMock()
 
     aml_online_chat._memory = mock_memory
@@ -146,7 +175,7 @@ async def test_send_prompt_async_rate_limit_exception_adds_to_memory(aml_online_
 
     with pytest.raises(RateLimitException) as rle:
         await aml_online_chat.send_prompt_async(message=message)
-        aml_online_chat._memory.get_conversation.assert_called_once_with(conversation_id="123")
+        aml_online_chat._memory.get_conversation_messages.assert_called_once_with(conversation_id="123")
         aml_online_chat._memory.add_message_to_memory.assert_called_once_with(request=message)
 
     assert str(rle.value) == "Status Code: 429, Message: Rate Limit Exception"

@@ -154,6 +154,7 @@ export default function MessageList({ messages, onCopyToInput, onCopyToNewConver
   return (
     <div className={styles.root}>
       {messages.map((message, index) => {
+        if (message.role === 'system') return null
         const isUser = message.role === 'user'
         const isSimulated = message.role === 'simulated_assistant'
         const timestamp = new Date(message.timestamp).toLocaleTimeString()
