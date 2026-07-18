@@ -160,12 +160,15 @@ class TestDisplayChoices:
 class TestIsStringCoercible:
     """``Parameter.is_string_coercible`` reflects whether a string token can supply the value."""
 
-    @pytest.mark.parametrize("param_type", [str, int, float, bool, Literal["a", "b"]])
+    @pytest.mark.parametrize(
+        "param_type",
+        [str, int, float, bool, Literal["a", "b"], _Speed, int | None, _Speed | None],
+    )
     def test_coercible_value_types(self, param_type: object) -> None:
         p = Parameter(name="x", description="d", param_type=param_type)
         assert p.is_string_coercible is True
 
-    @pytest.mark.parametrize("param_type", [None, list[str], _Speed, _Unsupported])
+    @pytest.mark.parametrize("param_type", [None, list[str], _Unsupported])
     def test_non_coercible_value_types(self, param_type: object) -> None:
         p = Parameter(name="x", description="d", param_type=param_type)
         assert p.is_string_coercible is False
@@ -176,6 +179,10 @@ class TestIsStringCoercible:
             description="d",
             reference=RegistryReference(component_type=ComponentType.TARGET),
         )
+        assert p.is_string_coercible is False
+
+    def test_opaque_is_never_coercible(self) -> None:
+        p = Parameter(name="value", description="d", param_type=str, opaque=True)
         assert p.is_string_coercible is False
 
 
@@ -259,6 +266,10 @@ class TestCoerceValueConstrainedScalars:
         p = Parameter(name="speed", description="d", param_type=_Speed)
         assert p.coerce_value(_Speed.SLOW) is _Speed.SLOW
 
+    def test_optional_enum_by_value(self) -> None:
+        p = Parameter(name="speed", description="d", param_type=_Speed | None)
+        assert p.coerce_value("slow") is _Speed.SLOW
+
     def test_enum_invalid_raises(self) -> None:
         p = Parameter(name="speed", description="d", param_type=_Speed)
         with pytest.raises(ValueError, match="one of"):
@@ -293,6 +304,11 @@ class TestCoerceValueLists:
 
 class TestCoerceValuePassthrough:
     """Reference / arbitrary / None param_types pass through unchanged."""
+
+    @pytest.mark.parametrize("param_type", [int | None, _Speed | None, list[str] | None])
+    def test_optional_type_accepts_none(self, param_type: object) -> None:
+        p = Parameter(name="value", description="d", param_type=param_type)
+        assert p.coerce_value(None) is None
 
     def test_param_type_none_returns_distinct_object(self) -> None:
         raw = ["a", "b"]

@@ -14,6 +14,8 @@ from typing import TYPE_CHECKING
 
 from pyrit.models.seeds.seed_group import SeedGroup
 from pyrit.models.seeds.seed_objective import SeedObjective
+from pyrit.models.seeds.seed_prompt import SeedPrompt
+from pyrit.models.seeds.seed_simulated_conversation import SeedSimulatedConversation
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -173,5 +175,20 @@ class AttackSeedGroup(SeedGroup):
         # all of them with a single new UUID.
         for seed in merged_seeds:
             seed.prompt_group_id = None
+
+        # Normalize prompt sequences to dense, 0-based order preserving relative
+        # ordering. A technique whose seed leads the conversation (e.g. a system
+        # prompt built at ``sequence=-1`` by ``from_system_prompt``) is thereby
+        # prepended cleanly: it lands at sequence 0 and the existing turns shift
+        # up (user 0 -> 1, assistant 1 -> 2, ...), rather than leaving a negative
+        # or sparse sequence. This keeps the merge robust no matter how the base
+        # group was numbered. Skipped when a simulated conversation is present,
+        # since its ``sequence_range`` is absolute and self-consistent.
+        has_simulated = any(isinstance(seed, SeedSimulatedConversation) for seed in merged_seeds)
+        if not has_simulated:
+            prompt_seeds = [seed for seed in merged_seeds if isinstance(seed, SeedPrompt)]
+            rank_by_sequence = {seq: rank for rank, seq in enumerate(sorted({p.sequence for p in prompt_seeds}))}
+            for seed in prompt_seeds:
+                seed.sequence = rank_by_sequence[seed.sequence]
 
         return AttackSeedGroup(seeds=merged_seeds)
