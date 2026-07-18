@@ -651,3 +651,49 @@ class TestBuildTechniqueClassFromFactories:
                 default_tags={"light"},
                 default_names={"gamma"},
             )
+
+    @pytest.mark.parametrize("name", ["ALL", "all", "DEFAULT", "default"])
+    def test_reserved_factory_name_raises(self, name: str):
+        """Factories cannot shadow the synthetic ALL or DEFAULT members."""
+        factories = [AttackTechniqueFactory(name=name, attack_class=_StubAttack)]
+
+        with pytest.raises(ValueError, match="reserved aggregate"):
+            AttackTechniqueRegistry.build_technique_class_from_factories(
+                class_name="ReservedFactoryTechnique",
+                factories=factories,
+            )
+
+    def test_duplicate_factory_name_raises(self):
+        """Duplicate factory names fail instead of silently overwriting an enum member."""
+        factories = [
+            AttackTechniqueFactory(name="duplicate", attack_class=_StubAttack),
+            AttackTechniqueFactory(name="duplicate", attack_class=_StubAttack),
+        ]
+
+        with pytest.raises(ValueError, match="enum member name 'duplicate'"):
+            AttackTechniqueRegistry.build_technique_class_from_factories(
+                class_name="DuplicateFactoryTechnique",
+                factories=factories,
+            )
+
+    def test_reserved_aggregate_tag_raises(self):
+        """An uppercase reserved tag cannot overwrite the synthetic ALL member."""
+        factories = [AttackTechniqueFactory(name="alpha", attack_class=_StubAttack, technique_tags=["ALL"])]
+
+        with pytest.raises(ValueError, match="enum member name 'ALL'"):
+            AttackTechniqueRegistry.build_technique_class_from_factories(
+                class_name="ReservedTagTechnique",
+                factories=factories,
+            )
+
+    def test_case_colliding_aggregate_tags_raise(self):
+        """Tags that normalize to the same enum member name fail explicitly."""
+        factories = [
+            AttackTechniqueFactory(name="alpha", attack_class=_StubAttack, technique_tags=["foo", "FOO"]),
+        ]
+
+        with pytest.raises(ValueError, match="enum member name 'FOO'"):
+            AttackTechniqueRegistry.build_technique_class_from_factories(
+                class_name="CollidingTagTechnique",
+                factories=factories,
+            )

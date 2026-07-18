@@ -53,6 +53,46 @@ def _attack_technique_factory_type() -> type[AttackTechniqueFactory]:
     return AttackTechniqueFactory
 
 
+def _validate_generated_member_collisions(
+    *,
+    class_name: str,
+    factories: list[AttackTechniqueFactory],
+    aggregate_tags: set[str],
+) -> None:
+    """
+    Validate that generated enum member names and values are unambiguous.
+
+    Args:
+        class_name (str): Name of the enum class being generated.
+        factories (list[AttackTechniqueFactory]): Technique factories that become enum members.
+        aggregate_tags (set[str]): Catalog tags that become aggregate members.
+
+    Raises:
+        ValueError: If a factory or aggregate would collide with a reserved or generated member.
+    """
+    member_sources = {"ALL": "reserved aggregate 'all'", "DEFAULT": "reserved aggregate 'default'"}
+    value_sources = {"all": "reserved aggregate 'all'", "default": "reserved aggregate 'default'"}
+
+    def _reserve(*, member_name: str, member_value: str, source: str) -> None:
+        if existing := member_sources.get(member_name):
+            raise ValueError(
+                f"Cannot build {class_name}: {source} maps to enum member name {member_name!r}, "
+                f"already used by {existing}. Rename the tag or factory."
+            )
+        if existing := value_sources.get(member_value):
+            raise ValueError(
+                f"Cannot build {class_name}: {source} maps to enum value {member_value!r}, "
+                f"already used by {existing}. Rename the tag or factory."
+            )
+        member_sources[member_name] = source
+        value_sources[member_value] = source
+
+    for tag in sorted(aggregate_tags):
+        _reserve(member_name=tag.upper(), member_value=tag, source=f"aggregate tag {tag!r}")
+    for factory in factories:
+        _reserve(member_name=factory.name, member_value=factory.name, source=f"technique factory {factory.name!r}")
+
+
 @dataclass(frozen=True)
 class AttackTechniqueMetadata(RegistryMetadata):
     """
@@ -216,7 +256,8 @@ class AttackTechniqueRegistry(Registry["AttackTechniqueFactory", AttackTechnique
             type: A ``ScenarioTechnique`` subclass with the generated members.
 
         Raises:
-            ValueError: If both ``default_tags`` and ``default_names`` are provided.
+            ValueError: If both ``default_tags`` and ``default_names`` are provided, or if generated
+                enum member names or values collide.
         """
         from pyrit.scenario import ScenarioTechnique
 
@@ -245,6 +286,11 @@ class AttackTechniqueRegistry(Registry["AttackTechniqueFactory", AttackTechnique
         # technique (name selection wins).
         reserved_aggregate_tags = {"all", "default"}
         auto_aggregate_tags = pool_tags - reserved_aggregate_tags - pool_technique_names
+        _validate_generated_member_collisions(
+            class_name=class_name,
+            factories=pool,
+            aggregate_tags=auto_aggregate_tags,
+        )
 
         all_aggregate_tag_names = {"all"} | auto_aggregate_tags
         if default_member_names:

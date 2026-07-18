@@ -59,9 +59,7 @@
 #    - Each enum member represents an **attack technique** (the *how* of an attack)
 #    - Each member is defined as `(value, tags)` where value is a string and tags is a set of strings
 #    - Include an `ALL` aggregate technique that expands to all available techniques
-#    - The default technique (what runs when the caller selects nothing) is owned by the
-#      catalog, not the scenario: override the `default()` classmethod to return the default
-#      member (omit it to fall back to `ALL`)
+#    - The default technique (what runs when the caller selects nothing) is owned by the catalog, not the scenario: override the `default()` classmethod to return the default member (omit it to fall back to `ALL`)
 #
 # 2. **Scenario Class**: Extend `Scenario` and pass these to `super().__init__()`:
 #    - `technique_class`: Your technique enum class
