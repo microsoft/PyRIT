@@ -14,6 +14,7 @@ from typing import (
 
 from openai.types.shared import ReasoningEffort
 
+from pyrit.common import forward_init_parameters
 from pyrit.exceptions import (
     EmptyResponseException,
     PyritException,
@@ -95,6 +96,7 @@ class OpenAIResponseTarget(OpenAITarget):
         )
     )
 
+    @forward_init_parameters
     def __init__(
         self,
         *,

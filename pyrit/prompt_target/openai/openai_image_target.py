@@ -4,6 +4,7 @@ import base64
 import logging
 from typing import Any, Literal
 
+from pyrit.common import forward_init_parameters
 from pyrit.exceptions import (
     EmptyResponseException,
     pyrit_target_retry,
@@ -41,6 +42,7 @@ class OpenAIImageTarget(OpenAITarget):
         )
     )
 
+    @forward_init_parameters
     def __init__(
         self,
         *,
