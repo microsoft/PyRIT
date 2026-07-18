@@ -55,6 +55,7 @@
 # ToxicChat [@lin2023toxicchat],
 # VLSU [@palaskar2025vlsu],
 # VLGuard [@zong2024vlguard],
+# WildGuard [@han2024wildguard],
 # XSTest [@rottger2023xstest],
 # AILuminate [@ghosh2025ailuminate],
 # Transphobia Awareness [@scheuerman2025transphobia],
@@ -101,7 +102,6 @@ for dataset in datasets:
 # The following example demonstrates adding datasets to memory. For comprehensive details on memory capabilities, see the [memory documentation](../memory/0_memory.md) and [seed database guide](../memory/8_seed_database.ipynb).
 
 # %%
-
 await initialize_pyrit_async(memory_db_type=IN_MEMORY)  # type: ignore
 
 memory = CentralMemory().get_memory_instance()

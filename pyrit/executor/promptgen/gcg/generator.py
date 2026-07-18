@@ -1,7 +1,8 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-"""GCGGenerator — typed PromptGeneratorStrategy implementation of the
+"""
+GCGGenerator — typed PromptGeneratorStrategy implementation of the
 Greedy Coordinate Gradient adversarial-suffix attack.
 
 Follows the same lifecycle/identity pattern as ``FuzzerGenerator`` and
@@ -19,7 +20,6 @@ Follows the same lifecycle/identity pattern as ``FuzzerGenerator`` and
   results can be traced back to the exact configuration that produced them.
 
 Example:
-
     generator = GCGGenerator(
         models=[GCGModelConfig(name="meta-llama/Llama-2-7b-chat-hf")],
         algorithm=GCGAlgorithmConfig(n_steps=500, batch_size=512),
@@ -71,7 +71,8 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class GCGContext(PromptGeneratorStrategyContext):
-    """Per-execution state for a GCGGenerator run.
+    """
+    Per-execution state for a GCGGenerator run.
 
     Attributes:
         goals (list[str]): Training goal strings (the prompts whose responses
@@ -99,7 +100,8 @@ class GCGContext(PromptGeneratorStrategyContext):
 
 
 class GCGResult(PromptGeneratorStrategyResult):
-    """Result of one GCGGenerator run.
+    """
+    Result of one GCGGenerator run.
 
     Attributes:
         final_suffix (str): The optimized adversarial suffix string. Empty
@@ -128,7 +130,8 @@ class GCGGenerator(
     PromptGeneratorStrategy[GCGContext, GCGResult],
     Identifiable,
 ):
-    """Greedy Coordinate Gradient adversarial-suffix generator.
+    """
+    Greedy Coordinate Gradient adversarial-suffix generator.
 
     Generates a token suffix that, when appended to ``goals``, is optimized to
     elicit ``targets`` from the configured HuggingFace model(s). See the GCG
@@ -180,7 +183,8 @@ class GCGGenerator(
         self._hf_token = hf_token
 
     def _ensure_spawn_start_method(self) -> None:
-        """Ensure torch.multiprocessing uses 'spawn' before workers are spawned.
+        """
+        Ensure torch.multiprocessing uses 'spawn' before workers are spawned.
 
         GCG workers load CUDA models, which is unsafe with the default 'fork'
         start method on Linux. We set 'spawn' on the first GCG run in the
@@ -202,7 +206,12 @@ class GCGGenerator(
             )
 
     def _build_identifier(self) -> ComponentIdentifier:
-        """Build a behavioral identifier exposing model identity + key hyper-params."""
+        """
+        Build a behavioral identifier exposing model identity and hyperparameters.
+
+        Returns:
+            ComponentIdentifier: The generator's behavioral identifier.
+        """
         return ComponentIdentifier.of(
             self,
             params={
@@ -263,7 +272,12 @@ class GCGGenerator(
         context.workers, context.test_workers = await asyncio.to_thread(get_workers, params)
 
     async def _perform_async(self, *, context: GCGContext) -> GCGResult:
-        """Build the attack, run the optimization loop, and read the result back."""
+        """
+        Build the attack, run the optimization loop, and read the result back.
+
+        Returns:
+            GCGResult: The completed optimization result.
+        """
         params = self._to_attack_params(context=context)
         context.logfile_path = self._build_logfile_path()
 
@@ -368,7 +382,12 @@ class GCGGenerator(
         train_targets: list[str],
         test_targets: list[str],
     ) -> tuple[list[str], list[str]]:
-        """Randomly substitute equivalent target phrasings for diversity."""
+        """
+        Randomly substitute equivalent target phrasings for diversity.
+
+        Returns:
+            tuple[list[str], list[str]]: Augmented training and held-out targets.
+        """
 
         def _shorten(s: str) -> str:
             return s.replace("Sure, h", "H")
@@ -381,7 +400,12 @@ class GCGGenerator(
         return train_targets, test_targets
 
     def _to_attack_params(self, *, context: GCGContext) -> Any:
-        """Build the dotted-attribute namespace the internal helpers expect."""
+        """
+        Build the dotted-attribute namespace the internal helpers expect.
+
+        Returns:
+            Any: A namespace containing legacy attack parameters.
+        """
         from types import SimpleNamespace
 
         all_models = self._models + self._test_models
@@ -417,7 +441,12 @@ class GCGGenerator(
         test_workers: list[Any],
         logfile_path: str,
     ) -> Any:
-        """Build the right attack object based on the strategy flags."""
+        """
+        Build the right attack object based on the strategy flags.
+
+        Returns:
+            Any: The configured attack implementation.
+        """
         control_init = self._resolve_control_init(workers=workers)
         if self._strategy.transfer:
             return ProgressiveMultiPromptAttack(
@@ -452,10 +481,17 @@ class GCGGenerator(
         )
 
     def _resolve_control_init(self, *, workers: list[Any]) -> str:
-        """Resolve the initial suffix string for a run.
+        """
+        Resolve the initial suffix string for a run.
 
         Uses the configured ``suffix_init`` extension when provided; otherwise
         falls back to the legacy literal ``control_init`` value.
+
+        Returns:
+            str: The initial adversarial suffix.
+
+        Raises:
+            ValueError: If an initializer needs a tokenizer but no worker exists.
         """
         if self._algorithm.suffix_init is None:
             return self._algorithm.control_init
@@ -465,7 +501,12 @@ class GCGGenerator(
 
     @staticmethod
     def _read_result(*, logfile_path: str, memory_labels: dict[str, str]) -> GCGResult:
-        """Pull final-step values out of the JSON log written during the run."""
+        """
+        Pull final-step values out of the JSON log written during the run.
+
+        Returns:
+            GCGResult: The values parsed from the log, or an empty result if absent.
+        """
         try:
             with open(logfile_path) as f:
                 log = json.load(f)

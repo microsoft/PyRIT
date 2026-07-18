@@ -5,6 +5,7 @@ import logging
 from collections.abc import MutableSequence
 from typing import Any
 
+from pyrit.common import forward_init_parameters
 from pyrit.exceptions import (
     EmptyResponseException,
     pyrit_target_retry,
@@ -88,6 +89,7 @@ class OpenAIChatTarget(OpenAITarget):
         )
     )
 
+    @forward_init_parameters
     def __init__(
         self,
         *,
