@@ -120,6 +120,12 @@ from pyrit.datasets.seed_datasets.remote.vlguard_dataset import (
     _VLGuardDataset,
 )
 from pyrit.datasets.seed_datasets.remote.vlsu_multimodal_dataset import _VLSUMultimodalDataset
+from pyrit.datasets.seed_datasets.remote.wildguardmix_dataset import (
+    WildGuardMixAdversarial,
+    WildGuardMixPromptHarmLabel,
+    WildGuardMixSplit,
+    _WildGuardMixDataset,
+)
 from pyrit.datasets.seed_datasets.remote.xl_safety_bench_dataset import (
     XLSafetyBenchCountry,
     XLSafetyBenchCulturalCategory,
@@ -152,6 +158,9 @@ __all__ = [
     "VLGuardCategory",
     "VLGuardSubcategory",
     "VLGuardSubset",
+    "WildGuardMixAdversarial",
+    "WildGuardMixPromptHarmLabel",
+    "WildGuardMixSplit",
     "_AegisContentSafetyDataset",
     "ATRCategory",
     "ATRDetectionField",
@@ -223,6 +232,7 @@ __all__ = [
     "_VisualLeakBenchDataset",
     "VisualLeakBenchCategory",
     "VisualLeakBenchPIIType",
+    "_WildGuardMixDataset",
     "XLSafetyBenchCountry",
     "XLSafetyBenchCulturalCategory",
     "XLSafetyBenchJailbreakCategory",

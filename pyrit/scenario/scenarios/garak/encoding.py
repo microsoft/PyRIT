@@ -29,6 +29,7 @@ from pyrit.prompt_normalizer.converter_configuration import ConverterConfigurati
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.dataset_configuration import CompoundDatasetAttackConfiguration, DatasetAttackConfiguration
+from pyrit.scenario.core.matrix_atomic_attack_builder import build_baseline_atomic_attack
 from pyrit.scenario.core.scenario import Scenario
 from pyrit.scenario.core.scenario_context import ScenarioContext
 from pyrit.scenario.core.scenario_technique import ScenarioTechnique
@@ -197,7 +198,18 @@ class Encoding(Scenario):
         Returns:
             list[AtomicAttack]: The list of AtomicAttack instances in this scenario.
         """
-        return self._get_converter_attacks(context=context)
+        atomic_attacks: list[AtomicAttack] = []
+        if context.include_baseline:
+            atomic_attacks.append(
+                build_baseline_atomic_attack(
+                    objective_target=context.objective_target,
+                    objective_scorer=self._objective_scorer,
+                    seed_groups=list(context.seed_groups),
+                    memory_labels=context.memory_labels,
+                )
+            )
+        atomic_attacks.extend(self._get_converter_attacks(context=context))
+        return atomic_attacks
 
     # These are the same as Garak encoding attacks
     def _get_converter_attacks(self, *, context: ScenarioContext) -> list[AtomicAttack]:

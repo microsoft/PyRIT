@@ -5,11 +5,12 @@
 Tests for the shared registry constructor-argument resolution primitive.
 """
 
+from enum import Enum
 from typing import Literal
 
 import pytest
 
-from pyrit.common import REQUIRED_VALUE
+from pyrit.common import REQUIRED_VALUE, forward_init_parameters
 from pyrit.common.apply_defaults import _RequiredValueSentinel
 from pyrit.models import Message, MessagePiece
 from pyrit.models.identifiers import ConverterIdentifier, TargetIdentifier
@@ -58,6 +59,18 @@ class _SimpleOnly:
         self.mode = mode
 
 
+class _Speed(Enum):
+    FAST = "fast"
+    SLOW = "slow"
+
+
+class _EnumOnly:
+    """Helper whose constructor takes an enum parameter."""
+
+    def __init__(self, *, speed: _Speed) -> None:
+        self.speed = speed
+
+
 class _Plain:
     def __init__(
         self, *, count: int, ratio: float = 0.5, mode: Literal["a", "b"] = "a", note: str | None = None
@@ -84,6 +97,31 @@ class _SentinelDefault:
 class _VarArgs:
     def __init__(self, *args: object, name: str = "n", **kwargs: object) -> None:
         self.name = name
+
+
+class _ForwardedParent:
+    def __init__(self, *, count: int = 1, speed: _Speed = _Speed.FAST) -> None:
+        self.count = count
+        self.speed = speed
+
+
+class _ForwardingChild(_ForwardedParent):
+    @forward_init_parameters
+    def __init__(self, *, label: str = "child", **kwargs: object) -> None:
+        super().__init__(**kwargs)
+        self.label = label
+
+
+class _OpaqueParent:
+    def __init__(self, *, count: int = 1) -> None:
+        self.count = count
+
+
+class _OpenBagChild(_OpaqueParent):
+    def __init__(self, *, label: str = "child", **options: object) -> None:
+        super().__init__()
+        self.label = label
+        self.options = options
 
 
 class _StrTargetArg:
@@ -152,6 +190,18 @@ class TestResolveConstructorArgs:
     def test_literal_invalid_raises(self) -> None:
         with pytest.raises(ValueError, match="mode"):
             _resolve(_SimpleOnly, {"mode": "z"})
+
+    def test_enum_string_coerces_to_member(self) -> None:
+        resolved = _resolve(_EnumOnly, {"speed": "fast"})
+        assert resolved == {"speed": _Speed.FAST}
+
+    def test_forwarded_parent_params_are_coerced(self) -> None:
+        resolved = _resolve(_ForwardingChild, {"label": "configured", "count": "3", "speed": "slow"})
+        assert resolved == {"label": "configured", "count": 3, "speed": _Speed.SLOW}
+
+    def test_open_bag_does_not_disable_unknown_param_rejection(self) -> None:
+        with pytest.raises(ValueError, match="Unknown parameter 'count'"):
+            _resolve(_OpenBagChild, {"count": "3"})
 
     def test_unknown_param_raises(self) -> None:
         with pytest.raises(ValueError, match="Unknown parameter 'nope'"):
@@ -239,6 +289,14 @@ class TestDeriveParameters:
     def test_var_args_skipped(self) -> None:
         names = [p.name for p in derive_parameters(cls=_VarArgs)]
         assert names == ["name"]
+
+    def test_forwarded_parent_parameters_follow_child_in_mro_order(self) -> None:
+        names = [p.name for p in derive_parameters(cls=_ForwardingChild)]
+        assert names == ["label", "count", "speed"]
+
+    def test_unexposed_parent_parameters_are_not_inferred_from_open_bag(self) -> None:
+        names = [p.name for p in derive_parameters(cls=_OpenBagChild)]
+        assert names == ["label"]
 
     def test_identifier_marker_overrides_plain_annotation(self) -> None:
         # The identifier marks ``converter_target`` as a TARGET reference, so even a
