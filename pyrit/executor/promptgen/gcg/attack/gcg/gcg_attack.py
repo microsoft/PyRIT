@@ -35,7 +35,7 @@ def token_gradients(
     loss_slice: slice,
 ) -> torch.Tensor:
     """
-    Computes gradients of the loss with respect to the coordinates.
+    Compute gradients of the loss with respect to the coordinates.
 
     Args:
         model (Any): The transformer model to be used.
@@ -46,6 +46,9 @@ def token_gradients(
 
     Returns:
         torch.Tensor: The gradients of each token in the input_slice with respect to the loss.
+
+    Raises:
+        RuntimeError: If backpropagation does not produce token gradients.
     """
     embed_weights = get_embedding_matrix(model)
     one_hot = torch.zeros(
@@ -69,6 +72,8 @@ def token_gradients(
 
     loss.backward()
 
+    if one_hot.grad is None:
+        raise RuntimeError("Model backward pass did not produce token gradients")
     return one_hot.grad.clone()
 
 
@@ -148,6 +153,7 @@ class GCGMultiPromptAttack(MultiPromptAttack):
         loss: LossFunction | None = None,
         candidate_filter: CandidateFilter | None = None,
     ) -> None:
+        """Initialize a GCG attack with optional algorithm extensions."""
         super().__init__(
             goals,
             targets,
@@ -180,7 +186,7 @@ class GCGMultiPromptAttack(MultiPromptAttack):
         candidate_filter = getattr(self, "_candidate_filter", None)
         if candidate_filter is not None:
             return candidate_filter
-        return LengthPreservingFilter(filter=filter_cand)
+        return LengthPreservingFilter(enabled=filter_cand)
 
     def _sample_control_candidates(
         self,
@@ -254,7 +260,14 @@ class GCGMultiPromptAttack(MultiPromptAttack):
 
         Returns:
             tuple[str, float]: The best control string and its normalized loss.
+
+        Raises:
+            RuntimeError: If workers produce no aggregate gradient.
+            ValueError: If no model worker is configured.
         """
+        if not self.workers:
+            raise ValueError("GCG optimization requires at least one worker")
+
         main_device = self.models[0].device
         control_cands = []
         loss_function = self._resolve_loss(target_weight=target_weight, control_weight=control_weight)
@@ -290,9 +303,13 @@ class GCGMultiPromptAttack(MultiPromptAttack):
             else:
                 grad += new_grad
 
+        if grad is None:
+            raise RuntimeError("GCG workers did not produce an aggregate gradient")
+
+        last_worker_index = len(self.workers) - 1
         with torch.no_grad():
             control_cand = self._sample_control_candidates(
-                worker_index=j,
+                worker_index=last_worker_index,
                 gradient=grad,
                 batch_size=batch_size,
                 topk=topk,
@@ -301,7 +318,7 @@ class GCGMultiPromptAttack(MultiPromptAttack):
             )
             control_cands.append(
                 self._filter_control_candidates(
-                    worker_index=j,
+                    worker_index=last_worker_index,
                     control_cand=control_cand,
                     filter_cand=filter_cand,
                 )
@@ -315,30 +332,27 @@ class GCGMultiPromptAttack(MultiPromptAttack):
             for j, cand in enumerate(control_cands):
                 # Looping through the prompts at this level is less elegant, but
                 # we can manage VRAM better this way
-                progress = (
-                    tqdm(range(len(self.prompts[0])), total=len(self.prompts[0]))
-                    if verbose
-                    else enumerate(self.prompts[0])
-                )
-                for i in progress:
+                progress = tqdm(range(len(self.prompts[0])), total=len(self.prompts[0])) if verbose else None
+                prompt_indices = progress if progress is not None else range(len(self.prompts[0]))
+                for i in prompt_indices:
                     for k, worker in enumerate(self.workers):
                         worker(self.prompts[k][i], "logits", worker.model, cand, return_ids=True)
-                    logits, ids = zip(*[worker.results.get() for worker in self.workers])
+                    logits, ids = zip(*[worker.results.get() for worker in self.workers], strict=True)
                     loss[j * batch_size : (j + 1) * batch_size] += sum(
                         loss_function.compute_loss(
                             logits=logit,
-                            token_ids=id,
+                            token_ids=token_ids,
                             target_slice=self.prompts[k][i]._target_slice,
                             control_slice=self.prompts[k][i]._control_slice,
                         ).to(main_device)
-                        for k, (logit, id) in enumerate(zip(logits, ids))
+                        for k, (logit, token_ids) in enumerate(zip(logits, ids, strict=True))
                     )
                     del logits, ids
                     gc.collect()
 
-                    if verbose:
-                        progress.set_description(  # type: ignore[union-attr]
-                            f"loss={loss[j * batch_size : (j + 1) * batch_size].min().item() / (i + 1):.4f}"  # type: ignore[operator]
+                    if progress is not None:
+                        progress.set_description(
+                            f"loss={loss[j * batch_size : (j + 1) * batch_size].min().item() / (i + 1):.4f}"
                         )
 
             min_idx = loss.argmin()

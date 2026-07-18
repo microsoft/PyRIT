@@ -36,8 +36,8 @@ def _build_cyber_technique() -> type[ScenarioTechnique]:
 
     Exposes every technique registered in the singleton ``AttackTechniqueRegistry``;
     which techniques are available is decided by the active initializer, not narrowed
-    here. A plain ``PromptSendingAttack`` baseline is prepended automatically by
-    ``Scenario._build_baseline_atomic_attack`` via ``BaselineAttackPolicy.Enabled``.
+    here. A plain ``PromptSendingAttack`` baseline is emitted by the
+    matrix builder (``include_baseline=context.include_baseline``) via ``BaselineAttackPolicy.Enabled``.
 
     The ``DEFAULT`` aggregate is the curated default run — for Cyber it expands to
     ``red_teaming`` — while ``ALL`` selects the full registered pool.
@@ -114,8 +114,8 @@ class Cyber(Scenario):
         """
         Build the technique × dataset atomic attacks for Cyber, grouped by technique.
 
-        The baseline is emitted centrally by the base ``initialize_async``, so this override
-        never prepends one.
+        The baseline is emitted by ``build_matrix_atomic_attacks`` when ``context.include_baseline``
+        is set (the base no longer emits one centrally), so this override never prepends one itself.
 
         Args:
             context (ScenarioContext): The resolved runtime inputs for this run.

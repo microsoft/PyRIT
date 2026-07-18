@@ -1,7 +1,8 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-"""CSV → goals/targets loader for the GCG attack.
+"""
+CSV → goals/targets loader for the GCG attack.
 
 Decoupled from ``GCGGenerator`` so that callers with goals and targets
 already in memory can pass them straight into ``execute_async`` without going
@@ -24,7 +25,8 @@ if TYPE_CHECKING:
 def load_goals_and_targets(
     *, data: GCGDataConfig, random_seed: int = 42
 ) -> tuple[list[str], list[str], list[str], list[str]]:
-    """Load training and held-out goal/target lists from CSV(s).
+    """
+    Load training and held-out goal/target lists from CSV(s).
 
     Wraps the existing pandas-based ``get_goals_and_targets`` so the caller
     sees a typed signature instead of a free-form params object.
