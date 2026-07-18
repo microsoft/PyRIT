@@ -137,7 +137,8 @@ class Leakage(Scenario):
         Passes the leakage-specific factories (``first_letter``, ``image``) as
         ``extra_factories`` — kept local to this scenario so they don't pollute the global
         registry — and delegates the technique × dataset cross-product to
-        ``build_matrix_atomic_attacks``. The base owns baseline emission.
+        ``build_matrix_atomic_attacks``, which emits the baseline when ``context.include_baseline``
+        is set (the base no longer emits one centrally).
 
         Args:
             context (ScenarioContext): The resolved runtime inputs for this run.

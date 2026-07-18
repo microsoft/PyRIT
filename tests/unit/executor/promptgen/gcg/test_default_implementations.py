@@ -428,6 +428,10 @@ class TestLengthPreservingFilter:
         assert torch.equal(default_input, legacy_input)
         assert default_input[0, 0].item() == 0
 
+    def test_init_rejects_enabled_and_legacy_filter_together(self) -> None:
+        with pytest.raises(TypeError, match="Specify either 'enabled' or 'filter', not both"):
+            LengthPreservingFilter(enabled=True, filter=False)
+
 
 class TestLiteralStringInit:
     """Parity: ``LiteralStringInit`` vs the literal-string ``control_init``

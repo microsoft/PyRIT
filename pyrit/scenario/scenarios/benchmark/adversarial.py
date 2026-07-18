@@ -240,7 +240,7 @@ class AdversarialBenchmark(Scenario):
             dataset_groups=context.seed_groups_by_dataset,
             adversarial_targets=resolved_targets,
             display_group_fn=lambda combo: combo.target_name or "",
-            include_baseline=False,
+            include_baseline=context.include_baseline,
         )
 
         if not self._use_cached:

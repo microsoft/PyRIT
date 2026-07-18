@@ -17,6 +17,7 @@ AttackPrompt = attack_manager_mod.AttackPrompt
 PromptManager = attack_manager_mod.PromptManager
 EvaluateAttack = attack_manager_mod.EvaluateAttack
 IndividualPromptAttack = attack_manager_mod.IndividualPromptAttack
+ModelWorker = attack_manager_mod.ModelWorker
 ProgressiveMultiPromptAttack = attack_manager_mod.ProgressiveMultiPromptAttack
 get_embedding_layer = attack_manager_mod.get_embedding_layer
 get_embedding_matrix = attack_manager_mod.get_embedding_matrix
@@ -29,6 +30,12 @@ gcg_attack_mod = pytest.importorskip(
 GCGMultiPromptAttack = gcg_attack_mod.GCGMultiPromptAttack
 GCGPromptManager = gcg_attack_mod.GCGPromptManager
 token_gradients = gcg_attack_mod.token_gradients
+
+default_implementations_mod = pytest.importorskip(
+    "pyrit.executor.promptgen.gcg.default_implementations",
+    reason="GCG optional dependencies not installed",
+)
+LengthPreservingFilter = default_implementations_mod.LengthPreservingFilter
 
 
 class TestGetFilteredCands:
@@ -308,6 +315,14 @@ class TestEmbeddingHelpers:
 class TestPromptManagerInit:
     """Tests for PromptManager initialization validation."""
 
+    def test_raises_when_managers_are_missing(self) -> None:
+        with pytest.raises(ValueError, match="PromptManager requires a managers mapping"):
+            PromptManager(
+                goals=["goal"],
+                targets=["target"],
+                tokenizer=MagicMock(),
+            )
+
     def test_raises_on_mismatched_goals_targets(self) -> None:
         with pytest.raises(ValueError, match="Length of goals and targets must match"):
             PromptManager(
@@ -329,6 +344,19 @@ class TestPromptManagerInit:
 
 class TestEvaluateAttackInit:
     """Tests for EvaluateAttack initialization validation."""
+
+    @pytest.mark.parametrize(
+        ("attack_class", "expected_message"),
+        [
+            (MultiPromptAttack, "MultiPromptAttack requires a managers mapping"),
+            (ProgressiveMultiPromptAttack, "ProgressiveMultiPromptAttack requires a managers mapping"),
+            (IndividualPromptAttack, "IndividualPromptAttack requires a managers mapping"),
+            (EvaluateAttack, "EvaluateAttack requires a managers mapping"),
+        ],
+    )
+    def test_attack_raises_when_managers_are_missing(self, *, attack_class: type[Any], expected_message: str) -> None:
+        with pytest.raises(ValueError, match=expected_message):
+            attack_class(goals=["goal"], targets=["target"], workers=[])
 
     def test_raises_with_multiple_workers(self) -> None:
         mock_worker1 = MagicMock()
@@ -503,6 +531,55 @@ class TestGetWorkersChatTemplateValidation:
         with patch.object(attack_manager_mod.AutoTokenizer, "from_pretrained", return_value=bare_tokenizer):
             with pytest.raises(ValueError, match="no chat_template configured"):
                 get_workers(params)
+
+    def test_starts_workers_for_training(self) -> None:
+        params = MagicMock()
+        params.tokenizer_paths = ["fake/chat-model"]
+        params.tokenizer_kwargs = [{}]
+        params.model_paths = ["fake/chat-model"]
+        params.model_kwargs = [{}]
+        params.devices = ["cpu"]
+        params.token = ""
+        params.num_train_models = 1
+
+        tokenizer = MagicMock()
+        tokenizer.pad_token = "<pad>"
+        tokenizer.chat_template = "{{ messages[0]['content'] }}"
+        worker = MagicMock()
+
+        with (
+            patch.object(attack_manager_mod.AutoTokenizer, "from_pretrained", return_value=tokenizer),
+            patch.object(attack_manager_mod, "ModelWorker", return_value=worker),
+        ):
+            train_workers, test_workers = attack_manager_mod.get_workers(params, evaluation=False)
+
+        worker.start.assert_called_once_with()
+        assert train_workers == [worker]
+        assert test_workers == []
+
+
+def test_model_worker_uses_model_device_dispatch() -> None:
+    model = MagicMock()
+    moved_model = MagicMock()
+    evaluated_model = MagicMock()
+    model.to.return_value = moved_model
+    moved_model.eval.return_value = evaluated_model
+
+    with (
+        patch.object(attack_manager_mod.AutoModelForCausalLM, "from_pretrained", return_value=model),
+        patch.object(attack_manager_mod.mp, "JoinableQueue", side_effect=[MagicMock(), MagicMock()]),
+    ):
+        worker = ModelWorker(
+            model_path="fake/model",
+            token="",
+            model_kwargs={},
+            tokenizer=MagicMock(),
+            device="cpu",
+        )
+
+    model.to.assert_called_once_with(torch.device("cpu"))
+    moved_model.eval.assert_called_once_with()
+    assert worker.model is evaluated_model
 
 
 class _Queue:
@@ -966,3 +1043,127 @@ class TestGCGMultiPromptAttackStepWiring:
 
         length = attack._get_control_length(control="test")
         assert length is None
+
+
+def test_attack_prompt_logits_rejects_non_string_controls() -> None:
+    prompt = object.__new__(AttackPrompt)
+    prompt._control_slice = slice(1, 3)
+    prompt.input_ids = torch.tensor([0, 1, 2, 3])
+    prompt.tokenizer = MagicMock()
+    model = MagicMock()
+    model.device = torch.device("cpu")
+
+    with pytest.raises(ValueError, match="list of strings or a tensor"):
+        prompt.logits(model, test_controls=123)
+
+
+def test_attack_prompt_logits_builds_attention_mask() -> None:
+    prompt = object.__new__(AttackPrompt)
+    prompt._control_slice = slice(1, 3)
+    prompt.input_ids = torch.tensor([0, 1, 2, 3])
+    prompt.tokenizer = MagicMock()
+    prompt.tokenizer.return_value.input_ids = [5, 6]
+    model = MagicMock()
+    model.device = torch.device("cpu")
+    model.return_value.logits = torch.randn(1, 4, 8)
+
+    logits = prompt.logits(model, test_controls=["candidate"])
+
+    assert logits.shape == (1, 4, 8)
+    assert torch.equal(model.call_args.kwargs["attention_mask"], torch.ones(1, 4, dtype=torch.long))
+
+
+def test_prompt_manager_grad_sums_prompt_gradients() -> None:
+    prompt_manager = object.__new__(PromptManager)
+    first_prompt = MagicMock()
+    first_prompt.grad.return_value = torch.tensor([1.0, 2.0])
+    second_prompt = MagicMock()
+    second_prompt.grad.return_value = torch.tensor([3.0, 4.0])
+    prompt_manager._prompts = [first_prompt, second_prompt]
+
+    result = prompt_manager.grad(MagicMock())
+
+    assert torch.equal(result, torch.tensor([4.0, 6.0]))
+
+
+def test_multi_prompt_run_anneals_and_accepts_lower_loss() -> None:
+    attack = object.__new__(MultiPromptAttack)
+    prompt_manager = MagicMock()
+    prompt_manager.control_str = "initial"
+    attack.prompts = [prompt_manager]
+    attack.logfile = None
+    attack.step = MagicMock(return_value=("better", 1.0))
+
+    control, loss, steps = attack.run(
+        n_steps=1,
+        prev_loss=2.0,
+        stop_on_success=False,
+        anneal=True,
+    )
+
+    assert (control, loss, steps) == ("better", 1.0, 1)
+
+
+def test_multi_prompt_log_requires_logfile_after_parsing_results() -> None:
+    attack = object.__new__(MultiPromptAttack)
+    attack.goals = []
+    attack.test_goals = []
+    attack.workers = []
+    attack.test_workers = []
+    attack.logfile = None
+
+    with pytest.raises(ValueError, match="without a logfile path"):
+        attack.log(
+            step_num=1,
+            n_steps=1,
+            control="control",
+            loss=1.0,
+            runtime=0.1,
+            model_tests=([[True]], [[1]], [[1.0]]),
+        )
+
+
+def test_evaluate_attack_run_with_no_controls_returns_empty_results() -> None:
+    attack = object.__new__(EvaluateAttack)
+    worker = MagicMock()
+    attack.workers = [worker]
+    attack.logfile = None
+
+    results = attack.run(steps=0, controls=[], batch_size=1)
+
+    assert results == ([], [], [], [], [], [])
+
+
+def test_gcg_step_requires_worker() -> None:
+    attack = object.__new__(GCGMultiPromptAttack)
+    attack.workers = []
+
+    with pytest.raises(ValueError, match="at least one worker"):
+        attack.step()
+
+
+def test_token_gradients_raises_when_backward_produces_no_gradient() -> None:
+    model = MagicMock()
+    model.device = torch.device("cpu")
+    model.return_value.logits = torch.randn(1, 3, 4)
+    loss = MagicMock()
+    loss_function = MagicMock(return_value=loss)
+
+    with (
+        patch.object(gcg_attack_mod, "get_embedding_matrix", return_value=torch.ones(4, 2)),
+        patch.object(gcg_attack_mod, "get_embeddings", return_value=torch.ones(1, 3, 2)),
+        patch.object(gcg_attack_mod.nn, "CrossEntropyLoss", return_value=loss_function),
+        pytest.raises(RuntimeError, match="did not produce token gradients"),
+    ):
+        token_gradients(
+            model,
+            torch.tensor([0, 1, 2]),
+            input_slice=slice(0, 1),
+            target_slice=slice(1, 2),
+            loss_slice=slice(0, 1),
+        )
+
+
+def test_length_preserving_filter_rejects_unknown_option() -> None:
+    with pytest.raises(TypeError, match="Unexpected LengthPreservingFilter option: unexpected"):
+        LengthPreservingFilter(unexpected=True)
