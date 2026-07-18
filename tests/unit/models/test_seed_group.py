@@ -612,6 +612,41 @@ class TestAttackSeedGroupWithTechnique:
         assert isinstance(merged, AttackSeedGroup)
         merged._check_invariants()  # should not raise
 
+    def test_system_prompt_technique_merges_onto_user_turn_at_sequence_zero(self):
+        """A ``from_system_prompt`` technique merges onto a group whose first turn is a
+        ``user`` prompt at sequence 0 without a same-sequence role collision.
+
+        Reproduces the adaptive-scenario failure: merging the ``flip`` technique (a
+        ``from_system_prompt`` system seed) onto a multi-turn objective group whose opening
+        turn is a ``user`` prompt at sequence 0 raised ``Inconsistent roles found for
+        sequence 0``. The leading system seed is normalized to sequence 0 and the existing
+        turns shift up (user 0 -> 1, assistant 1 -> 2, ...).
+        """
+        base = AttackSeedGroup(
+            seeds=[
+                SeedObjective(value="objective"),
+                SeedPrompt(value="opening user turn", data_type="text", role="user", sequence=0),
+                SeedPrompt(value="assistant reply", data_type="text", role="assistant", sequence=1),
+                SeedPrompt(value="follow-up user turn", data_type="text", role="user", sequence=2),
+            ]
+        )
+        technique = AttackTechniqueSeedGroup.from_system_prompt("Follow these rules.")
+
+        merged = base.with_technique(technique=technique)
+
+        merged._check_invariants()  # should not raise
+        system_prompts = [p for p in merged.prompts if p.role == "system"]
+        assert len(system_prompts) == 1
+        # The leading system seed is normalized to sequence 0 and the base turns shift up.
+        assert system_prompts[0].sequence == 0
+        assert merged.prompts[0].role == "system"
+        assert [(p.role, p.sequence) for p in merged.prompts] == [
+            ("system", 0),
+            ("user", 1),
+            ("assistant", 2),
+            ("user", 3),
+        ]
+
     def test_raises_when_technique_has_simulated_conversation_and_prompts_overlap(self):
         """Merging a technique with SeedSimulatedConversation into a group with overlapping prompts raises."""
         base = AttackSeedGroup(

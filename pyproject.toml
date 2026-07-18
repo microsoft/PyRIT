@@ -214,7 +214,7 @@ replace-imports-with-any = [
 ]
 
 [tool.ty.src]
-exclude = ["doc/code/", "pyrit/executor/promptgen/gcg/"]
+exclude = ["doc/code/"]
 
 # Relax type checking for HuggingFace module
 [[tool.ty.overrides]]
@@ -428,8 +428,6 @@ notice-rgx = "Copyright \\(c\\) Microsoft Corporation\\.\\s*\\n.*Licensed under 
 "doc/**" = ["ANN", "CPY001", "TCH", "E402", "E501", "PGH003", "A", "ERA001", "LOG", "PLE1142"]
 # Backend API routes raise HTTPException handled by FastAPI, not true exceptions
 "pyrit/backend/**/*.py" = ["DOC501", "B008"]
-# Vendored GCG attack code — external project with its own style
-"pyrit/executor/promptgen/gcg/**/*.py" = ["A", "B905", "D", "DOC", "N", "PERF", "SIM101", "SIM108"]
 "pyrit/__init__.py" = ["D104"]
 # Allow broad pytest.raises(Exception) in tests
 "tests/**/*.py" = ["ANN", "B017"]

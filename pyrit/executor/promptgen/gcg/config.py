@@ -1,7 +1,8 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-"""Typed configuration objects for the Greedy Coordinate Gradient (GCG) attack.
+"""
+Typed configuration objects for the Greedy Coordinate Gradient (GCG) attack.
 
 A minimal call is::
 
@@ -45,7 +46,8 @@ def _default_tokenizer_kwargs() -> dict[str, Any]:
 
 @dataclass
 class GCGModelConfig:
-    """Identity and loading options for a single HuggingFace model used by GCG.
+    """
+    Identity and loading options for a single HuggingFace model used by GCG.
 
     Attributes:
         name (str): HuggingFace model identifier such as
@@ -67,13 +69,20 @@ class GCGModelConfig:
     tokenizer_kwargs: dict[str, Any] = field(default_factory=_default_tokenizer_kwargs)
 
     def __post_init__(self) -> None:
+        """
+        Validate the model identifier.
+
+        Raises:
+            ValueError: If the model identifier is empty.
+        """
         if not self.name:
             raise ValueError("GCGModelConfig.name must be a non-empty HuggingFace model identifier.")
 
 
 @dataclass
 class GCGDataConfig:
-    """Goal/target dataset configuration for the GCG attack.
+    """
+    Goal/target dataset configuration for the GCG attack.
 
     Used as a typed bundle for AML transport (a job ships its data config as
     a separate JSON file alongside the strategy ``GCGConfig``). Library
@@ -96,18 +105,37 @@ class GCGDataConfig:
     n_test_data: int = 0
 
     def __post_init__(self) -> None:
+        """
+        Validate requested dataset row counts.
+
+        Raises:
+            ValueError: If either requested row count is negative.
+        """
         if self.n_train_data < 0:
             raise ValueError(f"GCGDataConfig.n_train_data must be >= 0, got {self.n_train_data}.")
         if self.n_test_data < 0:
             raise ValueError(f"GCGDataConfig.n_test_data must be >= 0, got {self.n_test_data}.")
 
     def to_json(self) -> str:
-        """Serialize this config to a JSON string."""
+        """
+        Serialize this config to a JSON string.
+
+        Returns:
+            str: A pretty-printed JSON representation.
+        """
         return json.dumps(asdict(self), indent=2)
 
     @classmethod
     def from_json(cls, payload: str) -> GCGDataConfig:
-        """Deserialize a config previously produced by ``to_json``."""
+        """
+        Deserialize a config previously produced by ``to_json``.
+
+        Returns:
+            GCGDataConfig: The deserialized data configuration.
+
+        Raises:
+            ValueError: If the payload is not valid JSON.
+        """
         try:
             data = json.loads(payload)
         except json.JSONDecodeError as e:
@@ -116,7 +144,12 @@ class GCGDataConfig:
 
     @classmethod
     def from_json_file(cls, path: str | Path) -> GCGDataConfig:
-        """Load a config from a JSON file."""
+        """
+        Load a config from a JSON file.
+
+        Returns:
+            GCGDataConfig: The deserialized data configuration.
+        """
         with open(path) as f:
             return cls.from_json(f.read())
 
@@ -128,7 +161,8 @@ class GCGDataConfig:
 
 @dataclass
 class GCGAlgorithmConfig:
-    """Hyper-parameters of the GCG optimization loop.
+    """
+    Hyper-parameters of the GCG optimization loop.
 
     Attributes:
         n_steps (int): Number of optimization steps per goal. Defaults to 500.
@@ -186,6 +220,12 @@ class GCGAlgorithmConfig:
     suffix_init: SuffixInitializer | None = None
 
     def __post_init__(self) -> None:
+        """
+        Validate optimization hyperparameters and extension implementations.
+
+        Raises:
+            ValueError: If a hyperparameter or extension is invalid.
+        """
         if self.n_steps <= 0:
             raise ValueError(f"GCGAlgorithmConfig.n_steps must be > 0, got {self.n_steps}.")
         if self.test_steps <= 0:
@@ -231,7 +271,8 @@ class GCGAlgorithmConfig:
 
 @dataclass
 class GCGStrategyConfig:
-    """High-level strategy flags that pick which attack class is used.
+    """
+    High-level strategy flags that pick which attack class is used.
 
     Attributes:
         transfer (bool): If True, run a ``ProgressiveMultiPromptAttack`` (the
@@ -257,13 +298,20 @@ class GCGStrategyConfig:
     stop_on_success: bool = False
 
     def __post_init__(self) -> None:
+        """
+        Validate progressive strategy dependencies.
+
+        Raises:
+            ValueError: If progressive behavior is enabled without transfer.
+        """
         if not self.transfer and (self.progressive_goals or self.progressive_models):
             raise ValueError("GCGStrategyConfig.progressive_goals/progressive_models require transfer=True.")
 
 
 @dataclass
 class GCGOutputConfig:
-    """Where the run writes its log/result artefacts.
+    """
+    Where the run writes its log/result artefacts.
 
     Attributes:
         result_prefix (str): Prefix for the per-run JSON log file. The actual
@@ -282,7 +330,8 @@ class GCGOutputConfig:
 
 @dataclass
 class GCGConfig:
-    """Top-level strategy configuration for one GCG attack run.
+    """
+    Top-level strategy configuration for one GCG attack run.
 
     Bundles everything ``pyrit.executor.promptgen.gcg.GCGGenerator``'s
     constructor needs. Per-execution data (goals, targets) is **not** here —
@@ -314,11 +363,18 @@ class GCGConfig:
     hf_token: str | None = None
 
     def __post_init__(self) -> None:
+        """
+        Validate that at least one model is configured.
+
+        Raises:
+            ValueError: If no model is configured.
+        """
         if not self.models:
             raise ValueError("GCGConfig.models must contain at least one GCGModelConfig.")
 
     def to_json(self) -> str:
-        """Serialize this config to a JSON string.
+        """
+        Serialize this config to a JSON string.
 
         Used by the AzureML transport: the notebook builds a ``GCGConfig`` locally,
         serializes it into the AML job's inputs, and ``experiments/run.py``
@@ -331,7 +387,8 @@ class GCGConfig:
 
     @classmethod
     def from_json(cls, payload: str) -> GCGConfig:
-        """Deserialize a config previously produced by ``to_json``.
+        """
+        Deserialize a config previously produced by ``to_json``.
 
         Args:
             payload (str): JSON document matching the shape produced by
@@ -352,7 +409,8 @@ class GCGConfig:
 
     @classmethod
     def from_json_file(cls, path: str | Path) -> GCGConfig:
-        """Load a config from a JSON file produced by ``to_json_file``.
+        """
+        Load a config from a JSON file produced by ``to_json_file``.
 
         Args:
             path (str | Path): Filesystem path to a JSON config file.
@@ -364,7 +422,8 @@ class GCGConfig:
             return cls.from_json(f.read())
 
     def to_json_file(self, path: str | Path) -> None:
-        """Write this config to a JSON file.
+        """
+        Write this config to a JSON file.
 
         Args:
             path (str | Path): Filesystem path to write to.

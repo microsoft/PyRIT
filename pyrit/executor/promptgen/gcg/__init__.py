@@ -1,14 +1,14 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-"""Public API for the Greedy Coordinate Gradient (GCG) adversarial-suffix generator.
+"""
+Public API for the Greedy Coordinate Gradient (GCG) adversarial-suffix generator.
 
 The primary entry point is ``GCG`` (alias for ``GCGGenerator``), a
 ``pyrit.executor.promptgen.core.PromptGeneratorStrategy`` that produces
 adversarial suffixes via the GCG algorithm.
 
 Example:
-
     from pyrit.executor.promptgen.gcg import (
         GCG,
         GCGAlgorithmConfig,
