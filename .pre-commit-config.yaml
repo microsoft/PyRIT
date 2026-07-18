@@ -88,8 +88,8 @@ repos:
         # dependencies (tqdm etc). The third-party ty-pre-commit hook installs
         # ty in an isolated env without project deps, which causes spurious
         # ``unresolved-import`` errors now that the rule is set to ``error``.
-        entry: uv run --link-mode=copy ty check
+        # Include optional modules in the environment, including GCG's torch imports.
+        entry: uv run --extra all --link-mode=copy ty check
         language: system
         files: ^pyrit/
-        exclude: ^pyrit/executor/promptgen/gcg/
         types: [python]

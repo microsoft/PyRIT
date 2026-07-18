@@ -234,6 +234,7 @@ class TestAttackTechniqueSeedGroupFromSystemPrompt:
         assert isinstance(seed, SeedPrompt)
         assert seed.value == "Follow these rules."
         assert seed.role == "system"
+        assert seed.sequence == -1
         assert seed.data_type == "text"
         assert seed.is_general_technique is True
         assert group.insertion_index is None

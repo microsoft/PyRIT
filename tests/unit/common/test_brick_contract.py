@@ -3,7 +3,11 @@
 
 import pytest
 
-from pyrit.common.brick_contract import enforce_keyword_only_init
+from pyrit.common.brick_contract import (
+    enforce_keyword_only_init,
+    forward_init_parameters,
+    init_parameters_are_forwarded,
+)
 
 
 class _FakeBase:
@@ -12,6 +16,22 @@ class _FakeBase:
     def __init_subclass__(cls, **kwargs: object) -> None:
         super().__init_subclass__(**kwargs)
         enforce_keyword_only_init(cls, base_name="_FakeBase")
+
+
+def test_forward_init_parameters_marks_variadic_constructor() -> None:
+    @forward_init_parameters
+    def _init(self: object, **kwargs: object) -> None:
+        pass
+
+    assert init_parameters_are_forwarded(_init)
+
+
+def test_forward_init_parameters_rejects_non_variadic_constructor() -> None:
+    with pytest.raises(TypeError, match=r"requires a constructor that accepts \*\*kwargs"):
+
+        @forward_init_parameters
+        def _init(self: object, *, value: str) -> None:
+            pass
 
 
 def test_compliant_keyword_only_init_passes() -> None:

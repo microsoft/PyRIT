@@ -4,6 +4,7 @@
 import logging
 from typing import Any
 
+from pyrit.common import forward_init_parameters
 from pyrit.exceptions.exception_classes import (
     pyrit_target_retry,
 )
@@ -21,6 +22,7 @@ class OpenAICompletionTarget(OpenAITarget):
 
     _DEFAULT_CONFIGURATION: TargetConfiguration = TargetConfiguration(capabilities=TargetCapabilities())
 
+    @forward_init_parameters
     def __init__(
         self,
         *,

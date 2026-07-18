@@ -253,6 +253,62 @@ class TestListTargetCatalog:
         assert "api_key" in openai_entry.supported_auth_modes
         assert "identity" in openai_entry.supported_auth_modes
 
+    @pytest.mark.parametrize(
+        ("target_type", "parameter_name", "type_name", "required", "choices"),
+        [
+            (
+                "GandalfTarget",
+                "level",
+                "GandalfLevel",
+                True,
+                [
+                    "baseline",
+                    "do-not-tell",
+                    "do-not-tell-and-block",
+                    "gpt-is-password-encoded",
+                    "word-blacklist",
+                    "gpt-blacklist",
+                    "gandalf",
+                    "gandalf-the-white",
+                    "adventure-1",
+                    "adventure-2",
+                ],
+            ),
+            (
+                "AzureBlobStorageTarget",
+                "blob_content_type",
+                "SupportedContentType",
+                False,
+                ["text/plain", "text/html"],
+            ),
+            (
+                "PlaywrightCopilotTarget",
+                "copilot_type",
+                "CopilotType",
+                False,
+                ["consumer", "m365"],
+            ),
+        ],
+    )
+    async def test_catalog_includes_enum_parameters(
+        self,
+        target_type: str,
+        parameter_name: str,
+        type_name: str,
+        required: bool,
+        choices: list[str],
+    ) -> None:
+        """Enum parameters are exposed with their required state and allowed values."""
+        service = TargetService()
+
+        result = await service.list_target_catalog_async()
+
+        entry = next(item for item in result.items if item.target_type == target_type)
+        parameter = next(param for param in entry.parameters if param.name == parameter_name)
+        assert parameter.required is required
+        assert parameter.type_name == type_name
+        assert parameter.choices == choices
+
 
 class TestCreateTarget:
     """Tests for TargetService.create_target method."""
@@ -282,6 +338,55 @@ class TestCreateTarget:
 
         assert result.target_registry_name is not None
         assert result.identifier.class_name == "TextTarget"
+
+    async def test_create_target_delegates_construction_to_registry(self, sqlite_instance) -> None:
+        """Every target construction path is owned by the registry."""
+        service = TargetService()
+        with patch.object(service._registry, "create_instance", wraps=service._registry.create_instance) as create:
+            await service.create_target_async(request=CreateTargetRequest(type="TextTarget", params={}))
+
+        create.assert_called_once()
+
+    async def test_create_gandalf_target_coerces_level_string(self, sqlite_instance) -> None:
+        """A Gandalf level from the JSON request is coerced to its enum before construction."""
+        service = TargetService()
+        request = CreateTargetRequest(
+            type="GandalfTarget",
+            params={"level": "baseline"},
+        )
+
+        result = await service.create_target_async(request=request)
+
+        assert result.identifier.class_name == "GandalfTarget"
+        assert result.target_specific_params == {"level": "baseline"}
+
+    async def test_create_gandalf_target_rejects_invalid_level(self, sqlite_instance) -> None:
+        """An invalid Gandalf level raises a parameter error before target construction."""
+        service = TargetService()
+        request = CreateTargetRequest(
+            type="GandalfTarget",
+            params={"level": "unknown"},
+        )
+
+        with pytest.raises(ValueError, match="Parameter 'level'.*expected one of"):
+            await service.create_target_async(request=request)
+
+    async def test_create_azure_blob_target_coerces_content_type_string(self, sqlite_instance) -> None:
+        """An explicit blob content type from JSON is coerced before target construction."""
+        service = TargetService()
+        request = CreateTargetRequest(
+            type="AzureBlobStorageTarget",
+            params={
+                "container_url": "https://test.blob.core.windows.net/test",
+                "sas_token": "valid_sas_token",
+                "blob_content_type": "text/html",
+            },
+        )
+
+        result = await service.create_target_async(request=request)
+
+        target = service.get_target_object(target_registry_name=result.target_registry_name)
+        assert target._blob_content_type == "text/html"
 
     async def test_create_target_registers_in_registry(self, sqlite_instance) -> None:
         """Test that create_target registers object in registry."""
