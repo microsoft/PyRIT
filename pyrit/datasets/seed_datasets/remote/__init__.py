@@ -36,6 +36,11 @@ from pyrit.datasets.seed_datasets.remote.comic_jailbreak_dataset import (
 )
 from pyrit.datasets.seed_datasets.remote.dangerous_qa_dataset import _DangerousQADataset
 from pyrit.datasets.seed_datasets.remote.darkbench_dataset import _DarkBenchDataset
+from pyrit.datasets.seed_datasets.remote.decoding_trust_adv_glue_dataset import (
+    DecodingTrustAdvGLUEModel,
+    DecodingTrustAdvGLUETask,
+    _DecodingTrustAdvGLUEDataset,
+)
 from pyrit.datasets.seed_datasets.remote.decoding_trust_toxicity_dataset import (
     DecodingTrustToxicitySubset,
     _DecodingTrustToxicityDataset,
@@ -132,6 +137,8 @@ __all__ = [
     "AegisHarmCategory",
     "CoCoNotCategory",
     "CoCoNotSplit",
+    "DecodingTrustAdvGLUEModel",
+    "DecodingTrustAdvGLUETask",
     "DecodingTrustToxicitySubset",
     "FigStepCategory",
     "FigStepVariant",
@@ -170,6 +177,7 @@ __all__ = [
     "ComicJailbreakTemplateConfig",
     "_DangerousQADataset",
     "_DarkBenchDataset",
+    "_DecodingTrustAdvGLUEDataset",
     "_DecodingTrustToxicityDataset",
     "_EquityMedQADataset",
     "_FigStepDataset",
