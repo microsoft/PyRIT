@@ -1,4 +1,4 @@
-# Copyright (c) Microsoft Corporation.
+﻿# Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
 """
@@ -36,6 +36,10 @@ from pyrit.datasets.seed_datasets.remote.comic_jailbreak_dataset import (
 )
 from pyrit.datasets.seed_datasets.remote.dangerous_qa_dataset import _DangerousQADataset
 from pyrit.datasets.seed_datasets.remote.darkbench_dataset import _DarkBenchDataset
+from pyrit.datasets.seed_datasets.remote.decoding_trust_fairness_dataset import (
+    DecodingTrustFairnessSubset,
+    _DecodingTrustFairnessDataset,
+)
 from pyrit.datasets.seed_datasets.remote.decoding_trust_toxicity_dataset import (
     DecodingTrustToxicitySubset,
     _DecodingTrustToxicityDataset,
@@ -132,6 +136,7 @@ __all__ = [
     "AegisHarmCategory",
     "CoCoNotCategory",
     "CoCoNotSplit",
+    "DecodingTrustFairnessSubset",
     "DecodingTrustToxicitySubset",
     "FigStepCategory",
     "FigStepVariant",
@@ -170,6 +175,7 @@ __all__ = [
     "ComicJailbreakTemplateConfig",
     "_DangerousQADataset",
     "_DarkBenchDataset",
+    "_DecodingTrustFairnessDataset",
     "_DecodingTrustToxicityDataset",
     "_EquityMedQADataset",
     "_FigStepDataset",
