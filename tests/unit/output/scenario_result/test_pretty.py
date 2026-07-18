@@ -96,6 +96,25 @@ async def test_write_async_with_unknown_target_when_no_params(printer, capsys):
     assert "Target Endpoint: Unknown" in out
 
 
+async def test_write_async_prefers_underlying_model_over_deployment_name(printer, capsys):
+    result = _scenario_result(
+        target_params={"model_name": "pyrit-github-gpt4", "underlying_model_name": "gpt-4o"},
+    )
+    await printer.write_async(result)
+    out = capsys.readouterr().out
+    assert "Target Model: gpt-4o" in out
+    assert "pyrit-github-gpt4" not in out
+
+
+async def test_write_async_falls_back_to_model_name_without_underlying_model(printer, capsys):
+    result = _scenario_result(
+        target_params={"model_name": "pyrit-github-gpt4"},
+    )
+    await printer.write_async(result)
+    out = capsys.readouterr().out
+    assert "Target Model: pyrit-github-gpt4" in out
+
+
 async def test_write_async_renders_scorer_section_when_scorer_identifier_present(printer, monkeypatch, capsys):
     # Stub the scorer printer's render_async so we don't depend on real evaluation data.
     async def fake_render_async(*, scorer_identifier, harm_category=None):

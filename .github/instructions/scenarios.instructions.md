@@ -190,8 +190,9 @@ async def _build_atomic_attacks_async(self, *, context: ScenarioContext) -> list
 
 `initialize_async` resolves the run's inputs once (objective target, techniques, dataset
 config, memory labels, baseline flag, and seed groups), snapshots them into an immutable
-`ScenarioContext`, calls this method, and then inserts the baseline centrally. Scenario authors
-never read half-initialized `self._*` state to build attacks — read everything from `context`.
+`ScenarioContext`, and calls this method. Each scenario emits its own baseline from within
+`_build_atomic_attacks_async` (see the Baseline section below). Scenario authors never read
+half-initialized `self._*` state to build attacks — read everything from `context`.
 
 ### Zero-boilerplate matrix scenarios
 
@@ -275,11 +276,17 @@ resolves without falling back to `OpenAIChatTarget`.
 
 ### Baseline
 
-The baseline (a `PromptSendingAttack` over the run's seeds) is inserted **centrally** by
-`Scenario.initialize_async` according to the scenario's `BASELINE_ATTACK_POLICY` class var and
-the runtime `include_baseline` flag. `_build_atomic_attacks_async` must **never** prepend its own
-baseline — doing so double-emits it and reintroduces baseline-vs-technique population divergence
-under `max_dataset_size`.
+The baseline is a `PromptSendingAttack` over the run's seeds. Each scenario emits its **own**
+baseline from within `_build_atomic_attacks_async`, gated on `context.include_baseline` (which
+`initialize_async` resolves from the scenario's `BASELINE_ATTACK_POLICY` class var and the runtime
+`include_baseline` flag). Matrix scenarios get it for free — `build_matrix_atomic_attacks` prepends
+it when `context.include_baseline` is set. Hand-built scenarios prepend it themselves via the
+`build_baseline_atomic_attack` helper (at index 0), reusing `context.seed_groups` so the baseline
+samples the same seeds as the techniques. Emit **one baseline per independently scored population**
+and only when `context.include_baseline` is set: most scenarios score a single population and emit
+exactly one, while a scenario with several separately-scored populations (e.g. Psychosocial's
+per-sub-harm scorers) emits one per population. Never double-emit a baseline for the *same*
+population — that reintroduces baseline-vs-technique population divergence under `max_dataset_size`.
 
 ### Manual AtomicAttack construction:
 

@@ -117,8 +117,9 @@ class RapidResponse(Scenario):
         Build the technique × harm-category atomic attacks, grouped by harm category.
 
         Results group by harm category (the dataset name) rather than technique so per-category
-        ASR rolls up naturally. The baseline is emitted centrally by the base
-        ``initialize_async``, so this override never prepends one.
+        ASR rolls up naturally. The baseline is emitted by ``build_matrix_atomic_attacks`` when
+        ``context.include_baseline`` is set (the base no longer emits one centrally), so this
+        override never prepends one itself.
 
         Args:
             context (ScenarioContext): The resolved runtime inputs for this run.
