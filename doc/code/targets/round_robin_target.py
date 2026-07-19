@@ -30,28 +30,37 @@
 # %% [markdown]
 # ## Basic Usage
 #
-# In this example, we retrieve two configured `OpenAIChatTarget` instances pointing to
-# different endpoints and wrap them in a `RoundRobinTarget`.
+# In this example, we create two `OpenAIChatTarget` instances pointing to different endpoints
+# (simulating two regional deployments of the same model) and wrap them in a `RoundRobinTarget`.
 # We then send multiple prompts and show which inner target handled each one.
 
 # %%
+import os
+
+from pyrit.auth import get_azure_openai_auth
 from pyrit.models import Message
 from pyrit.prompt_normalizer import PromptNormalizer
-from pyrit.prompt_target import RoundRobinTarget
-from pyrit.registry import TargetRegistry
+from pyrit.prompt_target import OpenAIChatTarget, RoundRobinTarget
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 
 await initialize_pyrit_async(memory_db_type=IN_MEMORY)  # type: ignore
 
-# Retrieve two configured regional deployments.
-target_registry = TargetRegistry.get_registry_singleton()
-target_a = target_registry.instances.get("azure_openai_gpt4o")
-target_b = target_registry.instances.get("azure_openai_gpt4o2")
-if target_a is None or target_b is None:
-    raise ValueError(
-        "The azure_openai_gpt4o and azure_openai_gpt4o2 targets must be registered. "
-        "Configure both AZURE_OPENAI_GPT4O_* endpoint sets."
-    )
+# Create two targets pointing to different regional deployments of the same model.
+endpoint_a = os.environ["AZURE_OPENAI_GPT4O_ENDPOINT"]
+endpoint_b = os.environ["AZURE_OPENAI_GPT4O_ENDPOINT2"]
+
+target_a = OpenAIChatTarget(
+    endpoint=endpoint_a,
+    api_key=get_azure_openai_auth(endpoint_a),
+    model_name=os.environ["AZURE_OPENAI_GPT4O_MODEL"],
+    underlying_model=os.environ["AZURE_OPENAI_GPT4O_UNDERLYING_MODEL"],
+)
+target_b = OpenAIChatTarget(
+    endpoint=endpoint_b,
+    api_key=get_azure_openai_auth(endpoint_b),
+    model_name=os.environ["AZURE_OPENAI_GPT4O_MODEL2"],
+    underlying_model=os.environ["AZURE_OPENAI_GPT4O_UNDERLYING_MODEL2"],
+)
 
 # Wrap them in a RoundRobinTarget
 rr_target = RoundRobinTarget(targets=[target_a, target_b])
@@ -84,6 +93,21 @@ for i, prompt in enumerate(prompts):
 # deployment has higher rate limits or capacity.
 
 # %%
+await initialize_pyrit_async(memory_db_type=IN_MEMORY)  # type: ignore
+
+target_a = OpenAIChatTarget(
+    endpoint=endpoint_a,
+    api_key=get_azure_openai_auth(endpoint_a),
+    model_name=os.environ["AZURE_OPENAI_GPT4O_MODEL"],
+    underlying_model=os.environ["AZURE_OPENAI_GPT4O_UNDERLYING_MODEL"],
+)
+target_b = OpenAIChatTarget(
+    endpoint=endpoint_b,
+    api_key=get_azure_openai_auth(endpoint_b),
+    model_name=os.environ["AZURE_OPENAI_GPT4O_MODEL2"],
+    underlying_model=os.environ["AZURE_OPENAI_GPT4O_UNDERLYING_MODEL2"],
+)
+
 # Target A gets 2x the traffic
 rr_weighted = RoundRobinTarget(targets=[target_a, target_b], weights=[2, 1])
 
@@ -124,12 +148,31 @@ print(f"\nDistribution: Target A = {counts['Target A']}, Target B = {counts['Tar
 from pyrit.executor.attack import AttackAdversarialConfig, CrescendoAttack
 from pyrit.output import output_attack_async
 
+await initialize_pyrit_async(memory_db_type=IN_MEMORY)  # type: ignore
+
 # The objective target is a round-robin across two deployments
+target_a = OpenAIChatTarget(
+    endpoint=endpoint_a,
+    api_key=get_azure_openai_auth(endpoint_a),
+    model_name=os.environ["AZURE_OPENAI_GPT4O_MODEL"],
+    underlying_model=os.environ["AZURE_OPENAI_GPT4O_UNDERLYING_MODEL"],
+)
+target_b = OpenAIChatTarget(
+    endpoint=endpoint_b,
+    api_key=get_azure_openai_auth(endpoint_b),
+    model_name=os.environ["AZURE_OPENAI_GPT4O_MODEL2"],
+    underlying_model=os.environ["AZURE_OPENAI_GPT4O_UNDERLYING_MODEL2"],
+)
 rr_target = RoundRobinTarget(targets=[target_a, target_b])
 
 # The adversarial chat (used to generate attack prompts) can also be a round-robin,
 # or a single target — it's independent of the objective target.
-adversarial_chat = target_a
+adversarial_chat = OpenAIChatTarget(
+    endpoint=endpoint_a,
+    api_key=get_azure_openai_auth(endpoint_a),
+    model_name=os.environ["AZURE_OPENAI_GPT4O_MODEL"],
+    underlying_model=os.environ["AZURE_OPENAI_GPT4O_UNDERLYING_MODEL"],
+)
 adversarial_config = AttackAdversarialConfig(target=adversarial_chat)
 
 attack = CrescendoAttack(
@@ -156,8 +199,15 @@ await output_attack_async(result)
 from pyrit.executor.attack import AttackExecutor, PromptSendingAttack
 from pyrit.score import ContentClassifier, ContentClassifierPaths, SelfAskCategoryScorer
 
+await initialize_pyrit_async(memory_db_type=IN_MEMORY)  # type: ignore
+
 # Step 1: Generate some responses to score using a simple attack
-objective_target = target_a
+objective_target = OpenAIChatTarget(
+    endpoint=endpoint_a,
+    api_key=get_azure_openai_auth(endpoint_a),
+    model_name=os.environ["AZURE_OPENAI_GPT4O_MODEL"],
+    underlying_model=os.environ["AZURE_OPENAI_GPT4O_UNDERLYING_MODEL"],
+)
 attack = PromptSendingAttack(objective_target=objective_target)
 
 objectives = [
@@ -174,7 +224,19 @@ results = await AttackExecutor().execute_attack_async(  # type: ignore
 
 # Step 2: Score all responses using a round-robin scorer target
 # The scorer's LLM calls are distributed across both targets
-rr_scorer_target = RoundRobinTarget(targets=[target_a, target_b], weights=[2, 1])
+scorer_target_a = OpenAIChatTarget(
+    endpoint=endpoint_a,
+    api_key=get_azure_openai_auth(endpoint_a),
+    model_name=os.environ["AZURE_OPENAI_GPT4O_MODEL"],
+    underlying_model=os.environ["AZURE_OPENAI_GPT4O_UNDERLYING_MODEL"],
+)
+scorer_target_b = OpenAIChatTarget(
+    endpoint=endpoint_b,
+    api_key=get_azure_openai_auth(endpoint_b),
+    model_name=os.environ["AZURE_OPENAI_GPT4O_MODEL2"],
+    underlying_model=os.environ["AZURE_OPENAI_GPT4O_UNDERLYING_MODEL2"],
+)
+rr_scorer_target = RoundRobinTarget(targets=[scorer_target_a, scorer_target_b], weights=[2, 1])
 
 scorer = SelfAskCategoryScorer.from_content_classifier(
     chat_target=rr_scorer_target,
@@ -183,6 +245,8 @@ scorer = SelfAskCategoryScorer.from_content_classifier(
 
 # Collect response messages for scoring
 response_messages = [r.last_response.to_message() for r in results if r.last_response is not None]
+
+scorer_target_a_hash = scorer_target_a.get_identifier().hash
 
 # Score each response individually so we can track and print which scorer target handled it
 # You may want to use `score_prompts_batch_async` like below in practice for efficiency

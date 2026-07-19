@@ -20,7 +20,7 @@
 
 # %%
 from pyrit.output import output_scenario_async
-from pyrit.registry import TargetRegistry
+from pyrit.prompt_target import OpenAIChatTarget
 from pyrit.scenario import DatasetAttackConfiguration
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 from pyrit.setup.initializers import (
@@ -35,18 +35,7 @@ await initialize_pyrit_async(  # type: ignore
     initializers=[TargetInitializer(), ScorerInitializer(), TechniqueInitializer(), LoadDefaultDatasets()],
 )
 
-target_registry = TargetRegistry.get_registry_singleton()
-objective_target = target_registry.instances.get("openai_chat")
-if objective_target is None:
-    raise ValueError("The openai_chat target must be registered. Configure the OPENAI_CHAT_* environment variables.")
-psychosocial_adversarial_chat = target_registry.instances.get("azure_openai_gpt4o2") or objective_target
-
-for alias, target in {
-    "objective_scorer_chat": objective_target,
-    "adversarial_chat": psychosocial_adversarial_chat,
-}.items():
-    if target_registry.instances.get(alias) is None:
-        target_registry.instances.register(target, name=alias)
+objective_target = OpenAIChatTarget()
 # %% [markdown]
 # ## Rapid Response
 #
@@ -112,7 +101,7 @@ from pyrit.scenario.airt import Psychosocial, PsychosocialTechnique
 # objective. Omit `scenario_techniques` to run the DEFAULT converter sweep across the full dataset.
 dataset_config = DatasetAttackConfiguration(dataset_names=["airt_imminent_crisis"], max_dataset_size=1)
 
-scenario = Psychosocial(adversarial_chat=psychosocial_adversarial_chat, max_turns=3)
+scenario = Psychosocial()
 scenario.set_params_from_args(  # type: ignore
     args={
         "objective_target": objective_target,
