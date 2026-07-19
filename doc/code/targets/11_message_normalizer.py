@@ -82,7 +82,7 @@ print(json_output)
 # %% [markdown]
 # ## GenericSystemSquashNormalizer
 #
-# Some models don't support system messages. The `GenericSystemSquashNormalizer` merges the system message into the first user message using a standardized instruction format.
+# Some models don't support system messages. The `GenericSystemSquashNormalizer` merges system messages into the user messages that follow them using a standardized instruction format.
 #
 # The format is:
 # ```
@@ -171,7 +171,7 @@ print(formatted)
 # The `TokenizerTemplateNormalizer` supports different strategies for handling system messages:
 #
 # - **`keep`**: Pass system messages as-is (default)
-# - **`squash`**: Merge system into first user message using `GenericSystemSquashNormalizer`
+# - **`squash`**: Merge system messages into the following user message using `GenericSystemSquashNormalizer`
 # - **`ignore`**: Drop system messages entirely
 # - **`developer`**: Change system role to developer role (for newer OpenAI models)
 

@@ -33,6 +33,7 @@ from pyrit.executor.attack.component.conversation_manager import (
 )
 from pyrit.executor.attack.core import AttackContext
 from pyrit.executor.attack.core.attack_parameters import AttackParameters
+from pyrit.message_normalizer import ConversationContextNormalizer
 from pyrit.models import ComponentIdentifier, Message, MessagePiece, Score
 from pyrit.prompt_normalizer import ConverterConfiguration, PromptNormalizer
 from pyrit.prompt_target import PromptTarget
@@ -762,10 +763,18 @@ class TestInitializeContext:
         assert "Next message" in text_value
         assert "Hello" in text_value or "doing well" in text_value
 
+    @pytest.mark.parametrize(
+        "prepended_conversation_config",
+        [
+            None,
+            PrependedConversationConfig(message_normalizer=ConversationContextNormalizer()),
+        ],
+    )
     async def test_system_prompt_for_non_chat_target_preserves_instruction_and_objective(
         self,
         attack_identifier: ComponentIdentifier,
         mock_prompt_target: MagicMock,
+        prepended_conversation_config: PrependedConversationConfig | None,
     ) -> None:
         manager = ConversationManager()
         context = _TestAttackContext(params=AttackParameters(objective="Explain saponification"))
@@ -775,6 +784,7 @@ class TestInitializeContext:
             context=context,
             target=mock_prompt_target,
             conversation_id=str(uuid.uuid4()),
+            prepended_conversation_config=prepended_conversation_config,
         )
 
         assert context.next_message is not None
@@ -784,6 +794,7 @@ class TestInitializeContext:
             context=context,
             target=mock_prompt_target,
             conversation_id=str(uuid.uuid4()),
+            prepended_conversation_config=prepended_conversation_config,
         )
 
         assert context.next_message.get_value() == "Turn 1:\nuser: You are a chemistry tutor\n\nExplain saponification"

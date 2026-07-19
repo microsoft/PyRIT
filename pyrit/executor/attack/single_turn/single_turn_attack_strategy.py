@@ -9,7 +9,6 @@ from abc import ABC
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from pyrit.common.deprecation import print_deprecation_message
 from pyrit.common.logger import logger
 from pyrit.executor.attack.core.attack_parameters import AttackParameters, AttackParamsT
 from pyrit.executor.attack.core.attack_strategy import AttackContext, AttackStrategy
@@ -32,21 +31,8 @@ class SingleTurnAttackContext(AttackContext[AttackParamsT]):
     # Unique identifier of the main conversation between the attacker and model
     conversation_id: str = field(default_factory=lambda: str(uuid.uuid4()))
 
-    # Deprecated, non-functional no-op; removed in 0.17.0. Set the objective
-    # target's system prompt via ``prepended_conversation`` instead.
-    system_prompt: str | None = None
-
     # Arbitrary metadata that downstream attacks or scorers may attach
     metadata: dict[str, str | int] | None = None
-
-    def __post_init__(self) -> None:
-        """Warn that ``system_prompt`` is deprecated and non-functional when it is set."""
-        if self.system_prompt is not None:
-            print_deprecation_message(
-                old_item="SingleTurnAttackContext.system_prompt",
-                new_item="prepended_conversation=[Message.from_system_prompt(...)]",
-                removed_in="0.17.0",
-            )
 
 
 class SingleTurnAttackStrategy(AttackStrategy[SingleTurnAttackContext[Any], AttackResult], ABC):

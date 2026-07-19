@@ -359,11 +359,11 @@ class ConversationManager:
         if config is None:
             config = PrependedConversationConfig()
 
+        normalizer = config.get_message_normalizer()
         messages_to_normalize = prepended_conversation
-        if config.message_normalizer is None:
+        if isinstance(normalizer, ConversationContextNormalizer):
             messages_to_normalize = await GenericSystemSquashNormalizer().normalize_async(prepended_conversation)
 
-        normalizer = config.get_message_normalizer()
         normalized_context = await normalizer.normalize_string_async(messages_to_normalize)
 
         next_message = context.next_message
