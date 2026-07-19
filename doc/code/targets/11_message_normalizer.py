@@ -9,7 +9,7 @@
 # ---
 
 # %% [markdown]
-# # 11. MessageNormalizer
+# # MessageNormalizer
 #
 # MessageNormalizers convert PyRIT's `Message` format into other formats that specific targets require. Different LLMs and APIs expect messages in different formats:
 #

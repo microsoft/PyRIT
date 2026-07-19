@@ -15,13 +15,12 @@ from pyrit.exceptions import (
     RateLimitException,
     get_retry_max_num_attempts,
 )
-from pyrit.models import Message, MessagePiece
+from pyrit.models import JsonResponseConfig, Message, MessagePiece
 from pyrit.prompt_target import (
     OpenAIChatAudioConfig,
     TargetCapabilities,
     TargetConfiguration,
 )
-from pyrit.prompt_target.common.json_response_config import _JsonResponseConfig
 from pyrit.prompt_target.litellm_chat_target import LiteLLMChatTarget
 
 # ---------------------------------------------------------------------------
@@ -135,8 +134,8 @@ def _user_message(text="test prompt", conversation_id="convo"):
     return piece.to_message()
 
 
-def _disabled_json_config() -> _JsonResponseConfig:
-    return _JsonResponseConfig.from_metadata(metadata={})
+def _disabled_json_config() -> JsonResponseConfig:
+    return JsonResponseConfig.from_metadata(metadata={})
 
 
 # ---------------------------------------------------------------------------

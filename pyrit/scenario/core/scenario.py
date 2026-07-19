@@ -47,7 +47,6 @@ from pyrit.registry import ScorerRegistry
 from pyrit.registry.resolution import resolve_declared_params, resolve_reference_value
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
-from pyrit.scenario.core.matrix_atomic_attack_builder import build_baseline_atomic_attack
 from pyrit.scenario.core.scenario_context import ScenarioContext
 from pyrit.scenario.core.scenario_target_defaults import get_default_scorer_target
 from pyrit.scenario.core.scenario_technique import ScenarioTechnique
@@ -153,7 +152,6 @@ class Scenario(ABC):
         name: str = "",
         version: int,
         technique_class: type[ScenarioTechnique],
-        default_technique: ScenarioTechnique,
         default_dataset_config: DatasetAttackConfiguration,
         objective_scorer: Scorer,
         scenario_result_id: uuid.UUID | str | None = None,
@@ -165,9 +163,9 @@ class Scenario(ABC):
             name (str): Descriptive name for the scenario.
             version (int): Version number of the scenario.
             technique_class (type[ScenarioTechnique]): The technique enum class for this scenario.
-            default_technique (ScenarioTechnique): The default technique member used when no
-                ``scenario_techniques`` are passed to ``initialize_async``. Usually an aggregate
-                member like ``MyTechnique.ALL`` or ``MyTechnique.DEFAULT``.
+                The technique used when no ``scenario_techniques`` are passed to
+                ``initialize_async`` is the catalog's own default, read from
+                ``technique_class.default()``.
             default_dataset_config (DatasetAttackConfiguration): The default dataset configuration used
                 when no ``dataset_config`` is passed to ``initialize_async``.
             objective_scorer (Scorer): The objective scorer used to evaluate attack results.
@@ -197,7 +195,7 @@ class Scenario(ABC):
 
         # Store technique configuration for use in initialize_async
         self._technique_class = technique_class
-        self._default_technique = default_technique
+        self._default_technique = technique_class.default()
         self._default_dataset_config = default_dataset_config
 
         # These will be set in initialize_async
@@ -609,9 +607,12 @@ class Scenario(ABC):
         self._technique_converters = params.get("technique_converters") or {}
 
         # Build atomic attacks: resolve the seed groups once, snapshot the resolved inputs
-        # into a ScenarioContext, and hand it to the subclass extension point. Baseline is
-        # emitted centrally (from context.seed_groups) so overrides never re-resolve seeds
-        # or hand-roll baseline emission.
+        # into a ScenarioContext, and hand it to the subclass extension point. Baseline emission
+        # is the scenario's own responsibility — matrix scenarios get it for free (the matrix
+        # builder reads ``context.include_baseline``); other scenarios prepend one via
+        # ``build_baseline_atomic_attack``. The base only resolves the policy into
+        # ``self._include_baseline`` above, which the ScenarioContext carries as
+        # ``include_baseline``.
         #
         # On resume, resolve the full, deterministic dataset (no max_dataset_size sampling):
         # the originally-sampled subset was snapshotted into the ScenarioResult metadata and is
@@ -621,9 +622,6 @@ class Scenario(ABC):
         seed_groups_by_dataset = await self._resolve_seed_groups_by_dataset_async(apply_sampling=not is_resume)
         context = self._build_scenario_context(seed_groups_by_dataset=seed_groups_by_dataset)
         self._atomic_attacks = await self._build_atomic_attacks_async(context=context)
-
-        if include_baseline and (not self._atomic_attacks or self._atomic_attacks[0].atomic_attack_name != "baseline"):
-            self._atomic_attacks.insert(0, self._build_baseline_atomic_attack(seed_groups=list(context.seed_groups)))
 
         # Build the canonical scenario identifier once params/techniques/datasets
         # are resolved, so both the resume check and the new-result branch share the
@@ -642,7 +640,10 @@ class Scenario(ABC):
                     f"Drop scenario_result_id to start a new scenario."
                 )
 
-            self._validate_stored_scenario(stored_result=existing_results[0], current_identifier=scenario_identifier)
+            self._validate_stored_scenario(
+                stored_result=existing_results[0],
+                current_identifier=scenario_identifier,
+            )
             self._apply_persisted_objectives(stored_result=existing_results[0])
             return  # Valid resume - skip creating new scenario result
 
@@ -709,6 +710,7 @@ class Scenario(ABC):
         the **full, deterministic** dataset (sampling is bypassed on the resume branch of
         ``initialize_async``), so restricting each atomic attack's seed_groups to the
         persisted set here reconstructs exactly the objectives the first run committed to.
+        Per-objective atomic attacks outside that subset are removed before scheduling.
         If any persisted hash is no longer present in the dataset, refuse to resume — that
         now signals the dataset itself genuinely changed, not a random resample drift.
 
@@ -726,8 +728,11 @@ class Scenario(ABC):
 
         persisted_hashes: set[str] = set(persisted)
         retained: set[str] = set()
+        retained_attacks: list[AtomicAttack] = []
         for aa in self._atomic_attacks:
             retained |= aa.keep_seed_groups_with_hashes(hashes=persisted_hashes)
+            if aa.seed_groups:
+                retained_attacks.append(aa)
 
         missing = persisted_hashes - retained
         if missing:
@@ -739,35 +744,7 @@ class Scenario(ABC):
                 f"Either restore the missing objectives or drop scenario_result_id to start a new scenario."
             )
 
-    def _build_baseline_atomic_attack(self, *, seed_groups: list[AttackSeedGroup]) -> AtomicAttack:
-        """
-        Build the baseline AtomicAttack from pre-resolved seed groups.
-
-        The baseline sends each objective unmodified, providing a comparison point
-        against the scenario's technique attacks. Pass the same ``seed_groups`` used
-        to build the technique attacks so both populations match.
-
-        Args:
-            seed_groups: Seed groups to attack. Used as-is, no further sampling.
-
-        Returns:
-            AtomicAttack: The baseline atomic attack.
-
-        Raises:
-            ValueError: If ``initialize_async`` has not been called (no objective
-                target or scorer set).
-        """
-        if self._objective_target is None:
-            raise ValueError("Objective target is required to create baseline attack.")
-        if self._objective_scorer is None:
-            raise ValueError("Objective scorer is required to create baseline attack.")
-
-        return build_baseline_atomic_attack(
-            objective_target=self._objective_target,
-            objective_scorer=self._objective_scorer,
-            seed_groups=seed_groups,
-            memory_labels=self._memory_labels,
-        )
+        self._atomic_attacks = retained_attacks
 
     def _build_scenario_identifier(self) -> ScenarioIdentifier:
         """
@@ -1010,8 +987,9 @@ class Scenario(ABC):
 
         Scenario authors build their attacks from ``context.seed_groups`` (or
         ``context.seed_groups_by_dataset``) so sampling under ``max_dataset_size`` stays
-        consistent across every atomic attack and the baseline. The base owns baseline
-        emission, so overrides never prepend one themselves.
+        consistent across every atomic attack and the baseline. Each scenario emits its own
+        baseline here when ``context.include_baseline`` is set -- matrix scenarios via
+        ``build_matrix_atomic_attacks``, hand-built scenarios via ``build_baseline_atomic_attack``.
 
         Args:
             context (ScenarioContext): The resolved runtime inputs for this run.

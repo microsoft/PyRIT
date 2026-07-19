@@ -88,7 +88,9 @@ class _JailbreakTemplatesDataset(SeedDatasetProvider):
         seeds: list[SeedPrompt] = []
         for path in sorted(self._templates_path.rglob("*.yaml")):
             try:
-                seeds.append(SeedPrompt.from_yaml_file(path))
+                seed = SeedPrompt.from_yaml_file(path)
+                seed.dataset_name = self.dataset_name
+                seeds.append(seed)
             except Exception as e:
                 logger.warning(f"Skipping invalid jailbreak template {path}: {e}")
         return seeds

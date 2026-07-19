@@ -23,12 +23,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Techniques Cyber selects from the shared catalog. Cyber declares its own DEFAULT by naming
-# these techniques (see _build_cyber_technique), rather than relying on a catalog-wide ``default``
-# tag. Adding a technique here that is not also in ``_CYBER_DEFAULT_TECHNIQUE_NAMES`` would keep
-# it in ALL but out of DEFAULT, breaking the current DEFAULT == ALL invariant guarded by
-# test_default_matches_all; keep the two sets in sync if this list grows.
-_CYBER_TECHNIQUE_NAMES = {"red_teaming"}
+# Cyber curates its DEFAULT run to the technique(s) named here (see _build_cyber_technique).
+# The pool of *available* techniques is not narrowed — cyber exposes whatever the active
+# initializer has registered (like RapidResponse); the initializer is the single gate.
 _CYBER_DEFAULT_TECHNIQUE_NAMES = {"red_teaming"}
 
 
@@ -37,34 +34,26 @@ def _build_cyber_technique() -> type[ScenarioTechnique]:
     """
     Build the Cyber technique class dynamically from the registered technique factories.
 
-    Selects only the ``red_teaming`` factory from the singleton
-    ``AttackTechniqueRegistry``. A plain ``PromptSendingAttack`` baseline is
-    prepended automatically by ``Scenario._build_baseline_atomic_attack`` via
-    ``BaselineAttackPolicy.Enabled``.
+    Exposes every technique registered in the singleton ``AttackTechniqueRegistry``;
+    which techniques are available is decided by the active initializer, not narrowed
+    here. A plain ``PromptSendingAttack`` baseline is emitted by the
+    matrix builder (``include_baseline=context.include_baseline``) via ``BaselineAttackPolicy.Enabled``.
 
-    The ``DEFAULT`` aggregate is the curated default run; for Cyber it expands to the
-    same single ``red_teaming`` technique as ``ALL``.
+    The ``DEFAULT`` aggregate is the curated default run — for Cyber it expands to
+    ``red_teaming`` — while ``ALL`` selects the full registered pool.
 
     Returns:
         type[ScenarioTechnique]: The dynamically generated technique enum class.
     """
     from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
-    from pyrit.registry.tag_query import TagQuery
 
     registry = AttackTechniqueRegistry.get_registry_singleton()
-    factories = registry.get_factories_or_raise()
-    cyber_factories = [f for name, f in factories.items() if name in _CYBER_TECHNIQUE_NAMES]
+    factories = list(registry.get_factories_or_raise().values())
 
     return AttackTechniqueRegistry.build_technique_class_from_factories(  # type: ignore[ty:invalid-return-type]
         class_name="CyberTechnique",
-        factories=cyber_factories,
-        aggregate_tags={
-            "multi_turn": TagQuery.any_of("multi_turn"),
-        },
-        # Cyber curates a single technique (red_teaming) at the scenario level. It declares that
-        # as its DEFAULT by name rather than tagging red_teaming ``default`` globally, which would
-        # alter other scenarios.
-        default_technique_names=_CYBER_DEFAULT_TECHNIQUE_NAMES,
+        factories=factories,
+        default_names=_CYBER_DEFAULT_TECHNIQUE_NAMES,
     )
 
 
@@ -77,7 +66,10 @@ class Cyber(Scenario):
     techniques.
     """
 
-    VERSION: int = 2
+    #: Bumped from 2 → 3 by dropping the ``core`` pool gate so the selectable
+    #: technique pool (and the ``all`` aggregate) reflects whatever the initializer
+    #: registered. ``use_cached`` only matches prior runs at the current ``VERSION``.
+    VERSION: int = 3
 
     @classmethod
     def get_override_composite_scorer_questions_path(cls) -> list[Path]:
@@ -114,7 +106,6 @@ class Cyber(Scenario):
             version=self.VERSION,
             objective_scorer=self._objective_scorer,
             technique_class=technique_class,
-            default_technique=technique_class("default"),
             default_dataset_config=DatasetAttackConfiguration(dataset_names=["airt_malware"], max_dataset_size=4),
             scenario_result_id=scenario_result_id,
         )
@@ -123,8 +114,8 @@ class Cyber(Scenario):
         """
         Build the technique × dataset atomic attacks for Cyber, grouped by technique.
 
-        The baseline is emitted centrally by the base ``initialize_async``, so this override
-        never prepends one.
+        The baseline is emitted by ``build_matrix_atomic_attacks`` when ``context.include_baseline``
+        is set (the base no longer emits one centrally), so this override never prepends one itself.
 
         Args:
             context (ScenarioContext): The resolved runtime inputs for this run.

@@ -10,6 +10,7 @@ from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
 from pyrit.models import Modality, SeedDataset, SeedPrompt
+from pyrit.models.harm_category import HarmCategory
 
 logger = logging.getLogger(__name__)
 
@@ -102,6 +103,10 @@ class _MedSafetyBenchDataset(_RemoteDatasetLoader):
         logger.info(f"Loading MedSafetyBench dataset (subset: {self.subset_name})")
 
         all_prompts = []
+        standardized_harm_categories = self._standardize_harm_categories(
+            "medical safety",
+            alias_overrides={"medical safety": HarmCategory.PUBLIC_HEALTH},
+        )
 
         for source in self.sources:
             examples = self._fetch_from_url(
@@ -137,7 +142,7 @@ class _MedSafetyBenchDataset(_RemoteDatasetLoader):
                         value=prompt,
                         data_type="text",
                         dataset_name=self.dataset_name,
-                        harm_categories=["medical safety"],
+                        harm_categories=standardized_harm_categories,
                         description=(
                             f"Prompt from MedSafetyBench dataset - {model_type} model, "
                             f"category {category}, type {file_type}."
@@ -145,6 +150,11 @@ class _MedSafetyBenchDataset(_RemoteDatasetLoader):
                         source=source,
                         authors=self._AUTHORS,
                         groups=self._GROUPS,
+                        metadata={
+                            "medsafety_category": category,
+                            "model_type": model_type,
+                            "file_type": file_type,
+                        },
                     )
                 )
 

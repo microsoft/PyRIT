@@ -16,6 +16,7 @@ from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
 )
 from pyrit.memory import data_serializer_factory
 from pyrit.models import SeedDataset, SeedPrompt
+from pyrit.models.harm_category import HarmCategory
 
 if TYPE_CHECKING:
     from PIL.Image import Image as PILImage
@@ -130,6 +131,47 @@ class _MSTSDataset(_RemoteDatasetLoader):
         "Suicide & Self-Harm",
         "Other",
     ]
+    HARM_CATEGORY_ALIAS_OVERRIDES: dict[str, list[HarmCategory]] = {
+        "violent crimes": [HarmCategory.VIOLENT_CONTENT],
+        "non-violent crimes": [HarmCategory.COORDINATION_HARM],
+        "sex-related crimes": [HarmCategory.SEXUAL_CONTENT],
+        "suicide & self-harm": [HarmCategory.SUICIDE, HarmCategory.SELF_HARM],
+        "other": [HarmCategory.OTHER],
+    }
+    # The 21 fine-grained hazard_subcategory values resolve far more precisely than
+    # the 5 top-level hazard_category buckets (e.g. the "Other" bucket splits into
+    # "Conspiracy theories" -> INFO_INTEGRITY and "Gross behaviour" -> OTHER). When a
+    # row's subcategory is present and recognized it takes precedence; otherwise the
+    # loader falls back to the coarse hazard_category mapping above.
+    HAZARD_SUBCATEGORY_ALIAS_OVERRIDES: dict[str, list[HarmCategory]] = {
+        "property damage": [HarmCategory.COORDINATION_HARM],
+        "sale, purchase or ownership of illegal, regulated or unregistered items": [
+            HarmCategory.REGULATED_GOODS,
+            HarmCategory.COORDINATION_HARM,
+        ],
+        "environmental pollution": [HarmCategory.OTHER],
+        "production of illegal, regulated or unregistered items": [
+            HarmCategory.REGULATED_GOODS,
+            HarmCategory.COORDINATION_HARM,
+        ],
+        "reckless endangerment": [HarmCategory.DANGEROUS_SITUATIONS],
+        "dangerous challenges": [HarmCategory.DANGEROUS_SITUATIONS],
+        "scams & fraud": [HarmCategory.SCAMS, HarmCategory.DECEPTION],
+        "self-harm": [HarmCategory.SELF_HARM],
+        "physical assault": [HarmCategory.VIOLENT_CONTENT],
+        "murder": [HarmCategory.VIOLENT_CONTENT],
+        "gross behaviour": [HarmCategory.OTHER],
+        "sexual harassment": [HarmCategory.HARASSMENT, HarmCategory.SEXUAL_SOLICITATION],
+        "trespassing": [HarmCategory.COORDINATION_HARM],
+        "terror": [HarmCategory.VIOLENT_EXTREMISM, HarmCategory.COORDINATION_HARM],
+        "conspiracy theories": [HarmCategory.INFO_INTEGRITY],
+        "eating disorders": [HarmCategory.EATING_DISORDERS, HarmCategory.SELF_HARM],
+        "suicide": [HarmCategory.SUICIDE, HarmCategory.SELF_HARM],
+        "sexual assault": [HarmCategory.SEXUAL_CONTENT, HarmCategory.VIOLENT_CONTENT],
+        "indecent exposure": [HarmCategory.SEXUAL_CONTENT],
+        "theft": [HarmCategory.COORDINATION_HARM],
+        "mass violence": [HarmCategory.VIOLENT_CONTENT, HarmCategory.VIOLENT_EXTREMISM],
+    }
     modalities: list[str] = ["text", "image"]
     size: str = "large"
     tags: set[str] = {"default", "safety", "multimodal", "multilingual"}
@@ -318,7 +360,17 @@ class _MSTSDataset(_RemoteDatasetLoader):
         )
 
         group_id = uuid.uuid4()
-        harm_categories = [hazard_category] if hazard_category else []
+        subcategory_key = hazard_subcategory.strip().lower()
+        if subcategory_key in self.HAZARD_SUBCATEGORY_ALIAS_OVERRIDES:
+            harm_categories = self._standardize_harm_categories(
+                hazard_subcategory,
+                alias_overrides=self.HAZARD_SUBCATEGORY_ALIAS_OVERRIDES,
+            )
+        else:
+            harm_categories = self._standardize_harm_categories(
+                hazard_category,
+                alias_overrides=self.HARM_CATEGORY_ALIAS_OVERRIDES,
+            )
         metadata: dict[str, str | int] = {
             "case_id": case_id,
             "image_id": image_id,

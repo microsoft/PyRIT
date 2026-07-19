@@ -15,15 +15,15 @@ from pydantic import Field, model_validator
 from tinytag import TinyTag
 
 from pyrit.common.path import PATHS_DICT
-from pyrit.models.json_schema_definition import (  # noqa: TC001  (runtime-required by Pydantic field annotations)
-    JsonSchemaDefinition,
-    get_common_json_schema,
-)
 from pyrit.models.literals import (  # noqa: TC001  (runtime-required by Pydantic field annotations)
     ChatMessageRole,
     PromptDataType,
 )
 from pyrit.models.seeds.seed import Seed
+from pyrit.models.target.json_schema_definition import (  # noqa: TC001  (runtime-required by Pydantic field annotations)
+    JsonSchemaDefinition,
+    get_common_json_schema,
+)
 
 if TYPE_CHECKING:
     import uuid

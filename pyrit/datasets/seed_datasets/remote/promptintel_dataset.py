@@ -60,7 +60,9 @@ class _PromptIntelDataset(_RemoteDatasetLoader):
     # Metadata
     modalities: tuple[Modality, ...] = (Modality.TEXT,)
     size: str = "medium"  # indicator count varies with registry contents; gated by API key
-    tags: frozenset[str] = frozenset({"safety", "jailbreak", "cybersecurity"})
+    # PromptIntel is a live registry API that continuously gains new records, so it also carries
+    # the "feed" tag to distinguish it from static, versioned dataset releases.
+    tags: frozenset[str] = frozenset({"safety", "jailbreak", "cybersecurity", "feed"})
 
     # Maps PromptIntel short category IDs to their full taxonomy names
     _CATEGORY_DISPLAY_NAMES: ClassVar[dict[str, str]] = {
@@ -228,6 +230,15 @@ class _PromptIntelDataset(_RemoteDatasetLoader):
             display_names = [self._CATEGORY_DISPLAY_NAMES.get(c, c) for c in categories if isinstance(c, str)]
             metadata["categories"] = ", ".join(display_names)
 
+        # Preserve the dataset's native attack-technique labels for provenance and
+        # searchability. PromptIntel's ``threats`` describe how an attack is delivered
+        # (e.g. "Jailbreak", "Direct prompt injection") rather than the resulting harm,
+        # so they are kept verbatim here even though the dataset is treated as
+        # harm-mapping-unclear.
+        threats = record.get("threats", [])
+        if threats:
+            metadata["threats"] = ", ".join(t for t in threats if isinstance(t, str))
+
         tags = record.get("tags", [])
         if tags:
             metadata["tags"] = ", ".join(tags)
@@ -276,9 +287,11 @@ class _PromptIntelDataset(_RemoteDatasetLoader):
 
         record_id = record.get("id", "")
 
-        # Build common fields
-        threats = record.get("threats", [])
-        harm_categories = threats if threats else None
+        # PromptIntel's ``threats`` taxonomy is a registry of attack techniques
+        # (jailbreak, prompt injection, obfuscation, ...) rather than a harm taxonomy,
+        # so it does not map cleanly onto the canonical harm categories. Emit empty
+        # harm_categories while preserving the raw ``threats`` labels (see _build_metadata).
+        harm_categories: list[str] = []
         author = record.get("author", "")
         authors = [author] if author else None
         date_added = self._parse_datetime(record.get("created_at"))

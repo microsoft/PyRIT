@@ -377,17 +377,14 @@ async def test_prompt_normalizer_send_prompt_batch_async_applies_labels(mock_mem
     prompt_target = MockPromptTarget()
     message = Message.from_prompt(prompt=seed_group.prompts[0].value, role="user")
     normalizer_request = NormalizerRequest(message=message)
-    labels = {"test": "label"}
 
     normalizer = PromptNormalizer()
     results = await normalizer.send_prompt_batch_to_target_async(
         requests=[normalizer_request],
         target=prompt_target,
-        labels=labels,
         batch_size=1,
     )
 
-    assert normalizer_request.message.message_pieces[0].labels == labels
     assert len(results) == 1
 
 

@@ -14,7 +14,6 @@ from typing import (
     TYPE_CHECKING,
     Any,
     Generic,
-    Optional,
     TypeVar,
 )
 
@@ -172,8 +171,8 @@ class AttackExecutor:
         *,
         attack: AttackStrategy[AttackStrategyContextT, AttackStrategyResultT],
         seed_groups: Sequence[AttackSeedGroup],
-        adversarial_chat: Optional["PromptTarget"] = None,
-        objective_scorer: Optional["TrueFalseScorer"] = None,
+        adversarial_chat: "PromptTarget | None" = None,
+        objective_scorer: "TrueFalseScorer | None" = None,
         field_overrides: Sequence[dict[str, Any]] | None = None,
         return_partial_on_failure: bool = False,
         attribution: AttackResultAttribution | None = None,

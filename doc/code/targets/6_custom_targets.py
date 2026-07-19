@@ -8,7 +8,7 @@
 #       jupytext_version: 1.19.0
 # ---
 # %% [markdown]
-# # 6. Creating Custom Targets
+# # Creating Custom Targets
 #
 # Often, to use PyRIT, you need to create custom targets so it can interact with the system you're testing. [Gandalf](https://gandalf.lakera.ai/) is a platform designed as a playground that emulate AI applications. This demo shows how to use PyRIT to connect with this endpoint. If you're testing your own custom endpoint, a good start is often to build a target, and then you will be able to interact with it similar to this demo.
 #

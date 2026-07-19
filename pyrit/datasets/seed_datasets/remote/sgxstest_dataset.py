@@ -149,7 +149,10 @@ class _SGXSTestDataset(_RemoteDatasetLoader):
             SeedObjective(
                 value=item["prompt"],
                 dataset_name=self.dataset_name,
-                harm_categories=[item["category"]] if item.get("category") else [],
+                # SGXSTest's `category` is an XSTest-style linguistic hazard type (homonym,
+                # figurative language, safe context, ...), not a harm. It's preserved in
+                # metadata; harm_categories is left empty (over-refusal contrast set).
+                harm_categories=[],
                 description=description,
                 source=source_url,
                 authors=authors,

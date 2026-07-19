@@ -8,7 +8,7 @@
 #       jupytext_version: 1.18.1
 # ---
 # %% [markdown]
-# # 10.3 WebSocket Copilot Target
+# # WebSocket Copilot Target
 #
 # The `WebSocketCopilotTarget` is an alternative to the `PlaywrightCopilotTarget` that is designed to be more reliable by minimizing dependence on browser automation. Instead of driving the Copilot UI, it communicates directly with Copilot over a WebSocket connection.
 #

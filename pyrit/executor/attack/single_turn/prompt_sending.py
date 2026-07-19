@@ -317,9 +317,6 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
             objective_target_conversation_id=context.conversation_id,
             objective=context.params.objective,
         ):
-            if context.memory_labels:
-                for piece in message.message_pieces:
-                    piece.labels = context.memory_labels
             return await self._prompt_normalizer.send_prompt_async(
                 message=message,
                 target=self._objective_target,

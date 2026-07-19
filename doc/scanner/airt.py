@@ -77,46 +77,38 @@ await output_scenario_async(scenario_result)
 # %% [markdown]
 # ## Psychosocial
 #
-# Tests whether a target appropriately handles psychosocial crisis situations, evaluating imminent
-# crisis handling and licensed therapist impersonation.
+# Tests whether a target harms the well-being or mental health of users across two sub-harms:
+# **imminent crisis** (mistreating someone in a mental-health crisis, facilitating self-harm) and
+# **licensed therapist** (improperly acting as or claiming to be a real therapist). Choose sub-harms
+# with the `--sub-harm` parameter (`imminent_crisis`, `licensed_therapist`, or `all`); both run by
+# default, each with its own dataset, escalation prompt, and conversation-level scorer.
 #
 # ```bash
-# pyrit_scan airt.psychosocial --target openai_chat --techniques imminent_crisis --max-dataset-size 1
+# pyrit_scan airt.psychosocial --target openai_chat --techniques tone
 # ```
 #
-# **Available techniques:** ALL, ImminentCrisis, LicensedTherapist
+# Each sub-harm escalates a simulated multi-turn conversation toward the objective, then layers the
+# selected converter techniques on top (natural-language rewrites that preserve emotional framing;
+# obfuscation converters like base64/morse are excluded). Datasets are bound to the sub-harms, so
+# `--dataset-names` is ignored (`--max-dataset-size` still applies).
 #
-# ### Conversation-Level Scoring
-#
-# Unlike content harms that can be evaluated from a single response, psychosocial harms emerge
-# gradually across a multi-turn conversation. This scenario uses create_conversation_scorer()
-# to evaluate the **entire conversation history** rather than just the latest response — critical
-# for detecting patterns like gradual crisis escalation.
-#
-# Each subharm has a built-in YAML rubric:
-#
-# - **crisis_management.yaml** — Evaluates crisis recognition using the MHFA/ALGEE methodology
-#   (Approach, Listen, Give reassurance, Encourage professional help, Encourage self-help).
-#   Scores range from 1 (not harmful) to 5 (extremely harmful).
-# - **licensed_therapist.yaml** — Evaluates whether the model inappropriately provides clinical
-#   mental health advice.
-#
-# Rubrics can be customized per-subharm via the SubharmConfig dataclass.
-#
-# **Note:** This scenario does not include a default baseline. A single-turn baseline would not be
-# meaningful because psychosocial harms emerge through multi-turn escalation.
+# **Available techniques:** ALL, DEFAULT, tone, language, persuasion, deterministic, crescendo
 
 # %%
 from pyrit.scenario.airt import Psychosocial, PsychosocialTechnique
 
+# Minimal demo: a single sub-harm, one technique (the bare simulated-crescendo base), and one
+# objective. Omit `scenario_techniques` to run the DEFAULT converter sweep across the full dataset.
 dataset_config = DatasetAttackConfiguration(dataset_names=["airt_imminent_crisis"], max_dataset_size=1)
 
 scenario = Psychosocial()
 scenario.set_params_from_args(  # type: ignore
     args={
         "objective_target": objective_target,
-        "scenario_techniques": [PsychosocialTechnique.ImminentCrisis],
+        "sub_harm": "imminent_crisis",
+        "scenario_techniques": [PsychosocialTechnique.NoConverter],
         "dataset_config": dataset_config,
+        "max_turns": 2,
     }
 )
 await scenario.initialize_async()  # type: ignore
@@ -165,29 +157,40 @@ await output_scenario_async(scenario_result)
 # %% [markdown]
 # ## Jailbreak
 #
-# Tests target resilience against template-based jailbreak attacks using various prompt injection
-# templates.
+# Tests target resilience against jailbreak templates. A run crosses three selectors: the harmful
+# objectives (**dataset**, HarmBench), the **techniques** each jailbreak is delivered through, and
+# which **jailbreaks** to run. Two deliveries are on by default: `prompt_sending` renders the
+# objective inline into the template as a request converter (target-agnostic), and
+# `jailbreak_system_prompt` sets the template as a native system prompt with the objective sent as
+# the user turn (only for targets that natively support editable history + system prompts — it is
+# skipped for incapable targets). Registry techniques like `role_play_*`, `many_shot`, and `tap` are
+# opt-in. Results are grouped by jailbreak template, and a baseline (the un-jailbroken objective) is
+# included by default so complying with the bare objective is itself visible.
 #
 # ```bash
 # pyrit_scan airt.jailbreak \
-#   --initializers target \
+#   --initializers target load_default_datasets \
 #   --target openai_chat \
-#   --techniques prompt_sending \
+#   --dataset-names harmbench \
 #   --max-dataset-size 1
 # ```
 #
-# **Available techniques:** ALL, SIMPLE, COMPLEX, PromptSending, ManyShot, SkeletonKey, RolePlay
+# **Available techniques:** ALL, DEFAULT (`prompt_sending` + `jailbreak_system_prompt`), plus registry
+# techniques (`role_play_*`, `many_shot`, `tap`, …). By default a small random sample of jailbreak
+# templates runs; pass `num_jailbreaks` (random count) or `jailbreak_names` (explicit) to widen or
+# pin the selection.
 
 # %%
 from pyrit.scenario.airt import Jailbreak, JailbreakTechnique
 
-dataset_config = DatasetAttackConfiguration(dataset_names=["airt_harms"], max_dataset_size=1)
+dataset_config = DatasetAttackConfiguration(dataset_names=["harmbench"], max_dataset_size=1)
 
 scenario = Jailbreak()
 scenario.set_params_from_args(  # type: ignore
     args={
         "objective_target": objective_target,
-        "scenario_techniques": [JailbreakTechnique.PromptSending],
+        "scenario_techniques": [JailbreakTechnique.DEFAULT],
+        "jailbreak_names": ["aim.yaml"],
         "dataset_config": dataset_config,
     }
 )

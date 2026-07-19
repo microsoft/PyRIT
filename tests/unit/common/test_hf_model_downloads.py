@@ -3,17 +3,11 @@
 
 import os
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
-# Import functions to test from local application files
-from pyrit.common.download_hf_model import (
-    download_chunk_async,
-    download_file_async,
-    download_files_async,
-    download_specific_files_async,
-)
+from pyrit.common.download_hf_model import download_specific_files_async
 
 # Define constants for testing
 MODEL_ID = "microsoft/Phi-3-mini-4k-instruct"
@@ -31,7 +25,6 @@ FILE_PATTERNS = [
 @pytest.fixture(scope="module")
 def setup_environment():
     """Fixture to set up the environment for Hugging Face downloads."""
-    # Check for Hugging Face token
     with patch.dict(os.environ, {"HUGGINGFACE_TOKEN": "mocked_token"}):
         token = os.getenv("HUGGINGFACE_TOKEN")
         yield token
@@ -40,65 +33,17 @@ def setup_environment():
 async def test_download_specific_files_async(setup_environment):
     """Test downloading specific files"""
     token = setup_environment  # Get the token from the fixture
-
-    with patch("os.makedirs"), patch("pyrit.common.download_hf_model.download_files_async"):
-        await download_specific_files_async(MODEL_ID, FILE_PATTERNS, token, Path(""))
-
-
-async def test_download_files_async_dispatches_one_call_per_url():
-    """Exercise the nested download_with_limit_async helper plus asyncio.gather."""
-    seen_urls: list[str] = []
-
-    async def fake_file_async(url, token, download_dir, num_splits):
-        seen_urls.append(url)
-
-    with patch("pyrit.common.download_hf_model.download_file_async", new=fake_file_async):
-        urls = ["https://example/a", "https://example/b", "https://example/c"]
-        await download_files_async(urls, "token", Path("/tmp"), num_splits=2, parallel_downloads=2)
-
-    assert sorted(seen_urls) == sorted(urls)
-
-
-async def test_download_file_async_schedules_one_chunk_per_split(tmp_path):
-    """Exercise the chunk-task assembly inside download_file_async."""
-    num_splits = 3
-    file_size = 30
-    chunk_bytes = b"abcdefghij"
-
-    head_response = MagicMock()
-    head_response.raise_for_status = MagicMock()
-    head_response.headers = {"Content-Length": str(file_size)}
-
-    client_instance = MagicMock()
-    client_instance.head = AsyncMock(return_value=head_response)
-
-    class _ClientCM:
-        async def __aenter__(self):
-            return client_instance
-
-        async def __aexit__(self, exc_type, exc, tb):
-            return False
+    cache_dir = Path("model-cache")
 
     with (
-        patch("pyrit.common.download_hf_model.httpx.AsyncClient", return_value=_ClientCM()),
-        patch("pyrit.common.download_hf_model.download_chunk_async", new_callable=AsyncMock) as mock_chunk_async,
+        patch("pathlib.Path.mkdir"),
+        patch("pyrit.common.download_hf_model.snapshot_download") as snapshot_download_mock,
     ):
-        mock_chunk_async.return_value = chunk_bytes
-        await download_file_async("https://example/myfile.bin", "token", tmp_path, num_splits)
+        await download_specific_files_async(MODEL_ID, FILE_PATTERNS, token, cache_dir)
 
-    assert mock_chunk_async.await_count == num_splits
-    assert (tmp_path / "myfile.bin").read_bytes() == chunk_bytes * num_splits
-
-
-async def test_download_chunk_async_returns_response_content():
-    """Sanity-check the real download_chunk_async implementation."""
-    response = MagicMock()
-    response.raise_for_status = MagicMock()
-    response.content = b"chunk-payload"
-    client = MagicMock()
-    client.get = AsyncMock(return_value=response)
-
-    result = await download_chunk_async("https://example/file", {"Authorization": "Bearer t"}, 0, 9, client)
-
-    assert result == b"chunk-payload"
-    client.get.assert_awaited_once()
+    snapshot_download_mock.assert_called_once_with(
+        repo_id=MODEL_ID,
+        allow_patterns=FILE_PATTERNS,
+        token=token,
+        local_dir=cache_dir,
+    )

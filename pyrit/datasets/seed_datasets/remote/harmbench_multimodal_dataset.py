@@ -14,7 +14,8 @@ from pyrit.datasets.seed_datasets.remote._image_cache import (
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import Modality, SeedDataset, SeedPrompt
+from pyrit.models import Modality, SeedDataset, SeedPrompt, SeedUnion
+from pyrit.models.harm_category import HarmCategory
 
 logger = logging.getLogger(__name__)
 
@@ -136,8 +137,21 @@ class _HarmBenchMultimodalDataset(_RemoteDatasetLoader):
             cache=cache,
         )
 
-        prompts = []
+        prompts: list[SeedUnion] = []
         failed_image_count = 0
+        harm_category_alias_overrides: dict[str, list[HarmCategory]] = {
+            "chemical_biological": [HarmCategory.CBRN],
+            "cybercrime_intrusion": [HarmCategory.COORDINATION_HARM, HarmCategory.MALWARE],
+            "harassment_bullying": [
+                HarmCategory.HARASSMENT,
+                HarmCategory.HATE_SPEECH,
+                HarmCategory.REPRESENTATIONAL,
+            ],
+            "illegal": [HarmCategory.COORDINATION_HARM],
+            "misinformation_disinformation": [HarmCategory.INFO_INTEGRITY],
+            "harmful": [HarmCategory.OTHER],
+            "copyright": [HarmCategory.COPYRIGHT],
+        }
 
         for example in examples:
             missing_keys = required_keys - example.keys()
@@ -148,6 +162,10 @@ class _HarmBenchMultimodalDataset(_RemoteDatasetLoader):
                 continue
 
             semantic_category = example["SemanticCategory"]
+            standardized_categories = self._standardize_harm_categories(
+                semantic_category,
+                alias_overrides=harm_category_alias_overrides,
+            )
 
             # Filter by categories if specified
             if self.categories is not None:
@@ -187,13 +205,14 @@ class _HarmBenchMultimodalDataset(_RemoteDatasetLoader):
                 data_type="image_path",
                 name=f"HarmBench Multimodal Image - {behavior_id}",
                 dataset_name=self.dataset_name,
-                harm_categories=[semantic_category],
+                harm_categories=standardized_categories,
                 description=f"An image prompt from the HarmBench multimodal dataset, BehaviorID: {behavior_id}",
                 source=self.source,
                 prompt_group_id=group_id,
                 sequence=0,
                 metadata={
                     "behavior_id": behavior_id,
+                    "semantic_category": semantic_category,
                     "image_description": image_description,
                     "redacted_image_description": redacted_description,
                     "original_image_url": image_url,
@@ -208,13 +227,14 @@ class _HarmBenchMultimodalDataset(_RemoteDatasetLoader):
                 data_type="text",
                 name=f"HarmBench Multimodal Text - {behavior_id}",
                 dataset_name=self.dataset_name,
-                harm_categories=[semantic_category],
+                harm_categories=standardized_categories,
                 description=f"A text prompt from the HarmBench multimodal dataset, BehaviorID: {behavior_id}",
                 source=self.source,
                 prompt_group_id=group_id,
                 sequence=0,
                 metadata={
                     "behavior_id": behavior_id,
+                    "semantic_category": semantic_category,
                 },
                 authors=self._AUTHORS,
                 groups=self._GROUPS,

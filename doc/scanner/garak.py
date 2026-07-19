@@ -5,7 +5,7 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.19.1
+#       jupytext_version: 1.19.4
 # ---
 
 # %% [markdown]
@@ -48,6 +48,11 @@ objective_target = TargetRegistry.get_registry_singleton().instances.get("openai
 # **Available techniques** (17 encodings): Base64, Base2048, Base16, Base32, ASCII85, Hex,
 # QuotedPrintable, UUencode, ROT13, Braille, Atbash, MorseCode, NATO, Ecoji, Zalgo, LeetSpeak,
 # AsciiSmuggler
+#
+# **Aggregate techniques:** `ALL` (every encoding, exhaustive) and `DEFAULT` (a broad curated subset
+# spanning every encoding family — base-N, byte-encodings, substitution ciphers, and symbolic
+# alphabets — for a meaningful default scan; the niche/lossy schemes are ALL-only). `DEFAULT` is used
+# when no techniques are specified.
 #
 # > **Note:** Technique composition is NOT supported for Encoding — each encoding is tested
 # > independently.

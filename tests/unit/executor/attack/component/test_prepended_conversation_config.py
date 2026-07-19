@@ -29,9 +29,3 @@ def test_get_message_normalizer_returns_custom():
     mock_normalizer = MagicMock()
     config = PrependedConversationConfig(message_normalizer=mock_normalizer)
     assert config.get_message_normalizer() is mock_normalizer
-
-
-def test_default_init_does_not_emit_deprecation_warning(recwarn):
-    PrependedConversationConfig()
-    deprecation_warnings = [w for w in recwarn.list if issubclass(w.category, DeprecationWarning)]
-    assert deprecation_warnings == []

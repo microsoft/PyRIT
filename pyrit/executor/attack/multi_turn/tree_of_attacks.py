@@ -577,9 +577,6 @@ class _TreeOfAttacksNode:
             objective_target_conversation_id=self.objective_target_conversation_id,
             objective=self._objective,
         ):
-            if self._memory_labels:
-                for piece in message.message_pieces:
-                    piece.labels = self._memory_labels
             response = await self._prompt_normalizer.send_prompt_async(
                 message=message,
                 request_converter_configurations=self._request_converters,
@@ -656,9 +653,6 @@ class _TreeOfAttacksNode:
             objective_target_conversation_id=self.objective_target_conversation_id,
             objective=self._objective,
         ):
-            if self._memory_labels:
-                for piece in message.message_pieces:
-                    piece.labels = self._memory_labels
             response = await self._prompt_normalizer.send_prompt_async(
                 message=message,
                 request_converter_configurations=self._request_converters,

@@ -115,6 +115,26 @@ class ScenarioTechnique(Enum, metaclass=_DeprecatedEnumMeta):
         return self._tags
 
     @classmethod
+    def default(cls: type[T]) -> T:
+        """
+        Return the technique member used when the caller selects nothing.
+
+        The default is a property of the technique catalog, not of the scenario that
+        consumes it. Dynamically built classes have their default recorded by
+        ``build_technique_class_from_factories`` (stored as ``_default_technique_value``).
+        Statically declared subclasses whose default is not ``ALL`` override this
+        classmethod to return their default member; everything else falls back to ``ALL``,
+        which every catalog always contains.
+
+        Returns:
+            T: The default technique member.
+        """
+        value = getattr(cls, "_default_technique_value", None)
+        if value is not None:
+            return cls(value)
+        return cls["ALL"]
+
+    @classmethod
     def get_aggregate_tags(cls: type[T]) -> set[str]:
         """
         Get the set of tags that represent aggregate categories.
