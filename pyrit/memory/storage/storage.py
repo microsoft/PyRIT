@@ -25,8 +25,40 @@ class SupportedContentType(Enum):
     See all options here: https://www.iana.org/assignments/media-types/media-types.xhtml.
     """
 
-    # TODO, add other media supported types
+    # Text types
     PLAIN_TEXT = "text/plain"
+    HTML = "text/html"
+    JSON = "application/json"
+    XML = "application/xml"
+    CSV = "text/csv"
+    MARKDOWN = "text/markdown"
+
+    # Image types
+    PNG = "image/png"
+    JPEG = "image/jpeg"
+    GIF = "image/gif"
+    WEBP = "image/webp"
+    SVG = "image/svg+xml"
+    BMP = "image/bmp"
+
+    # Audio types
+    WAV = "audio/wav"
+    MP3 = "audio/mpeg"
+    OGG = "audio/ogg"
+    FLAC = "audio/flac"
+    M4A = "audio/mp4"
+
+    # Video types
+    MP4 = "video/mp4"
+    WEBM = "video/webm"
+    OGG_VIDEO = "video/ogg"
+    AVI = "video/x-msvideo"
+
+    # Document types
+    PDF = "application/pdf"
+    ZIP = "application/zip"
+    TAR = "application/x-tar"
+    GZIP = "application/gzip"
 
 
 class StorageIO(ABC):
@@ -211,7 +243,9 @@ class AzureBlobStorageIO(StorageIO):
 
         from azure.identity.aio import DefaultAzureCredential
 
-        logger.info("SAS token not provided. Using DefaultAzureCredential for direct Entra ID authentication.")
+        logger.info(
+            "SAS token not provided. Using DefaultAzureCredential for direct Entra ID authentication."
+        )
         parsed_url = urlparse(self._container_url)
         path_parts = [part for part in parsed_url.path.split("/") if part]
         if not path_parts:
@@ -240,7 +274,9 @@ class AzureBlobStorageIO(StorageIO):
             if credential:
                 await credential.close()
 
-    async def _upload_blob_async(self, file_name: str, data: bytes, content_type: str) -> None:
+    async def _upload_blob_async(
+        self, file_name: str, data: bytes, content_type: str
+    ) -> None:
         """
         (Async) Handles uploading blob to given storage container.
 
@@ -383,7 +419,9 @@ class AzureBlobStorageIO(StorageIO):
             self._client_async = await self._create_container_client_async()
         blob_name = self._resolve_blob_name(path)
         try:
-            await self._upload_blob_async(file_name=blob_name, data=data, content_type=self._blob_content_type)
+            await self._upload_blob_async(
+                file_name=blob_name, data=data, content_type=self._blob_content_type
+            )
         except Exception as exc:
             logger.exception(f"Failed to write file at {blob_name}: {exc}")
             raise
