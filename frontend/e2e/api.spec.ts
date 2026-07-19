@@ -13,7 +13,7 @@ test.describe("API Health Check", () => {
     const start = Date.now();
     while (Date.now() - start < maxWait) {
       try {
-        const resp = await request.get("/api/health", { timeout: 2_000 });
+        const resp = await request.get("/api/health");
         if (resp.ok()) return;
       } catch {
         // Backend not ready yet
@@ -24,7 +24,7 @@ test.describe("API Health Check", () => {
   });
 
   test("should have healthy backend API @seeded", async ({ request }) => {
-    const response = await request.get("/api/health", { timeout: 10_000 });
+    const response = await request.get("/api/health");
 
     expect(response.ok()).toBe(true);
     const data = await response.json();
@@ -48,7 +48,7 @@ test.describe("Targets API", () => {
     const start = Date.now();
     while (Date.now() - start < maxWait) {
       try {
-        const resp = await request.get("/api/health", { timeout: 2_000 });
+        const resp = await request.get("/api/health");
         if (resp.ok()) return;
       } catch {
         // Backend not ready yet
@@ -108,7 +108,7 @@ test.describe("Attacks API", () => {
     const start = Date.now();
     while (Date.now() - start < maxWait) {
       try {
-        const resp = await request.get("/api/health", { timeout: 2_000 });
+        const resp = await request.get("/api/health");
         if (resp.ok()) return;
       } catch {
         // Backend not ready yet

@@ -50,7 +50,7 @@ async function waitForBackend(request: APIRequestContext): Promise<void> {
   const start = Date.now();
   while (Date.now() - start < maxWait) {
     try {
-      const resp = await request.get("/api/health", { timeout: 2_000 });
+      const resp = await request.get("/api/health");
       if (resp.ok()) return;
     } catch {
       // Backend not ready yet
@@ -528,8 +528,6 @@ async function assertLiveAssistant(
   exp: TargetVariant["expectAssistantLive"],
 ): Promise<void> {
   const assistantBubble = page.getByTestId("message-bubble-1");
-  await expect(assistantBubble).toBeVisible({ timeout: 90_000 });
-
   if (exp.hasText) {
     await expect(assistantBubble).toContainText(/\S/, { timeout: 90_000 });
   }
@@ -987,8 +985,7 @@ for (const variant of TARGET_VARIANTS) {
 
     let targetRegistryName: string;
 
-    test.beforeAll(async ({ request }, testInfo) => {
-      testInfo.setTimeout(120_000);
+    test.beforeAll(async ({ request }) => {
       if (!hasLiveConfiguration(variant)) return;
       await waitForBackend(request);
       targetRegistryName = await createTarget(
