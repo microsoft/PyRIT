@@ -33,7 +33,7 @@ class AddTextImageConverter(_BaseImageTextConverter):
         self,
         *,
         text_to_add: str,
-        font_name: str = "helvetica.ttf",
+        font_name: str | None = None,
         color: tuple[int, int, int] = (0, 0, 0),
         font_size: int = 15,
         x_pos: int = 10,
@@ -44,7 +44,8 @@ class AddTextImageConverter(_BaseImageTextConverter):
 
         Args:
             text_to_add (str): Text to add to an image.
-            font_name (str): Path of font to use. Must be a TrueType font (.ttf). Defaults to "helvetica.ttf".
+            font_name (str | None): Path of font to use. Must be a TrueType font (.ttf).
+                Defaults to None which uses Pillow's built-in default font.
             color (tuple): Color to print text in, using RGB values. Defaults to (0, 0, 0).
             font_size (int): Size of font to use. Defaults to 15.
             x_pos (int): X coordinate to place text in (0 is left most). Defaults to 10.
@@ -55,11 +56,12 @@ class AddTextImageConverter(_BaseImageTextConverter):
         """
         if text_to_add.strip() == "":
             raise ValueError("Please provide valid text_to_add value")
-        if not font_name.endswith(".ttf"):
+        if font_name is not None and not font_name.endswith(".ttf"):
             raise ValueError("The specified font must be a TrueType font with a .ttf extension")
         self._text_to_add = text_to_add
         self._font_name = font_name
         self._font_size = font_size
+        self._font_load_failed = font_name is None
         self._font = self._load_font()
         self._color = color
         self._x_pos = x_pos
@@ -91,10 +93,13 @@ class AddTextImageConverter(_BaseImageTextConverter):
         Returns:
             FreeTypeFont: The loaded font object. Falls back to Pillow's built-in default font on error.
         """
+        if self._font_load_failed:
+            return cast("FreeTypeFont", ImageFont.load_default(size=self._font_size))
         try:
-            return ImageFont.truetype(self._font_name, self._font_size)
+            return ImageFont.truetype(self._font_name, self._font_size)  # type: ignore[ty:invalid-argument-type]
         except OSError:
             logger.warning(f"Cannot open font resource: {self._font_name}. Using Pillow built-in default font.")
+            self._font_load_failed = True
             return cast("FreeTypeFont", ImageFont.load_default(size=self._font_size))
 
     def _add_text_to_image(self, image: Image.Image) -> Image.Image:

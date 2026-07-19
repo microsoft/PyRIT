@@ -19,18 +19,20 @@ def text_image_converter_sample_image_bytes():
     return img_bytes.getvalue()
 
 
-def test_add_text_image_converter_initialization():
+def test_add_text_image_converter_initialization(caplog):
     converter = AddTextImageConverter(
-        text_to_add="Sample text", font_name="helvetica.ttf", color=(255, 255, 255), font_size=20, x_pos=10, y_pos=10
+        text_to_add="Sample text", color=(255, 255, 255), font_size=20, x_pos=10, y_pos=10
     )
     assert converter._text_to_add == "Sample text"
-    assert converter._font_name == "helvetica.ttf"
+    assert converter._font_name is None
     assert converter._color == (255, 255, 255)
     assert converter._font_size == 20
     assert converter._x_pos == 10
     assert converter._y_pos == 10
     assert converter._font is not None
     assert type(converter._font) is ImageFont.FreeTypeFont
+    # The default (None) uses Pillow's built-in font directly, so no font-loading warning is emitted.
+    assert not any("Cannot open font resource" in record.message for record in caplog.records)
 
 
 def test_add_text_image_converter_invalid_font():
@@ -40,7 +42,7 @@ def test_add_text_image_converter_invalid_font():
 
 def test_add_text_image_converter_invalid_text_to_add():
     with pytest.raises(ValueError):
-        AddTextImageConverter(text_to_add="", font_name="helvetica.ttf")
+        AddTextImageConverter(text_to_add="")
 
 
 def test_add_text_image_converter_fallback_to_default_font(text_image_converter_sample_image_bytes, caplog):
@@ -66,7 +68,7 @@ def test_add_text_image_converter_fallback_to_default_font(text_image_converter_
 
 
 def test_text_image_converter_add_text_to_image(text_image_converter_sample_image_bytes):
-    converter = AddTextImageConverter(text_to_add="Hello, World!", font_name="helvetica.ttf", color=(255, 255, 255))
+    converter = AddTextImageConverter(text_to_add="Hello, World!", color=(255, 255, 255))
     image = Image.open(BytesIO(text_image_converter_sample_image_bytes))
     try:
         pixels_before = list(image.get_flattened_data())
