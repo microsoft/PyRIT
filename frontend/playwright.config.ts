@@ -1,12 +1,5 @@
 import { defineConfig, devices } from "@playwright/test";
 
-const frontendPort = Number.parseInt(process.env.E2E_FRONTEND_PORT ?? "3000", 10);
-if (!Number.isInteger(frontendPort) || frontendPort < 1 || frontendPort > 65535) {
-  throw new Error("E2E_FRONTEND_PORT must be a valid TCP port.");
-}
-
-const frontendOrigin = `http://localhost:${frontendPort}`;
-const useDedicatedVite = Boolean(process.env.CI) || process.env.E2E_FRONTEND_PORT !== undefined;
 const CI_SEEDED_MODE =
   !!process.env.CI && process.env.E2E_SEEDED_MODE === "true";
 const E2E_BACKEND_PORT = process.env.PYRIT_E2E_BACKEND_PORT ?? "18000";
@@ -26,7 +19,7 @@ export default defineConfig({
   timeout: 30000,
 
   use: {
-    baseURL: frontendOrigin,
+    baseURL: "http://localhost:3000",
     trace: "on-first-retry",
     screenshot: "only-on-failure",
     // Pre-set localStorage so the onboarding tour doesn't auto-start and
@@ -35,7 +28,7 @@ export default defineConfig({
       cookies: [],
       origins: [
         {
-          origin: frontendOrigin,
+          origin: "http://localhost:3000",
           localStorage: [
             { name: "pyrit-tour-completed", value: "true" },
           ],
@@ -54,15 +47,11 @@ export default defineConfig({
       name: "seeded",
       use: { ...devices["Desktop Chrome"] },
       grep: /@seeded/,
-      fullyParallel: false,
-      workers: 1,
     },
     {
       name: "live",
       use: { ...devices["Desktop Chrome"] },
       grep: /@live/,
-      fullyParallel: false,
-      workers: 1,
     },
     // Firefox can be enabled by installing: npx playwright install firefox
     // {
@@ -85,21 +74,21 @@ export default defineConfig({
           timeout: 120_000,
         },
         {
-          command: `npx vite --host 127.0.0.1 --port ${frontendPort} --strictPort`,
+          command: "npx vite --host 127.0.0.1 --port 3000 --strictPort",
           env: { PYRIT_BACKEND_URL: E2E_BACKEND_URL },
           // Use 127.0.0.1 to avoid Node.js 17+ resolving localhost to IPv6 ::1
-          url: `http://127.0.0.1:${frontendPort}`,
+          url: "http://127.0.0.1:3000",
           reuseExistingServer: false,
           timeout: 120_000,
         },
       ]
     : {
         // Mock CI needs only Vite. Local seeded/live runs use dev.py.
-        command: useDedicatedVite
-          ? `npx vite --host 127.0.0.1 --port ${frontendPort} --strictPort`
+        command: process.env.CI
+          ? "npx vite --port 3000"
           : "python dev.py",
-        url: `http://127.0.0.1:${frontendPort}`,
-        reuseExistingServer: !useDedicatedVite,
+        url: "http://127.0.0.1:3000",
+        reuseExistingServer: !process.env.CI,
         timeout: 120_000,
       },
 });
