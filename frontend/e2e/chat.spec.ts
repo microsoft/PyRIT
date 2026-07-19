@@ -516,57 +516,65 @@ test.describe("Multi-modal: Image response", () => {
     const actions = bubble.locator('[data-testid^="message-actions-"]');
     await expect(bubble).toBeVisible();
     await expect(actions).toBeVisible();
-    const layoutBounds = await img.evaluate((image) => {
-      const bubbleElement = image.closest('[data-testid^="message-bubble-"]');
-      const actionsElement = bubbleElement?.querySelector('[data-testid^="message-actions-"]');
-      if (!bubbleElement || !actionsElement) {
-        return null;
+    await expect(async () => {
+      const layoutBounds = await img.evaluate((image) => {
+        const bubbleElement = image.closest('[data-testid^="message-bubble-"]');
+        const actionsElement = bubbleElement?.querySelector('[data-testid^="message-actions-"]');
+        if (!bubbleElement || !actionsElement) {
+          return null;
+        }
+
+        const imageRect = image.getBoundingClientRect();
+        const bubbleRect = bubbleElement.getBoundingClientRect();
+        const actionsRect = actionsElement.getBoundingClientRect();
+        return {
+          image: {
+            x: imageRect.x,
+            width: imageRect.width,
+            height: imageRect.height,
+          },
+          bubble: {
+            x: bubbleRect.x,
+            width: bubbleRect.width,
+          },
+          actions: {
+            x: actionsRect.x,
+            width: actionsRect.width,
+          },
+        };
+      });
+      if (!layoutBounds) {
+        throw new Error("Expected image message layout bounds");
       }
+      const { image: imageBounds, bubble: bubbleBounds, actions: actionBounds } = layoutBounds;
 
-      const imageRect = image.getBoundingClientRect();
-      const bubbleRect = bubbleElement.getBoundingClientRect();
-      const actionsRect = actionsElement.getBoundingClientRect();
-      return {
-        image: {
-          x: imageRect.x,
-          width: imageRect.width,
-          height: imageRect.height,
-        },
-        bubble: {
-          x: bubbleRect.x,
-          width: bubbleRect.width,
-        },
-        actions: {
-          x: actionsRect.x,
-          width: actionsRect.width,
-        },
-      };
-    });
-    if (!layoutBounds) {
-      throw new Error("Expected image message layout bounds");
-    }
-    const { image: imageBounds, bubble: bubbleBounds, actions: actionBounds } = layoutBounds;
+      expect(imageBounds.width).toBeGreaterThan(0);
+      expect(imageBounds.height).toBeGreaterThan(0);
+      expect(imageBounds.x).toBeGreaterThanOrEqual(bubbleBounds.x);
+      expect(imageBounds.x + imageBounds.width).toBeLessThanOrEqual(
+        bubbleBounds.x + bubbleBounds.width + 1,
+      );
+      expect(Math.abs(imageBounds.width / imageBounds.height - 4 / 3)).toBeLessThan(0.02);
+      expect(actionBounds.x + actionBounds.width).toBeLessThanOrEqual(
+        bubbleBounds.x + bubbleBounds.width + 1,
+      );
 
-    expect(imageBounds.x).toBeGreaterThanOrEqual(bubbleBounds.x);
-    expect(imageBounds.x + imageBounds.width).toBeLessThanOrEqual(
-      bubbleBounds.x + bubbleBounds.width + 1,
-    );
-    expect(Math.abs(imageBounds.width / imageBounds.height - 4 / 3)).toBeLessThan(0.02);
-    expect(actionBounds.x + actionBounds.width).toBeLessThanOrEqual(
-      bubbleBounds.x + bubbleBounds.width + 1,
-    );
-
-    const hasHorizontalOverflow = await page.getByTestId("message-list").evaluate(
-      (element) => element.scrollWidth > element.clientWidth + 1,
-    );
-    expect(hasHorizontalOverflow).toBe(false);
+      const hasHorizontalOverflow = await page.getByTestId("message-list").evaluate(
+        (element) => element.scrollWidth > element.clientWidth + 1,
+      );
+      expect(hasHorizontalOverflow).toBe(false);
+    }).toPass({ timeout: 10000 });
 
     await page.setViewportSize({ width: 1024, height: 768 });
-    const desktopImageBounds = await img.boundingBox();
-    if (!desktopImageBounds) {
-      throw new Error("Expected desktop image layout bounds");
-    }
-    expect(desktopImageBounds.width).toBeLessThanOrEqual(400);
+    await expect(async () => {
+      const desktopImageBounds = await img.boundingBox();
+      if (!desktopImageBounds) {
+        throw new Error("Expected desktop image layout bounds");
+      }
+      expect(desktopImageBounds.width).toBeGreaterThan(0);
+      expect(desktopImageBounds.height).toBeGreaterThan(0);
+      expect(desktopImageBounds.width).toBeLessThanOrEqual(400);
+    }).toPass({ timeout: 10000 });
   });
 });
 
