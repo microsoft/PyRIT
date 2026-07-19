@@ -49,15 +49,6 @@ from pyrit.models.identifiers import (
     snake_case_to_class_name,
     validate_registry_name,
 )
-from pyrit.models.json_schema_definition import (
-    COMMON_JSON_SCHEMAS,
-    JSON_SCHEMA_METADATA_KEY,
-    SEED_RESPONSE_JSON_SCHEMA_METADATA_KEY,
-    JsonSchemaDefinition,
-    get_common_json_schema,
-    register_common_json_schema,
-    unregister_common_json_schema,
-)
 from pyrit.models.literals import (
     MEDIA_PATH_DATA_TYPES,
     ChatMessageRole,
@@ -84,6 +75,7 @@ from pyrit.models.messages.chat_message import (
     ToolCall,
 )
 from pyrit.models.messages.conversation_reference import ConversationReference, ConversationType
+from pyrit.models.messages.conversation_retry import ConversationRetry, ConversationRetryReason
 from pyrit.models.parameter import (
     ComponentType,
     Parameter,
@@ -101,10 +93,10 @@ from pyrit.models.score import Score, ScoreType, UnvalidatedScore
 # Seeds - import from new seeds submodule for forward compatibility
 # Also keep imports from old locations for backward compatibility
 from pyrit.models.seeds import (
+    AttackSeedGroup,
+    AttackTechniqueSeedGroup,
     NextMessageSystemPromptPaths,
     Seed,
-    SeedAttackGroup,
-    SeedAttackTechniqueGroup,
     SeedDataset,
     SeedGroup,
     SeedObjective,
@@ -114,7 +106,19 @@ from pyrit.models.seeds import (
     SimulatedTargetSystemPromptPaths,
     group_seeds_into_attack_groups,
 )
-from pyrit.models.target_capabilities import CapabilityName, TargetCapabilities
+from pyrit.models.target import (
+    COMMON_JSON_SCHEMAS,
+    JSON_SCHEMA_METADATA_KEY,
+    SEED_RESPONSE_JSON_SCHEMA_METADATA_KEY,
+    CapabilityName,
+    JsonResponseConfig,
+    JsonSchemaDefinition,
+    TargetCapabilities,
+    TokenUsage,
+    get_common_json_schema,
+    register_common_json_schema,
+    unregister_common_json_schema,
+)
 
 __all__ = [
     "ALLOWED_CHAT_MESSAGE_ROLES",
@@ -138,6 +142,8 @@ __all__ = [
     "ConverterIdentifier",
     "Conversation",
     "ConversationReference",
+    "ConversationRetry",
+    "ConversationRetryReason",
     "ConversationStats",
     "ConversationType",
     "construct_response_from_request",
@@ -160,6 +166,7 @@ __all__ = [
     "IdentifierType",
     "JSONValue",
     "COMMON_JSON_SCHEMAS",
+    "JsonResponseConfig",
     "get_common_json_schema",
     "register_common_json_schema",
     "unregister_common_json_schema",
@@ -191,8 +198,8 @@ __all__ = [
     "ScenarioResult",
     "ScenarioRunState",
     "Seed",
-    "SeedAttackGroup",
-    "SeedAttackTechniqueGroup",
+    "AttackSeedGroup",
+    "AttackTechniqueSeedGroup",
     "SeedObjective",
     "SeedPrompt",
     "SeedDataset",
@@ -210,6 +217,8 @@ __all__ = [
     "TARGET_EVAL_PARAMS",
     "TargetCapabilities",
     "TargetIdentifier",
+    "TextDataTypeSerializer",
+    "TokenUsage",
     "ToolCall",
     "UnvalidatedScore",
     "validate_registry_name",

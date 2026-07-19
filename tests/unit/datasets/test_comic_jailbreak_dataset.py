@@ -132,8 +132,9 @@ class TestComicJailbreakDataset:
             if isinstance(seed, SeedPrompt):
                 assert seed.metadata["template"] == "article"
                 assert seed.metadata["behavior"] == "Defamation"
+                assert seed.metadata["category"] == "Harassment/Discrimination"
                 assert "goal" in seed.metadata
-            assert seed.harm_categories == ["Harassment/Discrimination"]
+            assert seed.harm_categories == ["HARASSMENT", "HATE_SPEECH", "REPRESENTATIONAL"]
 
     async def test_fetch_dataset_authors(self):
         mock_data = [_make_example()]
@@ -169,6 +170,34 @@ class TestComicJailbreakDataset:
         ):
             with pytest.raises(ValueError, match="SeedDataset cannot be empty"):
                 await loader.fetch_dataset_async()
+
+    @pytest.mark.parametrize(
+        ("native_label", "expected"),
+        [
+            ("Disinformation", ["INFO_INTEGRITY"]),
+            ("Economic harm", ["SCAMS"]),
+            ("Expert advice", ["HEALTH_DIAGNOSIS", "LEGAL_ADVICE", "FINANCIAL_ADVICE"]),
+            ("Fraud/Deception", ["SCAMS", "DECEPTION"]),
+            ("Government decision-making", ["HIGH_RISK_GOVERNMENT"]),
+            ("Harassment/Discrimination", ["HARASSMENT", "HATE_SPEECH", "REPRESENTATIONAL"]),
+            ("Malware-Hacking", ["MALWARE"]),
+            ("Malware/Hacking", ["MALWARE"]),
+            ("Physical harm", ["VIOLENT_CONTENT", "COORDINATION_HARM"]),
+            ("Privacy", ["PPI"]),
+            ("Sexual-Adult", ["SEXUAL_CONTENT"]),
+            ("Sexual/Adult content", ["SEXUAL_CONTENT"]),
+        ],
+    )
+    def test_harm_category_alias_overrides_cover_comic_jailbreak_categories(self, native_label, expected):
+        loader = _ComicJailbreakDataset()
+
+        assert (
+            loader._standardize_harm_categories(
+                native_label,
+                alias_overrides=loader.HARM_CATEGORY_ALIAS_OVERRIDES,
+            )
+            == expected
+        )
 
     async def test_fetch_dataset_respects_max_examples(self):
         """max_examples caps the number of source goals that get rendered."""

@@ -25,9 +25,9 @@ from pyrit.models import (
     AtomicAttackIdentifier,
     AttackOutcome,
     AttackResult,
+    AttackSeedGroup,
     Message,
     Score,
-    SeedAttackGroup,
 )
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import CapabilityName, PromptTarget
@@ -54,7 +54,7 @@ class MultiPromptSendingAttackParameters(AttackParameters):
     @classmethod
     async def from_seed_group_async(
         cls: type[MultiPromptSendingAttackParameters],
-        seed_group: SeedAttackGroup,
+        seed_group: AttackSeedGroup,
         *,
         adversarial_chat: PromptTarget | None = None,
         objective_scorer: TrueFalseScorer | None = None,
@@ -360,9 +360,6 @@ class MultiPromptSendingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[An
             objective_target_conversation_id=context.session.conversation_id,
             objective=context.objective,
         ):
-            if context.memory_labels:
-                for piece in current_message.message_pieces:
-                    piece.labels = context.memory_labels
             return await self._prompt_normalizer.send_prompt_async(
                 message=current_message,
                 target=self._objective_target,

@@ -9,7 +9,7 @@
 # ---
 
 # %% [markdown]
-# # 4. Contributing Datasets to PyRIT
+# # Contributing Datasets to PyRIT
 #
 # PyRIT is designed as a flexible framework that doesn't dictate what you should test, but instead makes it easy to test whatever you need. One of the most common contributions to PyRIT is adding new datasets that others can benefit from.
 #

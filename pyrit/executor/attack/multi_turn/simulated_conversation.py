@@ -105,8 +105,8 @@ async def generate_simulated_conversation_async(
         simulated_target_system_prompt_path=simulated_target_system_prompt_path,
     )
 
-    # Create adversarial config for the simulation. Load the optional system prompt path into a
-    # SeedPrompt so we use the inline ``system_prompt`` field (``system_prompt_path`` is deprecated).
+    # Create adversarial config for the simulation. Load the optional path into a SeedPrompt so the
+    # resolved prompt is stored directly on the configuration.
     adversarial_system_prompt = (
         SeedPrompt.from_yaml_file(adversarial_chat_system_prompt_path) if adversarial_chat_system_prompt_path else None
     )

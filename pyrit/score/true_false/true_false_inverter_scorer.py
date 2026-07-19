@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 import uuid
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from pyrit.prompt_target import PromptTarget
@@ -45,7 +45,7 @@ class TrueFalseInverterScorer(TrueFalseScorer):
             sub_scorers=[self._scorer.get_identifier()],
         )
 
-    def get_chat_target(self) -> Optional["PromptTarget"]:
+    def get_chat_target(self) -> "PromptTarget | None":
         """
         Delegate to the wrapped scorer.
 

@@ -24,7 +24,7 @@ from pyrit.executor.attack.core.attack_executor import AttackExecutorResult
 from pyrit.models import (
     AttackOutcome,
     AttackResult,
-    SeedAttackGroup,
+    AttackSeedGroup,
     SeedObjective,
     SeedPrompt,
 )
@@ -50,9 +50,9 @@ def create_attack_result(objective: str) -> AttackResult:
     )
 
 
-def create_seed_group(objective: str) -> SeedAttackGroup:
+def create_seed_group(objective: str) -> AttackSeedGroup:
     """Create a seed attack group with an objective."""
-    return SeedAttackGroup(
+    return AttackSeedGroup(
         seeds=[
             SeedObjective(value=objective),
             SeedPrompt(value=objective, data_type="text"),
@@ -335,9 +335,9 @@ class TestExecuteAttackFromSeedGroupsAsync:
 
     async def test_validates_seed_group_has_objective(self):
         """Test that seed groups without objectives raise ValueError at construction."""
-        # SeedAttackGroup now validates exactly one objective at construction
+        # AttackSeedGroup now validates exactly one objective at construction
         with pytest.raises(ValueError, match="must have exactly one objective"):
-            SeedAttackGroup(seeds=[SeedPrompt(value="test", data_type="text")])
+            AttackSeedGroup(seeds=[SeedPrompt(value="test", data_type="text")])
 
     async def test_passes_broadcast_fields(self):
         """Test that broadcast fields are passed to all seed groups."""

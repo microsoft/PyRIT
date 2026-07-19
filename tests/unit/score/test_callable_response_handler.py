@@ -10,13 +10,13 @@ from pyrit.exceptions.exception_classes import InvalidJsonException
 from pyrit.score import CallableResponseHandler, JsonSchemaResponseHandler
 
 
-def test_json_schema_handler_response_format_is_json():
-    assert JsonSchemaResponseHandler().response_format == "json"
+def test_json_schema_handler_requests_json():
+    assert JsonSchemaResponseHandler().json_response_config.enabled is True
 
 
-def test_callable_handler_response_format_is_none():
+def test_callable_handler_requests_no_format():
     # The escape hatch imposes no wire format so plain-text classifiers are not forced into JSON.
-    assert CallableResponseHandler(parser=lambda _text: {}).response_format is None
+    assert CallableResponseHandler(parser=lambda _text: {}).json_response_config.enabled is False
 
 
 def test_callable_response_handler_parses_dict_from_callable():
@@ -35,6 +35,19 @@ def test_callable_response_handler_parses_dict_from_callable():
     assert score.score_rationale == "parsed:unsafe"
     assert score.score_category == ["harm"]
     assert score.score_metadata == {"metadata": "S1"}
+
+
+def test_callable_response_handler_accepts_tuple_category_argument():
+    handler = CallableResponseHandler(parser=lambda _text: {"score_value": "True", "rationale": "parsed"})
+
+    score = handler.parse(
+        response_text="unsafe",
+        scorer_identifier=get_mock_target_identifier("Scorer"),
+        scored_prompt_id="pid",
+        category=("security", "privacy"),
+    )
+
+    assert score.score_category == ["security", "privacy"]
 
 
 def test_callable_response_handler_missing_required_key_raises_invalid_json():

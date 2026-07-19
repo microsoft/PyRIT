@@ -15,6 +15,7 @@ from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
 from pyrit.models import Modality, SeedDataset, SeedPrompt
+from pyrit.models.harm_category import HarmCategory
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +55,26 @@ class _VLSUMultimodalDataset(_RemoteDatasetLoader):
     Reference: [@palaskar2025vlsu]
     """
 
+    HARM_CATEGORY_ALIAS_OVERRIDES: dict[str, list[HarmCategory]] = {
+        "c1: slurs, hate speech, hate symbols": [HarmCategory.HATE_SPEECH, HarmCategory.REPRESENTATIONAL],
+        "c2: discrimination and unequal treatment": [HarmCategory.REPRESENTATIONAL, HarmCategory.HATE_SPEECH],
+        "c3: drug abuse": [HarmCategory.DRUG_USE],
+        "c4: self-harm and suicide": [HarmCategory.SELF_HARM, HarmCategory.SUICIDE],
+        "c5: animal violence and gore": [HarmCategory.VIOLENT_CONTENT],
+        "c6: adult explicit sexual material": [HarmCategory.SEXUAL_CONTENT],
+        "c7: adult racy material": [HarmCategory.SEXUAL_CONTENT],
+        "c8: warfare and armed conflicts": [HarmCategory.MILITARY],
+        "c9: interpersonal violence": [HarmCategory.VIOLENT_CONTENT],
+        "c10: weapons and dangerous objects": [HarmCategory.MILITARY],
+        "c11: gore and graphic content": [HarmCategory.VIOLENT_CONTENT],
+        "c12: terrorism and violent extremism": [HarmCategory.VIOLENT_EXTREMISM],
+        "c13: jailbreaks": [HarmCategory.DECEPTION],
+        "c14: inauthentic practices/fraud": [HarmCategory.DECEPTION, HarmCategory.SCAMS],
+        "c15: human exploitation": [HarmCategory.COORDINATION_HARM],
+    }
+    COMBINED_CATEGORY_CORRECTIONS: dict[str, str] = {
+        "2aa9226c-201d-458d-9b2e-0aa36845c763": VLSUCategory.HUMAN_EXPLOITATION.value,
+    }
     _AUTHORS = [
         "Shruti Palaskar",
         "Leon Gatys",
@@ -200,7 +221,7 @@ class _VLSUMultimodalDataset(_RemoteDatasetLoader):
         Returns:
             bool: True if the example should be included.
         """
-        combined_category = example.get("combined_category")
+        combined_category = self._get_effective_combined_category(example)
         combined_grade = example.get("consensus_combined_grade", "").lower()
 
         if self.categories is not None:
@@ -228,24 +249,29 @@ class _VLSUMultimodalDataset(_RemoteDatasetLoader):
         text_grade = example.get("consensus_text_grade", "").lower()
         image_grade = example.get("image_grade", "").lower()
         combined_grade = example.get("consensus_combined_grade", "").lower()
-        combined_category = example.get("combined_category", "")
+        raw_combined_category = example.get("combined_category", "")
+        combined_category = self._get_effective_combined_category(example)
+        standardized_harm_categories = self._standardize_combined_category(combined_category)
 
         group_id = uuid.uuid4()
         local_image_path = await self._fetch_and_save_image_async(image_url, str(group_id))
 
         metadata: dict[str, str | int] = {
             "category": combined_category,
+            "combined_category": raw_combined_category,
             "text_grade": text_grade,
             "image_grade": image_grade,
             "combined_grade": combined_grade,
         }
+        if combined_category != raw_combined_category:
+            metadata["corrected_combined_category"] = combined_category
 
         text_prompt = SeedPrompt(
             value=text,
             data_type="text",
             name="ML-VLSU Text",
             dataset_name=self.dataset_name,
-            harm_categories=[combined_category],
+            harm_categories=standardized_harm_categories,
             description="Text component of ML-VLSU multimodal prompt.",
             source=self.source,
             prompt_group_id=group_id,
@@ -260,7 +286,7 @@ class _VLSUMultimodalDataset(_RemoteDatasetLoader):
             data_type="image_path",
             name="ML-VLSU Image",
             dataset_name=self.dataset_name,
-            harm_categories=[combined_category],
+            harm_categories=standardized_harm_categories,
             description="Image component of ML-VLSU multimodal prompt.",
             source=self.source,
             prompt_group_id=group_id,
@@ -271,6 +297,19 @@ class _VLSUMultimodalDataset(_RemoteDatasetLoader):
         )
 
         return [text_prompt, image_prompt]
+
+    def _get_effective_combined_category(self, example: dict[str, str]) -> str:
+        row_uuid = example.get("uuid", "")
+        return self.COMBINED_CATEGORY_CORRECTIONS.get(row_uuid, example.get("combined_category", ""))
+
+    def _standardize_combined_category(self, combined_category: str) -> list[str]:
+        if not combined_category.strip():
+            return []
+
+        return self._standardize_harm_categories(
+            combined_category,
+            alias_overrides=self.HARM_CATEGORY_ALIAS_OVERRIDES,
+        )
 
     async def _fetch_and_save_image_async(self, image_url: str, group_id: str) -> str:
         """

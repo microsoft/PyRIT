@@ -42,12 +42,13 @@ from pyrit.converter.token_smuggling.ascii_smuggler_converter import AsciiSmuggl
 from pyrit.datasets import TextJailBreak
 from pyrit.executor.attack import CrescendoAttack, PromptSendingAttack, RedTeamingAttack, TreeOfAttacksWithPruningAttack
 from pyrit.executor.attack.core.attack_config import AttackAdversarialConfig, AttackConverterConfig, AttackScoringConfig
-from pyrit.models import SeedAttackGroup
+from pyrit.models import AttackSeedGroup
 from pyrit.prompt_normalizer.converter_configuration import ConverterConfiguration
 from pyrit.prompt_target import PromptTarget
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
+from pyrit.scenario.core.matrix_atomic_attack_builder import build_baseline_atomic_attack
 from pyrit.scenario.core.scenario import Scenario
 from pyrit.scenario.core.scenario_context import ScenarioContext
 from pyrit.scenario.core.scenario_target_defaults import get_default_adversarial_target
@@ -186,6 +187,11 @@ class FoundryTechnique(ScenarioTechnique):
         # Include base class aggregates ("all") and add Foundry-specific ones
         return super().get_aggregate_tags() | {"easy", "moderate", "difficult", "converter", "attack"}
 
+    @classmethod
+    def default(cls) -> "FoundryTechnique":
+        """Return the default technique (``EASY``) used when the caller selects nothing."""
+        return cls.EASY
+
 
 class RedTeamAgent(Scenario):
     """
@@ -242,7 +248,6 @@ class RedTeamAgent(Scenario):
         super().__init__(
             version=self.VERSION,
             technique_class=FoundryTechnique,
-            default_technique=FoundryTechnique.EASY,
             default_dataset_config=DatasetAttackConfiguration(dataset_names=["harmbench"], max_dataset_size=4),
             objective_scorer=objective_scorer,
             scenario_result_id=scenario_result_id,
@@ -348,13 +353,24 @@ class RedTeamAgent(Scenario):
             list[AtomicAttack]: The list of AtomicAttack instances in this scenario.
         """
         seed_groups = list(context.seed_groups)
-        return [
+        atomic_attacks: list[AtomicAttack] = []
+        if context.include_baseline:
+            atomic_attacks.append(
+                build_baseline_atomic_attack(
+                    objective_target=context.objective_target,
+                    objective_scorer=self._objective_scorer,
+                    seed_groups=seed_groups,
+                    memory_labels=context.memory_labels,
+                )
+            )
+        atomic_attacks.extend(
             self._get_attack_from_technique(composite=composition, seed_groups=seed_groups)
             for composition in self._scenario_composites
-        ]
+        )
+        return atomic_attacks
 
     def _get_attack_from_technique(
-        self, *, composite: FoundryComposite, seed_groups: list[SeedAttackGroup]
+        self, *, composite: FoundryComposite, seed_groups: list[AttackSeedGroup]
     ) -> AtomicAttack:
         """
         Get an atomic attack for the specified FoundryComposite.
@@ -362,7 +378,7 @@ class RedTeamAgent(Scenario):
         Args:
             composite (FoundryComposite): Typed composite with an optional attack technique
                 and zero or more converter techniques.
-            seed_groups (list[SeedAttackGroup]): Seed groups the attack draws from.
+            seed_groups (list[AttackSeedGroup]): Seed groups the attack draws from.
 
         Returns:
             AtomicAttack: The configured atomic attack.

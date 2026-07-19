@@ -7,8 +7,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
+from pyrit.models.messages.conversation_retry import (  # noqa: TC001  (runtime-required by Pydantic field annotations)
+    ConversationRetry,
+)
 from pyrit.models.messages.message import Message
 from pyrit.models.messages.message_piece import MessagePiece
 from pyrit.models.score import (  # noqa: TC001  (runtime-required by Pydantic field annotations)
@@ -25,11 +28,11 @@ class Conversation(BaseModel):
     """
     Conversation-scoped metadata shared by every piece in a conversation.
 
-    A ``Conversation`` records identifiers that belong to the conversation as a
-    whole rather than to any individual ``MessagePiece`` -- most importantly the
-    target the conversation is held with. Persisting these once per conversation
-    (instead of stamping them onto every piece/row) is what keeps ``MessagePiece``
-    small.
+    A ``Conversation`` records state that belongs to the conversation as a whole
+    rather than to any individual ``MessagePiece`` -- most importantly the target
+    the conversation is held with, plus the record of any turns that were retried.
+    Persisting the per-conversation identifiers once here (instead of stamping them
+    onto every piece/row) is what keeps ``MessagePiece`` small.
     """
 
     model_config = ConfigDict(
@@ -40,6 +43,9 @@ class Conversation(BaseModel):
 
     conversation_id: str
     target_identifier: ComponentIdentifierField | None = None
+
+    # Turns that were retried (rolled back out of memory and resent) in this conversation.
+    retries: list[ConversationRetry] = Field(default_factory=list)
 
 
 def get_all_values(messages: Sequence[Message]) -> list[str]:
@@ -230,7 +236,6 @@ def construct_response_from_request(
                 role="assistant",
                 original_value=resp_text,
                 conversation_id=request.conversation_id,
-                labels=request.labels,
                 original_value_data_type=response_type,
                 converted_value_data_type=response_type,
                 prompt_metadata=prompt_metadata or {},

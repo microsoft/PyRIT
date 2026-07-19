@@ -10,11 +10,41 @@ from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
 from pyrit.models import Modality, SeedDataset, SeedPrompt
+from pyrit.models.harm_category import HarmCategory, standardize_harm_categories
 
 if TYPE_CHECKING:
     from pyrit.models.seeds.seed_group import SeedUnion
 
 logger = logging.getLogger(__name__)
+
+
+# CCP-sensitive subjects that concern the biased or revisionist retelling of
+# controversial historical events (as opposed to present-day information
+# control). Matched as case-insensitive substrings of the dataset's own
+# ``subject`` label.
+_HISTORICAL_REVISIONISM_SUBJECT_MARKERS: tuple[str, ...] = (
+    "great leap forward",
+    "cultural revolution",
+    "tiananmen",
+    "mao zedong",
+    "1964",
+)
+
+
+def _harm_categories_for_subject(subject: str) -> list[str]:
+    """
+    Map a CCP subject to a canonical harm category.
+
+    Historical-revisionism subjects map to ``HISTORICAL_EVENTS_BIAS``; all other
+    censorship-sensitive subjects map to ``INFO_INTEGRITY``.
+
+    Returns:
+        list[str]: The standardized harm-category name(s) for the subject.
+    """
+    normalized = subject.lower()
+    if any(marker in normalized for marker in _HISTORICAL_REVISIONISM_SUBJECT_MARKERS):
+        return standardize_harm_categories([HarmCategory.HISTORICAL_EVENTS_BIAS])
+    return standardize_harm_categories([HarmCategory.INFO_INTEGRITY])
 
 
 class _CCPSensitivePromptsDataset(_RemoteDatasetLoader):
@@ -75,19 +105,29 @@ class _CCPSensitivePromptsDataset(_RemoteDatasetLoader):
             cache=cache,
         )
 
-        seed_prompts: list[SeedUnion] = [
-            SeedPrompt(
-                value=row["prompt"],
-                data_type="text",
-                dataset_name=self.dataset_name,
-                harm_categories=[row["subject"]],
-                description="Prompts covering topics sensitive to the CCP.",
-                authors=self._AUTHORS,
-                groups=self._GROUPS,
-                source=f"https://huggingface.co/datasets/{self.source}",
+        # CCP-sensitive subjects are about state censorship and information control.
+        # Subjects that revisit controversial historical events map to
+        # HISTORICAL_EVENTS_BIAS; the rest map to INFO_INTEGRITY. The dataset's own
+        # subject label is preserved in metadata either way.
+        seed_prompts: list[SeedUnion] = []
+        for row in data:
+            subject = row.get("subject") or ""
+            harm_categories = _harm_categories_for_subject(subject)
+            seed_prompts.append(
+                SeedPrompt(
+                    value=row["prompt"],
+                    data_type="text",
+                    dataset_name=self.dataset_name,
+                    harm_categories=harm_categories,
+                    description="Prompts covering topics sensitive to the CCP.",
+                    authors=self._AUTHORS,
+                    groups=self._GROUPS,
+                    source=f"https://huggingface.co/datasets/{self.source}",
+                    metadata={
+                        "subject": subject,
+                    },
+                )
             )
-            for row in data
-        ]
 
         logger.info(f"Successfully loaded {len(seed_prompts)} prompts from CCP Sensitive Prompts dataset")
 

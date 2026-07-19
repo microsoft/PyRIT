@@ -6,8 +6,15 @@ import logging
 from typing import Any, ClassVar, Literal, final
 
 from pyrit.memory import CentralMemory, MemoryInterface
-from pyrit.models import ComponentIdentifier, Conversation, Identifiable, Message, MessagePiece, TargetIdentifier
-from pyrit.prompt_target.common.json_response_config import _JsonResponseConfig
+from pyrit.models import (
+    ComponentIdentifier,
+    Conversation,
+    Identifiable,
+    JsonResponseConfig,
+    Message,
+    MessagePiece,
+    TargetIdentifier,
+)
 from pyrit.prompt_target.common.target_capabilities import (
     CapabilityName,
     TargetCapabilities,
@@ -224,7 +231,7 @@ class PromptTarget(Identifiable):
         After normalization, the metadata from the original ``message`` is copied
         onto the last normalized message so that downstream code (e.g.
         ``construct_response_from_request``) propagates the correct
-        ``conversation_id``, ``labels``, ``attack_identifier``, etc. to the response.
+        ``conversation_id`` and request lineage to the response.
 
         Args:
             message (Message): The current message to append.
@@ -253,8 +260,8 @@ class PromptTarget(Identifiable):
                 logger.warning(
                     "Normalization produced more messages than the input conversation "
                     "(%d → %d). Only the last normalized message has full lineage "
-                    "(labels, attack_identifier, etc.). Additional new messages have "
-                    "conversation_id set but require manual lineage updates if needed.",
+                    "metadata. Additional new messages have conversation_id set but "
+                    "require manual lineage updates if needed.",
                     len(conversation),
                     len(normalized),
                 )
@@ -267,9 +274,9 @@ class PromptTarget(Identifiable):
 
         Normalizers may create brand-new ``Message`` objects (e.g. ``HistorySquashNormalizer``
         uses ``Message.from_prompt``) that carry fresh random ``conversation_id`` values and
-        lack ``labels``, ``attack_identifier``, etc.  This method restores the original
-        metadata so that the response built from the normalized message stays part of the
-        correct conversation and retains traceability.
+        lack request lineage. This method restores the original metadata so that the response
+        built from the normalized message stays part of the correct conversation and retains
+        traceability.
 
         ``prompt_metadata`` is handled by provenance so that metadata-editing normalizers
         are honored. A piece that shares the source piece's ``id`` is the same logical piece
@@ -505,7 +512,7 @@ class PromptTarget(Identifiable):
         config = self._get_json_response_config(message_piece=message_piece)
         return config.enabled
 
-    def _get_json_response_config(self, *, message_piece: MessagePiece) -> _JsonResponseConfig:
+    def _get_json_response_config(self, *, message_piece: MessagePiece) -> JsonResponseConfig:
         """
         Get the JSON response configuration from the message piece metadata.
 
@@ -514,12 +521,12 @@ class PromptTarget(Identifiable):
                 include JSON response configuration.
 
         Returns:
-            _JsonResponseConfig: The JSON response configuration.
+            JsonResponseConfig: The JSON response configuration.
 
         Raises:
             ValueError: If JSON response format is requested but unsupported.
         """
-        config = _JsonResponseConfig.from_metadata(metadata=message_piece.prompt_metadata)
+        config = JsonResponseConfig.from_metadata(metadata=message_piece.prompt_metadata)
 
         if config.enabled and not self.capabilities.supports_json_output:
             target_name = self.get_identifier().class_name

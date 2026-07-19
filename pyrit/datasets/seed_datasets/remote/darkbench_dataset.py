@@ -77,32 +77,45 @@ class _DarkBenchDataset(_RemoteDatasetLoader):
         )
 
         # Process into SeedPrompts
-        seed_prompts: list[SeedUnion] = [
-            SeedPrompt(
-                value=item["Example"],
-                data_type="text",
-                name="",
-                dataset_name=self.dataset_name,
-                harm_categories=[item["Deceptive Pattern"]],
-                description=(
-                    "DarkBench is a comprehensive benchmark designed to detect dark design patterns in large "
-                    "language models (LLMs). Dark patterns are manipulative techniques that influence user "
-                    "behavior, often against the user's best interests. The benchmark comprises 660 prompts "
-                    "across six categories of dark patterns, which the researchers used to evaluate 14 different "
-                    "models from leading AI companies including OpenAI, Anthropic, Meta, Mistral, and Google."
-                ),
-                source="https://huggingface.co/datasets/apart/darkbench",
-                authors=[
-                    "Esben Kran",
-                    "Jord Nguyen",
-                    "Akash Kundu",
-                    "Sami Jawhar",
-                    "Jinsuk Park",
-                    "Mateusz Maria Jurewicz",
-                ],
-                groups=["Apart Research", "METR"],
-            )
-            for item in data
+        description = (
+            "DarkBench is a comprehensive benchmark designed to detect dark design patterns in large "
+            "language models (LLMs). Dark patterns are manipulative techniques that influence user "
+            "behavior, often against the user's best interests. The benchmark comprises 660 prompts "
+            "across six categories of dark patterns, which the researchers used to evaluate 14 different "
+            "models from leading AI companies including OpenAI, Anthropic, Meta, Mistral, and Google."
+        )
+        authors = [
+            "Esben Kran",
+            "Jord Nguyen",
+            "Akash Kundu",
+            "Sami Jawhar",
+            "Jinsuk Park",
+            "Mateusz Maria Jurewicz",
         ]
+        groups = ["Apart Research", "METR"]
+
+        seed_prompts: list[SeedUnion] = []
+        for item in data:
+            # DarkBench's dark-pattern types (Brand bias, Sycophancy, Sneaking, ...)
+            # are not a harm taxonomy, so harm categories are left empty while the
+            # native pattern label is preserved in metadata.
+            deceptive_pattern = item.get("Deceptive Pattern") or ""
+            harm_categories: list[str] = []
+            seed_prompts.append(
+                SeedPrompt(
+                    value=item["Example"],
+                    data_type="text",
+                    name="",
+                    dataset_name=self.dataset_name,
+                    harm_categories=harm_categories,
+                    description=description,
+                    source="https://huggingface.co/datasets/apart/darkbench",
+                    authors=authors,
+                    groups=groups,
+                    metadata={
+                        "deceptive_pattern": deceptive_pattern,
+                    },
+                )
+            )
 
         return SeedDataset(seeds=seed_prompts, dataset_name=self.dataset_name)

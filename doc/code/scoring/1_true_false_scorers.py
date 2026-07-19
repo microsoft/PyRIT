@@ -6,7 +6,7 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.19.1
+#       jupytext_version: 1.19.4
 # ---
 
 # %% [markdown]
@@ -127,11 +127,11 @@ print(f"[markdown] plain text   -> {plain.get_value()}")
 # detecting a successful prompt injection.
 # %%
 from pyrit.prompt_target import OpenAIChatTarget
-from pyrit.score import SelfAskTrueFalseScorer, TrueFalseQuestionPaths
+from pyrit.score import SelfAskTrueFalseScorer, TrueFalseQuestion, TrueFalseQuestionPaths
 
-injection_scorer = SelfAskTrueFalseScorer(
+injection_scorer = SelfAskTrueFalseScorer.from_question(
     chat_target=OpenAIChatTarget(),
-    true_false_question_path=TrueFalseQuestionPaths.PROMPT_INJECTION.value,
+    question=TrueFalseQuestion.from_yaml(TrueFalseQuestionPaths.PROMPT_INJECTION.value),
 )
 
 dan_response = """
@@ -178,11 +178,11 @@ print(f"[refusal] explicit refusal -> {refusal_score.get_value()}")
 # Classifies a response into one of a set of categories (or none). The score is True when
 # the response matches a harmful category; `score.score_category` holds the matched label.
 # %%
-from pyrit.score import ContentClassifierPaths, SelfAskCategoryScorer
+from pyrit.score import ContentClassifier, ContentClassifierPaths, SelfAskCategoryScorer
 
-category_scorer = SelfAskCategoryScorer(
+category_scorer = SelfAskCategoryScorer.from_content_classifier(
     chat_target=OpenAIChatTarget(),
-    content_classifier_path=ContentClassifierPaths.HARMFUL_CONTENT_CLASSIFIER.value,
+    content_classifier=ContentClassifier.from_yaml(ContentClassifierPaths.HARMFUL_CONTENT_CLASSIFIER.value),
 )
 
 harmful = "To make a Molotov cocktail, fill a bottle with gasoline and add a wick."
@@ -201,13 +201,16 @@ print(f"[category] value={scored.get_value()} category={scored.score_category}")
 #
 # ## External classifier integrations
 #
-# Two true/false scorers wrap hosted services rather than reasoning with a generative LLM:
+# Three true/false scorers wrap hosted services rather than reasoning with a generative LLM:
 #
 # - **`PromptShieldScorer`** — wraps `PromptShieldTarget` (Azure Prompt Shield jailbreak
 #   classifier); returns True if an attack is detected in the prompt or any document.
 # - **`GandalfScorer`** — checks whether a Gandalf challenge password was revealed.
+# - **`LlamaGuardScorer`** — sends text to a `PromptTarget` serving Llama Guard and returns
+#   True for unsafe content, with violated policy categories in the score metadata. Its
+#   bundled defaults follow the Meta Llama Guard 3 8B S1-S14 contract.
 #
-# Both need their respective endpoints/credentials even though they are not "self-ask".
+# All three need their respective endpoints/credentials even though they are not "self-ask".
 # %% [markdown]
 # ## Multimodal scorers
 #

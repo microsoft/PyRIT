@@ -58,7 +58,6 @@ class _JsonReturningTarget(MockPromptTarget):
                 role="assistant",
                 original_value=_VALID_ADVERSARIAL_JSON,
                 conversation_id=message.message_pieces[0].conversation_id,
-                labels=message.message_pieces[0].labels,
             ).to_message()
         ]
 

@@ -577,11 +577,7 @@ class FuzzerGenerator(
             FuzzerGenerator: A configured FuzzerGenerator instance with default scoring.
         """
         # Create default scorer using the provided scoring target
-        scale_scorer = SelfAskScaleScorer(
-            chat_target=scoring_target,
-            scale_arguments_path=SelfAskScaleScorer.ScalePaths.TREE_OF_ATTACKS_SCALE.value,
-            system_prompt_path=SelfAskScaleScorer.SystemPaths.GENERAL_SYSTEM_PROMPT.value,
-        )
+        scale_scorer = SelfAskScaleScorer.from_scale(chat_target=scoring_target)
 
         objective_scorer = FloatScaleThresholdScorer(
             scorer=scale_scorer,
@@ -840,7 +836,7 @@ class FuzzerGenerator(
         jailbreak_prompts = self._generate_prompts_from_template(template=target_template, prompts=context.prompts)
 
         # Send prompts to target
-        responses = await self._send_prompts_to_target_async(context=context, prompts=jailbreak_prompts)
+        responses = await self._send_prompts_to_target_async(prompts=jailbreak_prompts)
 
         # Score responses
         scores = await self._score_responses_async(responses=responses, tasks=context.prompts)
@@ -986,12 +982,11 @@ class FuzzerGenerator(
 
         return [template.render_template_value(prompt=prompt) for prompt in prompts]
 
-    async def _send_prompts_to_target_async(self, *, context: FuzzerContext, prompts: list[str]) -> list[Message]:
+    async def _send_prompts_to_target_async(self, *, prompts: list[str]) -> list[Message]:
         """
         Send prompts to the target in batches.
 
         Args:
-            context (FuzzerContext): The generation context.
             prompts (list[str]): The prompts to send.
 
         Returns:
@@ -1002,7 +997,6 @@ class FuzzerGenerator(
         return await self._prompt_normalizer.send_prompt_batch_to_target_async(
             requests=requests,
             target=self._objective_target,
-            labels=context.memory_labels,
             batch_size=self._batch_size,
         )
 

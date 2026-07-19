@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING, cast
 
 from pyrit.executor.attack import AttackScoringConfig
 from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
-from pyrit.models import SeedAttackGroup
+from pyrit.models import AttackSeedGroup
 from pyrit.prompt_normalizer import ConverterConfiguration
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
@@ -91,11 +91,13 @@ def build_baseline_atomic_attack(
     *,
     objective_target: PromptTarget,
     objective_scorer: Scorer,
-    seed_groups: list[SeedAttackGroup],
+    seed_groups: list[AttackSeedGroup],
     memory_labels: dict[str, str] | None = None,
+    atomic_attack_name: str = "baseline",
+    display_group: str | None = None,
 ) -> AtomicAttack:
     """
-    Build the baseline ``AtomicAttack`` that sends each objective unmodified.
+    Build a baseline ``AtomicAttack`` that sends each objective unmodified.
 
     The baseline is a plain ``PromptSendingAttack`` used as a comparison point against
     a scenario's technique attacks. Pass the *same* ``seed_groups`` used to build the
@@ -105,21 +107,28 @@ def build_baseline_atomic_attack(
     Args:
         objective_target (PromptTarget): The target to attack.
         objective_scorer (Scorer): The scorer used to evaluate the baseline.
-        seed_groups (list[SeedAttackGroup]): Seed groups to attack. Used as-is.
+        seed_groups (list[AttackSeedGroup]): Seed groups to attack. Used as-is.
         memory_labels (dict[str, str] | None): Labels applied to the baseline's prompts.
+        atomic_attack_name (str): Name for the baseline. Defaults to ``"baseline"``; scenarios
+            with multiple scored populations pass e.g. ``"<group>_baseline"``.
+        display_group (str | None): Report grouping for the baseline. Defaults to ``None`` so it
+            groups on its own; pass a technique cell's ``display_group`` to roll the baseline up
+            with that population.
 
     Returns:
-        AtomicAttack: The baseline atomic attack named ``"baseline"``.
+        AtomicAttack: The baseline atomic attack.
     """
     attack = PromptSendingAttack(
         objective_target=objective_target,
         attack_scoring_config=AttackScoringConfig(objective_scorer=cast("TrueFalseScorer", objective_scorer)),
     )
     return AtomicAttack(
-        atomic_attack_name="baseline",
+        atomic_attack_name=atomic_attack_name,
         attack_technique=AttackTechnique(attack=attack),
         seed_groups=seed_groups,
+        objective_scorer=cast("TrueFalseScorer", objective_scorer),
         memory_labels=memory_labels or {},
+        display_group=display_group,
     )
 
 
@@ -173,14 +182,18 @@ def build_matrix_atomic_attacks(
     technique × dataset cross-product: it resolves the selected techniques to factories
     (``resolve_technique_factories``) and hands them to ``MatrixAtomicAttackBuilder``
     with the context's target, labels, and per-dataset seed groups. The baseline is emitted
-    centrally by ``Scenario.initialize_async``, so this never prepends one.
+    here alongside the technique attacks when ``context.include_baseline`` is set (the base
+    ``Scenario`` no longer emits one centrally).
 
     Scenarios needing extra axes (adversarial targets, caching, converter stacks) call
     ``MatrixAtomicAttackBuilder`` directly instead.
 
     Args:
-        context (ScenarioContext): The resolved runtime inputs for this run.
-        objective_scorer (Scorer): The scorer applied to each produced atomic attack.
+        context (ScenarioContext): The resolved runtime inputs for this run. Supplies the
+            objective target, memory labels, per-dataset seed groups, selected techniques, and
+            the resolved ``include_baseline`` flag.
+        objective_scorer (Scorer): The scorer applied to each produced atomic attack. Not part
+            of the context — it is the scenario's own choice.
         display_group_fn (Callable[[MatrixCombo], str] | None): Builds each ``display_group``.
             Defaults to grouping by technique name.
         technique_converters (dict[str, list[Converter]] | None): Optional mapping from
@@ -192,7 +205,8 @@ def build_matrix_atomic_attacks(
             can offer techniques without registering them globally.
 
     Returns:
-        list[AtomicAttack]: The generated atomic attacks (no baseline).
+        list[AtomicAttack]: The generated atomic attacks, baseline first when
+        ``context.include_baseline`` is set.
     """
     builder = MatrixAtomicAttackBuilder(
         objective_target=context.objective_target,
@@ -204,7 +218,7 @@ def build_matrix_atomic_attacks(
         dataset_groups=context.seed_groups_by_dataset,
         display_group_fn=display_group_fn,
         technique_converters=technique_converters,
-        include_baseline=False,
+        include_baseline=context.include_baseline,
     )
 
 
@@ -215,7 +229,7 @@ class MatrixAtomicAttackBuilder:
     Construct once with the shared run inputs (target, scorer, labels), then call
     ``build`` with the per-run grid. The builder owns:
 
-    - seed-technique compatibility filtering (``SeedAttackGroup.filter_compatible``),
+    - seed-technique compatibility filtering (``AttackSeedGroup.filter_compatible``),
     - the ``factory.create(...)`` call, forwarding an adversarial target when the
       adversarial-target axis is active,
     - ``AtomicAttack`` construction with naming and display-group stamping, and
@@ -259,7 +273,7 @@ class MatrixAtomicAttackBuilder:
         self,
         *,
         technique_factories: dict[str, AttackTechniqueFactory],
-        dataset_groups: Mapping[str, list[SeedAttackGroup]],
+        dataset_groups: Mapping[str, list[AttackSeedGroup]],
         adversarial_targets: Sequence[tuple[str, PromptTarget]] | None = None,
         name_fn: Callable[[MatrixCombo], str] | None = None,
         display_group_fn: Callable[[MatrixCombo], str] | None = None,
@@ -277,7 +291,7 @@ class MatrixAtomicAttackBuilder:
         Args:
             technique_factories (dict[str, AttackTechniqueFactory]): Mapping of technique
                 name to the factory that produces it. Only these techniques are built.
-            dataset_groups (Mapping[str, list[SeedAttackGroup]]): Mapping of dataset name to
+            dataset_groups (Mapping[str, list[AttackSeedGroup]]): Mapping of dataset name to
                 its seed groups (e.g. ``await DatasetAttackConfiguration.get_attack_groups_by_dataset_async()``).
             adversarial_targets (Sequence[tuple[str, PromptTarget]] | None): Optional
                 ``(name, instance)`` pairs adding an adversarial-target axis. When set,
@@ -346,7 +360,7 @@ class MatrixAtomicAttackBuilder:
                             attack_technique=attack_technique,
                             seed_groups=compatible_groups,
                             adversarial_chat=(
-                                target_instance if target_instance is not None else factory.adversarial_chat
+                                target_instance if target_instance is not None else factory.resolve_adversarial_chat()
                             ),
                             objective_scorer=cast("TrueFalseScorer", self._objective_scorer),
                             memory_labels=self._memory_labels,
@@ -372,28 +386,28 @@ class MatrixAtomicAttackBuilder:
         self,
         *,
         factory: AttackTechniqueFactory,
-        seed_groups: list[SeedAttackGroup],
+        seed_groups: list[AttackSeedGroup],
         technique_name: str,
         dataset_name: str,
-    ) -> list[SeedAttackGroup] | None:
+    ) -> list[AttackSeedGroup] | None:
         """
         Filter seed groups to those compatible with the factory's seed technique.
 
         Args:
             factory (AttackTechniqueFactory): The factory whose ``seed_technique`` gates
                 compatibility.
-            seed_groups (list[SeedAttackGroup]): Candidate seed groups for one dataset.
+            seed_groups (list[AttackSeedGroup]): Candidate seed groups for one dataset.
             technique_name (str): Technique name, used only for log messages.
             dataset_name (str): Dataset name, used only for log messages.
 
         Returns:
-            list[SeedAttackGroup] | None: The compatible groups, or ``None`` when the
+            list[AttackSeedGroup] | None: The compatible groups, or ``None`` when the
             ``(technique, dataset)`` pair has no compatible groups and should be skipped.
         """
         if factory.seed_technique is None:
             return list(seed_groups)
 
-        compatible_groups = SeedAttackGroup.filter_compatible(
+        compatible_groups = AttackSeedGroup.filter_compatible(
             seed_groups=seed_groups,
             technique=factory.seed_technique,
         )

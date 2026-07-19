@@ -53,6 +53,26 @@ describe("MessageList", () => {
     expect(screen.getByText("Can you help me?")).toBeInTheDocument();
   });
 
+  it("should not render system messages as transcript bubbles", () => {
+    const withSystem: Message[] = [
+      {
+        role: "system",
+        content: "You are a pirate.",
+        timestamp: new Date().toISOString(),
+      },
+      ...mockMessages,
+    ];
+
+    render(
+      <TestWrapper>
+        <MessageList messages={withSystem} />
+      </TestWrapper>
+    );
+
+    expect(screen.queryByText("You are a pirate.")).not.toBeInTheDocument();
+    expect(screen.getByText("Hello, how are you?")).toBeInTheDocument();
+  });
+
   it("should render user messages", () => {
     const userMessages: Message[] = [
       {

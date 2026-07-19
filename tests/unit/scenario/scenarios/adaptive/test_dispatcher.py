@@ -9,7 +9,13 @@ from pyrit.executor.attack.compound.sequential_attack import (
     SequenceCompletionPolicy,
     SequentialAttack,
 )
-from pyrit.models import AttackOutcome, SeedAttackGroup, SeedObjective
+from pyrit.models import (
+    AttackOutcome,
+    AttackSeedGroup,
+    AttackTechniqueSeedGroup,
+    SeedObjective,
+    SeedPrompt,
+)
 from pyrit.scenario.scenarios.adaptive.dispatcher import (
     ADAPTIVE_ATTEMPT_LABEL,
     AdaptiveTechniqueDispatcher,
@@ -53,8 +59,8 @@ def target() -> MagicMock:
 
 
 @pytest.fixture
-def seed_group() -> SeedAttackGroup:
-    return SeedAttackGroup(seeds=[SeedObjective(value="obj")])
+def seed_group() -> AttackSeedGroup:
+    return AttackSeedGroup(seeds=[SeedObjective(value="obj")])
 
 
 class TestDispatcherInit:
@@ -196,6 +202,41 @@ class TestBuildAttackAsync:
         outer_sg.with_technique.assert_called_once_with(technique=seed_technique)
         assert attack._child_attacks[0].seed_group is merged_sg
 
+    async def test_merges_real_system_prompt_technique_onto_user_turn_at_sequence_zero(self, target):
+        """Regression for the adaptive role-merge bug, exercised through the real dispatcher path.
+
+        ``build_attack_async`` calls ``AttackSeedGroup.with_technique`` (dispatcher line ~216) to
+        apply a bundle's ``seed_technique`` to the objective's seed group. A ``from_system_prompt``
+        technique merged onto a group whose opening turn is a ``user`` prompt at sequence 0 -- as in
+        the ``airt_hate`` ``escalating_discrimination`` group -- used to raise ``Inconsistent roles
+        found for sequence 0: {system, user}``. Unlike the mocked merge test above, this drives the
+        real merge with real seeds so a future dispatcher or compatibility-gate change can't let the
+        collision slip back in.
+        """
+        seed_group = AttackSeedGroup(
+            seeds=[
+                SeedObjective(value="obj"),
+                SeedPrompt(value="opening user turn", data_type="text", role="user", sequence=0),
+            ]
+        )
+        seed_technique = AttackTechniqueSeedGroup.from_system_prompt("Follow these rules.")
+        bundle = _make_bundle(name="a", outcomes=[AttackOutcome.SUCCESS], seed_technique=seed_technique)
+        dispatcher = AdaptiveTechniqueDispatcher(
+            objective_target=target,
+            techniques={"a": bundle},
+            selector=_StubSelector(technique_order=["a"]),
+        )
+
+        attack = await dispatcher.build_attack_async(seed_group=seed_group)
+
+        execution_group = attack._child_attacks[0].seed_group
+        system_prompts = [p for p in execution_group.prompts if p.role == "system"]
+        assert len(system_prompts) == 1
+        # System framing is normalized to sequence 0; the base user turn shifts to 1.
+        assert system_prompts[0].sequence == 0
+        assert execution_group.prompts[0].role == "system"
+        assert [(p.role, p.sequence) for p in execution_group.prompts] == [("system", 0), ("user", 1)]
+
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestEvalHashRoundTrip:
@@ -216,7 +257,7 @@ class TestEvalHashRoundTrip:
     async def test_predicted_hash_matches_persisted_row(self, sqlite_instance):
         from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
         from pyrit.memory.memory_models import AttackResultEntry
-        from pyrit.models import SeedAttackGroup, SeedObjective
+        from pyrit.models import AttackSeedGroup, SeedObjective
         from pyrit.models.identifiers import compute_inner_attack_eval_hash
         from tests.unit.mocks import MockPromptTarget
 
@@ -232,7 +273,7 @@ class TestEvalHashRoundTrip:
             max_attempts_per_objective=1,
         )
 
-        sg = SeedAttackGroup(seeds=[SeedObjective(value="say hello")])
+        sg = AttackSeedGroup(seeds=[SeedObjective(value="say hello")])
         sequential = await dispatcher.build_attack_async(seed_group=sg)
         await sequential.execute_async(objective="say hello")
 

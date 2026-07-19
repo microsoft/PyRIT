@@ -15,10 +15,12 @@ from pyrit.models import ComponentIdentifier, Message, MessagePiece, Score
 from pyrit.prompt_target import PromptTarget
 from pyrit.score import (
     FloatScaleScorer,
+    JsonSchemaResponseHandler,
     Scorer,
     ScorerPromptValidator,
     TrueFalseScorer,
 )
+from pyrit.score.llm_scoring import _run_llm_scoring_async
 
 
 @pytest.fixture
@@ -166,20 +168,29 @@ class MockFloatScorer(Scorer):
 
 
 @pytest.mark.parametrize("bad_json", [BAD_JSON, KEY_ERROR_JSON, KEY_ERROR2_JSON])
-async def test_scorer_send_chat_target_async_bad_json_exception_retries(bad_json: str):
+async def test_scorer_send_chat_target_async_bad_json_exception_retries(bad_json: str, patch_central_database):
     chat_target = MagicMock(PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
-    bad_json_resp = Message(
-        message_pieces=[MessagePiece(role="assistant", original_value=bad_json, conversation_id="test-convo")]
-    )
-    chat_target.send_prompt_async = AsyncMock(return_value=[bad_json_resp])
+
+    def _fresh_bad_json_response(*args, **kwargs):
+        # A real target returns a fresh response (new piece ids) on every call; build one per
+        # attempt so the retry path doesn't collide on a reused message-piece id in memory.
+        return [
+            Message(
+                message_pieces=[MessagePiece(role="assistant", original_value=bad_json, conversation_id="test-convo")]
+            )
+        ]
+
+    chat_target.send_prompt_async = AsyncMock(side_effect=_fresh_bad_json_response)
     scorer = MockScorer()
     with pytest.raises(InvalidJsonException):
-        await scorer._score_value_with_llm_async(
-            prompt_target=chat_target,
+        await _run_llm_scoring_async(
+            chat_target=chat_target,
+            response_handler=JsonSchemaResponseHandler(),
+            scorer_identifier=scorer.get_identifier(),
             system_prompt="system_prompt",
-            message_value="message_value",
-            message_data_type="text",
+            value="message_value",
+            data_type="text",
             scored_prompt_id="123",
             category="category",
             objective="task",
@@ -189,7 +200,7 @@ async def test_scorer_send_chat_target_async_bad_json_exception_retries(bad_json
     assert chat_target.send_prompt_async.call_count == 2
 
 
-async def test_scorer_score_value_with_llm_exception_display_prompt_id():
+async def test_scorer_score_value_with_llm_exception_display_prompt_id(patch_central_database):
     chat_target = MagicMock(PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     chat_target.send_prompt_async = AsyncMock(side_effect=Exception("Test exception"))
@@ -197,18 +208,20 @@ async def test_scorer_score_value_with_llm_exception_display_prompt_id():
     scorer = MockScorer()
 
     with pytest.raises(Exception, match="Error scoring prompt with original prompt ID: 123"):
-        await scorer._score_value_with_llm_async(
-            prompt_target=chat_target,
+        await _run_llm_scoring_async(
+            chat_target=chat_target,
+            response_handler=JsonSchemaResponseHandler(),
+            scorer_identifier=scorer.get_identifier(),
             system_prompt="system_prompt",
-            message_value="message_value",
-            message_data_type="text",
+            value="message_value",
+            data_type="text",
             scored_prompt_id="123",
             category="category",
             objective="task",
         )
 
 
-async def test_scorer_send_chat_target_async_good_response(good_json):
+async def test_scorer_send_chat_target_async_good_response(good_json, patch_central_database):
     chat_target = MagicMock(PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
 
@@ -219,11 +232,13 @@ async def test_scorer_send_chat_target_async_good_response(good_json):
 
     scorer = MockScorer()
 
-    await scorer._score_value_with_llm_async(
-        prompt_target=chat_target,
+    await _run_llm_scoring_async(
+        chat_target=chat_target,
+        response_handler=JsonSchemaResponseHandler(),
+        scorer_identifier=scorer.get_identifier(),
         system_prompt="system_prompt",
-        message_value="message_value",
-        message_data_type="text",
+        value="message_value",
+        data_type="text",
         scored_prompt_id="123",
         category="category",
         objective="task",
@@ -232,7 +247,7 @@ async def test_scorer_send_chat_target_async_good_response(good_json):
     assert chat_target.send_prompt_async.call_count == 1
 
 
-async def test_scorer_remove_markdown_json_called(good_json):
+async def test_scorer_remove_markdown_json_called(good_json, patch_central_database):
     chat_target = MagicMock(PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     good_json_resp = Message(
@@ -245,11 +260,13 @@ async def test_scorer_remove_markdown_json_called(good_json):
     with patch(
         "pyrit.score.response_handler.remove_markdown_json", wraps=remove_markdown_json
     ) as mock_remove_markdown_json:
-        await scorer._score_value_with_llm_async(
-            prompt_target=chat_target,
+        await _run_llm_scoring_async(
+            chat_target=chat_target,
+            response_handler=JsonSchemaResponseHandler(),
+            scorer_identifier=scorer.get_identifier(),
             system_prompt="system_prompt",
-            message_value="message_value",
-            message_data_type="text",
+            value="message_value",
+            data_type="text",
             scored_prompt_id="123",
             category="category",
             objective="task",
@@ -258,7 +275,9 @@ async def test_scorer_remove_markdown_json_called(good_json):
         mock_remove_markdown_json.assert_called_once()
 
 
-async def test_score_value_with_llm_prepended_text_message_piece_creates_multipiece_message(good_json):
+async def test_score_value_with_llm_prepended_text_message_piece_creates_multipiece_message(
+    good_json, patch_central_database, tmp_path
+):
     """Test that prepended_text_message_piece creates a multi-piece message (text context + main content)."""
     chat_target = MagicMock(PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
@@ -269,13 +288,18 @@ async def test_score_value_with_llm_prepended_text_message_piece_creates_multipi
 
     scorer = MockScorer()
 
-    await scorer._score_value_with_llm_async(
-        prompt_target=chat_target,
+    image_path = tmp_path / "test_image.png"
+    image_path.write_bytes(b"\x89PNG\r\n\x1a\n")
+
+    await _run_llm_scoring_async(
+        chat_target=chat_target,
+        response_handler=JsonSchemaResponseHandler(),
+        scorer_identifier=scorer.get_identifier(),
         system_prompt="system_prompt",
-        message_value="test_image.png",
-        message_data_type="image_path",
+        value=str(image_path),
+        data_type="image_path",
         scored_prompt_id="123",
-        prepended_text_message_piece="objective: test\nresponse:",
+        prepended_text="objective: test\nresponse:",
         category="category",
         objective="task",
     )
@@ -298,10 +322,10 @@ async def test_score_value_with_llm_prepended_text_message_piece_creates_multipi
     # Second piece should be the main content (image in this case)
     main_piece = sent_message.message_pieces[1]
     assert main_piece.converted_value_data_type == "image_path"
-    assert main_piece.original_value == "test_image.png"
+    assert main_piece.original_value == str(image_path)
 
 
-async def test_score_value_with_llm_no_prepended_text_creates_single_piece_message(good_json):
+async def test_score_value_with_llm_no_prepended_text_creates_single_piece_message(good_json, patch_central_database):
     """Test that without prepended_text_message_piece, only a single piece message is created."""
     chat_target = MagicMock(PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
@@ -312,11 +336,13 @@ async def test_score_value_with_llm_no_prepended_text_creates_single_piece_messa
 
     scorer = MockScorer()
 
-    await scorer._score_value_with_llm_async(
-        prompt_target=chat_target,
+    await _run_llm_scoring_async(
+        chat_target=chat_target,
+        response_handler=JsonSchemaResponseHandler(),
+        scorer_identifier=scorer.get_identifier(),
         system_prompt="system_prompt",
-        message_value="objective: test\nresponse: some text",
-        message_data_type="text",
+        value="objective: test\nresponse: some text",
+        data_type="text",
         scored_prompt_id="123",
         category="category",
         objective="task",
@@ -336,7 +362,7 @@ async def test_score_value_with_llm_no_prepended_text_creates_single_piece_messa
     assert "response: some text" in text_piece.original_value
 
 
-async def test_score_value_with_llm_prepended_text_works_with_audio(good_json):
+async def test_score_value_with_llm_prepended_text_works_with_audio(good_json, patch_central_database, tmp_path):
     """Test that prepended_text_message_piece works with audio content (type-independent)."""
     chat_target = MagicMock(PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
@@ -347,13 +373,18 @@ async def test_score_value_with_llm_prepended_text_works_with_audio(good_json):
 
     scorer = MockScorer()
 
-    await scorer._score_value_with_llm_async(
-        prompt_target=chat_target,
+    audio_path = tmp_path / "test_audio.wav"
+    audio_path.write_bytes(b"RIFF0000WAVE")
+
+    await _run_llm_scoring_async(
+        chat_target=chat_target,
+        response_handler=JsonSchemaResponseHandler(),
+        scorer_identifier=scorer.get_identifier(),
         system_prompt="system_prompt",
-        message_value="test_audio.wav",
-        message_data_type="audio_path",
+        value=str(audio_path),
+        data_type="audio_path",
         scored_prompt_id="123",
-        prepended_text_message_piece="objective: transcribe and evaluate\nresponse:",
+        prepended_text="objective: transcribe and evaluate\nresponse:",
         category="category",
         objective="task",
     )
@@ -372,7 +403,7 @@ async def test_score_value_with_llm_prepended_text_works_with_audio(good_json):
     # Second piece should be audio
     audio_piece = sent_message.message_pieces[1]
     assert audio_piece.converted_value_data_type == "audio_path"
-    assert audio_piece.original_value == "test_audio.wav"
+    assert audio_piece.original_value == str(audio_path)
 
 
 def test_scorer_extract_task_from_response(patch_central_database):
@@ -1515,7 +1546,7 @@ class TestFloatScaleScorerEmptyScoreListRationale:
         assert scores[0].get_value() == 0.0
 
 
-async def test_score_value_with_llm_skips_reasoning_piece(good_json):
+async def test_score_value_with_llm_skips_reasoning_piece(good_json, patch_central_database):
     """Test that _score_value_with_llm extracts JSON from the text piece, not a reasoning piece."""
     chat_target = MagicMock(PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
@@ -1539,11 +1570,13 @@ async def test_score_value_with_llm_skips_reasoning_piece(good_json):
 
     scorer = MockScorer()
 
-    result = await scorer._score_value_with_llm_async(
-        prompt_target=chat_target,
+    result = await _run_llm_scoring_async(
+        chat_target=chat_target,
+        response_handler=JsonSchemaResponseHandler(),
+        scorer_identifier=scorer.get_identifier(),
         system_prompt="system_prompt",
-        message_value="message_value",
-        message_data_type="text",
+        value="message_value",
+        data_type="text",
         scored_prompt_id="123",
         category="category",
         objective="task",
@@ -1553,7 +1586,37 @@ async def test_score_value_with_llm_skips_reasoning_piece(good_json):
     assert result.score_rationale == "Valid response"
 
 
-async def test_score_value_with_llm_raises_when_scorer_response_blocked():
+async def test_score_value_with_llm_without_system_prompt(good_json, patch_central_database):
+    chat_target = MagicMock(PromptTarget)
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+    response_message = Message(
+        message_pieces=[
+            MessagePiece(
+                role="assistant",
+                original_value=good_json,
+                conversation_id="test-convo",
+            )
+        ]
+    )
+    chat_target.send_prompt_async = AsyncMock(return_value=[response_message])
+    scorer = MockScorer()
+
+    await _run_llm_scoring_async(
+        chat_target=chat_target,
+        response_handler=JsonSchemaResponseHandler(),
+        scorer_identifier=scorer.get_identifier(),
+        system_prompt=None,
+        value="message_value",
+        data_type="text",
+        scored_prompt_id="123",
+        category="category",
+        objective="task",
+    )
+
+    chat_target.set_system_prompt.assert_not_called()
+
+
+async def test_score_value_with_llm_raises_when_scorer_response_blocked(patch_central_database):
     """When the scorer's own LLM response is blocked, the transport raises ScorerLLMResponseBlockedException."""
     from pyrit.exceptions import ScorerLLMResponseBlockedException
 
@@ -1575,11 +1638,13 @@ async def test_score_value_with_llm_raises_when_scorer_response_blocked():
     scorer = MockScorer()
 
     with pytest.raises(ScorerLLMResponseBlockedException, match="blocked by content filtering"):
-        await scorer._score_value_with_llm_async(
-            prompt_target=chat_target,
+        await _run_llm_scoring_async(
+            chat_target=chat_target,
+            response_handler=JsonSchemaResponseHandler(),
+            scorer_identifier=scorer.get_identifier(),
             system_prompt="system_prompt",
-            message_value="message_value",
-            message_data_type="text",
+            value="message_value",
+            data_type="text",
             scored_prompt_id="test-prompt-id",
             category="category",
             objective="task",
@@ -1589,7 +1654,7 @@ async def test_score_value_with_llm_raises_when_scorer_response_blocked():
     assert chat_target.send_prompt_async.call_count == 1
 
 
-async def test_score_value_with_llm_raises_empty_response_when_no_text_piece():
+async def test_score_value_with_llm_raises_empty_response_when_no_text_piece(patch_central_database):
     """A no-text response that wasn't content-filtered raises EmptyResponseException, not blocked."""
     from pyrit.exceptions import EmptyResponseException
 
@@ -1611,11 +1676,13 @@ async def test_score_value_with_llm_raises_empty_response_when_no_text_piece():
     scorer = MockScorer()
 
     with pytest.raises(EmptyResponseException, match="no text to parse"):
-        await scorer._score_value_with_llm_async(
-            prompt_target=chat_target,
+        await _run_llm_scoring_async(
+            chat_target=chat_target,
+            response_handler=JsonSchemaResponseHandler(),
+            scorer_identifier=scorer.get_identifier(),
             system_prompt="system_prompt",
-            message_value="message_value",
-            message_data_type="text",
+            value="message_value",
+            data_type="text",
             scored_prompt_id="test-prompt-id",
             category="category",
             objective="task",
@@ -1629,22 +1696,25 @@ async def test_score_value_with_llm_raises_empty_response_when_no_text_piece():
 
 
 class _ForwarderTrueFalseScorer(TrueFalseScorer):
-    """TrueFalseScorer whose piece scoring goes through the base ``_score_value_with_llm_async`` forwarder."""
+    """TrueFalseScorer whose piece scoring uses the shared LLM scoring composition helper."""
 
     def __init__(self, *, chat_target: PromptTarget) -> None:
         super().__init__(validator=DummyValidator())
         self._prompt_target = chat_target
         self._system_prompt = "system"
+        self._response_handler = JsonSchemaResponseHandler()
 
     def _build_identifier(self) -> ComponentIdentifier:
         return self._create_identifier()
 
     async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
-        unvalidated = await self._score_value_with_llm_async(
-            prompt_target=self._prompt_target,
+        unvalidated = await _run_llm_scoring_async(
+            chat_target=self._prompt_target,
+            response_handler=self._response_handler,
+            scorer_identifier=self.get_identifier(),
             system_prompt=self._system_prompt,
-            message_value=message_piece.converted_value,
-            message_data_type="text",
+            value=message_piece.converted_value,
+            data_type="text",
             scored_prompt_id=message_piece.id,
             objective=objective,
         )
@@ -1682,25 +1752,27 @@ class _DirectTransportTrueFalseScorer(TrueFalseScorer):
 
 
 class _ForwarderFloatScaleScorer(FloatScaleScorer):
-    """FloatScaleScorer whose piece scoring goes through the base ``_score_value_with_llm_async`` forwarder."""
+    """FloatScaleScorer whose piece scoring uses the shared LLM scoring composition helper."""
 
     def __init__(self, *, chat_target: PromptTarget) -> None:
         super().__init__(validator=DummyValidator())
         self._prompt_target = chat_target
         self._system_prompt = "system"
+        self._response_handler = JsonSchemaResponseHandler(numeric_value=True)
 
     def _build_identifier(self) -> ComponentIdentifier:
         return self._create_identifier()
 
     async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
-        unvalidated = await self._score_value_with_llm_async(
-            prompt_target=self._prompt_target,
+        unvalidated = await _run_llm_scoring_async(
+            chat_target=self._prompt_target,
+            response_handler=self._response_handler,
+            scorer_identifier=self.get_identifier(),
             system_prompt=self._system_prompt,
-            message_value=message_piece.converted_value,
-            message_data_type="text",
+            value=message_piece.converted_value,
+            data_type="text",
             scored_prompt_id=message_piece.id,
             objective=objective,
-            numeric_value=True,
         )
         return [unvalidated.to_score(score_value=unvalidated.raw_score_value, score_type="float_scale")]
 

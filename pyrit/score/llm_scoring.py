@@ -4,10 +4,15 @@
 from __future__ import annotations
 
 import uuid
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
-from pyrit.exceptions import EmptyResponseException, ScorerLLMResponseBlockedException, pyrit_json_retry
-from pyrit.models import JSON_SCHEMA_METADATA_KEY, Message, MessagePiece
+from pyrit.exceptions import (
+    EmptyResponseException,
+    InvalidJsonException,
+    ScorerLLMResponseBlockedException,
+)
+from pyrit.models import Message, MessagePiece
+from pyrit.prompt_normalizer import PromptNormalizer, send_json_with_retry_async
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -21,11 +26,10 @@ if TYPE_CHECKING:
     from pyrit.score.response_handler import ResponseHandler
 
 
-@pyrit_json_retry
 async def _run_llm_scoring_async(
     *,
     chat_target: PromptTarget,
-    system_prompt: str,
+    system_prompt: str | None,
     response_handler: ResponseHandler,
     value: str,
     data_type: PromptDataType,
@@ -34,14 +38,19 @@ async def _run_llm_scoring_async(
     prepended_text: str | None = None,
     category: Sequence[str] | str | None = None,
     objective: str | None = None,
+    normalizer: PromptNormalizer | None = None,
 ) -> UnvalidatedScore:
     """
     Perform a single scoring round-trip against an LLM target and delegate parsing.
 
-    This is the shared LLM evaluation mechanism: it sets the system prompt on the target, sends
-    the value to be scored (forwarding ``response_handler.response_schema`` so targets that
-    support structured output can enforce it), applies the standard JSON retry behavior, and
-    delegates parsing and validation to ``response_handler``. It is intentionally stateless and
+    This is the shared LLM evaluation mechanism: it optionally sets a system prompt on the target, sends
+    the value to be scored (forwarding ``response_handler.json_response_config`` so targets that
+    support structured output can enforce it), and delegates parsing and validation to
+    ``response_handler``. The round-trip is routed through a ``PromptNormalizer`` via
+    ``send_json_with_retry_async`` so the scorer's question and the target's answer are persisted
+    to memory (a full audit trail, and a real conversation an attack can link as a SCORE-type
+    related conversation) and so JSON retries roll memory back to a clean baseline between attempts
+    instead of replaying the target's own malformed reply. It is intentionally stateless and
     independent of any particular ``Scorer`` so that scorers can compose it without inheriting LLM
     machinery.
 
@@ -54,7 +63,8 @@ async def _run_llm_scoring_async(
 
     Args:
         chat_target (PromptTarget): The target LLM to send the message to.
-        system_prompt (str): The system-level prompt that guides the target LLM.
+        system_prompt (str | None): The system-level prompt that guides the target LLM. When None,
+            the request is sent without configuring a system prompt.
         response_handler (ResponseHandler): Owns the response contract: supplies the optional
             response schema and turns the target's raw text into an ``UnvalidatedScore``.
         value (str): The content to be scored (e.g. text, image path, audio path).
@@ -69,6 +79,9 @@ async def _run_llm_scoring_async(
             from the response; supplying both is an error. Defaults to None.
         objective (str | None): The objective associated with the score, used for
             contextualizing the result. Defaults to None.
+        normalizer (PromptNormalizer | None): Normalizer used to send the scoring round-trip
+            and whose memory is rolled back between JSON retries. Injectable for testing;
+            defaults to a fresh ``PromptNormalizer()`` when not supplied.
 
     Returns:
         UnvalidatedScore: The parsed score, whose ``raw_score_value`` still needs to be
@@ -78,27 +91,27 @@ async def _run_llm_scoring_async(
         ScorerLLMResponseBlockedException: If the scorer's LLM response is blocked by
             content filtering. The transport only surfaces the condition; the calling
             ``Scorer`` owns the policy for whether to raise or return a default score.
-        EmptyResponseException: If the scorer's LLM response contains no text piece to parse
-            and was not blocked (e.g. an empty or malformed response).
+        EmptyResponseException: If the scorer's LLM response has message pieces but none of them
+            are text and none are blocked (a rare no-text-modality shape). Note a genuinely empty
+            text reply does NOT surface here: the normalizer converts an empty target response into
+            an empty text piece, which fails JSON parsing and is therefore retried and, if still
+            empty, ultimately raised as ``InvalidJsonException``.
         InvalidJsonException: If the response is not valid JSON, is missing required keys, or
-            fails the handler's value validation.
+            fails the handler's value validation. This also covers an empty text reply (normalized
+            to ``""``), which is retried before being surfaced here.
         Exception: For other unexpected errors during scoring.
     """
     conversation_id = str(uuid.uuid4())
 
-    chat_target.set_system_prompt(
-        system_prompt=system_prompt,
-        conversation_id=conversation_id,
-    )
-    prompt_metadata: dict[str, Any] = {}
-    response_format = response_handler.response_format
-    if response_format is not None:
-        prompt_metadata["response_format"] = response_format
-    response_schema = response_handler.response_schema
-    if response_schema is not None:
-        # Always forward the schema; the target's normalization pipeline omits it
-        # when the target cannot natively enforce a JSON schema.
-        prompt_metadata[JSON_SCHEMA_METADATA_KEY] = response_schema
+    if system_prompt is not None:
+        chat_target.set_system_prompt(
+            system_prompt=system_prompt,
+            conversation_id=conversation_id,
+        )
+    # Forward the JSON-response request (format and any schema together) via the handler's
+    # canonical config; the target's normalization pipeline omits the schema when it cannot
+    # natively enforce one.
+    prompt_metadata = response_handler.json_response_config.to_metadata()
 
     # Build message pieces - prepended text context first (if provided), then the main message being scored
     message_pieces: list[MessagePiece] = []
@@ -129,39 +142,54 @@ async def _run_llm_scoring_async(
     )
 
     scorer_llm_request = Message(message_pieces=message_pieces)
-    try:
-        response = await chat_target.send_prompt_async(message=scorer_llm_request)
-    except Exception as ex:
-        raise Exception(f"Error scoring prompt with original prompt ID: {scored_prompt_id}") from ex
 
-    # Resolve the text piece that holds the JSON response (score_value + rationale). When it's
-    # absent the scorer produced no parseable output. Guard on the actual failure (no text
-    # piece) rather than "all pieces blocked" so every no-text shape is handled instead of
-    # only the fully-blocked one. A content-filter block surfaces as a dedicated exception
-    # (the calling Scorer owns whether to raise or fall back); any other no-text response is a
-    # genuine empty/malformed error. Neither is retried by @pyrit_json_retry.
-    text_piece = next(
-        (piece for piece in response[0].message_pieces if piece.converted_value_data_type == "text"), None
-    )
-    if text_piece is None:
-        if any(piece.is_blocked() for piece in response[0].message_pieces):
-            raise ScorerLLMResponseBlockedException(
+    # Resolve the text piece that holds the JSON response (score_value + rationale). The normalizer
+    # converts an empty or blocked-then-empty target response into an empty text piece, so a genuine
+    # empty reply lands here as text_piece.converted_value == "" -> parse fails -> retried as invalid
+    # JSON. The text_piece-is-None branch below therefore only fires for a response that has pieces
+    # but no text piece: a content-filter block surfaces as its own exception (the calling Scorer
+    # owns whether to raise or fall back), and any other no-text shape is a genuine empty/malformed
+    # error. Neither of those is retried; only invalid JSON triggers a retry.
+    def _parse(response: Message) -> UnvalidatedScore:
+        text_piece = next(
+            (piece for piece in response.message_pieces if piece.converted_value_data_type == "text"), None
+        )
+        if text_piece is None:
+            if any(piece.is_blocked() for piece in response.message_pieces):
+                raise ScorerLLMResponseBlockedException(
+                    message=(
+                        f"The scorer's LLM response was blocked by content filtering while scoring "
+                        f"prompt ID: {scored_prompt_id}. Consider using a scorer endpoint with "
+                        f"content filtering disabled for red-teaming workflows."
+                    )
+                )
+            raise EmptyResponseException(
                 message=(
-                    f"The scorer's LLM response was blocked by content filtering while scoring "
-                    f"prompt ID: {scored_prompt_id}. Consider using a scorer endpoint with "
-                    f"content filtering disabled for red-teaming workflows."
+                    f"The scorer's LLM response contained no text to parse while scoring prompt ID: {scored_prompt_id}."
                 )
             )
-        raise EmptyResponseException(
-            message=(
-                f"The scorer's LLM response contained no text to parse while scoring prompt ID: {scored_prompt_id}."
-            )
+
+        return response_handler.parse(
+            response_text=text_piece.converted_value,
+            scorer_identifier=scorer_identifier,
+            scored_prompt_id=scored_prompt_id,
+            category=category,
+            objective=objective,
         )
 
-    return response_handler.parse(
-        response_text=text_piece.converted_value,
-        scorer_identifier=scorer_identifier,
-        scored_prompt_id=scored_prompt_id,
-        category=category,
-        objective=objective,
-    )
+    # Route the round-trip through the normalizer so the scorer Q&A is persisted and JSON retries
+    # replay on a clean history.
+    try:
+        return await send_json_with_retry_async(
+            normalizer=normalizer or PromptNormalizer(),
+            target=chat_target,
+            message=scorer_llm_request,
+            conversation_id=conversation_id,
+            parse=_parse,
+        )
+    except (ScorerLLMResponseBlockedException, EmptyResponseException, InvalidJsonException):
+        # Terminal / caller-owned outcomes: propagate unchanged so the calling Scorer can apply
+        # its own policy (fall back, raise, or -- for invalid JSON -- surface the retry exhaustion).
+        raise
+    except Exception as ex:
+        raise Exception(f"Error scoring prompt with original prompt ID: {scored_prompt_id}") from ex

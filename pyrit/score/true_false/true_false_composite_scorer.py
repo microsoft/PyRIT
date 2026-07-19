@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 import asyncio
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from pyrit.prompt_target import PromptTarget
@@ -67,7 +67,7 @@ class TrueFalseCompositeScorer(TrueFalseScorer):
             sub_scorers=[s.get_identifier() for s in self._scorers],
         )
 
-    def get_chat_target(self) -> Optional["PromptTarget"]:
+    def get_chat_target(self) -> "PromptTarget | None":
         """Return the chat target from the first sub-scorer that has one."""
         for scorer in self._scorers:
             target = scorer.get_chat_target()
