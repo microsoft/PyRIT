@@ -515,3 +515,86 @@ def test_supported_content_type_has_expected_values():
     assert SupportedContentType.ZIP.value == "application/zip"
     assert SupportedContentType.TAR.value == "application/x-tar"
     assert SupportedContentType.GZIP.value == "application/gzip"
+
+
+async def test_azure_blob_storage_io_write_file_infers_content_type_from_extension():
+    """write_file_async should infer content_type from file extension when not provided."""
+    container_url = "https://youraccount.blob.core.windows.net/yourcontainer"
+    azure_blob_storage_io = AzureBlobStorageIO(
+        container_url=container_url, blob_content_type=SupportedContentType.PLAIN_TEXT
+    )
+
+    mock_container_client = AsyncMock()
+
+    with patch.object(
+        azure_blob_storage_io, "_create_container_client_async", return_value=None
+    ):
+        azure_blob_storage_io._client_async = mock_container_client
+        azure_blob_storage_io._upload_blob_async = AsyncMock()
+
+        data_to_write = b"<html>test</html>"
+        path = "https://youraccount.blob.core.windows.net/yourcontainer/testfile.html"
+
+        await azure_blob_storage_io.write_file_async(path, data_to_write)
+
+        azure_blob_storage_io._upload_blob_async.assert_awaited_with(
+            file_name="testfile.html",
+            data=data_to_write,
+            content_type="text/html",
+        )
+
+
+async def test_azure_blob_storage_io_write_file_with_explicit_content_type():
+    """write_file_async should use explicit content_type when provided."""
+    container_url = "https://youraccount.blob.core.windows.net/yourcontainer"
+    azure_blob_storage_io = AzureBlobStorageIO(
+        container_url=container_url, blob_content_type=SupportedContentType.PLAIN_TEXT
+    )
+
+    mock_container_client = AsyncMock()
+
+    with patch.object(
+        azure_blob_storage_io, "_create_container_client_async", return_value=None
+    ):
+        azure_blob_storage_io._client_async = mock_container_client
+        azure_blob_storage_io._upload_blob_async = AsyncMock()
+
+        data_to_write = b"test data"
+        path = "https://youraccount.blob.core.windows.net/yourcontainer/testfile.txt"
+
+        await azure_blob_storage_io.write_file_async(
+            path, data_to_write, content_type="application/json"
+        )
+
+        azure_blob_storage_io._upload_blob_async.assert_awaited_with(
+            file_name="testfile.txt",
+            data=data_to_write,
+            content_type="application/json",
+        )
+
+
+async def test_azure_blob_storage_io_write_file_infers_image_content_type():
+    """write_file_async should infer image content types from extension."""
+    container_url = "https://youraccount.blob.core.windows.net/yourcontainer"
+    azure_blob_storage_io = AzureBlobStorageIO(
+        container_url=container_url, blob_content_type=SupportedContentType.PLAIN_TEXT
+    )
+
+    mock_container_client = AsyncMock()
+
+    with patch.object(
+        azure_blob_storage_io, "_create_container_client_async", return_value=None
+    ):
+        azure_blob_storage_io._client_async = mock_container_client
+        azure_blob_storage_io._upload_blob_async = AsyncMock()
+
+        data_to_write = b"\x89PNG\r\n\x1a\n"
+        path = "https://youraccount.blob.core.windows.net/yourcontainer/image.png"
+
+        await azure_blob_storage_io.write_file_async(path, data_to_write)
+
+        azure_blob_storage_io._upload_blob_async.assert_awaited_with(
+            file_name="image.png",
+            data=data_to_write,
+            content_type="image/png",
+        )

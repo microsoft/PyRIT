@@ -73,7 +73,9 @@ class StorageIO(ABC):
         """
 
     @abstractmethod
-    async def write_file_async(self, path: Path | str, data: bytes) -> None:
+    async def write_file_async(
+        self, path: Path | str, data: bytes, content_type: str | None = None
+    ) -> None:
         """
         Asynchronously writes data to the given path.
         """
@@ -117,13 +119,16 @@ class DiskStorageIO(StorageIO):
         async with aiofiles.open(path, "rb") as file:
             return await file.read()
 
-    async def write_file_async(self, path: Path | str, data: bytes) -> None:
+    async def write_file_async(
+        self, path: Path | str, data: bytes, content_type: str | None = None
+    ) -> None:
         """
         Asynchronously writes data to a file on the local disk.
 
         Args:
             path (Path): The path to the file.
             data (bytes): The content to write to the file.
+            content_type (str | None): Optional content type (unused for local disk storage).
 
         """
         path = self._convert_to_path(path)
@@ -404,7 +409,9 @@ class AzureBlobStorageIO(StorageIO):
         finally:
             await self._close_client_async()
 
-    async def write_file_async(self, path: Path | str, data: bytes) -> None:
+    async def write_file_async(
+        self, path: Path | str, data: bytes, content_type: str | None = None
+    ) -> None:
         """
         Write data to Azure Blob Storage at the specified path.
 
@@ -414,13 +421,24 @@ class AzureBlobStorageIO(StorageIO):
         Args:
             path (Path | str): Full blob URL or relative blob path.
             data (bytes): The data to write.
+            content_type (str | None): Optional MIME type for the blob. If not provided,
+                it will be inferred from the file extension, falling back to the default
+                blob_content_type configured in the constructor.
         """
         if not self._client_async:
             self._client_async = await self._create_container_client_async()
         blob_name = self._resolve_blob_name(path)
+
+        # Determine content type: explicit > inferred from extension > default
+        if content_type is None:
+            from mimetypes import guess_type
+
+            inferred_type, _ = guess_type(blob_name)
+            content_type = inferred_type if inferred_type else self._blob_content_type
+
         try:
             await self._upload_blob_async(
-                file_name=blob_name, data=data, content_type=self._blob_content_type
+                file_name=blob_name, data=data, content_type=content_type
             )
         except Exception as exc:
             logger.exception(f"Failed to write file at {blob_name}: {exc}")

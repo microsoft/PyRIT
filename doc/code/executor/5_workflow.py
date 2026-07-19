@@ -139,7 +139,7 @@ from pyrit.executor.core import StrategyConverterConfig
 from pyrit.executor.workflow import XPIAWorkflow
 from pyrit.prompt_normalizer import ConverterConfiguration
 from pyrit.prompt_target import AzureBlobStorageTarget
-from pyrit.prompt_target.azure_blob_storage_target import SupportedContentType
+from pyrit.memory.storage.storage import SupportedContentType
 from pyrit.score import SubStringScorer
 
 logging.basicConfig(level=logging.DEBUG)

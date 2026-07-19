@@ -74,20 +74,36 @@ def data_serializer_factory(
             f"The 'category' argument is mandatory and must be one of the following: {get_args(AllowedCategories)}."
         )
     if value is not None:
-        if data_type in ["text", "reasoning", "function_call", "tool_call", "function_call_output"]:
+        if data_type in [
+            "text",
+            "reasoning",
+            "function_call",
+            "tool_call",
+            "function_call_output",
+        ]:
             return TextDataTypeSerializer(prompt_text=value, data_type=data_type)
         if data_type == "image_path":
-            return ImagePathDataTypeSerializer(category=category, prompt_text=value, extension=extension)
+            return ImagePathDataTypeSerializer(
+                category=category, prompt_text=value, extension=extension
+            )
         if data_type == "audio_path":
-            return AudioPathDataTypeSerializer(category=category, prompt_text=value, extension=extension)
+            return AudioPathDataTypeSerializer(
+                category=category, prompt_text=value, extension=extension
+            )
         if data_type == "video_path":
-            return VideoPathDataTypeSerializer(category=category, prompt_text=value, extension=extension)
+            return VideoPathDataTypeSerializer(
+                category=category, prompt_text=value, extension=extension
+            )
         if data_type == "binary_path":
-            return BinaryPathDataTypeSerializer(category=category, prompt_text=value, extension=extension)
+            return BinaryPathDataTypeSerializer(
+                category=category, prompt_text=value, extension=extension
+            )
         if data_type == "error":
             return ErrorDataTypeSerializer(prompt_text=value)
         if data_type == "url":
-            return URLDataTypeSerializer(category=category, prompt_text=value, extension=extension)
+            return URLDataTypeSerializer(
+                category=category, prompt_text=value, extension=extension
+            )
         raise ValueError(f"Data type {data_type} not supported")
     if data_type == "image_path":
         return ImagePathDataTypeSerializer(category=category, extension=extension)
@@ -139,7 +155,9 @@ class DataTypeSerializer(abc.ABC):
             # Scenarios where a user utilizes an in-memory DuckDB but also needs to interact
             # with an Azure Storage Account, ex., XPIAWorkflow.
             if self._memory.results_storage_io is None:
-                raise RuntimeError("results_storage_io is not configured but Azure storage URL was detected")
+                raise RuntimeError(
+                    "results_storage_io is not configured but Azure storage URL was detected"
+                )
             return self._memory.results_storage_io
         return DiskStorageIO()
 
@@ -153,7 +171,9 @@ class DataTypeSerializer(abc.ABC):
 
         """
 
-    async def save_data_async(self, data: bytes, output_filename: str | None = None) -> None:
+    async def save_data_async(
+        self, data: bytes, output_filename: str | None = None
+    ) -> None:
         """
         Save data to storage.
 
@@ -167,10 +187,16 @@ class DataTypeSerializer(abc.ABC):
         file_path = await self.get_data_filename_async(file_name=output_filename)
         if self._memory.results_storage_io is None:
             raise RuntimeError("Storage IO not initialized")
-        await self._memory.results_storage_io.write_file_async(file_path, data)
+        # Infer content type from file extension
+        content_type = self.get_mime_type(str(file_path))
+        await self._memory.results_storage_io.write_file_async(
+            file_path, data, content_type=content_type
+        )
         self.value = str(file_path)
 
-    async def save_b64_image_async(self, data: str | bytes, output_filename: str | None = None) -> None:
+    async def save_b64_image_async(
+        self, data: str | bytes, output_filename: str | None = None
+    ) -> None:
         """
         Save a base64-encoded image to storage.
 
@@ -185,7 +211,11 @@ class DataTypeSerializer(abc.ABC):
         image_bytes = base64.b64decode(data)
         if self._memory.results_storage_io is None:
             raise RuntimeError("Storage IO not initialized")
-        await self._memory.results_storage_io.write_file_async(file_path, image_bytes)
+        # Infer content type from file extension
+        content_type = self.get_mime_type(str(file_path))
+        await self._memory.results_storage_io.write_file_async(
+            file_path, image_bytes, content_type=content_type
+        )
         self.value = str(file_path)
 
     async def save_formatted_audio_async(
@@ -213,7 +243,9 @@ class DataTypeSerializer(abc.ABC):
 
         # save audio file locally first if in AzureStorageBlob so we can use wave.open to set audio parameters
         if self._is_azure_storage_url(str(file_path)):
-            with tempfile.NamedTemporaryFile(suffix=".wav", dir=DB_DATA_PATH, delete=False) as tmp:
+            with tempfile.NamedTemporaryFile(
+                suffix=".wav", dir=DB_DATA_PATH, delete=False
+            ) as tmp:
                 local_temp_path = Path(tmp.name)
             try:
                 await asyncio.to_thread(
@@ -227,8 +259,14 @@ class DataTypeSerializer(abc.ABC):
                 async with aiofiles.open(local_temp_path, "rb") as f:
                     audio_data = await f.read()
                 if self._memory.results_storage_io is None:
-                    raise RuntimeError("self._memory.results_storage_io is not initialized")
-                await self._memory.results_storage_io.write_file_async(file_path, audio_data)
+                    raise RuntimeError(
+                        "self._memory.results_storage_io is not initialized"
+                    )
+                # Infer content type from file extension
+                content_type = self.get_mime_type(str(file_path))
+                await self._memory.results_storage_io.write_file_async(
+                    file_path, audio_data, content_type=content_type
+                )
             finally:
                 local_temp_path.unlink(missing_ok=True)
 
@@ -259,7 +297,9 @@ class DataTypeSerializer(abc.ABC):
 
         """
         if not self.data_on_disk():
-            raise TypeError(f"Data for data Type {self.data_type} is not stored on disk")
+            raise TypeError(
+                f"Data for data Type {self.data_type} is not stored on disk"
+            )
 
         if not self.value:
             raise RuntimeError("Prompt text not set")
@@ -309,7 +349,9 @@ class DataTypeSerializer(abc.ABC):
             if isinstance(self.value, str):
                 input_bytes = self.value.encode("utf-8")
             else:
-                raise ValueError(f"Invalid data type {self.value}, expected str data type.")
+                raise ValueError(
+                    f"Invalid data type {self.value}, expected str data type."
+                )
 
         hash_object = hashlib.sha256(input_bytes)
         return hash_object.hexdigest()
@@ -349,13 +391,19 @@ class DataTypeSerializer(abc.ABC):
 
         if self._is_azure_storage_url(results_path):
             full_data_directory_path = results_path + self.data_sub_directory
-            self._file_path = full_data_directory_path + f"/{file_name}.{self.file_extension}"
+            self._file_path = (
+                full_data_directory_path + f"/{file_name}.{self.file_extension}"
+            )
         else:
             full_data_directory_path = results_path + self.data_sub_directory
             if self._memory.results_storage_io is None:
                 raise RuntimeError("self._memory.results_storage_io is not initialized")
-            await self._memory.results_storage_io.create_directory_if_not_exists_async(Path(full_data_directory_path))
-            self._file_path = Path(full_data_directory_path, f"{file_name}.{self.file_extension}")
+            await self._memory.results_storage_io.create_directory_if_not_exists_async(
+                Path(full_data_directory_path)
+            )
+            self._file_path = Path(
+                full_data_directory_path, f"{file_name}.{self.file_extension}"
+            )
 
         return self._file_path
 
@@ -401,7 +449,10 @@ class DataTypeSerializer(abc.ABC):
 
         """
         parsed = urlparse(path)
-        return parsed.scheme in ("http", "https") and "blob.core.windows.net" in parsed.netloc
+        return (
+            parsed.scheme in ("http", "https")
+            and "blob.core.windows.net" in parsed.netloc
+        )
 
 
 class TextDataTypeSerializer(DataTypeSerializer):
@@ -458,7 +509,9 @@ class ErrorDataTypeSerializer(DataTypeSerializer):
 class URLDataTypeSerializer(DataTypeSerializer):
     """Serializer for URL values and URL-backed local file references."""
 
-    def __init__(self, *, category: str, prompt_text: str, extension: str | None = None) -> None:
+    def __init__(
+        self, *, category: str, prompt_text: str, extension: str | None = None
+    ) -> None:
         """
         Initialize a URL serializer.
 
@@ -488,7 +541,13 @@ class URLDataTypeSerializer(DataTypeSerializer):
 class ImagePathDataTypeSerializer(DataTypeSerializer):
     """Serializer for image path values stored on disk."""
 
-    def __init__(self, *, category: str, prompt_text: str | None = None, extension: str | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        category: str,
+        prompt_text: str | None = None,
+        extension: str | None = None,
+    ) -> None:
         """
         Initialize an image-path serializer.
 
