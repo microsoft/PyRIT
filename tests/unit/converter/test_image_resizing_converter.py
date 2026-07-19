@@ -231,10 +231,21 @@ async def test_image_resizing_converter_output_dimensions(sample_image_bytes):
     assert resized_image.size == (expected_width, expected_height)
 
 
-def test_image_resizing_converter_invalid_dimensions():
-    """Test that scale factor yielding zero dimensions raises ValueError."""
+@pytest.mark.parametrize(
+    ("input_size", "expected_size"),
+    [
+        ((1, 1), (1, 1)),
+        ((1, 8), (1, 4)),
+        ((8, 1), (4, 1)),
+    ],
+)
+def test_image_resizing_converter_minimum_output_dimensions(
+    input_size: tuple[int, int], expected_size: tuple[int, int]
+) -> None:
+    """Test that each output dimension is clamped to at least one pixel."""
     converter = ImageResizingConverter(scale_factor=0.5)
-    # A 1x1 image scaled by 0.5 becomes 0x0
-    image = Image.new("RGB", (1, 1))
-    with pytest.raises(ValueError, match="Resizing would result in invalid dimensions"):
-        converter._apply_transform(image)
+    image = Image.new("RGB", input_size)
+
+    resized_image = converter._apply_transform(image)
+
+    assert resized_image.size == expected_size

@@ -75,14 +75,7 @@ class ImageResizingConverter(BaseImageToImageConverter):
 
         Returns:
             PIL.Image.Image: The resized image.
-
-        Raises:
-            ValueError: If the resizing would result in invalid dimensions (less than 1 pixel).
         """
-        new_width = int(image.width * self._scale_factor)
-        new_height = int(image.height * self._scale_factor)
-        if new_width < 1 or new_height < 1:
-            raise ValueError(
-                f"Resizing would result in invalid dimensions (less than 1 pixel): {new_width}x{new_height}"
-            )
+        new_width = max(1, int(image.width * self._scale_factor))
+        new_height = max(1, int(image.height * self._scale_factor))
         return image.resize((new_width, new_height), Image.Resampling.LANCZOS)
