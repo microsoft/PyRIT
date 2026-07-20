@@ -5,9 +5,8 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.19.4
+#       jupytext_version: 1.19.0
 # ---
-
 # %% [markdown]
 # # Generic Playwright Target
 #
@@ -74,12 +73,8 @@ def start_flask_app() -> subprocess.Popen:
     return flask_process
 
 
-# Playwright's driver subprocess is not supported by the Windows event loop used
-# by Jupyter kernels.
-playwright_supported = sys.platform != "win32"
-flask_process = start_flask_app() if playwright_supported else None
-if not playwright_supported:
-    print("Playwright example not run: Windows Jupyter kernels do not support the driver subprocess.")
+# Start the Flask app
+flask_process = start_flask_app()
 
 # %% [markdown]
 # The flask app should now be running locally:
@@ -134,7 +129,13 @@ async def interact_with_my_app(page: Page, message: Message) -> str:
 # Now, we can use the `PlaywrightTarget` by passing the interaction function we defined.
 # We'll use the `PromptSendingAttack` to send prompts to the target and collects responses.
 # %%
+import asyncio
+import sys
+
 from pyrit.executor.attack import PromptSendingAttack
+
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 
 # Using PlaywrightTarget with the interaction function and scorer
@@ -160,8 +161,9 @@ async def run() -> None:
         await browser.close()
 
 
-if playwright_supported:
-    await run()
+# Note in Windows this doesn't run in jupyter notebooks due to playwright limitations
+# https://github.com/microsoft/playwright-python/issues/480
+await run()
 
 # if __name__ == "__main__":
 #     asyncio.run(run())
@@ -170,7 +172,7 @@ if playwright_supported:
 # ## Terminate the Flask App
 
 # %%
-if flask_process is not None:
-    flask_process.terminate()
-    flask_process.wait()
-    print("Flask app has been terminated.")
+# Terminate the Flask app when done
+flask_process.terminate()
+flask_process.wait()  # Ensure the process has terminated
+print("Flask app has been terminated.")

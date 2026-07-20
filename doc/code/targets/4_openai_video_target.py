@@ -54,9 +54,8 @@ objectives = [
     "Video of a raccoon pirate eating a croissant at a cafe in France",
 ]
 
-objective_chat_target = OpenAIChatTarget()
 objective_scorer = SelfAskTrueFalseScorer.from_question(
-    chat_target=objective_chat_target,
+    chat_target=OpenAIChatTarget(),
     question=TrueFalseQuestion(true_description="A raccoon dressed as a pirate is actively eating a pastry"),
 )
 
@@ -64,13 +63,12 @@ video_scorer = VideoTrueFalseScorer(
     image_capable_scorer=objective_scorer,
     num_sampled_frames=10,
 )
-auxiliary_content_scorer = AzureContentFilterScorer()
 
 attack = PromptSendingAttack(
     objective_target=video_target,
     attack_scoring_config=AttackScoringConfig(
         objective_scorer=video_scorer,
-        auxiliary_scorers=[VideoFloatScaleScorer(image_capable_scorer=auxiliary_content_scorer)],
+        auxiliary_scorers=[VideoFloatScaleScorer(image_capable_scorer=AzureContentFilterScorer())],
     ),
 )
 
@@ -81,7 +79,6 @@ results = await AttackExecutor().execute_attack_async(  # type: ignore
 
 for result in results:
     await output_attack_async(result, include_auxiliary_scores=True)
-await auxiliary_content_scorer.cleanup_scorer_async()
 
 # %% [markdown]
 # ## Scoring video and audio **together**:
@@ -98,16 +95,14 @@ objectives = [
 ]
 
 # Visual scorer - checks what is SEEN in the video frames
-visual_chat_target = OpenAIChatTarget()
 visual_scorer = SelfAskTrueFalseScorer.from_question(
-    chat_target=visual_chat_target,
+    chat_target=OpenAIChatTarget(),
     question=TrueFalseQuestion(true_description="A raccoon dressed as a pirate is actively eating a pastry"),
 )
 
 # Audio transcript scorer - checks what is SAID in the video
-audio_chat_target = OpenAIChatTarget()
 audio_text_scorer = SelfAskTrueFalseScorer.from_question(
-    chat_target=audio_chat_target,
+    chat_target=OpenAIChatTarget(),
     question=TrueFalseQuestion(true_description="Someone introduces themselves and expresses enjoyment of a croissant"),
 )
 
@@ -153,11 +148,7 @@ remix_piece = MessagePiece(
     prompt_metadata={"video_id": video_id},
 )
 remix_result = await video_target.send_prompt_async(message=Message(message_pieces=[remix_piece]))  # type: ignore
-remix_response_piece = remix_result[0].message_pieces[0]
-if remix_response_piece.converted_value_data_type == "error":
-    print(f"Remix not generated: {remix_response_piece.converted_value}")
-else:
-    print(f"Remixed video: {remix_response_piece.converted_value}")
+print(f"Remixed video: {remix_result[0].message_pieces[0].converted_value}")
 
 # %% [markdown]
 # ## Text+Image-to-Video
@@ -167,7 +158,6 @@ else:
 
 # %%
 import uuid
-from pathlib import Path
 
 # Create a simple test image matching the video resolution (1280x720)
 from PIL import Image
@@ -201,5 +191,3 @@ image_piece = MessagePiece(
 )
 result = await i2v_target.send_prompt_async(message=Message(message_pieces=[text_piece, image_piece]))  # type: ignore
 print(f"Text+Image-to-video result: {result[0].message_pieces[0].converted_value}")
-
-Path(image_path).unlink(missing_ok=True)
