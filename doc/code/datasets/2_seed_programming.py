@@ -9,7 +9,7 @@
 # ---
 
 # %% [markdown]
-# # 2. Creating Seeds Programmatically and with YAML
+# # Creating Seeds Programmatically and with YAML
 #
 # Seeds are the fundamental data type PyRIT uses to initialize attacks and manage test content. Understanding how to create and work with seeds is essential for effective AI red teaming. This guide covers two primary approaches for defining seeds: programmatically (in code) and declaratively (using YAML files).
 #

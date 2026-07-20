@@ -104,7 +104,6 @@ class ConcreteScenario(Scenario):
             objective_scorer = MagicMock()
             objective_scorer.get_identifier.return_value = _mock_scorer_id("MockScorer")
 
-        kwargs.setdefault("default_technique", technique_class.ALL)
         kwargs.setdefault("default_dataset_config", DatasetConfiguration())
         super().__init__(technique_class=technique_class, objective_scorer=objective_scorer, **kwargs)
         self._test_atomic_attacks = atomic_attacks_to_return or []

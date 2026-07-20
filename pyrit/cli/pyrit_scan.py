@@ -18,6 +18,7 @@ import sys
 from argparse import ArgumentParser, Namespace, RawDescriptionHelpFormatter
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, get_args, get_origin
+from urllib.parse import urlparse
 
 from pyrit.cli._cli_args import (
     ARG_HELP,
@@ -444,21 +445,30 @@ async def _resolve_server_url_async(*, parsed_args: Namespace) -> str | None:
 
     # Auto-start if requested
     if parsed_args.start_server:
-        # The launcher can only bind localhost:8000. If the user explicitly
-        # configured a different URL we can't honor it — refuse rather than
-        # silently start a server the user can't reach.
-        if base_url != DEFAULT_SERVER_URL:
+        parsed_url = urlparse(base_url)
+        if (
+            parsed_url.scheme != "http"
+            or parsed_url.hostname not in {"localhost", "127.0.0.1"}
+            or parsed_url.username is not None
+            or parsed_url.password is not None
+            or parsed_url.path not in {"", "/"}
+            or parsed_url.query
+            or parsed_url.fragment
+        ):
             print(
                 f"Error: cannot --start-server because the configured server URL ({base_url}) "
-                f"does not match the launcher default ({DEFAULT_SERVER_URL}). "
-                "Either remove --server-url / the server.url config entry, "
-                "or start the backend manually with `pyrit_backend --host ... --port ...`.",
+                "is not a plain local HTTP URL. Use localhost or 127.0.0.1, "
+                "or start a remote backend separately.",
                 file=sys.stderr,
             )
             return None
         launcher = ServerLauncher()
         try:
-            return await launcher.start_async(config_file=parsed_args.config_file)
+            return await launcher.start_async(
+                host=parsed_url.hostname,
+                port=parsed_url.port or 80,
+                config_file=parsed_args.config_file,
+            )
         except RuntimeError as exc:
             print(f"Error: {exc}")
             return None
@@ -504,8 +514,6 @@ async def _handle_stop_server_async(*, parsed_args: Namespace) -> int:
     Returns:
         int: Exit code (always ``0``).
     """
-    from urllib.parse import urlparse
-
     from pyrit.cli._server_launcher import ServerLauncher, stop_server_on_port
 
     base_url = _resolve_configured_server_url(parsed_args=parsed_args)

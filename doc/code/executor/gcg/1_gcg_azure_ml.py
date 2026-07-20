@@ -10,7 +10,7 @@
 # ---
 
 # %% [markdown]
-# # 1. Generating GCG Suffixes Using Azure Machine Learning
+# # Generating GCG Suffixes Using Azure Machine Learning
 
 # %% [markdown]
 # This notebook shows how to generate GCG [@zou2023gcg] suffixes using Azure Machine Learning (AML), which consists of three main steps:

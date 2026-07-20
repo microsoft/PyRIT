@@ -25,6 +25,7 @@ from pyrit.executor.attack import AttackScoringConfig
 from pyrit.models.identifiers import compute_inner_attack_eval_hash
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
+from pyrit.scenario.core.matrix_atomic_attack_builder import build_baseline_atomic_attack
 from pyrit.scenario.core.scenario import Scenario
 from pyrit.scenario.core.scenario_target_defaults import get_default_adversarial_target
 from pyrit.scenario.scenarios.adaptive.dispatcher import AdaptiveTechniqueDispatcher, TechniqueBundle
@@ -73,12 +74,6 @@ class AdaptiveScenario(Scenario):
 
     @classmethod
     @abstractmethod
-    def get_default_technique(cls) -> ScenarioTechnique:
-        """Return the scenario's default technique aggregate (subclasses must override)."""
-        raise NotImplementedError
-
-    @classmethod
-    @abstractmethod
     def default_dataset_config(cls) -> DatasetAttackConfiguration:
         """Return the scenario's default ``DatasetAttackConfiguration`` (subclasses must override)."""
         raise NotImplementedError
@@ -108,7 +103,6 @@ class AdaptiveScenario(Scenario):
         super().__init__(
             version=self.VERSION,
             technique_class=self.get_technique_class(),
-            default_technique=self.get_default_technique(),
             default_dataset_config=self.default_dataset_config(),
             objective_scorer=objective_scorer,
             scenario_result_id=scenario_result_id,
@@ -165,9 +159,9 @@ class AdaptiveScenario(Scenario):
         accumulates globally; selection is committed up-front during
         scenario initialization, before any execution starts.
 
-        The base ``Scenario`` prepends the baseline ``AtomicAttack`` (named
-        ``"baseline"``) at index 0 when ``context.include_baseline`` is true (the
-        default under ``BASELINE_ATTACK_POLICY = Enabled``).
+        The scenario prepends the baseline ``AtomicAttack`` (named ``"baseline"``) at index 0
+        when ``context.include_baseline`` is true (the default under
+        ``BASELINE_ATTACK_POLICY = Enabled``).
 
         Args:
             context (ScenarioContext): The resolved runtime inputs for this run.
@@ -182,6 +176,15 @@ class AdaptiveScenario(Scenario):
         techniques = self._build_techniques_dict(objective_target=context.objective_target)
 
         atomic_attacks: list[AtomicAttack] = []
+        if context.include_baseline:
+            atomic_attacks.append(
+                build_baseline_atomic_attack(
+                    objective_target=context.objective_target,
+                    objective_scorer=self._objective_scorer,
+                    seed_groups=list(context.seed_groups),
+                    memory_labels=context.memory_labels,
+                )
+            )
         for dataset_name, seed_groups in context.seed_groups_by_dataset.items():
             atomic_attacks.extend(
                 await self._build_atomics_for_dataset_async(

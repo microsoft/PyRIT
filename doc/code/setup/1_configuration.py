@@ -22,7 +22,7 @@ from pyrit.output import output_attack_async
 #       jupytext_version: 1.19.1
 # ---
 # %% [markdown]
-# # 1. Configuration
+# # Configuration
 #
 # Before running PyRIT, you need to call the `initialize_pyrit_async` function which will set up your configuration.
 #
