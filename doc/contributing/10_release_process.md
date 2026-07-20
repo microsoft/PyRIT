@@ -14,48 +14,38 @@ Before starting the release process, verify the codebase is in a healthy state.
 ### Customer-Facing Review
 
 Use an existing release work item, or create one if none exists, to track release
-readiness. Perform a review of the customer-facing release materials (draft GitHub
-release notes, changed public documentation, and changed CoPyRIT UI content), not a
-new code security assessment. Complete the steps below.
+readiness. The release owner reviews the customer-facing release materials: draft
+GitHub release notes, changed public documentation, and changed CoPyRIT UI content.
+Review the changed documentation and UI content for technical accuracy, security and
+compatibility disclosures, content clarity, and usability. Ensure the release notes
+include:
 
-#### Required Release Note Content
+- A summary of the important bug fixes and features being shipped.
+- Security fixes and known high-priority security issues, including affected versions
+  and recommended actions. If there are none, write
+  `No known high-priority security issues.`
+- Breaking changes and backward-compatibility issues, including clear migration or
+  mitigation steps. If there are none, write
+  `No known breaking changes or backward-compatibility issues.`
 
-Before release testing, prepare draft GitHub release notes that include:
-
-1. A summary of the important bug fixes and features being shipped.
-2. Security fixes and known high-priority security issues, including affected versions
-   and recommended actions. If there are none, write
-   `No known high-priority security issues.`
-3. Breaking changes and backward-compatibility issues, including clear migration or
-   mitigation steps. If there are none, write
-   `No known breaking changes or backward-compatibility issues.`
-
-The release owner then completes the first review:
-
-1. Compares the draft release notes with the changes included in the release.
-2. Reviews the changed public documentation and CoPyRIT UI content for technical
-   accuracy, security and compatibility disclosures, content clarity, and usability.
-3. Fixes high-priority security bugs and technical-review findings before release
-   testing.
-4. Links the draft release notes in the release work item and records either
-   `First review completed by @owner on YYYY-MM-DD: no findings` or links to the
-   issues or pull requests that resolved the findings.
+Link the draft release notes in the release work item. Record
+`Initial review completed by @owner on YYYY-MM-DD: no findings` or link the issues or
+pull requests that resolved the findings.
 
 #### Before Publishing
 
 A PyRIT maintainer other than the release owner reviews the final materials and:
 
-1. Repeats the first-review checks against the final release notes, public
-   documentation, and applicable CoPyRIT UI.
-2. Confirms that high-priority security bugs and technical-review findings from the
-   first review are resolved.
-3. Opens the changed documentation links and applicable CoPyRIT UI to confirm that
-   security information is accessible and the final content matches the release notes.
+1. Compares the final release notes with the changes included in the release and
+   confirms that the required content is complete and accurate.
+2. Opens the changed documentation and applicable CoPyRIT UI to confirm that the
+   content is clear, security information is accessible, and the final materials match
+   the release notes.
+3. Confirms that high-priority security bugs and technical-review findings from the
+   initial review are resolved.
 4. Records either
    `Approved by @reviewer on YYYY-MM-DD for development, security, content, and UX`
    or the remaining changes required before approval in the release work item.
-
-Do not publish until the final approval is recorded.
 
 Do not include details about security vulnerabilities that have not yet been publicly
 disclosed in the release work item. Follow [the security policy](../../SECURITY.md)
@@ -81,9 +71,9 @@ More significant changes, such as major features, require at least a new
 minor version.
 They should still be backwards compatible, so if you're upgrading from
 `1.1.0` to `1.2.0` your code shouldn't break.
-A major version of `1` or higher indicates a stable release.
-A leading major version of `0` indicates that the project is not stable and anything
-may change at any time.
+The major version `1.0.0` is the first "stable" release.
+Anything before (i.e., leading with major version `0`) indicates that it is
+not stable and anything may change at any time.
 For that reason, the minor version may indicate breaking changes, too,
 at least until we hit major version `1`.
 
@@ -306,11 +296,10 @@ since `downgrade()` risks data loss.
 
 Complete this checklist in the release work item:
 
-- [ ] The release owner's first review is recorded, and the draft release notes are linked.
+- [ ] The initial review is recorded, and the draft release notes are linked.
 - [ ] High-priority security bugs and technical-review findings are resolved.
-- [ ] A maintainer other than the release owner has approved the final customer-facing materials for development, security, content, and UX.
+- [ ] A maintainer other than the release owner has recorded final approval for development, security, content, and UX.
 - [ ] Release notes contain the required security and compatibility disclosures.
-- [ ] Links to the final approved materials are retained in the release work item.
 
 Do not publish the package until every item is complete.
 
@@ -343,22 +332,15 @@ This should be something like `x.y.z+1.dev0`.
 
 ## 12. Create GitHub Release
 
-Finally, go to the [releases page](https://github.com/microsoft/PyRIT/releases), select "Draft a new release" and the "tag"
-for which you want to create the release notes. It should match the version that you just released
-to PyPI. Hit "Generate release notes". This will pre-populate the text field with all changes.
-Make sure that it starts where the last release left off.
-Sometimes this tool adds too many changes, or leaves a few out, so it's best to check.
-Be sure to check and update the new contributors as well.
-Add a header "## Full list of changes" below "## What's changed?".
-Use the approved release notes linked from the release work item. Under
-"## What's changed", include the content required by
-[Required Release Note Content](#required-release-note-content). Maintenance changes,
-build pipeline updates, and routine documentation fixes can remain in the full list
-only.
+Finally, go to the [releases page](https://github.com/microsoft/PyRIT/releases), select
+"Draft a new release", and choose the tag that matches the version published to PyPI.
+Generate the release notes to produce the full change list. Verify that the list starts
+where the previous release ended and that the new-contributor list is accurate. Add
+"## Full list of changes" below "## What's changed" and place the generated list
+there. Use the approved release notes linked from the release work item for
+"## What's changed". Maintenance changes, build pipeline updates, and routine
+documentation fixes can remain in the full list only.
 
-Do not include details about security vulnerabilities that have not yet been publicly
-disclosed. Follow [the security policy](../../SECURITY.md) for private reporting.
-Confirm in the release work item that the disclosures match the approved materials.
 If you are unsure about whether to include certain changes please consult with your fellow
 maintainers.
 When you're done, hit "Publish release" and mark it as the latest release.
