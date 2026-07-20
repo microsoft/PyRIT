@@ -187,6 +187,11 @@ class FoundryTechnique(ScenarioTechnique):
         # Include base class aggregates ("all") and add Foundry-specific ones
         return super().get_aggregate_tags() | {"easy", "moderate", "difficult", "converter", "attack"}
 
+    @classmethod
+    def default(cls) -> "FoundryTechnique":
+        """Return the default technique (``EASY``) used when the caller selects nothing."""
+        return cls.EASY
+
 
 class RedTeamAgent(Scenario):
     """
@@ -243,7 +248,6 @@ class RedTeamAgent(Scenario):
         super().__init__(
             version=self.VERSION,
             technique_class=FoundryTechnique,
-            default_technique=FoundryTechnique.EASY,
             default_dataset_config=DatasetAttackConfiguration(dataset_names=["harmbench"], max_dataset_size=4),
             objective_scorer=objective_scorer,
             scenario_result_id=scenario_result_id,

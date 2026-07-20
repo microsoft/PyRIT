@@ -741,7 +741,7 @@ def test_no_key_recognized_azure_endpoint_auto_mints_entra(patch_central_databas
     with (
         patch.dict(os.environ, {}, clear=True),
         patch(
-            "pyrit.prompt_target.openai.openai_target.get_azure_openai_auth",
+            "pyrit.auth.openai_auth.get_azure_openai_auth",
             return_value=_provider,
         ) as mock_get_auth,
     ):

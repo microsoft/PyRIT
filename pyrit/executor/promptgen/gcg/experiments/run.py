@@ -1,7 +1,8 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-"""Thin CLI wrapper around ``GCGGenerator.execute_async`` for AzureML jobs.
+"""
+Thin CLI wrapper around ``GCGGenerator.execute_async`` for AzureML jobs.
 
 The notebook (or any user) builds a ``GCGConfig`` (strategy) and a
 ``GCGDataConfig`` (data) locally, serializes both with their respective
@@ -71,7 +72,12 @@ def _parse_arguments() -> argparse.Namespace:
 
 
 def _resolve_output(*, output: GCGOutputConfig, output_dir: str | None) -> GCGOutputConfig:
-    """Combine ``output_dir`` with the basename of the config's existing result_prefix."""
+    """
+    Combine ``output_dir`` with the basename of the existing result prefix.
+
+    Returns:
+        GCGOutputConfig: The resolved output configuration.
+    """
     if output_dir is None:
         return output
     base = Path(output.result_prefix).name or "gcg_suffix"

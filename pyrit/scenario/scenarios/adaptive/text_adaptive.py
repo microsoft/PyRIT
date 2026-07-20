@@ -19,7 +19,6 @@ from typing import TYPE_CHECKING, ClassVar
 from pyrit.common import apply_defaults
 from pyrit.models.parameter import Parameter
 from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
-from pyrit.registry.tag_query import TagQuery
 from pyrit.scenario.core.dataset_configuration import CompoundDatasetAttackConfiguration, DatasetAttackConfiguration
 from pyrit.scenario.scenarios.adaptive.adaptive_scenario import AdaptiveScenario
 
@@ -71,11 +70,7 @@ def _build_text_adaptive_technique() -> type[ScenarioTechnique]:
     return AttackTechniqueRegistry.build_technique_class_from_factories(  # type: ignore[return-value, ty:invalid-return-type]
         class_name="TextAdaptiveTechnique",
         factories=factories,
-        aggregate_tags={
-            "single_turn": TagQuery.any_of("single_turn"),
-            "multi_turn": TagQuery.any_of("multi_turn"),
-        },
-        default_technique_names={"role_play_movie_script", "many_shot"},
+        default_names={"role_play_movie_script", "many_shot"},
     )
 
 
@@ -103,12 +98,6 @@ class TextAdaptive(AdaptiveScenario):
         if cls._cached_technique_class is None:
             cls._cached_technique_class = _build_text_adaptive_technique()
         return cls._cached_technique_class
-
-    @classmethod
-    def get_default_technique(cls) -> ScenarioTechnique:
-        """Return the default technique aggregate (resolves to every ``default``-tagged technique)."""
-        technique_class = cls.get_technique_class()
-        return technique_class("default")
 
     @classmethod
     def required_datasets(cls) -> list[str]:
