@@ -21,6 +21,7 @@ from pyrit.auth.azure_auth import (
 from pyrit.auth.azure_storage_auth import AzureStorageAuth
 from pyrit.auth.copilot_authenticator import CopilotAuthenticator
 from pyrit.auth.manual_copilot_authenticator import ManualCopilotAuthenticator
+from pyrit.auth.openai_auth import resolve_openai_auth
 
 __all__ = [
     "AsyncTokenProviderCredential",
@@ -29,6 +30,7 @@ __all__ = [
     "AzureStorageAuth",
     "CopilotAuthenticator",
     "ManualCopilotAuthenticator",
+    "resolve_openai_auth",
     "TokenProviderCredential",
     "ensure_async_token_provider",
     "get_azure_token_provider",

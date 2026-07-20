@@ -2,10 +2,10 @@ import { test, expect } from "@playwright/test";
 
 // API tests go through the Vite dev server proxy (/api -> configured backend)
 // rather than hitting the backend directly, so they work as soon as
-// Playwright's webServer (port 3000) is ready.
+// Playwright's webServer is ready.
 
 test.describe("API Health Check", () => {
-  // The backend may still be starting when Vite (port 3000) is already up.
+  // The backend may still be starting when Vite is already up.
   // Poll the health endpoint through the proxy until the backend is ready.
   test.beforeAll(async ({ request }) => {
     const maxWait = 30_000;
@@ -13,7 +13,7 @@ test.describe("API Health Check", () => {
     const start = Date.now();
     while (Date.now() - start < maxWait) {
       try {
-        const resp = await request.get("/api/health");
+        const resp = await request.get("/api/health", { timeout: 2_000 });
         if (resp.ok()) return;
       } catch {
         // Backend not ready yet
@@ -24,7 +24,7 @@ test.describe("API Health Check", () => {
   });
 
   test("should have healthy backend API @seeded", async ({ request }) => {
-    const response = await request.get("/api/health");
+    const response = await request.get("/api/health", { timeout: 10_000 });
 
     expect(response.ok()).toBe(true);
     const data = await response.json();
@@ -48,7 +48,7 @@ test.describe("Targets API", () => {
     const start = Date.now();
     while (Date.now() - start < maxWait) {
       try {
-        const resp = await request.get("/api/health");
+        const resp = await request.get("/api/health", { timeout: 2_000 });
         if (resp.ok()) return;
       } catch {
         // Backend not ready yet
@@ -108,7 +108,7 @@ test.describe("Attacks API", () => {
     const start = Date.now();
     while (Date.now() - start < maxWait) {
       try {
-        const resp = await request.get("/api/health");
+        const resp = await request.get("/api/health", { timeout: 2_000 });
         if (resp.ok()) return;
       } catch {
         // Backend not ready yet

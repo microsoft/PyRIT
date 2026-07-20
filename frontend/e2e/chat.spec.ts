@@ -6,6 +6,8 @@ import { makeTarget } from "./_targets";
 // ---------------------------------------------------------------------------
 
 const MOCK_CONVERSATION_ID = "e2e-conv-001";
+const WIDE_IMAGE_DATA_URI =
+  "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='800' height='600' viewBox='0 0 800 600'%3E%3Crect width='800' height='600' fill='%230078d4'/%3E%3C/svg%3E";
 
 /** Intercept targets & attacks APIs so the chat flow can run without real keys. */
 async function mockBackendAPIs(page: Page) {
@@ -208,6 +210,62 @@ test.describe("Chat Functionality", () => {
     await expect(badge).toBeVisible();
     await expect(badge).toContainText("OpenAIChatTarget");
     await expect(badge).toContainText(/gpt-4o-mock/);
+  });
+
+  test("should overlay conversations without shrinking mobile chat and restore focus", async ({ page }) => {
+    await page.route(/\/api\/attacks\/[^/]+\/conversations/, async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          attack_result_id: "e2e-attack-001",
+          main_conversation_id: MOCK_CONVERSATION_ID,
+          conversations: [
+            {
+              conversation_id: MOCK_CONVERSATION_ID,
+              message_count: 2,
+              last_message_preview: "Mobile drawer regression",
+              created_at: "2026-01-01T00:00:00Z",
+            },
+          ],
+        }),
+      });
+    });
+
+    const input = page.getByRole("textbox");
+    await input.fill("Start a mobile conversation");
+    await page.getByRole("button", { name: /send/i }).click();
+    await expect(page.getByText("Start a mobile conversation", { exact: true })).toBeVisible();
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    const chatArea = page.getByTestId("chat-area");
+    const toggleButton = page.getByRole("button", { name: "Toggle conversations panel" });
+    await expect(toggleButton).toBeEnabled();
+    const beforeOpen = await chatArea.boundingBox();
+
+    await toggleButton.click();
+    const drawer = page.getByRole("dialog", { name: "Attack Conversations" });
+    await expect(drawer).toBeVisible();
+
+    const afterOpen = await chatArea.boundingBox();
+    const viewport = page.viewportSize();
+    if (!beforeOpen || !afterOpen || !viewport) {
+      throw new Error("Expected chat and drawer layout bounds");
+    }
+
+    expect(Math.abs(afterOpen.width - beforeOpen.width)).toBeLessThanOrEqual(1);
+    await expect.poll(async () => {
+      const drawerBounds = await drawer.boundingBox();
+      return drawerBounds ? drawerBounds.x : -1;
+    }).toBeGreaterThanOrEqual(0);
+    await expect.poll(async () => {
+      const drawerBounds = await drawer.boundingBox();
+      return drawerBounds ? drawerBounds.x + drawerBounds.width : Number.POSITIVE_INFINITY;
+    }).toBeLessThanOrEqual(viewport.width);
+
+    await page.keyboard.press("Escape");
+    await expect(drawer).not.toBeVisible();
+    await expect(toggleButton).toBeFocused();
   });
 
   test("should send a message and receive backend response", async ({ page }) => {
@@ -428,8 +486,8 @@ test.describe("Multi-modal: Image response", () => {
       original_value_data_type: "text",
       converted_value_data_type: "image_path",
       original_value: "generated image",
-      converted_value: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAACklEQVR4nGMAAQAABQABDQottAAAAABJRU5ErkJggg==",
-      converted_value_mime_type: "image/png",
+      converted_value: WIDE_IMAGE_DATA_URI,
+      converted_value_mime_type: "image/svg+xml",
       scores: [],
       response_error: "none",
     },
@@ -439,6 +497,7 @@ test.describe("Multi-modal: Image response", () => {
     await setupImageMock(page);
     await page.goto("/");
     await activateMockTarget(page);
+    await page.setViewportSize({ width: 390, height: 844 });
 
     const input = page.getByRole("textbox");
     await input.fill("Generate an image");
@@ -451,7 +510,71 @@ test.describe("Multi-modal: Image response", () => {
     const img = page.locator('img:not([alt="Co-PyRIT Logo"])');
     await expect(img).toBeVisible({ timeout: 10000 });
     const src = await img.getAttribute("src");
-    expect(src).toContain("data:image/png;base64,");
+    expect(src).toContain("data:image/svg+xml");
+
+    const bubble = page.locator('[data-testid^="message-bubble-"]', { has: img });
+    const actions = bubble.locator('[data-testid^="message-actions-"]');
+    await expect(bubble).toBeVisible();
+    await expect(actions).toBeVisible();
+    await expect(async () => {
+      const layoutBounds = await img.evaluate((image) => {
+        const bubbleElement = image.closest('[data-testid^="message-bubble-"]');
+        const actionsElement = bubbleElement?.querySelector('[data-testid^="message-actions-"]');
+        if (!bubbleElement || !actionsElement) {
+          return null;
+        }
+
+        const imageRect = image.getBoundingClientRect();
+        const bubbleRect = bubbleElement.getBoundingClientRect();
+        const actionsRect = actionsElement.getBoundingClientRect();
+        return {
+          image: {
+            x: imageRect.x,
+            width: imageRect.width,
+            height: imageRect.height,
+          },
+          bubble: {
+            x: bubbleRect.x,
+            width: bubbleRect.width,
+          },
+          actions: {
+            x: actionsRect.x,
+            width: actionsRect.width,
+          },
+        };
+      });
+      if (!layoutBounds) {
+        throw new Error("Expected image message layout bounds");
+      }
+      const { image: imageBounds, bubble: bubbleBounds, actions: actionBounds } = layoutBounds;
+
+      expect(imageBounds.width).toBeGreaterThan(0);
+      expect(imageBounds.height).toBeGreaterThan(0);
+      expect(imageBounds.x).toBeGreaterThanOrEqual(bubbleBounds.x);
+      expect(imageBounds.x + imageBounds.width).toBeLessThanOrEqual(
+        bubbleBounds.x + bubbleBounds.width + 1,
+      );
+      expect(Math.abs(imageBounds.width / imageBounds.height - 4 / 3)).toBeLessThan(0.02);
+      expect(actionBounds.x + actionBounds.width).toBeLessThanOrEqual(
+        bubbleBounds.x + bubbleBounds.width + 1,
+      );
+
+      const hasHorizontalOverflow = await page.getByTestId("message-list").evaluate(
+        (element) => element.scrollWidth > element.clientWidth + 1,
+      );
+      expect(hasHorizontalOverflow).toBe(false);
+    }).toPass({ timeout: 10000 });
+
+    await page.setViewportSize({ width: 1024, height: 768 });
+    await expect(async () => {
+      const desktopImageBounds = await img.boundingBox();
+      if (!desktopImageBounds) {
+        throw new Error("Expected desktop image layout bounds");
+      }
+      expect(desktopImageBounds.width).toBeGreaterThan(0);
+      expect(desktopImageBounds.height).toBeGreaterThan(0);
+      expect(desktopImageBounds.width).toBeLessThanOrEqual(400);
+    }).toPass({ timeout: 10000 });
   });
 });
 
@@ -473,6 +596,7 @@ test.describe("Multi-modal: Audio response", () => {
     await setupAudioMock(page);
     await page.goto("/");
     await activateMockTarget(page);
+    await page.setViewportSize({ width: 390, height: 844 });
 
     const input = page.getByRole("textbox");
     await input.fill("Speak this out loud");
@@ -483,6 +607,38 @@ test.describe("Multi-modal: Audio response", () => {
     // Audio element should appear
     const audio = page.locator("audio");
     await expect(audio).toBeVisible({ timeout: 10000 });
+
+    const audioLayout = await audio.evaluate((element) => {
+      const bubbleElement = element.closest('[data-testid^="message-bubble-"]');
+      if (!bubbleElement) {
+        return null;
+      }
+
+      const audioRect = element.getBoundingClientRect();
+      const bubbleRect = bubbleElement.getBoundingClientRect();
+      return {
+        audio: {
+          x: audioRect.x,
+          width: audioRect.width,
+        },
+        bubble: {
+          x: bubbleRect.x,
+          width: bubbleRect.width,
+        },
+      };
+    });
+    if (!audioLayout) {
+      throw new Error("Expected audio message layout bounds");
+    }
+
+    expect(audioLayout.audio.x).toBeGreaterThanOrEqual(audioLayout.bubble.x);
+    expect(audioLayout.audio.x + audioLayout.audio.width).toBeLessThanOrEqual(
+      audioLayout.bubble.x + audioLayout.bubble.width + 1,
+    );
+    const hasHorizontalOverflow = await page.getByTestId("message-list").evaluate(
+      (element) => element.scrollWidth > element.clientWidth + 1,
+    );
+    expect(hasHorizontalOverflow).toBe(false);
   });
 });
 

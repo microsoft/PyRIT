@@ -112,7 +112,7 @@ export default function ConversationPanel({
   // Actually, we'll handle refresh via the attackConversationId dependency
 
   return (
-    <div className={styles.root} data-testid="conversation-panel">
+    <div id="conversation-panel" className={styles.root} data-testid="conversation-panel">
       <div className={styles.header}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalXXS, overflow: 'hidden' }}>
           <div className={styles.headerTitle}>

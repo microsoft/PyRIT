@@ -50,24 +50,23 @@ def _make_attack_result(
     *,
     conversation_id: str = "attack-1",
     has_target: bool = True,
+    target_identifier: ComponentIdentifier | None = None,
     name: str = "Test Attack",
     outcome: AttackOutcome = AttackOutcome.UNDETERMINED,
 ) -> AttackResult:
     """Create an AttackResult for mapper tests."""
     now = datetime.now(timezone.utc)
 
-    target_identifier = (
-        ComponentIdentifier(
+    effective_target_identifier = None
+    if has_target:
+        effective_target_identifier = target_identifier or ComponentIdentifier(
             class_name="TextTarget",
             class_module="pyrit.prompt_target",
         )
-        if has_target
-        else None
-    )
 
     children = {}
-    if target_identifier:
-        children["objective_target"] = target_identifier
+    if effective_target_identifier:
+        children["objective_target"] = effective_target_identifier
 
     return AttackResult(
         conversation_id=conversation_id,
@@ -156,6 +155,36 @@ class TestAttackResultToSummary:
         assert summary.attack_type == "My Attack"
         assert summary.target is not None
         assert summary.target.target_type == "TextTarget"
+
+    async def test_round_robin_target_includes_canonical_identifier_hash(self) -> None:
+        """Composite targets retain their full identity even when root display fields are absent."""
+        target_identifier = ComponentIdentifier(
+            class_name="RoundRobinTarget",
+            class_module="pyrit.prompt_target.round_robin_target",
+            params={"weights": [1, 1]},
+            children={
+                "targets": [
+                    ComponentIdentifier(
+                        class_name="TextTarget",
+                        class_module="pyrit.prompt_target",
+                        params={"model_name": "e2e-dummy-model"},
+                    ),
+                    ComponentIdentifier(
+                        class_name="TextTarget",
+                        class_module="pyrit.prompt_target",
+                        params={"model_name": "e2e-dummy-model"},
+                    ),
+                ]
+            },
+        )
+        ar = _make_attack_result(target_identifier=target_identifier)
+
+        summary = await attack_result_to_summary_async(ar, stats=ConversationStats(message_count=0))
+
+        assert summary.target is not None
+        assert summary.target.target_type == "RoundRobinTarget"
+        assert summary.target.model_name is None
+        assert summary.target.identifier_hash == target_identifier.hash
 
     async def test_empty_pieces_gives_zero_messages(self) -> None:
         """Test mapping with no message pieces."""
