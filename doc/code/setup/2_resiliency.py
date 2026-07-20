@@ -122,17 +122,9 @@
 from pyrit.prompt_target import OpenAIChatTarget
 from pyrit.scenario.foundry import FoundryTechnique, RedTeamAgent
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
-from pyrit.setup.initializers import (
-    LoadDefaultDatasets,
-    ScorerInitializer,
-    TargetInitializer,
-    TechniqueInitializer,
-)
+from pyrit.setup.initializers import LoadDefaultDatasets
 
-await initialize_pyrit_async(  # type: ignore
-    memory_db_type=IN_MEMORY,
-    initializers=[TargetInitializer(), ScorerInitializer(), TechniqueInitializer(), LoadDefaultDatasets()],
-)
+await initialize_pyrit_async(memory_db_type=IN_MEMORY, initializers=[LoadDefaultDatasets()])  # type: ignore
 
 objective_target = OpenAIChatTarget()
 
