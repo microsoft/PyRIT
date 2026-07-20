@@ -5,6 +5,7 @@ import {
   MenuList,
   MenuPopover,
   MenuTrigger,
+  useRestoreFocusTarget,
 } from '@fluentui/react-components'
 import type { MenuCheckedValueChangeData, MenuCheckedValueChangeEvent } from '@fluentui/react-components'
 import {
@@ -40,6 +41,7 @@ const THEME_LABELS: Record<ThemeMode, string> = {
 export default function Navigation({ currentView, onNavigate, onOpenFeedback }: NavigationProps) {
   const styles = useNavigationStyles()
   const { mode, resolved, setMode } = useTheme()
+  const feedbackRestoreFocusTarget = useRestoreFocusTarget()
 
   const handleThemeChange = (
     _: MenuCheckedValueChangeEvent,
@@ -99,6 +101,7 @@ export default function Navigation({ currentView, onNavigate, onOpenFeedback }: 
       <div className={styles.spacer} />
 
       <Button
+        {...feedbackRestoreFocusTarget}
         className={styles.navButton}
         appearance="subtle"
         icon={<PersonFeedbackRegular />}

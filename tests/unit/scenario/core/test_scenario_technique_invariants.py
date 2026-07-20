@@ -184,6 +184,27 @@ def test_aggregates_are_disjoint_from_techniques(get_technique):
 
 
 @pytest.mark.parametrize("get_technique", SCENARIO_STRATEGY_BUILDERS)
+def test_catalog_tags_are_selectable_aggregates(get_technique):
+    """Every catalog tag carried by a pool technique is itself a selectable aggregate
+    that expands to exactly the techniques carrying it (tags are synonymous with
+    aggregates). ``all`` and ``default`` are reserved synthetic aggregates, and a tag
+    that collides with a technique name stays a concrete technique, so both are excluded.
+    """
+    strat = get_technique()
+    reserved = {"all", "default"}
+    technique_values = {s.value for s in strat.get_all_techniques()}
+    catalog_tags = {tag for s in strat.get_all_techniques() for tag in s.tags} - reserved - technique_values
+    assert catalog_tags, "expected at least one catalog tag to promote"
+
+    aggregate_values = {s.value for s in strat.get_aggregate_techniques()}
+    for tag in catalog_tags:
+        assert tag in aggregate_values, f"catalog tag {tag!r} is not a selectable aggregate"
+        expanded = set(strat.expand({strat(tag)}))
+        expected = {s for s in strat.get_all_techniques() if tag in s.tags}
+        assert expanded == expected, f"aggregate {tag!r} did not expand to its tagged techniques"
+
+
+@pytest.mark.parametrize("get_technique", SCENARIO_STRATEGY_BUILDERS)
 def test_expanding_a_technique_returns_itself(get_technique):
     """Expanding a single non-aggregate technique returns just that technique."""
     strat = get_technique()
