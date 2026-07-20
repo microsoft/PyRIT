@@ -946,6 +946,60 @@ describe("CreateTargetDialog", () => {
     expect(createButton).toBeDisabled();
   });
 
+  it("should keep full long registry names accessible after selecting RoundRobin targets", async () => {
+    const user = userEvent.setup();
+    const firstRegistryName =
+      "openai-production-eastus2-red-team-evaluation-primary-deployment";
+    const secondRegistryName =
+      "openai-production-eastus2-red-team-evaluation-secondary-deployment";
+
+    render(
+      <TestWrapper>
+        <CreateTargetDialog
+          {...defaultProps}
+          existingTargets={[
+            makeTarget({
+              target_registry_name: firstRegistryName,
+              target_type: "OpenAIChatTarget",
+              model_name: "gpt-4o",
+              identifier_hash: "long-hash-a",
+            }),
+            makeTarget({
+              target_registry_name: secondRegistryName,
+              target_type: "OpenAIChatTarget",
+              model_name: "gpt-4o",
+              identifier_hash: "long-hash-b",
+            }),
+          ]}
+        />
+      </TestWrapper>
+    );
+
+    await selectTargetType(user, "RoundRobinTarget");
+    const select = screen.getByText("Select a target to add...").closest("select");
+    expect(select).not.toBeNull();
+    if (!select) {
+      throw new Error("Round Robin target selector was not rendered");
+    }
+
+    await user.selectOptions(select, firstRegistryName);
+    await user.selectOptions(select, secondRegistryName);
+
+    const selectedName = screen.getByLabelText(
+      `Selected target: ${firstRegistryName} (gpt-4o)`
+    );
+    expect(selectedName).toHaveAttribute("tabindex", "0");
+    await user.click(selectedName);
+    expect(selectedName).toHaveFocus();
+
+    expect(
+      screen.getByRole("button", { name: `Remove ${firstRegistryName}` })
+    ).toBeInTheDocument();
+    expect(
+      screen.getByLabelText(`Weight for ${secondRegistryName}`)
+    ).toBeInTheDocument();
+  });
+
   it("filters duplicate-by-identifier-hash targets out of the picker once one is selected", async () => {
     const user = userEvent.setup();
 
