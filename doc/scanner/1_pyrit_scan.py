@@ -185,7 +185,6 @@ class MyCustomScenario(Scenario):
             version=1,
             objective_scorer=TrueFalseInverterScorer(scorer=SelfAskRefusalScorer(chat_target=OpenAIChatTarget())),
             technique_class=MyCustomTechnique,
-            default_technique=MyCustomTechnique.ALL,
             default_dataset_config=DatasetAttackConfiguration(dataset_names=["harmbench"]),
             scenario_result_id=scenario_result_id,
         )

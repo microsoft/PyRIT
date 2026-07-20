@@ -82,8 +82,7 @@ def _build_doctor_technique() -> type[ScenarioTechnique]:
     return AttackTechniqueRegistry.build_technique_class_from_factories(  # type: ignore[return-value, ty:invalid-return-type]
         class_name="DoctorTechnique",
         factories=DOCTOR_FACTORIES,
-        aggregate_tags={},
-        default_technique_names={"policy_puppetry", "policy_puppetry_leet"},
+        default_names={"policy_puppetry", "policy_puppetry_leet"},
     )
 
 
@@ -138,7 +137,6 @@ class Doctor(Scenario):
         super().__init__(
             version=self.VERSION,
             technique_class=technique_class,
-            default_technique=technique_class("default"),
             default_dataset_config=DatasetAttackConfiguration(dataset_names=["garak_doctor"]),
             objective_scorer=objective_scorer,
             scenario_result_id=scenario_result_id,
