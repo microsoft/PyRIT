@@ -146,7 +146,7 @@ def test_in_the_wild_directory_is_populated() -> None:
     # The collection covers both explicit-placeholder wrappers (Path A) and the much larger
     # set of slot-less persona/override wrappers (Path B); guard against a silent regression
     # that would strip the Path-B expansion back down to the original ~100 templates.
-    assert len(files) > 300, f"expected a substantial collection, found {len(files)}"
+    assert len(files) == 488, f"expected exactly 488 TrustAIRLab templates, found {len(files)}"
 
 
 @pytest.mark.parametrize("yaml_file", _yaml_files(), ids=_yaml_ids())
