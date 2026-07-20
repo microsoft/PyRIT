@@ -118,7 +118,7 @@ Most users should enable the following initializers. These are what the `.pyrit_
 ```
 
 ```{important}
-Configurations created before the initializer cleanup may contain the removed names `simple`, `airt`, `scenario_technique`, or `objective_list`. Replace them with the current initializers listed above.
+The default initializers were consolidated and renamed as part of the cleanup leading up to the **v1.0.0** release. Configurations created before v1.0.0 may still reference the removed names `simple`, `airt`, `scenario_technique`, or `objective_list` — replace them with the current initializers listed above.
 ```
 
 The recommended config:
