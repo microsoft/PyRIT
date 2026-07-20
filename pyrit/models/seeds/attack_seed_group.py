@@ -188,6 +188,8 @@ class AttackSeedGroup(SeedGroup):
     ) -> None:
         """Normalize merged prompt sequences while preserving source-relative order."""
         all_seeds = [*base_seeds, *technique_seeds]
+        # Simulated conversations reserve an absolute sequence range; renumbering only prompts
+        # could invalidate that range or create an overlap.
         if any(isinstance(seed, SeedSimulatedConversation) for seed in all_seeds):
             return
 
