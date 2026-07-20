@@ -15,14 +15,14 @@ import { useAttackVerdictChipStyles } from './AttackVerdictChip.styles'
 
 // Shown when the verdict is attack-level but a related (non-main) conversation
 // is active, so the score doesn't correspond to what's on screen.
-const ATTACK_LEVEL_HINT =
+const ATTACK_LEVEL_NOTE =
   'Attack-level verdict, computed on the main conversation \u2014 not the related conversation you are viewing.'
 
 interface AttackVerdictChipProps {
   outcome?: AttackOutcome | null
   score?: ScoreView | null
   // False when a related (non-main) conversation is active: `last_score` is the
-  // attack's objective score on the main conversation, so it does not belong to
+  // attack's objective score on the main conversation, so it doesn't belong to
   // the conversation on screen. Defaults to true.
   appliesToActiveConversation?: boolean
 }
@@ -34,7 +34,7 @@ export default function AttackVerdictChip({
 }: AttackVerdictChipProps) {
   const styles = useAttackVerdictChipStyles()
 
-  // The verdict is the attack's outcome plus its score. With neither there's nothing to show
+  // The verdict is the attack's outcome plus its score. If both are missing, there's nothing to show
   // (e.g. a manual GUI attack, which can't be scored yet), so the chip is omitted entirely.
   if (!outcome && !score) return null
   const resolvedOutcome = resolveOutcome(outcome)
@@ -63,15 +63,15 @@ export default function AttackVerdictChip({
     return appliesToActiveConversation ? (
       badge
     ) : (
-      <Tooltip content={ATTACK_LEVEL_HINT} relationship="label">
+      <Tooltip content={ATTACK_LEVEL_NOTE} relationship="label">
         {badge}
       </Tooltip>
     )
   }
 
   const categories = score.score_category?.filter(Boolean) ?? []
-  // A FloatScaleThresholdScorer keeps the raw scale score behind its true/false
-  // verdict; surface it and let it grade the badge hue.
+  // A FloatScaleThresholdScorer keeps the raw scale score behind the true/false
+  // score; surface the float value and let it determine the badge tone.
   const scaleScore = score.scale_score ?? null
   const scoreColor = getScoreColor(resolvedOutcome, score.score_type, score.score_value, scaleScore)
   const scoreBadgeStyle = {
@@ -102,7 +102,7 @@ export default function AttackVerdictChip({
           <Text weight="semibold" size={300}>Verdict</Text>
           {!appliesToActiveConversation && (
             <Text size={200} className={styles.attackLevelNote} data-testid="attack-level-note">
-              {ATTACK_LEVEL_HINT}
+              {ATTACK_LEVEL_NOTE}
             </Text>
           )}
           <div className={styles.row}>

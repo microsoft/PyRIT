@@ -51,8 +51,7 @@ describe('AttackVerdictChip', () => {
     )
 
     const chip = screen.getByRole('button', { name: /verdict failure, score true/i })
-    // The chip shows the outcome; the raw score value lives in the popover, not
-    // as a second visible badge.
+    // The chip shows the outcome; the raw score value lives in the popover
     expect(within(chip).getByText('failure')).toBeInTheDocument()
     expect(within(chip).queryByText('true')).not.toBeInTheDocument()
   })

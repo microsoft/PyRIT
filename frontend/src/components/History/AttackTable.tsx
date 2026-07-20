@@ -64,9 +64,9 @@ export default function AttackTable({ attacks, onOpenAttack, formatDate }: Attac
             data-testid={`attack-row-${attack.attack_result_id}`}
           >
             <TableCell>
-              {/* Reuse the verdict chip so hovering/clicking reveals the last
-                  score, matching the chat ribbon. Stop propagation so opening
-                  the score popover doesn't also open the attack. */}
+              {/* Reuse the outcome chip so hovering/clicking reveals the last
+                  score, matching the chat ribbon. Stop propagation so clicking
+                  the score opens the popover and doesn't also open the attack. */}
               <span
                 data-testid={`outcome-badge-${attack.attack_result_id}`}
                 onClick={(e) => e.stopPropagation()}

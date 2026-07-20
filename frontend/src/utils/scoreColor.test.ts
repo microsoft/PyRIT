@@ -45,7 +45,7 @@ describe('getScoreColor', () => {
 
   it('renders a boolean verdict at full, brightest strength for either value', () => {
     // A true/false verdict is definitive, so both true and false render the
-    // full hue -- e.g. a false failure is the brightest red, not a light tint.
+    // full hue -- e.g. a false failure is the brightest red.
     expect(getScoreColor('failure', 'true_false', 'false')).toEqual({ background: RED, foreground: WHITE })
     expect(getScoreColor('failure', 'true_false', 'true')).toEqual({ background: RED, foreground: WHITE })
     expect(getScoreColor('success', 'true_false', 'false')).toEqual({ background: GREEN, foreground: WHITE })
@@ -55,21 +55,19 @@ describe('getScoreColor', () => {
     // A FloatScaleThresholdScorer keeps the raw 0-1 score in metadata; a false
     // failure at 0.5 is a medium red, matching a plain float_scale 0.5.
     expect(getScoreColor('failure', 'true_false', 'false', 0.5)).toEqual({ background: 'rgb(161, 62, 64)', foreground: WHITE })
-    // The underlying float takes precedence over the boolean full-strength rule.
     expect(getScoreColor('failure', 'true_false', 'false', 0.5)).not.toEqual({ background: RED, foreground: WHITE })
-    // Clamped to [0, 1].
     expect(getScoreColor('success', 'true_false', 'true', 1.5)).toEqual({ background: GREEN, foreground: WHITE })
   })
 
   it('tints a float by its value: a lower value is lighter', () => {
-    // A full-value success is the vivid hue; a lower value is a lighter tint of
-    // the same hue (never a different color, never grey).
+    // A full-value success is the brightest hue; a lower value is a lighter tint of
+    // the same hue).
     expect(getScoreColor('success', 'float_scale', '1')).toEqual({ background: GREEN, foreground: WHITE })
     expect(getScoreColor('success', 'float_scale', '0.75')).toEqual({ background: 'rgb(26, 110, 26)', foreground: WHITE })
     expect(getScoreColor('failure', 'float_scale', '0.5')).toEqual({ background: 'rgb(161, 62, 64)', foreground: WHITE })
   })
 
-  it('floors the tint so a scored float is never grey', () => {
+  it('floors the tint', () => {
     const lowest = getScoreColor('success', 'float_scale', '0')
     expect(lowest).toEqual({ background: 'rgb(64, 103, 64)', foreground: WHITE })
     expect(lowest.background).not.toBe(GREY)

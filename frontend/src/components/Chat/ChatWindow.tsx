@@ -46,7 +46,7 @@ interface ChatWindowProps {
   relatedConversationCount?: number
   /** The loaded attack's objective (empty for new/manual attacks). */
   objective?: string
-  /** The loaded attack's outcome verdict. */
+  /** The loaded attack's outcome. */
   outcome?: AttackOutcome | null
   /** The loaded attack's final score, if any. */
   lastScore?: ScoreView | null
