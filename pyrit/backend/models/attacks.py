@@ -31,6 +31,7 @@ class TargetInfo(BaseModel):
     target_type: str = Field(..., description="Target class name (e.g., 'OpenAIChatTarget')")
     endpoint: str | None = Field(None, description="Target endpoint URL")
     model_name: str | None = Field(None, description="Model or deployment name")
+    identifier_hash: str = Field(..., description="Canonical target identifier hash")
 
 
 class ScoreView(Score):
@@ -250,6 +251,7 @@ class AttackSummary(AttackResult):
             target_type=target_id.class_name,
             endpoint=cast("str | None", target_id.params.get("endpoint") or None),
             model_name=cast("str | None", target_id.params.get("model_name") or None),
+            identifier_hash=target_id.hash,
         )
 
     @computed_field  # type: ignore[prop-decorator]

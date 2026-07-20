@@ -38,10 +38,12 @@ export const useMainLayoutStyles = makeStyles({
   contentArea: {
     display: 'flex',
     flex: 1,
+    minWidth: 0,
     overflow: 'hidden',
   },
   sidebar: {
     width: '60px',
+    flexShrink: 0,
     backgroundColor: tokens.colorNeutralBackground3,
     borderRight: `1px solid ${tokens.colorNeutralStroke1}`,
     display: 'flex',
@@ -49,6 +51,7 @@ export const useMainLayoutStyles = makeStyles({
   },
   main: {
     flex: 1,
+    minWidth: 0,
     display: 'flex',
     flexDirection: 'column',
     overflow: 'hidden',

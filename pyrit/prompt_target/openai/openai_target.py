@@ -22,7 +22,7 @@ from openai._exceptions import (
     AuthenticationError,
 )
 
-from pyrit.auth import ensure_async_token_provider, get_azure_openai_auth, is_azure_openai_endpoint
+from pyrit.auth import resolve_openai_auth
 from pyrit.common import default_values
 from pyrit.exceptions.exception_classes import (
     RateLimitException,
@@ -152,27 +152,11 @@ class OpenAITarget(PromptTarget):
             custom_configuration=custom_configuration,
         )
 
-        # API key: use passed value, env var, or fall back to Entra ID for Azure endpoints
-        resolved_api_key: str | Callable[[], str | Awaitable[str]]
-        if api_key is not None and callable(api_key):
-            resolved_api_key = api_key
-        else:
-            api_key_value = default_values.get_non_required_value(
-                env_var_name=self.api_key_environment_variable, passed_value=api_key
-            )
-            if api_key_value:
-                resolved_api_key = api_key_value
-            elif is_azure_openai_endpoint(endpoint_value):
-                resolved_api_key = get_azure_openai_auth(endpoint_value)
-            else:
-                raise ValueError(
-                    f"Environment variable {self.api_key_environment_variable} is required for non-Azure endpoints. "
-                    "For recognized Azure OpenAI / AI Foundry endpoints, Entra ID authentication is used "
-                    "automatically."
-                )
-
-        # Ensure api_key is async-compatible (wrap sync token providers if needed)
-        self._api_key = ensure_async_token_provider(resolved_api_key)
+        self._api_key = resolve_openai_auth(
+            endpoint=endpoint_value,
+            api_key=api_key,
+            api_key_environment_variable=self.api_key_environment_variable,
+        )
 
         self._initialize_openai_client()
 

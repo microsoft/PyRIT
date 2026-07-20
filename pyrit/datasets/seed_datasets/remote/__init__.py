@@ -132,6 +132,15 @@ from pyrit.datasets.seed_datasets.remote.wildguardmix_dataset import (
     WildGuardMixSplit,
     _WildGuardMixDataset,
 )
+from pyrit.datasets.seed_datasets.remote.xl_safety_bench_dataset import (
+    XLSafetyBenchCountry,
+    XLSafetyBenchCulturalCategory,
+    XLSafetyBenchJailbreakCategory,
+    XLSafetyBenchLanguageMode,
+    _XLSafetyBenchCulturalDataset,
+    _XLSafetyBenchJailbreakDataset,
+    _XLSafetyBenchJailbreakObjectivesDataset,
+)
 from pyrit.datasets.seed_datasets.remote.xstest_dataset import _XSTestDataset
 
 __all__ = [
@@ -234,5 +243,12 @@ __all__ = [
     "VisualLeakBenchCategory",
     "VisualLeakBenchPIIType",
     "_WildGuardMixDataset",
+    "XLSafetyBenchCountry",
+    "XLSafetyBenchCulturalCategory",
+    "XLSafetyBenchJailbreakCategory",
+    "XLSafetyBenchLanguageMode",
+    "_XLSafetyBenchCulturalDataset",
+    "_XLSafetyBenchJailbreakDataset",
+    "_XLSafetyBenchJailbreakObjectivesDataset",
     "_XSTestDataset",
 ]

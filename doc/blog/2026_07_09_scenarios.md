@@ -40,6 +40,8 @@ await scenario.initialize_async(objective_target=target)
 result = await scenario.run_async()
 ```
 
+Watch the [scanner walkthrough](./2026_07_09_scanner_walkthrough.mp4) to see how to select and run a scenario from the command line.
+
 `RapidResponse` is a natural jumping-off point. You run it to map *where* your target struggles — and then you pivot to a focused scenario to dig into *why*.
 
 ## When brute force gets expensive
@@ -117,10 +119,10 @@ flowchart TB
     AT -->|"registered (with tags)"| Reg["AttackTechniqueRegistry"]
     Reg -->|"TagQuery"| Strat["ScenarioTechnique"]
 
-    Strat -->|"--techniques"| Sc["Scenario<br/>(e.g. RapidResponse)"]
-    DS[("scenario datasets")] --> Sc
+    Strat -->|"--techniques"| Sc["Scenario (e.g. RapidResponse)"]
+    DS[(scenario datasets)] --> Sc
 
-    Sc -->|"technique × dataset"| AA["AtomicAttack"]
+    Sc -->|"technique x dataset"| AA["AtomicAttack"]
     AA -->|"AttackExecutor"| Res["ScenarioResult"]
 ```
 
