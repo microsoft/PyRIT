@@ -123,6 +123,16 @@ class EncodingTechnique(ScenarioTechnique):
         """
         return super().get_aggregate_tags() | {"default"}
 
+    @classmethod
+    def default(cls) -> "EncodingTechnique":
+        """
+        Select the curated ``DEFAULT`` aggregate for the out-of-the-box run, not the exhaustive ``ALL``.
+
+        Returns:
+            EncodingTechnique: The curated ``DEFAULT`` aggregate.
+        """
+        return cls.DEFAULT
+
 
 logger = logging.getLogger(__name__)
 
@@ -173,7 +183,6 @@ class Encoding(Scenario):
         super().__init__(
             version=self.VERSION,
             technique_class=EncodingTechnique,
-            default_technique=EncodingTechnique.DEFAULT,
             default_dataset_config=CompoundDatasetAttackConfiguration(
                 configurations=[
                     EncodingDatasetConfiguration(dataset_names=["garak_slur_terms_en"], max_dataset_size=10),
