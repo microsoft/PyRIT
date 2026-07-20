@@ -31,6 +31,7 @@ from pyrit.models import (
     RetryEvent,
     Score,
 )
+from pyrit.score.score_utils import ORIGINAL_FLOAT_VALUE_KEY
 
 
 def _make_score() -> Score:
@@ -87,6 +88,25 @@ class TestScoreViewContract:
     def test_schema_builds(self) -> None:
         """Test that ScoreView's serialization schema includes the computed field."""
         assert "scorer_type" in ScoreView.model_json_schema(mode="serialization")["properties"]
+
+    def test_scale_score_exposes_thresholded_float(self) -> None:
+        """A thresholded true/false score surfaces its raw scale score from metadata."""
+        score = _make_score()
+        score.score_type = "true_false"
+        score.score_value = "False"
+        score.score_metadata = {ORIGINAL_FLOAT_VALUE_KEY: 0.5}
+
+        view = ScoreView.from_domain(score)
+
+        assert view.scale_score == 0.5
+        assert view.model_dump(mode="json")["scale_score"] == 0.5
+
+    def test_scale_score_is_none_without_a_numeric_metadata_value(self) -> None:
+        """A plain score (no float metadata) reports no numeric scale score."""
+        assert ScoreView.from_domain(_make_score()).scale_score is None
+        boolean_meta = _make_score()
+        boolean_meta.score_metadata = {ORIGINAL_FLOAT_VALUE_KEY: True}
+        assert ScoreView.from_domain(boolean_meta).scale_score is None
 
 
 class TestMessagePieceViewContract:
