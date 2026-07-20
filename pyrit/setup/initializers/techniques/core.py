@@ -12,7 +12,7 @@ factories here carry only their behavioral tags (e.g.
 ``default`` is intentionally not a tag here: what runs by default is
 scenario-relative and is declared per scenario (see
 ``AttackTechniqueRegistry.build_technique_class_from_factories``'s
-``default_technique_names``), not baked into the shared catalog.
+``default_tags`` / ``default_names``), not baked into the shared catalog.
 """
 
 from pyrit.common.path import (

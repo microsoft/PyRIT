@@ -152,7 +152,6 @@ class Scenario(ABC):
         name: str = "",
         version: int,
         technique_class: type[ScenarioTechnique],
-        default_technique: ScenarioTechnique,
         default_dataset_config: DatasetAttackConfiguration,
         objective_scorer: Scorer,
         scenario_result_id: uuid.UUID | str | None = None,
@@ -164,9 +163,9 @@ class Scenario(ABC):
             name (str): Descriptive name for the scenario.
             version (int): Version number of the scenario.
             technique_class (type[ScenarioTechnique]): The technique enum class for this scenario.
-            default_technique (ScenarioTechnique): The default technique member used when no
-                ``scenario_techniques`` are passed to ``initialize_async``. Usually an aggregate
-                member like ``MyTechnique.ALL`` or ``MyTechnique.DEFAULT``.
+                The technique used when no ``scenario_techniques`` are passed to
+                ``initialize_async`` is the catalog's own default, read from
+                ``technique_class.default()``.
             default_dataset_config (DatasetAttackConfiguration): The default dataset configuration used
                 when no ``dataset_config`` is passed to ``initialize_async``.
             objective_scorer (Scorer): The objective scorer used to evaluate attack results.
@@ -196,7 +195,7 @@ class Scenario(ABC):
 
         # Store technique configuration for use in initialize_async
         self._technique_class = technique_class
-        self._default_technique = default_technique
+        self._default_technique = technique_class.default()
         self._default_dataset_config = default_dataset_config
 
         # These will be set in initialize_async

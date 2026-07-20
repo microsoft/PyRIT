@@ -1,7 +1,8 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-"""Typing-only extension points for the Greedy Coordinate Gradient (GCG) attack.
+"""
+Typing-only extension points for the Greedy Coordinate Gradient (GCG) attack.
 
 This module defines four ``runtime_checkable`` ``Protocol``s that mark the four
 algorithmic seams inside the GCG optimization loop where a future caller may
@@ -40,7 +41,8 @@ if TYPE_CHECKING:
 
 @runtime_checkable
 class SamplingStrategy(Protocol):
-    """Proposes a batch of candidate suffix token sequences from the gradient.
+    """
+    Proposes a batch of candidate suffix token sequences from the gradient.
 
     Invoked once per GCG optimization step, after the per-worker gradients have
     been aggregated. The implementation receives the aggregated gradient over
@@ -75,7 +77,8 @@ class SamplingStrategy(Protocol):
         allow_non_ascii: bool,
         non_ascii_tokens: torch.Tensor,
     ) -> torch.Tensor:
-        """Sample ``batch_size`` candidate suffix token sequences.
+        """
+        Sample ``batch_size`` candidate suffix token sequences.
 
         Args:
             gradient (torch.Tensor): Aggregated gradient over the control
@@ -109,7 +112,8 @@ class SamplingStrategy(Protocol):
 
 @runtime_checkable
 class LossFunction(Protocol):
-    """Scores a batch of candidate suffixes against the target completion.
+    """
+    Scores a batch of candidate suffixes against the target completion.
 
     Invoked once per worker per training prompt per candidate batch during the
     search pass. The implementation receives the model's logits for the
@@ -148,7 +152,8 @@ class LossFunction(Protocol):
         target_slice: slice,
         control_slice: slice,
     ) -> torch.Tensor:
-        """Compute the per-candidate loss for a candidate batch.
+        """
+        Compute the per-candidate loss for a candidate batch.
 
         Args:
             logits (torch.Tensor): Model logits for the candidate batch with
@@ -170,7 +175,8 @@ class LossFunction(Protocol):
 
 @runtime_checkable
 class CandidateFilter(Protocol):
-    """Decodes and prunes a batch of candidate suffix token tensors.
+    """
+    Decodes and prunes a batch of candidate suffix token tensors.
 
     Invoked once per worker per optimization step, immediately after sampling.
     The implementation receives the raw sampled token tensor and the worker's
@@ -205,7 +211,8 @@ class CandidateFilter(Protocol):
         tokenizer: Any,
         current_control: str,
     ) -> list[str]:
-        """Decode and filter a batch of candidate suffix token tensors.
+        """
+        Decode and filter a batch of candidate suffix token tensors.
 
         Args:
             candidate_tokens (torch.Tensor): Sampled candidate suffixes with
@@ -228,7 +235,8 @@ class CandidateFilter(Protocol):
 
 @runtime_checkable
 class SuffixInitializer(Protocol):
-    """Produces the initial suffix string fed into the optimization loop.
+    """
+    Produces the initial suffix string fed into the optimization loop.
 
     Invoked once at attack-setup time. The returned string is threaded through
     the existing ``control_init`` parameter of ``AttackPrompt`` /
@@ -259,7 +267,8 @@ class SuffixInitializer(Protocol):
     """
 
     def make_initial_suffix(self, *, tokenizer: Any) -> str:
-        """Return the initial suffix string for the optimization loop.
+        """
+        Return the initial suffix string for the optimization loop.
 
         Args:
             tokenizer (Any): A HuggingFace-style tokenizer the implementation

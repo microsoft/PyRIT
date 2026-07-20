@@ -15,7 +15,7 @@ state is mutated.
 These tests cover the new contract:
 * Class metadata (VERSION, BASELINE policy, defaults).
 * Technique enum is built from registered factories with ``uses_adversarial=True``
-  and the ``core`` technique tag; ``light`` aggregate preserves the
+  that do not bake their own ``adversarial_chat``; ``light`` aggregate preserves the
   source ``light`` tag (excludes ``tap`` / ``crescendo_simulated``).
 * ``supported_parameters`` declares ``adversarial_targets: list[str]``.
 * ``_resolve_adversarial_targets`` raises with available names on typos.
@@ -76,7 +76,7 @@ def _build_benchmarkable_factories_snapshot() -> list:
         factories = build_technique_factories()
     finally:
         TargetRegistry.reset_registry_singleton()
-    return [f for f in factories if f.uses_adversarial and "core" in f.technique_tags]
+    return [f for f in factories if f.uses_adversarial and f.adversarial_chat is None]
 
 
 _BENCHMARKABLE_FACTORIES = _build_benchmarkable_factories_snapshot()
@@ -126,6 +126,7 @@ def _register_mock_factory(*, name: str, tags: list[str] | None = None, seed_tec
     factory = MagicMock(spec=AttackTechniqueFactory)
     factory.name = name
     factory.uses_adversarial = True
+    factory.adversarial_chat = None
     factory.technique_tags = tags if tags is not None else ["core", "light"]
     factory.seed_technique = seed_technique
     technique_instance = MagicMock(name="AttackTechnique")
@@ -154,9 +155,9 @@ async def _build_atomic_attacks(bench: AdversarialBenchmark) -> list:
 class TestAdversarialBenchmarkMetadata:
     """Tests for class-level metadata that doesn't depend on any runtime state."""
 
-    def test_version_is_2(self):
-        """VERSION matches the post-collapse ``atomic_attack_name`` format so cached results still match."""
-        assert AdversarialBenchmark.VERSION == 2
+    def test_version_is_3(self):
+        """VERSION bumped to 3 when the ``core`` pool gate was dropped so cached v2 results don't suppress v3 runs."""
+        assert AdversarialBenchmark.VERSION == 3
 
     def test_baseline_attack_policy_is_forbidden(self):
         """A baseline contributes no signal to a model-comparison benchmark, so it is forbidden."""
@@ -202,7 +203,7 @@ class TestAdversarialBenchmarkTechnique:
     """Tests for ``_build_benchmark_technique`` using the registry-based factory API."""
 
     def test_technique_built_from_registered_adversarial_factories(self):
-        """Each registered ``core`` adversarial factory produces one concrete enum member."""
+        """Each registered adversarial factory produces one concrete enum member."""
         technique_cls = _build_benchmark_technique()
         aggregate_names = {"all"} | technique_cls.get_aggregate_tags()
         concrete_members = [m for m in technique_cls if m.value not in aggregate_names]
@@ -240,6 +241,8 @@ class TestAdversarialBenchmarkTechnique:
         technique_cls = _build_benchmark_technique()
         member_values = {m.value for m in technique_cls}
         assert "pinned_adversary" not in member_values
+
+    def test_technique_exposes_tag_aggregates(self):
         """The technique enum exposes ``light``, ``single_turn``, ``multi_turn`` aggregates."""
         technique_cls = _build_benchmark_technique()
         aggregates = technique_cls.get_aggregate_tags()
@@ -304,6 +307,17 @@ class TestAdversarialBenchmarkInit:
             use_cached=True,
         )
         assert bench._use_cached is True
+
+    def test_construct_without_light_factory_falls_back_to_all(self):
+        """A pool with no ``light``-tagged factory must still construct, defaulting to ``all``."""
+        AttackTechniqueRegistry.reset_registry_singleton()
+        _build_benchmark_technique.cache_clear()
+        _register_mock_factory(name="narrow_tap", tags=["airt_internal", "multi_turn"])
+
+        bench = AdversarialBenchmark(objective_scorer=MagicMock(spec=TrueFalseScorer))
+
+        assert "light" not in bench._technique_class.get_aggregate_tags()
+        assert bench._default_technique.value == "all"
 
 
 # ---------------------------------------------------------------------------
