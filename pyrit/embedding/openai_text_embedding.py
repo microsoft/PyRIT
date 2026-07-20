@@ -8,7 +8,7 @@ from typing import Any
 import tenacity
 from openai import AsyncOpenAI
 
-from pyrit.auth import ensure_async_token_provider, get_azure_openai_auth, is_azure_openai_endpoint
+from pyrit.auth import resolve_openai_auth
 from pyrit.common import default_values
 from pyrit.models import (
     EmbeddingData,
@@ -63,27 +63,11 @@ class OpenAITextEmbedding(EmbeddingSupport):
             env_var_name=self.MODEL_ENVIRONMENT_VARIABLE, passed_value=model_name
         )
 
-        # API key: use passed value, env var, or fall back to Entra ID for Azure endpoints
-        resolved_api_key: str | Callable[[], str | Awaitable[str]]
-        if api_key is not None and callable(api_key):
-            resolved_api_key = api_key
-        else:
-            api_key_value = default_values.get_non_required_value(
-                env_var_name=self.API_KEY_ENVIRONMENT_VARIABLE, passed_value=api_key
-            )
-            if api_key_value:
-                resolved_api_key = api_key_value
-            elif is_azure_openai_endpoint(endpoint):
-                resolved_api_key = get_azure_openai_auth(endpoint)
-            else:
-                raise ValueError(
-                    f"Environment variable {self.API_KEY_ENVIRONMENT_VARIABLE} is required for non-Azure "
-                    "endpoints. For recognized Azure OpenAI / AI Foundry endpoints, Entra ID authentication "
-                    "is used automatically."
-                )
-
-        # Wrap sync token providers for async compatibility; AsyncOpenAI accepts str or async callable
-        async_api_key = ensure_async_token_provider(resolved_api_key)
+        async_api_key = resolve_openai_auth(
+            endpoint=endpoint,
+            api_key=api_key,
+            api_key_environment_variable=self.API_KEY_ENVIRONMENT_VARIABLE,
+        )
         self._async_client = AsyncOpenAI(
             api_key=async_api_key,
             base_url=endpoint,

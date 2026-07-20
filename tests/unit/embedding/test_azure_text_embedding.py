@@ -146,7 +146,7 @@ def test_no_key_azure_endpoint_falls_back_to_entra(mock_async_openai):
     mock_async_openai.return_value = MagicMock()
     mock_auth = AsyncMock(return_value="entra-token")
 
-    with patch("pyrit.embedding.openai_text_embedding.get_azure_openai_auth", return_value=mock_auth) as mock_get_auth:
+    with patch("pyrit.auth.openai_auth.get_azure_openai_auth", return_value=mock_auth) as mock_get_auth:
         _build_embedding(api_key=None, endpoint=_AZURE_ENDPOINT)
 
     mock_get_auth.assert_called_once_with(_AZURE_ENDPOINT)
