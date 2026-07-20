@@ -76,6 +76,11 @@ class ScamTechnique(ScenarioTechnique):
         # Include base class aggregates ("all") and add scenario-specific ones
         return super().get_aggregate_tags() | {"default", "single_turn", "multi_turn"}
 
+    @classmethod
+    def default(cls) -> "ScamTechnique":
+        """Return the default technique (``DEFAULT``) used when the caller selects nothing."""
+        return cls.DEFAULT
+
 
 class Scam(Scenario):
     """
@@ -146,7 +151,6 @@ class Scam(Scenario):
         super().__init__(
             version=self.VERSION,
             technique_class=ScamTechnique,
-            default_technique=ScamTechnique.DEFAULT,
             default_dataset_config=DatasetAttackConfiguration(dataset_names=["airt_scams"], max_dataset_size=4),
             objective_scorer=objective_scorer,
             scenario_result_id=scenario_result_id,

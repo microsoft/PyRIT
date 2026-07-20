@@ -59,10 +59,10 @@
 #    - Each enum member represents an **attack technique** (the *how* of an attack)
 #    - Each member is defined as `(value, tags)` where value is a string and tags is a set of strings
 #    - Include an `ALL` aggregate technique that expands to all available techniques
+#    - The default technique (what runs when the caller selects nothing) is owned by the catalog, not the scenario: override the `default()` classmethod to return the default member (omit it to fall back to `ALL`)
 #
 # 2. **Scenario Class**: Extend `Scenario` and pass these to `super().__init__()`:
 #    - `technique_class`: Your technique enum class
-#    - `default_technique`: The default technique (typically `YourTechnique.ALL` or `YourTechnique.DEFAULT`)
 #    - Implement `_build_atomic_attacks_async(context)` — the single abstract extension point.
 #      Matrix-shaped scenarios delegate to `build_matrix_atomic_attacks(context=...)` in one line.
 #
@@ -74,7 +74,6 @@
 #    - `name`: Descriptive name for your scenario
 #    - `version`: Integer version number
 #    - `technique_class`: The technique enum class for this scenario
-#    - `default_technique`: The default technique member (typically `YourTechnique.ALL` or `YourTechnique.DEFAULT`)
 #    - `default_dataset_config`: A `DatasetConfiguration` specifying the scenario's default datasets
 #    - `objective_scorer`: The scorer used to judge responses
 #    - `scenario_result_id`: Optional ID to resume an existing scenario (optional)
@@ -118,6 +117,10 @@ class MyTechnique(ScenarioTechnique):
     PromptSending = ("prompt_sending", {"single_turn", "default"})
     RolePlay = ("role_play_movie_script", {"single_turn"})
 
+    @classmethod
+    def default(cls) -> "MyTechnique":
+        return cls.DEFAULT
+
 
 class MyScenario(Scenario):
     """Quick-check scenario for testing model behavior across harm categories."""
@@ -139,7 +142,6 @@ class MyScenario(Scenario):
             version=self.VERSION,
             objective_scorer=self._objective_scorer,
             technique_class=MyTechnique,
-            default_technique=MyTechnique.DEFAULT,
             default_dataset_config=DatasetConfiguration(dataset_names=["dataset_name"], max_dataset_size=4),
             scenario_result_id=scenario_result_id,
         )

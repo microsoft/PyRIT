@@ -74,12 +74,6 @@ class AdaptiveScenario(Scenario):
 
     @classmethod
     @abstractmethod
-    def get_default_technique(cls) -> ScenarioTechnique:
-        """Return the scenario's default technique aggregate (subclasses must override)."""
-        raise NotImplementedError
-
-    @classmethod
-    @abstractmethod
     def default_dataset_config(cls) -> DatasetAttackConfiguration:
         """Return the scenario's default ``DatasetAttackConfiguration`` (subclasses must override)."""
         raise NotImplementedError
@@ -109,7 +103,6 @@ class AdaptiveScenario(Scenario):
         super().__init__(
             version=self.VERSION,
             technique_class=self.get_technique_class(),
-            default_technique=self.get_default_technique(),
             default_dataset_config=self.default_dataset_config(),
             objective_scorer=objective_scorer,
             scenario_result_id=scenario_result_id,

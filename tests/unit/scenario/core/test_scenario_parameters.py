@@ -65,7 +65,6 @@ def _make_scenario(
     return _ParamTestScenario(
         version=1,
         technique_class=_ParamTestTechnique,
-        default_technique=_ParamTestTechnique.ALL,
         default_dataset_config=DatasetConfiguration(),
         objective_scorer=mock_scorer,
     )
