@@ -5,56 +5,118 @@ import {
   Popover,
   PopoverTrigger,
   PopoverSurface,
+  Tooltip,
+  mergeClasses,
 } from '@fluentui/react-components'
 import type { AttackOutcome, ScoreView } from '../../types'
-import { resolveOutcome } from '../../utils/attackOutcome'
+import { OUTCOME_COLORS, OUTCOME_ICONS, resolveOutcome } from '../../utils/attackOutcome'
 import { getScoreColor } from '../../utils/scoreColor'
 import { useAttackVerdictChipStyles } from './AttackVerdictChip.styles'
+
+// Shown when the verdict is attack-level but a related (non-main) conversation
+// is active, so the score doesn't correspond to what's on screen.
+const ATTACK_LEVEL_HINT =
+  'Attack-level verdict, computed on the main conversation \u2014 not the related conversation you are viewing.'
 
 interface AttackVerdictChipProps {
   outcome?: AttackOutcome | null
   score?: ScoreView | null
+  // False when a related (non-main) conversation is active: `last_score` is the
+  // attack's objective score on the main conversation, so it does not belong to
+  // the conversation on screen. Defaults to true.
+  appliesToActiveConversation?: boolean
 }
 
-export default function AttackVerdictChip({ outcome, score }: AttackVerdictChipProps) {
+export default function AttackVerdictChip({
+  outcome,
+  score,
+  appliesToActiveConversation = true,
+}: AttackVerdictChipProps) {
   const styles = useAttackVerdictChipStyles()
 
-  // Only the score value is surfaced in the ribbon, so there's nothing to show without a score.
-  if (!score) return null
-
+  // The verdict is the attack's outcome plus its score. With neither there's nothing to show
+  // (e.g. a manual GUI attack, which can't be scored yet), so the chip is omitted entirely.
+  if (!outcome && !score) return null
   const resolvedOutcome = resolveOutcome(outcome)
+  const outcomeBadge = (
+    <Badge
+      appearance="filled"
+      color={OUTCOME_COLORS[resolvedOutcome]}
+      icon={OUTCOME_ICONS[resolvedOutcome]}
+      data-testid="attack-outcome-badge"
+    >
+      {resolvedOutcome}
+    </Badge>
+  )
+
+  // Outcome-only verdict: strategies that produce an outcome but no score (e.g. sequential,
+  // barge-in) still get the outcome badge, matching the history table, with no score popover.
+  if (!score) {
+    const badge = (
+      <div
+        className={mergeClasses(styles.chip, !appliesToActiveConversation && styles.dimmed)}
+        data-testid="attack-verdict-chip"
+      >
+        {outcomeBadge}
+      </div>
+    )
+    return appliesToActiveConversation ? (
+      badge
+    ) : (
+      <Tooltip content={ATTACK_LEVEL_HINT} relationship="label">
+        {badge}
+      </Tooltip>
+    )
+  }
+
   const categories = score.score_category?.filter(Boolean) ?? []
-  const scoreColor = getScoreColor(score.score_type, score.score_value)
+  // A FloatScaleThresholdScorer keeps the raw scale score behind its true/false
+  // verdict; surface it and let it grade the badge hue.
+  const scaleScore = score.scale_score ?? null
+  const scoreColor = getScoreColor(resolvedOutcome, score.score_type, score.score_value, scaleScore)
   const scoreBadgeStyle = {
     backgroundColor: scoreColor.background,
     borderColor: scoreColor.background,
     color: scoreColor.foreground,
   }
+  const ariaLabel = appliesToActiveConversation
+    ? `Verdict ${resolvedOutcome}, score ${score.score_value}`
+    : `Attack-level verdict ${resolvedOutcome}, score ${score.score_value}`
 
   return (
     <Popover withArrow>
       <PopoverTrigger disableButtonEnhancement>
         <Button
           appearance="subtle"
-          className={styles.chip}
+          className={mergeClasses(styles.chip, !appliesToActiveConversation && styles.dimmed)}
           data-testid="attack-score-chip"
-          aria-label={`Score ${score.score_value}`}
+          aria-label={ariaLabel}
         >
-          <span className={styles.chipLabel}>Score</span>
           <Badge appearance="filled" size="medium" style={scoreBadgeStyle}>
-            {score.score_value}
+            {resolvedOutcome}
           </Badge>
         </Button>
       </PopoverTrigger>
       <PopoverSurface>
         <div className={styles.surface} data-testid="attack-score-details">
-          <Text weight="semibold" size={300}>Score</Text>
+          <Text weight="semibold" size={300}>Verdict</Text>
+          {!appliesToActiveConversation && (
+            <Text size={200} className={styles.attackLevelNote} data-testid="attack-level-note">
+              {ATTACK_LEVEL_HINT}
+            </Text>
+          )}
           <div className={styles.row}>
             <Text size={200} weight="semibold" className={styles.rowLabel}>Value</Text>
             <Badge appearance="filled" size="small" style={scoreBadgeStyle}>
               {score.score_value}
             </Badge>
           </div>
+          {scaleScore !== null && (
+            <div className={styles.row}>
+              <Text size={200} weight="semibold" className={styles.rowLabel}>Scale score</Text>
+              <Text size={200}>{scaleScore.toFixed(2)}</Text>
+            </div>
+          )}
           <div className={styles.row}>
             <Text size={200} weight="semibold" className={styles.rowLabel}>Type</Text>
             <Text size={200}>{score.score_type}</Text>

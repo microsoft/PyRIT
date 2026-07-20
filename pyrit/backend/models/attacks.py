@@ -23,6 +23,7 @@ from pyrit.models import (
     MessagePiece,
     Score,
 )
+from pyrit.score.score_utils import ORIGINAL_FLOAT_VALUE_KEY
 
 
 class TargetInfo(BaseModel):
@@ -49,6 +50,21 @@ class ScoreView(Score):
         if identifier and identifier.class_name:
             return identifier.class_name
         return "Unknown"
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def scale_score(self) -> float | None:
+        """
+        The raw 0-1 float scale score behind a thresholded true/false verdict.
+
+        ``FloatScaleThresholdScorer`` keeps the pre-threshold scale value in
+        ``score_metadata``; surface it here so clients don't have to know the
+        metadata key. ``None`` when the score is not a thresholded float scale.
+        """
+        value = (self.score_metadata or {}).get(ORIGINAL_FLOAT_VALUE_KEY)
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return None
+        return float(value)
 
     @classmethod
     def from_domain(cls, score: Score) -> "ScoreView":

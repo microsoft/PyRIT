@@ -183,6 +183,9 @@ export interface ScoreView {
   score_value: string
   score_category?: string[] | null
   score_rationale?: string | null
+  // Raw 0-1 scale score behind a thresholded true/false verdict (e.g. from a
+  // FloatScaleThresholdScorer); null for a plain true/false score.
+  scale_score?: number | null
   timestamp: string
 }
 

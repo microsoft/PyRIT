@@ -15,7 +15,8 @@ import {
   OpenRegular,
 } from '@fluentui/react-icons'
 import type { AttackSummary } from '../../types'
-import { OUTCOME_ICONS, OUTCOME_COLORS, resolveOutcome } from '../../utils/attackOutcome'
+import { resolveOutcome } from '../../utils/attackOutcome'
+import AttackVerdictChip from '../Chat/AttackVerdictChip'
 import { useAttackHistoryStyles } from './AttackHistory.styles'
 
 interface AttackTableProps {
@@ -63,14 +64,16 @@ export default function AttackTable({ attacks, onOpenAttack, formatDate }: Attac
             data-testid={`attack-row-${attack.attack_result_id}`}
           >
             <TableCell>
-              <Badge
-                appearance="filled"
-                color={OUTCOME_COLORS[resolveOutcome(attack.outcome)]}
-                icon={OUTCOME_ICONS[resolveOutcome(attack.outcome)]}
+              {/* Reuse the verdict chip so hovering/clicking reveals the last
+                  score, matching the chat ribbon. Stop propagation so opening
+                  the score popover doesn't also open the attack. */}
+              <span
                 data-testid={`outcome-badge-${attack.attack_result_id}`}
+                onClick={(e) => e.stopPropagation()}
+                onKeyDown={(e) => e.stopPropagation()}
               >
-                {resolveOutcome(attack.outcome)}
-              </Badge>
+                <AttackVerdictChip outcome={resolveOutcome(attack.outcome)} score={attack.last_score} />
+              </span>
             </TableCell>
             <TableCell>
               <Text size={200} weight="semibold" truncate>{attack.attack_type}</Text>

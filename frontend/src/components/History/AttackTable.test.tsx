@@ -1,4 +1,4 @@
-import { render, screen, fireEvent } from '@testing-library/react'
+import { render, screen, fireEvent, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { FluentProvider, webLightTheme } from '@fluentui/react-components'
 import AttackTable from './AttackTable'
@@ -202,6 +202,67 @@ describe('AttackTable', () => {
     expect(screen.getByText('failure')).toBeInTheDocument()
     // undetermined for null outcome
     expect(screen.getAllByText('undetermined')).toHaveLength(1)
+  })
+
+  it('tints the outcome badge by the score when the attack has one', () => {
+    const scored: AttackSummary[] = [
+      {
+        ...sampleAttacks[0],
+        attack_result_id: 'ar-scored',
+        outcome: 'failure',
+        last_score: {
+          id: 'score-1',
+          scorer_type: 'FloatScaleThresholdScorer',
+          score_type: 'true_false',
+          score_value: 'false',
+          scale_score: 0.5,
+          timestamp: '2026-01-15T11:00:00Z',
+        },
+      },
+    ]
+    render(
+      <TestWrapper>
+        <AttackTable {...defaultProps} attacks={scored} />
+      </TestWrapper>
+    )
+
+    // A scored row is tinted via an inline background (mirroring the verdict
+    // chip), not the flat Fluent outcome color.
+    const cell = screen.getByTestId('outcome-badge-ar-scored')
+    expect(within(cell).getByText('failure')).toHaveStyle({ backgroundColor: 'rgb(161, 62, 64)' })
+  })
+
+  it('reveals the last score in a popover without opening the attack', async () => {
+    const user = userEvent.setup()
+    const onOpenAttack = jest.fn()
+    const scored: AttackSummary[] = [
+      {
+        ...sampleAttacks[0],
+        attack_result_id: 'ar-scored',
+        outcome: 'failure',
+        last_score: {
+          id: 'score-1',
+          scorer_type: 'FloatScaleThresholdScorer',
+          score_type: 'true_false',
+          score_value: 'false',
+          scale_score: 0.5,
+          timestamp: '2026-01-15T11:00:00Z',
+        },
+      },
+    ]
+    render(
+      <TestWrapper>
+        <AttackTable {...defaultProps} attacks={scored} onOpenAttack={onOpenAttack} />
+      </TestWrapper>
+    )
+
+    await user.click(screen.getByRole('button', { name: /verdict failure, score false/i }))
+
+    const details = await screen.findByTestId('attack-score-details')
+    expect(within(details).getByText('Scale score')).toBeInTheDocument()
+    expect(within(details).getByText('0.50')).toBeInTheDocument()
+    // Interacting with the chip must not navigate to the attack.
+    expect(onOpenAttack).not.toHaveBeenCalled()
   })
 
   it('should show target model name as badge when available', () => {

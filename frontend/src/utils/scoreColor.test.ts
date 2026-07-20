@@ -2,8 +2,9 @@ import { getScoreColor, normalizeScoreValue } from './scoreColor'
 
 const WHITE = '#ffffff'
 const GREY = 'rgb(97, 97, 97)'
-const RED = 'rgb(197, 15, 31)'
-const GREEN = 'rgb(16, 124, 16)'
+const RED = 'rgb(188, 47, 50)'
+const GREEN = 'rgb(14, 112, 14)'
+const AMBER = 'rgb(196, 53, 1)'
 
 describe('normalizeScoreValue', () => {
   it('maps true/false verdicts to the [0, 1] extremes', () => {
@@ -35,30 +36,58 @@ describe('normalizeScoreValue', () => {
 })
 
 describe('getScoreColor', () => {
-  it('renders a true verdict as the most saturated green', () => {
-    expect(getScoreColor('true_false', 'true')).toEqual({ background: GREEN, foreground: WHITE })
+  it('drives the hue from the outcome, not the score polarity', () => {
+    // A refusal scorer reports "true" on a *failed* attack; the badge must stay
+    // red (failure) rather than turning success-green from the raw polarity.
+    expect(getScoreColor('failure', 'true_false', 'true')).toEqual({ background: RED, foreground: WHITE })
+    expect(getScoreColor('success', 'true_false', 'true')).toEqual({ background: GREEN, foreground: WHITE })
   })
 
-  it('renders a false verdict as the most saturated red', () => {
-    expect(getScoreColor('true_false', 'false')).toEqual({ background: RED, foreground: WHITE })
+  it('renders a boolean verdict at full, brightest strength for either value', () => {
+    // A true/false verdict is definitive, so both true and false render the
+    // full hue -- e.g. a false failure is the brightest red, not a light tint.
+    expect(getScoreColor('failure', 'true_false', 'false')).toEqual({ background: RED, foreground: WHITE })
+    expect(getScoreColor('failure', 'true_false', 'true')).toEqual({ background: RED, foreground: WHITE })
+    expect(getScoreColor('success', 'true_false', 'false')).toEqual({ background: GREEN, foreground: WHITE })
   })
 
-  it('renders the float midpoint (0.5) as neutral grey', () => {
-    expect(getScoreColor('float_scale', '0.5')).toEqual({ background: GREY, foreground: WHITE })
+  it('grades a thresholded true/false verdict by its underlying scale score', () => {
+    // A FloatScaleThresholdScorer keeps the raw 0-1 score in metadata; a false
+    // failure at 0.5 is a medium red, matching a plain float_scale 0.5.
+    expect(getScoreColor('failure', 'true_false', 'false', 0.5)).toEqual({ background: 'rgb(161, 62, 64)', foreground: WHITE })
+    // The underlying float takes precedence over the boolean full-strength rule.
+    expect(getScoreColor('failure', 'true_false', 'false', 0.5)).not.toEqual({ background: RED, foreground: WHITE })
+    // Clamped to [0, 1].
+    expect(getScoreColor('success', 'true_false', 'true', 1.5)).toEqual({ background: GREEN, foreground: WHITE })
   })
 
-  it('renders a float above the midpoint as a muted green', () => {
-    expect(getScoreColor('float_scale', '0.75')).toEqual({ background: 'rgb(57, 111, 57)', foreground: WHITE })
+  it('tints a float by its value: a lower value is lighter', () => {
+    // A full-value success is the vivid hue; a lower value is a lighter tint of
+    // the same hue (never a different color, never grey).
+    expect(getScoreColor('success', 'float_scale', '1')).toEqual({ background: GREEN, foreground: WHITE })
+    expect(getScoreColor('success', 'float_scale', '0.75')).toEqual({ background: 'rgb(26, 110, 26)', foreground: WHITE })
+    expect(getScoreColor('failure', 'float_scale', '0.5')).toEqual({ background: 'rgb(161, 62, 64)', foreground: WHITE })
   })
 
-  it('renders a float below the midpoint as a muted red', () => {
-    expect(getScoreColor('float_scale', '0.25')).toEqual({ background: 'rgb(147, 56, 64)', foreground: WHITE })
+  it('floors the tint so a scored float is never grey', () => {
+    const lowest = getScoreColor('success', 'float_scale', '0')
+    expect(lowest).toEqual({ background: 'rgb(64, 103, 64)', foreground: WHITE })
+    expect(lowest.background).not.toBe(GREY)
   })
 
-  it('falls back to grey for missing or uninterpretable scores', () => {
-    expect(getScoreColor(null, null)).toEqual({ background: GREY, foreground: WHITE })
-    expect(getScoreColor('true_false', null)).toEqual({ background: GREY, foreground: WHITE })
-    expect(getScoreColor('unknown', '0.5')).toEqual({ background: GREY, foreground: WHITE })
-    expect(getScoreColor('float_scale', 'not-a-number')).toEqual({ background: GREY, foreground: WHITE })
+  it('renders an error outcome as amber', () => {
+    expect(getScoreColor('error', 'true_false', 'true')).toEqual({ background: AMBER, foreground: WHITE })
+  })
+
+  it('renders grey for an undetermined outcome', () => {
+    expect(getScoreColor('undetermined', 'true_false', 'true')).toEqual({ background: GREY, foreground: WHITE })
+    expect(getScoreColor(null, 'float_scale', '0.9')).toEqual({ background: GREY, foreground: WHITE })
+  })
+
+  it('renders grey for an unscored or uninterpretable value', () => {
+    expect(getScoreColor('success', null, null)).toEqual({ background: GREY, foreground: WHITE })
+    expect(getScoreColor('success', 'true_false', null)).toEqual({ background: GREY, foreground: WHITE })
+    expect(getScoreColor('success', 'unknown', '0.5')).toEqual({ background: GREY, foreground: WHITE })
+    expect(getScoreColor('success', 'float_scale', 'not-a-number')).toEqual({ background: GREY, foreground: WHITE })
   })
 })

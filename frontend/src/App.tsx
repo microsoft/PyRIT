@@ -218,7 +218,7 @@ function App() {
           labels: attack.labels ?? {},
           target: attack.target ?? null,
           relatedConversationIds: attack.related_conversation_ids ?? [],
-          objective: attack.objective,
+          objective: attack.objective ?? '',
           outcome: attack.outcome ?? null,
           lastScore: attack.last_score ?? null,
           status: 'success',
