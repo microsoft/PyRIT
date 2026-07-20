@@ -19,6 +19,7 @@ import {
   Field,
   MessageBar,
   MessageBarBody,
+  Tooltip,
 } from '@fluentui/react-components'
 import { DeleteRegular } from '@fluentui/react-icons'
 import { targetsApi } from '@/services/api'
@@ -431,11 +432,15 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
 
   return (
     <Dialog open={open} onOpenChange={(_, data) => { if (!data.open) handleClose() }}>
-      <DialogSurface>
+      <DialogSurface className={styles.dialogSurface}>
         <DialogBody>
           <DialogTitle>Create New Target</DialogTitle>
-          <DialogContent>
-            <form className={styles.form} onSubmit={(e) => { e.preventDefault(); handleSubmit() }}>
+          <DialogContent className={styles.dialogContent}>
+            <form
+              className={styles.form}
+              data-testid="create-target-form"
+              onSubmit={(e) => { e.preventDefault(); handleSubmit() }}
+            >
               {error && (
                 <MessageBar intent="error">
                   <MessageBarBody>{error}</MessageBarBody>
@@ -443,12 +448,14 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
               )}
 
               <Field
+                className={styles.formField}
                 label="Target Type"
                 required
                 validationMessage={fieldErrors.targetType}
                 validationState={fieldErrors.targetType ? 'error' : 'none'}
               >
                 <Select
+                  className={styles.fullWidthSelect}
                   value={targetType}
                   onChange={(_, data) => {
                     const next = data.value
@@ -472,8 +479,9 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
               {/* === RoundRobinTarget form: select existing targets === */}
               {isRoundRobin && (
                 <>
-                  <Field label="Add Target">
+                  <Field className={styles.formField} label="Add Target">
                     <Select
+                      className={styles.fullWidthSelect}
                       value=""
                       onChange={(_, data) => {
                         if (data.value) addInnerTarget(data.value)
@@ -495,8 +503,8 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                   </Field>
 
                   {selectedInnerTargets.length > 0 && (
-                    <div>
-                      <Label size="small" style={{ marginBottom: '4px', display: 'block' }}>
+                    <div className={styles.selectedTargetsSection}>
+                      <Label size="small" className={styles.selectedTargetsLabel}>
                         Selected Targets ({selectedInnerTargets.length})
                         {selectedInnerTargets.length < 2 && (
                           <Text size={200} style={{ color: tokens.colorPaletteRedForeground1, marginLeft: '8px' }}>
@@ -509,49 +517,56 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                           const target = availableTargets.find(
                             (t) => t.target_registry_name === sel.registryName,
                           )
+                          const selectedTargetLabel = `${target?.target_registry_name ?? sel.registryName}${
+                            target && targetModelName(target) ? ` (${targetModelName(target)})` : ''
+                          }`
                           const weightParse = parseWeight(sel.weightInput)
                           const weightError = weightParse.ok ? null : weightParse.error
                           return (
                             <div key={sel.registryName} className={styles.selectedTargetRow}>
-                              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                  <Text size={200} style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                                    {target?.target_registry_name ?? sel.registryName}
-                                    {target && targetModelName(target) ? ` (${targetModelName(target)})` : ''}
-                                  </Text>
-                                  <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                                    <Label size="small">Weight:</Label>
-                                    <Input
-                                      type="number"
-                                      value={sel.weightInput}
-                                      min="1"
-                                      max={String(MAX_WEIGHT)}
-                                      step="1"
-                                      aria-invalid={weightError !== null}
-                                      aria-label={`Weight for ${sel.registryName}`}
-                                      style={{ width: '70px' }}
-                                      onChange={(_, data) =>
-                                        setInnerTargetWeightInput(sel.registryName, data.value)
-                                      }
-                                    />
-                                    <Button
-                                      appearance="subtle"
-                                      size="small"
-                                      icon={<DeleteRegular />}
-                                      aria-label={`Remove ${sel.registryName}`}
-                                      onClick={() => removeInnerTarget(sel.registryName)}
-                                    />
-                                  </div>
+                              <Tooltip
+                                content={<span className={styles.targetNameTooltip}>{selectedTargetLabel}</span>}
+                                relationship="description"
+                              >
+                                <Text
+                                  as="span"
+                                  size={200}
+                                  className={styles.selectedTargetName}
+                                  tabIndex={0}
+                                  aria-label={`Selected target: ${selectedTargetLabel}`}
+                                >
+                                  {selectedTargetLabel}
+                                </Text>
+                              </Tooltip>
+                              <div className={styles.selectedTargetControlGroup}>
+                                <div className={styles.selectedTargetControls}>
+                                  <Label size="small">Weight:</Label>
+                                  <Input
+                                    className={styles.weightInput}
+                                    type="number"
+                                    value={sel.weightInput}
+                                    min="1"
+                                    max={String(MAX_WEIGHT)}
+                                    step="1"
+                                    aria-invalid={weightError !== null}
+                                    aria-label={`Weight for ${sel.registryName}`}
+                                    onChange={(_, data) =>
+                                      setInnerTargetWeightInput(sel.registryName, data.value)
+                                    }
+                                  />
+                                  <Button
+                                    appearance="subtle"
+                                    size="small"
+                                    icon={<DeleteRegular />}
+                                    aria-label={`Remove ${sel.registryName}`}
+                                    onClick={() => removeInnerTarget(sel.registryName)}
+                                  />
                                 </div>
                                 {weightError && (
                                   <Text
                                     size={100}
                                     role="alert"
-                                    style={{
-                                      color: tokens.colorPaletteRedForeground1,
-                                      marginTop: '2px',
-                                      alignSelf: 'flex-end',
-                                    }}
+                                    className={styles.weightError}
                                   >
                                     {weightError}
                                   </Text>
