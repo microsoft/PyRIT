@@ -277,7 +277,7 @@ export default function TargetTable({ targets, activeTarget, onSetActiveTarget }
     activeTarget?.target_registry_name === target.target_registry_name
 
   return (
-    <div className={styles.tableContainer}>
+    <div className={styles.tableContainer} data-testid="target-table-scroll-region">
       {activeTarget && (
         <Table aria-label="Active target" className={styles.table} style={{ marginBottom: '12px' }}>
           <TableBody>
@@ -333,12 +333,12 @@ export default function TargetTable({ targets, activeTarget, onSetActiveTarget }
       )}
 
       {targetTypes.length > 1 && (
-        <div style={{ marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+        <div className={styles.filterRow}>
           <Text size={200}>Filter by type:</Text>
           <Select
+            className={styles.filterSelect}
             value={typeFilter}
             onChange={(_, data) => setTypeFilter(data.value)}
-            style={{ minWidth: '200px' }}
           >
             <option value="">All types</option>
             {targetTypes.map(t => (
