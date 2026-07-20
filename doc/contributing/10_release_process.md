@@ -11,22 +11,55 @@ Follow the instructions according to the order provided.
 
 Before starting the release process, verify the codebase is in a healthy state.
 
-### Required Release Reviews
+### Customer-Facing Review
 
-Use the existing release work item to record:
+Use an existing release work item, or create one if none exists, to track release
+readiness. Perform a review of the customer-facing release materials (draft GitHub
+release notes, changed public documentation, and changed CoPyRIT UI content), not a
+new code security assessment. Complete the steps below.
 
-- Release owner and target version
-- Links to the UI, documentation, and release notes
-- One reviewer each for development, security, content publishing, and user experience
+#### Required Release Note Content
 
-| Checkpoint | Timing | Completion criteria |
-|---|---|---|
-| Scope freeze | Before release testing | Reviewers assess planned customer-facing changes. Security and compatibility findings are linked and assigned. |
-| Final release candidate | Immediately before publishing | Reviewers approve the final UI, documentation, and release notes. High-priority findings are resolved or covered by an approved customer disclosure. |
+Before release testing, prepare draft GitHub release notes that include:
 
-Do not publish until all final approvals, including reviewer names and dates, are
-recorded in the release work item. Store details about security vulnerabilities that
-have not yet been publicly disclosed only in the approved private security system.
+1. A summary of the important bug fixes and features being shipped.
+2. Security fixes and known high-priority security issues, including affected versions
+   and recommended actions. If there are none, write
+   `No known high-priority security issues.`
+3. Breaking changes and backward-compatibility issues, including clear migration or
+   mitigation steps. If there are none, write
+   `No known breaking changes or backward-compatibility issues.`
+
+The release owner then completes the first review:
+
+1. Compares the draft release notes with the changes included in the release.
+2. Reviews the changed public documentation and CoPyRIT UI content for technical
+   accuracy, security and compatibility disclosures, content clarity, and usability.
+3. Fixes high-priority security bugs and technical-review findings before release
+   testing.
+4. Links the draft release notes in the release work item and records either
+   `First review completed by @owner on YYYY-MM-DD: no findings` or links to the
+   issues or pull requests that resolved the findings.
+
+#### Before Publishing
+
+A PyRIT maintainer other than the release owner reviews the final materials and:
+
+1. Repeats the first-review checks against the final release notes, public
+   documentation, and applicable CoPyRIT UI.
+2. Confirms that high-priority security bugs and technical-review findings from the
+   first review are resolved.
+3. Opens the changed documentation links and applicable CoPyRIT UI to confirm that
+   security information is accessible and the final content matches the release notes.
+4. Records either
+   `Approved by @reviewer on YYYY-MM-DD for development, security, content, and UX`
+   or the remaining changes required before approval in the release work item.
+
+Do not publish until the final approval is recorded.
+
+Do not include details about security vulnerabilities that have not yet been publicly
+disclosed in the release work item. Follow [the security policy](../../SECURITY.md)
+for private vulnerability reporting.
 
 - **Check for pending changes.** Ask other PyRIT maintainers whether they have any in-flight changes that should land before the release.
 - **Verify build pipelines.** Confirm that all integration tests and end-to-end tests are passing in the CI pipelines. If any tests are failing, fix them before proceeding.
@@ -48,9 +81,9 @@ More significant changes, such as major features, require at least a new
 minor version.
 They should still be backwards compatible, so if you're upgrading from
 `1.1.0` to `1.2.0` your code shouldn't break.
-The major version `1.0.0` is the first "stable" release.
-Anything before (i.e., leading with major version `0`) indicates that it is
-not stable and anything may change at any time.
+A major version of `1` or higher indicates a stable release.
+A leading major version of `0` indicates that the project is not stable and anything
+may change at any time.
 For that reason, the minor version may indicate breaking changes, too,
 at least until we hit major version `1`.
 
@@ -271,13 +304,13 @@ since `downgrade()` risks data loss.
 
 ## 10. Publish to PyPI
 
-Before publishing, complete and retain this checklist in the release work item:
+Complete this checklist in the release work item:
 
-- [ ] Technical reviews of the final customer-facing content and UI are complete, and all high-priority feedback is resolved or has an approved disposition.
-- [ ] Scope-freeze and final-release-candidate reviews are recorded.
-- [ ] The final development, content publishing, security, and user experience approvals are recorded with reviewer names and dates.
-- [ ] Release notes contain the required security and compatibility disclosures described in step 12, including explicit "None known" statements where applicable.
-- [ ] Links to review evidence and the final approved artifacts are retained in the release work item.
+- [ ] The release owner's first review is recorded, and the draft release notes are linked.
+- [ ] High-priority security bugs and technical-review findings are resolved.
+- [ ] A maintainer other than the release owner has approved the final customer-facing materials for development, security, content, and UX.
+- [ ] Release notes contain the required security and compatibility disclosures.
+- [ ] Links to the final approved materials are retained in the release work item.
 
 Do not publish the package until every item is complete.
 
@@ -317,30 +350,15 @@ Make sure that it starts where the last release left off.
 Sometimes this tool adds too many changes, or leaves a few out, so it's best to check.
 Be sure to check and update the new contributors as well.
 Add a header "## Full list of changes" below "## What's changed?".
-Under "## What's changed", summarize the important bug fixes and features that
-customers should know about. Maintenance changes, build pipeline updates, and routine
-documentation fixes can remain in the full list only.
+Use the approved release notes linked from the release work item. Under
+"## What's changed", include the content required by
+[Required Release Note Content](#required-release-note-content). Maintenance changes,
+build pipeline updates, and routine documentation fixes can remain in the full list
+only.
 
-Every release must include these customer-facing sections before "## Full list of changes":
-
-```markdown
-## Security
-
-Describe security fixes and any known high-priority security issues that customers
-must consider, including affected versions and recommended actions. If there are no
-known issues to disclose, write "No known high-priority security issues."
-
-## Breaking changes and compatibility
-
-Describe breaking changes, backward-compatibility issues, affected versions, and
-migration or mitigation steps. If there are none, write "No known breaking changes
-or backward-compatibility issues."
-```
-
-Coordinate the wording of security issues that have not yet been publicly disclosed
-with the security reviewer and MSRC. Do not publish vulnerability details before their
-approved publication date. Confirm in the release work item that these sections match
-the final reviewed content and UI.
+Do not include details about security vulnerabilities that have not yet been publicly
+disclosed. Follow [the security policy](../../SECURITY.md) for private reporting.
+Confirm in the release work item that the disclosures match the approved materials.
 If you are unsure about whether to include certain changes please consult with your fellow
 maintainers.
 When you're done, hit "Publish release" and mark it as the latest release.
