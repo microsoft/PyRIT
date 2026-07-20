@@ -15,6 +15,16 @@ export const useChatWindowStyles = makeStyles({
     backgroundColor: tokens.colorNeutralBackground2,
     overflow: 'hidden',
   },
+  conversationDrawer: {
+    width: '280px',
+    minWidth: '280px',
+    height: '100%',
+  },
+  narrowConversationDrawer: {
+    width: '320px',
+    minWidth: 0,
+    maxWidth: '100vw',
+  },
   ribbon: {
     height: '48px',
     minHeight: '48px',

@@ -240,6 +240,11 @@ class PsychosocialTechnique(ScenarioTechnique):
         """
         return super().get_aggregate_tags() | {"default", "tone", "language", "persuasion", "deterministic"}
 
+    @classmethod
+    def default(cls) -> PsychosocialTechnique:
+        """Return the curated ``DEFAULT`` aggregate used when the caller selects nothing."""
+        return cls.DEFAULT
+
 
 # LLM-backed converters rewrite through an adversarial chat target (built at attack time).
 _LLM_CONVERTER_BUILDERS: dict[PsychosocialTechnique, Callable[[PromptTarget], Converter]] = {
@@ -409,8 +414,7 @@ class Psychosocial(Scenario):
 
         super().__init__(
             version=self.VERSION,
-            technique_class=PsychosocialTechnique,  # type: ignore[ty:invalid-argument-type]
-            default_technique=PsychosocialTechnique.DEFAULT,
+            technique_class=PsychosocialTechnique,
             default_dataset_config=DatasetAttackConfiguration(
                 dataset_names=[harm.dataset_name for harm in _SUB_HARMS],
             ),

@@ -698,16 +698,10 @@ class AttackService:
             return
 
         request_target_id = request_target_obj.get_identifier()
-        if (
-            stored_target_id.class_name != request_target_id.class_name
-            or (stored_target_id.params.get("endpoint") or "") != (request_target_id.params.get("endpoint") or "")
-            or (stored_target_id.params.get("model_name") or "") != (request_target_id.params.get("model_name") or "")
-        ):
+        if stored_target_id.hash != request_target_id.hash:
             raise ValueError(
-                f"Target mismatch: attack was created with "
-                f"{stored_target_id.class_name}/{stored_target_id.params.get('model_name')} "
-                f"but request uses "
-                f"{request_target_id.class_name}/{request_target_id.params.get('model_name')}. "
+                f"Target mismatch: attack was created with {stored_target_id.unique_name} "
+                f"but request uses {request_target_id.unique_name}. "
                 f"Create a new attack to use a different target."
             )
 
