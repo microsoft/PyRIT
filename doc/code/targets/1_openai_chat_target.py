@@ -9,7 +9,7 @@
 # ---
 
 # %% [markdown]
-# # 1. OpenAI Chat Target
+# # OpenAI Chat Target
 #
 # In this demo, we show an example of the `OpenAIChatTarget`, which includes many openAI-compatible models including `gpt-4o`, `gpt-4`, `DeepSeek`, `llama`, `phi-4`, and `gpt-3.5`. Internally, this is one of our most-used chat targets for our own infrastructure.
 #

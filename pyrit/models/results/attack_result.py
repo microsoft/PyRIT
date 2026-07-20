@@ -119,7 +119,7 @@ class AttackResult(StrategyResult):
         """
         Return the attack strategy identifier from the composite atomic identifier.
 
-        This is the non-deprecated replacement for the ``attack_identifier`` property.
+        This replaces the removed ``attack_identifier`` property.
         Extracts the ``"attack"`` child from the nested ``"attack_technique"`` child
         of ``atomic_attack_identifier``.
 

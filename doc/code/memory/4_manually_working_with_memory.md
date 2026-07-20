@@ -1,4 +1,4 @@
-# 4. Working with Memory Manually
+# Working with Memory Manually
 
 After or during an operation or a test, it can be important to use the memory in the database in a straightforward way.
 

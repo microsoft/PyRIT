@@ -479,8 +479,8 @@ class AddMessageRequest(BaseModel):
     )
     labels: dict[str, str] | None = Field(
         None,
-        description="Labels to attach to every message piece. "
-        "Falls back to labels from existing pieces in the conversation.",
+        description="Request labels used for attack-level consistency checks. "
+        "When present, the operator must match the attack result's operator.",
     )
 
 

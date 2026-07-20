@@ -9,12 +9,13 @@ against the declarative ``Parameter`` contract, whether that contract is derived
 from a class ``__init__`` or declared explicitly by a component. It has three
 responsibilities:
 
-- **Derive** (``derive_parameters``): read the constructor signature, enriched
-  by the identifier's ``Param.*`` build markers, into a ``list[Parameter]``. A
-  parameter the identifier promotes as a reference to another registry (an
-  included field typed as a child identifier, e.g. ``TargetIdentifier``) becomes
-  a registry **reference**; every other parameter becomes a plain value parameter
-  whose ``param_type`` is the annotation with ``Optional[X]`` reduced to ``X``.
+- **Derive** (``derive_parameters``): read the constructor signature, plus
+  explicitly forwarded parent signatures in MRO order, and enrich them with the
+  identifier's ``Param.*`` build markers into a ``list[Parameter]``. A parameter
+  the identifier promotes as a reference to another registry (an included field
+  typed as a child identifier, e.g. ``TargetIdentifier``) becomes a registry
+  **reference**; every other parameter becomes a plain value parameter whose
+  ``param_type`` is the annotation with ``Optional[X]`` reduced to ``X``.
 - **Resolve from a constructor** (``resolve_constructor_args``): derive the
   contract for a class and turn a flat dict of raw arguments into
   constructor-ready keyword arguments — coercing simple string values via
@@ -42,6 +43,7 @@ import types
 from typing import TYPE_CHECKING, Any, Protocol, TypeAlias, Union, get_args, get_origin
 
 from pyrit.common.apply_defaults import REQUIRED_VALUE, _RequiredValueSentinel
+from pyrit.common.brick_contract import init_parameters_are_forwarded
 from pyrit.models.parameter import ComponentType, Parameter, RegistryReference
 
 # Re-exported so ``from pyrit.registry.resolution import display_choices`` keeps working;
@@ -121,15 +123,100 @@ def _default_for(param: inspect.Parameter) -> Any:
     return param.default
 
 
+def _constructor_sources(cls: type) -> list[tuple[type, inspect.Signature]]:
+    """
+    Return the constructor signatures that form ``cls``'s build contract.
+
+    The effective constructor is always first. When it explicitly declares
+    ``**kwargs`` forwarding with ``forward_init_parameters``, the next constructor
+    defined along the MRO is included. The same rule is applied recursively.
+
+    Args:
+        cls (type): The class whose constructor chain is inspected.
+
+    Returns:
+        list[tuple[type, inspect.Signature]]: Constructor owners and signatures
+            in child-to-parent order.
+
+    Raises:
+        ValueError: If a constructor signature cannot be inspected.
+    """
+    owners = [owner for owner in cls.__mro__ if "__init__" in owner.__dict__]
+    sources: list[tuple[type, inspect.Signature]] = []
+    for index, owner in enumerate(owners):
+        init = owner.__dict__["__init__"]
+        try:
+            signature = inspect.signature(init)
+        except (ValueError, TypeError) as exc:
+            raise ValueError(f"Failed to inspect __init__ signature for '{cls.__name__}': {exc}") from exc
+        sources.append((owner, signature))
+
+        if not init_parameters_are_forwarded(init) or index + 1 == len(owners):
+            break
+    return sources
+
+
+def _parameters_from_signature(
+    *,
+    owner: type,
+    signature: inspect.Signature,
+    reference_overrides: dict[str, ComponentType],
+) -> list[Parameter]:
+    """
+    Build parameters declared by one constructor signature.
+
+    Args:
+        owner (type): The class that defines the constructor.
+        signature (inspect.Signature): The constructor signature.
+        reference_overrides (dict[str, ComponentType]): Identifier-declared
+            registry references keyed by constructor parameter name.
+
+    Returns:
+        list[Parameter]: Parameters declared by the constructor.
+    """
+    descriptions = _parse_arg_descriptions(owner)
+    parameters: list[Parameter] = []
+    for name, param in signature.parameters.items():
+        if name in _SKIPPED_PARAM_NAMES or param.kind in (
+            inspect.Parameter.VAR_POSITIONAL,
+            inspect.Parameter.VAR_KEYWORD,
+        ):
+            continue
+
+        component_type = reference_overrides.get(name)
+        if component_type is not None:
+            parameters.append(
+                Parameter(
+                    name=name,
+                    description=descriptions.get(name, ""),
+                    default=_default_for(param),
+                    reference=RegistryReference(component_type=component_type, annotation=param.annotation),
+                )
+            )
+            continue
+
+        param_type = None if param.annotation is inspect.Parameter.empty else _unwrap_optional(param.annotation)
+        parameters.append(
+            Parameter(
+                name=name,
+                description=descriptions.get(name, ""),
+                default=_default_for(param),
+                param_type=param_type,
+            )
+        )
+    return parameters
+
+
 def derive_parameters(*, cls: type, identifier_type: type[ComponentIdentifier] | None = None) -> list[Parameter]:
     """
     Derive the declarative ``Parameter`` list for ``cls`` from its constructor.
 
-    Performs the single ``inspect.signature`` call of the build pipeline and maps
-    each settable constructor parameter to a ``Parameter``: parameters the
+    Maps each settable constructor parameter to a ``Parameter``: parameters the
     identifier promotes as references carry a ``RegistryReference``; plain
-    parameters carry an ``Optional``-unwrapped ``param_type``. Parameter order
-    follows the constructor signature.
+    parameters carry an ``Optional``-unwrapped ``param_type``. When a constructor
+    explicitly declares that its ``**kwargs`` are forwarded, the next constructor
+    in MRO order is merged. Child declarations take precedence over same-named
+    base declarations.
 
     Args:
         cls (type): The component class whose ``__init__`` drives derivation.
@@ -138,53 +225,25 @@ def derive_parameters(*, cls: type, identifier_type: type[ComponentIdentifier] |
             references. When None, no parameter is treated as a reference.
 
     Returns:
-        list[Parameter]: One ``Parameter`` per settable constructor parameter.
+        list[Parameter]: One ``Parameter`` per settable constructor parameter,
+            ordered from the effective constructor through forwarded bases.
 
     Raises:
         ValueError: If the constructor signature cannot be inspected.
     """
-    try:
-        sig = inspect.signature(cls.__init__)
-    except (ValueError, TypeError) as e:
-        raise ValueError(f"Failed to inspect __init__ signature for '{cls.__name__}': {e}") from e
-
     reference_overrides = identifier_type.get_reference_component_types() if identifier_type is not None else {}
-    descriptions = _parse_arg_descriptions(cls)
-
     parameters: list[Parameter] = []
-    for name, param in sig.parameters.items():
-        if name in _SKIPPED_PARAM_NAMES:
-            continue
-        if param.kind in (
-            inspect.Parameter.VAR_POSITIONAL,
-            inspect.Parameter.VAR_KEYWORD,
+    seen: set[str] = set()
+    for owner, signature in _constructor_sources(cls):
+        for parameter in _parameters_from_signature(
+            owner=owner,
+            signature=signature,
+            reference_overrides=reference_overrides,
         ):
-            continue
-
-        annotation = param.annotation
-        component_type = reference_overrides.get(name)
-        description = descriptions.get(name, "")
-        default = _default_for(param)
-
-        if component_type is not None:
-            parameters.append(
-                Parameter(
-                    name=name,
-                    description=description,
-                    default=default,
-                    reference=RegistryReference(component_type=component_type, annotation=annotation),
-                )
-            )
-        else:
-            param_type = None if annotation is inspect.Parameter.empty else _unwrap_optional(annotation)
-            parameters.append(
-                Parameter(
-                    name=name,
-                    description=description,
-                    default=default,
-                    param_type=param_type,
-                )
-            )
+            if parameter.name in seen:
+                continue
+            parameters.append(parameter)
+            seen.add(parameter.name)
 
     return parameters
 
@@ -379,11 +438,10 @@ def resolve_constructor_args(
     """
     Resolve a flat argument dict into constructor-ready keyword arguments.
 
-    Derives the ``Parameter`` contract for ``cls`` (the single
-    ``inspect.signature`` call) and applies it to ``raw_args``. For each raw
-    argument: validate it is a declared parameter; resolve registry-reference
-    parameters by name; coerce simple string values via
-    ``Parameter.coerce_value``; pass everything else through unchanged.
+    Derives the ``Parameter`` contract for ``cls`` and applies it to
+    ``raw_args``. For each raw argument: validate it is a declared parameter;
+    resolve registry-reference parameters by name; coerce simple string values
+    via ``Parameter.coerce_value``; pass everything else through unchanged.
 
     Args:
         cls (type): The class being built.

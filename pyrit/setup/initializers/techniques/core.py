@@ -12,7 +12,7 @@ factories here carry only their behavioral tags (e.g.
 ``default`` is intentionally not a tag here: what runs by default is
 scenario-relative and is declared per scenario (see
 ``AttackTechniqueRegistry.build_technique_class_from_factories``'s
-``default_technique_names``), not baked into the shared catalog.
+``default_tags`` / ``default_names``), not baked into the shared catalog.
 """
 
 from pyrit.common.path import (
@@ -40,12 +40,16 @@ def get_technique_factories() -> list[AttackTechniqueFactory]:
 
     A bare ``PromptSendingAttack`` factory is intentionally omitted: every
     scenario whose ``BASELINE_ATTACK_POLICY`` is ``BaselineAttackPolicy.Enabled``
-    already auto-prepends an equivalent baseline atomic attack via
-    ``Scenario._build_baseline_atomic_attack``.
+    already emits an equivalent baseline atomic attack via
+    ``build_baseline_atomic_attack``.
 
     Factories that need an adversarial chat target do not bake one in; the
     default adversarial target is resolved lazily inside
-    ``AttackTechniqueFactory.create`` via ``get_default_adversarial_target()``.
+    ``AttackTechniqueFactory.create`` (for the attack's own
+    ``attack_adversarial_config``) and inside
+    ``AttackTechniqueFactory.resolve_adversarial_chat`` (for the ``AtomicAttack``
+    that expands a simulated-conversation seed), both via
+    ``get_default_adversarial_target()``.
 
     Returns:
         list[AttackTechniqueFactory]: The core scenario techniques.

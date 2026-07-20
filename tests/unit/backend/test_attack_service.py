@@ -759,7 +759,7 @@ class TestCreateAttack:
             assert sequences == [0, 1]
 
     async def test_create_attack_does_not_store_labels_in_metadata(self, attack_service, mock_memory) -> None:
-        """Test that labels are not stored in attack metadata (they live on pieces)."""
+        """Test that labels are not duplicated in attack metadata."""
         with patch("pyrit.backend.services.attack_service.get_target_service") as mock_get_target_service:
             mock_target_obj = MagicMock()
             mock_target_obj.get_identifier.return_value = ComponentIdentifier(
@@ -782,8 +782,8 @@ class TestCreateAttack:
             stored_ar = call_args[1]["attack_results"][0]
             assert "labels" not in stored_ar.metadata
 
-    async def test_create_attack_stamps_labels_on_prepended_pieces(self, attack_service, mock_memory) -> None:
-        """Test that labels are forwarded to prepended message pieces."""
+    async def test_create_attack_stores_labels_on_attack_result(self, attack_service, mock_memory) -> None:
+        """Test that labels are stored on the attack result."""
         with patch("pyrit.backend.services.attack_service.get_target_service") as mock_get_target_service:
             mock_target_obj = MagicMock()
             mock_target_obj.get_identifier.return_value = ComponentIdentifier(
@@ -794,23 +794,15 @@ class TestCreateAttack:
             mock_target_service.get_target_object.return_value = mock_target_obj
             mock_get_target_service.return_value = mock_target_service
 
-            prepended = [
-                PrependedMessageRequest(
-                    role="system",
-                    pieces=[MessagePieceRequest(original_value="Be helpful.")],
-                )
-            ]
-
             await attack_service.create_attack_async(
                 request=CreateAttackRequest(
                     target_registry_name="target-1",
                     labels={"env": "prod"},
-                    prepended_conversation=prepended,
                 )
             )
 
-            stored_piece = mock_memory.add_message_pieces_to_memory.call_args[1]["message_pieces"][0]
-            assert stored_piece.labels == {"env": "prod", "source": "gui"}
+            stored_ar = mock_memory.add_attack_results_to_memory.call_args[1]["attack_results"][0]
+            assert stored_ar.labels == {"env": "prod", "source": "gui"}
 
     async def test_create_attack_prepended_messages_have_incrementing_sequences(
         self, attack_service, mock_memory
@@ -891,23 +883,15 @@ class TestCreateAttack:
             mock_target_service.get_target_object.return_value = mock_target_obj
             mock_get_target_service.return_value = mock_target_service
 
-            prepended = [
-                PrependedMessageRequest(
-                    role="system",
-                    pieces=[MessagePieceRequest(original_value="Be helpful.")],
-                )
-            ]
-
             await attack_service.create_attack_async(
                 request=CreateAttackRequest(
                     target_registry_name="target-1",
                     labels={"source": "api-test"},
-                    prepended_conversation=prepended,
                 )
             )
 
-            stored_piece = mock_memory.add_message_pieces_to_memory.call_args[1]["message_pieces"][0]
-            assert stored_piece.labels["source"] == "api-test"  # not overwritten to "gui"
+            stored_ar = mock_memory.add_attack_results_to_memory.call_args[1]["attack_results"][0]
+            assert stored_ar.labels["source"] == "api-test"
 
     async def test_create_attack_default_name(self, attack_service, mock_memory) -> None:
         """Test that request.name=None uses default class_name and objective."""
@@ -1037,64 +1021,6 @@ class TestAddMessage:
 
         with pytest.raises(ValueError, match="not found"):
             await attack_service.add_message_async(attack_result_id="nonexistent", request=request)
-
-    async def test_add_message_without_send_stamps_labels_on_pieces(self, attack_service, mock_memory) -> None:
-        """Test that add_message (send=False) inherits labels from existing pieces."""
-        ar = make_attack_result(conversation_id="test-id")
-        mock_memory.get_attack_results.return_value = [ar]
-
-        existing_piece = make_mock_piece(conversation_id="test-id")
-        existing_piece.labels = {"env": "prod"}
-        mock_memory.get_message_pieces.return_value = [existing_piece]
-        mock_memory.get_conversation_messages.return_value = []
-
-        request = AddMessageRequest(
-            role="user",
-            pieces=[MessagePieceRequest(original_value="Hello")],
-            target_conversation_id="test-id",
-            send=False,
-        )
-
-        result = await attack_service.add_message_async(attack_result_id="test-id", request=request)
-
-        stored_piece = mock_memory.add_message_pieces_to_memory.call_args[1]["message_pieces"][0]
-        assert stored_piece.labels == {"env": "prod"}
-        assert result.attack is not None
-
-    async def test_add_message_with_send_passes_labels_to_normalizer(self, attack_service, mock_memory) -> None:
-        """Test that add_message (send=True) inherits labels from existing pieces."""
-        ar = make_attack_result(conversation_id="test-id")
-        mock_memory.get_attack_results.return_value = [ar]
-
-        existing_piece = make_mock_piece(conversation_id="test-id")
-        existing_piece.labels = {"env": "staging"}
-        mock_memory.get_message_pieces.return_value = [existing_piece]
-        mock_memory.get_conversation_messages.return_value = []
-
-        with (
-            patch("pyrit.backend.services.attack_service.get_target_service") as mock_get_target_svc,
-            patch("pyrit.backend.services.attack_service.PromptNormalizer") as mock_normalizer_cls,
-        ):
-            mock_target_svc = MagicMock()
-            mock_target_svc.get_target_object.return_value = _make_matching_target_mock()
-            mock_get_target_svc.return_value = mock_target_svc
-
-            mock_normalizer = MagicMock()
-            mock_normalizer.send_prompt_async = AsyncMock()
-            mock_normalizer_cls.return_value = mock_normalizer
-
-            request = AddMessageRequest(
-                pieces=[MessagePieceRequest(original_value="Hello")],
-                target_conversation_id="test-id",
-                send=True,
-                target_registry_name="test-target",
-            )
-
-            await attack_service.add_message_async(attack_result_id="test-id", request=request)
-
-            call_kwargs = mock_normalizer.send_prompt_async.call_args[1]
-            sent_message = call_kwargs["message"]
-            assert all(piece.labels == {"env": "staging"} for piece in sent_message.message_pieces)
 
     async def test_add_message_raises_when_send_without_registry_name(self, attack_service, mock_memory) -> None:
         """Test that add_message raises ValueError when send=True but target_registry_name missing."""
@@ -1429,67 +1355,6 @@ class TestAddMessage:
             # atomic_attack_identifier should be updated with converter identifiers
             update_call = mock_memory.update_attack_result_by_id.call_args[1]
             assert "atomic_attack_identifier" in update_call["update_fields"]
-
-    async def test_add_message_no_existing_pieces_uses_request_labels(self, attack_service, mock_memory) -> None:
-        """Test that add_message with no existing pieces falls back to request.labels."""
-        ar = make_attack_result(conversation_id="test-id")
-        mock_memory.get_attack_results.return_value = [ar]
-        mock_memory.get_message_pieces.return_value = []  # No existing pieces
-        mock_memory.get_conversation_messages.return_value = []
-
-        request = AddMessageRequest(
-            role="user",
-            pieces=[MessagePieceRequest(original_value="Hello")],
-            target_conversation_id="test-id",
-            send=False,
-            labels={"env": "prod", "source": "gui"},
-        )
-
-        result = await attack_service.add_message_async(attack_result_id="test-id", request=request)
-
-        stored_piece = mock_memory.add_message_pieces_to_memory.call_args[1]["message_pieces"][0]
-        assert stored_piece.labels == {"env": "prod", "source": "gui"}
-        assert result.attack is not None
-
-    async def test_add_message_no_existing_pieces_uses_request_labels_as_is(self, attack_service, mock_memory) -> None:
-        """Test that add_message passes request labels through as-is when stamping new pieces."""
-        ar = make_attack_result(conversation_id="test-id")
-        mock_memory.get_attack_results.return_value = [ar]
-        mock_memory.get_message_pieces.return_value = []
-        mock_memory.get_conversation_messages.return_value = []
-
-        request = AddMessageRequest(
-            role="user",
-            pieces=[MessagePieceRequest(original_value="Hello")],
-            target_conversation_id="test-id",
-            send=False,
-            labels={"operator": "alice", "operation": "red"},
-        )
-
-        await attack_service.add_message_async(attack_result_id="test-id", request=request)
-
-        stored_piece = mock_memory.add_message_pieces_to_memory.call_args[1]["message_pieces"][0]
-        assert stored_piece.labels == {"operator": "alice", "operation": "red"}
-
-    async def test_add_message_no_existing_pieces_no_request_labels(self, attack_service, mock_memory) -> None:
-        """Test that add_message with no existing pieces and no request.labels passes None."""
-        ar = make_attack_result(conversation_id="test-id")
-        mock_memory.get_attack_results.return_value = [ar]
-        mock_memory.get_message_pieces.return_value = []  # No existing pieces
-        mock_memory.get_conversation_messages.return_value = []
-
-        request = AddMessageRequest(
-            role="user",
-            pieces=[MessagePieceRequest(original_value="Hello")],
-            target_conversation_id="test-id",
-            send=False,
-        )
-
-        result = await attack_service.add_message_async(attack_result_id="test-id", request=request)
-
-        stored_piece = mock_memory.add_message_pieces_to_memory.call_args[1]["message_pieces"][0]
-        assert stored_piece.labels is None or stored_piece.labels == {}
-        assert result.attack is not None
 
 
 # ============================================================================
@@ -2520,7 +2385,7 @@ class TestAttackServiceAdditionalCoverage:
 
         assert persisted_classes.count("ExistingConverter") == 1
         assert persisted_classes.count("NewConverter") == 1
-        # The deprecated attack_identifier column should NOT be written
+        # The removed attack_identifier column should not be written.
         assert "attack_identifier" not in update_fields
 
     async def test_converter_merge_with_flat_atomic_identifier(self, attack_service, mock_memory):
@@ -2846,13 +2711,10 @@ class TestAddMessageGuards:
             assert result.attack is not None
 
     async def test_rejects_mismatched_operator(self, attack_service, mock_memory) -> None:
-        """Should raise ValueError when request operator differs from existing operator."""
+        """Should raise ValueError when request operator differs from attack operator."""
         ar = make_attack_result(conversation_id="test-id")
+        ar.labels["operator"] = "alice"
         mock_memory.get_attack_results.return_value = [ar]
-
-        existing_piece = make_mock_piece(conversation_id="test-id")
-        existing_piece.labels = {"operator": "alice"}
-        mock_memory.get_message_pieces.return_value = [existing_piece]
 
         request = AddMessageRequest(
             role="user",
@@ -2866,13 +2728,10 @@ class TestAddMessageGuards:
             await attack_service.add_message_async(attack_result_id="test-id", request=request)
 
     async def test_allows_matching_operator(self, attack_service, mock_memory) -> None:
-        """Should NOT raise when request operator matches existing operator."""
+        """Should NOT raise when request operator matches attack operator."""
         ar = make_attack_result(conversation_id="test-id")
+        ar.labels["operator"] = "alice"
         mock_memory.get_attack_results.return_value = [ar]
-
-        existing_piece = make_mock_piece(conversation_id="test-id")
-        existing_piece.labels = {"operator": "alice"}
-        mock_memory.get_message_pieces.return_value = [existing_piece]
         mock_memory.get_conversation_messages.return_value = []
 
         request = AddMessageRequest(

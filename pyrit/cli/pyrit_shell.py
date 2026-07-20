@@ -743,11 +743,10 @@ def main() -> int:
 
     logging.basicConfig(level=getattr(logging, args.log_level))
 
-    # Surface a deprecation if the layered config has blocks the CLI ignores.
-    from pyrit.cli._config_reader import ConfigError, warn_on_client_ignored_blocks
+    from pyrit.cli._config_reader import ConfigError, validate_client_config
 
     try:
-        warn_on_client_ignored_blocks(config_file=args.config_file)
+        validate_client_config(config_file=args.config_file)
     except ConfigError as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1

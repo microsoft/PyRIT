@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 from openai import AsyncOpenAI
 
+from pyrit.common import forward_init_parameters
 from pyrit.exceptions import (
     pyrit_target_retry,
 )
@@ -79,6 +80,7 @@ class RealtimeTarget(OpenAITarget):
     #: of truth for both atomic (send_text/send_audio) and streaming session paths.
     SAMPLE_RATE_HZ: ClassVar[int] = 24000
 
+    @forward_init_parameters
     def __init__(
         self,
         *,

@@ -8,7 +8,7 @@
 #       jupytext_version: 1.19.0
 # ---
 # %% [markdown]
-# # 8. Azure Blob Storage Targets
+# # Azure Blob Storage Targets
 #
 # Prompt Targets are most often LLMs, but not always. They should be thought of as anything that you send prompts to.
 #

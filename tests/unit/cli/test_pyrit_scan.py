@@ -764,9 +764,7 @@ class TestResolveServerUrl:
             assert await pyrit_scan._resolve_server_url_async(parsed_args=parsed) is None
         assert "nope" in capsys.readouterr().out
 
-    async def test_start_server_refuses_when_url_differs_from_default(self, capsys):
-        # User explicitly configured a non-default URL but asks us to launch the bundled
-        # backend. The launcher only knows how to bind localhost:8000, so we must refuse.
+    async def test_start_server_refuses_remote_url(self, capsys):
         parsed = Namespace(server_url="http://other:9999", start_server=True, config_file=None)
         start_async_mock = AsyncMock()
         with (
@@ -785,6 +783,23 @@ class TestResolveServerUrl:
         err = capsys.readouterr().err
         assert "cannot --start-server" in err
         assert "http://other:9999" in err
+
+    async def test_start_server_uses_custom_local_port(self):
+        parsed = Namespace(server_url="http://127.0.0.1:8765", start_server=True, config_file=None)
+        start_async_mock = AsyncMock(return_value="http://127.0.0.1:8765")
+        with (
+            patch(
+                "pyrit.cli._server_launcher.ServerLauncher.probe_health_async",
+                new=AsyncMock(return_value=False),
+            ),
+            patch(
+                "pyrit.cli._server_launcher.ServerLauncher.start_async",
+                new=start_async_mock,
+            ),
+        ):
+            result = await pyrit_scan._resolve_server_url_async(parsed_args=parsed)
+        assert result == "http://127.0.0.1:8765"
+        start_async_mock.assert_awaited_once_with(host="127.0.0.1", port=8765, config_file=None)
 
     async def test_resolution_order_cli_beats_config_beats_default(self):
         """CLI flag > config-file value > built-in default."""
@@ -1273,3 +1288,64 @@ class TestScenarioParamFlow:
         assert parsed.scenario_name == "foo"
         assert parsed.target == "t"
         assert parsed._unknown_args == ["--max-turns", "7"]
+
+
+class TestPollStreamsRetryWarnings:
+    """The poll loop should stream retry warnings as attack results land."""
+
+    async def test_poll_prints_retry_warnings_once(self, capsys):
+        from datetime import datetime, timezone
+
+        from pyrit.models import ScenarioRunState
+        from pyrit.models.catalog import AttackRetrySummary, ScenarioRunSummary
+        from pyrit.models.retry_event import RetryEvent
+
+        now = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        retry = RetryEvent(
+            attempt_number=3,
+            exception_type="RateLimitError",
+            exception_message="429 Too Many Requests",
+            component_role="objective_scorer",
+            component_name="TrueFalseScorer",
+            endpoint="https://ep/",
+        )
+
+        def _summary(*, status, with_retry):
+            return ScenarioRunSummary(
+                scenario_result_id="sr-1",
+                scenario_name="s",
+                scenario_version=0,
+                status=status,
+                created_at=now,
+                updated_at=now,
+                techniques_used=["a"],
+                total_attacks=1,
+                completed_attacks=1,
+                objective_achieved_rate=0,
+                attack_retries=(
+                    [AttackRetrySummary(attack_result_id="ar-1", atomic_attack_name="baseline", retries=[retry])]
+                    if with_retry
+                    else []
+                ),
+            )
+
+        client = MagicMock()
+        # First poll: retry present but still running. Second poll: same retry, terminal.
+        client.get_scenario_run_async = AsyncMock(
+            side_effect=[
+                _summary(status=ScenarioRunState.IN_PROGRESS, with_retry=True),
+                _summary(status=ScenarioRunState.COMPLETED, with_retry=True),
+            ]
+        )
+
+        with patch("asyncio.sleep", new=AsyncMock(return_value=None)):
+            final = await pyrit_scan._poll_until_terminal_async(
+                client=client, scenario_result_id="sr-1", total_techniques=1
+            )
+
+        assert final.status == ScenarioRunState.COMPLETED
+        out = capsys.readouterr().out
+        # The warning is printed exactly once despite appearing in both polls.
+        assert out.count("retry #3") == 1
+        assert "RateLimitError" in out
+        assert "endpoint https://ep/" in out

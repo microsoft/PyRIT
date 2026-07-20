@@ -301,9 +301,6 @@ class AnecdoctorGenerator(
         """
         # Create message from the formatted examples
         message = Message.from_prompt(prompt=formatted_examples, role="user")
-        if context.memory_labels:
-            for piece in message.message_pieces:
-                piece.labels = context.memory_labels
 
         # Send to target model with configured converters
         return await self._prompt_normalizer.send_prompt_async(
@@ -387,9 +384,6 @@ class AnecdoctorGenerator(
 
         # Create message for the processing model
         message = Message.from_prompt(prompt=formatted_examples, role="user")
-        if self._memory_labels:
-            for piece in message.message_pieces:
-                piece.labels = self._memory_labels
 
         # Send to processing model with configured converters
         kg_response = await self._prompt_normalizer.send_prompt_async(

@@ -9,7 +9,7 @@
 # ---
 
 # %% [markdown]
-# # 2. Resiliency and Retry
+# # Resiliency and Retry
 #
 # PyRIT provides multiple layers of retry and resiliency mechanisms to handle failures gracefully during security testing. This notebook explains the different retry mechanisms, how they work together, and how to configure them for your use case.
 #
