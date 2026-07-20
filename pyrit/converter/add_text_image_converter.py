@@ -61,7 +61,6 @@ class AddTextImageConverter(_BaseImageTextConverter):
         self._text_to_add = text_to_add
         self._font_name = font_name
         self._font_size = font_size
-        self._font_load_failed = font_name is None
         self._font = self._load_font()
         self._color = color
         self._x_pos = x_pos
@@ -93,13 +92,13 @@ class AddTextImageConverter(_BaseImageTextConverter):
         Returns:
             FreeTypeFont: The loaded font object. Falls back to Pillow's built-in default font on error.
         """
-        if self._font_load_failed:
+        font_name = self._font_name
+        if font_name is None:
             return cast("FreeTypeFont", ImageFont.load_default(size=self._font_size))
         try:
-            return ImageFont.truetype(self._font_name, self._font_size)  # type: ignore[ty:invalid-argument-type]
+            return ImageFont.truetype(font_name, self._font_size)
         except OSError:
-            logger.warning(f"Cannot open font resource: {self._font_name}. Using Pillow built-in default font.")
-            self._font_load_failed = True
+            logger.warning(f"Cannot open font resource: {font_name}. Using Pillow built-in default font.")
             return cast("FreeTypeFont", ImageFont.load_default(size=self._font_size))
 
     def _add_text_to_image(self, image: Image.Image) -> Image.Image:
