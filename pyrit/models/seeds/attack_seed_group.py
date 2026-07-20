@@ -21,6 +21,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from pyrit.models.seeds.attack_technique_seed_group import AttackTechniqueSeedGroup
+    from pyrit.models.seeds.seed import Seed
 
 
 class AttackSeedGroup(SeedGroup):
@@ -157,18 +158,12 @@ class AttackSeedGroup(SeedGroup):
                 f"overlapping the simulated conversation range are incompatible."
             )
 
-        base = list(self.seeds)
+        base_seeds = [copy.deepcopy(seed) for seed in self.seeds]
+        technique_seeds = [copy.deepcopy(seed) for seed in technique.seeds]
         idx = technique.insertion_index
-        technique_seeds = list(technique.seeds)
-        merged_seeds = base + technique_seeds if idx is None else base[:idx] + technique_seeds + base[idx:]
-
-        # ``self`` and ``technique`` may be shared across multiple ``with_technique``
-        # calls (e.g. the dispatcher reuses one ``bundle.seed_technique`` instance
-        # across every objective). Deepcopy first so the per-seed mutation below
-        # and the fresh group_id assigned by ``AttackSeedGroup.__init__`` only
-        # touch the returned group, leaving the originals untouched as the
-        # docstring promises.
-        merged_seeds = [copy.deepcopy(seed) for seed in merged_seeds]
+        merged_seeds = (
+            base_seeds + technique_seeds if idx is None else base_seeds[:idx] + technique_seeds + base_seeds[idx:]
+        )
 
         # Clear group IDs so the new group assigns a fresh one.
         # ``_enforce_consistent_group_id`` in the constructor will overwrite
@@ -176,19 +171,31 @@ class AttackSeedGroup(SeedGroup):
         for seed in merged_seeds:
             seed.prompt_group_id = None
 
-        # Normalize prompt sequences to dense, 0-based order preserving relative
-        # ordering. A technique whose seed leads the conversation (e.g. a system
-        # prompt built at ``sequence=-1`` by ``from_system_prompt``) is thereby
-        # prepended cleanly: it lands at sequence 0 and the existing turns shift
-        # up (user 0 -> 1, assistant 1 -> 2, ...), rather than leaving a negative
-        # or sparse sequence. This keeps the merge robust no matter how the base
-        # group was numbered. Skipped when a simulated conversation is present,
-        # since its ``sequence_range`` is absolute and self-consistent.
-        has_simulated = any(isinstance(seed, SeedSimulatedConversation) for seed in merged_seeds)
-        if not has_simulated:
-            prompt_seeds = [seed for seed in merged_seeds if isinstance(seed, SeedPrompt)]
-            rank_by_sequence = {seq: rank for rank, seq in enumerate(sorted({p.sequence for p in prompt_seeds}))}
-            for seed in prompt_seeds:
-                seed.sequence = rank_by_sequence[seed.sequence]
+        self._normalize_prompt_sequences(
+            base_seeds=base_seeds,
+            technique_seeds=technique_seeds,
+            prepend_technique=technique.prompt_placement == "prepend",
+        )
 
         return AttackSeedGroup(seeds=merged_seeds)
+
+    @staticmethod
+    def _normalize_prompt_sequences(
+        *,
+        base_seeds: Sequence[Seed],
+        technique_seeds: Sequence[Seed],
+        prepend_technique: bool,
+    ) -> None:
+        """Normalize merged prompt sequences while preserving source-relative order."""
+        all_seeds = [*base_seeds, *technique_seeds]
+        if any(isinstance(seed, SeedSimulatedConversation) for seed in all_seeds):
+            return
+
+        seed_groups = (technique_seeds, base_seeds) if prepend_technique else (all_seeds,)
+        next_sequence = 0
+        for seeds in seed_groups:
+            prompts = [seed for seed in seeds if isinstance(seed, SeedPrompt)]
+            rank_by_sequence = {value: rank for rank, value in enumerate(sorted({p.sequence for p in prompts}))}
+            for prompt in prompts:
+                prompt.sequence = next_sequence + rank_by_sequence[prompt.sequence]
+            next_sequence += len(rank_by_sequence)
