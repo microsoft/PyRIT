@@ -18,10 +18,10 @@ from pyrit.memory import DataTypeSerializer, data_serializer_factory
 from pyrit.memory.storage import convert_local_image_to_data_url_async
 from pyrit.models import (
     ChatMessage,
+    JsonResponseConfig,
     Message,
     MessagePiece,
 )
-from pyrit.prompt_target.common.json_response_config import _JsonResponseConfig
 
 # Data types that render as a plain text content part.
 _TEXT_DATA_TYPES = ("text", "error")
@@ -238,12 +238,12 @@ async def build_multimodal_chat_messages_async(
     return chat_messages
 
 
-def build_response_format(*, json_config: _JsonResponseConfig) -> dict[str, Any] | None:
+def build_response_format(*, json_config: JsonResponseConfig) -> dict[str, Any] | None:
     """
     Build the ``response_format`` request parameter from a JSON response config.
 
     Args:
-        json_config (_JsonResponseConfig): The JSON response configuration derived from the
+        json_config (JsonResponseConfig): The JSON response configuration derived from the
             request metadata.
 
     Returns:

@@ -10,7 +10,7 @@
 # ---
 
 # %% [markdown]
-# # 2. Audio Converters
+# # Audio Converters
 #
 # Audio converters enable transformations between text and audio, as well as audio-to-audio modifications. These converters are multi-modal and handle one input type and one output type at a time.
 #

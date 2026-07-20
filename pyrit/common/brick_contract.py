@@ -10,17 +10,57 @@ points that users routinely swap in and out. To make those swaps predictable,
 every subclass must use the keyword-only constructor shape mandated by the
 style guide: ``def __init__(self, *, ...)``.
 
-This module provides one shared helper, ``enforce_keyword_only_init``,
-that bases invoke from their own ``__init_subclass__`` hook. The helper
-inspects the subclass's directly-defined ``__init__`` (not inherited) and
-classifies it as compliant or non-compliant. Non-compliant subclasses
-raise ``TypeError`` at class definition time.
+``enforce_keyword_only_init`` validates subclass signatures.
+``forward_init_parameters`` explicitly marks constructors that pass their
+``**kwargs`` to the next constructor in the MRO, allowing registries to derive
+the complete strict build contract without interpreting arbitrary keyword bags.
 """
 
 from __future__ import annotations
 
 import inspect
+from collections.abc import Callable
 from inspect import Parameter
+from typing import TypeVar
+
+_InitMethodT = TypeVar("_InitMethodT", bound=Callable[..., None])
+_FORWARD_INIT_PARAMETERS_ATTRIBUTE = "__pyrit_forward_init_parameters__"
+
+
+def forward_init_parameters(init: _InitMethodT) -> _InitMethodT:
+    """
+    Declare that a constructor forwards ``**kwargs`` to the next MRO constructor.
+
+    The registry uses this explicit declaration to merge parent constructor
+    parameters into the class's build contract without treating every variadic
+    keyword bag as parent arguments.
+
+    Args:
+        init (_InitMethodT): The forwarding constructor.
+
+    Returns:
+        _InitMethodT: The unchanged constructor with registry metadata attached.
+
+    Raises:
+        TypeError: If the constructor does not accept ``**kwargs``.
+    """
+    if not any(param.kind is Parameter.VAR_KEYWORD for param in inspect.signature(init).parameters.values()):
+        raise TypeError("forward_init_parameters requires a constructor that accepts **kwargs.")
+    setattr(init, _FORWARD_INIT_PARAMETERS_ATTRIBUTE, True)
+    return init
+
+
+def init_parameters_are_forwarded(init: Callable[..., object]) -> bool:
+    """
+    Return whether a constructor declares that it forwards ``**kwargs``.
+
+    Args:
+        init (Callable[..., object]): The constructor to inspect.
+
+    Returns:
+        bool: True when ``forward_init_parameters`` marked the constructor.
+    """
+    return bool(getattr(init, _FORWARD_INIT_PARAMETERS_ATTRIBUTE, False))
 
 
 def enforce_keyword_only_init(cls: type, *, base_name: str) -> None:

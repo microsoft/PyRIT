@@ -40,11 +40,9 @@ class SeedDatasetProvider(ABC):
         """
         Automatically register non-abstract subclasses.
 
-        This is called when a class inherits from SeedDatasetProvider. A
-        deprecation warning is emitted for subclasses that still override the
-        legacy ``fetch_dataset`` instead of ``fetch_dataset_async``. The
-        keyword-only ``__init__`` contract is also enforced via
-        ``enforce_keyword_only_init``.
+        This is called when a class inherits from SeedDatasetProvider. The
+        keyword-only ``__init__`` contract is enforced via
+        ``enforce_keyword_only_init`` before concrete providers are registered.
         """
         super().__init_subclass__(**kwargs)
         # Local import to avoid a circular dependency at package init time.

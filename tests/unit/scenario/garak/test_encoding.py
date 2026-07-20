@@ -103,7 +103,7 @@ class TestEncodingInitialization:
             )
 
             assert scenario.name == "Encoding"
-            assert scenario.VERSION == 1
+            assert scenario.VERSION == 2
 
     def test_init_with_custom_scorer(self, mock_objective_target, mock_objective_scorer, mock_memory_seeds):
         """Test initialization with custom objective scorer."""
@@ -205,12 +205,152 @@ class TestEncodingInitialization:
             )
             await scenario.initialize_async()
 
-            # By default, EncodingTechnique.ALL is used, which expands to all encoding techniques
+            # By default, EncodingTechnique.DEFAULT is used, which expands to the curated subset
             assert len(scenario._scenario_techniques) > 0
             # Verify all techniques contain EncodingTechnique instances
             assert all(isinstance(s, EncodingTechnique) for s in scenario._scenario_techniques)
-            # Verify none of the techniques are the aggregate "ALL"
+            # Verify none of the techniques are the aggregate members (ALL/DEFAULT)
             assert all(s != EncodingTechnique.ALL for s in scenario._scenario_techniques)
+            assert all(s != EncodingTechnique.DEFAULT for s in scenario._scenario_techniques)
+            # The default run is the curated DEFAULT set, not the exhaustive ALL set
+            assert {s.value for s in scenario._scenario_techniques} == {
+                t.value for t in EncodingTechnique.get_techniques_by_tag("default")
+            }
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestEncodingTechniqueDefault:
+    """Tests for the curated DEFAULT aggregate and technique tagging."""
+
+    def test_default_aggregate_curates_representative_subset(self):
+        """DEFAULT expands to a broad curated subset spanning encoding families, smaller than ALL."""
+        default_names = {t.value for t in EncodingTechnique.get_techniques_by_tag("default")}
+        assert default_names == {
+            "base64",
+            "base2048",
+            "base16",
+            "base32",
+            "ascii85",
+            "hex",
+            "quoted_printable",
+            "uuencode",
+            "rot13",
+            "atbash",
+            "morse_code",
+            "nato",
+            "leet_speak",
+        }
+        all_names = {t.value for t in EncodingTechnique.get_all_techniques()}
+        assert default_names < all_names
+        assert len(all_names) == 17
+        # The niche/lossy schemes stay ALL-only.
+        assert all_names - default_names == {"braille", "ecoji", "zalgo", "ascii_smuggler"}
+
+    def test_get_aggregate_tags_includes_default(self):
+        """The scenario exposes both ``all`` and ``default`` as aggregate tags."""
+        assert EncodingTechnique.get_aggregate_tags() == {"all", "default"}
+
+    def test_default_technique_is_curated_default(self, mock_objective_scorer):
+        """A bare scenario defaults to the curated DEFAULT aggregate, not ALL."""
+        scenario = Encoding(objective_scorer=mock_objective_scorer)
+        assert scenario._default_technique == EncodingTechnique.DEFAULT
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestEncodingAtomicNameUniqueness:
+    """Tests that atomic-attack names are unique per converter variant (collision fix)."""
+
+    async def test_all_atomic_attack_names_are_unique(
+        self, mock_objective_target, mock_objective_scorer, mock_attack_seed_groups
+    ):
+        """Every atomic attack across the exhaustive ALL run has a unique name."""
+        from unittest.mock import patch
+
+        with patch.object(
+            Encoding,
+            "_resolve_seed_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value={"memory": mock_attack_seed_groups},
+        ):
+            scenario = Encoding(objective_scorer=mock_objective_scorer)
+            scenario.set_params_from_args(
+                args={
+                    "objective_target": mock_objective_target,
+                    "scenario_techniques": [EncodingTechnique.ALL],
+                }
+            )
+            await scenario.initialize_async()
+
+            names = [
+                aa.atomic_attack_name
+                for aa in scenario._get_converter_attacks(
+                    context=scenario._build_scenario_context(seed_groups_by_dataset={"memory": mock_attack_seed_groups})
+                )
+            ]
+            assert len(names) == len(set(names)), "atomic_attack_name collisions detected"
+
+    async def test_base64_trimmed_to_two_variants(
+        self, mock_objective_target, mock_objective_scorer, mock_attack_seed_groups
+    ):
+        """base64 keeps only the default and url-safe variants (near-duplicates removed)."""
+        from unittest.mock import patch
+
+        with patch.object(
+            Encoding,
+            "_resolve_seed_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value={"memory": mock_attack_seed_groups},
+        ):
+            scenario = Encoding(objective_scorer=mock_objective_scorer)
+            scenario.set_params_from_args(
+                args={
+                    "objective_target": mock_objective_target,
+                    "scenario_techniques": [EncodingTechnique.Base64],
+                }
+            )
+            await scenario.initialize_async()
+
+            attacks = scenario._get_converter_attacks(
+                context=scenario._build_scenario_context(seed_groups_by_dataset={"memory": mock_attack_seed_groups})
+            )
+            # Every base64 atomic attack groups under the "base64" display group.
+            assert all(aa.display_group == "base64" for aa in attacks)
+            # Two distinct converter variants (default + urlsafe), each fanned over the raw config
+            # plus one config per decode template — names are unique and prefixed by the variant slug.
+            names = {aa.atomic_attack_name for aa in attacks}
+            assert {n for n in names if n.startswith("base64_urlsafe")}, "missing urlsafe variant"
+            assert {n for n in names if n.startswith("base64_") and not n.startswith("base64_urlsafe")}, (
+                "missing default base64 variant"
+            )
+            # The trimmed variants must not appear.
+            assert not any("standard" in n or "b2a" in n for n in names)
+
+    async def test_memory_labels_propagate_to_atomic_attacks(
+        self, mock_objective_target, mock_objective_scorer, mock_attack_seed_groups
+    ):
+        """Run-level memory_labels reach every built atomic attack (matches the sibling convention)."""
+        from unittest.mock import patch
+
+        labels = {"experiment": "enc-run", "operator": "airt"}
+        with patch.object(
+            Encoding,
+            "_resolve_seed_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value={"memory": mock_attack_seed_groups},
+        ):
+            scenario = Encoding(objective_scorer=mock_objective_scorer)
+            scenario.set_params_from_args(
+                args={
+                    "objective_target": mock_objective_target,
+                    "scenario_techniques": [EncodingTechnique.ALL],
+                    "memory_labels": labels,
+                }
+            )
+            await scenario.initialize_async()
+
+            technique_attacks = [aa for aa in scenario._atomic_attacks if aa.atomic_attack_name != "baseline"]
+            assert technique_attacks
+            assert all(aa._memory_labels == labels for aa in technique_attacks)
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -269,10 +409,12 @@ class TestEncodingAtomicAttacks:
                 }
             )
             await scenario.initialize_async()
-            attack_runs = scenario._get_converter_attacks(seed_groups=mock_attack_seed_groups)
+            attack_runs = scenario._get_converter_attacks(
+                context=scenario._build_scenario_context(seed_groups_by_dataset={"memory": mock_attack_seed_groups})
+            )
 
             # Should have multiple attack runs for different encodings
-            # The list includes: Base64 (4 variants), Base2048, Base16, Base32, ASCII85 (2), hex,
+            # The list includes: base64 (2 variants: default + urlsafe), base2048, base16, base32, ascii85 (2),
             # quoted-printable, UUencode, ROT13, Braille, Atbash, Morse, NATO, Ecoji, Zalgo, Leet, AsciiSmuggler
             assert len(attack_runs) > 0
 
@@ -300,7 +442,10 @@ class TestEncodingAtomicAttacks:
             )
             await scenario.initialize_async()
             attack_runs = scenario._get_prompt_attacks(
-                converters=[Base64Converter()], encoding_name="Base64", seed_groups=mock_attack_seed_groups
+                converters=[Base64Converter()],
+                encoding_name="base64",
+                variant_slug="base64",
+                context=scenario._build_scenario_context(seed_groups_by_dataset={"memory": mock_attack_seed_groups}),
             )
 
             # Should create attack runs
@@ -340,7 +485,10 @@ class TestEncodingAtomicAttacks:
             )
             await scenario.initialize_async()
             attack_runs = scenario._get_prompt_attacks(
-                converters=[Base64Converter()], encoding_name="Base64", seed_groups=mock_attack_seed_groups
+                converters=[Base64Converter()],
+                encoding_name="base64",
+                variant_slug="base64",
+                context=scenario._build_scenario_context(seed_groups_by_dataset={"memory": mock_attack_seed_groups}),
             )
 
             # Check that seed groups contain objectives with the expected format
@@ -428,9 +576,9 @@ class TestEncodingDatasetConfiguration:
         assert "garak_web_html_js" in dataset_names
 
     def test_default_dataset_config_has_max_size(self, mock_objective_scorer):
-        """Test that each child of the default config caps samples at 3 per dataset."""
+        """Test that each child of the default config caps samples at 10 per dataset."""
         config = Encoding(objective_scorer=mock_objective_scorer)._default_dataset_config
-        assert [child.max_dataset_size for child in config._configurations] == [3, 3]
+        assert [child.max_dataset_size for child in config._configurations] == [10, 10]
 
 
 @pytest.mark.usefixtures("patch_central_database")

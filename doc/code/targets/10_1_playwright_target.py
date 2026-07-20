@@ -8,7 +8,7 @@
 #       jupytext_version: 1.19.0
 # ---
 # %% [markdown]
-# # 10.1 Generic Playwright Target
+# # Generic Playwright Target
 #
 # This notebook demonstrates how to interact with the **Playwright Target** in PyRIT.
 #

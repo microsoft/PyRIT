@@ -82,8 +82,7 @@ def _build_doctor_technique() -> type[ScenarioTechnique]:
     return AttackTechniqueRegistry.build_technique_class_from_factories(  # type: ignore[return-value, ty:invalid-return-type]
         class_name="DoctorTechnique",
         factories=DOCTOR_FACTORIES,
-        aggregate_tags={},
-        default_technique_names={"policy_puppetry", "policy_puppetry_leet"},
+        default_names={"policy_puppetry", "policy_puppetry_leet"},
     )
 
 
@@ -138,7 +137,6 @@ class Doctor(Scenario):
         super().__init__(
             version=self.VERSION,
             technique_class=technique_class,
-            default_technique=technique_class("default"),
             default_dataset_config=DatasetAttackConfiguration(dataset_names=["garak_doctor"]),
             objective_scorer=objective_scorer,
             scenario_result_id=scenario_result_id,
@@ -150,8 +148,9 @@ class Doctor(Scenario):
 
         Builds the Doctor-specific technique factories locally (so they never enter the global
         registry) and delegates the technique × dataset cross-product to
-        ``MatrixAtomicAttackBuilder``. The base owns baseline emission, so this passes
-        ``include_baseline=False``.
+        ``MatrixAtomicAttackBuilder``. Baseline emission is the scenario's responsibility, so this
+        passes ``include_baseline=context.include_baseline`` (Doctor defaults its policy to
+        ``Disabled``).
 
         Args:
             context (ScenarioContext): The resolved runtime inputs for this run.
@@ -172,5 +171,5 @@ class Doctor(Scenario):
         return builder.build(
             technique_factories=technique_factories,
             dataset_groups=context.seed_groups_by_dataset,
-            include_baseline=False,
+            include_baseline=context.include_baseline,
         )

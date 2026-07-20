@@ -52,8 +52,8 @@ def test_image_resizing_converter_initialization_output_format_validation():
 
 def test_image_resizing_converter_initialization_scale_factor_validation():
     """Test validation of scale_factor parameter."""
-    for invalid_scale_factor in [0.0, -0.1, -1.0, -100.0]:
-        with pytest.raises(ValueError, match="Scale factor must be positive"):
+    for invalid_scale_factor in [0.0, -0.1, -1.0, -100.0, float("nan"), float("inf"), float("-inf")]:
+        with pytest.raises(ValueError, match="Scale factor must be a positive finite number"):
             ImageResizingConverter(scale_factor=invalid_scale_factor)
 
     for valid_scale_factor in [0.1, 0.5, 1.0, 2.0, 10.0]:
@@ -229,3 +229,23 @@ async def test_image_resizing_converter_output_dimensions(sample_image_bytes):
     expected_width = int(original_size[0] * scale_factor)
     expected_height = int(original_size[1] * scale_factor)
     assert resized_image.size == (expected_width, expected_height)
+
+
+@pytest.mark.parametrize(
+    ("input_size", "expected_size"),
+    [
+        ((1, 1), (1, 1)),
+        ((1, 8), (1, 4)),
+        ((8, 1), (4, 1)),
+    ],
+)
+def test_image_resizing_converter_minimum_output_dimensions(
+    input_size: tuple[int, int], expected_size: tuple[int, int]
+) -> None:
+    """Test that each output dimension is clamped to at least one pixel."""
+    converter = ImageResizingConverter(scale_factor=0.5)
+    image = Image.new("RGB", input_size)
+
+    resized_image = converter._apply_transform(image)
+
+    assert resized_image.size == expected_size

@@ -191,18 +191,16 @@ class Parameter(BaseModel):
         Whether a single string token can be coerced to this parameter's value.
 
         True for a non-reference plain scalar (``str`` / ``int`` / ``float`` /
-        ``bool``) or ``Literal[...]`` parameter — exactly the forms a text field or
-        CLI token can supply. References and structured types (lists, enums,
-        arbitrary objects) are False and are surfaced/handled elsewhere.
+        ``bool``), ``Literal[...]``, or ``Enum`` parameter — exactly the forms a
+        text field or CLI token can supply. References and structured types (lists
+        and arbitrary objects) are False and are surfaced/handled elsewhere.
 
         Returns:
             bool: True when a string can be coerced to this parameter's value.
         """
-        if self.reference is not None:
+        if self.reference is not None or self.opaque:
             return False
-        if self.param_type in _SUPPORTED_SCALAR_TYPES:
-            return True
-        return get_origin(self.param_type) is Literal
+        return _is_scalar_param_type(_unwrap_optional(self.param_type))
 
     def is_reference_to(self, component_type: ComponentType) -> bool:
         """
@@ -247,6 +245,9 @@ class Parameter(BaseModel):
         if self.reference is not None or self.opaque:
             return raw_value
         param_type = self.param_type
+        if raw_value is None and type(None) in get_args(param_type):
+            return None
+        param_type = _unwrap_optional(param_type)
         if param_type is None:
             return copy.deepcopy(raw_value)
         if get_origin(param_type) is list:

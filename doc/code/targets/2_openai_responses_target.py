@@ -8,7 +8,7 @@
 #       jupytext_version: 1.18.1
 # ---
 # %% [markdown]
-# # 2. OpenAI Responses Target
+# # OpenAI Responses Target
 #
 # In this demo, we show an example of the `OpenAIResponseTarget`. [Responses](https://platform.openai.com/docs/api-reference/responses) is a newer protocol than chat completions and provides additional functionality with a somewhat modified API. The allowed input types include text, image, web search, file search, functions, reasoning, and computer use.
 #

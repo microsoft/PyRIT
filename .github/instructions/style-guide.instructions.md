@@ -127,6 +127,14 @@ def __init__(self, target: PromptTarget, scorer: Scorer | None = None, max_retri
     ...
 ```
 
+### Forwarded Constructor Parameters
+- When a registry-built class accepts `**kwargs` in `__init__` and passes them
+  to `super().__init__(**kwargs)`, decorate the constructor with
+  `@forward_init_parameters`.
+- Do not apply the decorator to open-ended keyword bags that are consumed
+  locally or are not forwarded. The registry uses the marker specifically to
+  include parent constructor parameters in the class's build contract.
+
 ### Single Parameter Functions
 - Functions with only one parameter don't need keyword-only enforcement
 

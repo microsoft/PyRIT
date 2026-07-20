@@ -126,8 +126,8 @@ FIXTURES = ["patch_central_database", "mock_runtime_env"]
 class TestCyberBasic:
     """Tests for Cyber initialization and class properties."""
 
-    def test_version_is_2(self):
-        assert Cyber.VERSION == 2
+    def test_version_is_3(self):
+        assert Cyber.VERSION == 3
 
     def test_get_technique_class(self):
         strat = _technique_class()
@@ -149,15 +149,17 @@ class TestCyberBasic:
         default_members = strat.expand({strat.DEFAULT})
         assert default_members == [strat("red_teaming")]
 
-    def test_default_matches_all(self):
-        """DEFAULT must expand to exactly the same techniques as ALL.
+    def test_all_is_a_superset_of_default(self):
+        """ALL exposes the full registered pool while DEFAULT stays curated to red_teaming.
 
-        Cyber curates a single technique, so its DEFAULT run is a no-op alias of ALL. Asserting
-        equality (not just subset) guards against a future technique landing in ALL but being
-        silently excluded from DEFAULT (or vice versa) once the aggregate wiring changes.
+        Cyber no longer narrows its available techniques — the initializer is the single
+        gate — so ALL is strictly broader than the curated DEFAULT run.
         """
         strat = _technique_class()
-        assert set(strat.expand({strat.DEFAULT})) == set(strat.expand({strat.ALL}))
+        default_members = set(strat.expand({strat.DEFAULT}))
+        all_members = set(strat.expand({strat.ALL}))
+        assert default_members == {strat("red_teaming")}
+        assert default_members < all_members
 
     def test_default_dataset_config_has_malware_dataset(self):
         config = Cyber()._default_dataset_config
@@ -296,23 +298,29 @@ class TestCyberAttackGeneration:
             await scenario.initialize_async()
             return scenario._atomic_attacks
 
-    async def test_all_technique_produces_red_teaming(self, mock_objective_target, mock_objective_scorer):
+    async def test_all_technique_includes_red_teaming_and_others(self, mock_objective_target, mock_objective_scorer):
+        """ALL now exposes the full registered pool, not just red_teaming."""
         attacks = await self._init_and_get_attacks(
             mock_objective_target=mock_objective_target,
             mock_objective_scorer=mock_objective_scorer,
             techniques=[_technique_class().ALL],
         )
         technique_classes = {type(a.attack_technique.attack) for a in attacks}
-        assert technique_classes == {RedTeamingAttack}
+        assert RedTeamingAttack in technique_classes
+        assert len(technique_classes) > 1
 
-    async def test_multi_turn_technique_produces_red_teaming(self, mock_objective_target, mock_objective_scorer):
+    async def test_multi_turn_technique_includes_red_teaming_and_others(
+        self, mock_objective_target, mock_objective_scorer
+    ):
+        """MULTI_TURN exposes every registered multi-turn technique, including red_teaming."""
         attacks = await self._init_and_get_attacks(
             mock_objective_target=mock_objective_target,
             mock_objective_scorer=mock_objective_scorer,
             techniques=[_technique_class().MULTI_TURN],
         )
         technique_classes = {type(a.attack_technique.attack) for a in attacks}
-        assert technique_classes == {RedTeamingAttack}
+        assert RedTeamingAttack in technique_classes
+        assert len(technique_classes) > 1
 
     async def test_default_technique_produces_red_teaming(self, mock_objective_target, mock_objective_scorer):
         """Default (DEFAULT) should produce RedTeaming. PromptSendingAttack baseline is

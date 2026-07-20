@@ -44,6 +44,10 @@ def _mock_factory(*, name: str, seed_technique=None, adversarial_chat=None) -> M
     factory.name = name
     factory.seed_technique = seed_technique
     factory.adversarial_chat = adversarial_chat
+    # Mirror the real factory: with no simulated-conversation seed, resolution returns
+    # whatever adversarial_chat was baked (possibly None). Tests that exercise the
+    # simulated-conversation lazy path override this return value explicitly.
+    factory.resolve_adversarial_chat.return_value = adversarial_chat
     factory.create.return_value = MagicMock(name=f"{name}_technique")
     return factory
 
@@ -170,6 +174,21 @@ class TestMatrixAdversarialForwarding:
         assert "adversarial_chat" not in factory.create.call_args.kwargs
         assert result[0]._adversarial_chat is baked
 
+    def test_no_target_axis_stamps_factory_resolved_adversarial_chat(self):
+        # A simulated-conversation technique with no baked adversarial_chat resolves the
+        # default lazily via factory.resolve_adversarial_chat(); the builder must stamp that
+        # onto the AtomicAttack so seed-group expansion has an adversarial chat to use.
+        builder = _builder()
+        resolved = MagicMock(spec=PromptTarget)
+        factory = _mock_factory(name="tech")
+        factory.resolve_adversarial_chat.return_value = resolved
+        result = builder.build(
+            technique_factories={"tech": factory},
+            dataset_groups={"ds": [_seed_group(objective="o1")]},
+        )
+        assert "adversarial_chat" not in factory.create.call_args.kwargs
+        assert result[0]._adversarial_chat is resolved
+
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestMatrixCustomCallbacks:
@@ -286,6 +305,20 @@ class TestBuildBaselineHelper:
         assert baseline.atomic_attack_name == "baseline"
         assert baseline._seed_groups == groups
 
+    def test_baseline_custom_name_scorer_and_display_group(self):
+        scorer = MagicMock(spec=TrueFalseScorer)
+        groups = [_seed_group(objective="o1")]
+        baseline = build_baseline_atomic_attack(
+            objective_target=MagicMock(spec=PromptTarget),
+            objective_scorer=scorer,
+            seed_groups=groups,
+            atomic_attack_name="harm_a_baseline",
+            display_group="harm_a",
+        )
+        assert baseline.atomic_attack_name == "harm_a_baseline"
+        assert baseline.display_group == "harm_a"
+        assert baseline._objective_scorer is scorer
+
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestMatrixTechniqueConverters:
@@ -333,12 +366,13 @@ def _technique(value: str) -> SimpleNamespace:
     return SimpleNamespace(value=value)
 
 
-def _context(*, techniques, seed_groups_by_dataset=None) -> ScenarioContext:
+def _context(*, techniques, seed_groups_by_dataset=None, include_baseline=False) -> ScenarioContext:
     return ScenarioContext(
         objective_target=MagicMock(spec=PromptTarget),
         scenario_techniques=techniques,
         dataset_config=MagicMock(),
         memory_labels={"op": "unit"},
+        include_baseline=include_baseline,
         seed_groups_by_dataset=seed_groups_by_dataset or {},
     )
 
@@ -416,14 +450,26 @@ class TestBuildMatrixAtomicAttacks:
             )
         assert result[0].display_group == "ds"
 
-    def test_no_baseline_emitted(self):
+    def test_no_baseline_emitted_when_context_disables_it(self):
         context = _context(
             techniques=[_technique("tech")],
             seed_groups_by_dataset={"ds": [_seed_group(objective="o1")]},
+            include_baseline=False,
         )
         with _patch_registry({"tech": _mock_factory(name="tech")}):
             result = build_matrix_atomic_attacks(context=context, objective_scorer=MagicMock(spec=TrueFalseScorer))
         assert all(a.atomic_attack_name != "baseline" for a in result)
+
+    def test_baseline_emitted_when_context_enables_it(self):
+        context = _context(
+            techniques=[_technique("tech")],
+            seed_groups_by_dataset={"ds": [_seed_group(objective="o1")]},
+            include_baseline=True,
+        )
+        with _patch_registry({"tech": _mock_factory(name="tech")}):
+            result = build_matrix_atomic_attacks(context=context, objective_scorer=MagicMock(spec=TrueFalseScorer))
+        assert result[0].atomic_attack_name == "baseline"
+        assert [a.atomic_attack_name for a in result] == ["baseline", "tech_ds"]
 
     def test_technique_converters_forwarded(self):
         from pyrit.converter import Converter

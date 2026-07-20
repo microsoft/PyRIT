@@ -10,6 +10,7 @@ import pytest
 
 from pyrit.memory import MemoryInterface, PromptMemoryEntry
 from pyrit.models import (
+    AttackResult,
     ComponentIdentifier,
     IdentifierFilter,
     IdentifierType,
@@ -50,7 +51,13 @@ def test_get_scores_by_label(sqlite_instance: MemoryInterface, sample_conversati
     sqlite_instance.add_scores_to_memory(scores=[score])
 
     # Fetch the score we just added by label
-    db_score = sqlite_instance.get_prompt_scores(labels=sample_conversations[0].labels)
+    labels = {"sample": "label"}
+    conversation_id = sample_conversations[0].conversation_id
+    assert conversation_id is not None
+    sqlite_instance.add_attack_results_to_memory(
+        attack_results=[AttackResult(conversation_id=conversation_id, objective="Test objective", labels=labels)]
+    )
+    db_score = sqlite_instance.get_prompt_scores(labels=labels)
 
     assert len(db_score) == 1
     assert db_score[0].score_value == score.score_value
@@ -112,6 +119,73 @@ def test_add_score_get_score(
     # scorer_class_identifier is now a ComponentIdentifier object, check the class_name
     assert db_score[0].scorer_class_identifier.class_name == "TestScorer"
     assert db_score[0].message_piece_id == prompt_id
+
+
+def test_scorer_identifier_persists_graph_and_dedupes(
+    sqlite_instance: MemoryInterface,
+    sample_conversation_entries: Sequence[PromptMemoryEntry],
+):
+    from pyrit.memory.memory_models import (
+        ScoreEntry,
+        ScorerIdentifierChildEntry,
+        ScorerIdentifierEntry,
+        TargetIdentifierEntry,
+    )
+
+    prompt_id = sample_conversation_entries[0].id
+    sqlite_instance._insert_entries(entries=sample_conversation_entries)
+    prompt_target = ComponentIdentifier(
+        class_name="OpenAIChatTarget",
+        class_module="pyrit.prompt_target",
+        params={"endpoint": "https://example.test", "model_name": "gpt-test"},
+    )
+    sub_scorer = ComponentIdentifier(
+        class_name="SelfAskScorer",
+        class_module="pyrit.score",
+        params={"scorer_type": "float_scale"},
+        children={"prompt_target": prompt_target},
+    )
+    composite = ComponentIdentifier(
+        class_name="CompositeScorer",
+        class_module="pyrit.score",
+        params={"scorer_type": "true_false", "score_aggregator": "AND_"},
+        children={"sub_scorers": [sub_scorer]},
+    )
+    scores = [
+        Score(
+            score_value="True",
+            score_type="true_false",
+            scorer_class_identifier=composite,
+            message_piece_id=prompt_id,
+        ),
+        Score(
+            score_value="True",
+            score_type="true_false",
+            scorer_class_identifier=composite,
+            message_piece_id=prompt_id,
+        ),
+    ]
+
+    sqlite_instance.add_scores_to_memory(scores=scores)
+
+    scorer_rows = sqlite_instance._query_entries(ScorerIdentifierEntry)
+    scorers_by_hash = {row.hash: row for row in scorer_rows}
+    assert set(scorers_by_hash) == {composite.hash, sub_scorer.hash}
+    assert scorers_by_hash[composite.hash].scorer_type == "true_false"
+    assert scorers_by_hash[composite.hash].score_aggregator == "AND_"
+    assert scorers_by_hash[composite.hash].prompt_target_hash is None
+    assert scorers_by_hash[sub_scorer.hash].prompt_target_hash == prompt_target.hash
+    assert ComponentIdentifier.model_validate(scorers_by_hash[composite.hash].identifier_json) == composite
+
+    score_rows = sqlite_instance._query_entries(ScoreEntry)
+    assert {row.scorer_identifier_hash for row in score_rows} == {composite.hash}
+
+    target_rows = sqlite_instance._query_entries(TargetIdentifierEntry)
+    assert [row.hash for row in target_rows] == [prompt_target.hash]
+    scorer_edges = sqlite_instance._query_entries(ScorerIdentifierChildEntry)
+    assert [(edge.parent_hash, edge.position, edge.child_hash) for edge in scorer_edges] == [
+        (composite.hash, 0, sub_scorer.hash)
+    ]
 
 
 def test_get_prompt_scores_empty_prompt_ids_returns_empty(sqlite_instance: MemoryInterface):
@@ -184,6 +258,7 @@ def test_add_score_duplicate_prompt(sqlite_instance: MemoryInterface):
 
 def test_get_scores_by_memory_labels(sqlite_instance: MemoryInterface):
     prompt_id = uuid4()
+    conversation_id = str(uuid4())
     pieces = [
         MessagePiece(
             id=prompt_id,
@@ -191,8 +266,7 @@ def test_get_scores_by_memory_labels(sqlite_instance: MemoryInterface):
             original_value="original prompt text",
             converted_value="Hello, how are you?",
             sequence=0,
-            labels={"sample": "label"},
-            conversation_id=str(uuid4()),
+            conversation_id=conversation_id,
         )
     ]
     sqlite_instance.add_message_pieces_to_memory(message_pieces=pieces)
@@ -208,6 +282,11 @@ def test_get_scores_by_memory_labels(sqlite_instance: MemoryInterface):
         message_piece_id=prompt_id,
     )
     sqlite_instance.add_scores_to_memory(scores=[score])
+    sqlite_instance.add_attack_results_to_memory(
+        attack_results=[
+            AttackResult(conversation_id=conversation_id, objective="Test objective", labels={"sample": "label"})
+        ]
+    )
 
     # Fetch the score we just added
     db_score = sqlite_instance.get_prompt_scores(labels={"sample": "label"})

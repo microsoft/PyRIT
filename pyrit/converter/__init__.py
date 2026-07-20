@@ -75,6 +75,7 @@ from pyrit.converter.selective_text_converter import SelectiveTextConverter
 from pyrit.converter.string_join_converter import StringJoinConverter
 from pyrit.converter.suffix_append_converter import SuffixAppendConverter
 from pyrit.converter.superscript_converter import SuperscriptConverter
+from pyrit.converter.task_framing_converter import TaskFramingConverter
 from pyrit.converter.tatweel_converter import TatweelConverter
 from pyrit.converter.template_segment_converter import TemplateSegmentConverter
 from pyrit.converter.tense_converter import TenseConverter
@@ -221,6 +222,7 @@ __all__ = [
     "StringJoinConverter",
     "SuffixAppendConverter",
     "SuperscriptConverter",
+    "TaskFramingConverter",
     "TatweelConverter",
     "TemplateSegmentConverter",
     "TenseConverter",
