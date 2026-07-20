@@ -88,24 +88,6 @@ describe('targetIdentity', () => {
         ),
       ).toBe(false)
     })
-
-    it('fails closed when persisted target identity is unavailable', () => {
-      const target = makeTarget({
-        target_registry_name: 'text_1',
-        identifier_hash: 'active-target-hash',
-      })
-
-      expect(
-        targetInfoMatchesTarget(
-          {
-            target_type: target.identifier.class_name,
-            endpoint: target.identifier.endpoint,
-            model_name: target.identifier.model_name,
-          },
-          target,
-        ),
-      ).toBe(false)
-    })
   })
 
   describe('targetModelName / targetUnderlyingModelName', () => {

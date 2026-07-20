@@ -46,13 +46,11 @@ export function targetEndpoint(target: TargetInstance): string | null {
 }
 
 /** The ComponentIdentifier content hash used for duplicate detection. */
-export function targetIdentifierHash(target: TargetInstance): string | null {
-  return target.identifier.hash ?? null
+export function targetIdentifierHash(target: TargetInstance): string {
+  return target.identifier.hash
 }
 
 /** Whether persisted attack target information identifies the active target. */
 export function targetInfoMatchesTarget(targetInfo: TargetInfo, target: TargetInstance): boolean {
-  const persistedHash = targetInfo.identifier_hash
-  const activeHash = targetIdentifierHash(target)
-  return Boolean(persistedHash && activeHash && persistedHash === activeHash)
+  return targetInfo.identifier_hash === targetIdentifierHash(target)
 }

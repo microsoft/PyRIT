@@ -170,7 +170,7 @@ export interface TargetInfo {
   target_type: string
   endpoint?: string | null
   model_name?: string | null
-  identifier_hash?: string | null
+  identifier_hash: string
 }
 
 export interface AttackSummary {
