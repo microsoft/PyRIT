@@ -91,8 +91,8 @@ await output_attack_async(result)
 #
 # A system prompt is the simplest prepended conversation. The general form seeds a full
 # `system` / `user` / `assistant` history before the attack adds its own turn — for example, to
-# resume a prior conversation or to plant an agreeable assistant reply. It is just a list of
-# `Message`s, so the system prompt and any seed turns compose freely.
+# resume a prior conversation or to plant an agreeable assistant reply. System prompts and seeded
+# `user` / `assistant` turns can be combined in the same list, and PyRIT preserves their order.
 
 # %%
 from pyrit.models import MessagePiece

@@ -37,49 +37,36 @@ class GenericSystemSquashNormalizer(MessageListNormalizer[Message]):
         if not system_messages:
             return list(messages)
 
-        system_messages_by_user_index: dict[int, list[Message]] = {}
-        attached_system_indexes: set[int] = set()
-        next_user_index: int | None = None
-        for index in range(len(messages) - 1, -1, -1):
-            message = messages[index]
-            if message.api_role == "user":
-                next_user_index = index
-            elif message.api_role == "system" and next_user_index is not None:
-                system_messages_by_user_index.setdefault(next_user_index, []).insert(0, message)
-                attached_system_indexes.add(index)
-
         result: list[Message] = []
         index = 0
         while index < len(messages):
             message = messages[index]
-            if message.api_role == "system":
-                if index in attached_system_indexes:
-                    index += 1
-                    continue
-
-                orphan_system_messages = [message]
+            if message.api_role != "system":
+                result.append(message)
                 index += 1
-                while index < len(messages) and messages[index].api_role == "system":
-                    orphan_system_messages.append(messages[index])
-                    index += 1
-                result.append(
-                    build_squashed_user_message(
-                        new_message_content=self._get_system_content(orphan_system_messages),
-                        source_messages=orphan_system_messages,
-                    )
-                )
                 continue
 
-            if message.api_role == "user" and index in system_messages_by_user_index:
+            system_messages = [message]
+            index += 1
+            while index < len(messages) and messages[index].api_role == "system":
+                system_messages.append(messages[index])
+                index += 1
+
+            if index < len(messages) and messages[index].api_role == "user":
                 result.append(
                     self._squash_system_messages_into_user(
-                        system_messages=system_messages_by_user_index[index],
-                        user_message=message,
+                        system_messages=system_messages,
+                        user_message=messages[index],
                     )
                 )
+                index += 1
             else:
-                result.append(message)
-            index += 1
+                result.append(
+                    build_squashed_user_message(
+                        new_message_content=self._get_system_content(system_messages),
+                        source_messages=system_messages,
+                    )
+                )
 
         return result
 

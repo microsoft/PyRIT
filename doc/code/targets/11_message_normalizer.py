@@ -5,7 +5,7 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.19.0
+#       jupytext_version: 1.19.4
 # ---
 
 # %% [markdown]
@@ -82,7 +82,13 @@ print(json_output)
 # %% [markdown]
 # ## GenericSystemSquashNormalizer
 #
-# Some models don't support system messages. The `GenericSystemSquashNormalizer` merges system messages into the user messages that follow them using a standardized instruction format.
+# Some models don't support system messages. The `GenericSystemSquashNormalizer` combines consecutive
+# system messages in their original order and merges them into the user message immediately following
+# them. If no user immediately follows, it converts the system messages to a user message in their
+# original position.
+#
+# For example, `system: Policy`, `system: Persona`, `user: Question` becomes one user message containing
+# the Policy and Persona instructions followed by the Question.
 #
 # The format is:
 # ```
@@ -203,7 +209,6 @@ print(custom_formatted)
 # You can create custom normalizers by extending the base classes.
 
 # %%
-
 from pyrit.message_normalizer import MessageStringNormalizer
 from pyrit.models import Message
 
