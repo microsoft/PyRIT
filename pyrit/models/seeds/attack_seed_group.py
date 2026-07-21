@@ -145,6 +145,8 @@ class AttackSeedGroup(SeedGroup):
         Raises:
             ValueError: If the technique contains a SeedSimulatedConversation whose
                 sequence range overlaps with existing prompt sequences.
+            ValueError: If preserving prompt placement combines conflicting roles at
+                the same sequence.
         """
         # Pre-merge compatibility check with a clear error message
         if not self.is_compatible_with_technique(technique=technique):

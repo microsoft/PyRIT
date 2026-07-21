@@ -13,6 +13,8 @@ from __future__ import annotations
 
 from typing import Literal
 
+from pydantic import Field
+
 from pyrit.models.seeds.seed_group import SeedGroup
 from pyrit.models.seeds.seed_objective import SeedObjective
 from pyrit.models.seeds.seed_prompt import SeedPrompt
@@ -33,8 +35,14 @@ class AttackTechniqueSeedGroup(SeedGroup):
     # ``None`` (default) appends at the end; an integer inserts before that position.
     insertion_index: int | None = None
 
-    # How prompt sequences from this technique are positioned relative to the base group.
-    prompt_placement: Literal["preserve", "prepend"] = "preserve"
+    prompt_placement: Literal["preserve", "prepend"] = Field(
+        default="preserve",
+        description=(
+            '"preserve" combines existing sequence relationships. During AttackSeedGroup construction, '
+            "prompts at the same sequence are grouped when roles are the same and rejected when roles conflict. "
+            '"prepend" places technique prompts before base prompts.'
+        ),
+    )
 
     @classmethod
     def from_system_prompt(cls, system_prompt: str, *, insertion_index: int | None = None) -> AttackTechniqueSeedGroup:
