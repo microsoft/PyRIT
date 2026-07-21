@@ -46,6 +46,8 @@ from pyrit.executor.attack.multi_turn import (
     generate_simulated_conversation_async,
 )
 from pyrit.executor.attack.single_turn import (
+    MaliciousToolCallInjection,
+    MaliciousToolCallInjectionParameters,
     ManyShotJailbreakAttack,
     PromptSendingAttack,
     SingleTurnAttackContext,
@@ -73,6 +75,8 @@ __all__ = [
     "CrescendoAttack",
     "CrescendoAttackContext",
     "CrescendoAttackResult",
+    "MaliciousToolCallInjection",
+    "MaliciousToolCallInjectionParameters",
     "ManyShotJailbreakAttack",
     "MultiPromptSendingAttack",
     "MultiPromptSendingAttackParameters",

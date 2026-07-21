@@ -3,6 +3,10 @@
 
 """Singe turn attack strategies module."""
 
+from pyrit.executor.attack.single_turn.malicious_tool_call_injection import (
+    MaliciousToolCallInjection,
+    MaliciousToolCallInjectionParameters,
+)
 from pyrit.executor.attack.single_turn.many_shot_jailbreak import ManyShotJailbreakAttack
 from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
 from pyrit.executor.attack.single_turn.single_turn_attack_strategy import (
@@ -14,6 +18,8 @@ from pyrit.executor.attack.single_turn.skeleton_key import SkeletonKeyAttack
 __all__ = [
     "SingleTurnAttackStrategy",
     "SingleTurnAttackContext",
+    "MaliciousToolCallInjection",
+    "MaliciousToolCallInjectionParameters",
     "PromptSendingAttack",
     "ManyShotJailbreakAttack",
     "SkeletonKeyAttack",
