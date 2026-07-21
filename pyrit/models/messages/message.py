@@ -343,7 +343,7 @@ class Message(BaseModel):
         Build a list of system-role messages, ready to pass as ``prepended_conversation``.
 
         Args:
-            *system_prompts (str): One or more system instruction texts.
+            *system_prompts (str): System instruction texts. When omitted, returns an empty list.
 
         Returns:
             list[Message]: One system-role message per input, in order.
