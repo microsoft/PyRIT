@@ -12,6 +12,11 @@ from pyrit.common.path import HOME_PATH
 from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.score import AzureContentFilterScorer
 
+_AZURE_KEY_AUTH_DISABLED_REASON = (
+    "Azure key-based (local) auth is disabled in our tenant; "
+    "covered by the Entra-auth tests (test_entra_auth_targets.py)."
+)
+
 
 @pytest.fixture
 def memory() -> Generator[MemoryInterface, None, None]:
@@ -80,6 +85,7 @@ async def test_azure_content_filter_scorer_long_text_chunking_integration(memory
 
 
 @pytest.mark.run_only_if_all_tests
+@pytest.mark.skip(reason=_AZURE_KEY_AUTH_DISABLED_REASON)
 async def test_azure_content_filter_scorer_image_with_api_key(memory) -> None:
     """
     Integration test for Azure Content Filter Scorer image scoring with explicit API key auth.
@@ -108,6 +114,7 @@ async def test_azure_content_filter_scorer_image_with_api_key(memory) -> None:
 
 
 @pytest.mark.run_only_if_all_tests
+@pytest.mark.skip(reason=_AZURE_KEY_AUTH_DISABLED_REASON)
 async def test_azure_content_filter_scorer_text_with_api_key(memory) -> None:
     """
     Integration test for Azure Content Filter Scorer text scoring with explicit API key auth.

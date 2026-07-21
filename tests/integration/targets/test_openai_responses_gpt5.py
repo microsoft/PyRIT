@@ -12,6 +12,13 @@ import pytest
 from pyrit.models import MessagePiece
 from pyrit.prompt_target import OpenAIResponseTarget
 
+_AZURE_KEY_AUTH_DISABLED_REASON = (
+    "Azure key-based (local) auth is disabled in our tenant; "
+    "covered by the Entra-auth tests (test_entra_auth_targets.py)."
+)
+
+pytestmark = pytest.mark.skip(reason=_AZURE_KEY_AUTH_DISABLED_REASON)
+
 
 @pytest.fixture()
 def gpt5_args():
