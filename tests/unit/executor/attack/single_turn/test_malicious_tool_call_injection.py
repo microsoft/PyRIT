@@ -12,11 +12,9 @@ from pyrit.executor.attack import (
     AttackConverterConfig,
     AttackParameters,
     AttackScoringConfig,
-    SingleTurnAttackContext,
-)
-from pyrit.executor.attack.single_turn.malicious_tool_call_injection import (
     MaliciousToolCallInjection,
     MaliciousToolCallInjectionParameters,
+    SingleTurnAttackContext,
 )
 from pyrit.models import (
     AttackOutcome,
@@ -366,4 +364,5 @@ class TestMaliciousToolCallInjectionExecute:
             await attack._perform_async(context=basic_context)
 
         sent_text = mock_send.call_args.kwargs["message"].message_pieces[0].original_value
+        assert sent_text == custom_continuation
         assert _PAYLOAD not in sent_text

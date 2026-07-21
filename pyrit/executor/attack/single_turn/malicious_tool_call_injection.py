@@ -23,7 +23,6 @@ hijack the model's next action.
 Ref: https://github.com/microsoft/PyRIT/issues/2241
 """
 
-import logging
 import uuid
 from typing import Any
 
@@ -36,9 +35,7 @@ from pyrit.models import Message
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import PromptTarget
 
-logger = logging.getLogger(__name__)
-
-# prepended_conversation is built internally from the tool exchange; exclude it from callers.
+# prepended_conversation and next_message are built internally; exclude them from callers.
 MaliciousToolCallInjectionParameters = AttackParameters.excluding("prepended_conversation", "next_message")
 
 _DEFAULT_TOOL_NAME = "web_search"
@@ -110,19 +107,20 @@ class MaliciousToolCallInjection(PromptSendingAttack):
            read, etc.) using the ``tool_calls`` narrative format that many
            function-calling targets recognise.
         2. **tool** — the spoofed tool response containing ``injection_payload``.
+
+        The continuation message is set as ``context.next_message`` so that
+        ``PromptSendingAttack`` sends it as the live user turn rather than the
+        raw objective.
         """
         tool_call_id = f"call_{uuid.uuid4().hex[:12]}"
 
-        # Simulate the assistant calling the tool (narrative form understood by
-        # function-calling targets without requiring OpenAI's structured format).
         assistant_call_text = (
             f'[Calling tool: {self._tool_name}]\n'
             f'{{"tool_call_id": "{tool_call_id}", '
             f'"function": "{self._tool_name}", '
-            f'"arguments": {{"query": "{context.attack_params.objective}"}}}}'
+            f'"arguments": {{"query": "{context.objective}"}}}}'
         )
 
-        # Craft the malicious tool response.
         tool_response_text = (
             f'[Tool response from {self._tool_name} | id={tool_call_id}]\n'
             f"{self._injection_payload}"
@@ -132,5 +130,7 @@ class MaliciousToolCallInjection(PromptSendingAttack):
             Message.from_prompt(prompt=assistant_call_text, role="assistant"),
             Message.from_prompt(prompt=tool_response_text, role="tool"),
         ]
+
+        context.next_message = Message.from_prompt(prompt=self._continuation_message, role="user")
 
         await super()._setup_async(context=context)
