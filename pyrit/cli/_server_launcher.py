@@ -11,20 +11,27 @@ detached backend process, and (optionally) stop it.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import math
 import os
+import re
 import signal
 import subprocess
 import sys
 import tempfile
-from typing import TYPE_CHECKING
+import time
+from pathlib import Path
+from urllib.parse import urlparse
 
+from pyrit.cli._config_reader import DEFAULT_SERVER_STARTUP_TIMEOUT
 from pyrit.cli.api_client import PyRITApiClient
 
-if TYPE_CHECKING:
-    from pathlib import Path
-
 _logger = logging.getLogger(__name__)
+_HEALTH_PROBE_TIMEOUT = 5.0
+_PROCESS_STOP_TIMEOUT = 10.0
+_STARTUP_POLL_INTERVAL = 0.5
+_PID_DIRECTORY = Path.home() / ".pyrit" / "run"
 
 
 # ---------------------------------------------------------------------------
@@ -32,9 +39,107 @@ _logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
+def parse_local_server_address(*, base_url: str) -> tuple[str, int] | None:
+    """
+    Parse a plain loopback HTTP URL into its host and port.
+
+    Args:
+        base_url: Server root URL.
+
+    Returns:
+        tuple[str, int] | None: The loopback host and port, or ``None`` for a non-local or malformed URL.
+    """
+    parsed_url = urlparse(base_url)
+    if (
+        parsed_url.scheme != "http"
+        or parsed_url.hostname not in {"localhost", "127.0.0.1"}
+        or parsed_url.username is not None
+        or parsed_url.password is not None
+        or parsed_url.path not in {"", "/"}
+        or parsed_url.query
+        or parsed_url.fragment
+    ):
+        return None
+    try:
+        port = parsed_url.port or 80
+    except ValueError:
+        return None
+    return parsed_url.hostname, port
+
+
+def _get_pid_directory() -> Path:
+    return _PID_DIRECTORY
+
+
+def _pid_file_path(*, port: int) -> Path:
+    return _get_pid_directory() / f"server-{port}.json"
+
+
+def _write_pid_record(*, host: str, port: int, pid: int) -> None:
+    path = _pid_file_path(port=port)
+    temporary_path = path.with_suffix(".tmp")
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary_path.write_text(
+            json.dumps({"host": host, "port": port, "pid": pid}),
+            encoding="utf-8",
+        )
+        temporary_path.replace(path)
+    except OSError as exc:
+        _logger.warning("Could not persist backend process state to %s: %s", path, exc)
+        try:
+            temporary_path.unlink(missing_ok=True)
+        except OSError:
+            _logger.warning("Could not remove temporary backend process state from %s", temporary_path)
+
+
+def _remove_pid_record(*, port: int) -> None:
+    path = _pid_file_path(port=port)
+    try:
+        path.unlink(missing_ok=True)
+    except OSError as exc:
+        _logger.warning("Could not remove backend process state from %s: %s", path, exc)
+
+
+def _read_recorded_pid(*, port: int) -> int | None:
+    path = _pid_file_path(port=port)
+    try:
+        raw_record = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return None
+    except (json.JSONDecodeError, OSError) as exc:
+        _logger.warning("Discarding invalid backend process state from %s: %s", path, exc)
+        _remove_pid_record(port=port)
+        return None
+
+    pid = raw_record.get("pid") if isinstance(raw_record, dict) else None
+    recorded_port = raw_record.get("port") if isinstance(raw_record, dict) else None
+    if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0 or recorded_port != port:
+        _logger.warning("Discarding invalid backend process state from %s", path)
+        _remove_pid_record(port=port)
+        return None
+    return pid
+
+
+def _parse_netstat_listener_pids(*, output: str, port: int) -> set[int]:
+    pids: set[int] = set()
+    for line in output.splitlines():
+        tokens = line.split()
+        if len(tokens) < 5 or tokens[0].upper() != "TCP" or tokens[3].upper() != "LISTENING":
+            continue
+        try:
+            local_port = int(tokens[1].rsplit(":", maxsplit=1)[1])
+            pid = int(tokens[-1])
+        except (IndexError, ValueError):
+            continue
+        if local_port == port:
+            pids.add(pid)
+    return pids
+
+
 def _find_pid_on_port_windows(*, port: int) -> int | None:
     """
-    Find the PID listening on *port* on Windows via ``netstat``.
+    Find the PID listening on *port* on Windows.
 
     Args:
         port: TCP port to look up.
@@ -42,6 +147,25 @@ def _find_pid_on_port_windows(*, port: int) -> int | None:
     Returns:
         int | None: The PID, or ``None`` if no listener was found.
     """
+    powershell_command = (
+        f"Get-NetTCPConnection -State Listen -LocalPort {port} -ErrorAction SilentlyContinue "
+        "| Select-Object -ExpandProperty OwningProcess -Unique"
+    )
+    try:
+        result = subprocess.run(
+            ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", powershell_command],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        pids = {int(line.strip()) for line in result.stdout.splitlines() if line.strip().isdigit()}
+        if len(pids) == 1:
+            return next(iter(pids))
+        if len(pids) > 1:
+            return None
+    except (OSError, subprocess.SubprocessError):
+        pass
+
     try:
         result = subprocess.run(
             ["netstat", "-ano", "-p", "TCP"],
@@ -51,23 +175,8 @@ def _find_pid_on_port_windows(*, port: int) -> int | None:
         )
     except (OSError, subprocess.SubprocessError):
         return None
-    for line in result.stdout.splitlines():
-        if "LISTENING" not in line:
-            continue
-        tokens = line.split()
-        if len(tokens) < 5:
-            continue
-        # Match the local-address column exactly so port 80 doesn't match
-        # :8000 / :8080 / etc. Handles both IPv4 ("0.0.0.0:8000") and
-        # IPv6 ("[::]:8000") local-address formats.
-        local_addr = tokens[1]
-        if local_addr.rsplit(":", 1)[-1] != str(port):
-            continue
-        try:
-            return int(tokens[-1])
-        except (ValueError, IndexError):
-            continue
-    return None
+    pids = _parse_netstat_listener_pids(output=result.stdout, port=port)
+    return next(iter(pids)) if len(pids) == 1 else None
 
 
 def _find_pid_on_port_unix(*, port: int) -> int | None:
@@ -82,42 +191,144 @@ def _find_pid_on_port_unix(*, port: int) -> int | None:
     """
     try:
         result = subprocess.run(
-            ["lsof", "-ti", f":{port}"],
+            ["lsof", "-t", f"-iTCP:{port}", "-sTCP:LISTEN"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        result = None
+    if result is not None:
+        pids = {int(line.strip()) for line in result.stdout.splitlines() if line.strip().isdigit()}
+        if len(pids) == 1:
+            return next(iter(pids))
+        if len(pids) > 1:
+            return None
+
+    try:
+        result = subprocess.run(
+            ["ss", "-ltnp", f"sport = :{port}"],
             capture_output=True,
             text=True,
             timeout=5,
         )
     except (OSError, subprocess.SubprocessError):
         return None
-    for pid_str in result.stdout.strip().splitlines():
+    pids = {int(pid) for pid in re.findall(r"pid=(\d+)", result.stdout)}
+    return next(iter(pids)) if len(pids) == 1 else None
+
+
+def _find_pid_on_port(*, port: int) -> int | None:
+    if sys.platform == "win32":
+        return _find_pid_on_port_windows(port=port)
+    return _find_pid_on_port_unix(port=port)
+
+
+def _resolve_server_pid(*, port: int) -> int | None:
+    listener_pid = _find_pid_on_port(port=port)
+    recorded_pid = _read_recorded_pid(port=port)
+    if recorded_pid is not None:
+        if recorded_pid == listener_pid:
+            return recorded_pid
+        _remove_pid_record(port=port)
+    return listener_pid
+
+
+def _process_exists(*, pid: int) -> bool:
+    if sys.platform == "win32":
+        powershell_command = (
+            f"$process = Get-Process -Id {pid} -ErrorAction SilentlyContinue; if ($null -eq $process) {{ exit 1 }}"
+        )
         try:
-            return int(pid_str)
-        except ValueError:
-            continue
-    return None
+            result = subprocess.run(
+                ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", powershell_command],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return True
+        return result.returncode == 0
+
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
 
 
-def stop_server_on_port(*, port: int) -> bool:
+def _wait_for_process_exit(*, pid: int, port: int, timeout: float) -> bool:
+    deadline = time.monotonic() + timeout
+    while _process_exists(pid=pid):
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.1)
+    return _find_pid_on_port(port=port) is None
+
+
+def _terminate_process_tree(*, process: subprocess.Popen[bytes]) -> bool:
+    if os.name == "nt":
+        try:
+            result = subprocess.run(
+                ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                capture_output=True,
+                text=True,
+                timeout=_PROCESS_STOP_TIMEOUT,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return False
+        if result.returncode != 0 and process.poll() is None:
+            return False
+    else:
+        try:
+            os.killpg(process.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        except OSError:
+            return False
+
+    try:
+        process.wait(timeout=_PROCESS_STOP_TIMEOUT)
+        return True
+    except subprocess.TimeoutExpired:
+        if os.name == "nt":
+            return False
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+            process.wait(timeout=_PROCESS_STOP_TIMEOUT)
+        except (OSError, subprocess.TimeoutExpired):
+            return False
+        return True
+
+
+def stop_server_on_port(*, port: int, shutdown_timeout: float = _PROCESS_STOP_TIMEOUT) -> bool:
     """
     Find and terminate the process listening on *port*.
 
     Args:
         port: TCP port to look up.
+        shutdown_timeout: Seconds to wait for the process to exit.
 
     Returns:
-        bool: ``True`` if a process was found and signalled, ``False`` otherwise.
+        bool: ``True`` if the process exits and releases the port, ``False`` otherwise.
     """
-    if sys.platform == "win32":
-        pid = _find_pid_on_port_windows(port=port)
-    else:
-        pid = _find_pid_on_port_unix(port=port)
+    pid = _resolve_server_pid(port=port)
     if pid is None:
         return False
     try:
         os.kill(pid, signal.SIGTERM)
-        return True
-    except OSError:
+    except OSError as exc:
+        _logger.warning("Could not signal backend process %d on port %d: %s", pid, port, exc)
         return False
+    if not _wait_for_process_exit(pid=pid, port=port, timeout=shutdown_timeout):
+        _logger.warning("Backend process %d did not stop within %.1f seconds", pid, shutdown_timeout)
+        return False
+    _remove_pid_record(port=port)
+    return True
 
 
 class ServerLauncher:
@@ -132,6 +343,7 @@ class ServerLauncher:
     def __init__(self) -> None:
         self._process: subprocess.Popen[bytes] | None = None
         self._pid: int | None = None
+        self._port: int | None = None
         self._log_path: str | None = None
 
     # ------------------------------------------------------------------
@@ -163,7 +375,7 @@ class ServerLauncher:
         port: int = 8000,
         config_file: Path | None = None,
         log_level: str | None = None,
-        startup_timeout: int = 30,
+        startup_timeout: float = DEFAULT_SERVER_STARTUP_TIMEOUT,
     ) -> str:
         """
         Start ``pyrit_backend`` as a detached subprocess and wait until healthy.
@@ -180,11 +392,27 @@ class ServerLauncher:
 
         Raises:
             RuntimeError: If the server did not become healthy within the timeout.
+            ValueError: If ``startup_timeout`` is not finite and greater than zero.
         """
+        if (
+            isinstance(startup_timeout, bool)
+            or not isinstance(startup_timeout, int | float)
+            or not math.isfinite(startup_timeout)
+            or startup_timeout <= 0
+        ):
+            raise ValueError("startup_timeout must be a finite number greater than 0.")
+
         base_url = f"http://{host}:{port}"
 
         # Already running?
-        if await self.probe_health_async(base_url=base_url):
+        try:
+            already_running = await asyncio.wait_for(
+                self.probe_health_async(base_url=base_url),
+                timeout=min(_HEALTH_PROBE_TIMEOUT, startup_timeout),
+            )
+        except asyncio.TimeoutError:
+            already_running = False
+        if already_running:
             _logger.info("Server already running at %s", base_url)
             return base_url
 
@@ -228,29 +456,62 @@ class ServerLauncher:
                 creationflags=creation_flags,
                 start_new_session=start_new_session,
             )
-        self._pid = self._process.pid
-        _logger.info("Backend PID: %d (logs: %s)", self._pid, self._log_path)
+        pid = self._process.pid
+        self._pid = pid
+        self._port = port
+        _write_pid_record(host=host, port=port, pid=pid)
+        _logger.info("Backend PID: %d (logs: %s)", pid, self._log_path)
 
-        # Wait for health, checking if the process crashed
-        for _elapsed in range(startup_timeout):
-            await asyncio.sleep(1)
+        startup_succeeded = False
+        cleanup_attempted = False
+        deadline = time.monotonic() + startup_timeout
+        try:
+            while True:
+                exit_code = self._process.poll()
+                if exit_code is not None:
+                    self._print_log_tail()
+                    _remove_pid_record(port=port)
+                    self._process = None
+                    self._pid = None
+                    self._port = None
+                    raise RuntimeError(
+                        f"Server process exited with code {exit_code} during startup. See logs: {self._log_path}"
+                    )
 
-            exit_code = self._process.poll()
-            if exit_code is not None:
-                self._print_log_tail()
-                raise RuntimeError(
-                    f"Server process exited with code {exit_code} during startup. See logs: {self._log_path}"
-                )
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+                try:
+                    healthy = await asyncio.wait_for(
+                        self.probe_health_async(base_url=base_url),
+                        timeout=min(_HEALTH_PROBE_TIMEOUT, remaining),
+                    )
+                except asyncio.TimeoutError:
+                    healthy = False
+                if healthy:
+                    listener_pid = _find_pid_on_port(port=port)
+                    if listener_pid is not None:
+                        _write_pid_record(host=host, port=port, pid=listener_pid)
+                    print(f"Server ready (PID {self._pid}). Logs: {self._log_path}")
+                    startup_succeeded = True
+                    return base_url
 
-            if await self.probe_health_async(base_url=base_url):
-                print(f"Server ready (PID {self._pid}). Logs: {self._log_path}")
-                return base_url
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+                await asyncio.sleep(min(_STARTUP_POLL_INTERVAL, remaining))
 
-        self._print_log_tail()
-        raise RuntimeError(
-            f"pyrit_backend did not become healthy within {startup_timeout}s. "
-            f"Check the server logs ({self._log_path}) or start it manually with: pyrit_backend"
-        )
+            self._print_log_tail()
+            process_stopped = self.stop()
+            cleanup_attempted = True
+            cleanup_message = "" if process_stopped else " The spawned backend process could not be stopped."
+            raise RuntimeError(
+                f"pyrit_backend did not become healthy within {startup_timeout}s. "
+                f"Check the server logs ({self._log_path}) or start it manually with: pyrit_backend.{cleanup_message}"
+            )
+        finally:
+            if not startup_succeeded and not cleanup_attempted and self._process is not None:
+                self.stop()
 
     def _read_log_tail(self, *, max_lines: int = 20) -> str:
         """
@@ -281,18 +542,36 @@ class ServerLauncher:
     # Stop
     # ------------------------------------------------------------------
 
-    def stop(self) -> None:
-        """Terminate the owned subprocess (if any)."""
-        if self._process is not None:
-            try:
-                self._process.terminate()
-                self._process.wait(timeout=5)
-                _logger.info("Stopped server (PID %d)", self._pid)
-            except Exception:
-                _logger.warning("Failed to stop server (PID %s)", self._pid, exc_info=True)
-            finally:
-                self._process = None
-                self._pid = None
+    def stop(self) -> bool:
+        """
+        Terminate the owned subprocess, if any.
+
+        Returns:
+            bool: ``True`` when no owned process remains, ``False`` when termination fails.
+        """
+        if self._process is None:
+            return True
+
+        process = self._process
+        if process.poll() is not None:
+            if self._port is not None:
+                _remove_pid_record(port=self._port)
+            self._process = None
+            self._pid = None
+            self._port = None
+            return True
+
+        if not _terminate_process_tree(process=process):
+            _logger.warning("Failed to stop server (PID %s)", self._pid)
+            return False
+
+        _logger.info("Stopped server (PID %d)", self._pid)
+        if self._port is not None:
+            _remove_pid_record(port=self._port)
+        self._process = None
+        self._pid = None
+        self._port = None
+        return True
 
     @property
     def pid(self) -> int | None:

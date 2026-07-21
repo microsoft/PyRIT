@@ -179,6 +179,15 @@ class TestParseArgs:
         args = pyrit_scan.parse_args(["--stop-server"])
         assert args.stop_server is True
 
+    def test_parse_args_with_startup_timeout(self):
+        args = pyrit_scan.parse_args(["--start-server", "--startup-timeout", "45.5"])
+        assert args.startup_timeout == 45.5
+
+    @pytest.mark.parametrize("value", ["0", "-1", "inf", "nan", "slow"])
+    def test_parse_args_rejects_invalid_startup_timeout(self, value):
+        with pytest.raises(SystemExit):
+            pyrit_scan.parse_args(["--start-server", "--startup-timeout", value])
+
     def test_main_with_invalid_args(self):
         result = pyrit_scan.main(["--invalid-flag"])
         assert result == 2
@@ -519,7 +528,8 @@ class TestStopServerOnPort:
     @patch("sys.platform", "win32")
     @patch("subprocess.run")
     @patch("os.kill")
-    def test_stop_on_windows_finds_pid_via_netstat(self, mock_kill, mock_run):
+    @patch("pyrit.cli._server_launcher._wait_for_process_exit", return_value=True)
+    def test_stop_on_windows_finds_pid_via_netstat(self, _mock_wait, mock_kill, mock_run):
         from pyrit.cli import _server_launcher
 
         mock_run.return_value = MagicMock(
@@ -547,7 +557,8 @@ class TestStopServerOnPort:
     @patch("sys.platform", "win32")
     @patch("subprocess.run")
     @patch("os.kill")
-    def test_stop_on_windows_matches_ipv6_local_address(self, mock_kill, mock_run):
+    @patch("pyrit.cli._server_launcher._wait_for_process_exit", return_value=True)
+    def test_stop_on_windows_matches_ipv6_local_address(self, _mock_wait, mock_kill, mock_run):
         from pyrit.cli import _server_launcher
 
         mock_run.return_value = MagicMock(
@@ -559,7 +570,8 @@ class TestStopServerOnPort:
     @patch("sys.platform", "linux")
     @patch("subprocess.run")
     @patch("os.kill")
-    def test_stop_on_unix_finds_pid_via_lsof(self, mock_kill, mock_run):
+    @patch("pyrit.cli._server_launcher._wait_for_process_exit", return_value=True)
+    def test_stop_on_unix_finds_pid_via_lsof(self, _mock_wait, mock_kill, mock_run):
         from pyrit.cli import _server_launcher
 
         mock_run.return_value = MagicMock(stdout="5678\n")
@@ -712,9 +724,15 @@ class TestResolveServerUrl:
             start_server=False,
             config_file=None,
         )
-        with patch(
-            "pyrit.cli._server_launcher.ServerLauncher.probe_health_async",
-            new=AsyncMock(return_value=True),
+        with (
+            patch(
+                "pyrit.cli._config_reader.read_server_settings",
+                return_value=pyrit_scan_config_reader.ServerSettings(),
+            ),
+            patch(
+                "pyrit.cli._server_launcher.ServerLauncher.probe_health_async",
+                new=AsyncMock(return_value=True),
+            ),
         ):
             result = await pyrit_scan._resolve_server_url_async(parsed_args=parsed)
         assert result == "http://override:7000"
@@ -723,8 +741,8 @@ class TestResolveServerUrl:
         parsed = Namespace(server_url=None, start_server=False, config_file=None)
         with (
             patch(
-                "pyrit.cli._config_reader.read_server_url",
-                return_value=None,
+                "pyrit.cli._config_reader.read_server_settings",
+                return_value=pyrit_scan_config_reader.ServerSettings(),
             ),
             patch(
                 "pyrit.cli._server_launcher.ServerLauncher.probe_health_async",
@@ -735,23 +753,36 @@ class TestResolveServerUrl:
 
     async def test_auto_starts_server_when_requested(self):
         parsed = Namespace(server_url=None, start_server=True, config_file=None)
+        start_async_mock = AsyncMock(return_value="http://localhost:8000")
         with (
-            patch("pyrit.cli._config_reader.read_server_url", return_value=None),
+            patch(
+                "pyrit.cli._config_reader.read_server_settings",
+                return_value=pyrit_scan_config_reader.ServerSettings(),
+            ),
             patch(
                 "pyrit.cli._server_launcher.ServerLauncher.probe_health_async",
                 new=AsyncMock(return_value=False),
             ),
             patch(
                 "pyrit.cli._server_launcher.ServerLauncher.start_async",
-                new=AsyncMock(return_value="http://localhost:8000"),
+                new=start_async_mock,
             ),
         ):
             assert await pyrit_scan._resolve_server_url_async(parsed_args=parsed) == "http://localhost:8000"
+        start_async_mock.assert_awaited_once_with(
+            host="localhost",
+            port=8000,
+            config_file=None,
+            startup_timeout=120.0,
+        )
 
     async def test_returns_none_when_start_server_raises(self, capsys):
         parsed = Namespace(server_url=None, start_server=True, config_file=None)
         with (
-            patch("pyrit.cli._config_reader.read_server_url", return_value=None),
+            patch(
+                "pyrit.cli._config_reader.read_server_settings",
+                return_value=pyrit_scan_config_reader.ServerSettings(),
+            ),
             patch(
                 "pyrit.cli._server_launcher.ServerLauncher.probe_health_async",
                 new=AsyncMock(return_value=False),
@@ -768,6 +799,10 @@ class TestResolveServerUrl:
         parsed = Namespace(server_url="http://other:9999", start_server=True, config_file=None)
         start_async_mock = AsyncMock()
         with (
+            patch(
+                "pyrit.cli._config_reader.read_server_settings",
+                return_value=pyrit_scan_config_reader.ServerSettings(),
+            ),
             patch(
                 "pyrit.cli._server_launcher.ServerLauncher.probe_health_async",
                 new=AsyncMock(return_value=False),
@@ -789,6 +824,10 @@ class TestResolveServerUrl:
         start_async_mock = AsyncMock(return_value="http://127.0.0.1:8765")
         with (
             patch(
+                "pyrit.cli._config_reader.read_server_settings",
+                return_value=pyrit_scan_config_reader.ServerSettings(),
+            ),
+            patch(
                 "pyrit.cli._server_launcher.ServerLauncher.probe_health_async",
                 new=AsyncMock(return_value=False),
             ),
@@ -799,7 +838,38 @@ class TestResolveServerUrl:
         ):
             result = await pyrit_scan._resolve_server_url_async(parsed_args=parsed)
         assert result == "http://127.0.0.1:8765"
-        start_async_mock.assert_awaited_once_with(host="127.0.0.1", port=8765, config_file=None)
+        start_async_mock.assert_awaited_once_with(
+            host="127.0.0.1",
+            port=8765,
+            config_file=None,
+            startup_timeout=120.0,
+        )
+
+    async def test_start_server_cli_timeout_overrides_config(self):
+        parsed = Namespace(
+            server_url=None,
+            start_server=True,
+            config_file=None,
+            startup_timeout=15.0,
+        )
+        start_async_mock = AsyncMock(return_value="http://localhost:8000")
+        with (
+            patch(
+                "pyrit.cli._config_reader.read_server_settings",
+                return_value=pyrit_scan_config_reader.ServerSettings(startup_timeout=90.0),
+            ),
+            patch(
+                "pyrit.cli._server_launcher.ServerLauncher.probe_health_async",
+                new=AsyncMock(return_value=False),
+            ),
+            patch(
+                "pyrit.cli._server_launcher.ServerLauncher.start_async",
+                new=start_async_mock,
+            ),
+        ):
+            await pyrit_scan._resolve_server_url_async(parsed_args=parsed)
+
+        assert start_async_mock.await_args.kwargs["startup_timeout"] == 15.0
 
     async def test_resolution_order_cli_beats_config_beats_default(self):
         """CLI flag > config-file value > built-in default."""
@@ -807,8 +877,8 @@ class TestResolveServerUrl:
         parsed = Namespace(server_url="http://cli:1111", start_server=False, config_file=None)
         with (
             patch(
-                "pyrit.cli._config_reader.read_server_url",
-                return_value="http://cfg:2222",
+                "pyrit.cli._config_reader.read_server_settings",
+                return_value=pyrit_scan_config_reader.ServerSettings(url="http://cfg:2222"),
             ),
             patch(
                 "pyrit.cli._server_launcher.ServerLauncher.probe_health_async",
@@ -821,8 +891,8 @@ class TestResolveServerUrl:
         parsed = Namespace(server_url=None, start_server=False, config_file=None)
         with (
             patch(
-                "pyrit.cli._config_reader.read_server_url",
-                return_value="http://cfg:2222",
+                "pyrit.cli._config_reader.read_server_settings",
+                return_value=pyrit_scan_config_reader.ServerSettings(url="http://cfg:2222"),
             ),
             patch(
                 "pyrit.cli._server_launcher.ServerLauncher.probe_health_async",
@@ -836,7 +906,10 @@ class TestResolveServerUrl:
 
         parsed = Namespace(server_url=None, start_server=False, config_file=None)
         with (
-            patch("pyrit.cli._config_reader.read_server_url", return_value=None),
+            patch(
+                "pyrit.cli._config_reader.read_server_settings",
+                return_value=pyrit_scan_config_reader.ServerSettings(),
+            ),
             patch(
                 "pyrit.cli._server_launcher.ServerLauncher.probe_health_async",
                 new=AsyncMock(return_value=True),
@@ -1051,7 +1124,8 @@ class TestMainExtraPaths:
         return_value=True,
     )
     @patch("pyrit.cli._server_launcher.stop_server_on_port", return_value=True)
-    def test_main_stop_server_kills_process_and_returns_zero(self, _stop_mock, _mock_probe, capsys):
+    def test_main_stop_server_kills_process_and_returns_zero(self, _stop_mock, mock_probe, capsys):
+        mock_probe.side_effect = [True, False]
         result = pyrit_scan.main(["--stop-server"])
         assert result == 0
         assert "stopped" in capsys.readouterr().out
@@ -1064,9 +1138,32 @@ class TestMainExtraPaths:
     @patch("pyrit.cli._server_launcher.stop_server_on_port", return_value=False)
     def test_main_stop_server_when_process_cannot_be_identified(self, _stop_mock, _mock_probe, capsys):
         result = pyrit_scan.main(["--stop-server"])
-        assert result == 0
+        assert result == 1
         out = capsys.readouterr().out
-        assert "could not identify" in out
+        assert "could not be stopped" in out
+
+    @patch(
+        "pyrit.cli._server_launcher.ServerLauncher.probe_health_async",
+        new_callable=AsyncMock,
+        return_value=True,
+    )
+    @patch("pyrit.cli._server_launcher.stop_server_on_port", return_value=True)
+    def test_main_stop_server_fails_when_backend_remains_healthy(self, _stop_mock, _mock_probe, capsys):
+        result = pyrit_scan.main(["--stop-server"])
+        assert result == 1
+        assert "still responding" in capsys.readouterr().out
+
+    @patch(
+        "pyrit.cli._server_launcher.ServerLauncher.probe_health_async",
+        new_callable=AsyncMock,
+    )
+    @patch("pyrit.cli._server_launcher.stop_server_on_port")
+    def test_main_stop_server_refuses_remote_url(self, stop_mock, probe_mock, capsys):
+        result = pyrit_scan.main(["--stop-server", "--server-url", "http://remote:8000"])
+        assert result == 1
+        stop_mock.assert_not_called()
+        probe_mock.assert_not_called()
+        assert "Cannot stop non-local server" in capsys.readouterr().err
 
     @patch(
         "pyrit.cli._server_launcher.ServerLauncher.probe_health_async",

@@ -175,6 +175,23 @@ env_files:
 
 If `true`, suppresses print statements during initialization. Useful for non-interactive environments or when embedding PyRIT in other tools. Defaults to `false`.
 
+### `server`
+
+Client settings for connecting to or launching a PyRIT backend.
+
+| Field | Description | Default |
+|---|---|---|
+| `url` | Backend URL used when `--server-url` is omitted | `http://localhost:8000` |
+| `startup_timeout` | Seconds `pyrit_scan --start-server` waits for a healthy backend before terminating the spawned process | `120` |
+
+`startup_timeout` must be a finite number greater than zero. The `--startup-timeout` CLI option overrides the configured value for an individual scanner invocation.
+
+```yaml
+server:
+  url: http://localhost:8000
+  startup_timeout: 120
+```
+
 ## Configuration Precedence
 
 PyRIT uses a 3-layer configuration precedence model. **Later layers override earlier ones:**
@@ -282,6 +299,11 @@ initializers:
 
 # Suppress initialization messages
 silent: false
+
+# Backend connection and local startup settings
+server:
+  url: http://localhost:8000
+  startup_timeout: 120
 ```
 
 ## What's Next?
