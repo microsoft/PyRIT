@@ -305,6 +305,7 @@ describe("ChatWindow Integration", () => {
 
     // The ribbon no longer shows the "PyRIT Attack" prefix; the target
     // badge stands on its own as the leftmost element.
+    expect(screen.getByRole("heading", { level: 1, name: "Chat" })).toBeInTheDocument();
     expect(screen.queryByText("PyRIT Attack")).not.toBeInTheDocument();
     expect(screen.getByTestId("target-badge")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /new attack/i })).toBeInTheDocument();

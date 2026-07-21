@@ -16,6 +16,9 @@ export const useLabelsBarStyles = makeStyles({
   },
   iconButton: {
     flexShrink: 0,
+    '@media (max-width: 600px)': {
+      minHeight: '44px',
+    },
   },
   iconTooltipBody: {
     whiteSpace: 'nowrap',

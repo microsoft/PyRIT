@@ -82,6 +82,9 @@ describe("TargetConfig", () => {
       </TestWrapper>
     );
 
+    expect(
+      screen.getByRole("heading", { level: 1, name: "Target Configuration" })
+    ).toBeInTheDocument();
     expect(screen.getByText("Loading targets...")).toBeInTheDocument();
   });
 
