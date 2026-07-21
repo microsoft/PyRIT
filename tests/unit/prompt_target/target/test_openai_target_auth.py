@@ -80,7 +80,7 @@ class TestOpenAITargetAuthResolution:
     def test_azure_endpoint_falls_back_to_entra(self):
         """Azure endpoints without a key fall back to get_azure_openai_auth."""
         mock_auth = AsyncMock(return_value="entra-token")
-        with patch("pyrit.prompt_target.openai.openai_target.get_azure_openai_auth", return_value=mock_auth):
+        with patch("pyrit.auth.openai_auth.get_azure_openai_auth", return_value=mock_auth):
             target = _build_target(
                 endpoint="https://myresource.openai.azure.com/openai/v1",
                 api_key=None,

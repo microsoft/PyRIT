@@ -78,7 +78,7 @@ function MediaWithFallback({ type, src, className }: { type: 'video' | 'audio'; 
   if (type === 'video') {
     return <video src={src} controls className={className} onError={handleError} data-testid="video-player" />
   }
-  return <audio src={src} controls onError={handleError} data-testid="audio-player" />
+  return <audio src={src} controls className={className} onError={handleError} data-testid="audio-player" />
 }
 
 /**
@@ -152,7 +152,7 @@ export default function MessageList({ messages, onCopyToInput, onCopyToNewConver
   }
 
   return (
-    <div className={styles.root}>
+    <div className={styles.root} data-testid="message-list">
       {messages.map((message, index) => {
         if (message.role === 'system') return null
         const isUser = message.role === 'user'
@@ -209,10 +209,10 @@ export default function MessageList({ messages, onCopyToInput, onCopyToNewConver
                   {message.originalAttachments && message.originalAttachments.length > 0 && (
                     <div className={styles.attachmentsContainer}>
                       {message.originalAttachments.map((att, i) => (
-                        <div key={i}>
+                        <div key={i} className={styles.attachmentItem}>
                           {att.type === 'image' && <ImageWithSpinner src={att.url} alt={att.name} className={styles.attachmentPreview} hiddenClassName={styles.attachmentPreviewHidden} containerClassName={styles.imageContainer} spinnerClassName={styles.imageSpinner} />}
                           {att.type === 'video' && <MediaWithFallback type="video" src={att.url} className={styles.videoPreview} />}
-                          {att.type === 'audio' && <MediaWithFallback type="audio" src={att.url} />}
+                          {att.type === 'audio' && <MediaWithFallback type="audio" src={att.url} className={styles.audioPreview} />}
                           {att.type === 'file' && <div className={styles.attachmentFile}><Text size={200}>📄 {att.name}</Text></div>}
                         </div>
                       ))}
@@ -263,7 +263,7 @@ export default function MessageList({ messages, onCopyToInput, onCopyToNewConver
               {message.attachments && message.attachments.length > 0 && (
                 <div className={styles.attachmentsContainer}>
                   {message.attachments.map((att, attIndex) => (
-                    <div key={attIndex}>
+                    <div key={attIndex} className={styles.attachmentItem}>
                       {att.type === 'image' && (
                         <ImageWithSpinner
                           src={att.url}
@@ -278,7 +278,7 @@ export default function MessageList({ messages, onCopyToInput, onCopyToNewConver
                         <MediaWithFallback type="video" src={att.url} className={styles.videoPreview} />
                       )}
                       {att.type === 'audio' && (
-                        <MediaWithFallback type="audio" src={att.url} />
+                        <MediaWithFallback type="audio" src={att.url} className={styles.audioPreview} />
                       )}
                       {att.type === 'file' && (
                         <div className={styles.attachmentFile}>

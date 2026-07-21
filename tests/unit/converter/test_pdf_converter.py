@@ -514,3 +514,44 @@ async def test_filename_extension_existing_pdf(sqlite_instance):
 
     result = await converter.convert_async(prompt="test")
     assert result.output_text.endswith(".tmp"), "The output file should have a .tmp extension"
+
+
+async def test_existing_pdf_output_preserves_source_stem(sqlite_instance):
+    import shutil
+    import tempfile
+
+    from pyrit.common.path import DATASETS_PATH
+
+    source_pdf = DATASETS_PATH / "converters" / "pdf_converters" / "fake_CV.pdf"
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        named_pdf = Path(tmp_dir) / "Jonathon_Sanchez.pdf"
+        shutil.copyfile(source_pdf, named_pdf)
+
+        converter = PDFConverter(
+            prompt_template=None,
+            font_type="Helvetica",
+            font_size=12,
+            page_width=210,
+            page_height=297,
+            existing_pdf=named_pdf,
+            injection_items=[
+                {
+                    "page": 0,
+                    "x": 50,
+                    "y": 700,
+                    "text": "Injected Text",
+                    "font_size": 12,
+                    "font": "Helvetica",
+                    "font_color": (255, 255, 255),
+                }
+            ],
+        )
+
+        result = await converter.convert_async(prompt="test")
+
+    # The template's stem is preserved (behind a numeric uniqueness prefix) so downstream consumers
+    # that name artifacts from the filename retain provenance instead of a purely numeric name.
+    output_name = Path(result.output_text).name
+    suffix = "_Jonathon_Sanchez.pdf"
+    assert output_name.endswith(suffix)
+    assert output_name[: -len(suffix)].isdigit()

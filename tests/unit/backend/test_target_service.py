@@ -455,7 +455,7 @@ class TestCreateTargetEntraAuth:
         with patch.dict(os.environ, {}, clear=False):
             os.environ.pop("OPENAI_CHAT_KEY", None)
             with patch(
-                "pyrit.prompt_target.openai.openai_target.get_azure_openai_auth",
+                "pyrit.auth.openai_auth.get_azure_openai_auth",
                 return_value=_test_token_provider,
             ) as mock_get_auth:
                 service = TargetService()
@@ -483,7 +483,7 @@ class TestCreateTargetEntraAuth:
         with patch.dict(os.environ, {}, clear=False):
             os.environ.pop("OPENAI_CHAT_KEY", None)
             with patch(
-                "pyrit.prompt_target.openai.openai_target.get_azure_openai_auth",
+                "pyrit.auth.openai_auth.get_azure_openai_auth",
                 return_value=_test_token_provider,
             ):
                 service = TargetService()
@@ -512,7 +512,7 @@ class TestCreateTargetEntraAuth:
         with patch.dict(os.environ, {}, clear=False):
             os.environ.pop("OPENAI_CHAT_KEY", None)
             with patch(
-                "pyrit.prompt_target.openai.openai_target.get_azure_openai_auth",
+                "pyrit.auth.openai_auth.get_azure_openai_auth",
                 return_value=_test_token_provider,
             ):
                 service = TargetService()
