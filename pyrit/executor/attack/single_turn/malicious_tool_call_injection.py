@@ -23,6 +23,7 @@ hijack the model's next action.
 Ref: https://github.com/microsoft/PyRIT/issues/2241
 """
 
+import json
 import uuid
 from typing import Any
 
@@ -77,9 +78,9 @@ class MaliciousToolCallInjection(PromptSendingAttack):
     def __init__(
         self,
         *,
-        objective_target: PromptTarget = REQUIRED_VALUE,  # type: ignore[assignment]
+        objective_target: PromptTarget = REQUIRED_VALUE,  # type: ignore[ty:invalid-parameter-default]
         tool_name: str = _DEFAULT_TOOL_NAME,
-        injection_payload: str = REQUIRED_VALUE,  # type: ignore[assignment]
+        injection_payload: str = REQUIRED_VALUE,  # type: ignore[ty:invalid-parameter-default]
         continuation_message: str = _DEFAULT_CONTINUATION_TEMPLATE,
         attack_converter_config: AttackConverterConfig | None = None,
         attack_scoring_config: AttackScoringConfig | None = None,
@@ -118,7 +119,7 @@ class MaliciousToolCallInjection(PromptSendingAttack):
             f'[Calling tool: {self._tool_name}]\n'
             f'{{"tool_call_id": "{tool_call_id}", '
             f'"function": "{self._tool_name}", '
-            f'"arguments": {{"query": "{context.objective}"}}}}'
+            f'"arguments": {json.dumps({"query": context.objective})}}}'
         )
 
         tool_response_text = (
