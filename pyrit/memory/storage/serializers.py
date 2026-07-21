@@ -239,6 +239,9 @@ class DataTypeSerializer(abc.ABC):
         Raises:
             RuntimeError: If storage IO is not initialized.
         """
+        # Force .wav extension since we're writing WAV format
+        if output_filename and not output_filename.lower().endswith(".wav"):
+            output_filename = Path(output_filename).stem + ".wav"
         file_path = await self.get_data_filename_async(file_name=output_filename)
 
         # save audio file locally first if in AzureStorageBlob so we can use wave.open to set audio parameters
@@ -262,10 +265,9 @@ class DataTypeSerializer(abc.ABC):
                     raise RuntimeError(
                         "self._memory.results_storage_io is not initialized"
                     )
-                # Infer content type from file extension
-                content_type = self.get_mime_type(str(file_path))
+                # Always use audio/wav since we're writing WAV format
                 await self._memory.results_storage_io.write_file_async(
-                    file_path, audio_data, content_type=content_type
+                    file_path, audio_data, content_type="audio/wav"
                 )
             finally:
                 local_temp_path.unlink(missing_ok=True)

@@ -64,6 +64,18 @@ class AzureBlobStorageTarget(PromptTarget):
         )
     )
 
+    # Text-only content types supported by this target (which handles text prompts)
+    _TEXT_CONTENT_TYPES = frozenset(
+        {
+            SupportedContentType.PLAIN_TEXT,
+            SupportedContentType.HTML,
+            SupportedContentType.JSON,
+            SupportedContentType.XML,
+            SupportedContentType.CSV,
+            SupportedContentType.MARKDOWN,
+        }
+    )
+
     def __init__(
         self,
         *,
@@ -82,11 +94,21 @@ class AzureBlobStorageTarget(PromptTarget):
             sas_token (str, Optional): The SAS token for authentication.
                 Defaults to the AZURE_STORAGE_ACCOUNT_SAS_TOKEN environment variable.
             blob_content_type (SupportedContentType): The content type for blobs.
+                Must be a text-based type (PLAIN_TEXT, HTML, JSON, XML, CSV, MARKDOWN).
                 Defaults to PLAIN_TEXT.
             max_requests_per_minute (int, Optional): Maximum number of requests per minute.
             custom_configuration (TargetConfiguration, Optional): Override the default configuration for
                 this target instance. Defaults to None.
+
+        Raises:
+            ValueError: If blob_content_type is not a text-based type.
         """
+        if blob_content_type not in self._TEXT_CONTENT_TYPES:
+            raise ValueError(
+                f"AzureBlobStorageTarget only supports text-based content types. "
+                f"Got {blob_content_type.value}. Supported types: "
+                f"{', '.join(ct.value for ct in self._TEXT_CONTENT_TYPES)}"
+            )
         self._blob_content_type: str = blob_content_type.value
 
         self._container_url: str = default_values.get_required_value(

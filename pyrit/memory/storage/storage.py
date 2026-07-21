@@ -61,6 +61,49 @@ class SupportedContentType(Enum):
     GZIP = "application/gzip"
 
 
+# Deterministic mapping from file extensions to SupportedContentType.
+# This avoids platform-dependent behavior from mimetypes.guess_type.
+_EXTENSION_TO_CONTENT_TYPE: dict[str, SupportedContentType] = {
+    # Text types
+    ".txt": SupportedContentType.PLAIN_TEXT,
+    ".text": SupportedContentType.PLAIN_TEXT,
+    ".html": SupportedContentType.HTML,
+    ".htm": SupportedContentType.HTML,
+    ".json": SupportedContentType.JSON,
+    ".xml": SupportedContentType.XML,
+    ".csv": SupportedContentType.CSV,
+    ".md": SupportedContentType.MARKDOWN,
+    ".markdown": SupportedContentType.MARKDOWN,
+    # Image types
+    ".png": SupportedContentType.PNG,
+    ".jpg": SupportedContentType.JPEG,
+    ".jpeg": SupportedContentType.JPEG,
+    ".gif": SupportedContentType.GIF,
+    ".webp": SupportedContentType.WEBP,
+    ".svg": SupportedContentType.SVG,
+    ".bmp": SupportedContentType.BMP,
+    # Audio types
+    ".wav": SupportedContentType.WAV,
+    ".wave": SupportedContentType.WAV,
+    ".mp3": SupportedContentType.MP3,
+    ".ogg": SupportedContentType.OGG,
+    ".flac": SupportedContentType.FLAC,
+    ".m4a": SupportedContentType.M4A,
+    # Video types
+    ".mp4": SupportedContentType.MP4,
+    ".m4v": SupportedContentType.MP4,
+    ".webm": SupportedContentType.WEBM,
+    ".ogv": SupportedContentType.OGG_VIDEO,
+    ".avi": SupportedContentType.AVI,
+    # Document types
+    ".pdf": SupportedContentType.PDF,
+    ".zip": SupportedContentType.ZIP,
+    ".tar": SupportedContentType.TAR,
+    ".gz": SupportedContentType.GZIP,
+    ".gzip": SupportedContentType.GZIP,
+}
+
+
 class StorageIO(ABC):
     """
     Abstract interface for storage systems (local disk, Azure Storage Account, etc.).
@@ -422,8 +465,8 @@ class AzureBlobStorageIO(StorageIO):
             path (Path | str): Full blob URL or relative blob path.
             data (bytes): The data to write.
             content_type (str | None): Optional MIME type for the blob. If not provided,
-                it will be inferred from the file extension, falling back to the default
-                blob_content_type configured in the constructor.
+                it will be inferred from the file extension using a deterministic mapping,
+                falling back to the default blob_content_type configured in the constructor.
         """
         if not self._client_async:
             self._client_async = await self._create_container_client_async()
@@ -431,10 +474,14 @@ class AzureBlobStorageIO(StorageIO):
 
         # Determine content type: explicit > inferred from extension > default
         if content_type is None:
-            from mimetypes import guess_type
-
-            inferred_type, _ = guess_type(blob_name)
-            content_type = inferred_type if inferred_type else self._blob_content_type
+            # Use deterministic mapping instead of platform-dependent mimetypes.guess_type
+            ext = Path(blob_name).suffix.lower()
+            inferred_content_type = _EXTENSION_TO_CONTENT_TYPE.get(ext)
+            content_type = (
+                inferred_content_type.value
+                if inferred_content_type
+                else self._blob_content_type
+            )
 
         try:
             await self._upload_blob_async(
