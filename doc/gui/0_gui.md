@@ -151,7 +151,7 @@ For `AzureMLChatTarget`, additional fields are available: **Max New Tokens**, **
 
 #### Auto-Populating Targets
 
-Targets can also be auto-populated by adding an initializer (e.g., `airt`) to your `~/.pyrit/.pyrit_conf` file. This reads endpoints from your `.env` and `.env.local` files. See [.pyrit_conf_example](https://github.com/microsoft/PyRIT/blob/main/.pyrit_conf_example) for details.
+Targets can also be auto-populated by adding the `target` initializer to your `~/.pyrit/.pyrit_conf` file. This reads endpoints from your `.env` and `.env.local` files. See [.pyrit_conf_example](https://github.com/microsoft/PyRIT/blob/main/.pyrit_conf_example) for details.
 
 ---
 

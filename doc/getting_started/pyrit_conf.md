@@ -117,6 +117,10 @@ Most users should enable the following initializers. These are what the `.pyrit_
 **Execution order follows listing order.** Initializers execute in the order they appear in the config. Ensure dependencies are satisfied — for example, list `target` before `scorer` since scorers need targets to be registered first.
 ```
 
+```{important}
+The default initializers were consolidated and renamed as part of the cleanup leading up to the **v1.0.0** release. Configurations created before v1.0.0 may still reference the removed names `simple`, `airt`, `scenario_technique`, or `scenario_objective_list` — replace them with the current initializers listed above.
+```
+
 The recommended config:
 
 ```yaml

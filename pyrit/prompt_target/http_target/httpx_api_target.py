@@ -34,7 +34,18 @@ class HTTPXAPITarget(HTTPTarget):
     """
 
     _DEFAULT_CONFIGURATION: TargetConfiguration = TargetConfiguration(
-        capabilities=TargetCapabilities(supports_multi_turn=True)
+        capabilities=TargetCapabilities(
+            supports_multi_turn=True,
+            input_modalities=frozenset(
+                {
+                    frozenset(["text"]),
+                    frozenset(["image_path"]),
+                    frozenset(["audio_path"]),
+                    frozenset(["video_path"]),
+                    frozenset(["binary_path"]),
+                }
+            ),
+        )
     )
 
     def __init__(

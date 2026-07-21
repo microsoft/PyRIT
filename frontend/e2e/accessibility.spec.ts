@@ -61,6 +61,34 @@ test.describe("Accessibility", () => {
     await expect(themeBtn).toBeVisible();
   });
 
+  test("should restore focus to Feedback after closing its dialog with Escape", async ({ page }) => {
+    const feedbackButton = page.getByRole("button", { name: "Feedback" });
+    await expect(feedbackButton).toBeVisible();
+    await feedbackButton.focus();
+    await feedbackButton.press("Enter");
+
+    const dialog = page.getByRole("dialog", { name: "Send feedback" });
+    await expect(dialog).toBeVisible();
+    await expect(dialog.locator(":focus")).toBeVisible();
+
+    await page.keyboard.press("Escape");
+
+    await expect(dialog).toBeHidden();
+    await expect(feedbackButton).toBeFocused();
+  });
+
+  test("should restore focus to Feedback after cancelling its dialog", async ({ page }) => {
+    const feedbackButton = page.getByRole("button", { name: "Feedback" });
+    await feedbackButton.click();
+
+    const dialog = page.getByRole("dialog", { name: "Send feedback" });
+    await expect(dialog).toBeVisible();
+    await dialog.getByRole("button", { name: "Cancel" }).click();
+
+    await expect(dialog).toBeHidden();
+    await expect(feedbackButton).toBeFocused();
+  });
+
   test("should be navigable with keyboard", async ({ page }) => {
     // Wait for the sidebar to render so there is a focusable element for Tab
     // to land on, and dispatch the Tab through `body` (rather than the bare

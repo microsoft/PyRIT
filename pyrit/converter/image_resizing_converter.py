@@ -2,6 +2,7 @@
 # Licensed under the MIT license.
 
 import logging
+import math
 from typing import Literal
 
 from PIL import Image
@@ -44,10 +45,10 @@ class ImageResizingConverter(BaseImageToImageConverter):
                 Defaults to 0.5 (halve the image dimensions).
 
         Raises:
-            ValueError: If unsupported output format is specified, or if scale factor is not positive.
+            ValueError: If unsupported output format is specified, or if scale factor is not a positive finite number.
         """
-        if scale_factor <= 0:
-            raise ValueError(f"Scale factor must be positive, got {scale_factor}")
+        if not math.isfinite(scale_factor) or scale_factor <= 0:
+            raise ValueError(f"Scale factor must be a positive finite number, got {scale_factor}")
         self._scale_factor = scale_factor
         super().__init__(output_format=output_format)
 
@@ -75,6 +76,6 @@ class ImageResizingConverter(BaseImageToImageConverter):
         Returns:
             PIL.Image.Image: The resized image.
         """
-        new_width = int(image.width * self._scale_factor)
-        new_height = int(image.height * self._scale_factor)
+        new_width = max(1, int(image.width * self._scale_factor))
+        new_height = max(1, int(image.height * self._scale_factor))
         return image.resize((new_width, new_height), Image.Resampling.LANCZOS)

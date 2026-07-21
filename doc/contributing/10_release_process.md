@@ -14,6 +14,7 @@ Before starting the release process, verify the codebase is in a healthy state.
 - **Check for pending changes.** Ask other PyRIT maintainers whether they have any in-flight changes that should land before the release.
 - **Verify build pipelines.** Confirm that all integration tests and end-to-end tests are passing in the CI pipelines. If any tests are failing, fix them before proceeding.
   - **Partner integration tests.** Ensure the partner integration tests are also passing. These tests validate that we are not breaking contracts with partner teams (e.g., Foundry). If any are failing, coordinate with the affected partner teams before proceeding with the release.
+  - **Azure key-based auth is disabled in our tenant.** Our Azure subscription has API-key (local) auth turned off, so Azure targets authenticate with Microsoft Entra ID (Entra auth) only. Integration tests and notebooks that exercise Azure targets with API keys are deliberately skipped; otherwise they fail with HTTP 403 `AuthenticationTypeDisabled` ("Key based authentication is disabled for this resource"). The same endpoints are covered by the Entra-auth tests in `tests/integration/targets/test_entra_auth_targets.py`, so this is expected and not a coverage gap. Do not re-enable these for our tenant. When validating a release manually, authenticate Azure targets with Entra (`az login`) rather than API keys.
 - **Update scorer metrics.** Run `python .\build_scripts\evaluate_scorers.py` and commit the results so that scorer evaluation metrics are up to date.
 
 ## 2. Decide the Next Version
@@ -179,6 +180,8 @@ Before running the demos, execute `az login` or `az login --use-device-code`, as
 Additionally, verify that your environment file includes all the test secrets needed to run the demos. If not, update your .env file using the secrets from the key vault.
 
 In the new location, run all notebooks that are currently skipped by integration tests (there are less than 10) in VS Code. These are listed in `skipped_files` in each `tests/integration/<folder>/test_notebooks_*.py` file and are located in the doc folder that you copied into your new `releases\releasevx.y.z` folder. Note that some of these notebooks have known issues and it may make sense to skip testing them until those are fixed. Check with the last person to deploy or look for the relevant release work item for more information. In running the notebooks, you may also see exceptions. If this happens, make sure to look for existing bugs open on the ADO board or create a new one if it does not exist! If it is easy to fix, we prefer to fix the issue before the release continues.
+
+Some notebooks that use Azure targets with API-key (local) auth are skipped by the integration tests for a separate reason: key-based auth is disabled in our Azure subscription (see the note under *Release Readiness* above). These are tracked in the `_azure_key_auth_notebooks` set in `tests/integration/targets/test_notebooks_targets.py` (distinct from the long-standing `skipped_files` list). Validate them with Entra auth (`az login`) rather than API keys, or rely on the equivalent Entra-auth integration tests; running them with API keys fails with HTTP 403 `AuthenticationTypeDisabled`.
 
 A reminder that you should ensure that the integration tests pass in the version you are releasing in addition to the skipped files.
 
