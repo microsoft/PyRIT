@@ -13,7 +13,6 @@ from pyrit.executor.attack import (
     AttackParameters,
     AttackScoringConfig,
     MaliciousToolCallInjection,
-    MaliciousToolCallInjectionParameters,
     SingleTurnAttackContext,
 )
 from pyrit.models import (
@@ -249,6 +248,7 @@ class TestMaliciousToolCallInjectionSetup:
         tool_text = basic_context.prepended_conversation[1].message_pieces[0].original_value
 
         import re
+
         call_ids_in_assistant = re.findall(r"call_[0-9a-f]+", assistant_text)
         call_ids_in_tool = re.findall(r"call_[0-9a-f]+", tool_text)
 
@@ -280,6 +280,7 @@ class TestMaliciousToolCallInjectionSetup:
             await attack._setup_async(context=ctx2)
 
         import re
+
         id1 = re.findall(r"call_[0-9a-f]+", ctx1.prepended_conversation[0].message_pieces[0].original_value)
         id2 = re.findall(r"call_[0-9a-f]+", ctx2.prepended_conversation[0].message_pieces[0].original_value)
         assert id1 != id2
