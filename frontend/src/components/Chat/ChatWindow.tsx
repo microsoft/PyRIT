@@ -621,11 +621,9 @@ export default function ChatWindow({
             )}
           </div>
           <div className={styles.ribbonActions}>
-            <AttackVerdictChip
-              outcome={outcome}
-              score={lastScore}
-              appliesToActiveConversation={activeConversationId === conversationId}
-            />
+            {activeConversationId === conversationId && (
+              <AttackVerdictChip outcome={outcome} score={lastScore} />
+            )}
             <Tooltip content="Toggle conversations panel" relationship="label">
               <Button
                 appearance="subtle"

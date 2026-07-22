@@ -6,11 +6,6 @@ export const useAttackVerdictChipStyles = makeStyles({
     alignItems: 'center',
     columnGap: tokens.spacingHorizontalXS,
   },
-  // A related (non-main) conversation is active: the attack-level verdict does
-  // not belong to what's on screen, so it's dimmed to read as secondary.
-  dimmed: {
-    opacity: 0.55,
-  },
   chipLabel: {
     textTransform: 'capitalize',
   },
@@ -28,10 +23,6 @@ export const useAttackVerdictChipStyles = makeStyles({
   rowLabel: {
     minWidth: '72px',
     color: tokens.colorNeutralForeground2,
-  },
-  attackLevelNote: {
-    color: tokens.colorNeutralForeground3,
-    fontStyle: 'italic',
   },
   rationaleBlock: {
     display: 'flex',

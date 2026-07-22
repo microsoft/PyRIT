@@ -111,31 +111,4 @@ describe('AttackVerdictChip', () => {
     const details = await screen.findByTestId('attack-score-details')
     expect(within(details).queryByText('Scale score')).not.toBeInTheDocument()
   })
-
-  it('marks the verdict as attack-level when a related conversation is active', async () => {
-    const user = userEvent.setup()
-    render(
-      <TestWrapper>
-        <AttackVerdictChip outcome="failure" score={sampleScore} appliesToActiveConversation={false} />
-      </TestWrapper>
-    )
-
-    // The accessible name signals the verdict is attack-level, not this conversation's.
-    const chip = screen.getByRole('button', { name: /attack-level verdict failure/i })
-    await user.click(chip)
-
-    const details = await screen.findByTestId('attack-score-details')
-    expect(within(details).getByTestId('attack-level-note')).toBeInTheDocument()
-  })
-
-  it('does not mark the verdict as attack-level on the main conversation', () => {
-    render(
-      <TestWrapper>
-        <AttackVerdictChip outcome="failure" score={sampleScore} appliesToActiveConversation={true} />
-      </TestWrapper>
-    )
-
-    expect(screen.queryByRole('button', { name: /attack-level verdict/i })).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /verdict failure, score true/i })).toBeInTheDocument()
-  })
 })
