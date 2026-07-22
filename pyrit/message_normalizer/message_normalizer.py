@@ -13,7 +13,7 @@ SystemMessageBehavior = Literal["keep", "squash", "ignore"]
 """
 How to handle system messages in models with varying support:
 - "keep": Keep system messages as-is (default for most models)
-- "squash": Merge system message into first user message
+- "squash": Merge system messages into the following user message
 - "ignore": Drop system messages entirely
 """
 
@@ -90,7 +90,7 @@ async def apply_system_message_behavior_async(
         messages: The list of Message objects to process.
         behavior: How to handle system messages:
             - "keep": Return messages unchanged
-            - "squash": Merge system into first user message
+            - "squash": Merge system messages into the following user message
             - "ignore": Remove system messages
 
     Returns:
