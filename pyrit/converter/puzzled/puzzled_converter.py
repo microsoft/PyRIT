@@ -5,7 +5,6 @@ import json
 import logging
 import pathlib
 import random
-import re
 import uuid
 
 from pyrit.common.path import CONVERTER_SEED_PROMPT_PATH
@@ -118,6 +117,11 @@ class PuzzledConverter(Converter):
         self._essential_words = essential_words
         self._seed = seed
         self._converter_target = converter_target
+        # Load the prompt template once here rather than on every convert_async call, so the
+        # async path does no blocking disk I/O.
+        self._prompt_template = SeedPrompt.from_yaml_file(
+            pathlib.Path(CONVERTER_SEED_PROMPT_PATH) / "puzzled_converter.yaml"
+        )
 
     def _build_identifier(self) -> ComponentIdentifier:
         """
@@ -146,7 +150,7 @@ class PuzzledConverter(Converter):
             ValueError: If the input type is not supported, or the prompt has no maskable words.
         """
         if not self.input_supported(input_type):
-            raise ValueError("Input type not supported")
+            raise ValueError(f"Input type {input_type} not supported")
 
         mask_result = mask_prompt(
             prompt,
@@ -166,8 +170,7 @@ class PuzzledConverter(Converter):
         semantics = await self._semantic_clues_async(self._converter_target, words) if self._converter_target else {}
         clues = "\n".join(self._clue_line(masked, semantics) for masked in mask_result.masked_words)
 
-        seed_prompt = SeedPrompt.from_yaml_file(pathlib.Path(CONVERTER_SEED_PROMPT_PATH) / "puzzled_converter.yaml")
-        formatted_prompt = seed_prompt.render_template_value(
+        formatted_prompt = self._prompt_template.render_template_value(
             masked_prompt=mask_result.masked_prompt,
             puzzle_type=self._puzzle_type.value,
             puzzle_instructions=_PUZZLE_INSTRUCTIONS[self._puzzle_type],
@@ -247,12 +250,15 @@ class PuzzledConverter(Converter):
         Returns:
             dict[str, str]: Lowercased word to semantic description (may be empty or partial).
         """
-        match = re.search(r"\{.*\}", raw or "", re.DOTALL)
-        if not match:
+        text = raw or ""
+        start = text.find("{")
+        if start == -1:
             return {}
         try:
-            parsed = json.loads(match.group(0))
-        except (ValueError, TypeError):
+            # raw_decode stops at the end of the first complete JSON object, so trailing
+            # prose or extra braces in the response cannot make a valid object fail to parse.
+            parsed, _ = json.JSONDecoder().raw_decode(text[start:])
+        except ValueError:
             return {}
         if not isinstance(parsed, dict):
             return {}
