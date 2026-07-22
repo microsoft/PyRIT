@@ -142,7 +142,12 @@ class PuzzledConverter(Converter):
             ComponentIdentifier: The identifier for this converter.
         """
         return self._create_identifier(
-            params={"puzzle_type": self._puzzle_type.value},
+            params={
+                "puzzle_type": self._puzzle_type.value,
+                "num_to_mask": self._num_to_mask,
+                "seed": self._seed,
+                "essential_words": sorted(w.lower() for w in self._essential_words) if self._essential_words else None,
+            },
             converter_target=self._converter_target.get_identifier() if self._converter_target else None,
         )
 
