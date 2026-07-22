@@ -232,7 +232,7 @@ def mask_prompt(
 
     Words are chosen by ``_rank_candidates``, then the placeholders are numbered by
     the order the chosen words appear in the prompt, so ``[WORD1]`` is always the leftmost
-    masked word. Only the first occurrence of each chosen word is masked.
+    masked word. Every occurrence of each chosen word is masked, matched case-insensitively.
 
     Args:
         prompt (str): The instruction to mask.
@@ -255,22 +255,30 @@ def mask_prompt(
 
     chosen = ranked[: max(0, target)]
 
-    # Number placeholders by where each chosen word first appears, so [WORD1] is the leftmost
-    # masked word. Every occurrence of a chosen word is then replaced, not just the first, so
-    # no sensitive word is left in cleartext.
+    # Number placeholders by where each chosen word first appears (case-insensitively), so
+    # [WORD1] is the leftmost masked word.
     first_index: dict[str, int] = {}
     for word in chosen:
-        match = re.search(rf"\b{re.escape(word)}\b", prompt)
+        match = re.search(rf"\b{re.escape(word)}\b", prompt, re.IGNORECASE)
         if match:
             first_index[word] = match.start()
     ordered = sorted(first_index, key=lambda w: first_index[w])
 
     masked_words: list[MaskedWord] = []
-    masked_prompt = prompt
+    placeholders: dict[str, str] = {}
     for index, word in enumerate(ordered, start=1):
         placeholder = f"[WORD{index}]"
         pos = pos_lookup.get(word.lower(), _GENERIC_POS)
         masked_words.append(MaskedWord(text=word, placeholder=placeholder, pos=pos))
-        masked_prompt = re.sub(rf"\b{re.escape(word)}\b", placeholder, masked_prompt)
+        placeholders[word.lower()] = placeholder
+
+    if not ordered:
+        return MaskResult(masked_prompt=prompt, masked_words=masked_words)
+
+    # Replace every occurrence of every chosen word in one case-insensitive pass, so a word
+    # that recurs or appears in different casing is never left in cleartext, and a placeholder
+    # already inserted cannot be re-matched while masking the next word.
+    pattern = re.compile(r"\b(" + "|".join(re.escape(w) for w in ordered) + r")\b", re.IGNORECASE)
+    masked_prompt = pattern.sub(lambda m: placeholders[m.group(0).lower()], prompt)
 
     return MaskResult(masked_prompt=masked_prompt, masked_words=masked_words)

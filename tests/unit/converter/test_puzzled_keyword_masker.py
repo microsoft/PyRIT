@@ -91,6 +91,14 @@ def test_mask_prompt_replaces_every_occurrence_of_a_chosen_word(monkeypatch):
     assert "hack" not in result.masked_prompt
 
 
+def test_mask_prompt_masks_all_casings_of_a_chosen_word(monkeypatch):
+    # Different casings of the same sensitive word must all be masked, not just the exact form.
+    monkeypatch.setattr(keyword_masker, "_get_nlp", lambda: None)
+    result = mask_prompt("Hack the box then hack it and HACK again", num_to_mask=1, essential_words=["hack"])
+    assert result.masked_prompt == "[WORD1] the box then [WORD1] it and [WORD1] again"
+    assert "hack" not in result.masked_prompt.lower()
+
+
 def test_mask_prompt_replaces_chosen_words_in_left_to_right_order(monkeypatch):
     monkeypatch.setattr(keyword_masker, "_get_nlp", lambda: None)
     result = mask_prompt(
