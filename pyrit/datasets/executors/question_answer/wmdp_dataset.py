@@ -70,7 +70,7 @@ def fetch_wmdp_dataset(category: str | None = None) -> QuestionAnsweringDataset:
         and Nathan Helm-Burger and Rassin Lababidi and Lennart Justen and Andrew B. Liu and Michael Chen and
         Isabelle Barrass and Oliver Zhang and Xiaoyuan Zhu and Rishub Tamirisa and Bhrugu Bharathi and Adam Khoja
         and Zhenqi Zhao and Ariel Herbert-Voss and Cort B. Breuer and Andy Zou and Mantas Mazeika and Zifan Wang
-        and Palash Oswal and Weiran Liu and Adam A. Hunt and Justin Tienken-Harder and Kevin Y. Shih and Kemper
+        and Palash Oswal and Weiran Lin and Adam A. Hunt and Justin Tienken-Harder and Kevin Y. Shih and Kemper
         Talley and John Guan and Russell Kaplan and Ian Steneker and David Campbell and Brad Jokubaitis and
         Alex Levinson and Jean Wang and William Qian and Kallol Krishna Karmakar and Steven Basart and Stephen
         Fitz and Mindy Levine and Ponnurangam Kumaraguru and Uday Tupakula and Vijay Varadharajan and Yan

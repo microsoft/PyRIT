@@ -220,7 +220,7 @@ class _SaladBenchDataset(_RemoteDatasetLoader):
             "Shanghai Artificial Intelligence Laboratory",
             "Harbin Institute of Technology",
             "Beijing Institute of Technology",
-            "Chinese University of Hong Kong",
+            "The Chinese University of Hong Kong",
             "The Hong Kong Polytechnic University",
         ]
 

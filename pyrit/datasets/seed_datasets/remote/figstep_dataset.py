@@ -113,7 +113,14 @@ class _FigStepDataset(_RemoteDatasetLoader):
         "Xiaoyun Wang",
     )
 
-    _GROUPS: ClassVar[tuple[str, ...]] = ("Tsinghua University",)
+    _GROUPS: ClassVar[tuple[str, ...]] = (
+        "Tsinghua University",
+        "Carnegie Mellon University",
+        "Zhongguancun Laboratory",
+        "National Financial Cryptography Research Center",
+        "Shandong Institute of Blockchain",
+        "Shandong University",
+    )
 
     COMMIT_SHA: str = "0861b17b3d67887c06ee3534ec65b3012f9becb7"
     RAW_BASE_URL: str = f"https://raw.githubusercontent.com/ThuCCSLab/FigStep/{COMMIT_SHA}/"
