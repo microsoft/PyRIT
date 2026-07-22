@@ -73,7 +73,9 @@
 # `TrueFalseScorer`. `FloatScaleThresholdScorer` is the cross-kind adapter: it accepts one
 # `FloatScaleScorer` and produces a `TrueFalseScorer`. `create_conversation_scorer()`
 # accepts only those two base types and returns a dynamic wrapper that remains the same
-# scorer kind as its input. For example, float-scale → conversation → threshold →
+# scorer kind as its input.
+#
+# For example, float-scale → conversation → threshold →
 # inversion is supported; a generic `Scorer` outside those base types is not.
 # %%
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
