@@ -10,7 +10,6 @@ import hashlib
 import tempfile
 import time
 import wave
-from mimetypes import guess_type
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, get_args
 from urllib.parse import urlparse
@@ -18,7 +17,7 @@ from urllib.parse import urlparse
 import aiofiles
 
 from pyrit.common.path import DB_DATA_PATH
-from pyrit.memory.storage.storage import DiskStorageIO, StorageIO
+from pyrit.memory.storage.storage import DiskStorageIO, StorageIO, _EXTENSION_TO_CONTENT_TYPE
 
 if TYPE_CHECKING:
     from pyrit.memory import MemoryInterface
@@ -427,7 +426,7 @@ class DataTypeSerializer(abc.ABC):
     @staticmethod
     def get_mime_type(file_path: str) -> str | None:
         """
-        Get the MIME type of the file path.
+        Get the MIME type of the file path using deterministic mapping.
 
         Args:
             file_path (str): Input file path.
@@ -436,8 +435,9 @@ class DataTypeSerializer(abc.ABC):
             str | None: MIME type if detectable; otherwise None.
 
         """
-        mime_type, _ = guess_type(file_path)
-        return mime_type
+        ext = Path(file_path).suffix.lower()
+        content_type = _EXTENSION_TO_CONTENT_TYPE.get(ext)
+        return content_type.value if content_type else None
 
     def _is_azure_storage_url(self, path: str) -> bool:
         """
