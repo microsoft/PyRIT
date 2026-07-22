@@ -125,6 +125,9 @@ describe("TargetConfig", () => {
     expect(
       screen.queryByText("airt", { selector: "code" })
     ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: ".pyrit_conf_example" })
+    ).toHaveAttribute("rel", "noopener noreferrer");
   });
 
   it(

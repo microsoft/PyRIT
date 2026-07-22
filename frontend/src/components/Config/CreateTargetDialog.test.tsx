@@ -427,6 +427,7 @@ describe("CreateTargetDialog", () => {
       "href",
       "https://github.com/microsoft/PyRIT/blob/main/.pyrit_conf_example"
     );
+    expect(link).toHaveAttribute("rel", "noopener noreferrer");
   });
 
   it("should show field validation errors when submitting form without endpoint", async () => {

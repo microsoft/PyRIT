@@ -122,7 +122,12 @@ export default function TargetConfig({ activeTarget, onSetActiveTarget }: Target
             to auto-populate targets from your <code>.env</code> and <code>.env.local</code> files.
             For example, add <code>target</code> to the <code>initializers</code> list to register
             available prompt targets automatically. See the{' '}
-            <Link href="https://github.com/microsoft/PyRIT/blob/main/.pyrit_conf_example" target="_blank" inline>
+            <Link
+              href="https://github.com/microsoft/PyRIT/blob/main/.pyrit_conf_example"
+              target="_blank"
+              rel="noopener noreferrer"
+              inline
+            >
               .pyrit_conf_example
             </Link>{' '}
             for details.
