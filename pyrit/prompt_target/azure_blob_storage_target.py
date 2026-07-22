@@ -104,10 +104,10 @@ class AzureBlobStorageTarget(PromptTarget):
             ValueError: If blob_content_type is not a text-based type.
         """
         if blob_content_type not in self._TEXT_CONTENT_TYPES:
+            supported_types = ", ".join(sorted(ct.value for ct in self._TEXT_CONTENT_TYPES))
             raise ValueError(
-                f"AzureBlobStorageTarget only supports text-based content types. "
-                f"Got {blob_content_type.value}. Supported types: "
-                f"{', '.join(ct.value for ct in self._TEXT_CONTENT_TYPES)}"
+                "AzureBlobStorageTarget only supports text-based content types. "
+                f"Got {blob_content_type.value}. Supported types: {supported_types}"
             )
         self._blob_content_type: str = blob_content_type.value
 
