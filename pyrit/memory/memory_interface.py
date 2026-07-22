@@ -12,7 +12,7 @@ from contextlib import closing
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, TypeVar
 
-from sqlalchemy import MetaData, and_, not_, or_, select
+from sqlalchemy import MetaData, and_, func, not_, or_, select
 from sqlalchemy.engine.base import Engine
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import joinedload
@@ -311,6 +311,24 @@ class MemoryInterface(abc.ABC):
 
         Returns:
             Any: A database-specific SQLAlchemy condition.
+        """
+
+    @abc.abstractmethod
+    def _attack_results_recency_order_by(self) -> "list[Any]":
+        """
+        Return the ORDER BY clauses that reproduce the History-view recency sort.
+
+        Concrete subclasses translate this into their SQL dialect's JSON accessor
+        (SQLite ``json_extract`` / Azure SQL ``JSON_VALUE``) so the sort key matches the
+        per-backend JSON abstraction the attack-result filters already use. The ordering
+        mirrors the previous service-side Python sort: the ``attack_metadata`` ``updated_at``
+        key, falling back to ``created_at`` then an empty string, all descending, with the
+        real ``timestamp`` column and ``id`` as deterministic descending tie-breaks (required
+        for stable ``limit``/``offset`` pagination).
+
+        Returns:
+            list[Any]: SQLAlchemy ORDER BY clauses (all descending) for the recency sort,
+            suitable for splatting into ``_query_entries(order_by=...)``.
         """
 
     def get_all_embeddings(self) -> Sequence[EmbeddingDataEntry]:
@@ -1042,6 +1060,7 @@ class MemoryInterface(abc.ABC):
         join_scores: bool = False,
         order_by: Any | None = None,
         limit: int | None = None,
+        offset: int | None = None,
     ) -> MutableSequence[Model]:
         """
         Fetch data from the specified table model with optional conditions.
@@ -1051,8 +1070,11 @@ class MemoryInterface(abc.ABC):
             conditions: SQLAlchemy filter conditions (Optional).
             distinct: Whether to return distinct rows only. Defaults to False.
             join_scores: Whether to join the scores table. Defaults to False.
-            order_by: SQLAlchemy order_by clause (Optional).
+            order_by: A single SQLAlchemy order_by clause, or a list/tuple of clauses for
+                multi-column ordering (Optional).
             limit (int | None): Maximum number of rows to return. Defaults to None (no limit).
+            offset (int | None): Number of leading rows to skip, applied after ``limit`` for
+                pagination. Defaults to None (no offset).
 
         Returns:
             List of model instances representing the rows fetched from the table.
@@ -1073,11 +1095,16 @@ class MemoryInterface(abc.ABC):
                 if conditions is not None:
                     query = query.filter(conditions)
                 if order_by is not None:
-                    query = query.order_by(order_by)
+                    if isinstance(order_by, (list, tuple)):
+                        query = query.order_by(*order_by)
+                    else:
+                        query = query.order_by(order_by)
                 if distinct:
                     query = query.distinct()
                 if limit is not None:
                     query = query.limit(limit)
+                if offset is not None:
+                    query = query.offset(offset)
                 return query.all()
             except SQLAlchemyError as e:
                 logger.exception(f"Error fetching data from table {model_class.__tablename__}: {e}")  # type: ignore[ty:unresolved-attribute]
@@ -2508,6 +2535,10 @@ class MemoryInterface(abc.ABC):
         targeted_harm_categories: Sequence[str] | None = None,
         identifier_filters: Sequence[IdentifierFilter] | None = None,
         scenario_result_id: str | None = None,
+        min_turns: int | None = None,
+        max_turns: int | None = None,
+        limit: int | None = None,
+        offset: int | None = None,
     ) -> Sequence[AttackResult]:
         """
         Retrieve a list of AttackResult objects based on the specified filters.
@@ -2562,6 +2593,19 @@ class MemoryInterface(abc.ABC):
                 specific scenario via the ``AttackResultEntry.attribution_parent_id`` foreign key.
                 Combined with ``outcome=AttackOutcome.ERROR`` this is the replacement for the
                 removed per-scenario error_attack_result_ids manifest. Defaults to None.
+            min_turns (int | None, optional): If set, only return attacks whose
+                ``executed_turns`` is greater than or equal to this value. Applied after
+                per-conversation deduplication (i.e. to the surviving newest row per
+                conversation), so it never resurfaces an older duplicate. Defaults to None.
+            max_turns (int | None, optional): If set, only return attacks whose
+                ``executed_turns`` is less than or equal to this value. Applied after
+                deduplication, mirroring ``min_turns``. Defaults to None.
+            limit (int | None, optional): Maximum number of deduplicated attack results to
+                return, ordered by recency. When either ``limit`` or ``offset`` is provided,
+                deduplication and pagination happen in the database (via ``ROW_NUMBER()``)
+                instead of loading every row into memory. Defaults to None (return all).
+            offset (int | None, optional): Number of leading deduplicated results to skip,
+                applied together with ``limit`` for pagination. Defaults to None.
 
         Returns:
             Sequence[AttackResult]: A list of AttackResult objects that match the specified filters.
@@ -2569,6 +2613,8 @@ class MemoryInterface(abc.ABC):
         Raises:
             ValueError: If any label key contains characters outside the allowlist
                 ``[A-Za-z0-9_.-]+``.
+            ValueError: If ``limit`` or ``offset`` is combined with ``attack_result_ids`` or
+                ``objective_sha256`` (id-batched lookups do not support SQL pagination).
         """
         # Handle empty list cases
         if attack_result_ids is not None and len(attack_result_ids) == 0:
@@ -2692,7 +2738,22 @@ class MemoryInterface(abc.ABC):
                 )
             )
 
+        paginating = limit is not None or offset is not None
+        if paginating and (attack_result_ids or objective_sha256):
+            raise ValueError(
+                "limit/offset pagination cannot be combined with attack_result_ids or objective_sha256 lookups."
+            )
+
         try:
+            if paginating:
+                return self._query_paginated_attack_results(
+                    conditions=conditions,
+                    min_turns=min_turns,
+                    max_turns=max_turns,
+                    limit=limit,
+                    offset=offset,
+                )
+
             list_params: list[tuple[InstrumentedAttribute[Any], Sequence[Any], str]] = []
             if attack_result_ids:
                 list_params.append((AttackResultEntry.id, list(attack_result_ids), "id"))
@@ -2704,10 +2765,99 @@ class MemoryInterface(abc.ABC):
                 conditions=conditions,
                 list_params=list_params,
             )
-            return self._dedup_attack_entries(entries)
+            results = self._dedup_attack_entries(entries)
+            return self._filter_attack_results_by_turns(results, min_turns=min_turns, max_turns=max_turns)
         except Exception as e:
             logger.exception(f"Failed to retrieve attack results with error {e}")
             raise
+
+    def _query_paginated_attack_results(
+        self,
+        *,
+        conditions: list[Any],
+        min_turns: int | None,
+        max_turns: int | None,
+        limit: int | None,
+        offset: int | None,
+    ) -> list[AttackResult]:
+        """
+        Deduplicate in SQL (filter-aware) and return one recency-ordered page of results.
+
+        Ranks rows with ``ROW_NUMBER() OVER (PARTITION BY conversation_id ORDER BY timestamp
+        DESC, id DESC)`` after applying ``conditions``, keeps only the newest row per
+        conversation (``rn == 1``) — reproducing the post-fetch Python dedup but *before*
+        pagination so page sizes stay correct — then applies the ``min_turns``/``max_turns``
+        bounds to those winners, orders by recency, and applies ``limit``/``offset`` in the
+        database. The turn bounds are applied to the winners (not inside the ranking
+        subquery) so they never resurrect an older duplicate that happens to fall in range.
+
+        Args:
+            conditions (list[Any]): Scalar WHERE filters applied before deduplication.
+            min_turns (int | None): Inclusive lower bound on ``executed_turns`` for winners.
+            max_turns (int | None): Inclusive upper bound on ``executed_turns`` for winners.
+            limit (int | None): Maximum number of results to return.
+            offset (int | None): Number of leading results to skip.
+
+        Returns:
+            list[AttackResult]: The deduplicated, recency-ordered page of attack results.
+        """
+        ranked = select(
+            AttackResultEntry.id.label("id"),
+            func.row_number()
+            .over(
+                partition_by=AttackResultEntry.conversation_id,
+                order_by=(AttackResultEntry.timestamp.desc(), AttackResultEntry.id.desc()),
+            )
+            .label("rn"),
+        )
+        if conditions:
+            ranked = ranked.where(and_(*conditions))
+        ranked_subquery = ranked.subquery()
+
+        winner_ids = select(ranked_subquery.c.id).where(ranked_subquery.c.rn == 1)
+
+        page_conditions: list[Any] = [AttackResultEntry.id.in_(winner_ids)]
+        if min_turns is not None:
+            page_conditions.append(AttackResultEntry.executed_turns >= min_turns)
+        if max_turns is not None:
+            page_conditions.append(AttackResultEntry.executed_turns <= max_turns)
+
+        entries = self._query_entries(
+            AttackResultEntry,
+            conditions=and_(*page_conditions),
+            order_by=self._attack_results_recency_order_by(),
+            limit=limit,
+            offset=offset,
+        )
+        return [entry.get_attack_result() for entry in entries]
+
+    @staticmethod
+    def _filter_attack_results_by_turns(
+        results: list[AttackResult], *, min_turns: int | None, max_turns: int | None
+    ) -> list[AttackResult]:
+        """
+        Filter already-deduplicated attack results by their ``executed_turns`` bounds.
+
+        Applied after per-conversation dedup (matching the SQL paginated path) so the bounds
+        act on the surviving newest row per conversation, never resurfacing an older
+        duplicate that falls within range.
+
+        Args:
+            results (list[AttackResult]): Deduplicated attack results to filter.
+            min_turns (int | None): Inclusive lower bound on executed turns, or None.
+            max_turns (int | None): Inclusive upper bound on executed turns, or None.
+
+        Returns:
+            list[AttackResult]: Results whose ``executed_turns`` fall within the bounds.
+        """
+        if min_turns is None and max_turns is None:
+            return results
+        return [
+            result
+            for result in results
+            if (min_turns is None or result.executed_turns >= min_turns)
+            and (max_turns is None or result.executed_turns <= max_turns)
+        ]
 
     @staticmethod
     def _dedup_attack_entries(entries: Sequence[AttackResultEntry]) -> list[AttackResult]:

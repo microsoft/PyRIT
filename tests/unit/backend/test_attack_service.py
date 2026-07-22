@@ -118,6 +118,33 @@ def _make_matching_target_mock() -> MagicMock:
     return mock_target
 
 
+def _paginating_side_effect(backing):
+    """Return a get_attack_results side_effect that honors limit/offset over ``backing``.
+
+    Simulates the memory layer, which now owns dedup / turn-filter / recency-sort /
+    pagination, so the service tests exercise only the cursor<->offset and over-fetch logic.
+    """
+
+    def _side_effect(**kwargs):
+        offset = kwargs.get("offset") or 0
+        limit = kwargs.get("limit")
+        data = list(backing)[offset:]
+        if limit is not None:
+            data = data[:limit]
+        return data
+
+    return _side_effect
+
+
+def _default_filter_cursor(offset: int) -> str:
+    """Build a valid list-attacks cursor for the default (no-filter) request.
+
+    Mirrors what ``list_attacks_async`` mints internally, so tests can feed a cursor back
+    in without depending on the fingerprint's exact value.
+    """
+    return AttackService._encode_attack_cursor(offset, AttackService._attack_filter_fingerprint())
+
+
 def _make_round_robin_identifier(
     *,
     second_model_name: str = "e2e-dummy-model",
@@ -406,33 +433,23 @@ class TestListAttacks:
         assert call_kwargs["converter_classes"] == ["Base64Converter", "ROT13Converter"]
         assert call_kwargs["converter_classes_match"] == "any"
 
-    async def test_list_attacks_filters_by_min_turns(self, attack_service, mock_memory) -> None:
-        """Test that list_attacks filters by minimum executed turns."""
-        ar1 = make_attack_result(conversation_id="attack-1")
-        ar1.executed_turns = 5
-        ar2 = make_attack_result(conversation_id="attack-2")
-        ar2.executed_turns = 2
-        mock_memory.get_attack_results.return_value = [ar1, ar2]
-        mock_memory.get_message_pieces.return_value = []
+    async def test_list_attacks_forwards_min_turns(self, attack_service, mock_memory) -> None:
+        """min_turns is forwarded to the memory query (filtering now happens in SQL)."""
+        mock_memory.get_attack_results.return_value = []
 
-        result = await attack_service.list_attacks_async(min_turns=3)
+        await attack_service.list_attacks_async(min_turns=3)
 
-        assert len(result.items) == 1
-        assert result.items[0].conversation_id == "attack-1"
+        call_kwargs = mock_memory.get_attack_results.call_args[1]
+        assert call_kwargs["min_turns"] == 3
 
-    async def test_list_attacks_filters_by_max_turns(self, attack_service, mock_memory) -> None:
-        """Test that list_attacks filters by maximum executed turns."""
-        ar1 = make_attack_result(conversation_id="attack-1")
-        ar1.executed_turns = 5
-        ar2 = make_attack_result(conversation_id="attack-2")
-        ar2.executed_turns = 2
-        mock_memory.get_attack_results.return_value = [ar1, ar2]
-        mock_memory.get_message_pieces.return_value = []
+    async def test_list_attacks_forwards_max_turns(self, attack_service, mock_memory) -> None:
+        """max_turns is forwarded to the memory query (filtering now happens in SQL)."""
+        mock_memory.get_attack_results.return_value = []
 
-        result = await attack_service.list_attacks_async(max_turns=3)
+        await attack_service.list_attacks_async(max_turns=3)
 
-        assert len(result.items) == 1
-        assert result.items[0].conversation_id == "attack-2"
+        call_kwargs = mock_memory.get_attack_results.call_args[1]
+        assert call_kwargs["max_turns"] == 3
 
     async def test_list_attacks_includes_labels_in_summary(self, attack_service, mock_memory) -> None:
         """Test that list_attacks includes labels from conversation stats in summaries."""
@@ -490,21 +507,15 @@ class TestListAttacks:
         call_kwargs = mock_memory.get_attack_results.call_args[1]
         assert call_kwargs["labels"] == {"operator": "alice", "operation": "red"}
 
-    async def test_list_attacks_combined_min_and_max_turns(self, attack_service, mock_memory) -> None:
-        """Test that list_attacks filters by both min_turns and max_turns together."""
-        ar1 = make_attack_result(conversation_id="attack-1")
-        ar1.executed_turns = 1
-        ar2 = make_attack_result(conversation_id="attack-2")
-        ar2.executed_turns = 3
-        ar3 = make_attack_result(conversation_id="attack-3")
-        ar3.executed_turns = 7
-        mock_memory.get_attack_results.return_value = [ar1, ar2, ar3]
-        mock_memory.get_message_pieces.return_value = []
+    async def test_list_attacks_forwards_min_and_max_turns(self, attack_service, mock_memory) -> None:
+        """Both min_turns and max_turns are forwarded to the memory query."""
+        mock_memory.get_attack_results.return_value = []
 
-        result = await attack_service.list_attacks_async(min_turns=2, max_turns=5)
+        await attack_service.list_attacks_async(min_turns=2, max_turns=5)
 
-        assert len(result.items) == 1
-        assert result.items[0].conversation_id == "attack-2"
+        call_kwargs = mock_memory.get_attack_results.call_args[1]
+        assert call_kwargs["min_turns"] == 2
+        assert call_kwargs["max_turns"] == 5
 
 
 # ============================================================================
@@ -1393,60 +1404,145 @@ class TestAddMessage:
 class TestPagination:
     """Tests for pagination in list_attacks."""
 
-    async def test_list_attacks_with_cursor_paginates(self, attack_service, mock_memory) -> None:
-        """Test that list_attacks with cursor starts from the right position."""
-        ar1 = make_attack_result(conversation_id="attack-1")
-        ar2 = make_attack_result(conversation_id="attack-2")
-        ar3 = make_attack_result(conversation_id="attack-3")
-        mock_memory.get_attack_results.return_value = [ar1, ar2, ar3]
-        mock_memory.get_message_pieces.return_value = []
+    async def test_list_attacks_first_page_forwards_limit_plus_one_and_zero_offset(
+        self, attack_service, mock_memory
+    ) -> None:
+        """The first page over-fetches one row (limit + 1) and starts at offset 0."""
+        mock_memory.get_attack_results.return_value = []
 
-        # Get first page
+        await attack_service.list_attacks_async(limit=20)
+
+        call_kwargs = mock_memory.get_attack_results.call_args[1]
+        assert call_kwargs["limit"] == 21
+        assert call_kwargs["offset"] == 0
+
+    async def test_list_attacks_decodes_cursor_to_offset(self, attack_service, mock_memory) -> None:
+        """A cursor is decoded into the memory query offset when its filter fingerprint matches."""
+        mock_memory.get_attack_results.return_value = []
+
+        await attack_service.list_attacks_async(limit=20, cursor=_default_filter_cursor(40))
+
+        call_kwargs = mock_memory.get_attack_results.call_args[1]
+        assert call_kwargs["offset"] == 40
+        assert call_kwargs["limit"] == 21
+
+    async def test_list_attacks_invalid_cursor_defaults_to_first_page(self, attack_service, mock_memory) -> None:
+        """A malformed or legacy (attack-result-id) cursor degrades to offset 0."""
+        mock_memory.get_attack_results.return_value = []
+
+        await attack_service.list_attacks_async(limit=20, cursor="ar-attack-1")
+
+        assert mock_memory.get_attack_results.call_args[1]["offset"] == 0
+
+    def test_decode_attack_cursor_clamps_edge_values(self) -> None:
+        """None/empty/malformed/mismatched decode to 0; oversized clamps to the 64-bit max."""
+        fingerprint = AttackService._attack_filter_fingerprint()
+        decode = AttackService._decode_attack_cursor
+        assert decode(None, fingerprint) == 0
+        assert decode("", fingerprint) == 0
+        assert decode("not-a-number", fingerprint) == 0
+        assert decode("ar-attack-1", fingerprint) == 0
+        assert decode("deadbeef.40", fingerprint) == 0
+        assert decode(f"{fingerprint}.-5", fingerprint) == 0
+        assert decode(f"{fingerprint}.40", fingerprint) == 40
+        assert decode(f"{fingerprint}.{2**63}", fingerprint) == 2**63 - 1
+        assert decode(f"{fingerprint}.{'9' * 40}", fingerprint) == 2**63 - 1
+
+    async def test_list_attacks_has_more_and_next_cursor(self, attack_service, mock_memory) -> None:
+        """When an extra row is returned, has_more is set and next_cursor advances by limit."""
+        backing = [make_attack_result(conversation_id=f"attack-{i}") for i in range(5)]
+        mock_memory.get_attack_results.side_effect = _paginating_side_effect(backing)
+
         result = await attack_service.list_attacks_async(limit=2)
-        # Results are sorted by updated_at desc, so order may vary
+
         assert len(result.items) == 2
-
-    async def test_list_attacks_has_more_flag(self, attack_service, mock_memory) -> None:
-        """Test that list_attacks sets has_more flag correctly."""
-        ar1 = make_attack_result(conversation_id="attack-1")
-        ar2 = make_attack_result(conversation_id="attack-2")
-        ar3 = make_attack_result(conversation_id="attack-3")
-        mock_memory.get_attack_results.return_value = [ar1, ar2, ar3]
-        mock_memory.get_message_pieces.return_value = []
-
-        result = await attack_service.list_attacks_async(limit=2)
-
         assert result.pagination.has_more is True
-        assert len(result.items) == 2
+        assert result.pagination.next_cursor == _default_filter_cursor(2)
 
-    async def test_list_attacks_cursor_skips_to_correct_position(self, attack_service, mock_memory) -> None:
-        """Test that list_attacks with cursor skips items before cursor."""
-        ar1 = make_attack_result(
-            conversation_id="attack-1",
-            updated_at=datetime(2024, 1, 3, tzinfo=timezone.utc),
-        )
-        ar2 = make_attack_result(
-            conversation_id="attack-2",
-            updated_at=datetime(2024, 1, 2, tzinfo=timezone.utc),
-        )
-        ar3 = make_attack_result(
-            conversation_id="attack-3",
-            updated_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
-        )
-        mock_memory.get_attack_results.return_value = [ar1, ar2, ar3]
-        mock_memory.get_message_pieces.return_value = []
+    async def test_list_attacks_second_page_via_cursor_is_disjoint(self, attack_service, mock_memory) -> None:
+        """Following next_cursor returns the next disjoint page."""
+        backing = [make_attack_result(conversation_id=f"attack-{i}") for i in range(5)]
+        mock_memory.get_attack_results.side_effect = _paginating_side_effect(backing)
 
-        # Cursor = ar-attack-1 should skip attack-1 and return from attack-2 onward
-        result = await attack_service.list_attacks_async(cursor="ar-attack-1", limit=10)
+        result = await attack_service.list_attacks_async(limit=2, cursor=_default_filter_cursor(2))
 
-        attack_ids = [item.conversation_id for item in result.items]
-        assert "attack-1" not in attack_ids
-        assert len(result.items) == 2
+        assert [item.conversation_id for item in result.items] == ["attack-2", "attack-3"]
+        assert result.pagination.has_more is True
+        assert result.pagination.next_cursor == _default_filter_cursor(4)
+
+    async def test_list_attacks_last_page_has_no_next_cursor(self, attack_service, mock_memory) -> None:
+        """The final page reports has_more False and a null next_cursor."""
+        backing = [make_attack_result(conversation_id=f"attack-{i}") for i in range(5)]
+        mock_memory.get_attack_results.side_effect = _paginating_side_effect(backing)
+
+        result = await attack_service.list_attacks_async(limit=2, cursor=_default_filter_cursor(4))
+
+        assert [item.conversation_id for item in result.items] == ["attack-4"]
+        assert result.pagination.has_more is False
+        assert result.pagination.next_cursor is None
+
+    async def test_list_attacks_prev_cursor_echoes_incoming_cursor(self, attack_service, mock_memory) -> None:
+        """prev_cursor echoes the incoming cursor unchanged."""
+        mock_memory.get_attack_results.return_value = []
+        cursor = _default_filter_cursor(10)
+
+        result = await attack_service.list_attacks_async(limit=2, cursor=cursor)
+
+        assert result.pagination.prev_cursor == cursor
+
+    async def test_list_attacks_stale_cursor_after_filter_change_resets_to_first_page(
+        self, attack_service, mock_memory
+    ) -> None:
+        """A cursor minted for one filter set falls back to page 1 when the filters change.
+
+        This is the core cursor-fingerprint guarantee: without the filter fingerprint, replaying a deep
+        offset against a newly-restricted (smaller) result set overshoots into an empty page
+        and the UI shows a false "No attacks found". With it, the stale cursor degrades to the
+        first page of the new filter set, matching the pre-optimization id-cursor behavior.
+        """
+        backing = [make_attack_result(conversation_id=f"attack-{i}") for i in range(5)]
+        mock_memory.get_attack_results.side_effect = _paginating_side_effect(backing)
+
+        # Page 1 with no filter yields a deep next_cursor.
+        first = await attack_service.list_attacks_async(limit=2)
+        stale_cursor = first.pagination.next_cursor
+        assert stale_cursor is not None
+
+        # Replaying it with a different filter set must reset the offset to 0, not overshoot.
+        result = await attack_service.list_attacks_async(limit=2, cursor=stale_cursor, outcome="success")
+
+        assert mock_memory.get_attack_results.call_args[1]["offset"] == 0
+        assert [item.conversation_id for item in result.items] == ["attack-0", "attack-1"]
+
+    async def test_list_attacks_cursor_with_matching_filters_preserves_offset(
+        self, attack_service, mock_memory
+    ) -> None:
+        """A cursor replayed with the same filter set applies its encoded offset."""
+        backing = [make_attack_result(conversation_id=f"attack-{i}") for i in range(5)]
+        mock_memory.get_attack_results.side_effect = _paginating_side_effect(backing)
+
+        first = await attack_service.list_attacks_async(limit=2, outcome="success")
+        next_cursor = first.pagination.next_cursor
+        assert next_cursor is not None
+
+        result = await attack_service.list_attacks_async(limit=2, cursor=next_cursor, outcome="success")
+
+        assert mock_memory.get_attack_results.call_args[1]["offset"] == 2
+        assert [item.conversation_id for item in result.items] == ["attack-2", "attack-3"]
+
+    def test_attack_filter_fingerprint_is_order_independent_and_filter_sensitive(self) -> None:
+        """The fingerprint normalizes ordering but distinguishes different filter values."""
+        fingerprint = AttackService._attack_filter_fingerprint
+        assert fingerprint(attack_types=["a", "b"]) == fingerprint(attack_types=["b", "a"])
+        assert fingerprint(labels={"op": ["red", "blue"]}) == fingerprint(labels={"op": ["blue", "red"]})
+        assert fingerprint() != fingerprint(outcome="success")
+        assert fingerprint(outcome="success") != fingerprint(outcome="failure")
+        assert fingerprint(min_turns=1) != fingerprint(max_turns=1)
 
     async def test_list_attacks_uses_conversation_stats_not_pieces(self, attack_service, mock_memory) -> None:
         """Test that list_attacks uses get_conversation_stats instead of loading full pieces."""
-        attacks = [make_attack_result(conversation_id=f"attack-{i}") for i in range(5)]
-        mock_memory.get_attack_results.return_value = attacks
+        backing = [make_attack_result(conversation_id=f"attack-{i}") for i in range(5)]
+        mock_memory.get_attack_results.side_effect = _paginating_side_effect(backing)
 
         await attack_service.list_attacks_async(limit=2)
 
@@ -1454,43 +1550,6 @@ class TestPagination:
         mock_memory.get_conversation_stats.assert_called_once()
         # get_message_pieces should NOT be called by list_attacks
         mock_memory.get_message_pieces.assert_not_called()
-
-    async def test_pagination_cursor_not_found_returns_from_start(self, attack_service, mock_memory) -> None:
-        """Test that a stale/invalid cursor defaults to returning from the beginning."""
-        ar1 = make_attack_result(
-            conversation_id="attack-1",
-            updated_at=datetime(2024, 1, 2, tzinfo=timezone.utc),
-        )
-        ar2 = make_attack_result(
-            conversation_id="attack-2",
-            updated_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
-        )
-        mock_memory.get_attack_results.return_value = [ar1, ar2]
-        mock_memory.get_message_pieces.return_value = []
-
-        result = await attack_service.list_attacks_async(cursor="nonexistent-cursor", limit=10)
-
-        # Should return all items (from beginning) since cursor wasn't found
-        assert len(result.items) == 2
-
-    async def test_pagination_cursor_at_last_item_returns_empty(self, attack_service, mock_memory) -> None:
-        """Test that cursor pointing to the last item returns empty page with has_more=False."""
-        ar1 = make_attack_result(
-            conversation_id="attack-1",
-            updated_at=datetime(2024, 1, 2, tzinfo=timezone.utc),
-        )
-        ar2 = make_attack_result(
-            conversation_id="attack-2",
-            updated_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
-        )
-        mock_memory.get_attack_results.return_value = [ar1, ar2]
-        mock_memory.get_message_pieces.return_value = []
-
-        # Cursor = last sorted item (attack-2 has the oldest updated_at, so it's last)
-        result = await attack_service.list_attacks_async(cursor="ar-attack-2", limit=10)
-
-        assert len(result.items) == 0
-        assert result.pagination.has_more is False
 
 
 # ============================================================================

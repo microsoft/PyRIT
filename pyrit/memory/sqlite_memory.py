@@ -271,6 +271,24 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
         combined = joiner.join(conditions)
         return text(f"({combined})").bindparams(**bindparams_dict)
 
+    def _attack_results_recency_order_by(self) -> list[Any]:
+        """
+        Return the SQLite ORDER BY clauses reproducing the History-view recency sort.
+
+        Sorts by the ``attack_metadata`` ``updated_at`` key (via ``json_extract``), falling
+        back to ``created_at`` then an empty string, all descending, with ``timestamp`` and
+        ``id`` descending as deterministic tie-breaks.
+
+        Returns:
+            list[Any]: SQLAlchemy ORDER BY clauses (all descending) for the recency sort.
+        """
+        recency = func.coalesce(
+            func.json_extract(AttackResultEntry.attack_metadata, "$.updated_at"),
+            func.json_extract(AttackResultEntry.attack_metadata, "$.created_at"),
+            "",
+        )
+        return [recency.desc(), AttackResultEntry.timestamp.desc(), AttackResultEntry.id.desc()]
+
     def get_all_table_models(self) -> list[type[Base]]:
         """
         Return a list of all table models used in the database by inspecting the Base registry.

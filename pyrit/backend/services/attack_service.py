@@ -15,6 +15,8 @@ ARCHITECTURE:
 - AI-generated attacks may have multiple related conversations
 """
 
+import hashlib
+import json
 import logging
 import mimetypes
 import uuid
@@ -129,7 +131,8 @@ class AttackService:
             min_turns: Filter by minimum executed turns.
             max_turns: Filter by maximum executed turns.
             limit: Maximum items to return.
-            cursor: Pagination cursor.
+            cursor: Opaque pagination token from a previous response's ``next_cursor``.
+                Omit (or pass ``None``) to fetch the first page.
 
         Returns:
             AttackListResponse with filtered and paginated attack summaries.
@@ -141,32 +144,40 @@ class AttackService:
         # consistent.
         effective_converter_types = converter_types if converter_types else None
 
-        attack_results = self._memory.get_attack_results(
+        # The cursor encodes both the row offset and a fingerprint of the filters it was
+        # generated for. Decoding against the current request's filters makes a cursor minted
+        # for a different filter set fall back to the first page instead of applying a stale
+        # offset that could overshoot into an empty page. The memory layer deduplicates,
+        # applies the turn bounds, orders by recency, and paginates in SQL, so only one page's
+        # worth of rows is materialized instead of the full table.
+        filter_fingerprint = self._attack_filter_fingerprint(
+            attack_types=attack_types,
+            converter_types=effective_converter_types,
+            converter_types_match=converter_types_match,
+            has_converters=has_converters,
+            outcome=outcome,
+            labels=labels if labels else None,
+            min_turns=min_turns,
+            max_turns=max_turns,
+        )
+        offset = self._decode_attack_cursor(cursor, filter_fingerprint)
+        results = self._memory.get_attack_results(
             outcome=outcome,
             labels=labels if labels else None,
             attack_classes=attack_types if attack_types else None,
             converter_classes=effective_converter_types,
             converter_classes_match=converter_types_match,
             has_converters=has_converters,
+            min_turns=min_turns,
+            max_turns=max_turns,
+            limit=limit + 1,
+            offset=offset,
         )
 
-        filtered: list[AttackResult] = []
-        for ar in attack_results:
-            if min_turns is not None and ar.executed_turns < min_turns:
-                continue
-            if max_turns is not None and ar.executed_turns > max_turns:
-                continue
-            filtered.append(ar)
-
-        # Sort by most recent (metadata lives on AttackResult, no pieces needed)
-        filtered.sort(
-            key=lambda ar: ar.metadata.get("updated_at", ar.metadata.get("created_at", "")),
-            reverse=True,
-        )
-
-        # Paginate on the lightweight list first
-        page_results, has_more = self._paginate_attack_results(items=filtered, cursor=cursor, limit=limit)
-        next_cursor = page_results[-1].attack_result_id if has_more and page_results else None
+        # Over-fetch by one row to detect whether a further page exists.
+        has_more = len(results) > limit
+        page_results = list(results[:limit])
+        next_cursor = self._encode_attack_cursor(offset + limit, filter_fingerprint) if has_more else None
 
         # Phase 2: Lightweight DB aggregation for the page only.
         # Collect conversation IDs we care about (main + pruned, not adversarial).
@@ -835,28 +846,98 @@ class AttackService:
     # Private Helper Methods - Pagination
     # ========================================================================
 
-    def _paginate_attack_results(
-        self, *, items: list[AttackResult], cursor: str | None, limit: int
-    ) -> tuple[list[AttackResult], bool]:
+    @staticmethod
+    def _attack_filter_fingerprint(
+        *,
+        attack_types: Sequence[str] | None = None,
+        converter_types: Sequence[str] | None = None,
+        converter_types_match: str = "all",
+        has_converters: bool | None = None,
+        outcome: str | None = None,
+        labels: dict[str, str | Sequence[str]] | None = None,
+        min_turns: int | None = None,
+        max_turns: int | None = None,
+    ) -> str:
         """
-        Apply cursor-based pagination over AttackResult objects.
+        Compute a stable, opaque fingerprint of the filters that define a result set.
 
-        Operates on lightweight AttackResult objects before pieces are fetched,
-        so only the final page incurs per-attack piece queries.
+        A pagination offset is only meaningful for the exact filter set it was generated
+        against. Embedding this fingerprint in the cursor lets ``_decode_attack_cursor``
+        detect a cursor minted for a different filter set and fall back to the first page,
+        instead of blindly applying a stale offset that could overshoot into an empty page.
+        Sequence and label filters are order-normalized so a semantically identical filter
+        set always fingerprints the same regardless of argument order.
 
         Returns:
-            Tuple of (paginated items, has_more flag).
+            A short hex digest that is stable for a given set of filter values.
         """
-        start_idx = 0
-        if cursor:
-            for i, item in enumerate(items):
-                if item.attack_result_id == cursor:
-                    start_idx = i + 1
-                    break
 
-        page = items[start_idx : start_idx + limit]
-        has_more = len(items) > start_idx + limit
-        return page, has_more
+        def _norm_seq(values: Sequence[str] | None) -> list[str] | None:
+            return sorted(str(v) for v in values) if values else None
+
+        def _norm_labels(
+            raw: dict[str, str | Sequence[str]] | None,
+        ) -> dict[str, str | list[str]] | None:
+            if not raw:
+                return None
+            normalized: dict[str, str | list[str]] = {}
+            for key in sorted(raw):
+                value = raw[key]
+                normalized[key] = value if isinstance(value, str) else sorted(str(v) for v in value)
+            return normalized
+
+        payload = {
+            "attack_types": _norm_seq(attack_types),
+            "converter_types": _norm_seq(converter_types),
+            "converter_types_match": converter_types_match,
+            "has_converters": has_converters,
+            "outcome": outcome,
+            "labels": _norm_labels(labels),
+            "min_turns": min_turns,
+            "max_turns": max_turns,
+        }
+        canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
+
+    @staticmethod
+    def _encode_attack_cursor(offset: int, fingerprint: str) -> str:
+        """
+        Encode a row offset and its filter fingerprint into an opaque pagination cursor.
+
+        The fingerprint is a hex digest (no ``.``) and the offset is a non-negative integer,
+        so ``.`` is an unambiguous separator for ``_decode_attack_cursor``.
+
+        Returns:
+            An opaque ``"<fingerprint>.<offset>"`` cursor string.
+        """
+        return f"{fingerprint}.{max(0, offset)}"
+
+    @staticmethod
+    def _decode_attack_cursor(cursor: str | None, fingerprint: str) -> int:
+        """
+        Decode the opaque list-attacks cursor into a non-negative row offset.
+
+        The cursor encodes the next page's offset together with a fingerprint of the filter
+        set it was generated for (see ``_attack_filter_fingerprint``). A cursor is honored
+        only when its fingerprint matches the current request's filters; malformed, legacy
+        (attack-result-id), or filter-mismatched cursors fall back to the first page so a
+        stale cursor degrades gracefully (returning page 1) instead of raising or overshooting
+        into an empty page. The result is clamped to the signed 64-bit range accepted by the
+        database ``OFFSET`` clause.
+
+        Returns:
+            A non-negative offset in ``[0, 2**63 - 1]``.
+        """
+        if not cursor:
+            return 0
+        prefix, separator, raw_offset = cursor.rpartition(".")
+        if not separator or prefix != fingerprint:
+            return 0
+        try:
+            offset = int(raw_offset)
+        except (TypeError, ValueError):
+            return 0
+        return max(0, min(offset, 2**63 - 1))
 
     # ========================================================================
     # Private Helper Methods - Duplicate / Branch

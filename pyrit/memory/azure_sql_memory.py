@@ -8,7 +8,7 @@ from contextlib import closing
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Literal, cast
 
-from sqlalchemy import and_, create_engine, event, exists, text
+from sqlalchemy import and_, create_engine, event, exists, func, text
 from sqlalchemy.engine.base import Engine
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import InstrumentedAttribute, sessionmaker
@@ -440,6 +440,26 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
         joiner = " OR " if match_mode == "any" else " AND "
         combined = joiner.join(conditions)
         return text(f"""ISJSON("{table_name}".{column_name}) = 1 AND ({combined})""").bindparams(**bindparams_dict)
+
+    def _attack_results_recency_order_by(self) -> list[Any]:
+        """
+        Return the Azure SQL ORDER BY clauses reproducing the History-view recency sort.
+
+        Sorts by the ``attack_metadata`` ``updated_at`` key (via ``JSON_VALUE``), falling
+        back to ``created_at`` then an empty string, all descending, with ``timestamp`` and
+        ``id`` descending as deterministic tie-breaks. Uses ORM ``func`` expressions (not raw
+        ``text``) so the clauses adapt to the aliased subquery SQLAlchemy emits when a
+        collection ``joinedload`` is combined with ``limit``/``offset``.
+
+        Returns:
+            list[Any]: SQLAlchemy ORDER BY clauses (all descending) for the recency sort.
+        """
+        recency = func.coalesce(
+            func.JSON_VALUE(AttackResultEntry.attack_metadata, "$.updated_at"),
+            func.JSON_VALUE(AttackResultEntry.attack_metadata, "$.created_at"),
+            "",
+        )
+        return [recency.desc(), AttackResultEntry.timestamp.desc(), AttackResultEntry.id.desc()]
 
     def _get_attack_result_label_condition(self, *, labels: dict[str, str | Sequence[str]]) -> Any:
         """
