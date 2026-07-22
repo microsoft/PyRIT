@@ -29,12 +29,12 @@ def _assistant_message(text: str) -> Message:
 
 
 @pytest.fixture(autouse=True)
-def _length_based_selection(monkeypatch):
+def _length_based_selection():
     # Force the length-based heuristic so tests don't depend on spaCy being installed.
     keyword_masker._nlp = None
     keyword_masker._nlp_loaded = False
-    monkeypatch.setattr(keyword_masker, "_get_nlp", lambda: None)
-    yield
+    with patch.object(keyword_masker, "_get_nlp", lambda: None):
+        yield
     keyword_masker._nlp = None
     keyword_masker._nlp_loaded = False
 
