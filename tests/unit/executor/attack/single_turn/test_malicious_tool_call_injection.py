@@ -352,6 +352,8 @@ class TestMaliciousToolCallInjectionExecute:
             attack_scoring_config=AttackScoringConfig(objective_scorer=mock_true_false_scorer),
         )
 
+        basic_context.next_message = Message.from_prompt(prompt=custom_continuation, role="user")
+
         with (
             patch.object(attack, "_setup_async", new_callable=AsyncMock),
             patch.object(
