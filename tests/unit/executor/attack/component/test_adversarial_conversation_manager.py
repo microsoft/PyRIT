@@ -171,6 +171,16 @@ def test_parse_reply_invalid_json_raises():
         _parse_adversarial_reply("not json at all", schema=SCHEMA)
 
 
+@pytest.mark.parametrize(
+    "response_text",
+    ["[]", "null", '"text"', "42"],
+    ids=["array", "null", "string", "number"],
+)
+def test_parse_reply_non_object_json_raises(response_text: str) -> None:
+    with pytest.raises(InvalidJsonException, match="must be a JSON object"):
+        _parse_adversarial_reply(response_text, schema=SCHEMA)
+
+
 def test_parse_reply_missing_key_raises():
     with pytest.raises(InvalidJsonException, match="Missing required keys"):
         _parse_adversarial_reply('{"next_message": "hi", "rationale": "r"}', schema=SCHEMA)
@@ -538,6 +548,23 @@ class TestGetNextMessageAsync:
         )
         with pytest.raises(InvalidJsonException):
             await manager.get_next_message_async(turn_index=1, last_response=_response_message())
+
+    async def test_non_object_reply_retries_then_succeeds(self) -> None:
+        normalizer = _normalizer(None)
+        normalizer.send_prompt_async.side_effect = [
+            Message.from_prompt(prompt="[]", role="assistant"),
+            Message.from_prompt(prompt=VALID_JSON, role="assistant"),
+        ]
+        manager = _manager(
+            adversarial_system_prompt=_system_prompt(schema=SCHEMA),
+            prompt_normalizer=normalizer,
+        )
+
+        turn = await manager.get_next_message_async(turn_index=1, last_response=_response_message())
+
+        assert turn.reply is not None
+        assert turn.reply.next_message == "hello target"
+        assert normalizer.send_prompt_async.call_count == 2
 
 
 # --- get_next_message_async: bypass path -------------------------------------
