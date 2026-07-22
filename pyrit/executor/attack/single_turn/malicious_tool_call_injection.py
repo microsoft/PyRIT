@@ -127,7 +127,7 @@ class MaliciousToolCallInjection(PromptSendingAttack):
         ``PromptSendingAttack`` sends it as the live user turn rather than the
         raw objective.
         """
-        tool_call_id = f"call_{uuid.uuid4().hex[:12]}"
+        tool_call_id = f"call_{uuid.uuid4().hex}"
 
         assistant_call_text = (
             f"[Calling tool: {self._tool_name}]\n"
