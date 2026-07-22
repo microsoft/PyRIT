@@ -27,6 +27,66 @@ async def test_generic_squash_system_message():
     assert result[1].get_value() == "Assistant message"
 
 
+async def test_generic_squash_multiple_system_messages_in_order():
+    messages = [
+        _make_message("system", "Policy"),
+        _make_message("system", "Persona"),
+        _make_message("user", "Question"),
+    ]
+
+    result = await GenericSystemSquashNormalizer().normalize_async(messages)
+
+    assert len(result) == 1
+    assert result[0].api_role == "user"
+    assert result[0].get_value() == "### Instructions ###\n\nPolicy\n\nPersona\n\n######\n\nQuestion"
+
+
+async def test_generic_squash_applies_system_messages_to_following_user():
+    messages = [
+        _make_message("user", "First question"),
+        _make_message("system", "Policy"),
+        _make_message("user", "Second question"),
+    ]
+
+    result = await GenericSystemSquashNormalizer().normalize_async(messages)
+
+    assert [message.api_role for message in result] == ["user", "user"]
+    assert result[0].get_value() == "First question"
+    assert result[1].get_value() == "### Instructions ###\n\nPolicy\n\n######\n\nSecond question"
+
+
+async def test_generic_squash_does_not_move_system_messages_across_assistant():
+    messages = [
+        _make_message("system", "Policy"),
+        _make_message("assistant", "Seeded reply"),
+        _make_message("system", "Persona"),
+        _make_message("user", "Question"),
+    ]
+
+    result = await GenericSystemSquashNormalizer().normalize_async(messages)
+
+    assert [message.api_role for message in result] == ["user", "assistant", "user"]
+    assert result[0].get_value() == "Policy"
+    assert result[1].get_value() == "Seeded reply"
+    assert result[2].get_value() == "### Instructions ###\n\nPersona\n\n######\n\nQuestion"
+
+
+async def test_generic_squash_converts_orphan_system_messages_in_place():
+    messages = [
+        _make_message("user", "Question"),
+        _make_message("system", "Policy"),
+        _make_message("system", "Persona"),
+        _make_message("assistant", "Prior response"),
+    ]
+
+    result = await GenericSystemSquashNormalizer().normalize_async(messages)
+
+    assert [message.api_role for message in result] == ["user", "user", "assistant"]
+    assert result[0].get_value() == "Question"
+    assert result[1].get_value() == "Policy\n\nPersona"
+    assert result[2].get_value() == "Prior response"
+
+
 async def test_generic_squash_system_message_empty_list():
     with pytest.raises(ValueError):
         await GenericSystemSquashNormalizer().normalize_async(messages=[])
@@ -104,8 +164,8 @@ async def test_generic_squash_preserves_multipart_user_message():
     assert result[0].message_pieces[1].converted_value_data_type == "image_path"
 
 
-async def test_generic_squash_uses_first_user_message_instead_of_rewriting_assistant():
-    """Test that squash targets the first user message even if assistant messages appear first."""
+async def test_generic_squash_preserves_system_message_before_assistant():
+    """Test that squash does not move a system message across an assistant message."""
     messages = [
         _make_message("system", "System message"),
         _make_message("assistant", "Assistant message"),
@@ -114,11 +174,11 @@ async def test_generic_squash_uses_first_user_message_instead_of_rewriting_assis
 
     result = await GenericSystemSquashNormalizer().normalize_async(messages)
 
-    assert len(result) == 2
-    assert result[0].api_role == "assistant"
-    assert result[0].get_value() == "Assistant message"
-    assert result[1].api_role == "user"
-    assert result[1].get_value() == "### Instructions ###\n\nSystem message\n\n######\n\nUser message"
+    assert len(result) == 3
+    assert [message.api_role for message in result] == ["user", "assistant", "user"]
+    assert result[0].get_value() == "System message"
+    assert result[1].get_value() == "Assistant message"
+    assert result[2].get_value() == "User message"
 
 
 async def test_generic_squash_no_user_message_converts_system_to_user():

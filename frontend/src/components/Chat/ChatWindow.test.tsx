@@ -59,6 +59,19 @@ const TestWrapper: React.FC<{ children: React.ReactNode }> = ({
   children,
 }) => <FluentProvider theme={webLightTheme}>{children}</FluentProvider>;
 
+function mockMatchMedia(matchesNarrowScreen: boolean): void {
+  (window.matchMedia as jest.Mock).mockImplementation((query: string) => ({
+    matches: matchesNarrowScreen && query === "(max-width: 600px)",
+    media: query,
+    onchange: null,
+    addListener: jest.fn(),
+    removeListener: jest.fn(),
+    addEventListener: jest.fn(),
+    removeEventListener: jest.fn(),
+    dispatchEvent: jest.fn(),
+  }));
+}
+
 const mockTarget: TargetInstance = makeTarget({
   target_registry_name: "openai_chat_1",
   target_type: "OpenAIChatTarget",
@@ -262,6 +275,7 @@ describe("ChatWindow Integration", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    mockMatchMedia(false);
     // Default: panel API returns empty conversations
     mockedAttacksApi.getConversations.mockResolvedValue({
       conversations: [],
@@ -1646,6 +1660,7 @@ describe("ChatWindow Integration", () => {
       target_type: "AzureOpenAIChatTarget",
       endpoint: "https://azure.openai.com",
       model_name: "gpt-4o",
+      identifier_hash: "different-target-hash",
     };
 
     render(
@@ -1667,6 +1682,7 @@ describe("ChatWindow Integration", () => {
       target_type: mockTarget.identifier.class_name,
       endpoint: mockTarget.identifier.endpoint,
       model_name: mockTarget.identifier.model_name,
+      identifier_hash: mockTarget.identifier.hash,
     };
 
     render(
@@ -1681,6 +1697,76 @@ describe("ChatWindow Integration", () => {
     );
 
     expect(screen.queryByTestId("cross-target-banner")).not.toBeInTheDocument();
+  });
+
+  it("should keep a historical Round Robin attack writable when the identifier hash matches", () => {
+    const roundRobinTarget = makeTarget({
+      target_registry_name: "round-robin",
+      target_type: "RoundRobinTarget",
+      endpoint: null,
+      model_name: null,
+      identifier_hash: "round-robin-hash",
+      inner_targets: [
+        { target_registry_name: "inner-a", model_name: "e2e-dummy-model" },
+        { target_registry_name: "inner-b", model_name: "e2e-dummy-model" },
+      ],
+    });
+    const historicalTarget: TargetInfo = {
+      target_type: "RoundRobinTarget",
+      endpoint: null,
+      model_name: null,
+      identifier_hash: "round-robin-hash",
+    };
+
+    render(
+      <TestWrapper>
+        <ChatWindow
+          {...defaultProps}
+          activeTarget={roundRobinTarget}
+          attackResultId="ar-round-robin"
+          conversationId="conv-round-robin"
+          attackTarget={historicalTarget}
+        />
+      </TestWrapper>
+    );
+
+    expect(screen.queryByTestId("cross-target-banner")).not.toBeInTheDocument();
+    expect(screen.getByTestId("chat-input")).toBeEnabled();
+  });
+
+  it("should lock a historical Round Robin attack when the composite identifier hash differs", () => {
+    const roundRobinTarget = makeTarget({
+      target_registry_name: "round-robin",
+      target_type: "RoundRobinTarget",
+      endpoint: null,
+      model_name: null,
+      identifier_hash: "active-round-robin-hash",
+      inner_targets: [
+        { target_registry_name: "inner-a", model_name: "e2e-dummy-model" },
+        { target_registry_name: "inner-b", model_name: "e2e-dummy-model" },
+      ],
+    });
+    const historicalTarget: TargetInfo = {
+      target_type: "RoundRobinTarget",
+      endpoint: null,
+      model_name: null,
+      identifier_hash: "different-round-robin-hash",
+    };
+
+    render(
+      <TestWrapper>
+        <ChatWindow
+          {...defaultProps}
+          activeTarget={roundRobinTarget}
+          attackResultId="ar-round-robin"
+          conversationId="conv-round-robin"
+          attackTarget={historicalTarget}
+        />
+      </TestWrapper>
+    );
+
+    expect(screen.getByTestId("cross-target-banner")).toBeInTheDocument();
+    expect(screen.queryByTestId("chat-input")).not.toBeInTheDocument();
   });
 
   it("should auto-open conversation panel when relatedConversationCount > 0", async () => {
@@ -1709,6 +1795,12 @@ describe("ChatWindow Integration", () => {
     await waitFor(() => {
       expect(screen.getByTestId("conversation-panel")).toBeInTheDocument();
     });
+    expect(
+      screen.getByRole("complementary", { name: "Attack Conversations" })
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("dialog", { name: "Attack Conversations" })
+    ).not.toBeInTheDocument();
   });
 
   it("should not auto-open conversation panel when relatedConversationCount is 0", () => {
@@ -1768,6 +1860,61 @@ describe("ChatWindow Integration", () => {
     await waitFor(() => {
       expect(screen.getByTestId("conversation-panel")).toBeInTheDocument();
     });
+  });
+
+  it("should keep the mobile drawer closed until requested and restore focus after Escape", async () => {
+    const user = userEvent.setup();
+    mockMatchMedia(true);
+    mockedAttacksApi.getMessages.mockResolvedValue({ messages: [] });
+    mockedAttacksApi.getConversations.mockResolvedValue({
+      main_conversation_id: "conv-mobile",
+      conversations: [
+        {
+          conversation_id: "conv-mobile",
+          is_main: true,
+          message_count: 1,
+          created_at: "2026-01-01T00:00:00Z",
+        },
+      ],
+    });
+    mockedMapper.backendMessagesToFrontend.mockReturnValue([]);
+
+    render(
+      <TestWrapper>
+        <ChatWindow
+          {...defaultProps}
+          attackResultId="ar-mobile"
+          conversationId="conv-mobile"
+          activeConversationId="conv-mobile"
+          relatedConversationCount={1}
+        />
+      </TestWrapper>
+    );
+
+    const toggleButton = screen.getByRole("button", {
+      name: "Toggle conversations panel",
+    });
+    expect(
+      screen.queryByRole("dialog", { name: "Attack Conversations" })
+    ).not.toBeInTheDocument();
+    expect(toggleButton).toHaveAttribute("aria-expanded", "false");
+
+    await user.click(toggleButton);
+
+    expect(
+      await screen.findByRole("dialog", { name: "Attack Conversations" })
+    ).toBeInTheDocument();
+    expect(toggleButton).toHaveAttribute("aria-expanded", "true");
+
+    await user.keyboard("{Escape}");
+
+    await waitFor(() => {
+      expect(
+        screen.queryByRole("dialog", { name: "Attack Conversations" })
+      ).not.toBeInTheDocument();
+    });
+    expect(toggleButton).toHaveAttribute("aria-expanded", "false");
+    expect(toggleButton).toHaveFocus();
   });
 
   it("should open conversation panel when copying to new conversation", async () => {

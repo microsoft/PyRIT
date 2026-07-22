@@ -23,7 +23,7 @@ TokenizerSystemBehavior = Literal["keep", "squash", "ignore", "developer"]
 """
 Extended system message behavior for tokenizer templates:
 - "keep": Keep system messages as-is (default for most models)
-- "squash": Merge system message into first user message
+- "squash": Merge system messages into the following user message
 - "ignore": Drop system messages entirely
 - "developer": Change system role to developer role (for newer OpenAI models)
 """
@@ -101,7 +101,7 @@ class TokenizerTemplateNormalizer(MessageStringNormalizer):
             tokenizer: A Hugging Face tokenizer with a chat template.
             system_message_behavior: How to handle system messages. Options:
                 - "keep": Keep system messages as-is (default)
-                - "squash": Merge system into first user message
+                - "squash": Merge system messages into the following user message
                 - "ignore": Drop system messages entirely
                 - "developer": Change system role to developer role
         """
@@ -195,7 +195,7 @@ class TokenizerTemplateNormalizer(MessageStringNormalizer):
 
         Handles system messages based on the configured system_message_behavior:
         - "keep": Pass system messages as-is
-        - "squash": Merge system into first user message
+        - "squash": Merge system messages into the following user message
         - "ignore": Drop system messages entirely
         - "developer": Change system role to developer role
 

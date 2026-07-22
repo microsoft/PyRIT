@@ -42,8 +42,9 @@ class TestFlipTechnique:
         assert factory.seed_technique is not None
         seed = factory.seed_technique.seeds[0]
         assert seed.role == "system"
-        assert seed.sequence == -1
+        assert seed.sequence == 0
         assert seed.is_general_technique is True
+        assert factory.seed_technique.prompt_placement == "prepend"
         assert "flipping each word" in seed.value
 
     def test_merges_onto_group_with_user_turn_at_sequence_zero(self):

@@ -647,6 +647,25 @@ class TestAttackSeedGroupWithTechnique:
             ("user", 3),
         ]
 
+    def test_system_prompt_technique_prepends_when_base_uses_negative_sequence(self):
+        """Explicit prepend placement must not reserve a sequence value in the base group."""
+        base = AttackSeedGroup(
+            seeds=[
+                SeedObjective(value="objective"),
+                SeedPrompt(value="opening user turn", data_type="text", role="user", sequence=-1),
+                SeedPrompt(value="assistant reply", data_type="text", role="assistant", sequence=4),
+            ]
+        )
+        technique = AttackTechniqueSeedGroup.from_system_prompt("Follow these rules.")
+
+        merged = base.with_technique(technique=technique)
+
+        assert [(p.role, p.sequence) for p in merged.prompts] == [
+            ("system", 0),
+            ("user", 1),
+            ("assistant", 2),
+        ]
+
     def test_raises_when_technique_has_simulated_conversation_and_prompts_overlap(self):
         """Merging a technique with SeedSimulatedConversation into a group with overlapping prompts raises."""
         base = AttackSeedGroup(
