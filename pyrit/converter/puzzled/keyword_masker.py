@@ -263,6 +263,9 @@ def mask_prompt(
         if match:
             first_index[word] = match.start()
     ordered = sorted(first_index, key=lambda w: first_index[w])
+    if not ordered:
+        # Nothing to mask (e.g. num_to_mask == 0); return the prompt unchanged.
+        return MaskResult(masked_prompt=prompt, masked_words=[])
 
     masked_words: list[MaskedWord] = []
     placeholders: dict[str, str] = {}
@@ -271,9 +274,6 @@ def mask_prompt(
         pos = pos_lookup.get(word.lower(), _GENERIC_POS)
         masked_words.append(MaskedWord(text=word, placeholder=placeholder, pos=pos))
         placeholders[word.lower()] = placeholder
-
-    if not ordered:
-        return MaskResult(masked_prompt=prompt, masked_words=masked_words)
 
     # Replace every occurrence of every chosen word in one case-insensitive pass, so a word
     # that recurs or appears in different casing is never left in cleartext, and a placeholder
