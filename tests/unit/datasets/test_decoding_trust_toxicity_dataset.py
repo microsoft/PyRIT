@@ -225,7 +225,7 @@ class TestDecodingTrustToxicityDataset:
         assert seed.data_type == "text"
         assert seed.description is not None and "DecodingTrust" in seed.description
         assert seed.authors is not None and "Boxin Wang" in seed.authors  # DecodingTrust lead
-        assert seed.groups
+        assert seed.groups is not None and "University of Illinois at Urbana-Champaign" in seed.groups
 
     async def test_metadata_round_trip(self):
         """Per-row challenging flag and 8 Perspective scores land in SeedPrompt.metadata."""
