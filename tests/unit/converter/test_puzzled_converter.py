@@ -56,6 +56,12 @@ def test_default_puzzle_type_is_word_search():
     assert PuzzledConverter()._puzzle_type is PuzzleType.WORD_SEARCH
 
 
+@pytest.mark.parametrize("num_to_mask", [0, -1])
+def test_non_positive_num_to_mask_raises(num_to_mask):
+    with pytest.raises(ValueError):
+        PuzzledConverter(num_to_mask=num_to_mask)
+
+
 def test_identifier_includes_puzzle_type():
     identifier = PuzzledConverter(puzzle_type="anagram").get_identifier()
     assert identifier.params["puzzle_type"] == "anagram"

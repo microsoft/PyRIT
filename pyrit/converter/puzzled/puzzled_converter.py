@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import asyncio
 import json
 import logging
 import pathlib
@@ -105,7 +106,8 @@ class PuzzledConverter(Converter):
                 the deterministic length-and-part-of-speech clue only.
 
         Raises:
-            ValueError: If ``puzzle_type`` is not a valid puzzle type.
+            ValueError: If ``puzzle_type`` is not a valid puzzle type, or ``num_to_mask`` is
+                given but less than 1.
         """
         super().__init__(converter_target=converter_target)
         try:
@@ -113,6 +115,11 @@ class PuzzledConverter(Converter):
         except ValueError as exc:
             valid = ", ".join(t.value for t in PuzzleType)
             raise ValueError(f"Invalid puzzle_type '{puzzle_type}'. Must be one of: {valid}.") from exc
+
+        if num_to_mask is not None and num_to_mask < 1:
+            # A puzzle that hides no words cannot be built, so reject this at construction
+            # rather than failing later with an opaque puzzle-builder error.
+            raise ValueError(f"num_to_mask must be a positive integer or None, got {num_to_mask}.")
 
         self._num_to_mask = num_to_mask
         self._essential_words = essential_words
@@ -156,7 +163,10 @@ class PuzzledConverter(Converter):
         if not self.input_supported(input_type):
             raise ValueError(f"Input type {input_type} not supported")
 
-        mask_result = mask_prompt(
+        # Run in a thread: mask_prompt is synchronous and may lazily load spaCy's model on
+        # first use, which is blocking I/O we keep off the event loop.
+        mask_result = await asyncio.to_thread(
+            mask_prompt,
             prompt,
             num_to_mask=self._num_to_mask,
             essential_words=self._essential_words,
@@ -211,10 +221,11 @@ class PuzzledConverter(Converter):
         """
         Ask the clue-generation target for an indirect semantic description of each word.
 
-        The result maps lowercased words to their descriptions and is cached per word set, so
-        repeated conversions of the same words reuse it. Any failure (request error, unparseable
-        response, missing words) degrades gracefully to an empty or partial mapping, so the
-        converter always falls back to the deterministic length/POS clue.
+        A parsed result (including an empty one, when the response held no usable clues) is
+        cached per word set so repeated conversions of the same words reuse it. A failed request
+        is not cached, so a later conversion can retry after a transient target error. Any failure
+        degrades gracefully to an empty or partial mapping, so the converter always falls back to
+        the deterministic length/POS clue.
 
         Args:
             target (PromptTarget): The chat model that generates the clues.
