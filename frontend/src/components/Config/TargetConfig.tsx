@@ -120,9 +120,14 @@ export default function TargetConfig({ activeTarget, onSetActiveTarget }: Target
           <Text size={300} style={{ color: tokens.colorNeutralForeground3 }}>
             Add a target manually, or configure an initializer in your <code>~/.pyrit/.pyrit_conf</code> file
             to auto-populate targets from your <code>.env</code> and <code>.env.local</code> files.
-            For example, add <code>airt</code> to the <code>initializers</code> list to register
-            Azure OpenAI targets automatically. See the{' '}
-            <Link href="https://github.com/microsoft/PyRIT/blob/main/.pyrit_conf_example" target="_blank" inline>
+            For example, add <code>target</code> to the <code>initializers</code> list to register
+            available prompt targets automatically. See the{' '}
+            <Link
+              href="https://github.com/microsoft/PyRIT/blob/main/.pyrit_conf_example"
+              target="_blank"
+              rel="noopener noreferrer"
+              inline
+            >
               .pyrit_conf_example
             </Link>{' '}
             for details.
