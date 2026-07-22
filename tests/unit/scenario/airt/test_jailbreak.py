@@ -525,6 +525,7 @@ class TestJailbreakSystemPromptDelivery:
             seed_technique = system_attack.attack_technique.seed_technique
             assert seed_technique is not None
             assert [s.role for s in seed_technique.seeds] == ["system"]
+            assert seed_technique.prompt_placement == "prepend"
             assert seed_technique.seeds[0].value
 
     async def test_system_delivery_uses_no_jailbreak_converter(
@@ -629,8 +630,8 @@ class TestJailbreakSystemPromptDelivery:
         """A caller-supplied seed group carrying a user prompt at the default sequence 0 must not
         collide with the system framing seed when native system delivery merges in.
 
-        The framing seed is ordered at ``sequence=-1`` precisely so this merge succeeds; without it
-        the group would raise ``Inconsistent roles found for sequence 0`` at runtime.
+        The framing technique declares prepend placement so this merge does not depend on the
+        caller's sequence values.
         """
         from pyrit.memory import CentralMemory
         from pyrit.score import SubStringScorer

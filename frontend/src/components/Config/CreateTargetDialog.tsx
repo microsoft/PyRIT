@@ -712,10 +712,15 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
 
               {!isRoundRobin && (
               <Label size="small" style={{ color: tokens.colorNeutralForeground3 }}>
-                Targets can also be auto-populated by adding an initializer (e.g. <code>airt</code>) to your{' '}
-                <code>~/.pyrit/.pyrit_conf</code> file, which reads endpoints from your <code>.env</code> and{' '}
-                <code>.env.local</code> files. See{' '}
-                <Link href="https://github.com/microsoft/PyRIT/blob/main/.pyrit_conf_example" target="_blank" inline>
+                Targets can also be auto-populated by adding the <code>target</code> initializer to your{' '}
+                <code>~/.pyrit/.pyrit_conf</code> file, which registers available prompt targets from endpoints in{' '}
+                your <code>.env</code> and <code>.env.local</code> files. See{' '}
+                <Link
+                  href="https://github.com/microsoft/PyRIT/blob/main/.pyrit_conf_example"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  inline
+                >
                   .pyrit_conf_example
                 </Link>.
               </Label>
