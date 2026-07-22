@@ -527,7 +527,7 @@ class ComponentIdentifier(BaseModel):
 
         params_dict = data.get("params")
         if isinstance(params_dict, dict):
-            collisions = set(params_dict) & RESERVED_PARAM_NAMES
+            collisions: set[str] = {str(name) for name in params_dict} & RESERVED_PARAM_NAMES
             if collisions:
                 raise ValueError(f"ComponentIdentifier params must not use reserved names: {sorted(collisions)}")
 
