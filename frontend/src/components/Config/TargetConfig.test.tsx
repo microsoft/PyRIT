@@ -118,6 +118,13 @@ describe("TargetConfig", () => {
     await waitFor(() => {
       expect(screen.getByText("No Targets Configured")).toBeInTheDocument();
     });
+    expect(screen.getByText("target", { selector: "code" })).toBeInTheDocument();
+    expect(
+      screen.getByText(/register available prompt targets automatically/i)
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText("airt", { selector: "code" })
+    ).not.toBeInTheDocument();
   });
 
   it(

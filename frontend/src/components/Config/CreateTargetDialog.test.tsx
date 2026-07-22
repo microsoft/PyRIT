@@ -398,16 +398,20 @@ describe("CreateTargetDialog", () => {
     });
   });
 
-  it("should display pyrit_conf hint text", () => {
+  it("should display supported target initializer guidance", () => {
     render(
       <TestWrapper>
         <CreateTargetDialog {...defaultProps} />
       </TestWrapper>
     );
 
+    expect(screen.getByText("target", { selector: "code" })).toBeInTheDocument();
     expect(
-      screen.getByText(/auto-populated by adding an initializer/)
+      screen.getByText(/registers available prompt targets from endpoints/i)
     ).toBeInTheDocument();
+    expect(
+      screen.queryByText("airt", { selector: "code" })
+    ).not.toBeInTheDocument();
   });
 
   it("should render .pyrit_conf_example as an accessible link", () => {
