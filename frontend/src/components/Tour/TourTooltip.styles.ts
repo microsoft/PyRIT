@@ -1,4 +1,5 @@
 import { makeStyles, tokens } from '@fluentui/react-components'
+import { mobileTouchTarget } from '../../styles/touchTargets'
 
 export const useTourTooltipStyles = makeStyles({
   // Outer wrapper: provides space for the mascot to overflow below the card
@@ -49,5 +50,8 @@ export const useTourTooltipStyles = makeStyles({
     display: 'flex',
     gap: tokens.spacingHorizontalS,
     marginLeft: 'auto',
+  },
+  actionButton: {
+    ...mobileTouchTarget,
   },
 })

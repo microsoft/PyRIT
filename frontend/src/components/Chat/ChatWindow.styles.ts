@@ -1,4 +1,5 @@
 import { makeStyles, tokens } from '@fluentui/react-components'
+import { mobileTouchTarget } from '../../styles/touchTargets'
 
 export const useChatWindowStyles = makeStyles({
   root: {
@@ -58,8 +59,12 @@ export const useChatWindowStyles = makeStyles({
     gap: tokens.spacingHorizontalS,
     flexShrink: 0,
   },
+  ribbonAction: {
+    ...mobileTouchTarget,
+  },
   newAttackButton: {
     flexShrink: 0,
+    ...mobileTouchTarget,
   },
   newAttackLabel: {
     '@media (max-width: 600px)': {

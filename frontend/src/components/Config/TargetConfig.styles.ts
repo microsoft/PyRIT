@@ -1,4 +1,9 @@
 import { makeStyles, tokens } from '@fluentui/react-components'
+import {
+  MOBILE_BREAKPOINT,
+  MINIMUM_TOUCH_TARGET_SIZE,
+  mobileTouchTarget,
+} from '../../styles/touchTargets'
 
 export const useTargetConfigStyles = makeStyles({
   root: {
@@ -45,9 +50,13 @@ export const useTargetConfigStyles = makeStyles({
     },
   },
   headerAction: {
-    '@media (max-width: 600px)': {
+    [MOBILE_BREAKPOINT]: {
       flex: '1 1 8rem',
+      minHeight: MINIMUM_TOUCH_TARGET_SIZE,
     },
+  },
+  touchTarget: {
+    ...mobileTouchTarget,
   },
   emptyState: {
     display: 'flex',

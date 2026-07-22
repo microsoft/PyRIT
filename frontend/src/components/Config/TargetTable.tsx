@@ -289,6 +289,7 @@ export default function TargetTable({ targets, activeTarget, onSetActiveTarget }
                 <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                   {hasInnerTargets(activeTarget) && (
                     <Button
+                      className={styles.rowAction}
                       appearance="subtle"
                       size="small"
                       icon={expandedRows.has(activeTarget.target_registry_name) ? <ChevronDownRegular /> : <ChevronRightRegular />}
@@ -411,6 +412,7 @@ export default function TargetTable({ targets, activeTarget, onSetActiveTarget }
                       </Badge>
                     ) : (
                       <Button
+                        className={styles.rowAction}
                         appearance="primary"
                         size="small"
                         onClick={() => onSetActiveTarget(target)}
@@ -424,6 +426,7 @@ export default function TargetTable({ targets, activeTarget, onSetActiveTarget }
                       {/* Chevron in the Type column keeps the action column aligned */}
                       {expandable && (
                         <Button
+                          className={styles.rowAction}
                           appearance="subtle"
                           size="small"
                           icon={expanded ? <ChevronDownRegular /> : <ChevronRightRegular />}

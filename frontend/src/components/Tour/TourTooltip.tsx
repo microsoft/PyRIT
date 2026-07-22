@@ -41,6 +41,7 @@ export default function TourTooltip({
               {!isLastStep && (
                 <Button
                   {...closeProps}
+                  className={styles.actionButton}
                   appearance="subtle"
                   icon={<DismissRegular />}
                   size="small"
@@ -61,19 +62,19 @@ export default function TourTooltip({
 
               <div className={styles.actions}>
                 {!isLastStep && (
-                  <Button {...skipProps} appearance="subtle" size="small">
+                  <Button {...skipProps} className={styles.actionButton} appearance="subtle" size="small">
                     Skip tour
                   </Button>
                 )}
 
                 {index > 0 && (
-                  <Button {...backProps} appearance="outline" size="small">
+                  <Button {...backProps} className={styles.actionButton} appearance="outline" size="small">
                     Back
                   </Button>
                 )}
 
                 {continuous && (
-                  <Button {...primaryProps} appearance="primary" size="small">
+                  <Button {...primaryProps} className={styles.actionButton} appearance="primary" size="small">
                     {isLastStep ? "Anchors Away!" : 'Next'}
                   </Button>
                 )}
