@@ -16,12 +16,15 @@ export default function ObjectiveHeader({ objective }: ObjectiveHeaderProps) {
   useLayoutEffect(() => {
     const el = contentRef.current
     if (!el) return
-    const measure = () => setOverflowing(el.scrollWidth > el.clientWidth)
+    const measure = () => {
+      if (expanded) return
+      setOverflowing(el.scrollWidth > el.clientWidth)
+    }
     measure()
     const observer = new ResizeObserver(measure)
     observer.observe(el)
     return () => observer.disconnect()
-  }, [objective])
+  }, [objective, expanded])
 
   if (!objective) return null
 
