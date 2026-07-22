@@ -83,12 +83,12 @@
 #
 # ```python
 # from pyrit.datasets.seed_datasets.remote import (
+#     AgenticPromptInjectionBoundaryDataset,
 #     AgenticPromptInjectionBoundaryLabel,
 #     AgenticPromptInjectionBoundarySplit,
-#     _AgenticPromptInjectionBoundaryDataset,
 # )
 #
-# paired_test_loader = _AgenticPromptInjectionBoundaryDataset(
+# paired_test_loader = AgenticPromptInjectionBoundaryDataset(
 #     label=AgenticPromptInjectionBoundaryLabel.ALL,
 #     split=AgenticPromptInjectionBoundarySplit.TEST,
 # )

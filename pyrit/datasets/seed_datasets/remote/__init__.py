@@ -144,9 +144,12 @@ from pyrit.datasets.seed_datasets.remote.xl_safety_bench_dataset import (
 )
 from pyrit.datasets.seed_datasets.remote.xstest_dataset import _XSTestDataset
 
+AgenticPromptInjectionBoundaryDataset = _AgenticPromptInjectionBoundaryDataset
+
 __all__ = [
     "AegisHarmCategory",
     "AgenticPromptInjectionBoundaryAttackFamily",
+    "AgenticPromptInjectionBoundaryDataset",
     "AgenticPromptInjectionBoundaryLabel",
     "AgenticPromptInjectionBoundarySourceContext",
     "AgenticPromptInjectionBoundarySplit",
