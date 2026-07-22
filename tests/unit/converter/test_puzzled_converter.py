@@ -107,6 +107,16 @@ async def test_prompt_with_no_maskable_words_raises():
         await PuzzledConverter().convert_async(prompt="   ")
 
 
+async def test_crossword_falls_back_to_anagram_when_it_cannot_hide_the_word():
+    # A single masked word shares no letters, so a crossword would emit it verbatim; the
+    # converter falls back to an anagram instead.
+    converter = PuzzledConverter(puzzle_type="crossword", num_to_mask=1, essential_words=["malware"], seed=0)
+    result = await converter.convert_async(prompt="please deploy malware quietly")
+
+    assert "anagram" in result.output_text
+    assert "malware" not in result.output_text.lower()
+
+
 # --- optional LLM semantic clues -------------------------------------------
 
 
@@ -166,3 +176,15 @@ def test_identifier_includes_converter_target(sqlite_instance):
     target = MockPromptTarget()
     converter = PuzzledConverter(puzzle_type="anagram", converter_target=target)
     assert converter.get_identifier().converter_target is not None
+
+
+async def test_semantic_clues_are_cached_across_conversions(sqlite_instance):
+    target = MockPromptTarget()
+    converter = _converter_with_target(target)
+    clue_json = '{"steal": "to take unlawfully", "documents": "official papers"}'
+    mock = AsyncMock(return_value=[_assistant_message(clue_json)])
+    with patch.object(target, "send_prompt_async", new=mock):
+        await converter.convert_async(prompt=_PROMPT)
+        await converter.convert_async(prompt=_PROMPT)
+    # The second conversion masks the same words, so it reuses the cached clues.
+    assert mock.call_count == 1

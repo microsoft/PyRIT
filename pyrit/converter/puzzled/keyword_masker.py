@@ -255,25 +255,22 @@ def mask_prompt(
 
     chosen = ranked[: max(0, target)]
 
-    # Find the first occurrence span of each chosen word, then order by position so the
-    # placeholder numbering reads left to right.
-    spans: list[tuple[int, int, str]] = []
+    # Number placeholders by where each chosen word first appears, so [WORD1] is the leftmost
+    # masked word. Every occurrence of a chosen word is then replaced, not just the first, so
+    # no sensitive word is left in cleartext.
+    first_index: dict[str, int] = {}
     for word in chosen:
         match = re.search(rf"\b{re.escape(word)}\b", prompt)
         if match:
-            spans.append((match.start(), match.end(), word))
-    spans.sort()
+            first_index[word] = match.start()
+    ordered = sorted(first_index, key=lambda w: first_index[w])
 
     masked_words: list[MaskedWord] = []
-    pieces: list[str] = []
-    cursor = 0
-    for index, (start, end, word) in enumerate(spans, start=1):
+    masked_prompt = prompt
+    for index, word in enumerate(ordered, start=1):
         placeholder = f"[WORD{index}]"
         pos = pos_lookup.get(word.lower(), _GENERIC_POS)
         masked_words.append(MaskedWord(text=word, placeholder=placeholder, pos=pos))
-        pieces.append(prompt[cursor:start])
-        pieces.append(placeholder)
-        cursor = end
-    pieces.append(prompt[cursor:])
+        masked_prompt = re.sub(rf"\b{re.escape(word)}\b", placeholder, masked_prompt)
 
-    return MaskResult(masked_prompt="".join(pieces), masked_words=masked_words)
+    return MaskResult(masked_prompt=masked_prompt, masked_words=masked_words)

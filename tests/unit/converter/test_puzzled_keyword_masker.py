@@ -83,6 +83,14 @@ def test_mask_prompt_ranks_essential_above_supplementary(monkeypatch):
 # --- masking ---------------------------------------------------------------
 
 
+def test_mask_prompt_replaces_every_occurrence_of_a_chosen_word(monkeypatch):
+    # A repeated sensitive word must be masked at every occurrence, not just the first.
+    monkeypatch.setattr(keyword_masker, "_get_nlp", lambda: None)
+    result = mask_prompt("hack the system then hack it again", num_to_mask=1, essential_words=["hack"])
+    assert result.masked_prompt == "[WORD1] the system then [WORD1] it again"
+    assert "hack" not in result.masked_prompt
+
+
 def test_mask_prompt_replaces_chosen_words_in_left_to_right_order(monkeypatch):
     monkeypatch.setattr(keyword_masker, "_get_nlp", lambda: None)
     result = mask_prompt(

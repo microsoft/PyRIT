@@ -15,6 +15,7 @@ from pyrit.converter.puzzled.puzzle_builders import (
     build_anagram,
     build_crossword,
     build_word_search,
+    crossword_symbol_map,
 )
 from pyrit.models import ComponentIdentifier, Message, MessagePiece, PromptDataType, SeedPrompt
 from pyrit.prompt_target import CHAT_TARGET_REQUIREMENTS, PromptTarget
@@ -117,6 +118,9 @@ class PuzzledConverter(Converter):
         self._essential_words = essential_words
         self._seed = seed
         self._converter_target = converter_target
+        # Cache generated clues per set of masked words so repeated conversions of the same
+        # words do not re-call the clue-generation model.
+        self._clue_cache: dict[tuple[str, ...], dict[str, str]] = {}
         # Load the prompt template once here rather than on every convert_async call, so the
         # async path does no blocking disk I/O.
         self._prompt_template = SeedPrompt.from_yaml_file(
@@ -159,10 +163,16 @@ class PuzzledConverter(Converter):
         )
         words = [masked.text for masked in mask_result.masked_words]
 
+        # A crossword only hides letters shared across words; with a single word, or words
+        # that share no letters, it would emit them verbatim, so fall back to an anagram.
+        puzzle_type = self._puzzle_type
+        if puzzle_type is PuzzleType.CROSSWORD and not crossword_symbol_map(words):
+            puzzle_type = PuzzleType.ANAGRAM
+
         rng = random.Random(self._seed)
-        if self._puzzle_type is PuzzleType.WORD_SEARCH:
+        if puzzle_type is PuzzleType.WORD_SEARCH:
             puzzle_body = build_word_search(words, rng)
-        elif self._puzzle_type is PuzzleType.ANAGRAM:
+        elif puzzle_type is PuzzleType.ANAGRAM:
             puzzle_body = build_anagram(words, rng)
         else:
             puzzle_body = build_crossword(words)
@@ -172,8 +182,8 @@ class PuzzledConverter(Converter):
 
         formatted_prompt = self._prompt_template.render_template_value(
             masked_prompt=mask_result.masked_prompt,
-            puzzle_type=self._puzzle_type.value,
-            puzzle_instructions=_PUZZLE_INSTRUCTIONS[self._puzzle_type],
+            puzzle_type=puzzle_type.value,
+            puzzle_instructions=_PUZZLE_INSTRUCTIONS[puzzle_type],
             puzzle_body=puzzle_body,
             clues=clues,
         )
@@ -201,9 +211,10 @@ class PuzzledConverter(Converter):
         """
         Ask the clue-generation target for an indirect semantic description of each word.
 
-        The result maps lowercased words to their descriptions. Any failure (request error,
-        unparseable response, missing words) degrades gracefully to an empty or partial mapping,
-        so the converter always falls back to the deterministic length/POS clue.
+        The result maps lowercased words to their descriptions and is cached per word set, so
+        repeated conversions of the same words reuse it. Any failure (request error, unparseable
+        response, missing words) degrades gracefully to an empty or partial mapping, so the
+        converter always falls back to the deterministic length/POS clue.
 
         Args:
             target (PromptTarget): The chat model that generates the clues.
@@ -212,6 +223,10 @@ class PuzzledConverter(Converter):
         Returns:
             dict[str, str]: Lowercased word to semantic description (may be empty or partial).
         """
+        cache_key = tuple(words)
+        if cache_key in self._clue_cache:
+            return self._clue_cache[cache_key]
+
         instruction = _CLUE_GENERATION_INSTRUCTION.format(words=", ".join(words))
         request = Message(
             message_pieces=[
@@ -233,7 +248,9 @@ class PuzzledConverter(Converter):
         except Exception as exc:  # noqa: BLE001 - clue generation is best-effort; fall back on any error
             logger.warning("PuzzledConverter clue generation failed (%s); using deterministic clues.", exc)
             return {}
-        return self._parse_semantic_clues(raw, words)
+        clues = self._parse_semantic_clues(raw, words)
+        self._clue_cache[cache_key] = clues
+        return clues
 
     @staticmethod
     def _parse_semantic_clues(raw: str, words: list[str]) -> dict[str, str]:
