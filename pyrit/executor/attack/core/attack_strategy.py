@@ -648,7 +648,7 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
             next_message (Message | None): Message to send to the target.
             prepended_conversation (list[Message] | None): Conversation to prepend.
             memory_labels (dict[str, str] | None): Memory labels for the attack context.
-            **kwargs: Additional context-specific parameters (conversation_id, system_prompt, etc.).
+            **kwargs: Additional context-specific parameters (conversation_id, metadata, etc.).
 
         Returns:
             AttackStrategyResultT: The result of the attack execution.

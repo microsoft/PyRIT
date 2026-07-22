@@ -12,7 +12,7 @@ from pyrit.common import apply_defaults
 from pyrit.converter import TextJailbreakConverter
 from pyrit.datasets import TextJailBreak
 from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
-from pyrit.models import AttackTechniqueSeedGroup, Parameter, SeedPrompt
+from pyrit.models import AttackTechniqueSeedGroup, Parameter
 from pyrit.prompt_target import CapabilityName
 from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
 from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
@@ -450,12 +450,7 @@ class Jailbreak(Scenario):
             the rendered jailbreak framing.
         """
         framing = TextJailBreak(template_file_name=template_file_name).get_jailbreak_system_prompt()
-        # sequence=-1 orders the system framing ahead of any user turn, so a caller-supplied seed
-        # group carrying a user prompt at the default sequence 0 does not raise a same-sequence
-        # role collision when this technique is merged in.
-        seed_technique = AttackTechniqueSeedGroup(
-            seeds=[SeedPrompt(value=framing, data_type="text", role="system", is_general_technique=True, sequence=-1)]
-        )
+        seed_technique = AttackTechniqueSeedGroup.from_system_prompt(framing)
         return AttackTechniqueFactory(
             name=_JAILBREAK_SYSTEM_PROMPT,
             attack_class=PromptSendingAttack,

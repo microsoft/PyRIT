@@ -8,12 +8,22 @@ import pytest
 from pyrit.auth import get_azure_openai_auth
 from pyrit.embedding import OpenAITextEmbedding
 
+_AZURE_KEY_AUTH_DISABLED_REASON = (
+    "Azure key-based (local) auth is disabled in our tenant; "
+    "covered by the Entra-auth tests (test_entra_auth_targets.py)."
+)
+
 
 @pytest.mark.run_only_if_all_tests
 @pytest.mark.parametrize(
     "endpoint_env,key_env,model_env",
     [
-        ("OPENAI_EMBEDDING_ENDPOINT", "OPENAI_EMBEDDING_KEY", "OPENAI_EMBEDDING_MODEL"),
+        pytest.param(
+            "OPENAI_EMBEDDING_ENDPOINT",
+            "OPENAI_EMBEDDING_KEY",
+            "OPENAI_EMBEDDING_MODEL",
+            marks=pytest.mark.skip(reason=_AZURE_KEY_AUTH_DISABLED_REASON),
+        ),
         ("PLATFORM_OPENAI_EMBEDDING_ENDPOINT", "PLATFORM_OPENAI_EMBEDDING_KEY", "PLATFORM_OPENAI_EMBEDDING_MODEL"),
     ],
 )

@@ -67,7 +67,7 @@ class InitializerRegistry(ParamBagRegistry["PyRITInitializer", InitializerMetada
     ``pyrit/setup/initializers`` directory structure via a filesystem scan (so
     ``_discover`` is overridden rather than supplying ``_base_type`` /
     ``_discovery_package``). Initializers are identified by their suffix-stripped
-    snake_case class name (e.g., ``"objective_target"``, ``"simple"``); the
+    snake_case class name (e.g., ``"objective_target"``, ``"technique"``); the
     directory structure is used for organization but not exposed to users.
     """
 

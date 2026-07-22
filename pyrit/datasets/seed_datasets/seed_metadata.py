@@ -68,6 +68,9 @@ RECOMMENDED_TAGS: frozenset[str] = frozenset(
         "prompt_injection",  # direct or indirect prompt-injection payloads
         "ethics",  # moral-judgment / values evaluation (e.g., moral foundations theory)
         "toxicity",  # toxicity / hate-speech / profanity (e.g., RealToxicityPrompts, Perspective API)
+        "country_grounded",  # prompts pinned to a specific country / region (e.g., per-country XL-SafetyBench splits)
+        "cultural",  # culture-aware evaluation (cultural sensitivities, norms, taboos)
+        "objectives",  # loader emits SeedObjective goals rather than polished SeedPrompt attacks
         "system_prompt",  # collections of system prompts used as extraction targets (e.g., garak sysprompt probes)
         "feed",  # live-API feed rather than a static, versioned dataset release (e.g., PromptIntel)
     }
