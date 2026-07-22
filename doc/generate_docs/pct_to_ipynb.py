@@ -7,30 +7,26 @@ import subprocess
 from pathlib import Path
 
 skip_files = {
-    "conf.py",
     # executor / gcg
     "1_gcg_azure_ml.py",  # missing required env variables
     # converters
     "2_audio_converters.py",  # requires Azure Speech API key
-    "6_human_converter.py",  # requires human input
     # datasets
     "2_seed_programming.py",  # requires OpenAI API credentials
     # memory
-    "6_azure_sql_memory.py",  # requires Azure SQL setup, remove following completion of #4001
-    "7_azure_sql_memory_attacks.py",  # remove following completion of #4001
+    "6_azure_sql_memory.py",  # requires Azure SQL setup
+    "7_azure_sql_memory_attacks.py",  # requires Azure SQL setup
     "embeddings.py",  # requires OpenAI embedding API key
-    # scoring
-    "prompt_shield_scorer.py",  # requires Azure Content Safety API key
     # targets
-    "4_non_llm_targets.py",  # requires Azure SQL Storage IO for Azure Storage Account (see #4001)
+    "8_non_llm_targets.py",  # requires Azure Blob Storage data-plane credentials
     "4_openai_video_target.py",  # requires OpenAI video API key
+    "10_1_playwright_target.py",  # Playwright installation takes too long
+    "10_2_playwright_target_copilot.py",  # Playwright installation takes too long, plus requires M365 account
     "10_3_websocket_copilot_target.py",  # requires manual token pasting
-    "playwright_target.py",  # Playwright installation takes too long
-    "playwright_target_copilot.py",  # Playwright installation takes too long, plus requires M365 account
     "app.py",  # Flask app for playwright demo, not a notebook
     # executor
-    "1_xpia_website.py",  # requires publicly accessible Azure Storage Account
-    "2_xpia_ai_recruiter.py",  # requires AI recruiter service running locally
+    # requires a publicly accessible Azure Storage Account and the AI recruiter service running locally
+    "5_workflow.py",
 }
 
 # Get the doc directory (parent of generate_docs where this script is located)
