@@ -441,25 +441,28 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
         combined = joiner.join(conditions)
         return text(f"""ISJSON("{table_name}".{column_name}) = 1 AND ({combined})""").bindparams(**bindparams_dict)
 
-    def _attack_results_recency_order_by(self) -> list[Any]:
+    def _attack_results_recency_expr(self) -> Any:
         """
-        Return the Azure SQL ORDER BY clauses reproducing the History-view recency sort.
+        Return the Azure SQL recency sort expression reproducing the History-view sort.
 
-        Sorts by the ``attack_metadata`` ``updated_at`` key (via ``JSON_VALUE``), falling
-        back to ``created_at`` then an empty string, all descending, with ``timestamp`` and
-        ``id`` descending as deterministic tie-breaks. Uses ORM ``func`` expressions (not raw
-        ``text``) so the clauses adapt to the aliased subquery SQLAlchemy emits when a
-        collection ``joinedload`` is combined with ``limit``/``offset``.
+        Coalesces the ``attack_metadata`` ``updated_at`` key (via ``JSON_VALUE``), falling
+        back to ``created_at`` then an empty string. ``JSON_VALUE`` always returns ``nvarchar``
+        (text) for scalars, so recency is inherently a text sort key here -- there is no
+        numeric-vs-text ordering hazard like SQLite's ``json_extract`` (which is why the SQLite
+        expression needs a ``json_type`` string guard and this one does not). Recency assumes
+        ISO-8601 string timestamps, matching every PyRIT writer and ``_attack_result_recency_key``.
+        Uses an ORM ``func`` expression (not raw ``text``) so it adapts to the aliased subquery
+        SQLAlchemy emits when a collection ``joinedload`` is combined with ``limit``. Backs both
+        the recency ORDER BY and the keyset seek predicate so they stay in lockstep.
 
         Returns:
-            list[Any]: SQLAlchemy ORDER BY clauses (all descending) for the recency sort.
+            Any: A SQLAlchemy expression yielding the coalesced recency string.
         """
-        recency = func.coalesce(
+        return func.coalesce(
             func.JSON_VALUE(AttackResultEntry.attack_metadata, "$.updated_at"),
             func.JSON_VALUE(AttackResultEntry.attack_metadata, "$.created_at"),
             "",
         )
-        return [recency.desc(), AttackResultEntry.timestamp.desc(), AttackResultEntry.id.desc()]
 
     def _get_attack_result_label_condition(self, *, labels: dict[str, str | Sequence[str]]) -> Any:
         """

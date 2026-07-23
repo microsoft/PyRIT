@@ -15,6 +15,8 @@ ARCHITECTURE:
 - AI-generated attacks may have multiple related conversations
 """
 
+import base64
+import binascii
 import hashlib
 import json
 import logging
@@ -56,7 +58,7 @@ from pyrit.backend.models.attacks import (
 from pyrit.backend.models.common import PaginationInfo
 from pyrit.backend.services.converter_service import get_converter_service
 from pyrit.backend.services.target_service import get_target_service
-from pyrit.memory import CentralMemory, data_serializer_factory
+from pyrit.memory import AttackResultsKeysetCursor, CentralMemory, data_serializer_factory
 from pyrit.models import (
     AtomicAttackIdentifier,
     AttackIdentifier,
@@ -144,12 +146,15 @@ class AttackService:
         # consistent.
         effective_converter_types = converter_types if converter_types else None
 
-        # The cursor encodes both the row offset and a fingerprint of the filters it was
-        # generated for. Decoding against the current request's filters makes a cursor minted
-        # for a different filter set fall back to the first page instead of applying a stale
-        # offset that could overshoot into an empty page. The memory layer deduplicates,
-        # applies the turn bounds, orders by recency, and paginates in SQL, so only one page's
-        # worth of rows is materialized instead of the full table.
+        # The cursor encodes both a keyset (seek) anchor — the recency sort key of the last
+        # row on the previous page — and a fingerprint of the filters it was generated for.
+        # Decoding against the current request's filters makes a cursor minted for a different
+        # filter set fall back to the first page instead of seeking within the wrong result
+        # set. The memory layer deduplicates, applies the turn bounds, orders by recency, seeks
+        # past the anchor, and limits in SQL, so only one page's worth of rows is materialized
+        # instead of the full table. A keyset anchor (unlike a numeric offset) does not drift
+        # when rows are inserted or deleted between page loads, so boundaries never skip or
+        # duplicate a result.
         filter_fingerprint = self._attack_filter_fingerprint(
             attack_types=attack_types,
             converter_types=effective_converter_types,
@@ -160,7 +165,7 @@ class AttackService:
             min_turns=min_turns,
             max_turns=max_turns,
         )
-        offset = self._decode_attack_cursor(cursor, filter_fingerprint)
+        after = self._decode_attack_cursor(cursor=cursor, fingerprint=filter_fingerprint)
         results = self._memory.get_attack_results(
             outcome=outcome,
             labels=labels if labels else None,
@@ -171,13 +176,20 @@ class AttackService:
             min_turns=min_turns,
             max_turns=max_turns,
             limit=limit + 1,
-            offset=offset,
+            after=after,
         )
 
         # Over-fetch by one row to detect whether a further page exists.
         has_more = len(results) > limit
         page_results = list(results[:limit])
-        next_cursor = self._encode_attack_cursor(offset + limit, filter_fingerprint) if has_more else None
+        next_cursor = (
+            self._encode_attack_cursor(
+                cursor=AttackResultsKeysetCursor.from_attack_result(page_results[-1]),
+                fingerprint=filter_fingerprint,
+            )
+            if has_more and page_results
+            else None
+        )
 
         # Phase 2: Lightweight DB aggregation for the page only.
         # Collect conversation IDs we care about (main + pruned, not adversarial).
@@ -861,10 +873,10 @@ class AttackService:
         """
         Compute a stable, opaque fingerprint of the filters that define a result set.
 
-        A pagination offset is only meaningful for the exact filter set it was generated
+        A pagination cursor is only meaningful for the exact filter set it was generated
         against. Embedding this fingerprint in the cursor lets ``_decode_attack_cursor``
         detect a cursor minted for a different filter set and fall back to the first page,
-        instead of blindly applying a stale offset that could overshoot into an empty page.
+        instead of seeking with a keyset anchor that belongs to a different result set.
         Sequence and label filters are order-normalized so a semantically identical filter
         set always fingerprints the same regardless of argument order.
 
@@ -883,8 +895,18 @@ class AttackService:
             normalized: dict[str, str | list[str]] = {}
             for key in sorted(raw):
                 value = raw[key]
-                normalized[key] = value if isinstance(value, str) else sorted(str(v) for v in value)
-            return normalized
+                if isinstance(value, str):
+                    normalized[key] = value
+                    continue
+                # Drop empty sequences: get_attack_results treats an empty-sequence label as
+                # "no filter" (see effective_labels), so including it here would fingerprint
+                # a request differently from the equivalent no-op filter and spuriously reset
+                # pagination to the first page.
+                candidates = sorted(str(v) for v in value)
+                if not candidates:
+                    continue
+                normalized[key] = candidates
+            return normalized or None
 
         payload = {
             "attack_types": _norm_seq(attack_types),
@@ -900,44 +922,71 @@ class AttackService:
         return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
 
     @staticmethod
-    def _encode_attack_cursor(offset: int, fingerprint: str) -> str:
+    def _encode_attack_cursor(*, cursor: AttackResultsKeysetCursor, fingerprint: str) -> str:
         """
-        Encode a row offset and its filter fingerprint into an opaque pagination cursor.
+        Encode a keyset anchor and its filter fingerprint into an opaque pagination cursor.
 
-        The fingerprint is a hex digest (no ``.``) and the offset is a non-negative integer,
-        so ``.`` is an unambiguous separator for ``_decode_attack_cursor``.
+        The anchor's recency string and timestamp can contain ``.``/``:``/``-`` (ISO
+        timestamps), so the payload is JSON-serialized and base64url-encoded rather than
+        joined with a delimiter, keeping the cursor an unambiguous opaque token for
+        ``_decode_attack_cursor``.
 
         Returns:
-            An opaque ``"<fingerprint>.<offset>"`` cursor string.
+            An opaque base64url cursor string encoding ``{fingerprint, recency, timestamp,
+            attack_result_id}``.
         """
-        return f"{fingerprint}.{max(0, offset)}"
+        payload = {
+            "f": fingerprint,
+            "r": cursor.recency,
+            "t": cursor.timestamp.isoformat(),
+            "i": cursor.attack_result_id,
+        }
+        raw = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+        return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
 
     @staticmethod
-    def _decode_attack_cursor(cursor: str | None, fingerprint: str) -> int:
+    def _decode_attack_cursor(*, cursor: str | None, fingerprint: str) -> AttackResultsKeysetCursor | None:
         """
-        Decode the opaque list-attacks cursor into a non-negative row offset.
+        Decode the opaque list-attacks cursor into a keyset (seek) anchor.
 
-        The cursor encodes the next page's offset together with a fingerprint of the filter
-        set it was generated for (see ``_attack_filter_fingerprint``). A cursor is honored
-        only when its fingerprint matches the current request's filters; malformed, legacy
-        (attack-result-id), or filter-mismatched cursors fall back to the first page so a
-        stale cursor degrades gracefully (returning page 1) instead of raising or overshooting
-        into an empty page. The result is clamped to the signed 64-bit range accepted by the
-        database ``OFFSET`` clause.
+        The cursor encodes the previous page's last-row recency anchor together with a
+        fingerprint of the filter set it was generated for (see ``_attack_filter_fingerprint``).
+        A cursor is honored only when its fingerprint matches the current request's filters;
+        malformed, legacy (offset/attack-result-id), or filter-mismatched cursors fall back to
+        the first page (``None``) so a stale cursor degrades gracefully instead of raising or
+        seeking within the wrong result set.
 
         Returns:
-            A non-negative offset in ``[0, 2**63 - 1]``.
+            The decoded ``AttackResultsKeysetCursor``, or ``None`` to start at the first page.
         """
         if not cursor:
-            return 0
-        prefix, separator, raw_offset = cursor.rpartition(".")
-        if not separator or prefix != fingerprint:
-            return 0
+            return None
         try:
-            offset = int(raw_offset)
-        except (TypeError, ValueError):
-            return 0
-        return max(0, min(offset, 2**63 - 1))
+            padded = cursor + "=" * (-len(cursor) % 4)
+            payload = json.loads(base64.urlsafe_b64decode(padded.encode("ascii")))
+        except (binascii.Error, ValueError, TypeError):
+            return None
+        if not isinstance(payload, dict) or payload.get("f") != fingerprint:
+            return None
+        recency = payload.get("r")
+        raw_timestamp = payload.get("t")
+        attack_result_id = payload.get("i")
+        if not isinstance(recency, str) or not isinstance(raw_timestamp, str) or not isinstance(attack_result_id, str):
+            return None
+        try:
+            timestamp = datetime.fromisoformat(raw_timestamp)
+            uuid.UUID(attack_result_id)
+        except ValueError:
+            return None
+        if timestamp.tzinfo is None:
+            # Service-minted cursors always carry an aware (UTC) timestamp (AttackResult.timestamp
+            # is timezone-aware). A naive timestamp means a crafted or corrupted cursor whose anchor
+            # would bind inconsistently against the aware timestamp column, so restart at page one.
+            return None
+        # Canonicalize to UTC so the tie-break comparison matches the UTC-normalized timestamp
+        # column regardless of the offset a crafted cursor encodes (service cursors are already UTC).
+        timestamp = timestamp.astimezone(timezone.utc)
+        return AttackResultsKeysetCursor(recency=recency, timestamp=timestamp, attack_result_id=attack_result_id)
 
     # ========================================================================
     # Private Helper Methods - Duplicate / Branch

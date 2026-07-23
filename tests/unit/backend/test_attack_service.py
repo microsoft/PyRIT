@@ -7,6 +7,9 @@ Tests for attack service.
 The attack service uses PyRIT memory with AttackResult as the source of truth.
 """
 
+import base64
+import json
+import uuid
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -26,6 +29,7 @@ from pyrit.backend.services.attack_service import (
     AttackService,
     get_attack_service,
 )
+from pyrit.memory import AttackResultsKeysetCursor
 from pyrit.models import (
     AtomicAttackIdentifier,
     AttackOutcome,
@@ -118,17 +122,23 @@ def _make_matching_target_mock() -> MagicMock:
     return mock_target
 
 
-def _paginating_side_effect(backing):
-    """Return a get_attack_results side_effect that honors limit/offset over ``backing``.
+def _keyset_side_effect(backing):
+    """Return a get_attack_results side_effect simulating a recency-ordered keyset seek.
 
-    Simulates the memory layer, which now owns dedup / turn-filter / recency-sort /
-    pagination, so the service tests exercise only the cursor<->offset and over-fetch logic.
+    ``backing`` must already be in the order memory would return (recency DESC). When an
+    ``after`` anchor is supplied, every row up to and including the anchor id is skipped,
+    mirroring a seek strictly past the previous page's last row. The memory layer owns the
+    real dedup / turn-filter / recency-sort / seek, so the service tests exercise only the
+    cursor<->anchor round-trip and the over-fetch (limit + 1) logic.
     """
 
     def _side_effect(**kwargs):
-        offset = kwargs.get("offset") or 0
+        after = kwargs.get("after")
         limit = kwargs.get("limit")
-        data = list(backing)[offset:]
+        data = list(backing)
+        if after is not None:
+            ids = [r.attack_result_id for r in data]
+            data = data[ids.index(after.attack_result_id) + 1 :] if after.attack_result_id in ids else []
         if limit is not None:
             data = data[:limit]
         return data
@@ -136,13 +146,22 @@ def _paginating_side_effect(backing):
     return _side_effect
 
 
-def _default_filter_cursor(offset: int) -> str:
-    """Build a valid list-attacks cursor for the default (no-filter) request.
+def _paginated_backing(count: int) -> list[AttackResult]:
+    """Build ``count`` attack results with real UUID ids, ordered as memory would return them."""
+    return [make_attack_result(conversation_id=f"attack-{i}", attack_result_id=str(uuid.uuid4())) for i in range(count)]
+
+
+def _cursor_for(result: AttackResult, *, fingerprint: str | None = None) -> str:
+    """Encode a keyset cursor anchored at ``result`` for the given (default) filter set.
 
     Mirrors what ``list_attacks_async`` mints internally, so tests can feed a cursor back
     in without depending on the fingerprint's exact value.
     """
-    return AttackService._encode_attack_cursor(offset, AttackService._attack_filter_fingerprint())
+    effective_fingerprint = fingerprint if fingerprint is not None else AttackService._attack_filter_fingerprint()
+    return AttackService._encode_attack_cursor(
+        cursor=AttackResultsKeysetCursor.from_attack_result(result),
+        fingerprint=effective_fingerprint,
+    )
 
 
 def _make_round_robin_identifier(
@@ -1404,78 +1423,112 @@ class TestAddMessage:
 class TestPagination:
     """Tests for pagination in list_attacks."""
 
-    async def test_list_attacks_first_page_forwards_limit_plus_one_and_zero_offset(
+    async def test_list_attacks_first_page_forwards_limit_plus_one_and_no_after(
         self, attack_service, mock_memory
     ) -> None:
-        """The first page over-fetches one row (limit + 1) and starts at offset 0."""
+        """The first page over-fetches one row (limit + 1) and passes no keyset anchor."""
         mock_memory.get_attack_results.return_value = []
 
         await attack_service.list_attacks_async(limit=20)
 
         call_kwargs = mock_memory.get_attack_results.call_args[1]
         assert call_kwargs["limit"] == 21
-        assert call_kwargs["offset"] == 0
+        assert call_kwargs["after"] is None
 
-    async def test_list_attacks_decodes_cursor_to_offset(self, attack_service, mock_memory) -> None:
-        """A cursor is decoded into the memory query offset when its filter fingerprint matches."""
+    async def test_list_attacks_decodes_cursor_to_after(self, attack_service, mock_memory) -> None:
+        """A cursor is decoded into the memory keyset anchor when its filter fingerprint matches."""
         mock_memory.get_attack_results.return_value = []
+        anchor_row = make_attack_result(conversation_id="attack-anchor", attack_result_id=str(uuid.uuid4()))
 
-        await attack_service.list_attacks_async(limit=20, cursor=_default_filter_cursor(40))
+        await attack_service.list_attacks_async(limit=20, cursor=_cursor_for(anchor_row))
 
         call_kwargs = mock_memory.get_attack_results.call_args[1]
-        assert call_kwargs["offset"] == 40
+        assert call_kwargs["after"].attack_result_id == anchor_row.attack_result_id
         assert call_kwargs["limit"] == 21
 
     async def test_list_attacks_invalid_cursor_defaults_to_first_page(self, attack_service, mock_memory) -> None:
-        """A malformed or legacy (attack-result-id) cursor degrades to offset 0."""
+        """A malformed or legacy (offset/attack-result-id) cursor degrades to the first page."""
         mock_memory.get_attack_results.return_value = []
 
         await attack_service.list_attacks_async(limit=20, cursor="ar-attack-1")
 
-        assert mock_memory.get_attack_results.call_args[1]["offset"] == 0
+        assert mock_memory.get_attack_results.call_args[1]["after"] is None
 
-    def test_decode_attack_cursor_clamps_edge_values(self) -> None:
-        """None/empty/malformed/mismatched decode to 0; oversized clamps to the 64-bit max."""
+    def test_decode_attack_cursor_rejects_invalid_and_round_trips_valid(self) -> None:
+        """Bad/legacy/mismatched/naive cursors decode to None; valid round-trips; non-UTC canonicalizes to UTC."""
         fingerprint = AttackService._attack_filter_fingerprint()
-        decode = AttackService._decode_attack_cursor
-        assert decode(None, fingerprint) == 0
-        assert decode("", fingerprint) == 0
-        assert decode("not-a-number", fingerprint) == 0
-        assert decode("ar-attack-1", fingerprint) == 0
-        assert decode("deadbeef.40", fingerprint) == 0
-        assert decode(f"{fingerprint}.-5", fingerprint) == 0
-        assert decode(f"{fingerprint}.40", fingerprint) == 40
-        assert decode(f"{fingerprint}.{2**63}", fingerprint) == 2**63 - 1
-        assert decode(f"{fingerprint}.{'9' * 40}", fingerprint) == 2**63 - 1
+
+        def decode(cursor, fp=fingerprint):
+            return AttackService._decode_attack_cursor(cursor=cursor, fingerprint=fp)
+
+        assert decode(None) is None
+        assert decode("") is None
+        assert decode("not-base64!!!") is None
+        assert decode("ar-attack-1") is None  # legacy attack-result-id cursor
+        assert decode("deadbeef.40") is None  # legacy offset cursor
+
+        anchor = make_attack_result(conversation_id="attack-1", attack_result_id=str(uuid.uuid4()))
+        valid = _cursor_for(anchor, fingerprint=fingerprint)
+        # A cursor minted for a different filter set is rejected.
+        assert decode(valid, "0000000000000000") is None
+        decoded = decode(valid)
+        assert decoded is not None
+        assert decoded.attack_result_id == anchor.attack_result_id
+        assert decoded.recency == anchor.metadata.get("updated_at")
+
+        # A crafted cursor carrying a naive (tz-less) timestamp is rejected: service-minted anchors
+        # are always timezone-aware, and a naive anchor would bind inconsistently in the seek.
+        naive_payload = {
+            "f": fingerprint,
+            "r": anchor.metadata.get("updated_at"),
+            "t": "2026-01-01T00:00:00",
+            "i": str(uuid.uuid4()),
+        }
+        naive_cursor = base64.urlsafe_b64encode(json.dumps(naive_payload).encode("utf-8")).decode("ascii").rstrip("=")
+        assert decode(naive_cursor) is None
+
+        # A crafted cursor carrying a non-UTC aware offset is canonicalized to UTC so its seek
+        # tie-break matches the UTC-normalized timestamp column (service cursors are already UTC).
+        offset_payload = {
+            "f": fingerprint,
+            "r": anchor.metadata.get("updated_at"),
+            "t": "2026-01-01T00:00:00+05:00",
+            "i": str(uuid.uuid4()),
+        }
+        offset_cursor = base64.urlsafe_b64encode(json.dumps(offset_payload).encode("utf-8")).decode("ascii").rstrip("=")
+        offset_decoded = decode(offset_cursor)
+        assert offset_decoded is not None
+        assert offset_decoded.timestamp == datetime(2025, 12, 31, 19, 0, 0, tzinfo=timezone.utc)
+        assert offset_decoded.timestamp.tzinfo == timezone.utc
 
     async def test_list_attacks_has_more_and_next_cursor(self, attack_service, mock_memory) -> None:
-        """When an extra row is returned, has_more is set and next_cursor advances by limit."""
-        backing = [make_attack_result(conversation_id=f"attack-{i}") for i in range(5)]
-        mock_memory.get_attack_results.side_effect = _paginating_side_effect(backing)
+        """When an extra row is returned, has_more is set and next_cursor anchors on the last row."""
+        backing = _paginated_backing(5)
+        mock_memory.get_attack_results.side_effect = _keyset_side_effect(backing)
 
         result = await attack_service.list_attacks_async(limit=2)
 
         assert len(result.items) == 2
         assert result.pagination.has_more is True
-        assert result.pagination.next_cursor == _default_filter_cursor(2)
+        assert result.pagination.next_cursor == _cursor_for(backing[1])
 
     async def test_list_attacks_second_page_via_cursor_is_disjoint(self, attack_service, mock_memory) -> None:
         """Following next_cursor returns the next disjoint page."""
-        backing = [make_attack_result(conversation_id=f"attack-{i}") for i in range(5)]
-        mock_memory.get_attack_results.side_effect = _paginating_side_effect(backing)
+        backing = _paginated_backing(5)
+        mock_memory.get_attack_results.side_effect = _keyset_side_effect(backing)
 
-        result = await attack_service.list_attacks_async(limit=2, cursor=_default_filter_cursor(2))
+        result = await attack_service.list_attacks_async(limit=2, cursor=_cursor_for(backing[1]))
 
         assert [item.conversation_id for item in result.items] == ["attack-2", "attack-3"]
         assert result.pagination.has_more is True
-        assert result.pagination.next_cursor == _default_filter_cursor(4)
+        assert result.pagination.next_cursor == _cursor_for(backing[3])
 
     async def test_list_attacks_last_page_has_no_next_cursor(self, attack_service, mock_memory) -> None:
         """The final page reports has_more False and a null next_cursor."""
-        backing = [make_attack_result(conversation_id=f"attack-{i}") for i in range(5)]
-        mock_memory.get_attack_results.side_effect = _paginating_side_effect(backing)
+        backing = _paginated_backing(5)
+        mock_memory.get_attack_results.side_effect = _keyset_side_effect(backing)
 
-        result = await attack_service.list_attacks_async(limit=2, cursor=_default_filter_cursor(4))
+        result = await attack_service.list_attacks_async(limit=2, cursor=_cursor_for(backing[3]))
 
         assert [item.conversation_id for item in result.items] == ["attack-4"]
         assert result.pagination.has_more is False
@@ -1484,7 +1537,7 @@ class TestPagination:
     async def test_list_attacks_prev_cursor_echoes_incoming_cursor(self, attack_service, mock_memory) -> None:
         """prev_cursor echoes the incoming cursor unchanged."""
         mock_memory.get_attack_results.return_value = []
-        cursor = _default_filter_cursor(10)
+        cursor = _cursor_for(make_attack_result(conversation_id="attack-1", attack_result_id=str(uuid.uuid4())))
 
         result = await attack_service.list_attacks_async(limit=2, cursor=cursor)
 
@@ -1495,31 +1548,31 @@ class TestPagination:
     ) -> None:
         """A cursor minted for one filter set falls back to page 1 when the filters change.
 
-        This is the core cursor-fingerprint guarantee: without the filter fingerprint, replaying a deep
-        offset against a newly-restricted (smaller) result set overshoots into an empty page
-        and the UI shows a false "No attacks found". With it, the stale cursor degrades to the
-        first page of the new filter set, matching the pre-optimization id-cursor behavior.
+        This is the core cursor-fingerprint guarantee: without the filter fingerprint, replaying a
+        keyset anchor against a different result set would seek within the wrong data set. With it,
+        the stale cursor degrades to the first page of the new filter set, matching the
+        pre-optimization id-cursor behavior.
         """
-        backing = [make_attack_result(conversation_id=f"attack-{i}") for i in range(5)]
-        mock_memory.get_attack_results.side_effect = _paginating_side_effect(backing)
+        backing = _paginated_backing(5)
+        mock_memory.get_attack_results.side_effect = _keyset_side_effect(backing)
 
-        # Page 1 with no filter yields a deep next_cursor.
+        # Page 1 with no filter yields a next_cursor anchored on the last row.
         first = await attack_service.list_attacks_async(limit=2)
         stale_cursor = first.pagination.next_cursor
         assert stale_cursor is not None
 
-        # Replaying it with a different filter set must reset the offset to 0, not overshoot.
+        # Replaying it with a different filter set must reset to the first page, not seek.
         result = await attack_service.list_attacks_async(limit=2, cursor=stale_cursor, outcome="success")
 
-        assert mock_memory.get_attack_results.call_args[1]["offset"] == 0
+        assert mock_memory.get_attack_results.call_args[1]["after"] is None
         assert [item.conversation_id for item in result.items] == ["attack-0", "attack-1"]
 
-    async def test_list_attacks_cursor_with_matching_filters_preserves_offset(
+    async def test_list_attacks_cursor_with_matching_filters_preserves_anchor(
         self, attack_service, mock_memory
     ) -> None:
-        """A cursor replayed with the same filter set applies its encoded offset."""
-        backing = [make_attack_result(conversation_id=f"attack-{i}") for i in range(5)]
-        mock_memory.get_attack_results.side_effect = _paginating_side_effect(backing)
+        """A cursor replayed with the same filter set applies its encoded keyset anchor."""
+        backing = _paginated_backing(5)
+        mock_memory.get_attack_results.side_effect = _keyset_side_effect(backing)
 
         first = await attack_service.list_attacks_async(limit=2, outcome="success")
         next_cursor = first.pagination.next_cursor
@@ -1527,7 +1580,7 @@ class TestPagination:
 
         result = await attack_service.list_attacks_async(limit=2, cursor=next_cursor, outcome="success")
 
-        assert mock_memory.get_attack_results.call_args[1]["offset"] == 2
+        assert mock_memory.get_attack_results.call_args[1]["after"].attack_result_id == backing[1].attack_result_id
         assert [item.conversation_id for item in result.items] == ["attack-2", "attack-3"]
 
     def test_attack_filter_fingerprint_is_order_independent_and_filter_sensitive(self) -> None:
@@ -1538,11 +1591,17 @@ class TestPagination:
         assert fingerprint() != fingerprint(outcome="success")
         assert fingerprint(outcome="success") != fingerprint(outcome="failure")
         assert fingerprint(min_turns=1) != fingerprint(max_turns=1)
+        # An empty-sequence label is a no-op filter in get_attack_results (effective_labels),
+        # so it must fingerprint identically to no label filter — otherwise a cursor minted
+        # with it would spuriously reset pagination to the first page.
+        assert fingerprint(labels={"op": []}) == fingerprint()
+        assert fingerprint(labels={"op": []}) == fingerprint(labels=None)
+        assert fingerprint(labels={"op": [], "team": "red"}) == fingerprint(labels={"team": "red"})
 
     async def test_list_attacks_uses_conversation_stats_not_pieces(self, attack_service, mock_memory) -> None:
         """Test that list_attacks uses get_conversation_stats instead of loading full pieces."""
-        backing = [make_attack_result(conversation_id=f"attack-{i}") for i in range(5)]
-        mock_memory.get_attack_results.side_effect = _paginating_side_effect(backing)
+        backing = _paginated_backing(5)
+        mock_memory.get_attack_results.side_effect = _keyset_side_effect(backing)
 
         await attack_service.list_attacks_async(limit=2)
 
