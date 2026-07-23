@@ -1501,6 +1501,19 @@ class TestPagination:
         assert offset_decoded.timestamp == datetime(2025, 12, 31, 19, 0, 0, tzinfo=timezone.utc)
         assert offset_decoded.timestamp.tzinfo == timezone.utc
 
+        # A crafted cursor whose extreme UTC offset would push the timestamp past datetime's
+        # representable range when normalized to UTC decodes to None instead of raising.
+        overflow_payload = {
+            "f": fingerprint,
+            "r": anchor.metadata.get("updated_at"),
+            "t": "0001-01-01T00:00:00+23:59",
+            "i": str(uuid.uuid4()),
+        }
+        overflow_cursor = (
+            base64.urlsafe_b64encode(json.dumps(overflow_payload).encode("utf-8")).decode("ascii").rstrip("=")
+        )
+        assert decode(overflow_cursor) is None
+
     async def test_list_attacks_has_more_and_next_cursor(self, attack_service, mock_memory) -> None:
         """When an extra row is returned, has_more is set and next_cursor anchors on the last row."""
         backing = _paginated_backing(5)

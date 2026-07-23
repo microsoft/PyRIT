@@ -985,7 +985,12 @@ class AttackService:
             return None
         # Canonicalize to UTC so the tie-break comparison matches the UTC-normalized timestamp
         # column regardless of the offset a crafted cursor encodes (service cursors are already UTC).
-        timestamp = timestamp.astimezone(timezone.utc)
+        try:
+            timestamp = timestamp.astimezone(timezone.utc)
+        except (OverflowError, OSError):
+            # A crafted cursor near datetime's min/max with a large UTC offset overflows the
+            # representable range when shifted to UTC; treat it as malformed and restart at page one.
+            return None
         return AttackResultsKeysetCursor(recency=recency, timestamp=timestamp, attack_result_id=attack_result_id)
 
     # ========================================================================
