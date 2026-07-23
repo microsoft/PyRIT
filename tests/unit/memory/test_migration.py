@@ -986,12 +986,13 @@ def test_conversations_backfill_populates_targets_and_handles_conflicts(caplog):
             engine.dispose()
 
 
-def test_conversations_backfill_batches_rows_and_preserves_existing():
+def test_conversations_backfill_batches_rows_and_preserves_existing(caplog):
     """The backfill bounds each statement and does not overwrite existing rows."""
     from unittest.mock import patch
 
     from pyrit.memory.alembic.versions import b2f4c6a8d1e3_add_conversations_table as mig
 
+    caplog.set_level("INFO")
     with tempfile.TemporaryDirectory() as temp_dir:
         engine = create_engine(f"sqlite:///{os.path.join(temp_dir, 'conversation-batches.db')}")
         insert_metrics = []
@@ -1069,6 +1070,7 @@ def test_conversations_backfill_batches_rows_and_preserves_existing():
             assert existing == (_TARGET_B, "preserved")
             assert row_count == mig._CONVERSATION_INSERT_BATCH_SIZE * 2 + 2
             assert null_versions == mig._CONVERSATION_INSERT_BATCH_SIZE * 2 + 1
+            assert any("completed insert batch 3/3" in record.message for record in caplog.records)
         finally:
             if event.contains(engine, "before_cursor_execute", record_conversation_insert):
                 event.remove(engine, "before_cursor_execute", record_conversation_insert)
@@ -1275,8 +1277,9 @@ def test_identifier_migrations_are_nullable_and_best_effort_with_malformed_json(
             engine.dispose()
 
 
-def test_target_identifier_backfill_batches_conversation_links():
+def test_target_identifier_backfill_batches_conversation_links(caplog):
     """Target links use bounded statements even when every identifier is unique."""
+    caplog.set_level("INFO")
     with tempfile.TemporaryDirectory() as temp_dir:
         engine = create_engine(f"sqlite:///{os.path.join(temp_dir, 'identifier-link-batches.db')}")
         update_metrics = []
@@ -1330,6 +1333,9 @@ def test_target_identifier_backfill_batches_conversation_links():
             assert linked_count == 602
             assert identifier_count == 601
             assert "_PyritConversationTargetLinks" not in temp_tables
+            assert any("processed 601 unique target graph(s)" in record.message for record in caplog.records)
+            assert any("completed staging batch 2/2" in record.message for record in caplog.records)
+            assert any("staged target-link update completed" in record.message for record in caplog.records)
         finally:
             if event.contains(engine, "before_cursor_execute", record_target_backfill):
                 event.remove(engine, "before_cursor_execute", record_target_backfill)

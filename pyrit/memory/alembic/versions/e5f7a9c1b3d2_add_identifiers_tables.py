@@ -42,6 +42,8 @@ depends_on: str | Sequence[str] | None = None
 logger = logging.getLogger(__name__)
 
 _TARGET_LINK_INSERT_BATCH_SIZE = 400
+_TARGET_GRAPH_PROGRESS_INTERVAL = 100
+_TARGET_LINK_PROGRESS_INTERVAL = 25
 _TARGET_LINK_STAGING_TABLE = "_PyritConversationTargetLinks"
 _TARGET_LINK_SQL_SERVER_STAGING_TABLE = "#PyritConversationTargetLinks"
 
@@ -799,7 +801,15 @@ def _backfill_target_identifiers() -> None:
 
     links: list[tuple[str, str]] = []
     inserter = IdentifierGraphInserter(bind=bind)
-    for identifier, conversation_ids in grouped_targets.values():
+    target_group_count = len(grouped_targets)
+    if target_group_count:
+        logger.info(
+            f"TargetIdentifiers backfill: materializing {target_group_count} unique target graph(s) "
+            f"for {len(rows)} conversation(s)."
+        )
+    for group_number, (identifier, conversation_ids) in enumerate(grouped_targets.values(), start=1):
+        if group_number == 1 or group_number % _TARGET_GRAPH_PROGRESS_INTERVAL == 0:
+            logger.info(f"TargetIdentifiers backfill: processing target graph {group_number}/{target_group_count}.")
         try:
             with bind.begin_nested():
                 identifier_hash = inserter.insert_target(identifier)
@@ -816,6 +826,9 @@ def _backfill_target_identifiers() -> None:
             links.extend((conversation_id, identifier_hash) for conversation_id in conversation_ids)
         else:
             skipped += len(conversation_ids)
+
+    if target_group_count:
+        logger.info(f"TargetIdentifiers backfill: processed {target_group_count} unique target graph(s).")
 
     linked, update_skipped = _update_conversation_target_links(bind=bind, links=links)
     skipped += update_skipped
@@ -838,8 +851,10 @@ def _update_conversation_target_links(*, bind: Any, links: Sequence[tuple[str, s
     try:
         staged_links, skipped = _stage_conversation_target_links(bind=bind, table_name=table_name, links=links)
         try:
+            logger.info(f"TargetIdentifiers backfill: applying {len(staged_links)} staged target link(s).")
             with bind.begin_nested():
                 _update_conversation_target_links_from_staging(bind=bind, table_name=table_name)
+            logger.info("TargetIdentifiers backfill: staged target-link update completed.")
             return len(staged_links), skipped
         except Exception:
             logger.warning(
@@ -892,7 +907,9 @@ def _stage_conversation_target_links(
     """
     staged_links: list[tuple[str, str]] = []
     skipped = 0
-    for start in range(0, len(links), _TARGET_LINK_INSERT_BATCH_SIZE):
+    batch_count = (len(links) + _TARGET_LINK_INSERT_BATCH_SIZE - 1) // _TARGET_LINK_INSERT_BATCH_SIZE
+    logger.info(f"TargetIdentifiers backfill: staging {len(links)} target link(s) in {batch_count} batch(es).")
+    for batch_number, start in enumerate(range(0, len(links), _TARGET_LINK_INSERT_BATCH_SIZE), start=1):
         batch = links[start : start + _TARGET_LINK_INSERT_BATCH_SIZE]
         try:
             with bind.begin_nested():
@@ -910,6 +927,8 @@ def _stage_conversation_target_links(
             )
             staged_links.extend(batch_staged)
             skipped += batch_skipped
+        if batch_number % _TARGET_LINK_PROGRESS_INTERVAL == 0 or batch_number == batch_count:
+            logger.info(f"TargetIdentifiers backfill: completed staging batch {batch_number}/{batch_count}.")
     return staged_links, skipped
 
 

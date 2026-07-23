@@ -39,6 +39,7 @@ depends_on: str | Sequence[str] | None = None
 logger = logging.getLogger(__name__)
 
 _CONVERSATION_INSERT_BATCH_SIZE = 400
+_CONVERSATION_INSERT_PROGRESS_INTERVAL = 25
 _CONVERSATION_INSERT_PREFIX = 'INSERT INTO "Conversations" (conversation_id, target_identifier, pyrit_version) VALUES '
 
 
@@ -141,8 +142,15 @@ def _backfill_conversations() -> None:
 
 def _insert_conversation_rows(*, bind: Connection, rows: Sequence[tuple[str, str | None]]) -> None:
     """Insert conversation rows in bounded multi-value statements."""
-    for start in range(0, len(rows), _CONVERSATION_INSERT_BATCH_SIZE):
+    batch_count = (len(rows) + _CONVERSATION_INSERT_BATCH_SIZE - 1) // _CONVERSATION_INSERT_BATCH_SIZE
+    if not batch_count:
+        return
+
+    logger.info(f"Conversations backfill: inserting {len(rows)} row(s) in {batch_count} batch(es).")
+    for batch_number, start in enumerate(range(0, len(rows), _CONVERSATION_INSERT_BATCH_SIZE), start=1):
         _insert_conversation_batch(bind=bind, rows=rows[start : start + _CONVERSATION_INSERT_BATCH_SIZE])
+        if batch_number % _CONVERSATION_INSERT_PROGRESS_INTERVAL == 0 or batch_number == batch_count:
+            logger.info(f"Conversations backfill: completed insert batch {batch_number}/{batch_count}.")
 
 
 def _insert_conversation_batch(*, bind: Connection, rows: Sequence[tuple[str, str | None]]) -> None:
