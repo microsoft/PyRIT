@@ -718,31 +718,14 @@ async def test_video_multiple_prompts_create_separate_files(sqlite_instance: SQL
     )
 
 
-@pytest.mark.parametrize(
-    ("endpoint", "api_key_env_var", "model_name"),
-    [
-        pytest.param(
-            "OPENAI_VIDEO2_ENDPOINT",
-            "OPENAI_VIDEO2_KEY",
-            "OPENAI_VIDEO2_MODEL",
-            marks=pytest.mark.run_only_if_all_tests,
-        ),
-        ("OPENAI_VIDEO_ENDPOINT", None, "OPENAI_VIDEO_MODEL"),
-    ],
-)
-async def test_video_remix_chain(
-    sqlite_instance: SQLiteMemory,
-    endpoint: str,
-    api_key_env_var: str | None,
-    model_name: str,
-) -> None:
+async def test_video_remix_chain(sqlite_instance: SQLiteMemory) -> None:
     """Test text-to-video followed by remix using the returned video_id."""
-    endpoint_value = _get_required_env_var(endpoint)
-    model_name_value = _get_required_env_var(model_name)
+    endpoint_value = _get_required_env_var("OPENAI_VIDEO_ENDPOINT")
+    model_name_value = _get_required_env_var("OPENAI_VIDEO_MODEL")
 
     target = OpenAIVideoTarget(
         endpoint=endpoint_value,
-        api_key=_get_openai_auth(endpoint=endpoint_value, api_key_env_var=api_key_env_var),
+        api_key=_get_openai_auth(endpoint=endpoint_value, api_key_env_var=None),
         model_name=model_name_value,
         resolution_dimensions="1280x720",
         n_seconds=4,
@@ -782,13 +765,12 @@ async def test_video_remix_chain(
 @pytest.mark.run_only_if_all_tests
 async def test_video_image_to_video(sqlite_instance: SQLiteMemory) -> None:
     """Test image-to-video mode using an image as the first frame."""
-    endpoint_value = _get_required_env_var("OPENAI_VIDEO2_ENDPOINT")
-    api_key_value = _get_required_env_var("OPENAI_VIDEO2_KEY")
-    model_name_value = _get_required_env_var("OPENAI_VIDEO2_MODEL")
+    endpoint_value = _get_required_env_var("OPENAI_VIDEO_ENDPOINT")
+    model_name_value = _get_required_env_var("OPENAI_VIDEO_MODEL")
 
     target = OpenAIVideoTarget(
         endpoint=endpoint_value,
-        api_key=api_key_value,
+        api_key=_get_openai_auth(endpoint=endpoint_value, api_key_env_var=None),
         model_name=model_name_value,
         resolution_dimensions="1280x720",
         n_seconds=4,
