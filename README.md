@@ -1,4 +1,4 @@
-<p align="center"><img src="https://raw.githubusercontent.com/microsoft/PyRIT/releases/v1.0.0/doc/roakey.png" width="150"></p>
+<p align="center"><img src="./doc/roakey.png" width="150"></p>
 
 # Python Risk Identification Tool for generative AI (PyRIT)
 
@@ -20,4 +20,4 @@ not cause confusion or imply Microsoft sponsorship.
 Any use of third-party trademarks or logos are subject to those third-party's
 policies.
 
-If you use PyRIT in your research, please cite the tool itself following the [`CITATION.cff`](https://raw.githubusercontent.com/microsoft/PyRIT/releases/v1.0.0/CITATION.cff) file in the root of this repository.
+If you use PyRIT in your research, please cite the tool itself following the [`CITATION.cff`](./CITATION.cff) file in the root of this repository.
