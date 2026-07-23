@@ -51,6 +51,7 @@ from pyrit.converter.image_prompt_style_converter import ImagePromptStyleConvert
 from pyrit.converter.image_resizing_converter import ImageResizingConverter
 from pyrit.converter.image_rotation_converter import ImageRotationConverter
 from pyrit.converter.insert_punctuation_converter import InsertPunctuationConverter
+from pyrit.converter.ipa_converter import IPAConverter
 from pyrit.converter.json_string_converter import JsonStringConverter
 from pyrit.converter.leetspeak_converter import LeetspeakConverter
 from pyrit.converter.llm_generic_text_converter import LLMGenericTextConverter
@@ -190,6 +191,7 @@ __all__ = [
     "ImageRotationConverter",
     "IndexSelectionStrategy",
     "InsertPunctuationConverter",
+    "IPAConverter",
     "JsonStringConverter",
     "KeywordSelectionStrategy",
     "LeetspeakConverter",
