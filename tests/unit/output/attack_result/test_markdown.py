@@ -374,3 +374,89 @@ async def test_write_async_adversarial_with_no_messages(printer, attack_result, 
 async def test_write_async_include_adversarial_with_no_refs(printer, attack_result, capsys):
     await printer.write_async(attack_result, include_adversarial_conversation=True)
     assert "## Adversarial Conversation" not in capsys.readouterr().out
+
+
+async def test_write_async_main_reasoning_uses_escaped_tags(
+    printer,
+    attack_result,
+    sqlite_instance,
+    reasoning_value,
+):
+    piece = MessagePiece(
+        role="assistant",
+        original_value=reasoning_value,
+        converted_value=reasoning_value,
+        original_value_data_type="reasoning",
+        converted_value_data_type="reasoning",
+    )
+    _seed_messages(sqlite_instance, "conv-main", [piece])
+
+    rendered = await printer.render_async(attack_result, include_reasoning_trace=True)
+
+    assert r"\<reasoning-summary\>" in rendered
+    assert r"\</reasoning-summary\>" in rendered
+    assert "<reasoning-summary>" not in rendered
+
+
+async def test_write_async_pruned_reasoning_uses_escaped_tags(
+    printer,
+    attack_result,
+    sqlite_instance,
+    reasoning_value,
+):
+    piece = MessagePiece(
+        role="assistant",
+        original_value=reasoning_value,
+        converted_value=reasoning_value,
+        original_value_data_type="reasoning",
+        converted_value_data_type="reasoning",
+        conversation_id="pruned-reasoning",
+    )
+    sqlite_instance.add_message_to_memory(request=Message(message_pieces=[piece]))
+    attack_result.related_conversations.add(
+        ConversationReference(
+            conversation_id="pruned-reasoning",
+            conversation_type=ConversationType.PRUNED,
+        )
+    )
+
+    rendered = await printer.render_async(
+        attack_result,
+        include_pruned_conversations=True,
+        include_reasoning_trace=True,
+    )
+
+    assert r"\<reasoning-summary\>" in rendered
+    assert "step one" in rendered
+
+
+async def test_write_async_adversarial_reasoning_uses_escaped_tags(
+    printer,
+    attack_result,
+    sqlite_instance,
+    reasoning_value,
+):
+    piece = MessagePiece(
+        role="assistant",
+        original_value=reasoning_value,
+        converted_value=reasoning_value,
+        original_value_data_type="reasoning",
+        converted_value_data_type="reasoning",
+        conversation_id="adversarial-reasoning",
+    )
+    sqlite_instance.add_message_to_memory(request=Message(message_pieces=[piece]))
+    attack_result.related_conversations.add(
+        ConversationReference(
+            conversation_id="adversarial-reasoning",
+            conversation_type=ConversationType.ADVERSARIAL,
+        )
+    )
+
+    rendered = await printer.render_async(
+        attack_result,
+        include_adversarial_conversation=True,
+        include_reasoning_trace=True,
+    )
+
+    assert r"\<reasoning-summary\>" in rendered
+    assert "step one" in rendered

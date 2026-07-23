@@ -1,14 +1,20 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+from __future__ import annotations
+
 import textwrap
+from typing import TYPE_CHECKING
 
 from colorama import Fore, Style
 
 from pyrit.models import AttackOutcome, ScenarioResult
 from pyrit.output.scenario_result.base import ScenarioResultPrinterBase
-from pyrit.output.scorer.base import ScorerPrinterBase
-from pyrit.output.sink import Sink
+
+if TYPE_CHECKING:
+    from pyrit.output.attack_result.pretty import PrettyAttackResultPrinter
+    from pyrit.output.scorer.base import ScorerPrinterBase
+    from pyrit.output.sink import Sink
 
 
 class PrettyScenarioResultPrinter(ScenarioResultPrinterBase):
@@ -27,6 +33,7 @@ class PrettyScenarioResultPrinter(ScenarioResultPrinterBase):
         indent_size: int = 2,
         enable_colors: bool = True,
         scorer_printer: ScorerPrinterBase | None = None,
+        attack_result_printer: PrettyAttackResultPrinter | None = None,
         sort_groups_by_success_rate: bool = False,
     ) -> None:
         """
@@ -39,6 +46,8 @@ class PrettyScenarioResultPrinter(ScenarioResultPrinterBase):
             enable_colors (bool): Whether to enable ANSI color output. Defaults to True.
             scorer_printer (ScorerPrinterBase | None): Scorer printer for rendering scorer
                 information. Defaults to None; leaf classes should provide a default.
+            attack_result_printer (PrettyAttackResultPrinter | None): Attack-result printer used
+                to render reasoning traces from contained attacks. Defaults to None.
             sort_groups_by_success_rate (bool): When True, the Per-Group Breakdown is sorted
                 so that the group with the highest success rate appears first. Groups that tie
                 on success rate retain their original relative order. Defaults to False, which
@@ -49,6 +58,7 @@ class PrettyScenarioResultPrinter(ScenarioResultPrinterBase):
         self._indent = " " * indent_size
         self._enable_colors = enable_colors
         self._scorer_printer = scorer_printer
+        self._attack_result_printer = attack_result_printer
         self._sort_groups_by_success_rate = sort_groups_by_success_rate
 
     def _format_colored(self, text: str, *colors: str) -> str:
@@ -132,12 +142,18 @@ class PrettyScenarioResultPrinter(ScenarioResultPrinterBase):
             return str(Fore.CYAN)
         return str(Fore.GREEN)
 
-    async def render_async(self, result: ScenarioResult) -> str:
+    async def render_async(
+        self,
+        result: ScenarioResult,
+        *,
+        include_reasoning_trace: bool = False,
+    ) -> str:
         """
         Render the scenario result summary and return it as a string.
 
         Args:
             result (ScenarioResult): The scenario result to summarize.
+            include_reasoning_trace (bool): Whether to include reasoning traces. Defaults to False.
 
         Returns:
             str: The rendered scenario result text.
@@ -235,8 +251,56 @@ class PrettyScenarioResultPrinter(ScenarioResultPrinterBase):
 
         lines.append(self._render_footer())
         parts.append("".join(lines))
+        parts.append(
+            await self._render_attack_results_async(
+                result=result,
+                include_reasoning_trace=include_reasoning_trace,
+            )
+        )
 
         return "".join(parts)
+
+    async def _render_attack_results_async(
+        self,
+        *,
+        result: ScenarioResult,
+        include_reasoning_trace: bool,
+    ) -> str:
+        """
+        Render attack results when scenario reasoning output is requested.
+
+        Args:
+            result (ScenarioResult): The scenario result containing attacks.
+            include_reasoning_trace (bool): Whether attack reasoning traces should be rendered.
+
+        Returns:
+            str: Rendered attack-result details, or an empty string when disabled.
+
+        Raises:
+            ValueError: If reasoning is requested without an attack-result printer.
+        """
+        if not include_reasoning_trace:
+            return ""
+        if self._attack_result_printer is None:
+            raise ValueError("attack_result_printer is required when reasoning traces are requested")
+
+        lines = [self._render_section_header("Attack Reasoning Summaries")]
+        for group_name, attack_results in result.get_display_groups().items():
+            for index, attack_result in enumerate(attack_results, 1):
+                lines.append(
+                    self._format_colored(
+                        f"{self._indent}{group_name} #{index}",
+                        Style.BRIGHT,
+                        Fore.CYAN,
+                    )
+                )
+                lines.append(
+                    await self._attack_result_printer.render_async(
+                        attack_result,
+                        include_reasoning_trace=True,
+                    )
+                )
+        return "".join(lines)
 
 
 class PrettyScenarioResultMemoryPrinter(PrettyScenarioResultPrinter):
@@ -267,11 +331,20 @@ class PrettyScenarioResultMemoryPrinter(PrettyScenarioResultPrinter):
             sort_groups_by_success_rate (bool): When True, the Per-Group Breakdown is sorted
                 so that the group with the highest success rate appears first. Defaults to False.
         """
+        from pyrit.output.attack_result.pretty import PrettyAttackResultMemoryPrinter
+
+        attack_result_printer = PrettyAttackResultMemoryPrinter(
+            sink=sink,
+            width=width,
+            indent_size=indent_size,
+            enable_colors=enable_colors,
+        )
         super().__init__(
             sink=sink,
             width=width,
             indent_size=indent_size,
             enable_colors=enable_colors,
+            attack_result_printer=attack_result_printer,
             sort_groups_by_success_rate=sort_groups_by_success_rate,
         )
         from pyrit.output.scorer.pretty import PrettyScorerMemoryPrinter
@@ -281,14 +354,23 @@ class PrettyScenarioResultMemoryPrinter(PrettyScenarioResultPrinter):
         )
         self._scorer_printer = scorer_printer
 
-    async def render_async(self, result: ScenarioResult) -> str:
+    async def render_async(
+        self,
+        result: ScenarioResult,
+        *,
+        include_reasoning_trace: bool = False,
+    ) -> str:
         """
         Render the scenario result summary and return it as a string.
 
         Args:
             result (ScenarioResult): The scenario result to summarize.
+            include_reasoning_trace (bool): Whether to include reasoning traces. Defaults to False.
 
         Returns:
             str: The rendered scenario result text.
         """
-        return await super().render_async(result)
+        return await super().render_async(
+            result,
+            include_reasoning_trace=include_reasoning_trace,
+        )

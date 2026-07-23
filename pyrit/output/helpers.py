@@ -29,6 +29,7 @@ async def output_attack_async(
     include_auxiliary_scores: bool = False,
     include_pruned_conversations: bool = False,
     include_adversarial_conversation: bool = False,
+    include_reasoning_trace: bool = False,
     blur_images: bool = False,
     blur_radius: int = 20,
     blurred_dir: str | os.PathLike[str] | None = None,
@@ -45,6 +46,7 @@ async def output_attack_async(
         include_pruned_conversations (bool): Whether to include pruned conversations. Defaults to False.
         include_adversarial_conversation (bool): Whether to include the adversarial conversation.
             Defaults to False.
+        include_reasoning_trace (bool): Whether to include the reasoning traces. Defaults to False.
         blur_images (bool): If True, apply a Gaussian blur to image outputs before
             rendering them. For "pretty" output, image bytes are blurred in-memory before
             display. For "markdown" output, a blurred file is written to disk and the
@@ -80,6 +82,7 @@ async def output_attack_async(
         include_auxiliary_scores=include_auxiliary_scores,
         include_pruned_conversations=include_pruned_conversations,
         include_adversarial_conversation=include_adversarial_conversation,
+        include_reasoning_trace=include_reasoning_trace,
     )
 
 
@@ -89,6 +92,7 @@ async def output_scenario_async(
     format: OutputFormat = "pretty",  # noqa: A002
     sink: Sink | None = None,
     sort_groups_by_success_rate: bool = False,
+    include_reasoning_trace: bool = False,
 ) -> None:
     """
     Print a scenario result in the specified format to the specified destination.
@@ -100,6 +104,7 @@ async def output_scenario_async(
         sort_groups_by_success_rate (bool): When True, the Per-Group Breakdown is sorted so
             that the group with the highest success rate appears first. Defaults to False,
             which preserves the original insertion order.
+        include_reasoning_trace (bool): Whether to include reasoning traces. Defaults to False.
 
     Raises:
         ValueError: If ``format`` is not a supported value.
@@ -111,7 +116,10 @@ async def output_scenario_async(
         sink=sink or get_default_sink(StdoutSink),
         sort_groups_by_success_rate=sort_groups_by_success_rate,
     )
-    await printer.write_async(result)
+    await printer.write_async(
+        result,
+        include_reasoning_trace=include_reasoning_trace,
+    )
 
 
 async def output_scorer_async(

@@ -10,6 +10,8 @@ from pyrit.models import (
     AttackOutcome,
     AttackResult,
     ComponentIdentifier,
+    Message,
+    MessagePiece,
     ScenarioResult,
 )
 from pyrit.output.scenario_result.pretty import PrettyScenarioResultMemoryPrinter
@@ -239,3 +241,37 @@ async def test_write_async_sort_is_stable_for_ties(patch_central_database, capsy
     await sorting_printer.write_async(result)
     # Tied 100% groups retain their original relative order; 0% group goes last.
     assert _group_order(capsys.readouterr().out) == ["first_success", "second_success", "fail"]
+
+
+async def test_write_async_renders_attack_reasoning_when_requested(
+    printer,
+    sqlite_instance,
+    reasoning_value,
+):
+    conversation_id = "scenario-reasoning"
+    reasoning_piece = MessagePiece(
+        role="assistant",
+        original_value=reasoning_value,
+        converted_value=reasoning_value,
+        original_value_data_type="reasoning",
+        converted_value_data_type="reasoning",
+        conversation_id=conversation_id,
+    )
+    answer_piece = MessagePiece(
+        role="assistant",
+        original_value="Final answer.",
+        conversation_id=conversation_id,
+    )
+    sqlite_instance.add_message_to_memory(request=Message(message_pieces=[reasoning_piece, answer_piece]))
+    attack_result = AttackResult(
+        conversation_id=conversation_id,
+        objective="scenario objective",
+        outcome=AttackOutcome.SUCCESS,
+    )
+    result = _scenario_result(attack_results={"technique_a": [attack_result]})
+
+    rendered = await printer.render_async(result, include_reasoning_trace=True)
+
+    assert "Attack Reasoning Summaries" in rendered
+    assert "<reasoning-summary>" in rendered
+    assert "step one" in rendered

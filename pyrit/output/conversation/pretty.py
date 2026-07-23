@@ -1,7 +1,6 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-import json
 import logging
 import textwrap
 
@@ -85,6 +84,13 @@ class PrettyConversationPrinter(ConversationPrinterBase):
         image_pieces: list[MessagePiece] = []
         turn_number = 0
         for message in messages:
+            pieces = self._get_renderable_pieces(
+                message=message,
+                include_reasoning_trace=include_reasoning_trace,
+            )
+            if not pieces:
+                continue
+
             if message.api_role == "user":
                 turn_number += 1
                 lines.append("\n")
@@ -103,16 +109,11 @@ class PrettyConversationPrinter(ConversationPrinterBase):
                 lines.append(self._format_colored(f"🔸 {role_label}", Style.BRIGHT, Fore.YELLOW))
                 lines.append(self._format_colored("─" * self._width, Fore.YELLOW))
 
-            for piece in message.message_pieces:
-                if piece.original_value_data_type == "reasoning":
-                    if include_reasoning_trace:
-                        summary_text = self._extract_reasoning_summary(piece.original_value)
-                        if summary_text:
-                            lines.append(
-                                self._format_colored(f"{self._indent}💭 Reasoning Summary:", Style.DIM, Fore.CYAN)
-                            )
-                            lines.append(self._render_wrapped_text(summary_text, Fore.CYAN))
-                            lines.append("\n")
+            for piece in pieces:
+                if self._is_reasoning_piece(piece=piece):
+                    rendered = self._render_reasoning_summary(self._get_reasoning_value(piece=piece))
+                    if rendered:
+                        lines.append(rendered)
                     continue
 
                 if piece.is_blocked():
@@ -218,28 +219,32 @@ class PrettyConversationPrinter(ConversationPrinterBase):
 
         return "".join(lines)
 
-    @staticmethod
-    def _extract_reasoning_summary(reasoning_value: str) -> str:
+    def _render_reasoning_summary(self, reasoning_value: str) -> str:
         """
-        Extract human-readable summary text from a reasoning piece's JSON value.
+        Render a provider-generated reasoning summary in subdued gray.
 
         Args:
-            reasoning_value (str): The JSON string stored in the reasoning piece.
+            reasoning_value (str): Serialized OpenAI Responses reasoning item.
 
         Returns:
-            str: The concatenated summary text, or empty string if no summary is present.
+            str: The tagged reasoning block, or an empty string when the summary is empty.
         """
-        try:
-            data = json.loads(reasoning_value)
-        except (json.JSONDecodeError, TypeError):
+        summary = self._extract_reasoning_summary(reasoning_value)
+        if not summary:
             return ""
 
-        summary = data.get("summary") if isinstance(data, dict) else None
-        if not summary or not isinstance(summary, list):
-            return ""
-
-        parts = [item.get("text", "") for item in summary if isinstance(item, dict) and item.get("text")]
-        return "\n".join(parts)
+        # PyRIT adds these presentation tags. They label a provider-generated
+        # summary and do not represent raw model chain-of-thought.
+        label = "Provider-generated reasoning summary (not raw chain-of-thought)"
+        return "".join(
+            [
+                self._format_colored(f"{self._indent}<reasoning-summary>", Fore.LIGHTBLACK_EX),
+                self._format_colored(f"{self._indent}{label}", Style.DIM, Fore.LIGHTBLACK_EX),
+                self._render_wrapped_text(summary, Fore.LIGHTBLACK_EX),
+                self._format_colored(f"{self._indent}</reasoning-summary>", Fore.LIGHTBLACK_EX),
+                self._format_colored("", Fore.LIGHTBLACK_EX),
+            ]
+        )
 
 
 class PrettyConversationMemoryPrinter(PrettyConversationPrinter):

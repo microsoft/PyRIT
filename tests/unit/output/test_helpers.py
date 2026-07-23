@@ -99,7 +99,7 @@ async def test_output_scenario_async_pretty(mock_cls):
     await output_scenario_async(result)
 
     mock_cls.assert_called_once()
-    mock_printer.write_async.assert_called_once_with(result)
+    mock_printer.write_async.assert_called_once_with(result, include_reasoning_trace=False)
 
 
 @patch("pyrit.output.helpers.PrettyScenarioResultMemoryPrinter")
@@ -112,7 +112,31 @@ async def test_output_scenario_async_forwards_sort_groups_by_success_rate(mock_c
     await output_scenario_async(result, sort_groups_by_success_rate=True)
 
     assert mock_cls.call_args.kwargs["sort_groups_by_success_rate"] is True
-    mock_printer.write_async.assert_called_once_with(result)
+    mock_printer.write_async.assert_called_once_with(result, include_reasoning_trace=False)
+
+
+@patch("pyrit.output.helpers.PrettyAttackResultMemoryPrinter")
+async def test_output_attack_async_forwards_reasoning_trace(mock_cls):
+    mock_printer = MagicMock()
+    mock_printer.write_async = AsyncMock()
+    mock_cls.return_value = mock_printer
+    result = MagicMock()
+
+    await output_attack_async(result, include_reasoning_trace=True)
+
+    assert mock_printer.write_async.call_args.kwargs["include_reasoning_trace"] is True
+
+
+@patch("pyrit.output.helpers.PrettyScenarioResultMemoryPrinter")
+async def test_output_scenario_async_forwards_reasoning_trace(mock_cls):
+    mock_printer = MagicMock()
+    mock_printer.write_async = AsyncMock()
+    mock_cls.return_value = mock_printer
+    result = MagicMock()
+
+    await output_scenario_async(result, include_reasoning_trace=True)
+
+    mock_printer.write_async.assert_called_once_with(result, include_reasoning_trace=True)
 
 
 async def test_output_scenario_async_unsupported_format():
