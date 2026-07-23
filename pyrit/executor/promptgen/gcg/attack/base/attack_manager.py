@@ -1798,7 +1798,14 @@ class ModelWorkerOperation(str, Enum):
 
 @dataclass(frozen=True)
 class ModelWorkerTask:
-    """A spawn-safe model worker task that excludes the worker-owned model."""
+    """
+    A spawn-safe worker payload that excludes the worker-owned model.
+
+    Typed model operations receive the worker's persistent model during dispatch,
+    so each queued task serializes only the prompt payload and operation arguments
+    rather than serializing the full model again. ``obj`` is the prompt or prompt
+    manager that receives the operation.
+    """
 
     obj: Any
     operation: ModelWorkerOperation | Callable[..., Any]
