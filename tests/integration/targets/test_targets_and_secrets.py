@@ -448,19 +448,6 @@ async def test_openai_response_target_reasoning_options(
             "OPENAI_REALTIME_MODEL",
             id="openai-realtime-entra",
         ),
-        pytest.param(
-            "AZURE_OPENAI_REALTIME_ENDPOINT",
-            "AZURE_OPENAI_REALTIME_API_KEY",
-            "AZURE_OPENAI_REALTIME_MODEL",
-            marks=pytest.mark.skip(reason="Azure key-based (local) auth is disabled in our tenant."),
-            id="azure-realtime-api-key",
-        ),
-        pytest.param(
-            "AZURE_OPENAI_REALTIME_ENDPOINT",
-            None,
-            "AZURE_OPENAI_REALTIME_MODEL",
-            id="azure-realtime-entra",
-        ),
     ],
 )
 async def test_connect_required_realtime_targets(
@@ -482,15 +469,28 @@ async def test_connect_required_realtime_targets(
 
 
 @pytest.mark.parametrize(
-    ("endpoint", "model_name"),
+    ("endpoint", "api_key_env_var", "model_name"),
     [
-        ("AZURE_OPENAI_REALTIME_ENDPOINT", "AZURE_OPENAI_REALTIME_MODEL"),
+        pytest.param(
+            "AZURE_OPENAI_REALTIME_ENDPOINT",
+            "AZURE_OPENAI_REALTIME_API_KEY",
+            "AZURE_OPENAI_REALTIME_MODEL",
+            marks=pytest.mark.skip(reason=_AZURE_KEY_AUTH_DISABLED_REASON),
+            id="api-key",
+        ),
+        pytest.param(
+            "AZURE_OPENAI_REALTIME_ENDPOINT",
+            None,
+            "AZURE_OPENAI_REALTIME_MODEL",
+            id="entra",
+        ),
     ],
 )
 @pytest.mark.run_only_if_all_tests
 async def test_realtime_target_multi_objective(
     sqlite_instance: SQLiteMemory,
     endpoint: str,
+    api_key_env_var: str | None,
     model_name: str,
 ) -> None:
     """Test RealtimeTarget with multiple objectives like the notebook does."""
@@ -499,7 +499,7 @@ async def test_realtime_target_multi_objective(
 
     target = RealtimeTarget(
         endpoint=endpoint_value,
-        api_key=_get_openai_auth(endpoint=endpoint_value, api_key_env_var=None),
+        api_key=_get_openai_auth(endpoint=endpoint_value, api_key_env_var=api_key_env_var),
         model_name=model_name_value,
     )
 
