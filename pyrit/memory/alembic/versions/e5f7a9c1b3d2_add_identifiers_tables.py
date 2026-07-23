@@ -41,6 +41,10 @@ depends_on: str | Sequence[str] | None = None
 
 logger = logging.getLogger(__name__)
 
+_TARGET_LINK_INSERT_BATCH_SIZE = 400
+_TARGET_LINK_STAGING_TABLE = "_PyritConversationTargetLinks"
+_TARGET_LINK_SQL_SERVER_STAGING_TABLE = "#PyritConversationTargetLinks"
+
 
 class _CustomUUID(TypeDecorator[uuid.UUID]):
     """Frozen UUID type matching ``PromptMemoryEntries.id`` across dialects."""
@@ -783,35 +787,217 @@ def _backfill_target_identifiers() -> None:
         )
     ).fetchall()
 
-    update_stmt = sa.text('UPDATE "Conversations" SET target_identifier_hash = :hash WHERE conversation_id = :cid')
-    inserter = IdentifierGraphInserter(bind=bind)
-    linked = 0
+    grouped_targets: dict[str, tuple[dict[str, Any], list[str]]] = {}
     skipped = 0
     for conversation_id, raw_target in rows:
         identifier = load_identifier(raw_target)
         if identifier is None:
             skipped += 1
             continue
-        operation = partial(
-            _insert_identifier_link,
-            bind=bind,
-            insert=inserter.insert_target,
-            identifier=identifier,
-            update_statement=update_stmt,
-            update_values={"cid": conversation_id},
+        key = json.dumps(identifier, sort_keys=True)
+        grouped_targets.setdefault(key, (identifier, []))[1].append(str(conversation_id))
+
+    links: list[tuple[str, str]] = []
+    inserter = IdentifierGraphInserter(bind=bind)
+    for identifier, conversation_ids in grouped_targets.values():
+        try:
+            with bind.begin_nested():
+                identifier_hash = inserter.insert_target(identifier)
+        except Exception:
+            skipped += len(conversation_ids)
+            logger.warning(
+                f"TargetIdentifiers backfill skipped {len(conversation_ids)} conversation(s) "
+                f"for target {identifier.get('hash')!r}",
+                exc_info=True,
+            )
+            inserter = IdentifierGraphInserter(bind=bind)
+            continue
+        if identifier_hash:
+            links.extend((conversation_id, identifier_hash) for conversation_id in conversation_ids)
+        else:
+            skipped += len(conversation_ids)
+
+    linked, update_skipped = _update_conversation_target_links(bind=bind, links=links)
+    skipped += update_skipped
+
+    if linked or skipped:
+        logger.info(f"TargetIdentifiers backfill linked {linked} conversation(s); skipped {skipped}.")
+
+
+def _update_conversation_target_links(*, bind: Any, links: Sequence[tuple[str, str]]) -> tuple[int, int]:
+    """
+    Stage target links in bounded batches, then update all conversations once.
+
+    Returns:
+        tuple[int, int]: The linked and skipped conversation counts.
+    """
+    if not links:
+        return 0, 0
+
+    table_name = _create_target_link_staging_table(bind=bind)
+    try:
+        staged_links, skipped = _stage_conversation_target_links(bind=bind, table_name=table_name, links=links)
+        try:
+            with bind.begin_nested():
+                _update_conversation_target_links_from_staging(bind=bind, table_name=table_name)
+            return len(staged_links), skipped
+        except Exception:
+            logger.warning(
+                "TargetIdentifiers staged link update failed; retrying individually",
+                exc_info=True,
+            )
+            linked, update_skipped = _update_conversation_target_links_individually(
+                bind=bind,
+                links=staged_links,
+            )
+            return linked, skipped + update_skipped
+    finally:
+        bind.execute(sa.text(f'DROP TABLE "{table_name}"'))
+
+
+def _create_target_link_staging_table(*, bind: Any) -> str:
+    """
+    Create a connection-local table for target-link updates.
+
+    Returns:
+        str: The dialect-specific staging table name.
+    """
+    if bind.dialect.name == "mssql":
+        table_name = _TARGET_LINK_SQL_SERVER_STAGING_TABLE
+        create_prefix = "CREATE TABLE"
+    else:
+        table_name = _TARGET_LINK_STAGING_TABLE
+        create_prefix = "CREATE TEMPORARY TABLE"
+    bind.execute(
+        sa.text(
+            f'{create_prefix} "{table_name}" ('
+            "conversation_id VARCHAR(36) NOT NULL PRIMARY KEY, "
+            "target_identifier_hash VARCHAR(64) NOT NULL)"
         )
+    )
+    return table_name
+
+
+def _stage_conversation_target_links(
+    *,
+    bind: Any,
+    table_name: str,
+    links: Sequence[tuple[str, str]],
+) -> tuple[list[tuple[str, str]], int]:
+    """
+    Insert target links into the staging table with per-row fallback.
+
+    Returns:
+        tuple[list[tuple[str, str]], int]: The staged links and skipped count.
+    """
+    staged_links: list[tuple[str, str]] = []
+    skipped = 0
+    for start in range(0, len(links), _TARGET_LINK_INSERT_BATCH_SIZE):
+        batch = links[start : start + _TARGET_LINK_INSERT_BATCH_SIZE]
+        try:
+            with bind.begin_nested():
+                _insert_target_link_batch(bind=bind, table_name=table_name, links=batch)
+            staged_links.extend(batch)
+        except Exception:
+            logger.warning(
+                f"TargetIdentifiers staging insert failed for {len(batch)} conversation(s); retrying individually",
+                exc_info=True,
+            )
+            batch_staged, batch_skipped = _stage_conversation_target_links_individually(
+                bind=bind,
+                table_name=table_name,
+                links=batch,
+            )
+            staged_links.extend(batch_staged)
+            skipped += batch_skipped
+    return staged_links, skipped
+
+
+def _insert_target_link_batch(
+    *,
+    bind: Any,
+    table_name: str,
+    links: Sequence[tuple[str, str]],
+) -> None:
+    """Insert one non-empty target-link batch into the staging table."""
+    values: list[str] = []
+    parameters: dict[str, str] = {}
+    for index, (conversation_id, identifier_hash) in enumerate(links):
+        values.append(f"(:cid_{index}, :hash_{index})")
+        parameters[f"cid_{index}"] = conversation_id
+        parameters[f"hash_{index}"] = identifier_hash
+    bind.execute(
+        sa.text(f'INSERT INTO "{table_name}" (conversation_id, target_identifier_hash) VALUES {", ".join(values)}'),
+        parameters,
+    )
+
+
+def _stage_conversation_target_links_individually(
+    *,
+    bind: Any,
+    table_name: str,
+    links: Sequence[tuple[str, str]],
+) -> tuple[list[tuple[str, str]], int]:
+    """
+    Retry a failed staging batch one link at a time.
+
+    Returns:
+        tuple[list[tuple[str, str]], int]: The staged links and skipped count.
+    """
+    statement = sa.text(f'INSERT INTO "{table_name}" (conversation_id, target_identifier_hash) VALUES (:cid, :hash)')
+    staged_links: list[tuple[str, str]] = []
+    for conversation_id, identifier_hash in links:
+        operation = partial(bind.execute, statement, {"cid": conversation_id, "hash": identifier_hash})
+        if _run_best_effort_row(
+            bind=bind,
+            description=f"TargetIdentifiers backfill skipped conversation {conversation_id!r}",
+            operation=operation,
+        ):
+            staged_links.append((conversation_id, identifier_hash))
+    return staged_links, len(links) - len(staged_links)
+
+
+def _update_conversation_target_links_from_staging(*, bind: Any, table_name: str) -> None:
+    """Update conversation links from the connection-local staging table."""
+    if bind.dialect.name == "mssql":
+        statement = sa.text(
+            "UPDATE conversations SET target_identifier_hash = links.target_identifier_hash "
+            'FROM "Conversations" AS conversations '
+            f'INNER JOIN "{table_name}" AS links ON links.conversation_id = conversations.conversation_id'
+        )
+    else:
+        statement = sa.text(
+            'UPDATE "Conversations" SET target_identifier_hash = ('
+            f'SELECT links.target_identifier_hash FROM "{table_name}" AS links '
+            'WHERE links.conversation_id = "Conversations".conversation_id) '
+            f'WHERE EXISTS (SELECT 1 FROM "{table_name}" AS links '
+            'WHERE links.conversation_id = "Conversations".conversation_id)'
+        )
+    bind.execute(statement)
+
+
+def _update_conversation_target_links_individually(
+    *,
+    bind: Any,
+    links: Sequence[tuple[str, str]],
+) -> tuple[int, int]:
+    """
+    Retry a failed target-link batch one conversation at a time.
+
+    Returns:
+        tuple[int, int]: The linked and skipped conversation counts.
+    """
+    statement = sa.text('UPDATE "Conversations" SET target_identifier_hash = :hash WHERE conversation_id = :cid')
+    linked = 0
+    for conversation_id, identifier_hash in links:
+        operation = partial(bind.execute, statement, {"cid": conversation_id, "hash": identifier_hash})
         if _run_best_effort_row(
             bind=bind,
             description=f"TargetIdentifiers backfill skipped conversation {conversation_id!r}",
             operation=operation,
         ):
             linked += 1
-        else:
-            skipped += 1
-            inserter = IdentifierGraphInserter(bind=bind)
-
-    if linked or skipped:
-        logger.info(f"TargetIdentifiers backfill linked {linked} conversation(s); skipped {skipped}.")
+    return linked, len(links) - linked
 
 
 def _backfill_scorer_identifiers() -> None:

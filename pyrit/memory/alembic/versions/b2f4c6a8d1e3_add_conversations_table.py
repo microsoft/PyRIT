@@ -21,9 +21,13 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Sequence  # noqa: TC003
+from typing import TYPE_CHECKING
 
 import sqlalchemy as sa
 from alembic import op
+
+if TYPE_CHECKING:
+    from sqlalchemy.engine import Connection
 
 # revision identifiers, used by Alembic.
 revision: str = "b2f4c6a8d1e3"
@@ -33,6 +37,9 @@ depends_on: str | Sequence[str] | None = None
 
 
 logger = logging.getLogger(__name__)
+
+_CONVERSATION_INSERT_BATCH_SIZE = 400
+_CONVERSATION_INSERT_PREFIX = 'INSERT INTO "Conversations" (conversation_id, target_identifier, pyrit_version) VALUES '
 
 
 def upgrade() -> None:
@@ -118,22 +125,32 @@ def _backfill_conversations() -> None:
         if conversation_id is not None and conversation_id not in targets_by_conversation:
             targets_by_conversation[conversation_id] = None
 
-    insert_stmt = sa.text(
-        'INSERT INTO "Conversations" (conversation_id, target_identifier, pyrit_version) '
-        "VALUES (:cid, :target, :version)"
-    )
+    rows_to_insert = [
+        (conversation_id, target_identifier)
+        for conversation_id, target_identifier in targets_by_conversation.items()
+        if conversation_id not in existing_ids
+    ]
+    _insert_conversation_rows(bind=bind, rows=rows_to_insert)
 
-    inserted = 0
-    for conversation_id, target_identifier in targets_by_conversation.items():
-        if conversation_id in existing_ids:
-            continue
-        bind.execute(
-            insert_stmt,
-            {"cid": conversation_id, "target": target_identifier, "version": None},
-        )
-        inserted += 1
-
+    inserted = len(rows_to_insert)
     if inserted or conflict_warnings:
         logger.info(
             f"Conversations backfill: inserted {inserted} row(s); {conflict_warnings} target-conflict warning(s)."
         )
+
+
+def _insert_conversation_rows(*, bind: Connection, rows: Sequence[tuple[str, str | None]]) -> None:
+    """Insert conversation rows in bounded multi-value statements."""
+    for start in range(0, len(rows), _CONVERSATION_INSERT_BATCH_SIZE):
+        _insert_conversation_batch(bind=bind, rows=rows[start : start + _CONVERSATION_INSERT_BATCH_SIZE])
+
+
+def _insert_conversation_batch(*, bind: Connection, rows: Sequence[tuple[str, str | None]]) -> None:
+    """Insert one non-empty batch of conversation rows."""
+    value_clauses: list[str] = []
+    parameters: dict[str, str | None] = {}
+    for index, (conversation_id, target_identifier) in enumerate(rows):
+        value_clauses.append(f"(:cid_{index}, :target_{index}, NULL)")
+        parameters[f"cid_{index}"] = conversation_id
+        parameters[f"target_{index}"] = target_identifier
+    bind.execute(sa.text(_CONVERSATION_INSERT_PREFIX + ", ".join(value_clauses)), parameters)
