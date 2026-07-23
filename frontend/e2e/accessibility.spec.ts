@@ -25,7 +25,9 @@ async function expectTourContained(page: Page, dialog: Locator, checkTouchTarget
       const box = await dialog.boundingBox();
       const viewport = page.viewportSize();
       const dimensions = await page.evaluate(() => ({
+        clientHeight: document.documentElement.clientHeight,
         clientWidth: document.documentElement.clientWidth,
+        scrollHeight: document.documentElement.scrollHeight,
         scrollWidth: document.documentElement.scrollWidth,
       }));
 
@@ -34,6 +36,9 @@ async function expectTourContained(page: Page, dialog: Locator, checkTouchTarget
         viewport !== null &&
         box.x >= 0 &&
         box.x + box.width <= viewport.width + 1 &&
+        box.y >= 0 &&
+        box.y + box.height <= viewport.height + 1 &&
+        dimensions.scrollHeight <= dimensions.clientHeight + 1 &&
         dimensions.scrollWidth <= dimensions.clientWidth + 1
       );
     })
