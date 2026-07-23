@@ -29,6 +29,7 @@ from pyrit.prompt_target import (
 )
 
 SAMPLE_IMAGE_FILE = HOME_PATH / "assets" / "pyrit_architecture.png"
+_AZURE_KEY_AUTH_DISABLED_REASON = "Azure key-based (local) auth is disabled in our tenant."
 
 
 def _get_required_env_var(env_var_name: str) -> str:
@@ -118,6 +119,14 @@ async def _assert_can_send_video_prompt(*, target: PromptTarget) -> None:
     [
         ("OPENAI_CHAT_ENDPOINT", None, "OPENAI_CHAT_MODEL", True),
         pytest.param(
+            "OPENAI_CHAT_ENDPOINT",
+            "OPENAI_CHAT_KEY",
+            "OPENAI_CHAT_MODEL",
+            True,
+            marks=pytest.mark.skip(reason=_AZURE_KEY_AUTH_DISABLED_REASON),
+            id="openai-chat-api-key",
+        ),
+        pytest.param(
             "PLATFORM_OPENAI_CHAT_ENDPOINT",
             "PLATFORM_OPENAI_CHAT_KEY",
             "PLATFORM_OPENAI_CHAT_MODEL",
@@ -125,6 +134,14 @@ async def _assert_can_send_video_prompt(*, target: PromptTarget) -> None:
             marks=pytest.mark.run_only_if_all_tests,
         ),
         ("AZURE_OPENAI_GPT4O_ENDPOINT", None, "AZURE_OPENAI_GPT4O_MODEL", True),
+        pytest.param(
+            "AZURE_OPENAI_GPT4O_ENDPOINT",
+            "AZURE_OPENAI_GPT4O_KEY",
+            "AZURE_OPENAI_GPT4O_MODEL",
+            True,
+            marks=pytest.mark.skip(reason=_AZURE_KEY_AUTH_DISABLED_REASON),
+            id="azure-gpt4o-api-key",
+        ),
         ("AZURE_OPENAI_GPT4O_ENDPOINT2", None, "AZURE_OPENAI_GPT4O_MODEL2", True),
         ("AZURE_OPENAI_GPT4O_AAD_ENDPOINT", None, "AZURE_OPENAI_GPT4O_AAD_MODEL", True),
         (
@@ -133,17 +150,41 @@ async def _assert_can_send_video_prompt(*, target: PromptTarget) -> None:
             "AZURE_OPENAI_INTEGRATION_TEST_MODEL",
             True,
         ),
+        pytest.param(
+            "AZURE_OPENAI_INTEGRATION_TEST_ENDPOINT",
+            "AZURE_OPENAI_INTEGRATION_TEST_KEY",
+            "AZURE_OPENAI_INTEGRATION_TEST_MODEL",
+            True,
+            marks=pytest.mark.skip(reason=_AZURE_KEY_AUTH_DISABLED_REASON),
+            id="azure-integration-api-key",
+        ),
         (
             "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT",
             None,
             "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL",
             True,
         ),
+        pytest.param(
+            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT",
+            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_KEY",
+            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL",
+            True,
+            marks=pytest.mark.skip(reason=_AZURE_KEY_AUTH_DISABLED_REASON),
+            id="azure-unsafe-chat-api-key",
+        ),
         (
             "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT2",
             None,
             "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL2",
             True,
+        ),
+        pytest.param(
+            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT2",
+            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_KEY2",
+            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL2",
+            True,
+            marks=pytest.mark.skip(reason=_AZURE_KEY_AUTH_DISABLED_REASON),
+            id="azure-unsafe-chat2-api-key",
         ),
         (
             "AZURE_OPENAI_GPT4O_STRICT_FILTER_ENDPOINT",
@@ -152,7 +193,23 @@ async def _assert_can_send_video_prompt(*, target: PromptTarget) -> None:
             True,
         ),
         ("AZURE_OPENAI_GPT3_5_CHAT_ENDPOINT", None, "AZURE_OPENAI_GPT3_5_CHAT_MODEL", True),
+        pytest.param(
+            "AZURE_OPENAI_GPT3_5_CHAT_ENDPOINT",
+            "AZURE_OPENAI_GPT3_5_CHAT_KEY",
+            "AZURE_OPENAI_GPT3_5_CHAT_MODEL",
+            True,
+            marks=pytest.mark.skip(reason=_AZURE_KEY_AUTH_DISABLED_REASON),
+            id="azure-gpt35-api-key",
+        ),
         ("AZURE_OPENAI_GPT4_CHAT_ENDPOINT", None, "AZURE_OPENAI_GPT4_CHAT_MODEL", True),
+        pytest.param(
+            "AZURE_OPENAI_GPT4_CHAT_ENDPOINT",
+            "AZURE_OPENAI_GPT4_CHAT_KEY",
+            "AZURE_OPENAI_GPT4_CHAT_MODEL",
+            True,
+            marks=pytest.mark.skip(reason=_AZURE_KEY_AUTH_DISABLED_REASON),
+            id="azure-gpt4-api-key",
+        ),
         ("AZURE_OPENAI_GPT5_4_ENDPOINT", None, "AZURE_OPENAI_GPT5_4_MODEL", True),
         (
             "AZURE_OPENAI_GPT5_COMPLETIONS_ENDPOINT",
@@ -160,7 +217,23 @@ async def _assert_can_send_video_prompt(*, target: PromptTarget) -> None:
             "AZURE_OPENAI_GPT5_COMPLETIONS_MODEL",
             True,
         ),
+        pytest.param(
+            "AZURE_OPENAI_GPT5_COMPLETIONS_ENDPOINT",
+            "AZURE_OPENAI_GPT5_COMPLETIONS_KEY",
+            "AZURE_OPENAI_GPT5_COMPLETIONS_MODEL",
+            True,
+            marks=pytest.mark.skip(reason=_AZURE_KEY_AUTH_DISABLED_REASON),
+            id="azure-gpt5-completions-api-key",
+        ),
         ("AZURE_OPENAI_GPTV_CHAT_ENDPOINT", None, "AZURE_OPENAI_GPTV_CHAT_MODEL", True),
+        pytest.param(
+            "AZURE_OPENAI_GPTV_CHAT_ENDPOINT",
+            "AZURE_OPENAI_GPTV_CHAT_KEY",
+            "AZURE_OPENAI_GPTV_CHAT_MODEL",
+            True,
+            marks=pytest.mark.skip(reason=_AZURE_KEY_AUTH_DISABLED_REASON),
+            id="azure-gptv-api-key",
+        ),
         pytest.param(
             "AZURE_FOUNDRY_DEEPSEEK_ENDPOINT",
             "AZURE_FOUNDRY_DEEPSEEK_KEY",
@@ -169,6 +242,14 @@ async def _assert_can_send_video_prompt(*, target: PromptTarget) -> None:
             marks=pytest.mark.run_only_if_all_tests,
         ),
         ("AZURE_FOUNDRY_MISTRAL_LARGE_ENDPOINT", None, "AZURE_FOUNDRY_MISTRAL_LARGE_MODEL", True),
+        pytest.param(
+            "AZURE_FOUNDRY_MISTRAL_LARGE_ENDPOINT",
+            "AZURE_FOUNDRY_MISTRAL_LARGE_KEY",
+            "AZURE_FOUNDRY_MISTRAL_LARGE_MODEL",
+            True,
+            marks=pytest.mark.skip(reason=_AZURE_KEY_AUTH_DISABLED_REASON),
+            id="azure-mistral-api-key",
+        ),
         pytest.param(
             "AZURE_FOUNDRY_PHI4_ENDPOINT",
             "AZURE_CHAT_PHI4_KEY",
@@ -235,10 +316,24 @@ async def test_connect_required_openai_text_targets(
         ),
         ("OPENAI_RESPONSES_ENDPOINT", None, "OPENAI_RESPONSES_MODEL"),
         ("AZURE_OPENAI_RESPONSES_ENDPOINT", None, "AZURE_OPENAI_RESPONSES_MODEL"),
+        pytest.param(
+            "AZURE_OPENAI_RESPONSES_ENDPOINT",
+            "AZURE_OPENAI_RESPONSES_KEY",
+            "AZURE_OPENAI_RESPONSES_MODEL",
+            marks=pytest.mark.skip(reason=_AZURE_KEY_AUTH_DISABLED_REASON),
+            id="azure-responses-api-key",
+        ),
         (
             "AZURE_OPENAI_GPT41_RESPONSES_ENDPOINT",
             None,
             "AZURE_OPENAI_GPT41_RESPONSES_MODEL",
+        ),
+        pytest.param(
+            "AZURE_OPENAI_GPT41_RESPONSES_ENDPOINT",
+            "AZURE_OPENAI_GPT41_RESPONSES_KEY",
+            "AZURE_OPENAI_GPT41_RESPONSES_MODEL",
+            marks=pytest.mark.skip(reason=_AZURE_KEY_AUTH_DISABLED_REASON),
+            id="azure-gpt41-responses-api-key",
         ),
         pytest.param(
             "AWS_ENDPOINT",
@@ -353,7 +448,19 @@ async def test_openai_response_target_reasoning_options(
             "OPENAI_REALTIME_MODEL",
             id="openai-realtime-entra",
         ),
-        ("AZURE_OPENAI_REALTIME_ENDPOINT", None, "AZURE_OPENAI_REALTIME_MODEL"),
+        pytest.param(
+            "AZURE_OPENAI_REALTIME_ENDPOINT",
+            "AZURE_OPENAI_REALTIME_API_KEY",
+            "AZURE_OPENAI_REALTIME_MODEL",
+            marks=pytest.mark.skip(reason="Azure key-based (local) auth is disabled in our tenant."),
+            id="azure-realtime-api-key",
+        ),
+        pytest.param(
+            "AZURE_OPENAI_REALTIME_ENDPOINT",
+            None,
+            "AZURE_OPENAI_REALTIME_MODEL",
+            id="azure-realtime-entra",
+        ),
     ],
 )
 async def test_connect_required_realtime_targets(
@@ -459,7 +566,21 @@ async def test_connect_openai_completion(sqlite_instance: SQLiteMemory) -> None:
             "OPENAI_IMAGE_MODEL1",
             marks=pytest.mark.run_only_if_all_tests,
         ),  # gpt-image-1.5
+        pytest.param(
+            "OPENAI_IMAGE_ENDPOINT1",
+            "OPENAI_IMAGE_API_KEY1",
+            "OPENAI_IMAGE_MODEL1",
+            marks=pytest.mark.skip(reason=_AZURE_KEY_AUTH_DISABLED_REASON),
+            id="openai-image1-api-key",
+        ),
         ("OPENAI_IMAGE_ENDPOINT2", None, "OPENAI_IMAGE_MODEL2"),  # gpt-image-1
+        pytest.param(
+            "OPENAI_IMAGE_ENDPOINT2",
+            "OPENAI_IMAGE_API_KEY2",
+            "OPENAI_IMAGE_MODEL2",
+            marks=pytest.mark.skip(reason=_AZURE_KEY_AUTH_DISABLED_REASON),
+            id="openai-image2-api-key",
+        ),
         pytest.param(
             "PLATFORM_OPENAI_IMAGE_ENDPOINT",
             "PLATFORM_OPENAI_IMAGE_KEY",
@@ -500,7 +621,21 @@ async def test_connect_image(
     assert image_path.is_file(), f"Path exists but is not a file: {image_path}"
 
 
-async def test_image_editing_single_image(sqlite_instance: SQLiteMemory) -> None:
+@pytest.mark.parametrize(
+    "api_key_env_var",
+    [
+        pytest.param(None, id="entra"),
+        pytest.param(
+            "OPENAI_IMAGE_API_KEY2",
+            marks=pytest.mark.skip(reason=_AZURE_KEY_AUTH_DISABLED_REASON),
+            id="api-key",
+        ),
+    ],
+)
+async def test_image_editing_single_image(
+    sqlite_instance: SQLiteMemory,
+    api_key_env_var: str | None,
+) -> None:
     """
     Test image editing with a single image input.
     Uses gpt-image-1 which supports image editing/remix.
@@ -515,7 +650,7 @@ async def test_image_editing_single_image(sqlite_instance: SQLiteMemory) -> None
 
     target = OpenAIImageTarget(
         endpoint=endpoint_value,
-        api_key=_get_openai_auth(endpoint=endpoint_value, api_key_env_var=None),
+        api_key=_get_openai_auth(endpoint=endpoint_value, api_key_env_var=api_key_env_var),
         model_name=model_name_value,
     )
 
@@ -546,7 +681,21 @@ async def test_image_editing_single_image(sqlite_instance: SQLiteMemory) -> None
     assert output_path.is_file(), f"Path exists but is not a file: {output_path}"
 
 
-async def test_image_editing_multiple_images(sqlite_instance: SQLiteMemory) -> None:
+@pytest.mark.parametrize(
+    "api_key_env_var",
+    [
+        pytest.param(None, id="entra"),
+        pytest.param(
+            "OPENAI_IMAGE_API_KEY2",
+            marks=pytest.mark.skip(reason=_AZURE_KEY_AUTH_DISABLED_REASON),
+            id="api-key",
+        ),
+    ],
+)
+async def test_image_editing_multiple_images(
+    sqlite_instance: SQLiteMemory,
+    api_key_env_var: str | None,
+) -> None:
     """
     Test image editing with multiple image inputs.
     Uses gpt-image-1 which supports 1-16 image inputs.
@@ -560,7 +709,7 @@ async def test_image_editing_multiple_images(sqlite_instance: SQLiteMemory) -> N
 
     target = OpenAIImageTarget(
         endpoint=endpoint_value,
-        api_key=_get_openai_auth(endpoint=endpoint_value, api_key_env_var=None),
+        api_key=_get_openai_auth(endpoint=endpoint_value, api_key_env_var=api_key_env_var),
         model_name=model_name_value,
     )
 
@@ -598,15 +747,30 @@ async def test_image_editing_multiple_images(sqlite_instance: SQLiteMemory) -> N
 
 
 @pytest.mark.parametrize(
-    ("endpoint", "model_name"),
+    ("endpoint", "api_key_env_var", "model_name"),
     [
-        ("OPENAI_TTS_ENDPOINT1", "OPENAI_TTS_MODEL1"),
-        ("OPENAI_TTS_ENDPOINT2", "OPENAI_TTS_MODEL2"),
+        ("OPENAI_TTS_ENDPOINT1", None, "OPENAI_TTS_MODEL1"),
+        pytest.param(
+            "OPENAI_TTS_ENDPOINT1",
+            "OPENAI_TTS_KEY1",
+            "OPENAI_TTS_MODEL1",
+            marks=pytest.mark.skip(reason=_AZURE_KEY_AUTH_DISABLED_REASON),
+            id="openai-tts1-api-key",
+        ),
+        ("OPENAI_TTS_ENDPOINT2", None, "OPENAI_TTS_MODEL2"),
+        pytest.param(
+            "OPENAI_TTS_ENDPOINT2",
+            "OPENAI_TTS_KEY2",
+            "OPENAI_TTS_MODEL2",
+            marks=pytest.mark.skip(reason=_AZURE_KEY_AUTH_DISABLED_REASON),
+            id="openai-tts2-api-key",
+        ),
     ],
 )
 async def test_connect_tts(
     sqlite_instance: SQLiteMemory,
     endpoint: str,
+    api_key_env_var: str | None,
     model_name: str,
 ) -> None:
     endpoint_value = _get_required_env_var(endpoint)
@@ -614,7 +778,7 @@ async def test_connect_tts(
 
     target = OpenAITTSTarget(
         endpoint=endpoint_value,
-        api_key=_get_openai_auth(endpoint=endpoint_value, api_key_env_var=None),
+        api_key=_get_openai_auth(endpoint=endpoint_value, api_key_env_var=api_key_env_var),
         model_name=model_name_value,
     )
 
@@ -622,9 +786,16 @@ async def test_connect_tts(
 
 
 @pytest.mark.parametrize(
-    ("endpoint", "model_name"),
+    ("endpoint", "api_key_env_var", "model_name"),
     [
-        ("AZURE_OPENAI_VIDEO_ENDPOINT", "AZURE_OPENAI_VIDEO_MODEL"),
+        ("AZURE_OPENAI_VIDEO_ENDPOINT", None, "AZURE_OPENAI_VIDEO_MODEL"),
+        pytest.param(
+            "AZURE_OPENAI_VIDEO_ENDPOINT",
+            "AZURE_OPENAI_VIDEO_KEY",
+            "AZURE_OPENAI_VIDEO_MODEL",
+            marks=pytest.mark.skip(reason=_AZURE_KEY_AUTH_DISABLED_REASON),
+            id="azure-video-api-key",
+        ),
         # OpenAI Platform endpoint returns HTTP 401 "Missing scopes: api.videos.write" for all requests
         # ("PLATFORM_OPENAI_VIDEO_ENDPOINT", "PLATFORM_OPENAI_VIDEO_KEY",
         #  "PLATFORM_OPENAI_VIDEO_MODEL"),
@@ -633,6 +804,7 @@ async def test_connect_tts(
 async def test_connect_video(
     sqlite_instance: SQLiteMemory,
     endpoint: str,
+    api_key_env_var: str | None,
     model_name: str,
 ) -> None:
     """Test OpenAIVideoTarget with video API."""
@@ -641,7 +813,7 @@ async def test_connect_video(
 
     target = OpenAIVideoTarget(
         endpoint=endpoint_value,
-        api_key=_get_openai_auth(endpoint=endpoint_value, api_key_env_var=None),
+        api_key=_get_openai_auth(endpoint=endpoint_value, api_key_env_var=api_key_env_var),
         model_name=model_name_value,
         resolution_dimensions="1280x720",  # Supported by both v1 and v2
         n_seconds=4,  # Supported by both v1 (up to 20s) and v2 (4, 8, or 12s)
@@ -651,7 +823,21 @@ async def test_connect_video(
 
 
 @pytest.mark.run_only_if_all_tests
-async def test_video_multiple_prompts_create_separate_files(sqlite_instance: SQLiteMemory) -> None:
+@pytest.mark.parametrize(
+    "api_key_env_var",
+    [
+        pytest.param(None, id="entra"),
+        pytest.param(
+            "AZURE_OPENAI_VIDEO_KEY",
+            marks=pytest.mark.skip(reason=_AZURE_KEY_AUTH_DISABLED_REASON),
+            id="api-key",
+        ),
+    ],
+)
+async def test_video_multiple_prompts_create_separate_files(
+    sqlite_instance: SQLiteMemory,
+    api_key_env_var: str | None,
+) -> None:
     """
     Test that sending multiple prompts to video API using PromptSendingAttack
     creates separate video files and doesn't override previous files.
@@ -664,7 +850,7 @@ async def test_video_multiple_prompts_create_separate_files(sqlite_instance: SQL
 
     target = OpenAIVideoTarget(
         endpoint=endpoint_value,
-        api_key=_get_openai_auth(endpoint=endpoint_value, api_key_env_var=None),
+        api_key=_get_openai_auth(endpoint=endpoint_value, api_key_env_var=api_key_env_var),
         model_name=model_name_value,
         resolution_dimensions="1280x720",
         n_seconds=4,
@@ -718,14 +904,28 @@ async def test_video_multiple_prompts_create_separate_files(sqlite_instance: SQL
     )
 
 
-async def test_video_remix_chain(sqlite_instance: SQLiteMemory) -> None:
+@pytest.mark.parametrize(
+    "api_key_env_var",
+    [
+        pytest.param(None, id="entra"),
+        pytest.param(
+            "OPENAI_VIDEO_KEY",
+            marks=pytest.mark.skip(reason=_AZURE_KEY_AUTH_DISABLED_REASON),
+            id="api-key",
+        ),
+    ],
+)
+async def test_video_remix_chain(
+    sqlite_instance: SQLiteMemory,
+    api_key_env_var: str | None,
+) -> None:
     """Test text-to-video followed by remix using the returned video_id."""
     endpoint_value = _get_required_env_var("OPENAI_VIDEO_ENDPOINT")
     model_name_value = _get_required_env_var("OPENAI_VIDEO_MODEL")
 
     target = OpenAIVideoTarget(
         endpoint=endpoint_value,
-        api_key=_get_openai_auth(endpoint=endpoint_value, api_key_env_var=None),
+        api_key=_get_openai_auth(endpoint=endpoint_value, api_key_env_var=api_key_env_var),
         model_name=model_name_value,
         resolution_dimensions="1280x720",
         n_seconds=4,
@@ -763,14 +963,28 @@ async def test_video_remix_chain(sqlite_instance: SQLiteMemory) -> None:
 
 
 @pytest.mark.run_only_if_all_tests
-async def test_video_image_to_video(sqlite_instance: SQLiteMemory) -> None:
+@pytest.mark.parametrize(
+    "api_key_env_var",
+    [
+        pytest.param(None, id="entra"),
+        pytest.param(
+            "OPENAI_VIDEO_KEY",
+            marks=pytest.mark.skip(reason=_AZURE_KEY_AUTH_DISABLED_REASON),
+            id="api-key",
+        ),
+    ],
+)
+async def test_video_image_to_video(
+    sqlite_instance: SQLiteMemory,
+    api_key_env_var: str | None,
+) -> None:
     """Test image-to-video mode using an image as the first frame."""
     endpoint_value = _get_required_env_var("OPENAI_VIDEO_ENDPOINT")
     model_name_value = _get_required_env_var("OPENAI_VIDEO_MODEL")
 
     target = OpenAIVideoTarget(
         endpoint=endpoint_value,
-        api_key=_get_openai_auth(endpoint=endpoint_value, api_key_env_var=None),
+        api_key=_get_openai_auth(endpoint=endpoint_value, api_key_env_var=api_key_env_var),
         model_name=model_name_value,
         resolution_dimensions="1280x720",
         n_seconds=4,
