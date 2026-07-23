@@ -43,6 +43,20 @@ _CONVERSATION_INSERT_PROGRESS_INTERVAL = 25
 _CONVERSATION_INSERT_PREFIX = 'INSERT INTO "Conversations" (conversation_id, target_identifier, pyrit_version) VALUES '
 
 
+def _report_progress(message: str) -> None:
+    """Write migration progress to Alembic stdout, or the logger outside a migration context."""
+    try:
+        context = op.get_context()
+    except (AttributeError, NameError):
+        logger.info(message)
+        return
+    config = context.config
+    if config is not None:
+        config.print_stdout(message)
+    else:
+        logger.info(message)
+
+
 def upgrade() -> None:
     """Apply this schema upgrade."""
     op.create_table(
@@ -146,11 +160,11 @@ def _insert_conversation_rows(*, bind: Connection, rows: Sequence[tuple[str, str
     if not batch_count:
         return
 
-    logger.info(f"Conversations backfill: inserting {len(rows)} row(s) in {batch_count} batch(es).")
+    _report_progress(f"Conversations backfill: inserting {len(rows)} row(s) in {batch_count} batch(es).")
     for batch_number, start in enumerate(range(0, len(rows), _CONVERSATION_INSERT_BATCH_SIZE), start=1):
         _insert_conversation_batch(bind=bind, rows=rows[start : start + _CONVERSATION_INSERT_BATCH_SIZE])
         if batch_number % _CONVERSATION_INSERT_PROGRESS_INTERVAL == 0 or batch_number == batch_count:
-            logger.info(f"Conversations backfill: completed insert batch {batch_number}/{batch_count}.")
+            _report_progress(f"Conversations backfill: completed insert batch {batch_number}/{batch_count}.")
 
 
 def _insert_conversation_batch(*, bind: Connection, rows: Sequence[tuple[str, str | None]]) -> None:

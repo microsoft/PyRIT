@@ -1277,13 +1277,15 @@ def test_identifier_migrations_are_nullable_and_best_effort_with_malformed_json(
             engine.dispose()
 
 
-def test_target_identifier_backfill_batches_conversation_links(caplog):
+def test_target_identifier_backfill_batches_conversation_links():
     """Target links use bounded statements even when every identifier is unique."""
-    caplog.set_level("INFO")
+    from io import StringIO
+
     with tempfile.TemporaryDirectory() as temp_dir:
         engine = create_engine(f"sqlite:///{os.path.join(temp_dir, 'identifier-link-batches.db')}")
         update_metrics = []
         target_insert_count = 0
+        progress_stream = StringIO()
 
         def record_target_backfill(conn, cursor, statement, parameters, context, executemany):
             nonlocal target_insert_count
@@ -1295,6 +1297,7 @@ def test_target_identifier_backfill_batches_conversation_links(caplog):
         try:
             with engine.begin() as connection:
                 config = _config_for(connection)
+                config.stdout = progress_stream
                 command.upgrade(config, "d4e6f8a0b2c4")
                 conversation_parameters = []
                 for index in range(602):
@@ -1328,14 +1331,15 @@ def test_target_identifier_backfill_batches_conversation_links(caplog):
                 identifier_count = connection.execute(text('SELECT COUNT(*) FROM "TargetIdentifiers"')).scalar_one()
                 temp_tables = set(inspect(connection).get_temp_table_names())
 
+            progress_output = progress_stream.getvalue()
             assert update_metrics == [(400, 800), (202, 404)]
             assert target_insert_count == 601
             assert linked_count == 602
             assert identifier_count == 601
             assert "_PyritConversationTargetLinks" not in temp_tables
-            assert any("processed 601 unique target graph(s)" in record.message for record in caplog.records)
-            assert any("completed staging batch 2/2" in record.message for record in caplog.records)
-            assert any("staged target-link update completed" in record.message for record in caplog.records)
+            assert "processed 601 unique identifier graph(s)" in progress_output
+            assert "completed staging batch 2/2" in progress_output
+            assert "staged target-link update completed" in progress_output
         finally:
             if event.contains(engine, "before_cursor_execute", record_target_backfill):
                 event.remove(engine, "before_cursor_execute", record_target_backfill)
@@ -1470,6 +1474,341 @@ def test_target_identifier_bulk_update_failure_retries_individually(caplog):
         finally:
             if event.contains(engine, "before_cursor_execute", fail_one_individual_update):
                 event.remove(engine, "before_cursor_execute", fail_one_individual_update)
+            engine.dispose()
+
+
+def test_remaining_identifier_backfills_batch_row_links():
+    """Scorer, scenario, and attack links use bounded staging statements."""
+    from pyrit.memory.alembic.versions import e5f7a9c1b3d2_add_identifiers_tables as mig
+
+    row_count = mig._IDENTIFIER_LINK_INSERT_BATCH_SIZE + 1
+    identifiers = {
+        "scorer": {
+            "hash": "d" * 64,
+            "class_name": "BatchScorer",
+            "class_module": "tests.unit.memory.test_migration",
+        },
+        "scenario": {
+            "hash": "e" * 64,
+            "class_name": "BatchScenario",
+            "class_module": "tests.unit.memory.test_migration",
+        },
+        "attack": {
+            "hash": "f" * 64,
+            "class_name": "BatchAttack",
+            "class_module": "tests.unit.memory.test_migration",
+        },
+    }
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        engine = create_engine(f"sqlite:///{os.path.join(temp_dir, 'remaining-identifier-batches.db')}")
+        staging_metrics = []
+        update_count = 0
+
+        def record_identifier_links(conn, cursor, statement, parameters, context, executemany):
+            nonlocal update_count
+            if statement.startswith('INSERT INTO "_PyritIdentifierLinks"'):
+                staging_metrics.append((statement.count("), (") + 1, len(parameters)))
+            if statement.startswith(
+                (
+                    'UPDATE "ScoreEntries" SET "scorer_identifier_hash"',
+                    'UPDATE "ScenarioResultEntries" SET "scenario_identifier_hash"',
+                    'UPDATE "AttackResultEntries" SET "atomic_attack_identifier_hash"',
+                )
+            ):
+                update_count += 1
+
+        try:
+            with engine.begin() as connection:
+                config = _config_for(connection)
+                command.upgrade(config, "d4e6f8a0b2c4")
+                connection.execute(
+                    text(
+                        'INSERT INTO "ScoreEntries" '
+                        "(id, score_value, score_type, score_metadata, scorer_class_identifier, timestamp) "
+                        "VALUES (:id, 'True', 'true_false', '{}', :identifier, '2026-07-23')"
+                    ),
+                    [
+                        {
+                            "id": str(uuid.UUID(int=100_000 + index)),
+                            "identifier": json.dumps(identifiers["scorer"]),
+                        }
+                        for index in range(row_count)
+                    ],
+                )
+                connection.execute(
+                    text(
+                        'INSERT INTO "ScenarioResultEntries" '
+                        "(id, scenario_name, scenario_version, pyrit_version, scenario_identifier, "
+                        "objective_target_identifier, objective_scorer_identifier, scenario_run_state, "
+                        "attack_results_json, number_tries, completion_time, timestamp) "
+                        "VALUES (:id, 'BatchScenario', 1, '1.0.0', :identifier, '{}', '{}', "
+                        "'COMPLETED', '{}', 1, '2026-07-23', '2026-07-23')"
+                    ),
+                    [
+                        {
+                            "id": str(uuid.UUID(int=200_000 + index)),
+                            "identifier": json.dumps(identifiers["scenario"]),
+                        }
+                        for index in range(row_count)
+                    ],
+                )
+                connection.execute(
+                    text(
+                        'INSERT INTO "AttackResultEntries" '
+                        "(id, conversation_id, objective, atomic_attack_identifier, objective_sha256, "
+                        "executed_turns, execution_time_ms, outcome, timestamp, pyrit_version) "
+                        "VALUES (:id, :conversation_id, 'objective', :identifier, 'sha', 1, 0, "
+                        "'success', '2026-07-23', '1.0.0')"
+                    ),
+                    [
+                        {
+                            "id": str(uuid.UUID(int=300_000 + index)),
+                            "conversation_id": f"attack-{index}",
+                            "identifier": json.dumps(identifiers["attack"]),
+                        }
+                        for index in range(row_count)
+                    ],
+                )
+
+                event.listen(engine, "before_cursor_execute", record_identifier_links)
+                command.upgrade(config, "e5f7a9c1b3d2")
+                event.remove(engine, "before_cursor_execute", record_identifier_links)
+
+                linked_counts = (
+                    connection.execute(
+                        text('SELECT COUNT(*) FROM "ScoreEntries" WHERE scorer_identifier_hash IS NOT NULL')
+                    ).scalar_one(),
+                    connection.execute(
+                        text('SELECT COUNT(*) FROM "ScenarioResultEntries" WHERE scenario_identifier_hash IS NOT NULL')
+                    ).scalar_one(),
+                    connection.execute(
+                        text(
+                            'SELECT COUNT(*) FROM "AttackResultEntries" WHERE atomic_attack_identifier_hash IS NOT NULL'
+                        )
+                    ).scalar_one(),
+                )
+                temp_tables = set(inspect(connection).get_temp_table_names())
+
+            assert staging_metrics == [(400, 800), (1, 2)] * 3
+            assert update_count == 3
+            assert linked_counts == (row_count, row_count, row_count)
+            assert "_PyritIdentifierLinks" not in temp_tables
+        finally:
+            if event.contains(engine, "before_cursor_execute", record_identifier_links):
+                event.remove(engine, "before_cursor_execute", record_identifier_links)
+            engine.dispose()
+
+
+def test_converter_identifier_backfill_batches_links_and_skips_empty_lists():
+    """Prompt associations use bounded statements without savepoints for empty lists."""
+    from pyrit.memory.alembic.versions import e5f7a9c1b3d2_add_identifiers_tables as mig
+
+    linked_prompt_count = mig._CONVERTER_LINK_INSERT_BATCH_SIZE * 2 + 1
+    identifier = {
+        "hash": "c" * 64,
+        "class_name": "BatchConverter",
+        "class_module": "tests.unit.memory.test_migration",
+    }
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        engine = create_engine(f"sqlite:///{os.path.join(temp_dir, 'converter-link-batches.db')}")
+        insert_metrics = []
+        savepoint_count = 0
+
+        def record_converter_links(conn, cursor, statement, parameters, context, executemany):
+            nonlocal savepoint_count
+            if statement.startswith('INSERT INTO "PromptConverterIdentifiers"'):
+                insert_metrics.append((statement.count("), (") + 1, len(parameters)))
+            if statement.startswith("SAVEPOINT"):
+                savepoint_count += 1
+
+        try:
+            with engine.begin() as connection:
+                config = _config_for(connection)
+                command.upgrade(config, "d4e6f8a0b2c4")
+                prompt_statement = text(
+                    'INSERT INTO "PromptMemoryEntries" '
+                    "(id, role, conversation_id, sequence, timestamp, labels, prompt_metadata, "
+                    "converter_identifiers, original_value_data_type, original_value, "
+                    "converted_value_data_type, original_prompt_id, pyrit_version) "
+                    "VALUES (:id, 'user', :conversation_id, 0, '2026-07-23', '{}', '{}', :identifiers, "
+                    "'text', 'prompt', 'text', :id, '1.0.0')"
+                )
+                connection.execute(
+                    prompt_statement,
+                    [
+                        {
+                            "id": str(uuid.UUID(int=400_000 + index)),
+                            "conversation_id": f"linked-{index}",
+                            "identifiers": json.dumps([identifier]),
+                        }
+                        for index in range(linked_prompt_count)
+                    ],
+                )
+                connection.execute(
+                    prompt_statement,
+                    [
+                        {
+                            "id": str(uuid.UUID(int=500_000 + index)),
+                            "conversation_id": f"empty-{index}",
+                            "identifiers": "[]",
+                        }
+                        for index in range(1_000)
+                    ],
+                )
+
+                event.listen(engine, "before_cursor_execute", record_converter_links)
+                command.upgrade(config, "e5f7a9c1b3d2")
+                event.remove(engine, "before_cursor_execute", record_converter_links)
+
+                association_count = connection.execute(
+                    text('SELECT COUNT(*) FROM "PromptConverterIdentifiers"')
+                ).scalar_one()
+                converter_count = connection.execute(text('SELECT COUNT(*) FROM "ConverterIdentifiers"')).scalar_one()
+
+            assert insert_metrics == [(300, 900), (300, 900), (1, 3)]
+            assert association_count == linked_prompt_count
+            assert converter_count == 1
+            assert savepoint_count < 20
+        finally:
+            if event.contains(engine, "before_cursor_execute", record_converter_links):
+                event.remove(engine, "before_cursor_execute", record_converter_links)
+            engine.dispose()
+
+
+def test_identifier_row_link_batch_failure_retries_individually(caplog):
+    """A failed generic staging batch retries each healthy row."""
+    from unittest.mock import patch
+
+    from pyrit.memory.alembic.versions import e5f7a9c1b3d2_add_identifiers_tables as mig
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        engine = create_engine(f"sqlite:///{os.path.join(temp_dir, 'identifier-row-link-fallback.db')}")
+        batch_attempts = 0
+
+        def fail_first_identifier_link_batch(conn, cursor, statement, parameters, context, executemany):
+            nonlocal batch_attempts
+            if not statement.startswith('INSERT INTO "_PyritIdentifierLinks"'):
+                return
+            batch_attempts += 1
+            if batch_attempts == 1:
+                raise RuntimeError("forced identifier-link batch failure")
+
+        try:
+            with engine.begin() as connection:
+                config = _config_for(connection)
+                command.upgrade(config, "e5f7a9c1b3d2")
+                connection.execute(
+                    text(
+                        'INSERT INTO "ScorerIdentifiers" (hash, class_name, class_module, identifier_json) '
+                        "VALUES (:hash, 'Scorer', 'tests.unit.memory.test_migration', '{}')"
+                    ),
+                    [{"hash": f"{index:064x}"} for index in range(3)],
+                )
+                score_ids = [str(uuid.UUID(int=600_000 + index)) for index in range(3)]
+                connection.execute(
+                    text(
+                        'INSERT INTO "ScoreEntries" '
+                        "(id, score_value, score_type, score_metadata, scorer_class_identifier, timestamp) "
+                        "VALUES (:id, 'True', 'true_false', '{}', '{}', '2026-07-23')"
+                    ),
+                    [{"id": score_id} for score_id in score_ids],
+                )
+
+                event.listen(engine, "before_cursor_execute", fail_first_identifier_link_batch)
+                with patch.object(mig, "_IDENTIFIER_LINK_INSERT_BATCH_SIZE", 2):
+                    linked, skipped = mig._update_identifier_row_links(
+                        bind=connection,
+                        links=[(score_ids[index], f"{index:064x}") for index in range(3)],
+                        name="ScorerIdentifiers",
+                        target_table="ScoreEntries",
+                        target_id_column="id",
+                        target_hash_column="scorer_identifier_hash",
+                    )
+                event.remove(engine, "before_cursor_execute", fail_first_identifier_link_batch)
+
+                linked_count = connection.execute(
+                    text('SELECT COUNT(*) FROM "ScoreEntries" WHERE scorer_identifier_hash IS NOT NULL')
+                ).scalar_one()
+                temp_tables = set(inspect(connection).get_temp_table_names())
+
+            assert linked == 3
+            assert skipped == 0
+            assert batch_attempts == 4
+            assert linked_count == 3
+            assert "_PyritIdentifierLinks" not in temp_tables
+            assert any("staging insert failed" in record.message for record in caplog.records)
+        finally:
+            if event.contains(engine, "before_cursor_execute", fail_first_identifier_link_batch):
+                event.remove(engine, "before_cursor_execute", fail_first_identifier_link_batch)
+            engine.dispose()
+
+
+def test_converter_link_batch_failure_retries_at_prompt_boundary(caplog):
+    """A failed association batch preserves healthy prompts and skips one conflicting prompt."""
+    from pyrit.memory.alembic.versions import e5f7a9c1b3d2_add_identifiers_tables as mig
+
+    desired_hash = "a" * 64
+    existing_hash = "b" * 64
+    with tempfile.TemporaryDirectory() as temp_dir:
+        engine = create_engine(f"sqlite:///{os.path.join(temp_dir, 'converter-prompt-fallback.db')}")
+        try:
+            with engine.begin() as connection:
+                config = _config_for(connection)
+                command.upgrade(config, "e5f7a9c1b3d2")
+                connection.execute(
+                    text(
+                        'INSERT INTO "ConverterIdentifiers" (hash, class_name, class_module, identifier_json) '
+                        "VALUES (:hash, 'Converter', 'tests.unit.memory.test_migration', '{}')"
+                    ),
+                    [{"hash": desired_hash}, {"hash": existing_hash}],
+                )
+                prompt_ids = [str(uuid.UUID(int=700_000 + index)) for index in range(3)]
+                connection.execute(
+                    text(
+                        'INSERT INTO "PromptMemoryEntries" '
+                        "(id, role, conversation_id, sequence, timestamp, labels, prompt_metadata, "
+                        "original_value_data_type, original_value, converted_value_data_type, original_prompt_id) "
+                        "VALUES (:id, 'user', :conversation_id, 0, '2026-07-23', '{}', '{}', "
+                        "'text', 'prompt', 'text', :id)"
+                    ),
+                    [
+                        {"id": prompt_id, "conversation_id": f"conversation-{index}"}
+                        for index, prompt_id in enumerate(prompt_ids)
+                    ],
+                )
+                connection.execute(
+                    text(
+                        'INSERT INTO "PromptConverterIdentifiers" '
+                        "(prompt_memory_entry_id, position, converter_identifier_hash) "
+                        "VALUES (:prompt_id, 0, :hash)"
+                    ),
+                    {"prompt_id": prompt_ids[1], "hash": existing_hash},
+                )
+
+                inserted, skipped = mig._insert_prompt_converter_links(
+                    bind=connection,
+                    prompt_links=[(prompt_id, [(prompt_id, 0, desired_hash)]) for prompt_id in prompt_ids],
+                )
+
+                stored_links = connection.execute(
+                    text(
+                        "SELECT prompt_memory_entry_id, converter_identifier_hash "
+                        'FROM "PromptConverterIdentifiers" ORDER BY prompt_memory_entry_id'
+                    )
+                ).fetchall()
+
+            assert inserted == 2
+            assert skipped == 1
+            assert stored_links == [
+                (prompt_ids[0], desired_hash),
+                (prompt_ids[1], existing_hash),
+                (prompt_ids[2], desired_hash),
+            ]
+            assert any("association batch failed" in record.message for record in caplog.records)
+            assert any(f"skipped prompt {prompt_ids[1]}" in record.message for record in caplog.records)
+        finally:
             engine.dispose()
 
 

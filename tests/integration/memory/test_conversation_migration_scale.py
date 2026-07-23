@@ -22,6 +22,7 @@ from alembic.operations import Operations
 from sqlalchemy import create_engine, event, inspect, text
 
 from pyrit.memory.alembic.versions import b2f4c6a8d1e3_add_conversations_table as conversations_migration
+from pyrit.memory.alembic.versions import e5f7a9c1b3d2_add_identifiers_tables as identifiers_migration
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -39,11 +40,13 @@ _SEED_BATCH_SIZE = 5_000
 _LARGE_TARGET_CONVERSATION_INDEX = 42
 _CONFLICT_INDICES = frozenset({1, 10_001, 20_001, 30_001, 40_001, 50_001})
 _NULL_TARGET_INTERVAL = 1_009
+_CONVERTER_LINKED_PROMPT_COUNT = 601
 _MAX_UPGRADE_SECONDS = 600
 
 _TARGET_A_HASH = "a" * 64
 _TARGET_B_HASH = "b" * 64
 _LARGE_TARGET_HASH = "c" * 64
+_CONVERTER_HASH = "d" * 64
 
 
 def _target_json(*, target_hash: str, class_name: str, payload: str | None = None) -> str:
@@ -66,6 +69,16 @@ _LARGE_TARGET = _target_json(
     class_name="LargeScaleTarget",
     payload="x" * (64 * 1024),
 )
+_CONVERTER_IDENTIFIERS = json.dumps(
+    [
+        {
+            "class_module": "tests.integration.memory.test_conversation_migration_scale",
+            "class_name": "ScaleConverter",
+            "hash": _CONVERTER_HASH,
+        }
+    ],
+    sort_keys=True,
+)
 
 
 @dataclass
@@ -76,6 +89,8 @@ class _InsertMetrics:
     target_link_statement_rows: list[int] = field(default_factory=list)
     target_link_parameter_counts: list[int] = field(default_factory=list)
     target_link_update_statements: int = 0
+    converter_link_statement_rows: list[int] = field(default_factory=list)
+    converter_link_parameter_counts: list[int] = field(default_factory=list)
 
     def record(
         self,
@@ -102,6 +117,9 @@ class _InsertMetrics:
             )
         ):
             self.target_link_update_statements += 1
+        elif statement.startswith('INSERT INTO "PromptConverterIdentifiers"'):
+            self.converter_link_statement_rows.append(statement.count("), (") + 1)
+            self.converter_link_parameter_counts.append(len(parameters))
 
 
 def _config_for(connection: Connection) -> Config:
@@ -164,6 +182,7 @@ def _prompt_parameters() -> Iterator[dict[str, Any]]:
             "id": str(uuid.UUID(int=row_number)),
             "seq": 0,
             "target": _first_target(index),
+            "converters": _CONVERTER_IDENTIFIERS if row_number <= _CONVERTER_LINKED_PROMPT_COUNT else "[]",
         }
     for index in range(_SECOND_PROMPT_COUNT):
         row_number += 1
@@ -172,6 +191,7 @@ def _prompt_parameters() -> Iterator[dict[str, Any]]:
             "id": str(uuid.UUID(int=row_number)),
             "seq": 1,
             "target": _second_target(index),
+            "converters": "[]",
         }
 
 
@@ -190,10 +210,10 @@ def _seed_prompt_rows(connection: Connection) -> None:
     statement = text(
         'INSERT INTO "PromptMemoryEntries" '
         "(id, role, conversation_id, sequence, timestamp, labels, prompt_metadata, "
-        "prompt_target_identifier, attack_identifier, original_value_data_type, "
+        "prompt_target_identifier, attack_identifier, converter_identifiers, original_value_data_type, "
         "original_value, converted_value_data_type, original_prompt_id) "
         "VALUES (:id, 'user', :conv, :seq, '2026-07-22', '{}', '{}', "
-        ":target, '{}', 'text', 'scale prompt', 'text', :id)"
+        ":target, '{}', :converters, 'text', 'scale prompt', 'text', :id)"
     )
     for batch in _batched(_prompt_parameters(), size=_SEED_BATCH_SIZE):
         connection.execute(statement, batch)
@@ -284,6 +304,12 @@ def test_conversation_migration_upgrade_from_production_revision_at_scale(caplog
                 null_version_count = connection.execute(
                     text('SELECT COUNT(*) FROM "Conversations" WHERE pyrit_version IS NULL')
                 ).scalar_one()
+                converter_link_count = connection.execute(
+                    text('SELECT COUNT(*) FROM "PromptConverterIdentifiers"')
+                ).scalar_one()
+                converter_identifier_count = connection.execute(
+                    text('SELECT COUNT(*) FROM "ConverterIdentifiers"')
+                ).scalar_one()
                 prompt_columns = {column["name"] for column in inspect(connection).get_columns("PromptMemoryEntries")}
                 conversation_columns = {column["name"] for column in inspect(connection).get_columns("Conversations")}
                 _assert_sampled_conversations(connection)
@@ -297,6 +323,9 @@ def test_conversation_migration_upgrade_from_production_revision_at_scale(caplog
             expected_target_links = _PROMPT_CONVERSATION_COUNT - null_prompt_conversations
             expected_target_link_statements = math.ceil(
                 expected_target_links / conversations_migration._CONVERSATION_INSERT_BATCH_SIZE
+            )
+            expected_converter_link_statements = math.ceil(
+                _CONVERTER_LINKED_PROMPT_COUNT / identifiers_migration._CONVERTER_LINK_INSERT_BATCH_SIZE
             )
             conflict_warnings = [
                 record for record in caplog.records if "multiple distinct target identifiers" in record.message
@@ -317,6 +346,12 @@ def test_conversation_migration_upgrade_from_production_revision_at_scale(caplog
             assert metrics.target_link_statement_rows == [400] * 203 + [68]
             assert metrics.target_link_parameter_counts == [800] * 203 + [136]
             assert metrics.target_link_update_statements == 1
+            assert converter_link_count == _CONVERTER_LINKED_PROMPT_COUNT
+            assert converter_identifier_count == 1
+            assert len(metrics.converter_link_statement_rows) == expected_converter_link_statements == 3
+            assert metrics.converter_link_statement_rows == [300, 300, 1]
+            assert metrics.converter_link_parameter_counts == [900, 900, 3]
+            assert metrics.total_statements < 2_000
             assert len(conflict_warnings) == len(_CONFLICT_INDICES)
             assert elapsed_seconds < _MAX_UPGRADE_SECONDS
             print(
@@ -324,6 +359,7 @@ def test_conversation_migration_upgrade_from_production_revision_at_scale(caplog
                 f"{_PROMPT_ROW_COUNT} prompt rows, {_EXPECTED_CONVERSATION_COUNT} conversations, "
                 f"{len(metrics.statement_rows)} conversation inserts, "
                 f"{len(metrics.target_link_statement_rows)} target-link inserts, "
+                f"{len(metrics.converter_link_statement_rows)} converter-link inserts, "
                 f"{metrics.total_statements} total statements, {elapsed_seconds:.3f}s"
             )
         finally:
