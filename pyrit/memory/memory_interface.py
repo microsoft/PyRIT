@@ -32,6 +32,7 @@ from pyrit.memory.memory_models import (
     ConversationEntry,
     ConverterIdentifierEntry,
     EmbeddingDataEntry,
+    InitializerSettingEntry,
     PromptConverterIdentifierEntry,
     PromptMemoryEntry,
     ScenarioIdentifierEntry,
@@ -61,6 +62,7 @@ from pyrit.models import (
     ConverterIdentifier,
     IdentifierFilter,
     IdentifierType,
+    InitializerSetting,
     Message,
     MessagePiece,
     ScenarioIdentifier,
@@ -322,6 +324,49 @@ class MemoryInterface(abc.ABC):
         """
         result: Sequence[EmbeddingDataEntry] = self._query_entries(EmbeddingDataEntry)
         return result
+
+    def add_initializer_setting(self, *, setting: InitializerSetting) -> None:
+        """
+        Insert or replace a saved initializer setting.
+
+        Args:
+            setting: The initializer setting to persist.
+        """
+        self._update_entry(InitializerSettingEntry.from_domain_model(setting))
+
+    def get_initializer_settings(self) -> Sequence[InitializerSetting]:
+        """
+        Load all saved initializer settings.
+
+        Returns:
+            Sequence[InitializerSetting]: The persisted settings ordered by initializer name.
+        """
+        entries = self._query_entries(
+            InitializerSettingEntry,
+            order_by=InitializerSettingEntry.initializer_name.asc(),
+        )
+        return [entry.to_domain_model() for entry in entries]
+
+    def delete_initializer_setting(self, *, initializer_name: str) -> None:
+        """
+        Delete a saved initializer setting when it exists.
+
+        Args:
+            initializer_name: The initializer registry name to delete.
+
+        Raises:
+            SQLAlchemyError: If the delete operation fails.
+        """
+        with closing(self.get_session()) as session:
+            try:
+                session.query(InitializerSettingEntry).filter(
+                    InitializerSettingEntry.initializer_name == initializer_name
+                ).delete(synchronize_session=False)
+                session.commit()
+            except SQLAlchemyError as e:
+                session.rollback()
+                logger.exception(f"Error deleting initializer setting '{initializer_name}': {e}")
+                raise
 
     @abc.abstractmethod
     def _init_storage_io(self) -> None:

@@ -49,6 +49,7 @@ from pyrit.models.identifiers import (
     snake_case_to_class_name,
     validate_registry_name,
 )
+from pyrit.models.initializer_setting import InitializerSetting
 from pyrit.models.literals import (
     MEDIA_PATH_DATA_TYPES,
     ChatMessageRole,
@@ -164,6 +165,7 @@ __all__ = [
     "Identifiable",
     "IdentifierFilter",
     "IdentifierType",
+    "InitializerSetting",
     "JSONValue",
     "COMMON_JSON_SCHEMAS",
     "JsonResponseConfig",

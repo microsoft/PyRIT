@@ -108,6 +108,53 @@ export interface CreateTargetRequest {
   auth_mode?: 'api_key' | 'identity'
 }
 
+// --- Initializers ---
+
+export interface RegisteredInitializer {
+  initializer_name: string
+  initializer_type: string
+  description: string
+  required_env_vars: string[]
+  supported_parameters: Parameter[]
+}
+
+export type InitializerSource = 'baseline' | 'override' | 'baseline+override'
+
+export interface EffectiveInitializerSetting extends RegisteredInitializer {
+  enabled: boolean
+  parameters?: Record<string, unknown> | null
+  order_index: number
+  saved_order_index?: number | null
+  source: InitializerSource
+}
+
+export interface InitializerSettingsResponse {
+  items: EffectiveInitializerSetting[]
+}
+
+export interface UpdateInitializerSettingRequest {
+  enabled: boolean
+  parameters?: Record<string, unknown> | null
+  order_index?: number | null
+}
+
+export interface SavedInitializerSetting {
+  initializer_name: string
+  enabled: boolean
+  parameters?: Record<string, unknown> | null
+  order_index?: number | null
+}
+
+export interface ApplyInitializerRequest {
+  parameters?: Record<string, unknown> | null
+}
+
+export interface ApplyInitializerResponse {
+  initializer_name: string
+  status: 'applied'
+  applied_parameters?: Record<string, unknown> | null
+}
+
 // --- Converters ---
 
 export interface ConverterIdentifier {

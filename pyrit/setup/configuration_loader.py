@@ -216,6 +216,11 @@ class ConfigurationLoader(YamlLoadable):
         """The normalized ``server:`` block, or ``None`` when not configured."""
         return self._server_config
 
+    @property
+    def initializer_configs(self) -> Sequence[InitializerConfig]:
+        """The normalized, ordered list of ``initializers:`` entries from this configuration."""
+        return self._initializer_configs
+
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "ConfigurationLoader":
         """

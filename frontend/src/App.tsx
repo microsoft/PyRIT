@@ -7,7 +7,7 @@ import MainLayout from './components/Layout/MainLayout'
 import ChatWindow from './components/Chat/ChatWindow'
 import AttackNotFound from './components/Chat/AttackNotFound'
 import Home from './components/Home/Home'
-import TargetConfig from './components/Config/TargetConfig'
+import ConfigPage from './components/Config/ConfigPage'
 import AttackHistory from './components/History/AttackHistory'
 import FeedbackDialog from './components/Feedback/FeedbackDialog'
 import type { HistoryFilters } from './components/History/historyFilters'
@@ -386,7 +386,7 @@ function App() {
               <Route
                 path="/config"
                 element={
-                  <TargetConfig
+                  <ConfigPage
                     activeTarget={activeTarget}
                     onSetActiveTarget={handleSetActiveTarget}
                   />

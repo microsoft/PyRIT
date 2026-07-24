@@ -3,6 +3,8 @@ import { InteractionRequiredAuthError, type PublicClientApplication } from '@azu
 import { toApiError } from './errors'
 import { getApiScopes } from '../auth/msalConfig'
 import type {
+  ApplyInitializerRequest,
+  ApplyInitializerResponse,
   TargetInstance,
   TargetListResponse,
   TargetCatalogResponse,
@@ -10,6 +12,8 @@ import type {
   ConverterInstance,
   ConverterListResponse,
   CreateTargetRequest,
+  InitializerSettingsResponse,
+  SavedInitializerSetting,
   CreateAttackRequest,
   CreateAttackResponse,
   AttackSummary,
@@ -21,6 +25,7 @@ import type {
   CreateConversationRequest,
   CreateConversationResponse,
   ChangeMainConversationResponse,
+  UpdateInitializerSettingRequest,
 } from '../types'
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '/api'
@@ -193,6 +198,39 @@ export const convertersApi = {
 
   previewConversion: async (request: { original_value: string; converter_ids: string[]; original_value_data_type?: string }): Promise<{ converted_value: string; converted_value_data_type?: string }> => {
     const response = await apiClient.post('/converters/preview', request)
+    return response.data
+  },
+}
+
+export const initializersApi = {
+  getSettings: async (): Promise<InitializerSettingsResponse> => {
+    const response = await apiClient.get('/initializers/settings')
+    return response.data
+  },
+
+  updateSettings: async (
+    initializerName: string,
+    request: UpdateInitializerSettingRequest,
+  ): Promise<SavedInitializerSetting> => {
+    const response = await apiClient.put(
+      `/initializers/${encodeURIComponent(initializerName)}/settings`,
+      request,
+    )
+    return response.data
+  },
+
+  clearSettings: async (initializerName: string): Promise<void> => {
+    await apiClient.delete(`/initializers/${encodeURIComponent(initializerName)}/settings`)
+  },
+
+  applyNow: async (
+    initializerName: string,
+    request?: ApplyInitializerRequest,
+  ): Promise<ApplyInitializerResponse> => {
+    const response = await apiClient.post(
+      `/initializers/${encodeURIComponent(initializerName)}/apply`,
+      request ?? {},
+    )
     return response.data
   },
 }

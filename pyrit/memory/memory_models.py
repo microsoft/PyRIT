@@ -52,6 +52,7 @@ from pyrit.models import (
     ConversationType,
     ConverterIdentifier,
     EvaluationIdentifier,
+    InitializerSetting,
     MessagePiece,
     PromptDataType,
     ScenarioEvaluationIdentifier,
@@ -417,6 +418,50 @@ class DomainBackedEntry(Base, Generic[TDomain]):
                 "from_domain_model(...); every concrete entry must define how its "
                 "domain model is converted into a row."
             )
+
+
+class InitializerSettingEntry(DomainBackedEntry[InitializerSetting]):
+    """Persistence row for an ``InitializerSetting`` override."""
+
+    __tablename__ = "InitializerSettings"
+    __table_args__ = {"extend_existing": True}
+
+    initializer_name: Mapped[str] = mapped_column(String(64), primary_key=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    parameters: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    order_index: Mapped[int | None] = mapped_column(INTEGER, nullable=True)
+
+    @classmethod
+    def from_domain_model(cls, domain_model: InitializerSetting) -> Self:
+        """
+        Build an unsaved initializer-setting row from its domain model.
+
+        Args:
+            domain_model (InitializerSetting): The domain model this entry persists.
+
+        Returns:
+            Self: A new, unsaved row.
+        """
+        return cls(
+            initializer_name=domain_model.initializer_name,
+            enabled=domain_model.enabled,
+            parameters=domain_model.parameters,
+            order_index=domain_model.order_index,
+        )
+
+    def to_domain_model(self) -> InitializerSetting:
+        """
+        Convert this row back into its domain model.
+
+        Returns:
+            InitializerSetting: The reconstructed initializer setting.
+        """
+        return InitializerSetting(
+            initializer_name=self.initializer_name,
+            enabled=self.enabled,
+            parameters=self.parameters,
+            order_index=self.order_index,
+        )
 
 
 T = TypeVar("T", bound=ComponentIdentifier)
