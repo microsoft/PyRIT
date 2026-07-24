@@ -47,6 +47,7 @@ export const useTargetConfigStyles = makeStyles({
   headerAction: {
     '@media (max-width: 600px)': {
       flex: '1 1 8rem',
+      minHeight: '44px',
     },
   },
   emptyState: {

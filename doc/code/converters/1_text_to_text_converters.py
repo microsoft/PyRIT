@@ -6,7 +6,7 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.19.3
+#       jupytext_version: 1.19.4
 # ---
 
 # %% [markdown]
@@ -267,6 +267,7 @@ from pyrit.converter import (
     DecompositionConverter,
     DenylistConverter,
     ImagePromptStyleConverter,
+    IPAConverter,
     MaliciousQuestionGeneratorConverter,
     MathPromptConverter,
     NoiseConverter,
@@ -304,6 +305,10 @@ print("Tone (angry):", await tone_converter.convert_async(prompt=prompt))  # typ
 # Translation to specific language
 translation_converter = TranslationConverter(converter_target=attack_llm, language="French")
 print("Translation (French):", await translation_converter.convert_async(prompt=prompt))  # type: ignore
+
+# IPA transcription detects the source language and pronunciation variety
+ipa_converter = IPAConverter(converter_target=attack_llm)
+print("IPA:", await ipa_converter.convert_async(prompt=prompt))  # type: ignore
 
 # Random translation translates each word to a random language
 random_translation_converter = RandomTranslationConverter(

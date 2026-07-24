@@ -76,7 +76,7 @@ export default function TargetConfig({ activeTarget, onSetActiveTarget }: Target
     <div className={styles.root} data-testid="target-config">
       <div className={styles.header}>
         <div className={styles.headerLeft}>
-          <Text size={600} weight="semibold">Target Configuration</Text>
+          <Text as="h1" size={600} weight="semibold">Target Configuration</Text>
           <Text size={300} style={{ color: tokens.colorNeutralForeground3 }}>
             Manage targets for attack sessions. Select a target to use in the chat view.
           </Text>

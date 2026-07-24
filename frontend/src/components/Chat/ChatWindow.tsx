@@ -616,6 +616,7 @@ export default function ChatWindow({
 
   return (
     <div className={styles.root}>
+      <h1 className={styles.pageHeading}>Chat</h1>
       {isConverterPanelOpen && (
         <ConverterPanel
           onClose={() => setIsConverterPanelOpen(false)}

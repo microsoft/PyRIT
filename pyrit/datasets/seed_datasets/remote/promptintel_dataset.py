@@ -310,7 +310,7 @@ class _PromptIntelDataset(_RemoteDatasetLoader):
             harm_categories=harm_categories,
             description=impact_description if impact_description else None,
             authors=authors,
-            groups=["Cisco Talos Intelligence"],
+            groups=["Nova Hunting"],
             source=source_url,
             date_added=date_added,
             metadata=metadata,
