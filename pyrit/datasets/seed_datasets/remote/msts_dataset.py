@@ -111,16 +111,22 @@ class _MSTSDataset(_RemoteDatasetLoader):
     _GROUPS: ClassVar[list[str]] = [
         "Bocconi University",
         "Instituto de Telecomunicações",
-        "TU Darmstadt / hessian.AI",
+        "TU Darmstadt",
+        "hessian.AI",
         "University of Zurich",
         "Google DeepMind",
         "Walled AI",
         "King's College London",
-        "Sapienza University of Rome",
+        "Imperial College London",
+        "Clarkson University",
+        "Lawrence Berkeley National Laboratory",
         "KAIST",
-        "Aalto University",
+        "University of Pennsylvania",
+        "DFKI",
+        "CERTAIN",
+        "National University of Singapore",
+        "Contextual AI",
         "expert.ai",
-        "MLCommons",
     ]
 
     # Metadata
