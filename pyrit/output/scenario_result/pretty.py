@@ -252,7 +252,7 @@ class PrettyScenarioResultPrinter(ScenarioResultPrinterBase):
         lines.append(self._render_footer())
         parts.append("".join(lines))
         parts.append(
-            await self._render_attack_results_async(
+            await self._render_attack_reasoning_summaries_async(
                 result=result,
                 include_reasoning_trace=include_reasoning_trace,
             )
@@ -260,7 +260,7 @@ class PrettyScenarioResultPrinter(ScenarioResultPrinterBase):
 
         return "".join(parts)
 
-    async def _render_attack_results_async(
+    async def _render_attack_reasoning_summaries_async(
         self,
         *,
         result: ScenarioResult,
