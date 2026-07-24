@@ -20,10 +20,7 @@ skipped_files = [
     "10_3_websocket_copilot_target.ipynb",  # WebSocket Copilot target requires manual pasting tokens
 ]
 
-_AZURE_KEY_AUTH_DISABLED_REASON = (
-    "Azure key-based (local) auth is disabled in our tenant; "
-    "covered by the Entra-auth tests (test_entra_auth_targets.py)."
-)
+_AZURE_KEY_AUTH_DISABLED_REASON = "Azure key-based (local) auth is disabled in our tenant."
 
 # Notebooks whose targets use Azure key-based (local) auth, which is disabled in our tenant.
 _azure_key_auth_notebooks = {
