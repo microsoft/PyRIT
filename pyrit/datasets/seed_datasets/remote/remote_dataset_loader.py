@@ -361,13 +361,15 @@ class _RemoteDatasetLoader(SeedDatasetProvider, ABC):
             """
             cache_dir = str(DB_DATA_PATH / "huggingface") if cache else None
 
-            # Explicitly set download_mode to reuse cached data and never re-download
+            # Reuse cached data when caching is enabled; force a re-download otherwise so
+            # cache=False genuinely picks up upstream edits instead of silently reusing the cache.
+            download_mode = DownloadMode.REUSE_DATASET_IF_EXISTS if cache else DownloadMode.FORCE_REDOWNLOAD
             return load_dataset(
                 dataset_name,
                 config,
                 split=split,
                 cache_dir=cache_dir,
-                download_mode=DownloadMode.REUSE_DATASET_IF_EXISTS,
+                download_mode=download_mode,
                 token=token,
                 **kwargs,
             )

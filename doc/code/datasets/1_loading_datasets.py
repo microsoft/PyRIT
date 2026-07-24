@@ -5,7 +5,7 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.19.1
+#       jupytext_version: 1.19.5
 # ---
 
 # %% [markdown]
@@ -77,12 +77,16 @@
 #
 # The `turkish_conversation_prompt_injection` loader defaults to attack examples
 # and preserves each record's attack family, source context, split, and pair ID.
-# It loads the published v1.0.1 data from an immutable Hugging Face revision and
-# validates the source schema, stable IDs, split claims, and complete boundary pairs.
+# It loads the published v1.0.2 data from an immutable Hugging Face revision,
+# validates the complete release composition, and records the versioned Zenodo DOI
+# in each seed's provenance metadata.
 # Attack families describe delivery techniques rather than resulting harms, so
 # they remain in seed metadata instead of PyRIT's harm-category field.
 # Pair IDs also remain metadata: each attack and boundary example is an independent
 # evaluation case, not a multi-prompt group that should be sent together.
+# The examples are synthetic and were curated by one author without an independent
+# annotation or inter-annotator agreement study. Attack labels identify attempted
+# injections; rows do not include model responses or claim a verified bypass.
 # Typed filters can also load legitimate Turkish requests, a specific published
 # split, or selected attack families. For example:
 #

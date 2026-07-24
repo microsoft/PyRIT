@@ -4,7 +4,7 @@
 import logging
 import os
 from enum import Enum
-from typing import Any
+from typing import Any, ClassVar
 
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
@@ -22,22 +22,6 @@ _CONFIG_TO_HF_SPLIT: dict[str, str] = {
     "wildguardtrain": "train",
     "wildguardtest": "test",
 }
-
-_AUTHORS: list[str] = [
-    "Seungju Han",
-    "Kavel Rao",
-    "Allyson Ettinger",
-    "Liwei Jiang",
-    "Bill Yuchen Lin",
-    "Nathan Lambert",
-    "Yejin Choi",
-    "Nouha Dziri",
-]
-
-_GROUPS: list[str] = [
-    "Allen Institute for AI",
-    "University of Washington",
-]
 
 
 class WildGuardMixSplit(Enum):
@@ -94,6 +78,21 @@ class _WildGuardMixDataset(_RemoteDatasetLoader):
     HuggingFace: https://huggingface.co/datasets/allenai/wildguardmix
     """
 
+    _AUTHORS: ClassVar[list[str]] = [
+        "Seungju Han",
+        "Kavel Rao",
+        "Allyson Ettinger",
+        "Liwei Jiang",
+        "Bill Yuchen Lin",
+        "Nathan Lambert",
+        "Yejin Choi",
+        "Nouha Dziri",
+    ]
+    _GROUPS: ClassVar[list[str]] = [
+        "Allen Institute for AI",
+        "University of Washington",
+        "Seoul National University",
+    ]
     HF_DATASET_NAME: str = _HF_REPO_ID
     # WildGuard stores 13 named risk subcategories plus an "others" bucket as
     # normalized slugs. "benign" is intentionally excluded from harm metadata.
@@ -296,8 +295,8 @@ class _WildGuardMixDataset(_RemoteDatasetLoader):
                         else []
                     ),
                     source=self.source,
-                    authors=_AUTHORS,
-                    groups=_GROUPS,
+                    authors=self._AUTHORS,
+                    groups=self._GROUPS,
                     metadata={
                         "split": split.value,
                         "subcategory": subcategory,

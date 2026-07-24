@@ -5,7 +5,8 @@ export const useTourTooltipStyles = makeStyles({
   wrapper: {
     display: 'flex',
     flexDirection: 'column',
-    maxWidth: '420px',
+    width: '420px',
+    maxWidth: `calc(100vw - ${tokens.spacingHorizontalM} - ${tokens.spacingHorizontalM})`,
     position: 'relative',
   },
   container: {
@@ -30,16 +31,34 @@ export const useTourTooltipStyles = makeStyles({
     objectFit: 'contain',
     pointerEvents: 'none',
     zIndex: 1,
+    '@media (max-width: 600px)': {
+      left: 0,
+    },
+  },
+  closeRow: {
+    display: 'flex',
+    justifyContent: 'flex-end',
+    marginBottom: '-8px',
+    marginTop: '-4px',
+  },
+  closeButton: {
+    '@media (max-width: 600px)': {
+      minWidth: '44px',
+      minHeight: '44px',
+    },
   },
   content: {
     color: tokens.colorNeutralForeground1,
     lineHeight: tokens.lineHeightBase300,
+    overflowWrap: 'anywhere',
   },
   footer: {
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'space-between',
     gap: tokens.spacingHorizontalS,
+    flexWrap: 'wrap',
+    paddingLeft: '72px',
   },
   stepCounter: {
     color: tokens.colorNeutralForeground3,
@@ -49,5 +68,13 @@ export const useTourTooltipStyles = makeStyles({
     display: 'flex',
     gap: tokens.spacingHorizontalS,
     marginLeft: 'auto',
+    flexWrap: 'wrap',
+    justifyContent: 'flex-end',
+  },
+  actionButton: {
+    '@media (max-width: 600px)': {
+      minWidth: '44px',
+      minHeight: '44px',
+    },
   },
 })

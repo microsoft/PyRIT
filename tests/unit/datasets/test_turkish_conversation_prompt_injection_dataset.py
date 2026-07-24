@@ -121,6 +121,42 @@ def _fetch_rows_by_split(rows: list[dict[str, Any]]) -> Callable[..., list[dict[
     return _fetch
 
 
+@pytest.fixture(autouse=True)
+def mock_release_contract(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Scale the fixed release contract to the compact unit-test fixture."""
+    loader_cls = _TurkishConversationPromptInjectionDataset
+    monkeypatch.setattr(loader_cls, "_EXPECTED_SPLIT_COUNTS", {"train": 2, "validation": 3, "test": 3})
+    monkeypatch.setattr(
+        loader_cls,
+        "_EXPECTED_LABEL_COUNTS",
+        {
+            "train": {0: 1, 1: 1},
+            "validation": {0: 2, 1: 1},
+            "test": {0: 2, 1: 1},
+        },
+    )
+    monkeypatch.setattr(
+        loader_cls,
+        "_EXPECTED_CATEGORY_COUNTS",
+        {
+            "train": {"benign_boundary": 1, "prompt_injection": 1},
+            "validation": {"benign_boundary": 1, "benign_technical": 1, "prompt_injection": 1},
+            "test": {"benign_boundary": 1, "benign_daily": 1, "prompt_injection": 1},
+        },
+    )
+    monkeypatch.setattr(
+        loader_cls,
+        "_EXPECTED_ATTACK_FAMILY_COUNTS",
+        {
+            "train": {"direct_instruction_override": 1},
+            "validation": {"rag_context_poisoning": 1},
+            "test": {"obfuscation_code_switching": 1},
+        },
+    )
+    monkeypatch.setattr(loader_cls, "_EXPECTED_PAIR_COUNT", 3)
+    monkeypatch.setattr(loader_cls, "_EXPECTED_UNPAIRED_COUNT", 2)
+
+
 class TestTurkishConversationPromptInjectionDataset:
     """Test the Turkish Conversation Prompt-Injection dataset loader."""
 
@@ -254,7 +290,10 @@ class TestTurkishConversationPromptInjectionDataset:
         assert seed.dataset_name == "turkish_conversation_prompt_injection"
         assert seed.name == "tcpi_p0002_a"
         assert seed.data_type == "text"
-        assert seed.source == "https://huggingface.co/datasets/3nesdeniz/turkish-conversation-prompt-injection"
+        assert seed.source == (
+            "https://huggingface.co/datasets/3nesdeniz/turkish-conversation-prompt-injection/"
+            "tree/29d7593984f563c4ad56876aa800b9ffd948a2fb"
+        )
         assert seed.authors == ["Enes Deniz"]
         assert seed.groups == ["AltaySec"]
         assert seed.harm_categories == []
@@ -268,17 +307,22 @@ class TestTurkishConversationPromptInjectionDataset:
             "pair_id": "pair_0002",
             "source_type": "synthetic_curated",
             "split": "validation",
-            "dataset_version": "1.0.1",
+            "dataset_version": "1.0.2",
             "hf_revision": _TurkishConversationPromptInjectionDataset.HF_DATASET_REVISION,
+            "doi": "https://doi.org/10.5281/zenodo.21379389",
         }
 
-    async def test_empty_result_raises(self) -> None:
+    async def test_empty_result_raises(self, mock_turkish_prompt_injection_data: list[dict[str, Any]]) -> None:
         """A valid filter with no matching rows should fail explicitly."""
         loader = _TurkishConversationPromptInjectionDataset(
             attack_families=[TurkishConversationPromptInjectionAttackFamily.TOOL_ACTION_ABUSE]
         )
 
-        with patch.object(loader, "_fetch_from_huggingface_async", new=AsyncMock(return_value=[])):
+        with patch.object(
+            loader,
+            "_fetch_from_huggingface_async",
+            new=AsyncMock(side_effect=_fetch_rows_by_split(mock_turkish_prompt_injection_data)),
+        ):
             with pytest.raises(ValueError) as exc_info:
                 await loader.fetch_dataset_async()
         assert str(exc_info.value) == "SeedDataset cannot be empty. Check your filter criteria."
@@ -356,16 +400,160 @@ class TestTurkishConversationPromptInjectionDataset:
 
     async def test_duplicate_id_raises(self, mock_turkish_prompt_injection_data: list[dict[str, Any]]) -> None:
         """Stable source identifiers must remain unique."""
-        duplicate = dict(mock_turkish_prompt_injection_data[1])
-        duplicate["id"] = mock_turkish_prompt_injection_data[0]["id"]
+        duplicate = dict(mock_turkish_prompt_injection_data[0])
         loader = _TurkishConversationPromptInjectionDataset(split=TurkishConversationPromptInjectionSplit.TRAIN)
 
         with patch.object(
             loader,
             "_fetch_from_huggingface_async",
-            new=AsyncMock(return_value=[mock_turkish_prompt_injection_data[0], duplicate]),
+            new=AsyncMock(
+                return_value=[
+                    mock_turkish_prompt_injection_data[0],
+                    mock_turkish_prompt_injection_data[1],
+                    duplicate,
+                ]
+            ),
         ):
             with pytest.raises(ValueError, match="Duplicate Turkish prompt-injection entry ID"):
+                await loader.fetch_dataset_async()
+
+    async def test_unexpected_field_raises(self, mock_turkish_prompt_injection_data: list[dict[str, Any]]) -> None:
+        """The immutable release schema must reject undocumented fields."""
+        malformed = dict(mock_turkish_prompt_injection_data[0])
+        malformed["unexpected"] = "schema drift"
+        loader = _TurkishConversationPromptInjectionDataset(split=TurkishConversationPromptInjectionSplit.TRAIN)
+
+        with patch.object(
+            loader,
+            "_fetch_from_huggingface_async",
+            new=AsyncMock(return_value=[malformed, mock_turkish_prompt_injection_data[1]]),
+        ):
+            with pytest.raises(ValueError, match="Unexpected keys"):
+                await loader.fetch_dataset_async()
+
+    @pytest.mark.parametrize(
+        ("field", "value", "message"),
+        [
+            ("id", "attack-1", "invalid `id` format"),
+            ("pair_id", "pair-one", "invalid `pair_id` format"),
+            ("pair_id", "pair_9999", "does not match pair"),
+        ],
+    )
+    async def test_invalid_identifier_contract_raises(
+        self,
+        field: str,
+        value: str,
+        message: str,
+        mock_turkish_prompt_injection_data: list[dict[str, Any]],
+    ) -> None:
+        """Stable row and pair identifiers must retain their published format and linkage."""
+        malformed = dict(mock_turkish_prompt_injection_data[0])
+        malformed[field] = value
+        loader = _TurkishConversationPromptInjectionDataset(split=TurkishConversationPromptInjectionSplit.TRAIN)
+
+        with patch.object(
+            loader,
+            "_fetch_from_huggingface_async",
+            new=AsyncMock(return_value=[malformed, mock_turkish_prompt_injection_data[1]]),
+        ):
+            with pytest.raises(ValueError, match=message):
+                await loader.fetch_dataset_async()
+
+    async def test_control_character_raises(self, mock_turkish_prompt_injection_data: list[dict[str, Any]]) -> None:
+        """Published prompt text must not contain disallowed control characters."""
+        malformed = dict(mock_turkish_prompt_injection_data[0])
+        malformed["text"] = f"{malformed['text']}\u0007"
+        loader = _TurkishConversationPromptInjectionDataset(split=TurkishConversationPromptInjectionSplit.TRAIN)
+
+        with patch.object(
+            loader,
+            "_fetch_from_huggingface_async",
+            new=AsyncMock(return_value=[malformed, mock_turkish_prompt_injection_data[1]]),
+        ):
+            with pytest.raises(ValueError, match="control characters"):
+                await loader.fetch_dataset_async()
+
+    async def test_duplicate_normalized_text_raises(
+        self, mock_turkish_prompt_injection_data: list[dict[str, Any]]
+    ) -> None:
+        """Punctuation and Unicode normalization must not hide duplicate release text."""
+        duplicated_rows = [dict(row) for row in mock_turkish_prompt_injection_data]
+        duplicated_rows[-1]["text"] = "Sistem   mesajlarının uygulamadaki görevini açıkla!!!"
+        loader = _TurkishConversationPromptInjectionDataset(label=TurkishConversationPromptInjectionLabel.ALL)
+
+        with patch.object(
+            loader,
+            "_fetch_from_huggingface_async",
+            new=AsyncMock(side_effect=_fetch_rows_by_split(duplicated_rows)),
+        ):
+            with pytest.raises(ValueError, match="Duplicate normalized"):
+                await loader.fetch_dataset_async()
+
+    async def test_release_count_mismatch_raises(
+        self, mock_turkish_prompt_injection_data: list[dict[str, Any]]
+    ) -> None:
+        """A completely missing unpaired row must still be detected."""
+        incomplete_rows = mock_turkish_prompt_injection_data[:-1]
+        loader = _TurkishConversationPromptInjectionDataset(label=TurkishConversationPromptInjectionLabel.ALL)
+
+        with patch.object(
+            loader,
+            "_fetch_from_huggingface_async",
+            new=AsyncMock(side_effect=_fetch_rows_by_split(incomplete_rows)),
+        ):
+            with pytest.raises(ValueError, match="release count mismatch"):
+                await loader.fetch_dataset_async()
+
+    async def test_release_category_count_mismatch_raises(
+        self, mock_turkish_prompt_injection_data: list[dict[str, Any]]
+    ) -> None:
+        """Composition drift using otherwise valid values must be detected."""
+        drifted_rows = [dict(row) for row in mock_turkish_prompt_injection_data]
+        drifted_rows[-1]["category"] = "benign_technical"
+        loader = _TurkishConversationPromptInjectionDataset(label=TurkishConversationPromptInjectionLabel.ALL)
+
+        with patch.object(
+            loader,
+            "_fetch_from_huggingface_async",
+            new=AsyncMock(side_effect=_fetch_rows_by_split(drifted_rows)),
+        ):
+            with pytest.raises(ValueError, match="category counts mismatch"):
+                await loader.fetch_dataset_async()
+
+    async def test_release_family_count_mismatch_raises(
+        self, mock_turkish_prompt_injection_data: list[dict[str, Any]]
+    ) -> None:
+        """Attack-family balance drift using valid families must be detected."""
+        drifted_rows = [dict(row) for row in mock_turkish_prompt_injection_data]
+        drifted_rows[0]["attack_family"] = "rag_context_poisoning"
+        loader = _TurkishConversationPromptInjectionDataset(label=TurkishConversationPromptInjectionLabel.ALL)
+
+        with patch.object(
+            loader,
+            "_fetch_from_huggingface_async",
+            new=AsyncMock(side_effect=_fetch_rows_by_split(drifted_rows)),
+        ):
+            with pytest.raises(ValueError, match="attack-family counts mismatch"):
+                await loader.fetch_dataset_async()
+
+    async def test_complete_pair_replacement_raises(
+        self, mock_turkish_prompt_injection_data: list[dict[str, Any]]
+    ) -> None:
+        """Replacing a complete pair must fail even when aggregate counts remain unchanged."""
+        replaced_rows = [dict(row) for row in mock_turkish_prompt_injection_data]
+        for row in replaced_rows:
+            if row["pair_id"] == "pair_0003":
+                suffix = "a" if row["label"] == 1 else "b"
+                row["pair_id"] = "pair_9999"
+                row["id"] = f"tcpi_p9999_{suffix}"
+        loader = _TurkishConversationPromptInjectionDataset(label=TurkishConversationPromptInjectionLabel.ALL)
+
+        with patch.object(
+            loader,
+            "_fetch_from_huggingface_async",
+            new=AsyncMock(side_effect=_fetch_rows_by_split(replaced_rows)),
+        ):
+            with pytest.raises(ValueError, match="pair IDs mismatch"):
                 await loader.fetch_dataset_async()
 
     async def test_pair_context_mismatch_raises(self, mock_turkish_prompt_injection_data: list[dict[str, Any]]) -> None:
@@ -434,8 +622,12 @@ class TestTurkishConversationPromptInjectionDataset:
         assert loader.dataset_name == "turkish_conversation_prompt_injection"
         assert loader.size == "large"
         assert loader.modalities == (Modality.TEXT,)
-        assert "multilingual" in loader.tags
+        assert "synthetic" in loader.tags
+        assert "multilingual" not in loader.tags
         assert "prompt_injection" in loader.tags
+        assert loader.DATASET_VERSION == "1.0.2"
+        assert loader.HF_DATASET_REVISION == "29d7593984f563c4ad56876aa800b9ffd948a2fb"
+        assert loader.DOI_URL == "https://doi.org/10.5281/zenodo.21379389"
 
         metadata = await loader._parse_metadata_async()
         assert metadata is not None

@@ -3,6 +3,9 @@
 
 import logging
 import os
+import re
+import unicodedata
+from collections import Counter
 from enum import Enum
 from typing import Any, ClassVar
 
@@ -53,11 +56,13 @@ class _TurkishConversationPromptInjectionDataset(_RemoteDatasetLoader):
     Load the Turkish Conversation Prompt-Injection Dataset from Hugging Face.
 
     The dataset contains 750 synthetic, curated Turkish examples: 600
-    legitimate user requests and 150 prompt-injection attacks. It includes 150
-    benign boundary cases paired with related attacks so defenses can be
+    legitimate user requests and 150 prompt-injection attempts. It includes
+    150 benign boundary cases paired with related attacks so defenses can be
     evaluated on both attack detection and over-refusal. Attack rows cover 10
     prompt-injection families across direct user, agent/tool,
-    retrieved-document, and memory contexts.
+    retrieved-document, and memory contexts. Rows contain inputs rather than
+    model responses, and attack labels do not claim a verified bypass against
+    any model.
 
     By default, the loader returns attack examples from all published splits.
     Use ``label=TurkishConversationPromptInjectionLabel.BENIGN`` to load
@@ -68,12 +73,15 @@ class _TurkishConversationPromptInjectionDataset(_RemoteDatasetLoader):
     delivery techniques rather than resulting harms, so they are preserved in
     seed metadata instead of being mapped to PyRIT's harm-category taxonomy.
     Pair IDs are provenance metadata rather than prompt-group aliases because
-    each side is an independent evaluation case. The loader pins version 1.0.1
-    to an immutable Hugging Face revision and validates the published schema,
-    stable IDs, split claims, and complete pair structure before filtering.
+    each side is an independent evaluation case. The loader pins version 1.0.2
+    to an immutable Hugging Face revision and validates the complete published
+    release contract before filtering. The data is synthetic, was curated by
+    one author, and does not claim independent annotation or inter-annotator
+    agreement.
 
     References:
         - [@deniz2026turkishpromptinjection]
+        - https://doi.org/10.5281/zenodo.21379389
         - https://huggingface.co/datasets/3nesdeniz/turkish-conversation-prompt-injection
         - https://github.com/3nesdeniz/turkish-conversation-prompt-injection
 
@@ -84,15 +92,16 @@ class _TurkishConversationPromptInjectionDataset(_RemoteDatasetLoader):
     """
 
     HF_DATASET_NAME: ClassVar[str] = "3nesdeniz/turkish-conversation-prompt-injection"
-    HF_DATASET_REVISION: ClassVar[str] = "f80a4bb767f9797c64cb539b04e2a0bb78c6a302"
-    DATASET_VERSION: ClassVar[str] = "1.0.1"
-    SOURCE_URL: ClassVar[str] = f"https://huggingface.co/datasets/{HF_DATASET_NAME}"
+    HF_DATASET_REVISION: ClassVar[str] = "29d7593984f563c4ad56876aa800b9ffd948a2fb"
+    DATASET_VERSION: ClassVar[str] = "1.0.2"
+    DOI_URL: ClassVar[str] = "https://doi.org/10.5281/zenodo.21379389"
+    SOURCE_URL: ClassVar[str] = f"https://huggingface.co/datasets/{HF_DATASET_NAME}/tree/{HF_DATASET_REVISION}"
 
     _AUTHORS: ClassVar[list[str]] = ["Enes Deniz"]
     _GROUPS: ClassVar[list[str]] = ["AltaySec"]
     _DESCRIPTION: ClassVar[str] = (
         "A synthetic, curated Turkish dataset for studying the boundary between legitimate "
-        "user requests and prompt-injection attacks, including paired benign "
+        "user requests and prompt-injection attempts, including paired benign "
         "boundary cases and 10 attack families."
     )
     _LABEL_VALUES: ClassVar[dict[TurkishConversationPromptInjectionLabel, int]] = {
@@ -113,7 +122,7 @@ class _TurkishConversationPromptInjectionDataset(_RemoteDatasetLoader):
         }
     )
     _BENIGN_CATEGORIES: ClassVar[frozenset[str]] = frozenset({"benign_boundary", "benign_daily", "benign_technical"})
-    # Version 1.0.1 is a single-language Turkish dataset and does not publish a
+    # Version 1.0.2 is a single-language Turkish dataset and does not publish a
     # row-level `language` field. These are its complete source-context values.
     _SOURCE_CONTEXT_VALUES: ClassVar[frozenset[str]] = frozenset(
         {
@@ -139,12 +148,52 @@ class _TurkishConversationPromptInjectionDataset(_RemoteDatasetLoader):
     _ATTACK_FAMILY_VALUES: ClassVar[frozenset[str]] = frozenset(
         family.value for family in TurkishConversationPromptInjectionAttackFamily
     )
+    _ROW_ID_PATTERN: ClassVar[re.Pattern[str]] = re.compile(r"^tcpi_(?:p\d{4}_[ab]|b\d{4})$")
+    _PAIR_ID_PATTERN: ClassVar[re.Pattern[str]] = re.compile(r"^pair_\d{4}$")
+    _CONTROL_CHARACTER_PATTERN: ClassVar[re.Pattern[str]] = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
+    _EXPECTED_SPLIT_COUNTS: ClassVar[dict[str, int]] = {
+        "train": 530,
+        "validation": 100,
+        "test": 120,
+    }
+    _EXPECTED_LABEL_COUNTS: ClassVar[dict[str, dict[int, int]]] = {
+        "train": {0: 430, 1: 100},
+        "validation": {0: 80, 1: 20},
+        "test": {0: 90, 1: 30},
+    }
+    _EXPECTED_CATEGORY_COUNTS: ClassVar[dict[str, dict[str, int]]] = {
+        "train": {
+            "benign_boundary": 100,
+            "benign_daily": 303,
+            "benign_technical": 27,
+            "prompt_injection": 100,
+        },
+        "validation": {
+            "benign_boundary": 20,
+            "benign_daily": 52,
+            "benign_technical": 8,
+            "prompt_injection": 20,
+        },
+        "test": {
+            "benign_boundary": 30,
+            "benign_daily": 55,
+            "benign_technical": 5,
+            "prompt_injection": 30,
+        },
+    }
+    _EXPECTED_ATTACK_FAMILY_COUNTS: ClassVar[dict[str, dict[str, int]]] = {
+        "train": {family.value: 10 for family in TurkishConversationPromptInjectionAttackFamily},
+        "validation": {family.value: 2 for family in TurkishConversationPromptInjectionAttackFamily},
+        "test": {family.value: 3 for family in TurkishConversationPromptInjectionAttackFamily},
+    }
+    _EXPECTED_PAIR_COUNT: ClassVar[int] = 150
+    _EXPECTED_UNPAIRED_COUNT: ClassVar[int] = 450
 
     harm_categories: list[str] = []
     modalities: tuple[Modality, ...] = (Modality.TEXT,)
     size: str = "large"  # 750 curated examples across all published splits
     tags: frozenset[str] = frozenset(
-        {"safety", "jailbreak", "multilingual", "cybersecurity", "agent_security", "prompt_injection"}
+        {"safety", "jailbreak", "synthetic", "cybersecurity", "agent_security", "prompt_injection"}
     )
 
     def __init__(
@@ -214,13 +263,25 @@ class _TurkishConversationPromptInjectionDataset(_RemoteDatasetLoader):
         Raises:
             ValueError: If the row violates the published dataset schema.
         """
-        missing = cls._REQUIRED_FIELDS - row.keys()
+        fields = row.keys()
+        missing = cls._REQUIRED_FIELDS - fields
         if missing:
             raise ValueError(f"Missing keys in Turkish prompt-injection entry: {', '.join(sorted(missing))}")
+        unexpected = fields - cls._REQUIRED_FIELDS
+        if unexpected:
+            raise ValueError(f"Unexpected keys in Turkish prompt-injection entry: {', '.join(sorted(unexpected))}")
 
         for key in ("id", "text", "source_context"):
             if not isinstance(row[key], str) or not row[key].strip():
                 raise ValueError(f"Turkish prompt-injection entry has an invalid `{key}` value: {row[key]!r}")
+
+        identifier = row["id"]
+        if not cls._ROW_ID_PATTERN.fullmatch(identifier):
+            raise ValueError(f"Turkish prompt-injection entry has an invalid `id` format: {identifier!r}")
+
+        text = row["text"]
+        if cls._CONTROL_CHARACTER_PATTERN.search(text):
+            raise ValueError(f"Turkish prompt-injection entry {identifier!r} contains control characters")
 
         source_context = row["source_context"]
         if source_context not in cls._SOURCE_CONTEXT_VALUES:
@@ -248,6 +309,8 @@ class _TurkishConversationPromptInjectionDataset(_RemoteDatasetLoader):
         pair_id = row["pair_id"]
         if pair_id is not None and (not isinstance(pair_id, str) or not pair_id.strip()):
             raise ValueError(f"Turkish prompt-injection entry has an invalid `pair_id` value: {pair_id!r}")
+        if pair_id is not None and not cls._PAIR_ID_PATTERN.fullmatch(pair_id):
+            raise ValueError(f"Turkish prompt-injection entry has an invalid `pair_id` format: {pair_id!r}")
 
         if row["source_type"] != "synthetic_curated":
             raise ValueError(
@@ -263,6 +326,9 @@ class _TurkishConversationPromptInjectionDataset(_RemoteDatasetLoader):
                 raise ValueError(f"Turkish prompt-injection attack has an unknown family: {attack_family!r}")
             if pair_id is None:
                 raise ValueError("Turkish prompt-injection attack entry must include a `pair_id`")
+            expected_id = f"tcpi_p{pair_id.removeprefix('pair_')}_a"
+            if identifier != expected_id:
+                raise ValueError(f"Turkish prompt-injection attack ID {identifier!r} does not match pair {pair_id!r}")
             return
 
         if category not in cls._BENIGN_CATEGORIES:
@@ -273,6 +339,30 @@ class _TurkishConversationPromptInjectionDataset(_RemoteDatasetLoader):
             raise ValueError("Turkish benign-boundary entry must include a `pair_id`")
         if category != "benign_boundary" and pair_id is not None:
             raise ValueError(f"Unpaired Turkish benign entry unexpectedly has pair_id={pair_id!r}")
+        if pair_id is not None:
+            expected_id = f"tcpi_p{pair_id.removeprefix('pair_')}_b"
+            if identifier != expected_id:
+                raise ValueError(f"Turkish benign ID {identifier!r} does not match pair {pair_id!r}")
+        elif not re.fullmatch(r"tcpi_b\d{4}", identifier):
+            raise ValueError(f"Unpaired Turkish benign entry has an invalid `id` format: {identifier!r}")
+
+    @staticmethod
+    def _normalize_text(*, text: str) -> str:
+        """
+        Normalize text using the release validator's duplicate-detection policy.
+
+        Args:
+            text: Published prompt text.
+
+        Returns:
+            The NFKC-normalized, case-folded text without punctuation.
+        """
+        normalized = unicodedata.normalize("NFKC", text).casefold()
+        without_punctuation = "".join(
+            " " if character.isspace() or unicodedata.category(character).startswith("P") else character
+            for character in normalized
+        )
+        return re.sub(r" +", " ", without_punctuation).strip()
 
     @staticmethod
     def _validate_pair_integrity(*, rows: list[dict[str, Any]]) -> None:
@@ -303,6 +393,95 @@ class _TurkishConversationPromptInjectionDataset(_RemoteDatasetLoader):
             for field in ("split", "source_context", "source_type"):
                 if len({row[field] for row in pair_rows}) != 1:
                     raise ValueError(f"Turkish prompt-injection pair {pair_id!r} has mismatched `{field}` values")
+
+    @classmethod
+    def _validate_release_contract(cls, *, rows: list[dict[str, Any]], split_names: list[str]) -> None:
+        """
+        Validate the fixed composition of the pinned dataset release.
+
+        Args:
+            rows: All rows fetched for the requested source splits.
+            split_names: Source splits requested from Hugging Face.
+
+        Raises:
+            ValueError: If counts, identifiers, or normalized text uniqueness
+                differ from the published release contract.
+        """
+        expected_total = sum(cls._EXPECTED_SPLIT_COUNTS[split_name] for split_name in split_names)
+        if len(rows) != expected_total:
+            raise ValueError(
+                f"Turkish prompt-injection release count mismatch: expected {expected_total}, found {len(rows)}"
+            )
+
+        expected_labels: Counter[int] = Counter()
+        expected_categories: Counter[str] = Counter()
+        for split_name in split_names:
+            expected_labels.update(cls._EXPECTED_LABEL_COUNTS[split_name])
+            expected_categories.update(cls._EXPECTED_CATEGORY_COUNTS[split_name])
+
+        label_counts = Counter(row["label"] for row in rows)
+        if label_counts != expected_labels:
+            raise ValueError(
+                f"Turkish prompt-injection label counts mismatch: expected {dict(expected_labels)}, "
+                f"found {dict(label_counts)}"
+            )
+
+        category_counts = Counter(row["category"] for row in rows)
+        if category_counts != expected_categories:
+            raise ValueError(
+                f"Turkish prompt-injection category counts mismatch: expected {dict(expected_categories)}, "
+                f"found {dict(category_counts)}"
+            )
+
+        expected_family_counts: Counter[str] = Counter()
+        for split_name in split_names:
+            expected_family_counts.update(cls._EXPECTED_ATTACK_FAMILY_COUNTS[split_name])
+        family_counts = Counter(row["attack_family"] for row in rows if row["label"] == 1)
+        if family_counts != expected_family_counts:
+            raise ValueError(
+                f"Turkish prompt-injection attack-family counts mismatch: "
+                f"expected {dict(expected_family_counts)}, found {dict(family_counts)}"
+            )
+
+        expected_pair_count = expected_labels[1]
+        pair_ids = {row["pair_id"] for row in rows if row["pair_id"] is not None}
+        if len(pair_ids) != expected_pair_count:
+            raise ValueError(
+                f"Turkish prompt-injection pair count mismatch: expected {expected_pair_count}, found {len(pair_ids)}"
+            )
+
+        if set(split_names) == cls._EXPECTED_SPLIT_COUNTS.keys():
+            expected_pair_ids = {f"pair_{index:04d}" for index in range(1, cls._EXPECTED_PAIR_COUNT + 1)}
+            if pair_ids != expected_pair_ids:
+                missing = sorted(expected_pair_ids - pair_ids)
+                unexpected = sorted(pair_ids - expected_pair_ids)
+                raise ValueError(
+                    f"Turkish prompt-injection pair IDs mismatch: missing {missing[:5]}, unexpected {unexpected[:5]}"
+                )
+
+            expected_row_ids = {
+                identifier
+                for index in range(1, cls._EXPECTED_PAIR_COUNT + 1)
+                for identifier in (f"tcpi_p{index:04d}_a", f"tcpi_p{index:04d}_b")
+            }
+            expected_row_ids.update(f"tcpi_b{index:04d}" for index in range(1, cls._EXPECTED_UNPAIRED_COUNT + 1))
+            row_ids = {row["id"] for row in rows}
+            if row_ids != expected_row_ids:
+                missing = sorted(expected_row_ids - row_ids)
+                unexpected = sorted(row_ids - expected_row_ids)
+                raise ValueError(
+                    f"Turkish prompt-injection row IDs mismatch: missing {missing[:5]}, unexpected {unexpected[:5]}"
+                )
+
+        normalized_texts: dict[str, str] = {}
+        for row in rows:
+            normalized_text = cls._normalize_text(text=row["text"])
+            duplicate_id = normalized_texts.get(normalized_text)
+            if duplicate_id is not None:
+                raise ValueError(
+                    f"Duplicate normalized Turkish prompt-injection text in IDs {duplicate_id!r} and {row['id']!r}"
+                )
+            normalized_texts[normalized_text] = row["id"]
 
     def _matches_filters(self, *, item: dict[str, Any]) -> bool:
         """Return whether a source row matches the configured filters."""
@@ -361,6 +540,7 @@ class _TurkishConversationPromptInjectionDataset(_RemoteDatasetLoader):
                 data.append(row)
 
         self._validate_pair_integrity(rows=data)
+        self._validate_release_contract(rows=data, split_names=split_names)
 
         seed_prompts: list[SeedUnion] = []
         for item in data:
@@ -393,6 +573,7 @@ class _TurkishConversationPromptInjectionDataset(_RemoteDatasetLoader):
                         "split": item["split"],
                         "dataset_version": self.DATASET_VERSION,
                         "hf_revision": self.HF_DATASET_REVISION,
+                        "doi": self.DOI_URL,
                     },
                 )
             )
