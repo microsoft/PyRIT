@@ -1,22 +1,31 @@
 import { makeStyles, tokens } from '@fluentui/react-components'
 
-export const useInitializerTableStyles = makeStyles({
-  tableContainer: {
+export const useInitializerListStyles = makeStyles({
+  list: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: tokens.spacingVerticalL,
     width: '100%',
-    overflowX: 'auto',
   },
-  table: {
-    width: '100%',
-    tableLayout: 'fixed',
+  card: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: tokens.spacingVerticalM,
+    padding: tokens.spacingVerticalL,
+    border: `1px solid ${tokens.colorNeutralStroke2}`,
+    borderRadius: tokens.borderRadiusLarge,
   },
-  cell: {
-    verticalAlign: 'top',
-    paddingTop: tokens.spacingVerticalM,
+  cardHeader: {
+    display: 'flex',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    flexWrap: 'wrap',
+    gap: tokens.spacingHorizontalM,
   },
-  parametersCell: {
-    minWidth: '26rem',
-    verticalAlign: 'top',
-    paddingTop: tokens.spacingVerticalM,
+  titleGroup: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: tokens.spacingVerticalXXS,
   },
   parameterList: {
     display: 'flex',
@@ -32,14 +41,11 @@ export const useInitializerTableStyles = makeStyles({
     minHeight: '10rem',
     width: '100%',
   },
-  actionsCell: {
-    verticalAlign: 'top',
-    paddingTop: tokens.spacingVerticalM,
-  },
-  actionsColumn: {
+  actionsRow: {
     display: 'flex',
-    flexDirection: 'column',
-    gap: tokens.spacingVerticalXS,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: tokens.spacingHorizontalS,
   },
   sourceBadge: {
     textTransform: 'capitalize',
@@ -54,3 +60,4 @@ export const useInitializerTableStyles = makeStyles({
     marginTop: tokens.spacingVerticalXXS,
   },
 })
+

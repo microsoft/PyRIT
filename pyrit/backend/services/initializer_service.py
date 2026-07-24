@@ -28,6 +28,15 @@ from pyrit.setup.configuration_loader import InitializerConfig
 
 logger = logging.getLogger(__name__)
 
+# Built-in initializers whose effects are only observed by the scanner (a separate
+# consumer that shares this backend process) and have no visible effect in the GUI
+# itself: no scenario-run, dataset-browsing, or live-scoring UI exists here today.
+# Excluded from the GUI-facing effective settings list so the Initializers page only
+# shows controls that actually do something for a GUI-only user.
+_GUI_HIDDEN_INITIALIZER_NAMES = frozenset(
+    {"scorer", "technique", "load_default_datasets", "preload_scenario_metadata"}
+)
+
 
 def _metadata_to_registered_initializer(metadata: InitializerMetadata) -> RegisteredInitializer:
     """
@@ -140,6 +149,9 @@ class InitializerService:
         seen_names: set[str] = set()
 
         for baseline_position, config in enumerate(baseline_initializers):
+            if config.name in _GUI_HIDDEN_INITIALIZER_NAMES:
+                continue
+
             override = saved_overrides.get(config.name)
             effective_parameters = override.parameters if override and override.parameters is not None else config.args
             source = "baseline+override" if override else "baseline"
@@ -166,7 +178,7 @@ class InitializerService:
 
         append_index = 0
         for initializer_name, override in saved_overrides.items():
-            if initializer_name in seen_names:
+            if initializer_name in seen_names or initializer_name in _GUI_HIDDEN_INITIALIZER_NAMES:
                 continue
 
             effective_order = (

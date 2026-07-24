@@ -15,8 +15,8 @@ jest.mock('@/services/api', () => ({
   },
 }))
 
-jest.mock('./InitializerTable', () => {
-  const MockInitializerTable = ({
+jest.mock('./InitializerList', () => {
+  const MockInitializerList = ({
     items,
     onSave,
     onApply,
@@ -34,10 +34,10 @@ jest.mock('./InitializerTable', () => {
       <button onClick={() => void onReset('target')}>Reset target</button>
     </div>
   )
-  MockInitializerTable.displayName = 'MockInitializerTable'
+  MockInitializerList.displayName = 'MockInitializerList'
   return {
     __esModule: true,
-    default: MockInitializerTable,
+    default: MockInitializerList,
   }
 })
 
@@ -190,3 +190,4 @@ describe('InitializerConfig', () => {
     })
   })
 })
+

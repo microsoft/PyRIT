@@ -15,7 +15,7 @@ import type {
   UpdateInitializerSettingRequest,
 } from '@/types'
 
-import InitializerTable from './InitializerTable'
+import InitializerList from './InitializerList'
 import { useInitializerConfigStyles } from './InitializerConfig.styles'
 
 interface StatusMessage {
@@ -123,7 +123,6 @@ export default function InitializerConfig() {
     <section className={styles.root} data-testid="initializer-config">
       <div className={styles.header}>
         <div className={styles.headerText}>
-          <Text size={600} weight="semibold">Initializers</Text>
           <Text size={300}>
             Review the effective initializer order, save overrides to the database, or apply a single initializer now.
           </Text>
@@ -153,7 +152,7 @@ export default function InitializerConfig() {
       ) : items.length === 0 ? (
         <Text className={styles.emptyState}>No initializer settings are available.</Text>
       ) : (
-        <InitializerTable
+        <InitializerList
           items={items}
           savingInitializerName={savingInitializerName}
           applyingInitializerName={applyingInitializerName}
@@ -166,3 +165,4 @@ export default function InitializerConfig() {
     </section>
   )
 }
+

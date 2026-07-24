@@ -6,11 +6,12 @@ import {
   Link,
   Spinner,
 } from '@fluentui/react-components'
-import { AddRegular, ArrowSyncRegular } from '@fluentui/react-icons'
+import { AddRegular, ArrowSyncRegular, SettingsRegular } from '@fluentui/react-icons'
 import { targetsApi } from '../../services/api'
 import { toApiError } from '../../services/errors'
 import type { TargetInstance } from '../../types'
 import CreateTargetDialog from './CreateTargetDialog'
+import InitializerSettingsDialog from './InitializerSettingsDialog'
 import TargetTable from './TargetTable'
 import { useTargetConfigStyles } from './TargetConfig.styles'
 
@@ -25,6 +26,7 @@ export default function TargetConfig({ activeTarget, onSetActiveTarget }: Target
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [dialogOpen, setDialogOpen] = useState(false)
+  const [initializerDialogOpen, setInitializerDialogOpen] = useState(false)
   // Counter used to re-trigger the fetch effect from event handlers (Refresh,
   // dialog close) without invoking setState synchronously in the effect body.
   const [refetchCount, setRefetchCount] = useState(0)
@@ -93,6 +95,15 @@ export default function TargetConfig({ activeTarget, onSetActiveTarget }: Target
           </Button>
           <Button
             className={styles.headerAction}
+            appearance="subtle"
+            icon={<SettingsRegular />}
+            onClick={() => setInitializerDialogOpen(true)}
+            data-testid="open-initializer-settings"
+          >
+            Initializer Settings
+          </Button>
+          <Button
+            className={styles.headerAction}
             appearance="primary"
             icon={<AddRegular />}
             onClick={() => setDialogOpen(true)}
@@ -155,6 +166,11 @@ export default function TargetConfig({ activeTarget, onSetActiveTarget }: Target
         onClose={() => setDialogOpen(false)}
         onCreated={handleTargetCreated}
         existingTargets={targets}
+      />
+
+      <InitializerSettingsDialog
+        open={initializerDialogOpen}
+        onClose={() => setInitializerDialogOpen(false)}
       />
     </div>
   )

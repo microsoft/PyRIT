@@ -5,10 +5,6 @@ export const useInitializerConfigStyles = makeStyles({
     display: 'flex',
     flexDirection: 'column',
     gap: tokens.spacingVerticalL,
-    padding: tokens.spacingVerticalXXL,
-    '@media (max-width: 600px)': {
-      padding: `${tokens.spacingVerticalL} ${tokens.spacingHorizontalM}`,
-    },
   },
   header: {
     display: 'flex',

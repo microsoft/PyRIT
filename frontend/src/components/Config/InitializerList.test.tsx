@@ -4,7 +4,7 @@ import { FluentProvider, webLightTheme } from '@fluentui/react-components'
 
 import type { EffectiveInitializerSetting } from '@/types'
 
-import InitializerTable from './InitializerTable'
+import InitializerList from './InitializerList'
 
 const TestWrapper: React.FC<{ children: React.ReactNode }> = ({ children }) => (
   <FluentProvider theme={webLightTheme}>{children}</FluentProvider>
@@ -47,7 +47,7 @@ const SAMPLE_ITEMS: EffectiveInitializerSetting[] = [
   },
 ]
 
-describe('InitializerTable', () => {
+describe('InitializerList', () => {
   const defaultProps = {
     items: SAMPLE_ITEMS,
     onSave: jest.fn().mockResolvedValue(undefined),
@@ -62,11 +62,11 @@ describe('InitializerTable', () => {
   it('should render initializer rows and metadata', () => {
     render(
       <TestWrapper>
-        <InitializerTable {...defaultProps} />
+        <InitializerList {...defaultProps} />
       </TestWrapper>,
     )
 
-    expect(screen.getByRole('table', { name: 'Initializer settings' })).toBeInTheDocument()
+    expect(screen.getByRole('list', { name: 'Initializer settings' })).toBeInTheDocument()
     expect(screen.getByText('target')).toBeInTheDocument()
     expect(screen.getByText('Customized')).toBeInTheDocument()
   })
@@ -76,7 +76,7 @@ describe('InitializerTable', () => {
 
     render(
       <TestWrapper>
-        <InitializerTable {...defaultProps} />
+        <InitializerList {...defaultProps} />
       </TestWrapper>,
     )
 
@@ -92,7 +92,7 @@ describe('InitializerTable', () => {
 
     render(
       <TestWrapper>
-        <InitializerTable {...defaultProps} />
+        <InitializerList {...defaultProps} />
       </TestWrapper>,
     )
 
@@ -114,7 +114,7 @@ describe('InitializerTable', () => {
 
     render(
       <TestWrapper>
-        <InitializerTable {...defaultProps} />
+        <InitializerList {...defaultProps} />
       </TestWrapper>,
     )
 
@@ -135,7 +135,7 @@ describe('InitializerTable', () => {
 
     render(
       <TestWrapper>
-        <InitializerTable {...defaultProps} />
+        <InitializerList {...defaultProps} />
       </TestWrapper>,
     )
 
@@ -153,7 +153,7 @@ describe('InitializerTable', () => {
 
     render(
       <TestWrapper>
-        <InitializerTable {...defaultProps} />
+        <InitializerList {...defaultProps} />
       </TestWrapper>,
     )
 
@@ -170,7 +170,7 @@ describe('InitializerTable', () => {
   it('should only show reset action for saved overrides', () => {
     render(
       <TestWrapper>
-        <InitializerTable {...defaultProps} />
+        <InitializerList {...defaultProps} />
       </TestWrapper>,
     )
 
@@ -179,3 +179,4 @@ describe('InitializerTable', () => {
     expect(within(baselineRow).queryByRole('button', { name: 'Reset saved' })).not.toBeInTheDocument()
   })
 })
+

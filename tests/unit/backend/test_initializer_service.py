@@ -198,12 +198,12 @@ class TestInitializerServiceSettings:
     async def test_list_effective_initializer_settings_merges_baseline_and_overrides(self) -> None:
         metadata = [
             _make_initializer_metadata(registry_name="target", class_name="TargetInitializer"),
-            _make_initializer_metadata(registry_name="scorer", class_name="ScorerInitializer"),
+            _make_initializer_metadata(registry_name="widget", class_name="WidgetInitializer"),
             _make_initializer_metadata(registry_name="custom", class_name="CustomInitializer"),
         ]
         baseline_initializers = [
             InitializerConfig(name="target", args={"tags": ["baseline"]}),
-            InitializerConfig(name="scorer", args={"mode": "baseline"}),
+            InitializerConfig(name="widget", args={"mode": "baseline"}),
         ]
         saved_overrides = [
             InitializerSetting(initializer_name="target", enabled=False, order_index=3),
@@ -226,12 +226,50 @@ class TestInitializerServiceSettings:
                 baseline_initializers=baseline_initializers
             )
 
-            assert [item.initializer_name for item in result.items] == ["custom", "scorer", "target"]
+            assert [item.initializer_name for item in result.items] == ["custom", "widget", "target"]
             assert [item.source for item in result.items] == ["override", "baseline", "baseline+override"]
             assert result.items[0].parameters == {"tags": ["override"]}
             assert result.items[1].parameters == {"mode": "baseline"}
             assert result.items[2].enabled is False
             assert result.items[2].saved_order_index == 3
+
+    async def test_list_effective_initializer_settings_hides_scanner_only_initializers(self) -> None:
+        """Scorer/technique/dataset/scenario-metadata initializers have no GUI-visible
+        effect (no scenario-run, dataset, or live-scoring UI exists here), so the
+        GUI-facing effective settings list excludes them even when they are configured
+        in the baseline or have a saved override."""
+        metadata = [
+            _make_initializer_metadata(registry_name="target", class_name="TargetInitializer"),
+            _make_initializer_metadata(registry_name="scorer", class_name="ScorerInitializer"),
+            _make_initializer_metadata(registry_name="technique", class_name="TechniqueInitializer"),
+            _make_initializer_metadata(registry_name="load_default_datasets", class_name="LoadDefaultDatasets"),
+            _make_initializer_metadata(
+                registry_name="preload_scenario_metadata", class_name="PreloadScenarioMetadata"
+            ),
+        ]
+        baseline_initializers = [
+            InitializerConfig(name="technique"),
+            InitializerConfig(name="target"),
+            InitializerConfig(name="scorer"),
+            InitializerConfig(name="load_default_datasets"),
+        ]
+        saved_overrides = [
+            InitializerSetting(initializer_name="scorer", parameters={"mode": "strict"}),
+            InitializerSetting(initializer_name="preload_scenario_metadata", enabled=False),
+        ]
+
+        with patch.object(InitializerService, "__init__", lambda self: None):
+            service = InitializerService()
+            service._registry = MagicMock()
+            service._registry.get_all_registered_class_metadata.return_value = metadata
+            service._memory = MagicMock()
+            service._memory.get_initializer_settings.return_value = saved_overrides
+
+            result = await service.list_effective_initializer_settings_async(
+                baseline_initializers=baseline_initializers
+            )
+
+            assert [item.initializer_name for item in result.items] == ["target"]
 
     async def test_list_effective_initializer_settings_handles_disabled_override_without_order(self) -> None:
         baseline_initializers = [InitializerConfig(name="target", args={"tags": ["baseline"]})]
