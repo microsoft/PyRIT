@@ -16,7 +16,7 @@ All scenarios inherit from `Scenario` (ABC) and must:
 2. **Optionally declare `BASELINE_ATTACK_POLICY`** (defaults to `BaselineAttackPolicy.Enabled` — a baseline `PromptSendingAttack` is prepended and callers can opt out per run by setting `include_baseline=False` in the run params, see "Run Parameters" below):
    - `BaselineAttackPolicy.Disabled` — baseline supported but off by default (e.g. `garak.doctor`, where the harm-probe technique set dominates the run).
    - `BaselineAttackPolicy.Forbidden` — baseline is meaningless for this scenario's comparison axis (e.g. `AdversarialBenchmark`, which compares against gold-standard answers). Supplying `include_baseline=True` raises `ValueError`.
-3. **Pass `technique_class`, `default_technique`, and `default_dataset_config` to `super().__init__()`:**
+3. **Pass `technique_class` and `default_dataset_config` to `super().__init__()`:**
 
 ```python
 class MyScenario(Scenario):
@@ -28,12 +28,15 @@ class MyScenario(Scenario):
         super().__init__(
             version=self.VERSION,
             technique_class=MyTechnique,
-            default_technique=MyTechnique.ALL,
             default_dataset_config=DatasetConfiguration(dataset_names=["my_dataset"]),
             objective_scorer=objective_scorer or self._get_default_objective_scorer(),
             scenario_result_id=scenario_result_id,
         )
 ```
+
+The default technique (what runs when the caller passes no `scenario_techniques`) is
+**not** a constructor argument — it is owned by the technique catalog and read from
+`technique_class.default()`. See "Default Technique" below.
 
 For scenarios whose technique enum is built dynamically (RapidResponse pattern), build the
 technique class in a module-level `@cache`-decorated function and pass the result through
@@ -65,7 +68,6 @@ def __init__(
     super().__init__(
         version=self.VERSION,
         technique_class=MyTechnique,
-        default_technique=MyTechnique.ALL,
         default_dataset_config=DatasetConfiguration(dataset_names=["my_dataset"]),
         objective_scorer=objective_scorer,
     )
@@ -78,7 +80,7 @@ Requirements:
   `pyrit/common/brick_contract.py`). Violators raise `TypeError` at
   import time.
 - **All constructor parameters must be optional** (default to `None`) so the registry can instantiate the scenario with no arguments for metadata introspection. Defer required-input validation to `initialize_async()` or `_build_atomic_attacks_async()`. `ScenarioRegistry._build_metadata` raises `TypeError` if `scenario_class()` cannot be called with no arguments.
-- `super().__init__()` called with `version`, `technique_class`, `default_technique`, `default_dataset_config`, `objective_scorer`
+- `super().__init__()` called with `version`, `technique_class`, `default_dataset_config`, `objective_scorer` (the default technique is owned by the catalog, not passed here — see "Default Technique")
 - complex objects like `adversarial_chat` or `objective_scorer` should be passed into the constructor.
 
 ## Run Parameters
@@ -153,11 +155,33 @@ class MyTechnique(ScenarioTechnique):
     @classmethod
     def get_aggregate_tags(cls) -> set[str]:
         return {"all", "default", "single_turn", "multi_turn"}
+
+    @classmethod
+    def default(cls) -> "MyTechnique":
+        return cls.DEFAULT  # what runs when the caller selects nothing
 ```
 
 - `ALL` aggregate is always required
 - Each member: `NAME = ("string_value", {tag_set})`
 - Aggregates expand to all techniques matching their tag
+
+### Default Technique
+
+The default technique — what runs when no `scenario_techniques` are passed — is a property
+of the **technique catalog**, not the scenario. It is *not* passed to `super().__init__()`;
+the base `Scenario` reads it from `technique_class.default()`.
+
+- **Statically declared enums:** override the `default()` classmethod to return the default
+  member (e.g. `return cls.DEFAULT`, `return cls.EASY`). If the default is `ALL`, don't
+  override — the base `ScenarioTechnique.default()` already falls back to `ALL`.
+- **Dynamically built enums** (`build_technique_class_from_factories`, the RapidResponse
+  pattern): declare the default via exactly one of `default_tags={...}` (every pool technique
+  carrying any of those tags) or `default_names={...}` (exact technique names). Both build the
+  synthetic `DEFAULT` aggregate and record it so `default()` returns it. Passing both raises
+  `ValueError`. When neither is given (or nothing matches), the default falls back to `ALL`.
+
+The default is scenario-relative: the same catalog technique can be the default for one
+scenario and not another, so there is deliberately no catalog-wide `default` tag.
 
 ### Result grouping (`display_group`)
 
@@ -190,8 +214,9 @@ async def _build_atomic_attacks_async(self, *, context: ScenarioContext) -> list
 
 `initialize_async` resolves the run's inputs once (objective target, techniques, dataset
 config, memory labels, baseline flag, and seed groups), snapshots them into an immutable
-`ScenarioContext`, calls this method, and then inserts the baseline centrally. Scenario authors
-never read half-initialized `self._*` state to build attacks — read everything from `context`.
+`ScenarioContext`, and calls this method. Each scenario emits its own baseline from within
+`_build_atomic_attacks_async` (see the Baseline section below). Scenario authors never read
+half-initialized `self._*` state to build attacks — read everything from `context`.
 
 ### Zero-boilerplate matrix scenarios
 
@@ -248,9 +273,11 @@ AttackTechniqueFactory(
 
 Key points:
 - `name` is required and must match the technique enum value the scenario looks up.
-- `technique_tags` on the factory drives `TagQuery` filters used by
-  `AttackTechniqueRegistry.build_technique_class_from_factories(...)`. This is **distinct**
-  from the per-entry `tags` argument passed to `registry.register_technique(...)`.
+- `technique_tags` on the factory drives the aggregates and default selection built by
+  `AttackTechniqueRegistry.build_technique_class_from_factories(...)`: every tag present in
+  the pool auto-promotes to a selectable aggregate, and `default_tags` picks the default set
+  by tag. This is **distinct** from the per-entry `tags` argument passed to
+  `registry.register_technique(...)`.
 - `uses_adversarial` is auto-derived from the attack class signature (presence of
   `attack_adversarial_config`) and seed shape; pass `False` explicitly to opt out, or
   `True` to force opt-in.
@@ -275,11 +302,17 @@ resolves without falling back to `OpenAIChatTarget`.
 
 ### Baseline
 
-The baseline (a `PromptSendingAttack` over the run's seeds) is inserted **centrally** by
-`Scenario.initialize_async` according to the scenario's `BASELINE_ATTACK_POLICY` class var and
-the runtime `include_baseline` flag. `_build_atomic_attacks_async` must **never** prepend its own
-baseline — doing so double-emits it and reintroduces baseline-vs-technique population divergence
-under `max_dataset_size`.
+The baseline is a `PromptSendingAttack` over the run's seeds. Each scenario emits its **own**
+baseline from within `_build_atomic_attacks_async`, gated on `context.include_baseline` (which
+`initialize_async` resolves from the scenario's `BASELINE_ATTACK_POLICY` class var and the runtime
+`include_baseline` flag). Matrix scenarios get it for free — `build_matrix_atomic_attacks` prepends
+it when `context.include_baseline` is set. Hand-built scenarios prepend it themselves via the
+`build_baseline_atomic_attack` helper (at index 0), reusing `context.seed_groups` so the baseline
+samples the same seeds as the techniques. Emit **one baseline per independently scored population**
+and only when `context.include_baseline` is set: most scenarios score a single population and emit
+exactly one, while a scenario with several separately-scored populations (e.g. Psychosocial's
+per-sub-harm scorers) emits one per population. Never double-emit a baseline for the *same*
+population — that reintroduces baseline-vs-technique population divergence under `max_dataset_size`.
 
 ### Manual AtomicAttack construction:
 

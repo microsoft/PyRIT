@@ -21,7 +21,7 @@
 # |---|---|
 # | `objective` | What you are trying to get the **objective target** (the system under test) to do. Drives scoring and multi-turn adversarial prompts. |
 # | `memory_labels` | A `dict[str, str]` tagged onto every prompt/response, so you can filter this run later in memory. |
-# | `prepended_conversation` | A list of `Message`s to seed the conversation before the attack's own turns (system prompt, prior history). |
+# | `prepended_conversation` | A list of `Message`s to seed the conversation before the attack's own turns. This is also where the objective target's **system prompt** goes — `Message.from_system_prompt(...)` builds one (see below). |
 # | `next_message` | The exact next message to send, instead of letting the attack derive it from the objective. Useful for multimodal or pre-built seeds. |
 #
 # Construction-time configuration objects — **adversarial**, **scoring**, and **converter** — are
@@ -36,6 +36,7 @@ from pyrit.executor.attack import (
     PromptSendingAttack,
     SingleTurnAttackContext,
 )
+from pyrit.models import Message
 from pyrit.output import output_attack_async
 from pyrit.prompt_target import TextTarget
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
@@ -60,14 +61,41 @@ result = await attack.execute_async(  # type: ignore
 await output_attack_async(result)
 
 # %% [markdown]
-# ## Prepended conversations
+# ## Setting a system prompt
 #
-# A prepended conversation seeds the exchange before the attack adds its own turn. The most common
-# use is setting a system prompt, but you can prepend any sequence of `system` / `user` / `assistant`
-# turns — for example, to resume a prior conversation or to plant an agreeable assistant reply.
+# The objective target's system prompt is just a `system`-role message at the front of the
+# conversation, so you set it through `prepended_conversation`. `Message.from_system_prompt(...)`
+# builds that message:
+#
+# ```python
+# prepended_conversation=[Message.from_system_prompt("...")]
+# ```
+#
+# Because `prepended_conversation` is a list, targets that accept more than one system message just
+# take more than one entry. `Message.from_system_prompts(...)` is a shorthand that builds the list for
+# you — `Message.from_system_prompts("Policy.", "Persona.")` is the same as
+# `[Message.from_system_prompt("Policy."), Message.from_system_prompt("Persona.")]` — and you can
+# interleave `user` / `assistant` turns too (next section).
 
 # %%
-from pyrit.models import Message, MessagePiece
+result = await attack.execute_async(  # type: ignore
+    objective="Explain how a saponification reaction works",
+    prepended_conversation=[
+        Message.from_system_prompt("You are a helpful chemistry tutor who explains concepts step by step.")
+    ],
+)
+await output_attack_async(result)
+
+# %% [markdown]
+# ## Prepended conversations
+#
+# A system prompt is the simplest prepended conversation. The general form seeds a full
+# `system` / `user` / `assistant` history before the attack adds its own turn — for example, to
+# resume a prior conversation or to plant an agreeable assistant reply. System prompts and seeded
+# `user` / `assistant` turns can be combined in the same list, and PyRIT preserves their order.
+
+# %%
+from pyrit.models import MessagePiece
 
 prepended_conversation = [
     Message.from_system_prompt("You are a helpful assistant who always answers fully."),

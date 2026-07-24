@@ -11,6 +11,10 @@ Extends SeedGroup to enforce that all seeds have is_general_technique=True.
 
 from __future__ import annotations
 
+from typing import Literal
+
+from pydantic import Field
+
 from pyrit.models.seeds.seed_group import SeedGroup
 from pyrit.models.seeds.seed_objective import SeedObjective
 from pyrit.models.seeds.seed_prompt import SeedPrompt
@@ -31,6 +35,15 @@ class AttackTechniqueSeedGroup(SeedGroup):
     # ``None`` (default) appends at the end; an integer inserts before that position.
     insertion_index: int | None = None
 
+    prompt_placement: Literal["preserve", "prepend"] = Field(
+        default="preserve",
+        description=(
+            '"preserve" combines existing sequence relationships. During AttackSeedGroup construction, '
+            "prompts at the same sequence are grouped when roles are the same and rejected when roles conflict. "
+            '"prepend" places technique prompts before base prompts.'
+        ),
+    )
+
     @classmethod
     def from_system_prompt(cls, system_prompt: str, *, insertion_index: int | None = None) -> AttackTechniqueSeedGroup:
         """
@@ -40,6 +53,10 @@ class AttackTechniqueSeedGroup(SeedGroup):
         payload is a system prompt that should be prepended to every objective. The
         value is wrapped verbatim (``is_jinja_template=False``), so any literal
         ``{{ ... }}`` in ``system_prompt`` is preserved rather than re-rendered.
+
+        The group declares ``prompt_placement="prepend"`` so ``AttackSeedGroup.with_technique``
+        places the system framing before the base prompts without relying on a reserved sequence
+        value.
 
         Args:
             system_prompt (str): The system-role instruction text.
@@ -52,6 +69,7 @@ class AttackTechniqueSeedGroup(SeedGroup):
         return cls(
             seeds=[SeedPrompt(value=system_prompt, data_type="text", role="system", is_general_technique=True)],
             insertion_index=insertion_index,
+            prompt_placement="prepend",
         )
 
     def _check_invariants(self) -> None:

@@ -29,6 +29,7 @@ from pyrit.prompt_normalizer.converter_configuration import ConverterConfigurati
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.dataset_configuration import CompoundDatasetAttackConfiguration, DatasetAttackConfiguration
+from pyrit.scenario.core.matrix_atomic_attack_builder import build_baseline_atomic_attack
 from pyrit.scenario.core.scenario import Scenario
 from pyrit.scenario.core.scenario_context import ScenarioContext
 from pyrit.scenario.core.scenario_technique import ScenarioTechnique
@@ -122,6 +123,16 @@ class EncodingTechnique(ScenarioTechnique):
         """
         return super().get_aggregate_tags() | {"default"}
 
+    @classmethod
+    def default(cls) -> "EncodingTechnique":
+        """
+        Select the curated ``DEFAULT`` aggregate for the out-of-the-box run, not the exhaustive ``ALL``.
+
+        Returns:
+            EncodingTechnique: The curated ``DEFAULT`` aggregate.
+        """
+        return cls.DEFAULT
+
 
 logger = logging.getLogger(__name__)
 
@@ -172,7 +183,6 @@ class Encoding(Scenario):
         super().__init__(
             version=self.VERSION,
             technique_class=EncodingTechnique,
-            default_technique=EncodingTechnique.DEFAULT,
             default_dataset_config=CompoundDatasetAttackConfiguration(
                 configurations=[
                     EncodingDatasetConfiguration(dataset_names=["garak_slur_terms_en"], max_dataset_size=10),
@@ -197,7 +207,18 @@ class Encoding(Scenario):
         Returns:
             list[AtomicAttack]: The list of AtomicAttack instances in this scenario.
         """
-        return self._get_converter_attacks(context=context)
+        atomic_attacks: list[AtomicAttack] = []
+        if context.include_baseline:
+            atomic_attacks.append(
+                build_baseline_atomic_attack(
+                    objective_target=context.objective_target,
+                    objective_scorer=self._objective_scorer,
+                    seed_groups=list(context.seed_groups),
+                    memory_labels=context.memory_labels,
+                )
+            )
+        atomic_attacks.extend(self._get_converter_attacks(context=context))
+        return atomic_attacks
 
     # These are the same as Garak encoding attacks
     def _get_converter_attacks(self, *, context: ScenarioContext) -> list[AtomicAttack]:

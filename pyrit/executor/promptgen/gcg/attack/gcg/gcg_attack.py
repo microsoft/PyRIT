@@ -1,7 +1,6 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-import gc
 import logging
 from typing import Any
 
@@ -12,6 +11,7 @@ from tqdm.auto import tqdm
 
 from pyrit.executor.promptgen.gcg.attack.base.attack_manager import (
     AttackPrompt,
+    ModelWorkerOperation,
     MultiPromptAttack,
     PromptManager,
     get_embedding_matrix,
@@ -35,7 +35,7 @@ def token_gradients(
     loss_slice: slice,
 ) -> torch.Tensor:
     """
-    Computes gradients of the loss with respect to the coordinates.
+    Compute gradients of the loss with respect to the coordinates.
 
     Args:
         model (Any): The transformer model to be used.
@@ -46,6 +46,9 @@ def token_gradients(
 
     Returns:
         torch.Tensor: The gradients of each token in the input_slice with respect to the loss.
+
+    Raises:
+        RuntimeError: If autograd does not produce token gradients.
     """
     embed_weights = get_embedding_matrix(model)
     one_hot = torch.zeros(
@@ -67,9 +70,10 @@ def token_gradients(
     targets = input_ids[target_slice]
     loss = nn.CrossEntropyLoss()(logits[0, loss_slice, :], targets)
 
-    loss.backward()
-
-    return one_hot.grad.clone()
+    coordinate_gradient = torch.autograd.grad(loss, one_hot, allow_unused=True)[0]
+    if coordinate_gradient is None:
+        raise RuntimeError("Autograd did not produce token gradients")
+    return coordinate_gradient
 
 
 class GCGAttackPrompt(AttackPrompt):
@@ -148,6 +152,7 @@ class GCGMultiPromptAttack(MultiPromptAttack):
         loss: LossFunction | None = None,
         candidate_filter: CandidateFilter | None = None,
     ) -> None:
+        """Initialize a GCG attack with optional algorithm extensions."""
         super().__init__(
             goals,
             targets,
@@ -180,7 +185,7 @@ class GCGMultiPromptAttack(MultiPromptAttack):
         candidate_filter = getattr(self, "_candidate_filter", None)
         if candidate_filter is not None:
             return candidate_filter
-        return LengthPreservingFilter(filter=filter_cand)
+        return LengthPreservingFilter(enabled=filter_cand)
 
     def _sample_control_candidates(
         self,
@@ -254,13 +259,20 @@ class GCGMultiPromptAttack(MultiPromptAttack):
 
         Returns:
             tuple[str, float]: The best control string and its normalized loss.
+
+        Raises:
+            RuntimeError: If workers produce no aggregate gradient.
+            ValueError: If no model worker is configured.
         """
+        if not self.workers:
+            raise ValueError("GCG optimization requires at least one worker")
+
         main_device = self.models[0].device
         control_cands = []
         loss_function = self._resolve_loss(target_weight=target_weight, control_weight=control_weight)
 
         for j, worker in enumerate(self.workers):
-            worker(self.prompts[j], "grad", worker.model)
+            worker(self.prompts[j], ModelWorkerOperation.GRAD)
 
         # Aggregate gradients
         grad = None
@@ -290,9 +302,13 @@ class GCGMultiPromptAttack(MultiPromptAttack):
             else:
                 grad += new_grad
 
+        if grad is None:
+            raise RuntimeError("GCG workers did not produce an aggregate gradient")
+
+        last_worker_index = len(self.workers) - 1
         with torch.no_grad():
             control_cand = self._sample_control_candidates(
-                worker_index=j,
+                worker_index=last_worker_index,
                 gradient=grad,
                 batch_size=batch_size,
                 topk=topk,
@@ -301,13 +317,12 @@ class GCGMultiPromptAttack(MultiPromptAttack):
             )
             control_cands.append(
                 self._filter_control_candidates(
-                    worker_index=j,
+                    worker_index=last_worker_index,
                     control_cand=control_cand,
                     filter_cand=filter_cand,
                 )
             )
         del grad, control_cand
-        gc.collect()
 
         # Search
         loss = torch.zeros(len(control_cands) * batch_size).to(main_device)
@@ -315,39 +330,33 @@ class GCGMultiPromptAttack(MultiPromptAttack):
             for j, cand in enumerate(control_cands):
                 # Looping through the prompts at this level is less elegant, but
                 # we can manage VRAM better this way
-                progress = (
-                    tqdm(range(len(self.prompts[0])), total=len(self.prompts[0]))
-                    if verbose
-                    else enumerate(self.prompts[0])
-                )
-                for i in progress:
+                progress = tqdm(range(len(self.prompts[0])), total=len(self.prompts[0])) if verbose else None
+                prompt_indices = progress if progress is not None else range(len(self.prompts[0]))
+                for i in prompt_indices:
                     for k, worker in enumerate(self.workers):
-                        worker(self.prompts[k][i], "logits", worker.model, cand, return_ids=True)
-                    logits, ids = zip(*[worker.results.get() for worker in self.workers])
+                        worker(self.prompts[k][i], ModelWorkerOperation.LOGITS, cand, return_ids=True)
+                    logits, ids = zip(*[worker.results.get() for worker in self.workers], strict=True)
                     loss[j * batch_size : (j + 1) * batch_size] += sum(
                         loss_function.compute_loss(
                             logits=logit,
-                            token_ids=id,
+                            token_ids=token_ids,
                             target_slice=self.prompts[k][i]._target_slice,
                             control_slice=self.prompts[k][i]._control_slice,
                         ).to(main_device)
-                        for k, (logit, id) in enumerate(zip(logits, ids))
+                        for k, (logit, token_ids) in enumerate(zip(logits, ids, strict=True))
                     )
                     del logits, ids
-                    gc.collect()
 
-                    if verbose:
-                        progress.set_description(  # type: ignore[union-attr]
-                            f"loss={loss[j * batch_size : (j + 1) * batch_size].min().item() / (i + 1):.4f}"  # type: ignore[operator]
+                    if progress is not None:
+                        progress.set_description(
+                            f"loss={loss[j * batch_size : (j + 1) * batch_size].min().item() / (i + 1):.4f}"
                         )
 
             min_idx = loss.argmin()
             model_idx = min_idx // batch_size
             batch_idx = min_idx % batch_size
             next_control, cand_loss = control_cands[model_idx][batch_idx], loss[min_idx]
-
         del control_cands, loss
-        gc.collect()
 
         current_length = self._get_control_length(control=next_control)
         if current_length is not None:

@@ -12,14 +12,14 @@ from pyrit.common import apply_defaults
 from pyrit.converter import TextJailbreakConverter
 from pyrit.datasets import TextJailBreak
 from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
-from pyrit.models import AttackTechniqueSeedGroup, Parameter, SeedPrompt
+from pyrit.models import AttackTechniqueSeedGroup, Parameter
 from pyrit.prompt_target import CapabilityName
 from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
-from pyrit.registry.tag_query import TagQuery
 from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
 from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
 from pyrit.scenario.core.matrix_atomic_attack_builder import (
     MatrixAtomicAttackBuilder,
+    build_baseline_atomic_attack,
     resolve_technique_factories,
 )
 from pyrit.scenario.core.scenario import BaselineAttackPolicy, Scenario
@@ -124,11 +124,7 @@ def _build_jailbreak_technique() -> type[ScenarioTechnique]:
     return AttackTechniqueRegistry.build_technique_class_from_factories(  # type: ignore[return-value, ty:invalid-return-type]
         class_name="JailbreakTechnique",
         factories=factories,
-        aggregate_tags={
-            "single_turn": TagQuery.any_of("single_turn"),
-            "multi_turn": TagQuery.any_of("multi_turn"),
-        },
-        default_technique_names=set(_DEFAULT_TECHNIQUES),
+        default_names=set(_DEFAULT_TECHNIQUES),
     )
 
 
@@ -231,7 +227,6 @@ class Jailbreak(Scenario):
         super().__init__(
             version=self.VERSION,
             technique_class=technique_class,
-            default_technique=technique_class("default"),
             default_dataset_config=DatasetAttackConfiguration(dataset_names=["harmbench"], max_dataset_size=4),
             objective_scorer=self._objective_scorer,
             scenario_result_id=scenario_result_id,
@@ -346,6 +341,15 @@ class Jailbreak(Scenario):
         )
 
         atomic_attacks: list[AtomicAttack] = []
+        if context.include_baseline:
+            atomic_attacks.append(
+                build_baseline_atomic_attack(
+                    objective_target=context.objective_target,
+                    objective_scorer=self._objective_scorer,
+                    seed_groups=list(context.seed_groups),
+                    memory_labels=context.memory_labels,
+                )
+            )
         for template_file_name in self._resolved_jailbreaks:
             template_stem = Path(template_file_name).stem
 
@@ -446,12 +450,7 @@ class Jailbreak(Scenario):
             the rendered jailbreak framing.
         """
         framing = TextJailBreak(template_file_name=template_file_name).get_jailbreak_system_prompt()
-        # sequence=-1 orders the system framing ahead of any user turn, so a caller-supplied seed
-        # group carrying a user prompt at the default sequence 0 does not raise a same-sequence
-        # role collision when this technique is merged in.
-        seed_technique = AttackTechniqueSeedGroup(
-            seeds=[SeedPrompt(value=framing, data_type="text", role="system", is_general_technique=True, sequence=-1)]
-        )
+        seed_technique = AttackTechniqueSeedGroup.from_system_prompt(framing)
         return AttackTechniqueFactory(
             name=_JAILBREAK_SYSTEM_PROMPT,
             attack_class=PromptSendingAttack,

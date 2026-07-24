@@ -125,7 +125,10 @@ class _BeaverTailsDataset(_RemoteDatasetLoader):
         )
 
         source_url = f"https://huggingface.co/datasets/{self.HF_DATASET_NAME}"
-        groups = ["Institute for Artificial Intelligence", "CFCS, School of Computer Science"]
+        groups = [
+            "Institute for Artificial Intelligence, Peking University",
+            "Center on Frontiers of Computing Studies, School of Computer Science, Peking University",
+        ]
 
         seed_prompts = []
         for item in data:

@@ -58,7 +58,7 @@
 #
 # PyRITInitializers are how you can configure the CLI scanner. PyRIT includes several built-in initializers you can use with the `--initializers` flag.
 #
-# The `--list-initializers` command shows all available initializers. Initializers are referenced by their filename (e.g., `target`, `scorer`, `simple`) regardless of which subdirectory they're in.
+# The `--list-initializers` command shows all available initializers. Initializers are referenced by their filename (e.g., `target`, `scorer`) regardless of which subdirectory they're in.
 #
 # List the available initializers using the --list-initializers flag.
 
@@ -185,7 +185,6 @@ class MyCustomScenario(Scenario):
             version=1,
             objective_scorer=TrueFalseInverterScorer(scorer=SelfAskRefusalScorer(chat_target=OpenAIChatTarget())),
             technique_class=MyCustomTechnique,
-            default_technique=MyCustomTechnique.ALL,
             default_dataset_config=DatasetAttackConfiguration(dataset_names=["harmbench"]),
             scenario_result_id=scenario_result_id,
         )

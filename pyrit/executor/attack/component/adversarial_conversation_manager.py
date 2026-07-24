@@ -235,14 +235,19 @@ def _parse_adversarial_reply(response_text: str, *, schema: JsonSchemaDefinition
         AdversarialReply: The parsed message and reasoning fields.
 
     Raises:
-        InvalidJsonException: If the reply is not valid JSON, is missing a required key, carries a
-            key the schema forbids, or omits ``next_message``.
+        InvalidJsonException: If the reply is not valid JSON, does not decode to an object, is
+            missing a required key, carries a key the schema forbids, or omits ``next_message``.
     """
     cleaned = remove_markdown_json(response_text)
     try:
         parsed = json.loads(cleaned)
     except json.JSONDecodeError as e:
         raise InvalidJsonException(message=f"Invalid JSON encountered: {cleaned}") from e
+
+    if not isinstance(parsed, dict):
+        raise InvalidJsonException(
+            message=(f"Adversarial-chat reply must be a JSON object, but decoded to {type(parsed).__name__}: {cleaned}")
+        )
 
     normalized = {_camel_to_snake(key): value for key, value in parsed.items()}
 

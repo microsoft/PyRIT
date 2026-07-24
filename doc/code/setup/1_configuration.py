@@ -9,18 +9,6 @@
 #       jupytext_version: 1.19.4
 # ---
 
-# %%
-from pyrit.output import output_attack_async
-
-# ---
-# jupyter:
-#   jupytext:
-#     text_representation:
-#       extension: .py
-#       format_name: percent
-#       format_version: '1.3'
-#       jupytext_version: 1.19.1
-# ---
 # %% [markdown]
 # # Configuration
 #
@@ -148,6 +136,7 @@ from pyrit.executor.attack import (
     AttackScoringConfig,
     PromptSendingAttack,
 )
+from pyrit.output import output_attack_async
 from pyrit.prompt_normalizer.converter_configuration import (
     ConverterConfiguration,
 )

@@ -3,37 +3,41 @@
 
 from __future__ import annotations
 
-import gc
 import json
 import logging
 import math
 import random
 import time
 from copy import deepcopy
-from typing import Any
+from dataclasses import dataclass
+from enum import Enum
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 import pandas as pd
 import torch
 import torch.multiprocessing as mp
 import torch.nn as nn
-from transformers import (
-    AutoModelForCausalLM,
-    AutoTokenizer,
-    GPT2LMHeadModel,
-    GPTJForCausalLM,
-    GPTNeoXForCausalLM,
-    LlamaForCausalLM,
-    MistralForCausalLM,
-    MixtralForCausalLM,
-    Phi3ForCausalLM,
-)
+from transformers.models.auto.modeling_auto import AutoModelForCausalLM
+from transformers.models.auto.tokenization_auto import AutoTokenizer
+from transformers.models.gpt2.modeling_gpt2 import GPT2LMHeadModel
+from transformers.models.gpt_neox.modeling_gpt_neox import GPTNeoXForCausalLM
+from transformers.models.gptj.modeling_gptj import GPTJForCausalLM
+from transformers.models.llama.modeling_llama import LlamaForCausalLM
+from transformers.models.mistral.modeling_mistral import MistralForCausalLM
+from transformers.models.mixtral.modeling_mixtral import MixtralForCausalLM
+from transformers.models.phi3.modeling_phi3 import Phi3ForCausalLM
 
 from pyrit.executor.promptgen.gcg.experiments.log import (
     log_gpu_memory,
     log_loss,
     log_table_summary,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Iterator
+
+    from transformers import PreTrainedModel, PreTrainedTokenizerBase
 
 logger = logging.getLogger(__name__)
 
@@ -50,18 +54,35 @@ _DEFAULT_TEST_PREFIXES: list[str] = [
 
 
 class NpEncoder(json.JSONEncoder):
-    def default(self, obj: Any) -> Any:
-        if isinstance(obj, np.integer):
-            return int(obj)
-        if isinstance(obj, np.floating):
-            return float(obj)
-        if isinstance(obj, np.ndarray):
-            return obj.tolist()
-        return json.JSONEncoder.default(self, obj)
+    """Encode NumPy scalar and array values for JSON output."""
+
+    def default(self, o: Any) -> Any:
+        """
+        Convert supported NumPy values to JSON-compatible Python values.
+
+        Returns:
+            Any: The converted value.
+        """
+        if isinstance(o, np.integer):
+            return int(o)
+        if isinstance(o, np.floating):
+            return float(o)
+        if isinstance(o, np.ndarray):
+            return o.tolist()
+        return json.JSONEncoder.default(self, o)
 
 
 def get_embedding_layer(model: Any) -> Any:
-    if isinstance(model, GPTJForCausalLM) or isinstance(model, GPT2LMHeadModel):
+    """
+    Return the token embedding layer for a supported causal language model.
+
+    Returns:
+        Any: The model's token embedding layer.
+
+    Raises:
+        ValueError: If the model architecture is unsupported.
+    """
+    if isinstance(model, (GPTJForCausalLM, GPT2LMHeadModel)):
         return model.transformer.wte
     if isinstance(model, LlamaForCausalLM):
         return model.model.embed_tokens
@@ -73,13 +94,22 @@ def get_embedding_layer(model: Any) -> Any:
 
 
 def get_embedding_matrix(model: Any) -> Any:
-    if isinstance(model, GPTJForCausalLM) or isinstance(model, GPT2LMHeadModel):
+    """
+    Return the token embedding matrix for a supported causal language model.
+
+    Returns:
+        Any: The model's token embedding matrix.
+
+    Raises:
+        ValueError: If the model architecture is unsupported.
+    """
+    if isinstance(model, (GPTJForCausalLM, GPT2LMHeadModel)):
         return model.transformer.wte.weight
     if isinstance(model, LlamaForCausalLM):
         return model.model.embed_tokens.weight
     if isinstance(model, GPTNeoXForCausalLM):
         return model.base_model.embed_in.weight  # type: ignore[union-attr, unused-ignore]
-    if isinstance(model, MixtralForCausalLM) or isinstance(model, MistralForCausalLM):
+    if isinstance(model, (MixtralForCausalLM, MistralForCausalLM)):
         return model.model.embed_tokens.weight
     if isinstance(model, Phi3ForCausalLM):
         return model.model.embed_tokens.weight
@@ -87,13 +117,22 @@ def get_embedding_matrix(model: Any) -> Any:
 
 
 def get_embeddings(model: Any, input_ids: torch.Tensor) -> Any:
-    if isinstance(model, GPTJForCausalLM) or isinstance(model, GPT2LMHeadModel):
+    """
+    Embed input token ids with a supported causal language model.
+
+    Returns:
+        Any: The embedded token tensor.
+
+    Raises:
+        ValueError: If the model architecture is unsupported.
+    """
+    if isinstance(model, (GPTJForCausalLM, GPT2LMHeadModel)):
         return model.transformer.wte(input_ids).half()
     if isinstance(model, LlamaForCausalLM):
         return model.model.embed_tokens(input_ids)
     if isinstance(model, GPTNeoXForCausalLM):
         return model.base_model.embed_in(input_ids).half()  # type: ignore[operator, unused-ignore]
-    if isinstance(model, MixtralForCausalLM) or isinstance(model, MistralForCausalLM):
+    if isinstance(model, (MixtralForCausalLM, MistralForCausalLM)):
         return model.model.embed_tokens(input_ids)
     if isinstance(model, Phi3ForCausalLM):
         return model.model.embed_tokens(input_ids)
@@ -101,13 +140,12 @@ def get_embeddings(model: Any, input_ids: torch.Tensor) -> Any:
 
 
 def get_nonascii_toks(tokenizer: Any, device: str = "cpu") -> torch.Tensor:
+    """Return tokenizer ids that are non-ASCII or represent special tokens."""
+
     def is_ascii(s: str) -> bool:
         return s.isascii() and s.isprintable()
 
-    ascii_toks = []
-    for i in range(3, tokenizer.vocab_size):
-        if not is_ascii(tokenizer.decode([i])):
-            ascii_toks.append(i)
+    ascii_toks = [i for i in range(3, tokenizer.vocab_size) if not is_ascii(tokenizer.decode([i]))]
 
     if tokenizer.bos_token_id is not None:
         ascii_toks.append(tokenizer.bos_token_id)
@@ -135,7 +173,7 @@ class AttackPrompt:
         test_prefixes: list[str] | None = None,
     ) -> None:
         """
-        Initializes the AttackPrompt object with the provided parameters.
+        Initialize the attack prompt with the provided parameters.
 
         Args:
             goal (str):
@@ -231,6 +269,12 @@ class AttackPrompt:
 
     @torch.no_grad()  # type: ignore[misc, untyped-decorator, unused-ignore]
     def generate(self, model: Any, gen_config: Any = None) -> torch.Tensor:
+        """
+        Generate a model continuation from the current attack prompt.
+
+        Returns:
+            torch.Tensor: Generated continuation token ids.
+        """
         if gen_config is None:
             gen_config = model.generation_config
             gen_config.max_new_tokens = 16
@@ -246,9 +290,21 @@ class AttackPrompt:
         return output_ids[self._assistant_role_slice.stop :]  # type: ignore[no-any-return, unused-ignore]
 
     def generate_str(self, model: Any, gen_config: Any = None) -> Any:
+        """
+        Generate and decode a model continuation.
+
+        Returns:
+            Any: The decoded continuation.
+        """
         return self.tokenizer.decode(self.generate(model, gen_config))
 
     def test(self, model: Any, gen_config: Any = None) -> tuple[bool, int]:
+        """
+        Test whether the current prompt jailbreaks and matches its target.
+
+        Returns:
+            tuple[bool, int]: Jailbreak and exact-match indicators.
+        """
         if gen_config is None:
             gen_config = model.generation_config
             gen_config.max_new_tokens = self.test_new_toks
@@ -260,14 +316,30 @@ class AttackPrompt:
 
     @torch.no_grad()  # type: ignore[misc, untyped-decorator, unused-ignore]
     def test_loss(self, model: Any) -> float:
+        """
+        Compute the mean target loss for the current prompt.
+
+        Returns:
+            float: Mean target loss.
+        """
         logits, ids = self.logits(model, return_ids=True)
         return self.target_loss(logits, ids).mean().item()  # type: ignore[no-any-return, unused-ignore]
 
     def grad(self, model: Any) -> torch.Tensor:
+        """Compute gradients for the current attack prompt."""
         raise NotImplementedError("Gradient function not yet implemented")
 
     @torch.no_grad()  # type: ignore[misc, untyped-decorator, unused-ignore]
     def logits(self, model: Any, test_controls: Any = None, return_ids: bool = False) -> Any:
+        """
+        Compute logits for one or more candidate controls.
+
+        Returns:
+            Any: Model logits, optionally paired with their token ids.
+
+        Raises:
+            ValueError: If candidate controls have an invalid type or shape.
+        """
         pad_tok = -1
         if test_controls is None:
             test_controls = self.control_toks
@@ -275,9 +347,13 @@ class AttackPrompt:
             if len(test_controls.shape) == 1:
                 test_controls = test_controls.unsqueeze(0)
             test_ids = test_controls.to(model.device)
-        elif not isinstance(test_controls, list):
-            test_controls = [test_controls]
-        elif isinstance(test_controls[0], str):
+        else:
+            if not isinstance(test_controls, list):
+                test_controls = [test_controls]
+            if not test_controls or not isinstance(test_controls[0], str):
+                raise ValueError(
+                    f"test_controls must be a list of strings or a tensor of token ids, got {type(test_controls)}"
+                )
             max_len = self._control_slice.stop - self._control_slice.start
             test_ids = [
                 torch.tensor(self.tokenizer(control, add_special_tokens=False).input_ids[:max_len], device=model.device)
@@ -288,10 +364,6 @@ class AttackPrompt:
                 pad_tok += 1
             nested_ids = torch.nested.nested_tensor(test_ids)
             test_ids = torch.nested.to_padded_tensor(nested_ids, pad_tok, (len(test_ids), max_len))
-        else:
-            raise ValueError(
-                f"test_controls must be a list of strings or a tensor of token ids, got {type(test_controls)}"
-            )
 
         if not (test_ids[0].shape[0] == self._control_slice.stop - self._control_slice.start):
             raise ValueError(
@@ -308,28 +380,35 @@ class AttackPrompt:
         ids = torch.scatter(
             self.input_ids.unsqueeze(0).repeat(test_ids.shape[0], 1).to(model.device), 1, locs, test_ids
         )
-        if pad_tok >= 0:
-            attn_mask = (ids != pad_tok).type(ids.dtype)
-        else:
-            attn_mask = None
+        attn_mask = (ids != pad_tok).type(ids.dtype) if pad_tok >= 0 else None
 
         if return_ids:
             del locs, test_ids
-            gc.collect()
             return model(input_ids=ids, attention_mask=attn_mask).logits, ids
         del locs, test_ids
         logits = model(input_ids=ids, attention_mask=attn_mask).logits
         del ids
-        gc.collect()
         return logits
 
     def target_loss(self, logits: torch.Tensor, ids: torch.Tensor) -> torch.Tensor:
+        """
+        Compute unreduced cross-entropy loss over target tokens.
+
+        Returns:
+            torch.Tensor: Per-token target losses.
+        """
         crit = nn.CrossEntropyLoss(reduction="none")
         loss_slice = slice(self._target_slice.start - 1, self._target_slice.stop - 1)
         result: torch.Tensor = crit(logits[:, loss_slice, :].transpose(1, 2), ids[:, self._target_slice])
         return result
 
     def control_loss(self, logits: torch.Tensor, ids: torch.Tensor) -> torch.Tensor:
+        """
+        Compute unreduced cross-entropy loss over control tokens.
+
+        Returns:
+            torch.Tensor: Per-token control losses.
+        """
         crit = nn.CrossEntropyLoss(reduction="none")
         loss_slice = slice(self._control_slice.start - 1, self._control_slice.stop - 1)
         result: torch.Tensor = crit(logits[:, loss_slice, :].transpose(1, 2), ids[:, self._control_slice])
@@ -337,14 +416,17 @@ class AttackPrompt:
 
     @property
     def assistant_str(self) -> Any:
+        """The decoded assistant-role prefix."""
         return self.tokenizer.decode(self.input_ids[self._assistant_role_slice]).strip()
 
     @property
     def assistant_toks(self) -> torch.Tensor:
+        """The assistant-role token ids."""
         return self.input_ids[self._assistant_role_slice]
 
     @property
     def goal_str(self) -> Any:
+        """The decoded attack goal."""
         return self.tokenizer.decode(self.input_ids[self._goal_slice]).strip()
 
     @goal_str.setter
@@ -354,10 +436,12 @@ class AttackPrompt:
 
     @property
     def goal_toks(self) -> torch.Tensor:
+        """The attack goal token ids."""
         return self.input_ids[self._goal_slice]
 
     @property
     def target_str(self) -> Any:
+        """The decoded target response prefix."""
         return self.tokenizer.decode(self.input_ids[self._target_slice]).strip()
 
     @target_str.setter
@@ -367,10 +451,12 @@ class AttackPrompt:
 
     @property
     def target_toks(self) -> torch.Tensor:
+        """The target response token ids."""
         return self.input_ids[self._target_slice]
 
     @property
     def control_str(self) -> Any:
+        """The decoded adversarial control suffix."""
         return self.tokenizer.decode(self.input_ids[self._control_slice]).strip()
 
     @control_str.setter
@@ -380,6 +466,7 @@ class AttackPrompt:
 
     @property
     def control_toks(self) -> torch.Tensor:
+        """The adversarial control token ids."""
         return self.input_ids[self._control_slice]
 
     @control_toks.setter
@@ -389,18 +476,22 @@ class AttackPrompt:
 
     @property
     def prompt(self) -> Any:
+        """The decoded goal and control prompt."""
         return self.tokenizer.decode(self.input_ids[self._goal_slice.start : self._control_slice.stop])
 
     @property
     def input_toks(self) -> torch.Tensor:
+        """All input token ids."""
         return self.input_ids
 
     @property
     def input_str(self) -> Any:
+        """The decoded model input."""
         return self.tokenizer.decode(self.input_ids)
 
     @property
     def eval_str(self) -> str:
+        """The decoded input used for evaluation."""
         return (  # type: ignore[no-any-return, unused-ignore]
             self.tokenizer.decode(self.input_ids[: self._assistant_role_slice.stop])
             .replace("<s>", "")
@@ -421,7 +512,7 @@ class PromptManager:
         managers: dict[str, type[AttackPrompt]] | None = None,
     ) -> None:
         """
-        Initializes the PromptManager object with the provided parameters.
+        Initialize the prompt manager with the provided parameters.
 
         Args:
             goals (list[str]):
@@ -436,9 +527,15 @@ class PromptManager:
                 A list of prefixes to test the attack (default is _DEFAULT_TEST_PREFIXES).
             managers (dict, optional):
                 A dictionary of manager objects, required to create the prompts.
+
+        Raises:
+            ValueError: If managers are missing, goals and targets differ in
+                length, or no goal-target pair is provided.
         """
         if test_prefixes is None:
             test_prefixes = list(_DEFAULT_TEST_PREFIXES)
+        if managers is None:
+            raise ValueError("PromptManager requires a managers mapping")
         if len(goals) != len(targets):
             raise ValueError("Length of goals and targets must match")
         if len(goals) == 0:
@@ -447,12 +544,19 @@ class PromptManager:
         self.tokenizer = tokenizer
 
         self._prompts = [
-            managers["AP"](goal, target, tokenizer, control_init, test_prefixes) for goal, target in zip(goals, targets)
+            managers["AP"](goal, target, tokenizer, control_init, test_prefixes)
+            for goal, target in zip(goals, targets, strict=True)
         ]
 
         self._nonascii_toks = get_nonascii_toks(tokenizer, device="cpu")
 
     def generate(self, model: Any, gen_config: Any = None) -> list[torch.Tensor]:
+        """
+        Generate continuations for all managed prompts.
+
+        Returns:
+            list[torch.Tensor]: Generated continuation token ids.
+        """
         if gen_config is None:
             gen_config = model.generation_config
             gen_config.max_new_tokens = 16
@@ -460,55 +564,114 @@ class PromptManager:
         return [prompt.generate(model, gen_config) for prompt in self._prompts]
 
     def generate_str(self, model: Any, gen_config: Any = None) -> list[str]:
+        """
+        Generate decoded continuations for all managed prompts.
+
+        Returns:
+            list[str]: Decoded continuations.
+        """
         return [self.tokenizer.decode(output_toks) for output_toks in self.generate(model, gen_config)]
 
     def test(self, model: Any, gen_config: Any = None) -> list[tuple[bool, int]]:
+        """
+        Test all managed prompts for jailbreak and target matching.
+
+        Returns:
+            list[tuple[bool, int]]: Jailbreak and exact-match indicators.
+        """
         return [prompt.test(model, gen_config) for prompt in self._prompts]
 
     def test_loss(self, model: Any) -> list[float]:
+        """
+        Compute target losses for all managed prompts.
+
+        Returns:
+            list[float]: Mean target losses.
+        """
         return [prompt.test_loss(model) for prompt in self._prompts]
 
     def grad(self, model: Any) -> torch.Tensor:
-        return sum(prompt.grad(model) for prompt in self._prompts)  # type: ignore[return-value, unused-ignore]
+        """
+        Sum gradients across all managed prompts.
+
+        Returns:
+            torch.Tensor: Aggregated prompt gradients.
+        """
+        first_gradient = self._prompts[0].grad(model)
+        if len(self._prompts) == 1:
+            return first_gradient
+        result_dtype = first_gradient.dtype
+        gradient = first_gradient.float() if result_dtype in (torch.float16, torch.bfloat16) else first_gradient.clone()
+        for prompt in self._prompts[1:]:
+            gradient.add_(prompt.grad(model).to(dtype=gradient.dtype))
+        return gradient.to(dtype=result_dtype)
 
     def logits(self, model: Any, test_controls: Any = None, return_ids: bool = False) -> Any:
+        """
+        Compute logits for all managed prompts.
+
+        Returns:
+            Any: Prompt logits, optionally paired with token ids.
+        """
         vals = [prompt.logits(model, test_controls, return_ids) for prompt in self._prompts]
         if return_ids:
             return [val[0] for val in vals], [val[1] for val in vals]
         return vals
 
     def target_loss(self, logits: list[torch.Tensor], ids: list[torch.Tensor]) -> torch.Tensor:
+        """
+        Compute the mean target loss across all managed prompts.
+
+        Returns:
+            torch.Tensor: Mean target losses for each candidate.
+        """
         return torch.cat(
             [
-                prompt.target_loss(logit, id).mean(dim=1).unsqueeze(1)
-                for prompt, logit, id in zip(self._prompts, logits, ids)
+                prompt.target_loss(logit, token_ids).mean(dim=1).unsqueeze(1)
+                for prompt, logit, token_ids in zip(self._prompts, logits, ids, strict=True)
             ],
             dim=1,
         ).mean(dim=1)
 
     def control_loss(self, logits: list[torch.Tensor], ids: list[torch.Tensor]) -> torch.Tensor:
+        """
+        Compute the mean control loss across all managed prompts.
+
+        Returns:
+            torch.Tensor: Mean control losses for each candidate.
+        """
         return torch.cat(
             [
-                prompt.control_loss(logit, id).mean(dim=1).unsqueeze(1)
-                for prompt, logit, id in zip(self._prompts, logits, ids)
+                prompt.control_loss(logit, token_ids).mean(dim=1).unsqueeze(1)
+                for prompt, logit, token_ids in zip(self._prompts, logits, ids, strict=True)
             ],
             dim=1,
         ).mean(dim=1)
 
     def sample_control(self, *args: Any, **kwargs: Any) -> Any:
+        """Sample candidate controls for the current prompt state."""
         raise NotImplementedError("Sampling control tokens not yet implemented")
 
     def __len__(self) -> int:
+        """Return the number of managed prompts."""
         return len(self._prompts)
 
     def __getitem__(self, i: int) -> AttackPrompt:
+        """Return the prompt at the requested index."""
         return self._prompts[i]
 
-    def __iter__(self) -> Any:
+    def __iter__(self) -> Iterator[AttackPrompt]:
+        """
+        Iterate over managed prompts.
+
+        Returns:
+            Iterator[AttackPrompt]: An iterator over attack prompts.
+        """
         return iter(self._prompts)
 
     @property
     def control_toks(self) -> torch.Tensor:
+        """The shared control token ids."""
         return self._prompts[0].control_toks
 
     @control_toks.setter
@@ -518,6 +681,7 @@ class PromptManager:
 
     @property
     def control_str(self) -> str:
+        """The shared decoded control suffix."""
         return self._prompts[0].control_str  # type: ignore[no-any-return, unused-ignore]
 
     @control_str.setter
@@ -527,6 +691,7 @@ class PromptManager:
 
     @property
     def disallowed_toks(self) -> torch.Tensor:
+        """The token ids excluded from candidate controls."""
         return self._nonascii_toks
 
 
@@ -547,7 +712,7 @@ class MultiPromptAttack:
         test_workers: list[ModelWorker] | None = None,
     ) -> None:
         """
-        Initializes the MultiPromptAttack object with the provided parameters.
+        Initialize the multi-prompt attack with the provided parameters.
 
         Args:
             goals (list[str]):
@@ -570,6 +735,9 @@ class MultiPromptAttack:
                 The list of test targets of the attack
             test_workers (list of Worker objects, optional):
                 The list of test workers used in the attack
+
+        Raises:
+            ValueError: If the managers mapping is missing.
         """
         if test_prefixes is None:
             test_prefixes = list(_DEFAULT_TEST_PREFIXES)
@@ -579,6 +747,8 @@ class MultiPromptAttack:
             test_targets = []
         if test_workers is None:
             test_workers = []
+        if managers is None:
+            raise ValueError("MultiPromptAttack requires a managers mapping")
         self.goals = goals
         self.targets = targets
         self.workers = workers
@@ -596,6 +766,7 @@ class MultiPromptAttack:
 
     @property
     def control_str(self) -> Any:
+        """The shared decoded control suffix."""
         return self.prompts[0].control_str
 
     @control_str.setter
@@ -605,6 +776,7 @@ class MultiPromptAttack:
 
     @property
     def control_toks(self) -> list[torch.Tensor]:
+        """The control token ids for each tokenizer."""
         return [prompts.control_toks for prompts in self.prompts]
 
     @control_toks.setter
@@ -621,6 +793,12 @@ class MultiPromptAttack:
         filter_cand: bool = True,
         curr_control: str | None = None,
     ) -> list[str]:
+        """
+        Decode candidates and retain controls whose token length is stable.
+
+        Returns:
+            list[str]: Decoded candidate controls.
+        """
         cands, count = [], 0
         worker = self.workers[worker_index]
 
@@ -647,6 +825,7 @@ class MultiPromptAttack:
         return cands
 
     def step(self, *args: Any, **kwargs: Any) -> tuple[str, float]:
+        """Execute one attack optimization step."""
         raise NotImplementedError("Attack step function not yet implemented")
 
     def run(
@@ -667,9 +846,16 @@ class MultiPromptAttack:
         filter_cand: bool = True,
         verbose: bool = True,
     ) -> tuple[str, float, int]:
-        def P(e: float, e_prime: float, k: int) -> bool:
-            T = max(1 - float(k + 1) / (n_steps + anneal_from), 1.0e-7)
-            return True if e_prime < e else math.exp(-(e_prime - e) / T) >= random.random()
+        """
+        Run iterative optimization.
+
+        Returns:
+            tuple[str, float, int]: The final control, loss, and step count.
+        """
+
+        def acceptance_probability(e: float, e_prime: float, k: int) -> bool:
+            temperature = max(1 - float(k + 1) / (n_steps + anneal_from), 1.0e-7)
+            return e_prime < e or math.exp(-(e_prime - e) / temperature) >= random.random()
 
         if target_weight is None:
 
@@ -708,7 +894,6 @@ class MultiPromptAttack:
 
             steps += 1
             start = time.time()
-            torch.cuda.empty_cache()
             control, loss = self.step(
                 batch_size=batch_size,
                 topk=topk,
@@ -720,7 +905,7 @@ class MultiPromptAttack:
                 verbose=verbose,
             )
             runtime = time.time() - start
-            keep_control = True if not anneal else P(prev_loss, loss, i + anneal_from)
+            keep_control = True if not anneal else acceptance_probability(prev_loss, loss, i + anneal_from)
             if keep_control:
                 self.control_str = control
 
@@ -752,20 +937,34 @@ class MultiPromptAttack:
     def test(
         self, workers: list[ModelWorker], prompts: list[PromptManager], include_loss: bool = False
     ) -> tuple[list[list[bool]], list[list[int]], list[list[float]]]:
+        """
+        Test prompts across workers and optionally collect their losses.
+
+        Returns:
+            tuple[list[list[bool]], list[list[int]], list[list[float]]]:
+                Jailbreak, exact-match, and loss results.
+        """
         for j, worker in enumerate(workers):
-            worker(prompts[j], "test", worker.model)
+            worker(prompts[j], ModelWorkerOperation.TEST)
         model_tests = np.array([worker.results.get() for worker in workers])
         model_tests_jb = model_tests[..., 0].tolist()
         model_tests_mb = model_tests[..., 1].tolist()
         model_tests_loss: list[list[float]] = []
         if include_loss:
             for j, worker in enumerate(workers):
-                worker(prompts[j], "test_loss", worker.model)
+                worker(prompts[j], ModelWorkerOperation.TEST_LOSS)
             model_tests_loss = [worker.results.get() for worker in workers]
 
         return model_tests_jb, model_tests_mb, model_tests_loss
 
     def test_all(self) -> tuple[list[list[bool]], list[list[int]], list[list[float]]]:
+        """
+        Test training and held-out prompts across all workers.
+
+        Returns:
+            tuple[list[list[bool]], list[list[int]], list[list[float]]]:
+                Jailbreak, exact-match, and loss results.
+        """
         all_workers = self.workers + self.test_workers
         all_prompts = [
             self.managers["PM"](
@@ -781,6 +980,12 @@ class MultiPromptAttack:
         return self.test(all_workers, all_prompts, include_loss=True)
 
     def parse_results(self, results: Any) -> tuple[Any, Any, Any, Any]:
+        """
+        Partition results by training and held-out models and goals.
+
+        Returns:
+            tuple[Any, Any, Any, Any]: The four aggregate result partitions.
+        """
         x = len(self.workers)
         i = len(self.goals)
         id_id = results[:x, :i].sum()
@@ -799,6 +1004,12 @@ class MultiPromptAttack:
         model_tests: tuple[list[list[bool]], list[list[int]], list[list[float]]],
         verbose: bool = True,
     ) -> None:
+        """
+        Write one optimization step and its evaluations to the attack log.
+
+        Raises:
+            ValueError: If no logfile path is configured.
+        """
         prompt_tests_jb, prompt_tests_mb, model_tests_loss = list(map(np.array, model_tests))
         all_goal_strs = self.goals + self.test_goals
         all_workers = self.workers + self.test_workers
@@ -818,12 +1029,15 @@ class MultiPromptAttack:
         n_em = self.parse_results(prompt_tests_mb)
         n_loss = self.parse_results(model_tests_loss)
         total_tests = self.parse_results(np.ones(prompt_tests_jb.shape, dtype=int))
-        n_loss = [lo / t if t > 0 else 0 for lo, t in zip(n_loss, total_tests)]  # type: ignore[assignment, unused-ignore]
+        n_loss = [lo / total if total > 0 else 0 for lo, total in zip(n_loss, total_tests, strict=True)]
 
         tests["n_passed"] = n_passed
         tests["n_em"] = n_em
         tests["n_loss"] = n_loss
         tests["total"] = total_tests
+
+        if self.logfile is None:
+            raise ValueError("Cannot log an attack without a logfile path")
 
         with open(self.logfile) as f:
             log = json.load(f)
@@ -882,7 +1096,7 @@ class ProgressiveMultiPromptAttack:
         **kwargs: Any,
     ) -> None:
         """
-        Initializes the ProgressiveMultiPromptAttack object with the provided parameters.
+        Initialize the progressive multi-prompt attack.
 
         Args:
             goals (list[str]):
@@ -909,6 +1123,11 @@ class ProgressiveMultiPromptAttack:
                 The list of test targets of the attack
             test_workers (list[Worker], optional):
                 The list of test workers used in the attack
+            **kwargs (Any): Additional multi-prompt attack options prefixed
+                with ``mpa_``.
+
+        Raises:
+            ValueError: If the managers mapping is missing.
         """
         if test_prefixes is None:
             test_prefixes = list(_DEFAULT_TEST_PREFIXES)
@@ -918,6 +1137,8 @@ class ProgressiveMultiPromptAttack:
             test_targets = []
         if test_workers is None:
             test_workers = []
+        if managers is None:
+            raise ValueError("ProgressiveMultiPromptAttack requires a managers mapping")
         self.goals = goals
         self.targets = targets
         self.workers = workers
@@ -973,6 +1194,7 @@ class ProgressiveMultiPromptAttack:
 
     @staticmethod
     def filter_mpa_kwargs(**kwargs: Any) -> dict[str, Any]:
+        """Return options whose names use the ``mpa_`` prefix."""
         mpa_kwargs: dict[str, Any] = {}
         for key in kwargs:
             if key.startswith("mpa_"):
@@ -996,7 +1218,7 @@ class ProgressiveMultiPromptAttack:
         filter_cand: bool = True,
     ) -> tuple[str, int]:
         """
-        Executes the progressive multi prompt attack.
+        Execute the progressive multi-prompt attack.
 
         Args:
             n_steps (int, optional):
@@ -1009,10 +1231,10 @@ class ProgressiveMultiPromptAttack:
                 The temperature for sampling (default is 1)
             allow_non_ascii (bool, optional):
                 Whether to allow non-ASCII characters (default is False)
-            target_weight
-                The weight assigned to the target
-            control_weight
-                The weight assigned to the control
+            target_weight (float | None):
+                The weight assigned to the target.
+            control_weight (float | None):
+                The weight assigned to the control.
             anneal (bool, optional):
                 Whether to anneal the temperature (default is True)
             test_steps (int, optional):
@@ -1025,6 +1247,9 @@ class ProgressiveMultiPromptAttack:
                 Whether to print verbose output (default is True)
             filter_cand (bool, optional):
                 Whether to filter candidates whose lengths changed after re-tokenization (default is True)
+
+        Returns:
+            tuple[str, int]: The final control suffix and completed step count.
         """
         if self.logfile is not None:
             with open(self.logfile) as f:
@@ -1128,7 +1353,7 @@ class IndividualPromptAttack:
         **kwargs: Any,
     ) -> None:
         """
-        Initializes the IndividualPromptAttack object with the provided parameters.
+        Initialize the individual-prompt attack.
 
         Args:
             goals (list):
@@ -1151,6 +1376,11 @@ class IndividualPromptAttack:
                 The list of test targets of the attack
             test_workers (list, optional):
                 The list of test workers used in the attack
+            **kwargs (Any): Additional multi-prompt attack options prefixed
+                with ``mpa_``.
+
+        Raises:
+            ValueError: If the managers mapping is missing.
         """
         if test_prefixes is None:
             test_prefixes = list(_DEFAULT_TEST_PREFIXES)
@@ -1160,6 +1390,8 @@ class IndividualPromptAttack:
             test_targets = []
         if test_workers is None:
             test_workers = []
+        if managers is None:
+            raise ValueError("IndividualPromptAttack requires a managers mapping")
         self.goals = goals
         self.targets = targets
         self.workers = workers
@@ -1212,6 +1444,7 @@ class IndividualPromptAttack:
 
     @staticmethod
     def filter_mpa_kwargs(**kwargs: Any) -> dict[str, Any]:
+        """Return options whose names use the ``mpa_`` prefix."""
         mpa_kwargs: dict[str, Any] = {}
         for key in kwargs:
             if key.startswith("mpa_"):
@@ -1235,7 +1468,7 @@ class IndividualPromptAttack:
         filter_cand: bool = True,
     ) -> tuple[str, int]:
         """
-        Executes the individual prompt attack.
+        Execute the individual-prompt attack.
 
         Args:
             n_steps (int, optional):
@@ -1264,6 +1497,9 @@ class IndividualPromptAttack:
                 Whether to print verbose output (default is True)
             filter_cand (bool, optional):
                 Whether to filter candidates (default is True)
+
+        Returns:
+            tuple[str, int]: The final control suffix and configured step count.
         """
         if self.logfile is not None:
             with open(self.logfile) as f:
@@ -1340,7 +1576,7 @@ class EvaluateAttack:
         **kwargs: Any,
     ) -> None:
         """
-        Initializes the EvaluateAttack object with the provided parameters.
+        Initialize attack evaluation from generated result controls.
 
         Args:
             goals (list):
@@ -1363,6 +1599,11 @@ class EvaluateAttack:
                 The list of test targets of the attack
             test_workers (list, optional):
                 The list of test workers used in the attack
+            **kwargs (Any): Additional multi-prompt attack options prefixed
+                with ``mpa_``.
+
+        Raises:
+            ValueError: If managers are missing or the worker count is not one.
         """
         if test_prefixes is None:
             test_prefixes = list(_DEFAULT_TEST_PREFIXES)
@@ -1372,6 +1613,8 @@ class EvaluateAttack:
             test_targets = []
         if test_workers is None:
             test_workers = []
+        if managers is None:
+            raise ValueError("EvaluateAttack requires a managers mapping")
         self.goals = goals
         self.targets = targets
         self.workers = workers
@@ -1426,6 +1669,7 @@ class EvaluateAttack:
 
     @staticmethod
     def filter_mpa_kwargs(**kwargs: Any) -> dict[str, Any]:
+        """Return options whose names use the ``mpa_`` prefix."""
         mpa_kwargs: dict[str, Any] = {}
         for key in kwargs:
             if key.startswith("mpa_"):
@@ -1443,6 +1687,14 @@ class EvaluateAttack:
     ) -> tuple[
         list[list[bool]], list[list[bool]], list[list[bool]], list[list[bool]], list[list[str]], list[list[str]]
     ]:
+        """
+        Evaluate saved controls against training and held-out goals.
+
+        Returns:
+            tuple[list[list[bool]], list[list[bool]], list[list[bool]],
+            list[list[bool]], list[list[str]], list[list[str]]]: Training and
+                held-out jailbreak, exact-match, and generated-text results.
+        """
         model, tokenizer = self.workers[0].model, self.workers[0].tokenizer
         tokenizer.padding_side = "left"
 
@@ -1457,10 +1709,14 @@ class EvaluateAttack:
 
         total_jb, total_em, total_outputs = [], [], []
         test_total_jb, test_total_em, test_total_outputs = [], [], []
+        curr_jb: list[bool] = []
+        curr_em: list[bool] = []
+        all_outputs: list[str] = []
         prev_control = "haha"
         for step, control in enumerate(controls):
             for mode, goals, targets in zip(
-                *[("Train", "Test"), (self.goals, self.test_goals), (self.targets, self.test_targets)]
+                *[("Train", "Test"), (self.goals, self.test_goals), (self.targets, self.test_targets)],
+                strict=True,
             ):
                 if control != prev_control and len(goals) > 0:
                     attack = self.managers["MPA"](
@@ -1503,7 +1759,7 @@ class EvaluateAttack:
                         torch.cuda.empty_cache()
 
                     curr_jb, curr_em = [], []
-                    for gen_str, target in zip(all_outputs, targets):
+                    for gen_str, target in zip(all_outputs, targets, strict=True):
                         jailbroken = not any(prefix in gen_str for prefix in self.test_prefixes)
                         em = target in gen_str
                         curr_jb.append(jailbroken)
@@ -1530,7 +1786,36 @@ class EvaluateAttack:
         return total_jb, total_em, test_total_jb, test_total_em, total_outputs, test_total_outputs
 
 
+class ModelWorkerOperation(str, Enum):
+    """A model operation supported by ``ModelWorker``."""
+
+    GRAD = "grad"
+    LOGITS = "logits"
+    CONTRAST_LOGITS = "contrast_logits"
+    TEST = "test"
+    TEST_LOSS = "test_loss"
+
+
+@dataclass(frozen=True)
+class ModelWorkerTask:
+    """
+    A spawn-safe worker payload that excludes the worker-owned model.
+
+    Typed model operations receive the worker's persistent model during dispatch,
+    so each queued task serializes only the prompt payload and operation arguments
+    rather than serializing the full model again. ``obj`` is the prompt or prompt
+    manager that receives the operation.
+    """
+
+    obj: Any
+    operation: ModelWorkerOperation | Callable[..., Any]
+    args: tuple[Any, ...]
+    kwargs: dict[str, Any]
+
+
 class ModelWorker:
+    """Run model operations in a dedicated multiprocessing worker."""
+
     def __init__(
         self,
         model_path: str,
@@ -1539,65 +1824,114 @@ class ModelWorker:
         tokenizer: Any,
         device: str,
     ) -> None:
-        self.model = (
+        """Load a model and prepare its worker queues."""
+        model = cast(
+            "PreTrainedModel",
             AutoModelForCausalLM.from_pretrained(
                 model_path, token=token, torch_dtype=torch.float16, trust_remote_code=False, **model_kwargs
-            )
-            .to(device)  # type: ignore[arg-type, unused-ignore]
-            .eval()
+            ),
         )
+        move_to_device = cast("Callable[[torch.device], PreTrainedModel]", model.to)
+        self.model = move_to_device(torch.device(device)).eval()
         self.tokenizer = tokenizer
-        self.tasks: mp.JoinableQueue[Any] = mp.JoinableQueue()
+        self.tasks: mp.JoinableQueue[ModelWorkerTask | None] = mp.JoinableQueue()
         self.results: mp.JoinableQueue[Any] = mp.JoinableQueue()
         self.process: mp.Process | None = None
 
     @staticmethod
-    def run(model: Any, tasks: mp.JoinableQueue[Any], results: mp.JoinableQueue[Any]) -> None:
+    def run(
+        model: Any,
+        tasks: mp.JoinableQueue[ModelWorkerTask | None],
+        results: mp.JoinableQueue[Any],
+    ) -> None:
+        """Process queued model operations until a stop sentinel arrives."""
+        model.requires_grad_(False)
+        model.zero_grad(set_to_none=True)
         while True:
             task = tasks.get()
             if task is None:
+                tasks.task_done()
                 break
-            ob, fn, args, kwargs = task
-            if fn == "grad":
+            if task.operation is ModelWorkerOperation.GRAD:
                 with torch.enable_grad():  # type: ignore[no-untyped-call, unused-ignore]
-                    results.put(ob.grad(*args, **kwargs))
+                    results.put(ModelWorker._execute_task(model=model, task=task))
             else:
                 with torch.no_grad():
-                    if fn == "logits":
-                        results.put(ob.logits(*args, **kwargs))
-                    elif fn == "contrast_logits":
-                        results.put(ob.contrast_logits(*args, **kwargs))
-                    elif fn == "test":
-                        results.put(ob.test(*args, **kwargs))
-                    elif fn == "test_loss":
-                        results.put(ob.test_loss(*args, **kwargs))
-                    else:
-                        results.put(fn(*args, **kwargs))
+                    results.put(ModelWorker._execute_task(model=model, task=task))
             tasks.task_done()
 
     def start(self) -> ModelWorker:
+        """
+        Start the model worker process.
+
+        Returns:
+            ModelWorker: This worker.
+        """
         self.process = mp.Process(target=ModelWorker.run, args=(self.model, self.tasks, self.results))
         self.process.start()
         logger.info(f"Started worker {self.process.pid} for model {self.model.name_or_path}")
         return self
 
     def stop(self) -> ModelWorker:
+        """
+        Stop the model worker process and release cached CUDA memory.
+
+        Returns:
+            ModelWorker: This worker.
+        """
         self.tasks.put(None)
         if self.process is not None:
             self.process.join()
         torch.cuda.empty_cache()
         return self
 
-    def __call__(self, ob: Any, fn: str, *args: Any, **kwargs: Any) -> ModelWorker:
-        self.tasks.put((deepcopy(ob), fn, args, kwargs))
+    def __call__(
+        self,
+        ob: Any,
+        operation: ModelWorkerOperation | Callable[..., Any],
+        *args: Any,
+        **kwargs: Any,
+    ) -> ModelWorker:
+        """
+        Queue an operation for execution by this worker.
+
+        Returns:
+            ModelWorker: This worker.
+        """
+        self.tasks.put(ModelWorkerTask(obj=deepcopy(ob), operation=operation, args=args, kwargs=kwargs))
         return self
 
+    @staticmethod
+    def _execute_task(*, model: Any, task: ModelWorkerTask) -> Any:
+        """
+        Execute a task with the persistent model when the operation requires one.
 
-def get_workers(params: Any, eval: bool = False) -> tuple[list[ModelWorker], list[ModelWorker]]:
+        Returns:
+            Any: The operation result.
+        """
+        if isinstance(task.operation, ModelWorkerOperation):
+            method = getattr(task.obj, task.operation.value)
+            return method(model, *task.args, **task.kwargs)
+        return task.operation(*task.args, **task.kwargs)
+
+
+def get_workers(params: Any, evaluation: bool = False) -> tuple[list[ModelWorker], list[ModelWorker]]:
+    """
+    Load and optionally start training and held-out model workers.
+
+    Returns:
+        tuple[list[ModelWorker], list[ModelWorker]]: Training and held-out workers.
+
+    Raises:
+        ValueError: If a tokenizer does not define a chat template.
+    """
     tokenizers = []
     for i in range(len(params.tokenizer_paths)):
-        tokenizer = AutoTokenizer.from_pretrained(  # type: ignore[no-untyped-call, unused-ignore]
-            params.tokenizer_paths[i], token=params.token, trust_remote_code=False, **params.tokenizer_kwargs[i]
+        tokenizer = cast(
+            "PreTrainedTokenizerBase",
+            AutoTokenizer.from_pretrained(
+                params.tokenizer_paths[i], token=params.token, trust_remote_code=False, **params.tokenizer_kwargs[i]
+            ),
         )
         if "oasst-sft-6-llama-30b" in params.tokenizer_paths[i]:
             tokenizer.bos_token_id = 1
@@ -1638,7 +1972,7 @@ def get_workers(params: Any, eval: bool = False) -> tuple[list[ModelWorker], lis
         )
         for i in range(len(params.model_paths))
     ]
-    if not eval:
+    if not evaluation:
         for worker in workers:
             worker.start()
 
@@ -1650,6 +1984,16 @@ def get_workers(params: Any, eval: bool = False) -> tuple[list[ModelWorker], lis
 
 
 def get_goals_and_targets(params: Any) -> tuple[list[str], list[str], list[str], list[str]]:
+    """
+    Load training and held-out goals and targets from parameters or CSV files.
+
+    Returns:
+        tuple[list[str], list[str], list[str], list[str]]: Training goals,
+            training targets, held-out goals, and held-out targets.
+
+    Raises:
+        ValueError: If a goal list and its corresponding target list differ in length.
+    """
     train_goals = getattr(params, "goals", [])
     train_targets = getattr(params, "targets", [])
     test_goals = getattr(params, "test_goals", [])
