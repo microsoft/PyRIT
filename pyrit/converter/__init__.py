@@ -65,6 +65,7 @@ from pyrit.converter.noise_converter import NoiseConverter
 from pyrit.converter.pdf_converter import PDFConverter
 from pyrit.converter.persuasion_converter import PersuasionConverter
 from pyrit.converter.policy_puppetry_converter import PolicyPuppetryConverter, PolicyPuppetryTemplate
+from pyrit.converter.puzzled import PuzzledConverter, PuzzleType
 from pyrit.converter.qr_code_converter import QRCodeConverter
 from pyrit.converter.random_capital_letters_converter import RandomCapitalLettersConverter
 from pyrit.converter.random_translation_converter import RandomTranslationConverter
@@ -210,6 +211,8 @@ __all__ = [
     "PositionSelectionStrategy",
     "Converter",
     "ProportionSelectionStrategy",
+    "PuzzleType",
+    "PuzzledConverter",
     "QRCodeConverter",
     "ROT13Converter",
     "RandomCapitalLettersConverter",

@@ -101,6 +101,7 @@ from pyrit.converter import (
     InsertPunctuationConverter,
     LeetspeakConverter,
     MathObfuscationConverter,
+    PuzzledConverter,
     RandomCapitalLettersConverter,
     RepeatTokenConverter,
     StringJoinConverter,
@@ -171,6 +172,12 @@ print("Colloquial Wordswap:", await colloquial.convert_async(prompt=prompt))  # 
 # CodeChameleon [@lv2024codechameleon] encrypts and wraps in code
 code_chameleon = CodeChameleonConverter(encrypt_type="reverse")
 print("CodeChameleon:", await code_chameleon.convert_async(prompt=prompt))  # type: ignore
+
+# PUZZLED [@ahn2025puzzled] hides sensitive words in a word puzzle the target must solve.
+# Run `python -m spacy download en_core_web_sm` for the paper's part-of-speech-aware word choice;
+# without it, words are picked by length alone and every clue is just "n-letter word".
+puzzled = PuzzledConverter(puzzle_type="word_search", seed=1)
+print("Puzzled:", await puzzled.convert_async(prompt=prompt))  # type: ignore
 
 # %% [markdown]
 # ### 1.3 Text Manipulation Converters
