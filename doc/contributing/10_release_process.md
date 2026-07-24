@@ -104,35 +104,7 @@ git push --tags
 
 After pushing the branch to remote, check the release branch to make sure it looks as intended (e.g. check the links in the README work properly).
 
-## 6. Update the documentation site versions
-
-Add the new release as a version on the [documentation site](https://microsoft.github.io/PyRIT/).
-Edit `.github/docs-versions.yml` on `main`:
-
-- Append the new release under `versions:` with `slug: "x.y.z"`, `name: "x.y.z"`, and `ref: releases/vx.y.z`.
-- Update `stable:` and `default:` at the top of the file to point at the new version (so the
-  root URL `microsoft.github.io/PyRIT/` and the `/stable/` alias redirect to it).
-
-Open a small PR to `main` with just this change. Once merged, the docs workflow rebuilds the
-site and the new version appears in the version picker on every page of every version.
-
-For example, releasing `0.14.0` would change:
-
-```yaml
-default: "0.13.0"
-stable: "0.13.0"
-```
-
-to:
-
-```yaml
-default: "0.14.0"
-stable: "0.14.0"
-```
-
-and add an entry under `versions:` for `0.14.0` pointing at `releases/v0.14.0`.
-
-## 7. Build Package
+## 6. Build Package
 
 You'll need the build package to build the project. If it’s not already installed, install it `pip install build`.
 
@@ -163,7 +135,7 @@ This should print
 
 > Successfully built pyrit-x.y.z.tar.gz and pyrit-x.y.z-py3-none-any.whl
 
-## 8. Test Built Package
+## 7. Test Built Package
 
 This step is crucial to ensure that the new package works out of the box.
 
@@ -207,7 +179,7 @@ Note: You may need to build the package again if those changes modify any depend
 Lastly, **Verify pyrit-internal is up to date.** Follow the instructions at [aka.ms/internal-release](https://aka.ms/internal-release) to ensure the internal package is current.
 
 
-## 9. Migrate Production Database Schema
+## 8. Migrate Production Database Schema
 
 Apply any pending Alembic migrations to the production database. This is the **only**
 sanctioned path for modifying the production schema — normal startup only validates,
@@ -255,7 +227,7 @@ Still run it as confirmation.
 since `downgrade()` risks data loss.
 
 
-## 10. Publish to PyPI
+## 9. Publish to PyPI
 
 Create an account on pypi.org if you don't have one yet.
 Ask one of the other maintainers to add you to the `pyrit` project on PyPI.
@@ -272,19 +244,48 @@ If successful, it will print
 > View at:
 > https://pypi.org/project/pyrit/x.y.z/
 
-## 11. Update main
+## 10. Update main
 
 After the release is on PyPI, make sure to create a PR for the `main` branch
-where the only changes are:
+where the changes are:
 
 - the version increase in `__init__.py` (while keeping suffix `.dev0`).
 - Search for the previous release version in the codebase and replace any occurrences with the new version
   (without `.dev0`). For example, some installation pages refer to the latest release.
+- Update the documentation site versions in `.github/docs-versions.yml` (see below).
 
 The PR should be made from your fork and should be a different branch than the releases branch you created earlier.
 This should be something like `x.y.z+1.dev0`.
 
-## 12. Create GitHub Release
+### Update the documentation site versions
+
+Add the new release as a version on the [documentation site](https://microsoft.github.io/PyRIT/) by
+editing `.github/docs-versions.yml`:
+
+- Append the new release under `versions:` with `slug: "x.y.z"`, `name: "x.y.z"`, and `ref: releases/vx.y.z`.
+- Update `stable:` and `default:` at the top of the file to point at the new version (so the
+  root URL `microsoft.github.io/PyRIT/` and the `/stable/` alias redirect to it).
+
+Once merged, the docs workflow rebuilds the site and the new version appears in the version picker on
+every page of every version.
+
+For example, releasing `0.14.0` would change:
+
+```yaml
+default: "0.13.0"
+stable: "0.13.0"
+```
+
+to:
+
+```yaml
+default: "0.14.0"
+stable: "0.14.0"
+```
+
+and add an entry under `versions:` for `0.14.0` pointing at `releases/v0.14.0`.
+
+## 11. Create GitHub Release
 
 Finally, go to the [releases page](https://github.com/microsoft/PyRIT/releases), select "Draft a new release" and the "tag"
 for which you want to create the release notes. It should match the version that you just released
@@ -366,15 +367,15 @@ git push origin vx.y.z
 
 **5. Follow the regular release process from step 6 onward:**
 
-- Update the docs site versions (step 6) — add the new patch version to
-  `.github/docs-versions.yml` and bump `stable:`/`default:` if appropriate.
-- Build the package (step 7)
-- Test the built package in a clean environment (step 8)
-- Run integration tests (step 8)
+- Build the package (step 6)
+- Test the built package in a clean environment (step 7)
+- Run integration tests (step 7)
 - Publish to PyPI (step 9)
 - Update `main` with the next dev version (step 10) — for a patch release after `x.y.z`,
   the next version on `main` may be either `x.y.(z+1).dev0` or `x.(y+1).0.dev0`
-  depending on what the next planned release is.
+  depending on what the next planned release is. This is also where you update the docs
+  site versions in `.github/docs-versions.yml` (add the new patch version and bump
+  `stable:`/`default:` if appropriate).
 - Create the GitHub release (step 11) — for patch releases the release notes should
   clearly state the reason for the patch (e.g., "Security fix for …" or "Critical bug fix
   for …"). Because a patch release contains only cherry-picked changes, the "What's
