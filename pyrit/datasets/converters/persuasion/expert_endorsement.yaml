@@ -11,7 +11,7 @@ authors:
 groups:
   - Virginia Tech
   - Renmin University of China
-  - UC Davis
+  - University of California, Davis
   - Stanford University
 source: https://github.com/CHATS-lab/persuasive_jailbreaker/blob/main/PAP_Better_Incontext_Sample/mutation_utils.py
 data_type: text

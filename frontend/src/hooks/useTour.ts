@@ -10,7 +10,14 @@ import type { ViewName } from '../components/Sidebar/Navigation'
 // Static Joyride config — hoisted to module scope so they're created once,
 // not on every render. Joyride compares these by reference internally.
 const JOYRIDE_STEPS = [...TOUR_STEPS]
-const JOYRIDE_FLOATING_OPTIONS = { hideArrow: true } as const
+const TOUR_VIEWPORT_PADDING_PX = 12
+const JOYRIDE_FLOATING_OPTIONS = {
+  hideArrow: true,
+  shiftOptions: {
+    crossAxis: true,
+    padding: TOUR_VIEWPORT_PADDING_PX,
+  },
+} as const
 const JOYRIDE_OPTIONS = {
   closeButtonAction: 'skip' as const,
   overlayClickAction: false as const,

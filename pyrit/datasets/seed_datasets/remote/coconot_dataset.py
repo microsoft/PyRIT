@@ -82,7 +82,14 @@ class _CoCoNotBaseDataset(_RemoteDatasetLoader):
         "Hannaneh Hajishirzi",
     ]
 
-    _GROUPS: ClassVar[list[str]] = ["Allen Institute for AI"]
+    _GROUPS: ClassVar[list[str]] = [
+        "Allen Institute for Artificial Intelligence",
+        "University of Washington",
+        "The Ohio State University",
+        "Microsoft Research",
+        "Samaya AI",
+        "NVIDIA",
+    ]
 
     HF_DATASET_NAME: str = "allenai/coconot"
 

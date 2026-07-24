@@ -82,6 +82,9 @@ describe("TargetConfig", () => {
       </TestWrapper>
     );
 
+    expect(
+      screen.getByRole("heading", { level: 1, name: "Target Configuration" })
+    ).toBeInTheDocument();
     expect(screen.getByText("Loading targets...")).toBeInTheDocument();
   });
 
@@ -118,6 +121,16 @@ describe("TargetConfig", () => {
     await waitFor(() => {
       expect(screen.getByText("No Targets Configured")).toBeInTheDocument();
     });
+    expect(screen.getByText("target", { selector: "code" })).toBeInTheDocument();
+    expect(
+      screen.getByText(/register available prompt targets automatically/i)
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText("airt", { selector: "code" })
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: ".pyrit_conf_example" })
+    ).toHaveAttribute("rel", "noopener noreferrer");
   });
 
   it(
