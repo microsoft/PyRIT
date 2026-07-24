@@ -1,4 +1,5 @@
 import { makeStyles, tokens } from '@fluentui/react-components'
+import { mobileTouchTarget } from '../../styles/touchTargets'
 
 export const useCreateTargetDialogStyles = makeStyles({
   dialogSurface: {
@@ -111,6 +112,9 @@ export const useCreateTargetDialogStyles = makeStyles({
   weightInput: {
     width: '5rem',
     minWidth: '5rem',
+  },
+  touchTarget: {
+    ...mobileTouchTarget,
   },
   weightError: {
     alignSelf: 'flex-end',

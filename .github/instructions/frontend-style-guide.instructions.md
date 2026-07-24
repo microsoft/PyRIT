@@ -545,6 +545,7 @@ myPromise.then((v) => console.log(v))
 - Use semantic HTML elements (`<nav>`, `<main>`, `<button>`, etc.) and Fluent UI components (which are accessible by default).
 - Add `aria-label` or `aria-describedby` when the visual label is insufficient.
 - Interactive elements MUST be keyboard-accessible. Use `data-testid` for test selectors, not DOM structure.
+- Small and icon buttons that are reachable on touch/mobile MUST meet a minimum touch-target size. Apply the `mobileTouchTarget` (or `mobileTouchTargetHeight`) helper from `src/styles/touchTargets` in the component's `makeStyles` and set it on the button's `className`.
 
 ### Comments & Documentation
 - Use `/** JSDoc */` for documentation that users of the code should read (exported functions, components, interfaces).

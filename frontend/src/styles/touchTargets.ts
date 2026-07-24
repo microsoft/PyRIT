@@ -1,15 +1,16 @@
 export const MOBILE_BREAKPOINT = '@media (max-width: 600px)'
-export const MINIMUM_TOUCH_TARGET_SIZE = '44px'
+export const COARSE_POINTER = '@media (pointer: coarse)'
+export const MINIMUM_TOUCH_TARGET_SIZE = '2.75rem'
 
 export const mobileTouchTarget = {
-  [MOBILE_BREAKPOINT]: {
+  [COARSE_POINTER]: {
     minWidth: MINIMUM_TOUCH_TARGET_SIZE,
     minHeight: MINIMUM_TOUCH_TARGET_SIZE,
   },
 }
 
 export const mobileTouchTargetHeight = {
-  [MOBILE_BREAKPOINT]: {
+  [COARSE_POINTER]: {
     minHeight: MINIMUM_TOUCH_TARGET_SIZE,
   },
 }
