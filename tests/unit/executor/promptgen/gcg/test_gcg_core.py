@@ -1,8 +1,11 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import pickle
+from copy import deepcopy
+from dataclasses import dataclass
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch, sentinel
 
 import pytest
 
@@ -18,6 +21,8 @@ PromptManager = attack_manager_mod.PromptManager
 EvaluateAttack = attack_manager_mod.EvaluateAttack
 IndividualPromptAttack = attack_manager_mod.IndividualPromptAttack
 ModelWorker = attack_manager_mod.ModelWorker
+ModelWorkerOperation = attack_manager_mod.ModelWorkerOperation
+ModelWorkerTask = attack_manager_mod.ModelWorkerTask
 ProgressiveMultiPromptAttack = attack_manager_mod.ProgressiveMultiPromptAttack
 get_embedding_layer = attack_manager_mod.get_embedding_layer
 get_embedding_matrix = attack_manager_mod.get_embedding_matrix
@@ -36,6 +41,54 @@ default_implementations_mod = pytest.importorskip(
     reason="GCG optional dependencies not installed",
 )
 LengthPreservingFilter = default_implementations_mod.LengthPreservingFilter
+
+
+@dataclass
+class _TinyModelOutput:
+    logits: torch.Tensor
+
+
+class _TinyCausalLM(torch.nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+        self.embedding = torch.nn.Embedding(8, 4)
+        self.projection = torch.nn.Linear(4, 8, bias=False)
+
+    @property
+    def device(self) -> torch.device:
+        return self.embedding.weight.device
+
+    def forward(self, *, inputs_embeds: torch.Tensor) -> _TinyModelOutput:
+        return _TinyModelOutput(logits=self.projection(inputs_embeds.cumsum(dim=1)))
+
+
+def _backward_coordinate_gradient(
+    *,
+    model: _TinyCausalLM,
+    input_ids: torch.Tensor,
+    input_slice: slice,
+    target_slice: slice,
+    loss_slice: slice,
+) -> torch.Tensor:
+    embedding_weights = model.embedding.weight
+    one_hot = torch.zeros(
+        input_ids[input_slice].shape[0],
+        embedding_weights.shape[0],
+        device=model.device,
+        dtype=embedding_weights.dtype,
+    )
+    one_hot.scatter_(1, input_ids[input_slice].unsqueeze(1), torch.ones(one_hot.shape[0], 1))
+    one_hot.requires_grad_()
+    input_embeddings = (one_hot @ embedding_weights).unsqueeze(0)
+    embeddings = model.embedding(input_ids.unsqueeze(0)).detach()
+    full_embeddings = torch.cat(
+        [embeddings[:, : input_slice.start, :], input_embeddings, embeddings[:, input_slice.stop :, :]], dim=1
+    )
+    logits = model(inputs_embeds=full_embeddings).logits
+    loss = torch.nn.CrossEntropyLoss()(logits[0, loss_slice, :], input_ids[target_slice])
+    loss.backward()
+    assert one_hot.grad is not None
+    return one_hot.grad.clone()
 
 
 class TestGetFilteredCands:
@@ -582,6 +635,75 @@ def test_model_worker_uses_model_device_dispatch() -> None:
     assert worker.model is evaluated_model
 
 
+def test_model_worker_task_payload_excludes_model() -> None:
+    worker = object.__new__(ModelWorker)
+    worker.model = sentinel.model
+    worker.tasks = MagicMock()
+    prompt = {"prompt": "value"}
+
+    worker(prompt, ModelWorkerOperation.GRAD, 42, option=True)
+
+    task = worker.tasks.put.call_args.args[0]
+    assert isinstance(task, ModelWorkerTask)
+    assert task.obj == prompt
+    assert task.obj is not prompt
+    assert task.operation is ModelWorkerOperation.GRAD
+    assert task.args == (42,)
+    assert task.kwargs == {"option": True}
+    assert not hasattr(task, "model")
+    assert all(argument is not worker.model for argument in task.args)
+    assert all(value is not worker.model for value in task.kwargs.values())
+    assert pickle.loads(pickle.dumps(task)) == task
+
+
+@pytest.mark.parametrize(
+    ("operation", "method_name"),
+    [
+        (ModelWorkerOperation.GRAD, "grad"),
+        (ModelWorkerOperation.LOGITS, "logits"),
+        (ModelWorkerOperation.CONTRAST_LOGITS, "contrast_logits"),
+        (ModelWorkerOperation.TEST, "test"),
+        (ModelWorkerOperation.TEST_LOSS, "test_loss"),
+    ],
+)
+def test_model_worker_run_uses_worker_owned_model(operation: ModelWorkerOperation, method_name: str) -> None:
+    model = MagicMock()
+    target = MagicMock()
+    getattr(target, method_name).return_value = sentinel.result
+    task = ModelWorkerTask(
+        obj=target,
+        operation=operation,
+        args=(sentinel.argument,),
+        kwargs={"option": True},
+    )
+    tasks = MagicMock()
+    tasks.get.side_effect = [task, None]
+    results = MagicMock()
+
+    ModelWorker.run(model, tasks, results)
+
+    model.requires_grad_.assert_called_once_with(False)
+    model.zero_grad.assert_called_once_with(set_to_none=True)
+    getattr(target, method_name).assert_called_once_with(model, sentinel.argument, option=True)
+    results.put.assert_called_once_with(sentinel.result)
+    assert tasks.task_done.call_count == 2
+
+
+def test_multi_prompt_test_dispatches_without_model_payload() -> None:
+    attack = object.__new__(MultiPromptAttack)
+    worker = MagicMock()
+    worker.results.get.side_effect = [[(True, 1)], [0.25]]
+    prompt = MagicMock()
+
+    result = attack.test([worker], [prompt], include_loss=True)
+
+    assert result == ([[True]], [[1]], [[0.25]])
+    assert worker.call_args_list == [
+        call(prompt, ModelWorkerOperation.TEST),
+        call(prompt, ModelWorkerOperation.TEST_LOSS),
+    ]
+
+
 class _Queue:
     def __init__(self, items: list[Any]) -> None:
         self._items = list(items)
@@ -836,6 +958,15 @@ class TestGCGMultiPromptAttackStepWiring:
 
         assert actual_control == legacy_controls[0]
         assert actual_loss == pytest.approx(legacy_loss[0].item())
+        grad_args, grad_kwargs = worker.calls[0]
+        assert grad_args == (prompt_manager, ModelWorkerOperation.GRAD)
+        assert grad_kwargs == {}
+        logits_args, logits_kwargs = worker.calls[1]
+        assert logits_args[0] is prompt
+        assert logits_args[1] is ModelWorkerOperation.LOGITS
+        assert len(logits_args) == 3
+        assert all(argument is not worker.model for argument in logits_args)
+        assert logits_kwargs == {"return_ids": True}
 
     def test_step_uses_custom_protocol_implementations_when_supplied(self) -> None:
         gradient = torch.randn(3, 6)
@@ -1073,17 +1204,42 @@ def test_attack_prompt_logits_builds_attention_mask() -> None:
     assert torch.equal(model.call_args.kwargs["attention_mask"], torch.ones(1, 4, dtype=torch.long))
 
 
-def test_prompt_manager_grad_sums_prompt_gradients() -> None:
+def test_prompt_manager_grad_streams_and_sums_prompt_gradients() -> None:
     prompt_manager = object.__new__(PromptManager)
     first_prompt = MagicMock()
     first_prompt.grad.return_value = torch.tensor([1.0, 2.0])
     second_prompt = MagicMock()
     second_prompt.grad.return_value = torch.tensor([3.0, 4.0])
-    prompt_manager._prompts = [first_prompt, second_prompt]
+    third_prompt = MagicMock()
+    third_prompt.grad.return_value = torch.tensor([5.0, 6.0])
+    prompt_manager._prompts = [first_prompt, second_prompt, third_prompt]
+    model = MagicMock()
+
+    with patch.object(torch, "stack", side_effect=AssertionError("prompt gradients must be streamed")):
+        result = prompt_manager.grad(model)
+
+    assert torch.equal(result, torch.tensor([9.0, 12.0]))
+    for prompt in prompt_manager._prompts:
+        prompt.grad.assert_called_once_with(model)
+
+
+def test_prompt_manager_grad_preserves_fp16_reduction_precision() -> None:
+    prompt_manager = object.__new__(PromptManager)
+    prompt_gradients = [
+        torch.tensor([10000.0], dtype=torch.float16),
+        torch.tensor([1.0], dtype=torch.float16),
+        torch.tensor([-10000.0], dtype=torch.float16),
+    ]
+    prompt_manager._prompts = [MagicMock() for _ in prompt_gradients]
+    for prompt, gradient in zip(prompt_manager._prompts, prompt_gradients, strict=True):
+        prompt.grad.return_value = gradient
 
     result = prompt_manager.grad(MagicMock())
 
-    assert torch.equal(result, torch.tensor([4.0, 6.0]))
+    expected = torch.stack(prompt_gradients).sum(dim=0)
+    assert torch.equal(result, expected)
+    assert result.item() == 1.0
+    assert result.dtype is torch.float16
 
 
 def test_multi_prompt_run_anneals_and_accepts_lower_loss() -> None:
@@ -1142,7 +1298,41 @@ def test_gcg_step_requires_worker() -> None:
         attack.step()
 
 
-def test_token_gradients_raises_when_backward_produces_no_gradient() -> None:
+def test_token_gradients_matches_backward_without_model_parameter_gradients() -> None:
+    torch.manual_seed(2026)
+    backward_model = _TinyCausalLM()
+    input_only_model = deepcopy(backward_model)
+    input_ids = torch.tensor([0, 1, 2, 3, 4])
+    input_slice = slice(1, 3)
+    target_slice = slice(3, 5)
+    loss_slice = slice(2, 4)
+    expected = _backward_coordinate_gradient(
+        model=backward_model,
+        input_ids=input_ids,
+        input_slice=input_slice,
+        target_slice=target_slice,
+        loss_slice=loss_slice,
+    )
+
+    with (
+        patch.object(gcg_attack_mod, "get_embedding_matrix", side_effect=lambda model: model.embedding.weight),
+        patch.object(gcg_attack_mod, "get_embeddings", side_effect=lambda model, ids: model.embedding(ids)),
+    ):
+        actual = token_gradients(
+            input_only_model,
+            input_ids,
+            input_slice=input_slice,
+            target_slice=target_slice,
+            loss_slice=loss_slice,
+        )
+
+    assert torch.equal(actual, expected)
+    assert not actual.requires_grad
+    assert actual.grad_fn is None
+    assert all(parameter.grad is None for parameter in input_only_model.parameters())
+
+
+def test_token_gradients_raises_when_coordinate_gradient_missing() -> None:
     model = MagicMock()
     model.device = torch.device("cpu")
     model.return_value.logits = torch.randn(1, 3, 4)
@@ -1153,7 +1343,8 @@ def test_token_gradients_raises_when_backward_produces_no_gradient() -> None:
         patch.object(gcg_attack_mod, "get_embedding_matrix", return_value=torch.ones(4, 2)),
         patch.object(gcg_attack_mod, "get_embeddings", return_value=torch.ones(1, 3, 2)),
         patch.object(gcg_attack_mod.nn, "CrossEntropyLoss", return_value=loss_function),
-        pytest.raises(RuntimeError, match="did not produce token gradients"),
+        patch.object(gcg_attack_mod.torch.autograd, "grad", return_value=(None,)),
+        pytest.raises(RuntimeError, match="Autograd did not produce token gradients"),
     ):
         token_gradients(
             model,

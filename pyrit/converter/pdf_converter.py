@@ -3,6 +3,7 @@
 
 import ast
 import hashlib
+import time
 from io import BytesIO
 from pathlib import Path
 from typing import Any
@@ -431,10 +432,19 @@ class PDFConverter(Converter):
 
         extension = original_filename_ending[1:] if original_filename_ending else "pdf"
 
+        # When modifying an existing PDF, preserve the source file's stem in the output filename so the
+        # provenance of the template is retained (e.g. "Jonathon_Sanchez.pdf" -> "<ticks>_Jonathon_Sanchez.pdf").
+        # A numeric prefix keeps the name unique across conversions. Generated (non-template) PDFs keep the
+        # default numeric-only serializer name.
+        output_filename = None
+        if self._existing_pdf_path:
+            ticks = int(time.time() * 1_000_000)
+            output_filename = f"{ticks}_{self._existing_pdf_path.stem}"
+
         pdf_serializer = data_serializer_factory(
             category="prompt-memory-entries",
             data_type="binary_path",
             extension=extension,
         )
-        await pdf_serializer.save_data_async(pdf_bytes)
+        await pdf_serializer.save_data_async(pdf_bytes, output_filename=output_filename)
         return pdf_serializer

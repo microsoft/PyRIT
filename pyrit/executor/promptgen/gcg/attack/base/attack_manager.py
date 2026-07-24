@@ -3,13 +3,14 @@
 
 from __future__ import annotations
 
-import gc
 import json
 import logging
 import math
 import random
 import time
 from copy import deepcopy
+from dataclasses import dataclass
+from enum import Enum
 from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
@@ -383,12 +384,10 @@ class AttackPrompt:
 
         if return_ids:
             del locs, test_ids
-            gc.collect()
             return model(input_ids=ids, attention_mask=attn_mask).logits, ids
         del locs, test_ids
         logits = model(input_ids=ids, attention_mask=attn_mask).logits
         del ids
-        gc.collect()
         return logits
 
     def target_loss(self, logits: torch.Tensor, ids: torch.Tensor) -> torch.Tensor:
@@ -598,7 +597,14 @@ class PromptManager:
         Returns:
             torch.Tensor: Aggregated prompt gradients.
         """
-        return torch.stack([prompt.grad(model) for prompt in self._prompts]).sum(dim=0)
+        first_gradient = self._prompts[0].grad(model)
+        if len(self._prompts) == 1:
+            return first_gradient
+        result_dtype = first_gradient.dtype
+        gradient = first_gradient.float() if result_dtype in (torch.float16, torch.bfloat16) else first_gradient.clone()
+        for prompt in self._prompts[1:]:
+            gradient.add_(prompt.grad(model).to(dtype=gradient.dtype))
+        return gradient.to(dtype=result_dtype)
 
     def logits(self, model: Any, test_controls: Any = None, return_ids: bool = False) -> Any:
         """
@@ -888,7 +894,6 @@ class MultiPromptAttack:
 
             steps += 1
             start = time.time()
-            torch.cuda.empty_cache()
             control, loss = self.step(
                 batch_size=batch_size,
                 topk=topk,
@@ -940,14 +945,14 @@ class MultiPromptAttack:
                 Jailbreak, exact-match, and loss results.
         """
         for j, worker in enumerate(workers):
-            worker(prompts[j], "test", worker.model)
+            worker(prompts[j], ModelWorkerOperation.TEST)
         model_tests = np.array([worker.results.get() for worker in workers])
         model_tests_jb = model_tests[..., 0].tolist()
         model_tests_mb = model_tests[..., 1].tolist()
         model_tests_loss: list[list[float]] = []
         if include_loss:
             for j, worker in enumerate(workers):
-                worker(prompts[j], "test_loss", worker.model)
+                worker(prompts[j], ModelWorkerOperation.TEST_LOSS)
             model_tests_loss = [worker.results.get() for worker in workers]
 
         return model_tests_jb, model_tests_mb, model_tests_loss
@@ -1781,6 +1786,33 @@ class EvaluateAttack:
         return total_jb, total_em, test_total_jb, test_total_em, total_outputs, test_total_outputs
 
 
+class ModelWorkerOperation(str, Enum):
+    """A model operation supported by ``ModelWorker``."""
+
+    GRAD = "grad"
+    LOGITS = "logits"
+    CONTRAST_LOGITS = "contrast_logits"
+    TEST = "test"
+    TEST_LOSS = "test_loss"
+
+
+@dataclass(frozen=True)
+class ModelWorkerTask:
+    """
+    A spawn-safe worker payload that excludes the worker-owned model.
+
+    Typed model operations receive the worker's persistent model during dispatch,
+    so each queued task serializes only the prompt payload and operation arguments
+    rather than serializing the full model again. ``obj`` is the prompt or prompt
+    manager that receives the operation.
+    """
+
+    obj: Any
+    operation: ModelWorkerOperation | Callable[..., Any]
+    args: tuple[Any, ...]
+    kwargs: dict[str, Any]
+
+
 class ModelWorker:
     """Run model operations in a dedicated multiprocessing worker."""
 
@@ -1802,33 +1834,30 @@ class ModelWorker:
         move_to_device = cast("Callable[[torch.device], PreTrainedModel]", model.to)
         self.model = move_to_device(torch.device(device)).eval()
         self.tokenizer = tokenizer
-        self.tasks: mp.JoinableQueue[Any] = mp.JoinableQueue()
+        self.tasks: mp.JoinableQueue[ModelWorkerTask | None] = mp.JoinableQueue()
         self.results: mp.JoinableQueue[Any] = mp.JoinableQueue()
         self.process: mp.Process | None = None
 
     @staticmethod
-    def run(model: Any, tasks: mp.JoinableQueue[Any], results: mp.JoinableQueue[Any]) -> None:
+    def run(
+        model: Any,
+        tasks: mp.JoinableQueue[ModelWorkerTask | None],
+        results: mp.JoinableQueue[Any],
+    ) -> None:
         """Process queued model operations until a stop sentinel arrives."""
+        model.requires_grad_(False)
+        model.zero_grad(set_to_none=True)
         while True:
             task = tasks.get()
             if task is None:
+                tasks.task_done()
                 break
-            ob, fn, args, kwargs = task
-            if fn == "grad":
+            if task.operation is ModelWorkerOperation.GRAD:
                 with torch.enable_grad():  # type: ignore[no-untyped-call, unused-ignore]
-                    results.put(ob.grad(*args, **kwargs))
+                    results.put(ModelWorker._execute_task(model=model, task=task))
             else:
                 with torch.no_grad():
-                    if fn == "logits":
-                        results.put(ob.logits(*args, **kwargs))
-                    elif fn == "contrast_logits":
-                        results.put(ob.contrast_logits(*args, **kwargs))
-                    elif fn == "test":
-                        results.put(ob.test(*args, **kwargs))
-                    elif fn == "test_loss":
-                        results.put(ob.test_loss(*args, **kwargs))
-                    else:
-                        results.put(fn(*args, **kwargs))
+                    results.put(ModelWorker._execute_task(model=model, task=task))
             tasks.task_done()
 
     def start(self) -> ModelWorker:
@@ -1856,15 +1885,34 @@ class ModelWorker:
         torch.cuda.empty_cache()
         return self
 
-    def __call__(self, ob: Any, fn: str, *args: Any, **kwargs: Any) -> ModelWorker:
+    def __call__(
+        self,
+        ob: Any,
+        operation: ModelWorkerOperation | Callable[..., Any],
+        *args: Any,
+        **kwargs: Any,
+    ) -> ModelWorker:
         """
         Queue an operation for execution by this worker.
 
         Returns:
             ModelWorker: This worker.
         """
-        self.tasks.put((deepcopy(ob), fn, args, kwargs))
+        self.tasks.put(ModelWorkerTask(obj=deepcopy(ob), operation=operation, args=args, kwargs=kwargs))
         return self
+
+    @staticmethod
+    def _execute_task(*, model: Any, task: ModelWorkerTask) -> Any:
+        """
+        Execute a task with the persistent model when the operation requires one.
+
+        Returns:
+            Any: The operation result.
+        """
+        if isinstance(task.operation, ModelWorkerOperation):
+            method = getattr(task.obj, task.operation.value)
+            return method(model, *task.args, **task.kwargs)
+        return task.operation(*task.args, **task.kwargs)
 
 
 def get_workers(params: Any, evaluation: bool = False) -> tuple[list[ModelWorker], list[ModelWorker]]:

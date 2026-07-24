@@ -213,7 +213,6 @@ class TestContextValidation:
                 next_message=Message.from_prompt(prompt="test", role="user"),
             ),
             conversation_id=str(uuid.uuid4()),
-            system_prompt="System prompt",
             metadata={"key": "value"},
         )
 
@@ -1035,7 +1034,6 @@ class TestAttackLifecycle:
             prepended_conversation=[sample_response],
             memory_labels={"test": "label"},
             next_message=message,
-            system_prompt="System prompt",
         )
 
         # Verify result
@@ -1049,7 +1047,13 @@ class TestAttackLifecycle:
         assert context.objective == "Test objective"
         assert context.memory_labels == {"test": "label"}
         assert context.next_message is not None
-        assert context.system_prompt == "System prompt"
+
+    async def test_execute_async_with_system_prompt_raises_error(self, mock_target):
+        """Passing the removed system_prompt parameter is rejected."""
+        attack = PromptSendingAttack(objective_target=mock_target)
+
+        with pytest.raises(ValueError, match="does not accept parameters.*system_prompt"):
+            await attack.execute_async(objective="Test objective", system_prompt="System prompt")
 
     async def test_execute_async_with_invalid_params_raises_error(self, mock_target):
         """Test execute_async raises error when invalid parameters are passed"""

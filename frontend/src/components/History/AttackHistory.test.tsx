@@ -81,7 +81,7 @@ describe('AttackHistory', () => {
       </TestWrapper>
     )
 
-    expect(screen.getByText('Attack History')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { level: 1, name: 'Attack History' })).toBeInTheDocument()
     expect(screen.getByTestId('refresh-btn')).toBeInTheDocument()
     expect(screen.getByTestId('attack-type-filter')).toBeInTheDocument()
     expect(screen.getByTestId('outcome-filter')).toBeInTheDocument()

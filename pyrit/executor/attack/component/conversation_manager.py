@@ -13,7 +13,7 @@ from pyrit.executor.attack.component.prepended_conversation_config import (
     PrependedConversationConfig,
 )
 from pyrit.memory import CentralMemory
-from pyrit.message_normalizer import ConversationContextNormalizer
+from pyrit.message_normalizer import ConversationContextNormalizer, GenericSystemSquashNormalizer
 from pyrit.models import (
     ChatMessageRole,
     ComponentIdentifier,
@@ -359,23 +359,37 @@ class ConversationManager:
         if config is None:
             config = PrependedConversationConfig()
 
-        # Normalize conversation to string
         normalizer = config.get_message_normalizer()
-        normalized_context = await normalizer.normalize_string_async(prepended_conversation)
+        messages_to_normalize = prepended_conversation
+        if isinstance(normalizer, ConversationContextNormalizer):
+            messages_to_normalize = await GenericSystemSquashNormalizer().normalize_async(prepended_conversation)
 
-        # Prepend to next_message if it exists, otherwise create new message
-        if context.next_message is not None:
+        normalized_context = await normalizer.normalize_string_async(messages_to_normalize)
+
+        next_message = context.next_message
+        if next_message is None:
+            next_message = Message.from_prompt(prompt=context.objective, role="user")
+            context.next_message = next_message
+
+        if normalized_context:
             # Find an existing text piece to prepend to
             text_piece = None
-            for piece in context.next_message.message_pieces:
+            for piece in next_message.message_pieces:
                 if piece.original_value_data_type == "text":
                     text_piece = piece
                     break
 
             if text_piece:
                 # Prepend context to the existing text piece
-                text_piece.original_value = f"{normalized_context}\n\n{text_piece.original_value}"
-                text_piece.converted_value = f"{normalized_context}\n\n{text_piece.converted_value}"
+                context_prefix = f"{normalized_context}\n\n"
+                if text_piece.original_value != normalized_context and not text_piece.original_value.startswith(
+                    context_prefix
+                ):
+                    text_piece.original_value = f"{context_prefix}{text_piece.original_value}"
+                if text_piece.converted_value != normalized_context and not text_piece.converted_value.startswith(
+                    context_prefix
+                ):
+                    text_piece.converted_value = f"{context_prefix}{text_piece.converted_value}"
             else:
                 # No text piece found (multimodal message), add a new text piece at the beginning
                 context_piece = MessagePiece(
@@ -387,12 +401,7 @@ class ConversationManager:
                     converted_value_data_type="text",
                 )
                 # Create a new message with the context piece prepended
-                context.next_message = Message(
-                    message_pieces=[context_piece] + list(context.next_message.message_pieces)
-                )
-        else:
-            # Create new message with just the context
-            context.next_message = Message.from_prompt(prompt=normalized_context, role="user")
+                context.next_message = Message(message_pieces=[context_piece] + list(next_message.message_pieces))
 
         logger.debug(f"Normalized prepended conversation for non-chat target: {len(normalized_context)} characters")
         return ConversationState()

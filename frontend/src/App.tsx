@@ -18,7 +18,12 @@ import { DEFAULT_GLOBAL_LABELS } from './components/Labels/labelDefaults'
 import { filtersFromSearchParams, filtersToSearchParams } from './components/History/historyFilters'
 import type { ViewName } from './components/Sidebar/Navigation'
 import type { TargetInstance, TargetInfo } from './types'
-import { targetEndpoint, targetModelName, targetType } from './utils/targetIdentity'
+import {
+  targetEndpoint,
+  targetIdentifierHash,
+  targetModelName,
+  targetType,
+} from './utils/targetIdentity'
 import { attacksApi, versionApi } from './services/api'
 import { toApiError } from './services/errors'
 import { useTour } from './hooks/useTour'
@@ -284,6 +289,7 @@ function App() {
           target_type: targetType(activeTarget),
           endpoint: targetEndpoint(activeTarget),
           model_name: targetModelName(activeTarget),
+          identifier_hash: targetIdentifierHash(activeTarget),
         }
       : null
     skipNextLoadForAttackId.current = arId
