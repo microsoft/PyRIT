@@ -140,7 +140,7 @@ export default function Home({
     <div className={styles.root} data-testid="home-view">
       <div className={styles.container}>
         <div className={styles.hero}>
-          <Text size={700} weight="semibold" className={styles.heroTitle}>
+          <Text as="h1" size={700} weight="semibold" className={styles.heroTitle}>
             Welcome to Co-PyRIT
           </Text>
           <Text size={300} className={styles.heroSubtitle}>
@@ -152,7 +152,7 @@ export default function Home({
           <section className={styles.card} data-testid="home-labels-card" data-tour="labels-card">
             <div className={styles.cardHeader}>
               <span className={styles.cardIcon}><TagMultipleRegular /></span>
-              <Text size={500} weight="semibold">Labels</Text>
+              <Text as="h2" size={500} weight="semibold">Labels</Text>
             </div>
             <div className={styles.cardBody}>
               <Text size={200} className={styles.heroSubtitle}>
@@ -168,7 +168,7 @@ export default function Home({
           <section className={styles.card} data-testid="home-target-card" data-tour="target-card">
             <div className={styles.cardHeader}>
               <span className={styles.cardIcon}><TargetRegular /></span>
-              <Text size={500} weight="semibold">Target</Text>
+              <Text as="h2" size={500} weight="semibold">Target</Text>
             </div>
             <div className={styles.cardBody}>
               {activeTarget ? (
@@ -192,6 +192,7 @@ export default function Home({
                 iconPosition="after"
                 onClick={() => onNavigate('config')}
                 data-testid="home-configure-target-btn"
+                className={styles.mobilePrimaryAction}
               >
                 {activeTarget ? 'Manage targets' : 'Configure a target'}
               </Button>
@@ -201,7 +202,7 @@ export default function Home({
 
         <section data-testid="home-recent-operations">
           <div className={styles.sectionHeader}>
-            <Text size={500} weight="semibold">Recent operations</Text>
+            <Text as="h2" size={500} weight="semibold">Recent operations</Text>
             <Button
               appearance="subtle"
               icon={<ArrowRightRegular />}
@@ -248,7 +249,7 @@ export default function Home({
                     data-testid={`home-operation-${op.isUnlabeled ? 'unlabeled' : op.name}`}
                   >
                     <div className={styles.operationHeader}>
-                      <Text size={400} className={styles.operationName} title={op.name}>
+                      <Text as="h3" size={400} className={styles.operationName} title={op.name}>
                         {op.name}
                       </Text>
                       <Badge appearance="tint" size="small">

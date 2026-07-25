@@ -9,24 +9,30 @@ import uuid
 import jsonschema
 import pytest
 
+from pyrit.auth import get_azure_openai_auth
 from pyrit.models import MessagePiece
 from pyrit.prompt_target import OpenAIResponseTarget
 
-_AZURE_KEY_AUTH_DISABLED_REASON = (
-    "Azure key-based (local) auth is disabled in our tenant; "
-    "covered by the Entra-auth tests (test_entra_auth_targets.py)."
+_AZURE_KEY_AUTH_DISABLED_REASON = "Azure key-based (local) auth is disabled in our tenant."
+
+
+@pytest.fixture(
+    params=[
+        pytest.param(None, id="entra"),
+        pytest.param(
+            "AZURE_OPENAI_GPT5_KEY",
+            marks=pytest.mark.skip(reason=_AZURE_KEY_AUTH_DISABLED_REASON),
+            id="api-key",
+        ),
+    ]
 )
-
-pytestmark = pytest.mark.skip(reason=_AZURE_KEY_AUTH_DISABLED_REASON)
-
-
-@pytest.fixture()
-def gpt5_args():
+def gpt5_args(request: pytest.FixtureRequest) -> dict[str, object]:
     endpoint_value = os.environ["AZURE_OPENAI_GPT5_RESPONSES_ENDPOINT"]
+    api_key_env: str | None = request.param
     return {
         "endpoint": endpoint_value,
         "model_name": os.getenv("AZURE_OPENAI_GPT5_MODEL"),
-        "api_key": os.getenv("AZURE_OPENAI_GPT5_KEY"),
+        "api_key": os.environ[api_key_env] if api_key_env else get_azure_openai_auth(endpoint_value),
     }
 
 

@@ -4,10 +4,11 @@
 import os
 import tempfile
 from collections.abc import Sequence
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
 import pytest
+from sqlalchemy.exc import SQLAlchemyError
 
 from pyrit.memory import MemoryInterface
 from pyrit.models import MessagePiece, SeedDataset, SeedGroup, SeedObjective, SeedPrompt
@@ -1101,3 +1102,116 @@ async def test_get_seed_groups_filter_by_count(sqlite_instance: MemoryInterface)
     # Test without filtering (should return all)
     all_groups = sqlite_instance.get_seed_groups()
     assert len(all_groups) == 2
+
+
+async def test_replace_seeds_for_dataset_async_replaces_all(sqlite_instance: MemoryInterface):
+    """replace_seeds_for_dataset_async swaps the target dataset's seeds and leaves others intact."""
+    await sqlite_instance.add_seeds_to_memory_async(
+        seeds=[
+            SeedPrompt(value="a1", dataset_name="alpha", data_type="text"),
+            SeedPrompt(value="a2", dataset_name="alpha", data_type="text"),
+            SeedPrompt(value="b1", dataset_name="beta", data_type="text"),
+        ],
+        added_by="seeding",
+    )
+
+    deleted = await sqlite_instance.replace_seeds_for_dataset_async(
+        dataset_name="alpha",
+        seeds=[SeedPrompt(value="a3", dataset_name="alpha", data_type="text")],
+        added_by="refresh",
+    )
+
+    assert deleted == 2
+    assert {seed.value for seed in sqlite_instance.get_seeds(dataset_name="alpha")} == {"a3"}
+    assert {seed.value for seed in sqlite_instance.get_seeds(dataset_name="beta")} == {"b1"}
+
+
+async def test_replace_seeds_for_dataset_async_new_dataset_inserts(sqlite_instance: MemoryInterface):
+    """Replacing a dataset with no existing rows simply inserts the new seeds and returns 0."""
+    deleted = await sqlite_instance.replace_seeds_for_dataset_async(
+        dataset_name="fresh",
+        seeds=[SeedPrompt(value="v1", dataset_name="fresh", data_type="text")],
+        added_by="refresh",
+    )
+
+    assert deleted == 0
+    assert {seed.value for seed in sqlite_instance.get_seeds(dataset_name="fresh")} == {"v1"}
+
+
+async def test_replace_seeds_for_dataset_async_empty_name_raises(sqlite_instance: MemoryInterface):
+    """An empty dataset_name is rejected to avoid an accidental mass delete."""
+    with pytest.raises(ValueError, match="dataset_name"):
+        await sqlite_instance.replace_seeds_for_dataset_async(
+            dataset_name="",
+            seeds=[SeedPrompt(value="v1", dataset_name="x", data_type="text")],
+            added_by="refresh",
+        )
+
+
+async def test_replace_seeds_for_dataset_async_empty_seeds_raises(sqlite_instance: MemoryInterface):
+    """Refusing empty seeds prevents replacing a dataset with nothing (i.e. wiping it)."""
+    with pytest.raises(ValueError, match="non-empty"):
+        await sqlite_instance.replace_seeds_for_dataset_async(dataset_name="alpha", seeds=[], added_by="refresh")
+
+
+async def test_replace_seeds_for_dataset_async_mismatched_name_raises(sqlite_instance: MemoryInterface):
+    """Seeds tagged for a different dataset are rejected before any delete, avoiding a cross-wipe."""
+    await sqlite_instance.add_seeds_to_memory_async(
+        seeds=[SeedPrompt(value="keep", dataset_name="alpha", data_type="text")],
+        added_by="seeding",
+    )
+
+    with pytest.raises(ValueError, match="mismatched"):
+        await sqlite_instance.replace_seeds_for_dataset_async(
+            dataset_name="alpha",
+            seeds=[SeedPrompt(value="foreign", dataset_name="beta", data_type="text")],
+            added_by="refresh",
+        )
+
+    # The guard fires before the delete, so alpha is untouched and beta was never created.
+    assert {seed.value for seed in sqlite_instance.get_seeds(dataset_name="alpha")} == {"keep"}
+    assert sqlite_instance.get_seeds(dataset_name="beta") == []
+
+
+async def test_replace_seeds_for_dataset_async_mixed_none_and_foreign_name_raises(sqlite_instance: MemoryInterface):
+    """A mix of a None dataset_name and a foreign one still raises ValueError (not TypeError)."""
+    await sqlite_instance.add_seeds_to_memory_async(
+        seeds=[SeedPrompt(value="keep", dataset_name="alpha", data_type="text")],
+        added_by="seeding",
+    )
+
+    seed_unnamed = SeedPrompt(value="unnamed", data_type="text")  # dataset_name defaults to None
+    seed_foreign = SeedPrompt(value="foreign", dataset_name="beta", data_type="text")
+
+    with pytest.raises(ValueError, match="mismatched"):
+        await sqlite_instance.replace_seeds_for_dataset_async(
+            dataset_name="alpha",
+            seeds=[seed_unnamed, seed_foreign],
+            added_by="refresh",
+        )
+
+    assert {seed.value for seed in sqlite_instance.get_seeds(dataset_name="alpha")} == {"keep"}
+
+
+async def test_replace_seeds_for_dataset_async_rolls_back_on_error(sqlite_instance: MemoryInterface):
+    """A failure during the replace rolls back the delete too, so existing seeds are preserved."""
+    await sqlite_instance.add_seeds_to_memory_async(
+        seeds=[SeedPrompt(value="old", dataset_name="d", data_type="text")],
+        added_by="seeding",
+    )
+
+    real_session = sqlite_instance.get_session()
+    real_session.commit = MagicMock(side_effect=SQLAlchemyError("commit failed"))
+    real_session.rollback = MagicMock(side_effect=real_session.rollback)
+
+    with patch.object(sqlite_instance, "get_session", return_value=real_session):
+        with pytest.raises(SQLAlchemyError, match="commit failed"):
+            await sqlite_instance.replace_seeds_for_dataset_async(
+                dataset_name="d",
+                seeds=[SeedPrompt(value="new", dataset_name="d", data_type="text")],
+                added_by="refresh",
+            )
+
+    real_session.rollback.assert_called_once()
+    # The delete was rolled back with the failed insert -> the original seed survives.
+    assert {seed.value for seed in sqlite_instance.get_seeds(dataset_name="d")} == {"old"}

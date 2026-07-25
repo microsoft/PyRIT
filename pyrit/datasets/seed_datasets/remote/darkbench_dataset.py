@@ -86,7 +86,7 @@ class _DarkBenchDataset(_RemoteDatasetLoader):
         )
         authors = [
             "Esben Kran",
-            "Jord Nguyen",
+            'Hieu Minh "Jord" Nguyen',
             "Akash Kundu",
             "Sami Jawhar",
             "Jinsuk Park",
