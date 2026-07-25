@@ -184,7 +184,7 @@ class AzureBlobStorageTarget(PromptTarget):
                 await credential.close()
 
     async def _upload_blob_async(
-        self, file_name: str, data: bytes, content_type: str
+        self, *, file_name: str, data: bytes, content_type: str
     ) -> None:
         """
         (Async) Handles uploading blob to given storage container.
