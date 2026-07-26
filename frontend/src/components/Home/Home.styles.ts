@@ -14,6 +14,9 @@ export const useHomeStyles = makeStyles({
     display: 'flex',
     flexDirection: 'column',
     gap: tokens.spacingVerticalXXL,
+    '@media (max-width: 600px)': {
+      padding: `${tokens.spacingVerticalL} ${tokens.spacingHorizontalM}`,
+    },
   },
   hero: {
     display: 'flex',
@@ -30,6 +33,9 @@ export const useHomeStyles = makeStyles({
     display: 'grid',
     gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))',
     gap: tokens.spacingHorizontalL,
+    '@media (max-width: 600px)': {
+      gridTemplateColumns: 'minmax(0, 1fr)',
+    },
   },
   card: {
     backgroundColor: tokens.colorNeutralBackground1,
@@ -94,6 +100,9 @@ export const useHomeStyles = makeStyles({
     display: 'grid',
     gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))',
     gap: tokens.spacingHorizontalL,
+    '@media (max-width: 600px)': {
+      gridTemplateColumns: 'minmax(0, 1fr)',
+    },
   },
   operationCard: {
     backgroundColor: tokens.colorNeutralBackground1,

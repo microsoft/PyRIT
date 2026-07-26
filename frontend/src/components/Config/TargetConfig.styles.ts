@@ -53,6 +53,7 @@ export const useTargetConfigStyles = makeStyles({
   headerAction: {
     [NARROW_VIEWPORT_QUERY]: {
       flex: '1 1 8rem',
+      minHeight: '44px',
     },
     [TOUCH_INPUT_QUERY]: {
       minHeight: MINIMUM_TOUCH_TARGET_SIZE,

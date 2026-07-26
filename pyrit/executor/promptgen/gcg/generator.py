@@ -410,7 +410,10 @@ class GCGGenerator(
 
         all_models = self._models + self._test_models
         return SimpleNamespace(
-            token=self._hf_token or "",
+            # None means anonymous access. An empty string makes huggingface_hub send
+            # "Authorization: Bearer " with no credential, which httpx rejects as an
+            # illegal header value, so public models would fail to load.
+            token=self._hf_token,
             tokenizer_paths=[m.name for m in all_models],
             tokenizer_kwargs=[m.tokenizer_kwargs for m in all_models],
             model_paths=[m.name for m in all_models],

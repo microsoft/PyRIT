@@ -357,7 +357,7 @@ class SeedDataset(BaseModel):
         seed_groups: list[SeedGroup] = []
         for group_seeds in grouped_seeds.values():
             if len(group_seeds) > 1:
-                group_seeds.sort(key=lambda s: s.sequence if hasattr(s, "sequence") else 0)
+                group_seeds.sort(key=lambda s: getattr(s, "sequence", 0))
 
             # Try to create a AttackSeedGroup first; fall back to SeedGroup if validation fails
             try:

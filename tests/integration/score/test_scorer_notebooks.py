@@ -12,9 +12,7 @@ from pyrit.common import path
 
 nb_directory_path = pathlib.Path(path.DOCS_CODE_PATH, "scoring").resolve()
 
-skipped_files = [
-    "prompt_shield_scorer.ipynb",  # requires Azure Content Safety API key
-]
+skipped_files: list[str] = []
 
 
 @pytest.mark.parametrize(

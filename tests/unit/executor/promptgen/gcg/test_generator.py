@@ -158,6 +158,27 @@ class TestValidateContext:
             )
 
 
+class TestToAttackParamsToken:
+    """The HuggingFace token forwarded to model loading."""
+
+    def test_token_is_none_when_not_supplied(self) -> None:
+        # An empty string makes huggingface_hub send "Authorization: Bearer " with no
+        # credential, which httpx rejects as an illegal header value. None means anonymous,
+        # which is what loading a public model needs.
+        gen = GCGGenerator(models=[GCGModelConfig(name=_LLAMA_2)])
+
+        params = gen._to_attack_params(context=GCGContext(goals=["g"], targets=["t"]))
+
+        assert params.token is None
+
+    def test_token_is_forwarded_when_supplied(self) -> None:
+        gen = GCGGenerator(models=[GCGModelConfig(name=_LLAMA_2)], hf_token="hf_example")
+
+        params = gen._to_attack_params(context=GCGContext(goals=["g"], targets=["t"]))
+
+        assert params.token == "hf_example"
+
+
 @pytest.fixture
 def patched_get_workers():
     """Patch the heavy worker spawn so lifecycle tests don't try to load real models."""
