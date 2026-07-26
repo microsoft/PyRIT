@@ -1,6 +1,6 @@
 import { makeStyles, tokens } from '@fluentui/react-components'
 import {
-  MOBILE_BREAKPOINT,
+  TOUCH_INPUT_QUERY,
   MINIMUM_TOUCH_TARGET_SIZE,
   mobileTouchTarget,
   mobileTouchTargetHeight,
@@ -94,7 +94,7 @@ export const useTargetTableStyles = makeStyles({
     maxWidth: '20rem',
     ...mobileTouchTargetHeight,
     '& > select': {
-      [MOBILE_BREAKPOINT]: {
+      [TOUCH_INPUT_QUERY]: {
         minHeight: MINIMUM_TOUCH_TARGET_SIZE,
       },
     },

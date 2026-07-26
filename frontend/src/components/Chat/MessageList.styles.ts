@@ -1,5 +1,5 @@
 import { makeStyles, tokens } from '@fluentui/react-components'
-import { MOBILE_BREAKPOINT, mobileTouchTarget } from '../../styles/touchTargets'
+import { NARROW_VIEWPORT_QUERY, mobileTouchTarget } from '../../styles/touchTargets'
 
 export const useMessageListStyles = makeStyles({
   root: {
@@ -197,7 +197,7 @@ export const useMessageListStyles = makeStyles({
     justifyContent: 'flex-end',
     gap: tokens.spacingHorizontalXXS,
     marginTop: tokens.spacingVerticalS,
-    [MOBILE_BREAKPOINT]: {
+    [NARROW_VIEWPORT_QUERY]: {
       flexWrap: 'wrap',
     },
   },

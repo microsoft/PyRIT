@@ -1,6 +1,7 @@
 import { makeStyles, tokens } from '@fluentui/react-components'
 import {
-  MOBILE_BREAKPOINT,
+  NARROW_VIEWPORT_QUERY,
+  TOUCH_INPUT_QUERY,
   MINIMUM_TOUCH_TARGET_SIZE,
   mobileTouchTarget,
 } from '../../styles/touchTargets'
@@ -50,8 +51,10 @@ export const useTargetConfigStyles = makeStyles({
     },
   },
   headerAction: {
-    [MOBILE_BREAKPOINT]: {
+    [NARROW_VIEWPORT_QUERY]: {
       flex: '1 1 8rem',
+    },
+    [TOUCH_INPUT_QUERY]: {
       minHeight: MINIMUM_TOUCH_TARGET_SIZE,
     },
   },

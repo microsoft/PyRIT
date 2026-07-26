@@ -1,6 +1,6 @@
 import { makeStyles, tokens } from '@fluentui/react-components'
 import {
-  MOBILE_BREAKPOINT,
+  TOUCH_INPUT_QUERY,
   MINIMUM_TOUCH_TARGET_SIZE,
   mobileTouchTarget,
   mobileTouchTargetHeight,
@@ -35,12 +35,12 @@ export const useAttackHistoryStyles = makeStyles({
     minWidth: '160px',
     ...mobileTouchTargetHeight,
     '& > input': {
-      [MOBILE_BREAKPOINT]: {
+      [TOUCH_INPUT_QUERY]: {
         minHeight: MINIMUM_TOUCH_TARGET_SIZE,
       },
     },
     '& > [role="button"]': {
-      [MOBILE_BREAKPOINT]: {
+      [TOUCH_INPUT_QUERY]: {
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',

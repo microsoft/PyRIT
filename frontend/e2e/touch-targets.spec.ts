@@ -330,7 +330,7 @@ test.beforeEach(async ({ page }) => {
 });
 
 test.describe("Mobile touch targets", () => {
-  test.use({ viewport: MOBILE_VIEWPORT });
+  test.use({ viewport: MOBILE_VIEWPORT, hasTouch: true });
 
   test("keeps Home, Configuration, and History controls at least 44px", async ({
     page,
