@@ -4,6 +4,8 @@ description: 'Community-posted jailbreak prompt collected in the wild from the r
 authors: []
 groups:
 - TrustAIRLab
+- CISPA Helmholtz Center for Information Security
+- NetApp
 source: https://huggingface.co/datasets/TrustAIRLab/in-the-wild-jailbreak-prompts
 dataset_name: trustairlab_in_the_wild_jailbreak_2023_12_25
 parameters:

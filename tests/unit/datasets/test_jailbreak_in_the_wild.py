@@ -192,7 +192,11 @@ def test_attribution_and_provenance(yaml_file: Path) -> None:
 
     # Do not attribute user-posted prompts to the dataset collectors.
     assert seed.authors == [], f"{yaml_file.name}: authors must be empty (no user attribution)"
-    assert seed.groups == ["TrustAIRLab"], f"{yaml_file.name}: groups must be [TrustAIRLab]"
+    assert seed.groups == [
+        "TrustAIRLab",
+        "CISPA Helmholtz Center for Information Security",
+        "NetApp",
+    ], f"{yaml_file.name}: groups must include the curator and paper affiliations"
     assert seed.source == "https://huggingface.co/datasets/TrustAIRLab/in-the-wild-jailbreak-prompts"
 
     description = (seed.description or "").lower()
