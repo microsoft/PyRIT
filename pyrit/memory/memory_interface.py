@@ -2205,6 +2205,44 @@ class MemoryInterface(abc.ABC):
             serialized_prompt_value = str(serializer.value)
         return serialized_prompt_value or ""
 
+    async def _prepare_seed_for_storage_async(
+        self, *, prompt: Seed, added_by: str | None, current_time: datetime
+    ) -> None:
+        """
+        Prepare a seed in place for persistence.
+
+        Sets provenance and timestamp, serializes any media value to storage, and computes the
+        SHA256 used for identity and deduplication. Performs no database writes, so it is safe to
+        call before opening a transaction.
+
+        Args:
+            prompt (Seed): The seed to prepare; it is mutated in place.
+            added_by (str | None): The user to attribute the seed to; overrides an existing value.
+            current_time (datetime): The timestamp to apply when the seed has no ``date_added``.
+
+        Raises:
+            ValueError: If ``added_by`` is not set on the seed and none is provided.
+        """
+        if added_by:
+            prompt.added_by = added_by
+        if not prompt.added_by:
+            raise ValueError(
+                """The 'added_by' attribute must be set for each prompt.
+                Set it explicitly or pass a value to the 'added_by' parameter."""
+            )
+        if prompt.date_added is None:
+            prompt.date_added = current_time
+
+        # Only SeedPrompt has set_encoding_metadata for audio/video/image files
+        if hasattr(prompt, "set_encoding_metadata"):
+            prompt.set_encoding_metadata()  # type: ignore[ty:call-non-callable]
+
+        # Handle serialization for image, audio & video SeedPrompts
+        if prompt.data_type in ["image_path", "audio_path", "video_path"]:
+            prompt.value = await self._serialize_seed_value_async(prompt=prompt)
+
+        await set_seed_sha256_async(prompt)
+
     async def add_seeds_to_memory_async(self, *, seeds: Sequence[Seed], added_by: str | None = None) -> None:
         """
         Insert a list of seeds into the memory storage.
@@ -2219,26 +2257,7 @@ class MemoryInterface(abc.ABC):
         entries: MutableSequence[SeedEntry] = []
         current_time = datetime.now(tz=timezone.utc)
         for prompt in seeds:
-            if added_by:
-                prompt.added_by = added_by
-            if not prompt.added_by:
-                raise ValueError(
-                    """The 'added_by' attribute must be set for each prompt.
-                    Set it explicitly or pass a value to the 'added_by' parameter."""
-                )
-            if prompt.date_added is None:
-                prompt.date_added = current_time
-
-            # Only SeedPrompt has set_encoding_metadata for audio/video/image files
-            if hasattr(prompt, "set_encoding_metadata"):
-                prompt.set_encoding_metadata()  # type: ignore[ty:call-non-callable]
-
-            # Handle serialization for image, audio & video SeedPrompts
-            if prompt.data_type in ["image_path", "audio_path", "video_path"]:
-                serialized_prompt_value = await self._serialize_seed_value_async(prompt=prompt)
-                prompt.value = serialized_prompt_value
-
-            await set_seed_sha256_async(prompt)
+            await self._prepare_seed_for_storage_async(prompt=prompt, added_by=added_by, current_time=current_time)
 
             if prompt.value_sha256 and not self.get_seeds(
                 value_sha256=[prompt.value_sha256], dataset_name=prompt.dataset_name
@@ -2280,6 +2299,81 @@ class MemoryInterface(abc.ABC):
         except Exception as e:
             logger.exception(f"Failed to retrieve dataset names with error {e}")
             raise
+
+    async def replace_seeds_for_dataset_async(
+        self, *, dataset_name: str, seeds: Sequence[Seed], added_by: str | None = None
+    ) -> int:
+        """
+        Atomically replace all stored seeds for a dataset with a new set.
+
+        Every existing ``SeedPromptEntries`` row for ``dataset_name`` is deleted and the provided
+        seeds are inserted in a single transaction and commit; if the insert fails the delete is
+        rolled back with it, so the previously stored seeds are preserved. Seeds are prepared
+        (media serialized, SHA256 computed) before the transaction opens. Deduplication is
+        intentionally skipped: this is a full replace, so the provided seeds are stored as given.
+
+        The isolation guarantee is the database transaction boundary: a reader that queries after
+        the commit sees the complete new set. This holds on the file-backed SQLite and Azure SQL
+        backends, where each session has its own connection. The in-memory SQLite backend shares a
+        single connection across all sessions, so it does not isolate concurrent sessions from one
+        another; callers that need to read a dataset while it is being replaced should use a
+        file-backed or Azure SQL backend. ``RefreshDatasets`` replaces datasets sequentially, so it
+        does not rely on cross-session isolation.
+
+        ``SeedPromptEntries`` has no dependent foreign keys, so no related rows are removed first.
+        Deleting media-backed seeds (``image_path``, ``audio_path``, ``video_path``) removes only the
+        database rows; any serialized media files they reference are left on disk. This matches every
+        other seed-delete path and results in disk bloat, not data loss.
+
+        Args:
+            dataset_name (str): The name of the dataset whose seeds should be replaced.
+            seeds (Sequence[Seed]): The new seeds to store for the dataset; must be non-empty and
+                every seed's ``dataset_name`` must equal ``dataset_name``.
+            added_by (str | None): The user to attribute the new seeds to.
+
+        Returns:
+            int: The number of ``SeedPromptEntries`` deleted before the new seeds were inserted.
+
+        Raises:
+            ValueError: If ``dataset_name`` is empty, ``seeds`` is empty, or any seed's
+                ``dataset_name`` does not match ``dataset_name``.
+            SQLAlchemyError: If the replacement fails; the transaction is rolled back first.
+        """
+        if not dataset_name:
+            raise ValueError("dataset_name must be a non-empty string.")
+        if not seeds:
+            raise ValueError("seeds must be non-empty; refusing to replace a dataset with nothing.")
+        mismatched = sorted(
+            {seed.dataset_name for seed in seeds if seed.dataset_name != dataset_name},
+            key=lambda name: (name is None, name or ""),
+        )
+        if mismatched:
+            raise ValueError(
+                f"All seeds must belong to dataset '{dataset_name}', but got mismatched "
+                f"dataset_name(s): {mismatched}. Refusing to delete '{dataset_name}' and insert "
+                "seeds tagged for another dataset."
+            )
+
+        current_time = datetime.now(tz=timezone.utc)
+        entries: list[SeedEntry] = []
+        for prompt in seeds:
+            await self._prepare_seed_for_storage_async(prompt=prompt, added_by=added_by, current_time=current_time)
+            entries.append(SeedEntry(entry=prompt))
+
+        with closing(self.get_session()) as session:
+            try:
+                deleted = (
+                    session.query(SeedEntry)
+                    .filter(SeedEntry.dataset_name == dataset_name)
+                    .delete(synchronize_session=False)
+                )
+                session.add_all(entries)
+                session.commit()
+                return deleted
+            except SQLAlchemyError as e:
+                session.rollback()
+                logger.exception(f"Error replacing seeds for dataset {dataset_name}: {e}")
+                raise
 
     async def add_seed_groups_to_memory_async(
         self, *, prompt_groups: Sequence[SeedGroup], added_by: str | None = None
