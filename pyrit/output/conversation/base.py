@@ -25,9 +25,9 @@ class ConversationPrinterBase(PrinterBase):
         Check whether either stored representation marks the piece as reasoning.
 
         Returns:
-            bool: True when the original or converted data type is reasoning.
+            bool: True when the original data type is reasoning.
         """
-        return piece.original_value_data_type == "reasoning" or piece.converted_value_data_type == "reasoning"
+        return piece.original_value_data_type == "reasoning"
 
     @classmethod
     def _get_reasoning_value(cls, *, piece: MessagePiece) -> str:
@@ -38,13 +38,11 @@ class ConversationPrinterBase(PrinterBase):
             piece (MessagePiece): The reasoning piece whose serialized value should be returned.
 
         Returns:
-            str: The converted value when it remains reasoning, otherwise the original value.
+            str: The original value when it remains reasoning.
 
         Raises:
             ValueError: If neither representation is reasoning.
         """
-        if piece.converted_value_data_type == "reasoning":
-            return piece.converted_value
         if piece.original_value_data_type == "reasoning":
             return piece.original_value
         raise ValueError("Message piece is not a reasoning piece.")
