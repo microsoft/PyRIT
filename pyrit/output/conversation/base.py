@@ -72,68 +72,38 @@ class ConversationPrinterBase(PrinterBase):
         ]
 
     @classmethod
-    def _extract_reasoning_summary(cls, reasoning_value: str) -> str:
-        """
-        Extract a provider-visible reasoning summary from an OpenAI Responses item.
+@classmethod
+def _extract_reasoning_summary(cls, reasoning_value: str) -> str:
+    try:
+        data = json.loads(reasoning_value)
+    except (json.JSONDecodeError, TypeError) as exc:
+        raise ValueError("Reasoning piece must contain valid JSON.") from exc
 
-        The expected value is the JSON serialization of an OpenAI Responses
-        ``reasoning`` output item. The returned text is a provider-generated
-        summary, not raw model chain-of-thought.
+    if not isinstance(data, dict) or data.get("type") != "reasoning" or not isinstance(data.get("id"), str):
+        raise ValueError("Reasoning piece must be an OpenAI Responses item with type='reasoning' and a string 'id'.")
 
-        Args:
-            reasoning_value (str): Serialized OpenAI Responses reasoning item.
+    def _extract_text(item: object, expected_type: str, label: str) -> str:
+        if not isinstance(item, dict) or item.get("type") != expected_type or not isinstance(item.get("text"), str):
+            raise ValueError(f"Each reasoning {label} item must have type='{expected_type}' and a string 'text'.")
+        return item["text"]
 
-        Returns:
-            str: The concatenated summary text. An empty summary list produces an empty string.
+    summary = data.get("summary")
+    if not isinstance(summary, list):
+        raise ValueError("Reasoning piece 'summary' must be a list.")
+    parts = [_extract_text(item, "summary_text", "summary") for item in summary]
 
-        Raises:
-            ValueError: If the value is not valid JSON or does not match the expected
-                OpenAI Responses reasoning-summary shape.
-        """
-        try:
-            data = json.loads(reasoning_value)
-        except (json.JSONDecodeError, TypeError) as exc:
-            raise ValueError("Reasoning pieces must contain a valid JSON object.") from exc
+    status = data.get("status")
+    if status is not None and status not in cls._REASONING_STATUSES:
+        raise ValueError("Reasoning piece 'status' must be in_progress, completed, incomplete, or null.")
 
-        if not isinstance(data, dict) or data.get("type") != "reasoning":
-            raise ValueError("Reasoning pieces must contain an OpenAI Responses item with type='reasoning'.")
+    content = data.get("content")
+    if content is not None:
+        if not isinstance(content, list):
+            raise ValueError("Reasoning piece 'content' must be a list or null.")
+        for item in content:
+            _extract_text(item, "reasoning_text", "content")
 
-        if not isinstance(data.get("id"), str):
-            raise ValueError("Reasoning pieces must contain a string 'id'.")
-
-        summary = data.get("summary")
-        if not isinstance(summary, list):
-            raise ValueError("Reasoning pieces must contain a 'summary' list.")
-
-        parts: list[str] = []
-        for item in summary:
-            if (
-                not isinstance(item, dict)
-                or item.get("type") != "summary_text"
-                or not isinstance(item.get("text"), str)
-            ):
-                raise ValueError("Each reasoning summary item must have type='summary_text' and a string 'text'.")
-            parts.append(item["text"])
-
-        status = data.get("status")
-        if status is not None and status not in cls._REASONING_STATUSES:
-            raise ValueError("Reasoning piece 'status' must be in_progress, completed, incomplete, or null.")
-
-        encrypted_content = data.get("encrypted_content")
-        if encrypted_content is not None and not isinstance(encrypted_content, str):
-            raise ValueError("Reasoning piece 'encrypted_content' must be a string or null.")
-
-        content = data.get("content")
-        if content is not None:
-            if not isinstance(content, list):
-                raise ValueError("Reasoning piece 'content' must be a list or null.")
-            for item in content:
-                if (
-                    not isinstance(item, dict)
-                    or item.get("type") != "reasoning_text"
-                    or not isinstance(item.get("text"), str)
-                ):
-                    raise ValueError("Each reasoning content item must have type='reasoning_text' and a string 'text'.")
+    return "\n".join(parts)
 
         return "\n".join(parts)
 
