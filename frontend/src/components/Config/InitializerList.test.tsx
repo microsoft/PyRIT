@@ -64,7 +64,7 @@ describe('InitializerList', () => {
       </TestWrapper>,
     )
 
-    expect(screen.getByRole('list', { name: 'Target auto-registration' })).toBeInTheDocument()
+    expect(screen.getByRole('list', { name: 'Initializer settings' })).toBeInTheDocument()
     expect(screen.getByText('target')).toBeInTheDocument()
     expect(screen.getByText('Customized')).toBeInTheDocument()
   })

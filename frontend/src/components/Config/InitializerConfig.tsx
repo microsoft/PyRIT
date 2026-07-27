@@ -124,7 +124,7 @@ export default function InitializerConfig() {
       <div className={styles.header}>
         <div className={styles.headerText}>
           <Text size={300}>
-            Configure how targets are auto-registered from your environment, save your changes to the database, or apply them now.
+            Review the effective initializer order, save overrides to the database, or apply a single initializer now.
           </Text>
         </div>
         <div className={styles.headerActions}>
@@ -150,7 +150,7 @@ export default function InitializerConfig() {
           <Spinner label="Loading initializer settings..." />
         </div>
       ) : items.length === 0 ? (
-        <Text className={styles.emptyState}>No target auto-registration is configured.</Text>
+        <Text className={styles.emptyState}>No initializer settings are available.</Text>
       ) : (
         <InitializerList
           items={items}

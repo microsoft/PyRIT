@@ -159,7 +159,7 @@ export default function InitializerList({
   }
 
   return (
-    <div className={styles.list} role="list" aria-label="Target auto-registration">
+    <div className={styles.list} role="list" aria-label="Initializer settings">
       {items.map((item) => {
         const draft = drafts[item.initializer_name]
         if (!draft) {

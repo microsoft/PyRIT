@@ -100,7 +100,7 @@ export default function TargetConfig({ activeTarget, onSetActiveTarget }: Target
             onClick={() => setInitializerDialogOpen(true)}
             data-testid="open-initializer-settings"
           >
-            Auto-Register Targets
+            Initializer Settings
           </Button>
           <Button
             className={styles.headerAction}

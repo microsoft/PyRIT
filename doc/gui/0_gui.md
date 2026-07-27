@@ -153,13 +153,13 @@ For `AzureMLChatTarget`, additional fields are available: **Max New Tokens**, **
 
 Targets can also be auto-populated by adding the `target` initializer to your `~/.pyrit/.pyrit_conf` file. This reads endpoints from your `.env` and `.env.local` files. See [.pyrit_conf_example](https://github.com/microsoft/PyRIT/blob/main/.pyrit_conf_example) for details.
 
-### Auto-Registering Targets
+### Initializer Settings
 
-The Targets page includes an **Auto-Register Targets** dialog for tuning how PyRIT registers targets from your environment (the `target` initializer's `tags` and `auto_group` settings).
+The Targets page includes an **Initializer Settings** dialog for tuning how PyRIT initializes from your environment (for example, the `target` initializer's `tags` and `auto_group` settings).
 
 The dialog shows the settings resolved from your active configuration file (`~/.pyrit/.pyrit_conf`) along with any changes you make in the GUI, which are saved to the memory database. Where a saved GUI change and the config file disagree, the GUI change takes precedence.
 
-Use **Apply** to re-register targets immediately against the running backend — handy for picking up an environment or setting change without a restart. Saved changes and `.pyrit_conf` edits otherwise take effect the next time the backend starts.
+Use **Apply** to re-run an initializer immediately against the running backend — handy for picking up an environment or setting change without a restart. Saved changes and `.pyrit_conf` edits otherwise take effect the next time the backend starts.
 
 ---
 
