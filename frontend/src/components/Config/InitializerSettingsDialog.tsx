@@ -23,7 +23,7 @@ export default function InitializerSettingsDialog({ open, onClose }: Initializer
     <Dialog open={open} onOpenChange={(_, data) => { if (!data.open) onClose() }}>
       <DialogSurface className={styles.dialogSurface}>
         <DialogBody>
-          <DialogTitle>Initializer Settings</DialogTitle>
+          <DialogTitle>Auto-Register Targets</DialogTitle>
           <DialogContent className={styles.dialogContent}>
             <InitializerConfig />
           </DialogContent>

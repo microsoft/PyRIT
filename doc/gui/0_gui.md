@@ -153,32 +153,13 @@ For `AzureMLChatTarget`, additional fields are available: **Max New Tokens**, **
 
 Targets can also be auto-populated by adding the `target` initializer to your `~/.pyrit/.pyrit_conf` file. This reads endpoints from your `.env` and `.env.local` files. See [.pyrit_conf_example](https://github.com/microsoft/PyRIT/blob/main/.pyrit_conf_example) for details.
 
-### Initializer Configuration
+### Auto-Registering Targets
 
-The Configuration view also includes an **Initializers** settings dialog for reviewing and tuning the initializers that configure PyRIT's default converters, scorers, and targets.
+The Targets page includes an **Auto-Register Targets** dialog for tuning how PyRIT registers targets from your environment (the `target` initializer's `tags` and `auto_group` settings).
 
-#### Effective Initializer List
+The dialog shows the settings resolved from your active configuration file (`~/.pyrit/.pyrit_conf`) along with any changes you make in the GUI, which are saved to the memory database. Where a saved GUI change and the config file disagree, the GUI change takes precedence.
 
-The dialog shows an *effective* list that merges two sources:
-
-1. **Baseline** — the `initializers:` entries resolved from your active configuration file (`~/.pyrit/.pyrit_conf`, or the file named by `PYRIT_CONFIG_FILE`). This is the same baseline the backend was started with.
-2. **Saved overrides** — per-initializer settings you edit in the GUI, which are persisted to the memory database (Central Memory).
-
-For each initializer, the dialog reports where its effective values come from via a `source` field:
-
-| `source` | Meaning |
-| --- | --- |
-| `baseline` | Value comes only from your config file; no GUI override saved |
-| `baseline+override` | Initializer is in your config file **and** has a saved GUI override |
-| `override` | Initializer is not in your config file but has a saved GUI override |
-
-Scanner-only initializers (`scorer`, `technique`, `load_default_datasets`, `preload_scenario_metadata`) are hidden from this list because they have no visible effect in the GUI today.
-
-#### How Overrides Resolve Against `.pyrit_conf`
-
-When a saved GUI override and the `.pyrit_conf` baseline both specify a value for the same initializer, **the saved override wins**. Overrides can change an initializer's parameters, whether it is `enabled`, and its `order_index`. When an override leaves a field unset, the effective value falls back to the baseline from `.pyrit_conf`. This follows the same precedence philosophy as the rest of PyRIT's configuration — the more specific, user-set layer takes precedence over the config-file baseline, with no error on conflict.
-
-> **Note:** Saved overrides do **not** change how the backend initializes at startup. When the backend process boots, it still runs the initializers from `.pyrit_conf` only — the saved override rows are read for the GUI's effective list and for on-demand actions, not replayed during startup initialization. To make an initializer's saved (or one-time) settings take effect in the running process, use the dialog's **Apply** action, which builds, validates, and runs that single initializer immediately. Editing `.pyrit_conf`, by contrast, takes effect on the next backend restart.
+Use **Apply** to re-register targets immediately against the running backend — handy for picking up an environment or setting change without a restart. Saved changes and `.pyrit_conf` edits otherwise take effect the next time the backend starts.
 
 ---
 

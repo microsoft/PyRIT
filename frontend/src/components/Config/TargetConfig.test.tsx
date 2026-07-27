@@ -441,14 +441,14 @@ describe("TargetConfig", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("Initializer Settings")).toBeInTheDocument();
+      expect(screen.getByText("Auto-Register Targets")).toBeInTheDocument();
     });
 
     expect(
       screen.queryByTestId("initializer-settings-dialog")
     ).not.toBeInTheDocument();
 
-    await userEvent.click(screen.getByText("Initializer Settings"));
+    await userEvent.click(screen.getByText("Auto-Register Targets"));
 
     expect(
       screen.getByTestId("initializer-settings-dialog")
