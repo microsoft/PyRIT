@@ -109,12 +109,19 @@ class PrettyConversationPrinter(ConversationPrinterBase):
                 lines.append(self._format_colored(f"🔸 {role_label}", Style.BRIGHT, Fore.YELLOW))
                 lines.append(self._format_colored("─" * self._width, Fore.YELLOW))
 
+            reasoning_rendered = False
+            response_heading_rendered = False
             for piece in pieces:
                 if self._is_reasoning_piece(piece=piece):
                     rendered = self._render_reasoning_summary(self._get_reasoning_value(piece=piece))
                     if rendered:
                         lines.append(rendered)
+                        reasoning_rendered = True
                     continue
+
+                if reasoning_rendered and not response_heading_rendered and message.api_role == "assistant":
+                    lines.append(self._render_response_heading())
+                    response_heading_rendered = True
 
                 if piece.is_blocked():
                     lines.append(self._format_colored(f"{self._indent}🚫 BLOCKED BY TARGET", Style.BRIGHT, Fore.RED))
@@ -227,24 +234,30 @@ class PrettyConversationPrinter(ConversationPrinterBase):
             reasoning_value (str): Serialized OpenAI Responses reasoning item.
 
         Returns:
-            str: The tagged reasoning block, or an empty string when the summary is empty.
+            str: The labeled reasoning block, or an empty string when the summary is empty.
         """
         summary = self._extract_reasoning_summary(reasoning_value)
         if not summary:
             return ""
 
-        # PyRIT adds these presentation tags. They label a provider-generated
-        # summary and do not represent raw model chain-of-thought.
         label = "Provider-generated reasoning summary (not raw chain-of-thought)"
         return "".join(
             [
-                self._format_colored(f"{self._indent}<reasoning-summary>", Fore.LIGHTBLACK_EX),
+                self._format_colored(f"{self._indent}💭 Reasoning", Style.BRIGHT, Fore.LIGHTBLACK_EX),
                 self._format_colored(f"{self._indent}{label}", Style.DIM, Fore.LIGHTBLACK_EX),
                 self._render_wrapped_text(summary, Fore.LIGHTBLACK_EX),
-                self._format_colored(f"{self._indent}</reasoning-summary>", Fore.LIGHTBLACK_EX),
                 self._format_colored("", Fore.LIGHTBLACK_EX),
             ]
         )
+
+    def _render_response_heading(self) -> str:
+        """
+        Render the boundary between reasoning and the model response.
+
+        Returns:
+            str: The formatted response heading.
+        """
+        return self._format_colored(f"{self._indent}💬 Response", Style.BRIGHT, Fore.YELLOW)
 
 
 class PrettyConversationMemoryPrinter(PrettyConversationPrinter):

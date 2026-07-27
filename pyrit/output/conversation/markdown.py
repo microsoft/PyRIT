@@ -163,8 +163,16 @@ class MarkdownConversationPrinter(ConversationPrinterBase):
 
         lines.append(f"\n#### {role_name}\n")
 
+        reasoning_rendered = False
+        response_heading_rendered = False
         for piece in pieces:
-            lines.extend(await self._format_piece_content_async(piece=piece, show_original=False))
+            formatted = await self._format_piece_content_async(piece=piece, show_original=False)
+            if self._is_reasoning_piece(piece=piece):
+                reasoning_rendered = bool(formatted) or reasoning_rendered
+            elif reasoning_rendered and not response_heading_rendered:
+                lines.extend(self._format_response_heading())
+                response_heading_rendered = True
+            lines.extend(formatted)
 
         return lines
 
@@ -197,21 +205,28 @@ class MarkdownConversationPrinter(ConversationPrinterBase):
             reasoning_value (str): Serialized OpenAI Responses reasoning item.
 
         Returns:
-            list[str]: A single tagged Markdown block, or an empty list for an empty summary.
+            list[str]: A labeled Markdown block, or an empty list for an empty summary.
         """
         summary = self._extract_reasoning_summary(reasoning_value)
         if not summary:
             return []
 
-        # PyRIT adds these visible tags. They label a provider-generated summary
-        # and do not represent raw model chain-of-thought.
         block_lines = [
-            r"\<reasoning-summary\>",
-            "> **Provider-generated reasoning summary (not raw chain-of-thought)**",
+            "> **💭 Reasoning**",
+            "> *Provider-generated summary (not raw chain-of-thought)*",
             *(f"> {line}" if line else ">" for line in summary.splitlines()),
-            r"\</reasoning-summary\>",
         ]
         return ["\n".join(block_lines) + "\n"]
+
+    @staticmethod
+    def _format_response_heading() -> list[str]:
+        """
+        Format the boundary between reasoning and the model response.
+
+        Returns:
+            list[str]: Markdown lines for the response heading.
+        """
+        return ["**💬 Response**\n"]
 
     def _format_text_content(self, *, piece: MessagePiece, show_original: bool) -> list[str]:
         """

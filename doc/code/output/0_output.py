@@ -145,16 +145,17 @@ await output_conversation_async(messages=conversation)  # type: ignore
 # %% [markdown]
 # ## Including Reasoning Summaries
 #
-# Reasoning-summary output is opt in: the conversation, attack-result, and scenario-result
-# helpers hide reasoning by default. For OpenAI Responses targets, PyRIT renders
+# Reasoning-summary output is opt in: the conversation and attack-result helpers hide
+# reasoning by default. For OpenAI Responses targets, PyRIT renders
 # provider-generated reasoning summaries exposed by OpenAI, not raw hidden chain-of-thought.
 #
-# - Pretty output shows the `<reasoning-summary>` and `</reasoning-summary>` tags in subdued gray.
-# - Attack Markdown output shows visible escaped `\<reasoning-summary\>` and
-#   `\</reasoning-summary\>` tags.
+# - Pretty output labels the summary as **💭 Reasoning** in subdued gray.
+# - Markdown output uses a blockquoted **💭 Reasoning** section.
+# - When a response follows reasoning in the same message, both formats add a
+#   **💬 Response** heading to make the boundary explicit.
 #
 # ```python
-# from pyrit.output import output_attack_async, output_conversation_async, output_scenario_async
+# from pyrit.output import output_attack_async, output_conversation_async
 #
 # # Direct conversation
 # await output_conversation_async(messages=conversation, include_reasoning_trace=True)
@@ -162,13 +163,7 @@ await output_conversation_async(messages=conversation)  # type: ignore
 # # Attack result (Pretty or Markdown)
 # await output_attack_async(attack_result, include_reasoning_trace=True)
 # await output_attack_async(attack_result, format="markdown", include_reasoning_trace=True)
-#
-# # Existing scenario result (Pretty only)
-# await output_scenario_async(scenario_result, include_reasoning_trace=True)
 # ```
-#
-# For a scenario, enabling reasoning expands every contained attack result so its summaries
-# can be rendered. This can produce verbose output for large scenario runs.
 
 # %%
 from pyrit.executor.attack import PromptSendingAttack

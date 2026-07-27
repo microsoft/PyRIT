@@ -376,7 +376,7 @@ async def test_write_async_include_adversarial_with_no_refs(printer, attack_resu
     assert "## Adversarial Conversation" not in capsys.readouterr().out
 
 
-async def test_write_async_main_reasoning_uses_escaped_tags(
+async def test_write_async_main_reasoning_uses_heading(
     printer,
     attack_result,
     sqlite_instance,
@@ -393,12 +393,11 @@ async def test_write_async_main_reasoning_uses_escaped_tags(
 
     rendered = await printer.render_async(attack_result, include_reasoning_trace=True)
 
-    assert r"\<reasoning-summary\>" in rendered
-    assert r"\</reasoning-summary\>" in rendered
-    assert "<reasoning-summary>" not in rendered
+    assert "> **💭 Reasoning**" in rendered
+    assert "step one" in rendered
 
 
-async def test_write_async_pruned_reasoning_uses_escaped_tags(
+async def test_write_async_pruned_reasoning_uses_heading(
     printer,
     attack_result,
     sqlite_instance,
@@ -426,11 +425,11 @@ async def test_write_async_pruned_reasoning_uses_escaped_tags(
         include_reasoning_trace=True,
     )
 
-    assert r"\<reasoning-summary\>" in rendered
+    assert "> **💭 Reasoning**" in rendered
     assert "step one" in rendered
 
 
-async def test_write_async_adversarial_reasoning_uses_escaped_tags(
+async def test_write_async_adversarial_reasoning_uses_heading(
     printer,
     attack_result,
     sqlite_instance,
@@ -458,7 +457,7 @@ async def test_write_async_adversarial_reasoning_uses_escaped_tags(
         include_reasoning_trace=True,
     )
 
-    assert r"\<reasoning-summary\>" in rendered
+    assert "> **💭 Reasoning**" in rendered
     assert "step one" in rendered
 
 

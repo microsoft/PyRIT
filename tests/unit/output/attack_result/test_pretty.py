@@ -333,7 +333,7 @@ async def test_write_async_renders_reasoning_summary_when_requested(
     _seed_messages(sqlite_instance, "conv-main", [piece])
 
     content = await printer._render_conversation_async(attack_result, include_reasoning_trace=True)
-    assert "<reasoning-summary>" in content
+    assert "💭 Reasoning" in content
     assert "Provider-generated reasoning summary (not raw chain-of-thought)" in content
     assert "step one" in content
     assert "step two" in content
@@ -392,7 +392,7 @@ async def test_write_async_reasoning_summary_without_summary_key_is_rejected(pri
         await printer._render_conversation_async(attack_result, include_reasoning_trace=True)
 
 
-async def test_write_async_pruned_reasoning_uses_pretty_tags(
+async def test_write_async_pruned_reasoning_uses_pretty_heading(
     printer,
     attack_result,
     sqlite_instance,
@@ -420,5 +420,5 @@ async def test_write_async_pruned_reasoning_uses_pretty_tags(
         include_reasoning_trace=True,
     )
 
-    assert "<reasoning-summary>" in rendered
+    assert "💭 Reasoning" in rendered
     assert "step one" in rendered

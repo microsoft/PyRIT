@@ -22,29 +22,53 @@ def markdown_printer(patch_central_database) -> MarkdownConversationMemoryPrinte
     return MarkdownConversationMemoryPrinter()
 
 
-async def test_pretty_reasoning_uses_literal_tags_and_spacing(pretty_printer, reasoning_message):
+async def test_pretty_reasoning_uses_headings_and_spacing(pretty_printer, reasoning_message):
     rendered = await pretty_printer.render_async([reasoning_message], include_reasoning_trace=True)
 
-    assert "<reasoning-summary>" in rendered
-    assert "</reasoning-summary>\n\n  Final answer." in rendered
+    assert "💭 Reasoning" in rendered
+    assert "step two\n\n  💬 Response\n  Final answer." in rendered
     assert "Provider-generated reasoning summary (not raw chain-of-thought)" in rendered
     assert "step one" in rendered
     assert "step two" in rendered
 
 
-async def test_markdown_reasoning_uses_escaped_literal_tags_and_spacing(markdown_printer, reasoning_message):
+async def test_markdown_reasoning_uses_headings_and_spacing(markdown_printer, reasoning_message):
     rendered = await markdown_printer.render_async([reasoning_message], include_reasoning_trace=True)
 
     expected = (
-        r"\<reasoning-summary\>" + "\n"
-        "> **Provider-generated reasoning summary (not raw chain-of-thought)**\n"
+        "> **💭 Reasoning**\n"
+        "> *Provider-generated summary (not raw chain-of-thought)*\n"
         "> step one\n"
         "> step two\n"
-        r"\</reasoning-summary\>" + "\n\n"
+        "\n"
+        "**💬 Response**\n\n"
         "Final answer."
     )
     assert expected in rendered
-    assert "<reasoning-summary>" not in rendered
+
+
+@pytest.mark.parametrize("format_name", ["pretty", "markdown"])
+async def test_reasoning_only_message_omits_response_heading(
+    format_name,
+    pretty_printer,
+    markdown_printer,
+    reasoning_value,
+):
+    message = Message(
+        message_pieces=[
+            MessagePiece(
+                role="assistant",
+                original_value=reasoning_value,
+                original_value_data_type="reasoning",
+            )
+        ]
+    )
+    printer = pretty_printer if format_name == "pretty" else markdown_printer
+
+    rendered = await printer.render_async([message], include_reasoning_trace=True)
+
+    assert "💭 Reasoning" in rendered
+    assert "💬 Response" not in rendered
 
 
 @pytest.mark.parametrize("format_name", ["pretty", "markdown"])
@@ -57,13 +81,14 @@ async def test_reasoning_is_hidden_by_default(
     printer = pretty_printer if format_name == "pretty" else markdown_printer
     rendered = await printer.render_async([reasoning_message])
 
-    assert "reasoning-summary" not in rendered
+    assert "💭 Reasoning" not in rendered
+    assert "💬 Response" not in rendered
     assert "step one" not in rendered
     assert "Final answer." in rendered
 
 
 @pytest.mark.parametrize("format_name", ["pretty", "markdown"])
-async def test_empty_reasoning_summary_omits_tags(
+async def test_empty_reasoning_summary_omits_headings(
     format_name,
     pretty_printer,
     markdown_printer,
@@ -85,7 +110,8 @@ async def test_empty_reasoning_summary_omits_tags(
 
     rendered = await printer.render_async([message], include_reasoning_trace=True)
 
-    assert "reasoning-summary" not in rendered
+    assert "💭 Reasoning" not in rendered
+    assert "💬 Response" not in rendered
     assert "Final answer." in rendered
 
 
@@ -182,6 +208,7 @@ async def test_pretty_reasoning_is_gray_and_answer_keeps_assistant_color(
 
     rendered = await printer.render_async([reasoning_message], include_reasoning_trace=True)
 
-    assert f"{Fore.LIGHTBLACK_EX}  <reasoning-summary>" in rendered
+    assert f"{Fore.LIGHTBLACK_EX}  💭 Reasoning" in rendered
     assert f"{Fore.LIGHTBLACK_EX}  step one" in rendered
+    assert f"{Fore.YELLOW}  💬 Response" in rendered
     assert f"{Fore.YELLOW}  Final answer." in rendered

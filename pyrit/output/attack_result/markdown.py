@@ -257,14 +257,20 @@ class MarkdownAttackResultPrinter(AttackResultPrinterBase):
 
             markdown_lines.append(f"**Last Message ({role_label}):**\n")
 
+            reasoning_rendered = False
+            response_heading_rendered = False
             for piece in pieces:
                 if self._conversation_printer._is_reasoning_piece(piece=piece):
-                    markdown_lines.extend(
-                        self._conversation_printer._format_reasoning_summary(
-                            self._conversation_printer._get_reasoning_value(piece=piece)
-                        )
+                    formatted = self._conversation_printer._format_reasoning_summary(
+                        self._conversation_printer._get_reasoning_value(piece=piece)
                     )
+                    markdown_lines.extend(formatted)
+                    reasoning_rendered = bool(formatted) or reasoning_rendered
                     continue
+
+                if reasoning_rendered and not response_heading_rendered and last_message.api_role == "assistant":
+                    markdown_lines.extend(self._conversation_printer._format_response_heading())
+                    response_heading_rendered = True
 
                 content = piece.converted_value or ""
                 if "\n" in content:
@@ -339,14 +345,20 @@ class MarkdownAttackResultPrinter(AttackResultPrinterBase):
                 else:
                     markdown_lines.append(f"\n#### {message.api_role.upper()}\n")
 
+                reasoning_rendered = False
+                response_heading_rendered = False
                 for piece in pieces:
                     if self._conversation_printer._is_reasoning_piece(piece=piece):
-                        markdown_lines.extend(
-                            self._conversation_printer._format_reasoning_summary(
-                                self._conversation_printer._get_reasoning_value(piece=piece)
-                            )
+                        formatted = self._conversation_printer._format_reasoning_summary(
+                            self._conversation_printer._get_reasoning_value(piece=piece)
                         )
+                        markdown_lines.extend(formatted)
+                        reasoning_rendered = bool(formatted) or reasoning_rendered
                         continue
+
+                    if reasoning_rendered and not response_heading_rendered and message.api_role == "assistant":
+                        markdown_lines.extend(self._conversation_printer._format_response_heading())
+                        response_heading_rendered = True
 
                     content = piece.converted_value or ""
                     if len(content) > 200 or "\n" in content:

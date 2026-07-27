@@ -342,6 +342,8 @@ class PrettyAttackResultPrinter(AttackResultPrinterBase):
             role_label = last_message.api_role.upper()
             lines.append(self._format_colored(f"{self._indent}Last Message ({role_label}):", Style.BRIGHT, Fore.WHITE))
 
+            reasoning_rendered = False
+            response_heading_rendered = False
             for piece in pieces:
                 if self._conversation_printer._is_reasoning_piece(piece=piece):
                     rendered = self._conversation_printer._render_reasoning_summary(
@@ -349,7 +351,12 @@ class PrettyAttackResultPrinter(AttackResultPrinterBase):
                     )
                     if rendered:
                         lines.append(rendered)
+                        reasoning_rendered = True
                     continue
+
+                if reasoning_rendered and not response_heading_rendered and last_message.api_role == "assistant":
+                    lines.append(self._conversation_printer._render_response_heading())
+                    response_heading_rendered = True
 
                 lines.append(self._conversation_printer._render_wrapped_text(piece.converted_value, Fore.WHITE))
 
