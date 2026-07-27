@@ -16,18 +16,12 @@ class ScenarioResultPrinterBase(PrinterBase):
     """
 
     @abstractmethod
-    async def render_async(
-        self,
-        result: ScenarioResult,
-        *,
-        include_reasoning_trace: bool = False,
-    ) -> str:
+    async def render_async(self, result: ScenarioResult) -> str:
         """
         Render a scenario result summary and return it as a string.
 
         Args:
             result (ScenarioResult): The scenario result to summarize.
-            include_reasoning_trace (bool): Whether to include reasoning traces. Defaults to False.
 
         Returns:
             str: The rendered scenario result text.

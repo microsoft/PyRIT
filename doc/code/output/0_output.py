@@ -6,10 +6,6 @@
 #       format_name: percent
 #       format_version: '1.3'
 #       jupytext_version: 1.19.5
-#   kernelspec:
-#     display_name: pyrit (3.11.14)
-#     language: python
-#     name: python3
 # ---
 
 # %% [markdown]
@@ -175,9 +171,9 @@ await output_conversation_async(messages=conversation)  # type: ignore
 # can be rendered. This can produce verbose output for large scenario runs.
 
 # %%
-from pyrit.prompt_target import OpenAIResponseTarget
 from pyrit.executor.attack import PromptSendingAttack
 from pyrit.output import output_attack_async
+from pyrit.prompt_target import OpenAIResponseTarget
 
 objective_target = OpenAIResponseTarget(reasoning_effort="high", reasoning_summary="detailed")
 
@@ -197,7 +193,7 @@ Constraints:
 Determine the complete schedule. Verify every constraint in the final answer.
 """
 
-result = await attack.execute_async(objective=prompt) # type: ignore
+result = await attack.execute_async(objective=prompt)  # type: ignore
 await output_attack_async(result, include_reasoning_trace=True)
 
 
