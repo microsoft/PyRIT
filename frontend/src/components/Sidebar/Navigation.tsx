@@ -58,45 +58,51 @@ export default function Navigation({ currentView, onNavigate, onOpenFeedback }: 
 
   return (
     <div className={styles.root} data-tour="sidebar-nav">
-      <Button
-        className={styles.navButton}
-        data-active={currentView === 'home'}
-        appearance="subtle"
-        icon={<HomeRegular />}
-        title="Home"
-        aria-label="Home"
-        onClick={() => onNavigate('home')}
-      />
+      <nav aria-label="Primary" className={styles.primaryNavigation}>
+        <Button
+          className={styles.navButton}
+          data-active={currentView === 'home'}
+          appearance="subtle"
+          icon={<HomeRegular />}
+          title="Home"
+          aria-label="Home"
+          aria-current={currentView === 'home' ? 'page' : undefined}
+          onClick={() => onNavigate('home')}
+        />
 
-      <Button
-        className={styles.navButton}
-        data-active={currentView === 'chat'}
-        appearance="subtle"
-        icon={<ChatRegular />}
-        title="Chat"
-        aria-label="Chat"
-        onClick={() => onNavigate('chat')}
-      />
+        <Button
+          className={styles.navButton}
+          data-active={currentView === 'chat'}
+          appearance="subtle"
+          icon={<ChatRegular />}
+          title="Chat"
+          aria-label="Chat"
+          aria-current={currentView === 'chat' ? 'page' : undefined}
+          onClick={() => onNavigate('chat')}
+        />
 
-      <Button
-        className={styles.navButton}
-        data-active={currentView === 'history'}
-        appearance="subtle"
-        icon={<HistoryRegular />}
-        title="Attack History"
-        aria-label="Attack History"
-        onClick={() => onNavigate('history')}
-      />
+        <Button
+          className={styles.navButton}
+          data-active={currentView === 'history'}
+          appearance="subtle"
+          icon={<HistoryRegular />}
+          title="Attack History"
+          aria-label="Attack History"
+          aria-current={currentView === 'history' ? 'page' : undefined}
+          onClick={() => onNavigate('history')}
+        />
 
-      <Button
-        className={styles.navButton}
-        data-active={currentView === 'config'}
-        appearance="subtle"
-        icon={<SettingsRegular />}
-        title="Configuration"
-        aria-label="Configuration"
-        onClick={() => onNavigate('config')}
-      />
+        <Button
+          className={styles.navButton}
+          data-active={currentView === 'config'}
+          appearance="subtle"
+          icon={<SettingsRegular />}
+          title="Configuration"
+          aria-label="Configuration"
+          aria-current={currentView === 'config' ? 'page' : undefined}
+          onClick={() => onNavigate('config')}
+        />
+      </nav>
 
       <div className={styles.spacer} />
 

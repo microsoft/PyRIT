@@ -41,6 +41,32 @@ depends_on: str | Sequence[str] | None = None
 
 logger = logging.getLogger(__name__)
 
+_TARGET_LINK_INSERT_BATCH_SIZE = 400
+_IDENTIFIER_LINK_INSERT_BATCH_SIZE = 400
+_CONVERTER_LINK_INSERT_BATCH_SIZE = 300
+_IDENTIFIER_GRAPH_PROGRESS_INTERVAL = 100
+_TARGET_LINK_PROGRESS_INTERVAL = 25
+_IDENTIFIER_LINK_PROGRESS_INTERVAL = 25
+_CONVERTER_LINK_PROGRESS_INTERVAL = 25
+_TARGET_LINK_STAGING_TABLE = "_PyritConversationTargetLinks"
+_TARGET_LINK_SQL_SERVER_STAGING_TABLE = "#PyritConversationTargetLinks"
+_IDENTIFIER_LINK_STAGING_TABLE = "_PyritIdentifierLinks"
+_IDENTIFIER_LINK_SQL_SERVER_STAGING_TABLE = "#PyritIdentifierLinks"
+
+
+def _report_progress(message: str) -> None:
+    """Write migration progress to Alembic stdout, or the logger outside a migration context."""
+    try:
+        context = op.get_context()
+    except (AttributeError, NameError):
+        logger.info(message)
+        return
+    config = context.config
+    if config is not None:
+        config.print_stdout(message)
+    else:
+        logger.info(message)
+
 
 class _CustomUUID(TypeDecorator[uuid.UUID]):
     """Frozen UUID type matching ``PromptMemoryEntries.id`` across dialects."""
@@ -87,21 +113,6 @@ def _run_best_effort_row(*, bind: Any, description: str, operation: Callable[[],
         logger.warning(description, exc_info=True)
         return False
     return True
-
-
-def _insert_identifier_link(
-    *,
-    bind: Any,
-    insert: Callable[[dict[str, Any]], str | None],
-    identifier: dict[str, Any],
-    update_statement: Any,
-    update_values: dict[str, Any],
-) -> None:
-    """Insert an identifier graph and update its domain-row link."""
-    identifier_hash = insert(identifier)
-    if not identifier_hash:
-        return
-    bind.execute(update_statement, {**update_values, "hash": identifier_hash})
 
 
 def load_identifier(raw_identifier: Any) -> dict[str, Any] | None:
@@ -736,29 +747,233 @@ def _create_attack_identifier_tables() -> None:
     )
 
 
-def _insert_converter_links(
+def _materialize_identifier_row_links(
     *,
     bind: Any,
-    inserter: IdentifierGraphInserter,
-    link_statement: Any,
-    prompt_id: Any,
-    stored_identifiers: Any,
-    pyrit_version: str | None,
-) -> None:
-    """Insert converter graphs and their ordered links for one prompt row."""
-    for position, identifier in enumerate(load_identifier_list(stored_identifiers)):
-        if identifier.get("pyrit_version") is None:
-            identifier = {**identifier, "pyrit_version": pyrit_version}
-        identifier_hash = inserter.insert_converter(identifier)
-        if identifier_hash:
-            bind.execute(
-                link_statement,
-                {
-                    "prompt_memory_entry_id": prompt_id,
-                    "position": position,
-                    "converter_identifier_hash": identifier_hash,
-                },
+    rows: Sequence[Any],
+    name: str,
+    insert: Callable[[IdentifierGraphInserter, dict[str, Any]], str | None],
+) -> tuple[list[tuple[Any, str]], int]:
+    """
+    Materialize each unique retained identifier once and return its domain-row links.
+
+    Returns:
+        tuple[list[tuple[Any, str]], int]: Successful row links and skipped row count.
+    """
+    grouped_identifiers: dict[str, tuple[dict[str, Any], list[Any]]] = {}
+    skipped = 0
+    for row_id, raw_identifier in rows:
+        identifier = load_identifier(raw_identifier)
+        if identifier is None:
+            skipped += 1
+            continue
+        key = json.dumps(identifier, sort_keys=True)
+        grouped_identifiers.setdefault(key, (identifier, []))[1].append(str(row_id))
+
+    links: list[tuple[Any, str]] = []
+    inserter = IdentifierGraphInserter(bind=bind)
+    group_count = len(grouped_identifiers)
+    if group_count:
+        _report_progress(
+            f"{name} backfill: materializing {group_count} unique identifier graph(s) for {len(rows)} row(s)."
+        )
+    for group_number, (identifier, row_ids) in enumerate(grouped_identifiers.values(), start=1):
+        if group_number == 1 or group_number % _IDENTIFIER_GRAPH_PROGRESS_INTERVAL == 0:
+            _report_progress(f"{name} backfill: processing identifier graph {group_number}/{group_count}.")
+        try:
+            with bind.begin_nested():
+                identifier_hash = insert(inserter, identifier)
+        except Exception:
+            skipped += len(row_ids)
+            logger.warning(
+                f"{name} backfill skipped {len(row_ids)} row(s) for identifier {identifier.get('hash')!r}",
+                exc_info=True,
             )
+            inserter = IdentifierGraphInserter(bind=bind)
+            continue
+        if identifier_hash:
+            links.extend((row_id, identifier_hash) for row_id in row_ids)
+        else:
+            skipped += len(row_ids)
+
+    if group_count:
+        _report_progress(f"{name} backfill: processed {group_count} unique identifier graph(s).")
+    return links, skipped
+
+
+def _materialize_converter_links(
+    *,
+    bind: Any,
+    rows: Sequence[Any],
+) -> tuple[list[tuple[Any, list[tuple[Any, int, str]]]], int]:
+    """
+    Materialize converter graphs and build ordered associations grouped by prompt.
+
+    Returns:
+        tuple[list[tuple[Any, list[tuple[Any, int, str]]]], int]:
+            Prompt-grouped associations and skipped prompt count.
+    """
+    grouped_identifiers: dict[str, tuple[dict[str, Any], set[Any]]] = {}
+    prompt_references: list[tuple[Any, list[tuple[int, str]]]] = []
+    for prompt_id, stored_identifiers, pyrit_version in rows:
+        prompt_id = str(prompt_id)
+        references: list[tuple[int, str]] = []
+        for position, identifier in enumerate(load_identifier_list(stored_identifiers)):
+            if identifier.get("pyrit_version") is None:
+                identifier = {**identifier, "pyrit_version": pyrit_version}
+            key = json.dumps(identifier, sort_keys=True)
+            grouped_identifiers.setdefault(key, (identifier, set()))[1].add(prompt_id)
+            references.append((position, key))
+        if references:
+            prompt_references.append((prompt_id, references))
+
+    hashes_by_key: dict[str, str] = {}
+    failed_keys: set[str] = set()
+    inserter = IdentifierGraphInserter(bind=bind)
+    group_count = len(grouped_identifiers)
+    if group_count:
+        _report_progress(
+            f"ConverterIdentifiers backfill: materializing {group_count} unique identifier graph(s) "
+            f"for {len(prompt_references)} prompt(s)."
+        )
+    for group_number, (key, (identifier, _)) in enumerate(grouped_identifiers.items(), start=1):
+        if group_number == 1 or group_number % _IDENTIFIER_GRAPH_PROGRESS_INTERVAL == 0:
+            _report_progress(
+                f"ConverterIdentifiers backfill: processing identifier graph {group_number}/{group_count}."
+            )
+        try:
+            with bind.begin_nested():
+                identifier_hash = inserter.insert_converter(identifier)
+        except Exception:
+            failed_keys.add(key)
+            logger.warning(
+                f"ConverterIdentifiers backfill could not materialize identifier {identifier.get('hash')!r}",
+                exc_info=True,
+            )
+            inserter = IdentifierGraphInserter(bind=bind)
+            continue
+        if identifier_hash:
+            hashes_by_key[key] = identifier_hash
+
+    if group_count:
+        _report_progress(f"ConverterIdentifiers backfill: processed {group_count} unique identifier graph(s).")
+
+    prompt_links: list[tuple[Any, list[tuple[Any, int, str]]]] = []
+    skipped_prompt_ids: set[Any] = set()
+    for prompt_id, references in prompt_references:
+        if any(key in failed_keys for _, key in references):
+            skipped_prompt_ids.add(prompt_id)
+            continue
+        links = [
+            (prompt_id, position, identifier_hash)
+            for position, key in references
+            if (identifier_hash := hashes_by_key.get(key)) is not None
+        ]
+        if links:
+            prompt_links.append((prompt_id, links))
+    return prompt_links, len(skipped_prompt_ids)
+
+
+def _pack_converter_link_batches(
+    *,
+    prompt_links: Sequence[tuple[Any, list[tuple[Any, int, str]]]],
+) -> list[list[tuple[Any, list[tuple[Any, int, str]]]]]:
+    """
+    Pack complete prompt association groups into parameter-bounded batches.
+
+    Returns:
+        list[list[tuple[Any, list[tuple[Any, int, str]]]]]: Packed prompt groups.
+    """
+    batches: list[list[tuple[Any, list[tuple[Any, int, str]]]]] = []
+    current_batch: list[tuple[Any, list[tuple[Any, int, str]]]] = []
+    current_size = 0
+    for prompt_group in prompt_links:
+        group_size = len(prompt_group[1])
+        if current_batch and current_size + group_size > _CONVERTER_LINK_INSERT_BATCH_SIZE:
+            batches.append(current_batch)
+            current_batch = []
+            current_size = 0
+        current_batch.append(prompt_group)
+        current_size += group_size
+        if current_size >= _CONVERTER_LINK_INSERT_BATCH_SIZE:
+            batches.append(current_batch)
+            current_batch = []
+            current_size = 0
+    if current_batch:
+        batches.append(current_batch)
+    return batches
+
+
+def _insert_converter_link_batch(*, bind: Any, links: Sequence[tuple[Any, int, str]]) -> None:
+    """Insert one parameter-bounded batch of prompt-converter associations."""
+    values: list[str] = []
+    parameters: dict[str, Any] = {}
+    for index, (prompt_id, position, identifier_hash) in enumerate(links):
+        values.append(f"(:prompt_id_{index}, :position_{index}, :hash_{index})")
+        parameters[f"prompt_id_{index}"] = prompt_id
+        parameters[f"position_{index}"] = position
+        parameters[f"hash_{index}"] = identifier_hash
+    bind.execute(
+        sa.text(
+            'INSERT INTO "PromptConverterIdentifiers" '
+            "(prompt_memory_entry_id, position, converter_identifier_hash) "
+            f"VALUES {', '.join(values)}"
+        ),
+        parameters,
+    )
+
+
+def _insert_converter_link_chunks(*, bind: Any, links: Sequence[tuple[Any, int, str]]) -> None:
+    """Insert all associations for a batch while respecting parameter limits."""
+    for start in range(0, len(links), _CONVERTER_LINK_INSERT_BATCH_SIZE):
+        _insert_converter_link_batch(bind=bind, links=links[start : start + _CONVERTER_LINK_INSERT_BATCH_SIZE])
+
+
+def _insert_prompt_converter_links(
+    *,
+    bind: Any,
+    prompt_links: Sequence[tuple[Any, list[tuple[Any, int, str]]]],
+) -> tuple[int, int]:
+    """
+    Insert prompt associations in batches with per-prompt fallback.
+
+    Returns:
+        tuple[int, int]: Inserted association and skipped prompt counts.
+    """
+    batches = _pack_converter_link_batches(prompt_links=prompt_links)
+    inserted = 0
+    skipped_prompts = 0
+    if batches:
+        _report_progress(
+            f"ConverterIdentifiers backfill: inserting {sum(len(links) for _, links in prompt_links)} "
+            f"association(s) in {len(batches)} batch(es)."
+        )
+    for batch_number, prompt_batch in enumerate(batches, start=1):
+        links = [link for _, prompt_group in prompt_batch for link in prompt_group]
+        try:
+            with bind.begin_nested():
+                _insert_converter_link_chunks(bind=bind, links=links)
+            inserted += len(links)
+        except Exception:
+            logger.warning(
+                f"ConverterIdentifiers association batch failed for {len(prompt_batch)} prompt(s); retrying per prompt",
+                exc_info=True,
+            )
+            for prompt_id, prompt_group in prompt_batch:
+                operation = partial(_insert_converter_link_chunks, bind=bind, links=prompt_group)
+                if _run_best_effort_row(
+                    bind=bind,
+                    description=f"ConverterIdentifiers backfill skipped prompt {prompt_id}",
+                    operation=operation,
+                ):
+                    inserted += len(prompt_group)
+                else:
+                    skipped_prompts += 1
+        if batch_number % _CONVERTER_LINK_PROGRESS_INTERVAL == 0 or batch_number == len(batches):
+            _report_progress(
+                f"ConverterIdentifiers backfill: completed association batch {batch_number}/{len(batches)}."
+            )
+    return inserted, skipped_prompts
 
 
 def _backfill_target_identifiers() -> None:
@@ -783,35 +998,419 @@ def _backfill_target_identifiers() -> None:
         )
     ).fetchall()
 
-    update_stmt = sa.text('UPDATE "Conversations" SET target_identifier_hash = :hash WHERE conversation_id = :cid')
-    inserter = IdentifierGraphInserter(bind=bind)
-    linked = 0
-    skipped = 0
-    for conversation_id, raw_target in rows:
-        identifier = load_identifier(raw_target)
-        if identifier is None:
-            skipped += 1
-            continue
-        operation = partial(
-            _insert_identifier_link,
-            bind=bind,
-            insert=inserter.insert_target,
-            identifier=identifier,
-            update_statement=update_stmt,
-            update_values={"cid": conversation_id},
+    links, skipped = _materialize_identifier_row_links(
+        bind=bind,
+        rows=rows,
+        name="TargetIdentifiers",
+        insert=IdentifierGraphInserter.insert_target,
+    )
+    linked, update_skipped = _update_conversation_target_links(bind=bind, links=links)
+    skipped += update_skipped
+
+    if linked or skipped:
+        logger.info(f"TargetIdentifiers backfill linked {linked} conversation(s); skipped {skipped}.")
+
+
+def _update_conversation_target_links(*, bind: Any, links: Sequence[tuple[str, str]]) -> tuple[int, int]:
+    """
+    Stage target links in bounded batches, then update all conversations once.
+
+    Returns:
+        tuple[int, int]: The linked and skipped conversation counts.
+    """
+    if not links:
+        return 0, 0
+
+    table_name = _create_target_link_staging_table(bind=bind)
+    try:
+        staged_links, skipped = _stage_conversation_target_links(bind=bind, table_name=table_name, links=links)
+        try:
+            _report_progress(f"TargetIdentifiers backfill: applying {len(staged_links)} staged target link(s).")
+            with bind.begin_nested():
+                _update_conversation_target_links_from_staging(bind=bind, table_name=table_name)
+            _report_progress("TargetIdentifiers backfill: staged target-link update completed.")
+            return len(staged_links), skipped
+        except Exception:
+            logger.warning(
+                "TargetIdentifiers staged link update failed; retrying individually",
+                exc_info=True,
+            )
+            linked, update_skipped = _update_conversation_target_links_individually(
+                bind=bind,
+                links=staged_links,
+            )
+            return linked, skipped + update_skipped
+    finally:
+        bind.execute(sa.text(f'DROP TABLE "{table_name}"'))
+
+
+def _create_target_link_staging_table(*, bind: Any) -> str:
+    """
+    Create a connection-local table for target-link updates.
+
+    Returns:
+        str: The dialect-specific staging table name.
+    """
+    if bind.dialect.name == "mssql":
+        table_name = _TARGET_LINK_SQL_SERVER_STAGING_TABLE
+        create_prefix = "CREATE TABLE"
+    else:
+        table_name = _TARGET_LINK_STAGING_TABLE
+        create_prefix = "CREATE TEMPORARY TABLE"
+    bind.execute(
+        sa.text(
+            f'{create_prefix} "{table_name}" ('
+            "conversation_id VARCHAR(36) NOT NULL PRIMARY KEY, "
+            "target_identifier_hash VARCHAR(64) NOT NULL)"
         )
+    )
+    return table_name
+
+
+def _stage_conversation_target_links(
+    *,
+    bind: Any,
+    table_name: str,
+    links: Sequence[tuple[str, str]],
+) -> tuple[list[tuple[str, str]], int]:
+    """
+    Insert target links into the staging table with per-row fallback.
+
+    Returns:
+        tuple[list[tuple[str, str]], int]: The staged links and skipped count.
+    """
+    staged_links: list[tuple[str, str]] = []
+    skipped = 0
+    batch_count = (len(links) + _TARGET_LINK_INSERT_BATCH_SIZE - 1) // _TARGET_LINK_INSERT_BATCH_SIZE
+    _report_progress(f"TargetIdentifiers backfill: staging {len(links)} target link(s) in {batch_count} batch(es).")
+    for batch_number, start in enumerate(range(0, len(links), _TARGET_LINK_INSERT_BATCH_SIZE), start=1):
+        batch = links[start : start + _TARGET_LINK_INSERT_BATCH_SIZE]
+        try:
+            with bind.begin_nested():
+                _insert_target_link_batch(bind=bind, table_name=table_name, links=batch)
+            staged_links.extend(batch)
+        except Exception:
+            logger.warning(
+                f"TargetIdentifiers staging insert failed for {len(batch)} conversation(s); retrying individually",
+                exc_info=True,
+            )
+            batch_staged, batch_skipped = _stage_conversation_target_links_individually(
+                bind=bind,
+                table_name=table_name,
+                links=batch,
+            )
+            staged_links.extend(batch_staged)
+            skipped += batch_skipped
+        if batch_number % _TARGET_LINK_PROGRESS_INTERVAL == 0 or batch_number == batch_count:
+            _report_progress(f"TargetIdentifiers backfill: completed staging batch {batch_number}/{batch_count}.")
+    return staged_links, skipped
+
+
+def _insert_target_link_batch(
+    *,
+    bind: Any,
+    table_name: str,
+    links: Sequence[tuple[str, str]],
+) -> None:
+    """Insert one non-empty target-link batch into the staging table."""
+    values: list[str] = []
+    parameters: dict[str, str] = {}
+    for index, (conversation_id, identifier_hash) in enumerate(links):
+        values.append(f"(:cid_{index}, :hash_{index})")
+        parameters[f"cid_{index}"] = conversation_id
+        parameters[f"hash_{index}"] = identifier_hash
+    bind.execute(
+        sa.text(f'INSERT INTO "{table_name}" (conversation_id, target_identifier_hash) VALUES {", ".join(values)}'),
+        parameters,
+    )
+
+
+def _stage_conversation_target_links_individually(
+    *,
+    bind: Any,
+    table_name: str,
+    links: Sequence[tuple[str, str]],
+) -> tuple[list[tuple[str, str]], int]:
+    """
+    Retry a failed staging batch one link at a time.
+
+    Returns:
+        tuple[list[tuple[str, str]], int]: The staged links and skipped count.
+    """
+    statement = sa.text(f'INSERT INTO "{table_name}" (conversation_id, target_identifier_hash) VALUES (:cid, :hash)')
+    staged_links: list[tuple[str, str]] = []
+    for conversation_id, identifier_hash in links:
+        operation = partial(bind.execute, statement, {"cid": conversation_id, "hash": identifier_hash})
+        if _run_best_effort_row(
+            bind=bind,
+            description=f"TargetIdentifiers backfill skipped conversation {conversation_id!r}",
+            operation=operation,
+        ):
+            staged_links.append((conversation_id, identifier_hash))
+    return staged_links, len(links) - len(staged_links)
+
+
+def _update_conversation_target_links_from_staging(*, bind: Any, table_name: str) -> None:
+    """Update conversation links from the connection-local staging table."""
+    if bind.dialect.name == "mssql":
+        statement = sa.text(
+            "UPDATE conversations SET target_identifier_hash = links.target_identifier_hash "
+            'FROM "Conversations" AS conversations '
+            f'INNER JOIN "{table_name}" AS links ON links.conversation_id = conversations.conversation_id'
+        )
+    else:
+        statement = sa.text(
+            'UPDATE "Conversations" SET target_identifier_hash = ('
+            f'SELECT links.target_identifier_hash FROM "{table_name}" AS links '
+            'WHERE links.conversation_id = "Conversations".conversation_id) '
+            f'WHERE EXISTS (SELECT 1 FROM "{table_name}" AS links '
+            'WHERE links.conversation_id = "Conversations".conversation_id)'
+        )
+    bind.execute(statement)
+
+
+def _update_conversation_target_links_individually(
+    *,
+    bind: Any,
+    links: Sequence[tuple[str, str]],
+) -> tuple[int, int]:
+    """
+    Retry a failed target-link batch one conversation at a time.
+
+    Returns:
+        tuple[int, int]: The linked and skipped conversation counts.
+    """
+    statement = sa.text('UPDATE "Conversations" SET target_identifier_hash = :hash WHERE conversation_id = :cid')
+    linked = 0
+    for conversation_id, identifier_hash in links:
+        operation = partial(bind.execute, statement, {"cid": conversation_id, "hash": identifier_hash})
         if _run_best_effort_row(
             bind=bind,
             description=f"TargetIdentifiers backfill skipped conversation {conversation_id!r}",
             operation=operation,
         ):
             linked += 1
-        else:
-            skipped += 1
-            inserter = IdentifierGraphInserter(bind=bind)
+    return linked, len(links) - linked
 
-    if linked or skipped:
-        logger.info(f"TargetIdentifiers backfill linked {linked} conversation(s); skipped {skipped}.")
+
+def _update_identifier_row_links(
+    *,
+    bind: Any,
+    links: Sequence[tuple[Any, str]],
+    name: str,
+    target_table: str,
+    target_id_column: str,
+    target_hash_column: str,
+) -> tuple[int, int]:
+    """
+    Stage identifier links in bounded batches, then update all domain rows once.
+
+    Returns:
+        tuple[int, int]: The linked and skipped row counts.
+    """
+    if not links:
+        return 0, 0
+
+    table_name = _create_identifier_link_staging_table(bind=bind)
+    try:
+        staged_links, skipped = _stage_identifier_row_links(
+            bind=bind,
+            table_name=table_name,
+            links=links,
+            name=name,
+        )
+        try:
+            _report_progress(f"{name} backfill: applying {len(staged_links)} staged row link(s).")
+            with bind.begin_nested():
+                _update_identifier_row_links_from_staging(
+                    bind=bind,
+                    table_name=table_name,
+                    target_table=target_table,
+                    target_id_column=target_id_column,
+                    target_hash_column=target_hash_column,
+                )
+            _report_progress(f"{name} backfill: staged row-link update completed.")
+            return len(staged_links), skipped
+        except Exception:
+            logger.warning(f"{name} staged row-link update failed; retrying individually", exc_info=True)
+            linked, update_skipped = _update_identifier_row_links_individually(
+                bind=bind,
+                links=staged_links,
+                name=name,
+                target_table=target_table,
+                target_id_column=target_id_column,
+                target_hash_column=target_hash_column,
+            )
+            return linked, skipped + update_skipped
+    finally:
+        bind.execute(sa.text(f'DROP TABLE "{table_name}"'))
+
+
+def _create_identifier_link_staging_table(*, bind: Any) -> str:
+    """
+    Create a connection-local table for domain-row identifier links.
+
+    Returns:
+        str: The dialect-specific staging table name.
+    """
+    if bind.dialect.name == "mssql":
+        table_name = _IDENTIFIER_LINK_SQL_SERVER_STAGING_TABLE
+        create_prefix = "CREATE TABLE"
+        row_id_type = "UNIQUEIDENTIFIER"
+    else:
+        table_name = _IDENTIFIER_LINK_STAGING_TABLE
+        create_prefix = "CREATE TEMPORARY TABLE"
+        row_id_type = "VARCHAR(36)"
+    bind.execute(
+        sa.text(
+            f'{create_prefix} "{table_name}" ('
+            f"row_id {row_id_type} NOT NULL PRIMARY KEY, "
+            "identifier_hash VARCHAR(64) NOT NULL)"
+        )
+    )
+    return table_name
+
+
+def _stage_identifier_row_links(
+    *,
+    bind: Any,
+    table_name: str,
+    links: Sequence[tuple[Any, str]],
+    name: str,
+) -> tuple[list[tuple[Any, str]], int]:
+    """
+    Insert domain-row links into the staging table with per-row fallback.
+
+    Returns:
+        tuple[list[tuple[Any, str]], int]: Staged links and skipped row count.
+    """
+    staged_links: list[tuple[Any, str]] = []
+    skipped = 0
+    batch_count = (len(links) + _IDENTIFIER_LINK_INSERT_BATCH_SIZE - 1) // _IDENTIFIER_LINK_INSERT_BATCH_SIZE
+    _report_progress(f"{name} backfill: staging {len(links)} row link(s) in {batch_count} batch(es).")
+    for batch_number, start in enumerate(range(0, len(links), _IDENTIFIER_LINK_INSERT_BATCH_SIZE), start=1):
+        batch = links[start : start + _IDENTIFIER_LINK_INSERT_BATCH_SIZE]
+        try:
+            with bind.begin_nested():
+                _insert_identifier_row_link_batch(bind=bind, table_name=table_name, links=batch)
+            staged_links.extend(batch)
+        except Exception:
+            logger.warning(
+                f"{name} staging insert failed for {len(batch)} row(s); retrying individually",
+                exc_info=True,
+            )
+            batch_staged, batch_skipped = _stage_identifier_row_links_individually(
+                bind=bind,
+                table_name=table_name,
+                links=batch,
+                name=name,
+            )
+            staged_links.extend(batch_staged)
+            skipped += batch_skipped
+        if batch_number % _IDENTIFIER_LINK_PROGRESS_INTERVAL == 0 or batch_number == batch_count:
+            _report_progress(f"{name} backfill: completed staging batch {batch_number}/{batch_count}.")
+    return staged_links, skipped
+
+
+def _insert_identifier_row_link_batch(
+    *,
+    bind: Any,
+    table_name: str,
+    links: Sequence[tuple[Any, str]],
+) -> None:
+    """Insert one non-empty batch of domain-row identifier links."""
+    values: list[str] = []
+    parameters: dict[str, Any] = {}
+    for index, (row_id, identifier_hash) in enumerate(links):
+        values.append(f"(:row_id_{index}, :hash_{index})")
+        parameters[f"row_id_{index}"] = row_id
+        parameters[f"hash_{index}"] = identifier_hash
+    bind.execute(
+        sa.text(f'INSERT INTO "{table_name}" (row_id, identifier_hash) VALUES {", ".join(values)}'),
+        parameters,
+    )
+
+
+def _stage_identifier_row_links_individually(
+    *,
+    bind: Any,
+    table_name: str,
+    links: Sequence[tuple[Any, str]],
+    name: str,
+) -> tuple[list[tuple[Any, str]], int]:
+    """
+    Retry a failed staging batch one row at a time.
+
+    Returns:
+        tuple[list[tuple[Any, str]], int]: Staged links and skipped row count.
+    """
+    statement = sa.text(f'INSERT INTO "{table_name}" (row_id, identifier_hash) VALUES (:row_id, :hash)')
+    staged_links: list[tuple[Any, str]] = []
+    for row_id, identifier_hash in links:
+        operation = partial(bind.execute, statement, {"row_id": row_id, "hash": identifier_hash})
+        if _run_best_effort_row(
+            bind=bind,
+            description=f"{name} backfill skipped row {row_id!r}",
+            operation=operation,
+        ):
+            staged_links.append((row_id, identifier_hash))
+    return staged_links, len(links) - len(staged_links)
+
+
+def _update_identifier_row_links_from_staging(
+    *,
+    bind: Any,
+    table_name: str,
+    target_table: str,
+    target_id_column: str,
+    target_hash_column: str,
+) -> None:
+    """Update domain-row identifier links from the connection-local staging table."""
+    if bind.dialect.name == "mssql":
+        statement = sa.text(
+            f'UPDATE domain_rows SET "{target_hash_column}" = links.identifier_hash '
+            f'FROM "{target_table}" AS domain_rows '
+            f'INNER JOIN "{table_name}" AS links ON links.row_id = domain_rows."{target_id_column}"'
+        )
+    else:
+        statement = sa.text(
+            f'UPDATE "{target_table}" SET "{target_hash_column}" = ('
+            f'SELECT links.identifier_hash FROM "{table_name}" AS links '
+            f'WHERE links.row_id = "{target_table}"."{target_id_column}") '
+            f'WHERE EXISTS (SELECT 1 FROM "{table_name}" AS links '
+            f'WHERE links.row_id = "{target_table}"."{target_id_column}")'
+        )
+    bind.execute(statement)
+
+
+def _update_identifier_row_links_individually(
+    *,
+    bind: Any,
+    links: Sequence[tuple[Any, str]],
+    name: str,
+    target_table: str,
+    target_id_column: str,
+    target_hash_column: str,
+) -> tuple[int, int]:
+    """
+    Retry a failed staged update one row at a time.
+
+    Returns:
+        tuple[int, int]: Linked and skipped row counts.
+    """
+    statement = sa.text(
+        f'UPDATE "{target_table}" SET "{target_hash_column}" = :hash WHERE "{target_id_column}" = :row_id'
+    )
+    linked = 0
+    for row_id, identifier_hash in links:
+        operation = partial(bind.execute, statement, {"row_id": row_id, "hash": identifier_hash})
+        if _run_best_effort_row(
+            bind=bind,
+            description=f"{name} backfill skipped row {row_id!r}",
+            operation=operation,
+        ):
+            linked += 1
+    return linked, len(links) - linked
 
 
 def _backfill_scorer_identifiers() -> None:
@@ -823,29 +1422,23 @@ def _backfill_scorer_identifiers() -> None:
             "WHERE scorer_class_identifier IS NOT NULL ORDER BY id"
         )
     ).fetchall()
-    score_update = sa.text('UPDATE "ScoreEntries" SET scorer_identifier_hash = :hash WHERE id = :id')
-    inserter = IdentifierGraphInserter(bind=bind)
-    skipped = 0
-    for score_id, raw_scorer in score_rows:
-        identifier = load_identifier(raw_scorer)
-        if identifier is None:
-            skipped += 1
-            continue
-        operation = partial(
-            _insert_identifier_link,
-            bind=bind,
-            insert=inserter.insert_scorer,
-            identifier=identifier,
-            update_statement=score_update,
-            update_values={"id": score_id},
-        )
-        if not _run_best_effort_row(
-            bind=bind,
-            description=f"ScorerIdentifiers backfill: could not reconstruct scorer for score {score_id}",
-            operation=operation,
-        ):
-            skipped += 1
-            inserter = IdentifierGraphInserter(bind=bind)
+    links, skipped = _materialize_identifier_row_links(
+        bind=bind,
+        rows=score_rows,
+        name="ScorerIdentifiers",
+        insert=IdentifierGraphInserter.insert_scorer,
+    )
+    linked, update_skipped = _update_identifier_row_links(
+        bind=bind,
+        links=links,
+        name="ScorerIdentifiers",
+        target_table="ScoreEntries",
+        target_id_column="id",
+        target_hash_column="scorer_identifier_hash",
+    )
+    skipped += update_skipped
+    if linked or skipped:
+        _report_progress(f"ScorerIdentifiers backfill: linked {linked} score row(s); skipped {skipped}.")
     if skipped:
         logger.warning(f"ScorerIdentifiers backfill skipped {skipped} score row(s)")
 
@@ -859,29 +1452,23 @@ def _backfill_scenario_identifiers() -> None:
             "WHERE scenario_identifier IS NOT NULL ORDER BY id"
         )
     ).fetchall()
-    update_stmt = sa.text('UPDATE "ScenarioResultEntries" SET scenario_identifier_hash = :hash WHERE id = :id')
-    inserter = IdentifierGraphInserter(bind=bind)
-    skipped = 0
-    for result_id, raw_scenario in result_rows:
-        identifier = load_identifier(raw_scenario)
-        if identifier is None:
-            skipped += 1
-            continue
-        operation = partial(
-            _insert_identifier_link,
-            bind=bind,
-            insert=inserter.insert_scenario,
-            identifier=identifier,
-            update_statement=update_stmt,
-            update_values={"id": result_id},
-        )
-        if not _run_best_effort_row(
-            bind=bind,
-            description=f"ScenarioIdentifiers backfill: could not reconstruct scenario for result {result_id}",
-            operation=operation,
-        ):
-            skipped += 1
-            inserter = IdentifierGraphInserter(bind=bind)
+    links, skipped = _materialize_identifier_row_links(
+        bind=bind,
+        rows=result_rows,
+        name="ScenarioIdentifiers",
+        insert=IdentifierGraphInserter.insert_scenario,
+    )
+    linked, update_skipped = _update_identifier_row_links(
+        bind=bind,
+        links=links,
+        name="ScenarioIdentifiers",
+        target_table="ScenarioResultEntries",
+        target_id_column="id",
+        target_hash_column="scenario_identifier_hash",
+    )
+    skipped += update_skipped
+    if linked or skipped:
+        _report_progress(f"ScenarioIdentifiers backfill: linked {linked} result row(s); skipped {skipped}.")
     if skipped:
         logger.warning(f"ScenarioIdentifiers backfill skipped {skipped} scenario result row(s)")
 
@@ -895,30 +1482,13 @@ def _backfill_converter_identifiers() -> None:
             "WHERE converter_identifiers IS NOT NULL ORDER BY id"
         )
     ).fetchall()
-    link_insert = sa.text(
-        'INSERT INTO "PromptConverterIdentifiers" '
-        "(prompt_memory_entry_id, position, converter_identifier_hash) "
-        "VALUES (:prompt_memory_entry_id, :position, :converter_identifier_hash)"
-    )
-    inserter = IdentifierGraphInserter(bind=bind)
-    skipped = 0
-    for prompt_id, stored_identifiers, pyrit_version in prompt_rows:
-        operation = partial(
-            _insert_converter_links,
-            bind=bind,
-            inserter=inserter,
-            link_statement=link_insert,
-            prompt_id=prompt_id,
-            stored_identifiers=stored_identifiers,
-            pyrit_version=pyrit_version,
+    prompt_links, skipped = _materialize_converter_links(bind=bind, rows=prompt_rows)
+    inserted, association_skipped = _insert_prompt_converter_links(bind=bind, prompt_links=prompt_links)
+    skipped += association_skipped
+    if inserted or skipped:
+        _report_progress(
+            f"ConverterIdentifiers backfill: inserted {inserted} prompt association(s); skipped {skipped} prompt(s)."
         )
-        if not _run_best_effort_row(
-            bind=bind,
-            description=f"ConverterIdentifiers backfill: could not reconstruct converters for prompt {prompt_id}",
-            operation=operation,
-        ):
-            skipped += 1
-            inserter = IdentifierGraphInserter(bind=bind)
     if skipped:
         logger.warning(f"ConverterIdentifiers backfill skipped {skipped} prompt row(s)")
 
@@ -932,28 +1502,22 @@ def _backfill_attack_identifiers() -> None:
             "WHERE atomic_attack_identifier IS NOT NULL ORDER BY id"
         )
     ).fetchall()
-    inserter = IdentifierGraphInserter(bind=bind)
-    update_stmt = sa.text('UPDATE "AttackResultEntries" SET atomic_attack_identifier_hash = :hash WHERE id = :id')
-    skipped = 0
-    for result_id, raw_identifier in result_rows:
-        identifier = load_identifier(raw_identifier)
-        if identifier is None:
-            skipped += 1
-            continue
-        operation = partial(
-            _insert_identifier_link,
-            bind=bind,
-            insert=inserter.insert_atomic_attack,
-            identifier=identifier,
-            update_statement=update_stmt,
-            update_values={"id": result_id},
-        )
-        if not _run_best_effort_row(
-            bind=bind,
-            description=f"Attack identifier backfill could not reconstruct result {result_id}",
-            operation=operation,
-        ):
-            skipped += 1
-            inserter = IdentifierGraphInserter(bind=bind)
+    links, skipped = _materialize_identifier_row_links(
+        bind=bind,
+        rows=result_rows,
+        name="AttackIdentifiers",
+        insert=IdentifierGraphInserter.insert_atomic_attack,
+    )
+    linked, update_skipped = _update_identifier_row_links(
+        bind=bind,
+        links=links,
+        name="AttackIdentifiers",
+        target_table="AttackResultEntries",
+        target_id_column="id",
+        target_hash_column="atomic_attack_identifier_hash",
+    )
+    skipped += update_skipped
+    if linked or skipped:
+        _report_progress(f"AttackIdentifiers backfill: linked {linked} attack result row(s); skipped {skipped}.")
     if skipped:
         logger.warning(f"Attack identifier backfill skipped {skipped} attack result row(s)")

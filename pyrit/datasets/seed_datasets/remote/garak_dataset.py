@@ -67,8 +67,19 @@ class _GarakRemoteDataset(_RemoteDatasetLoader, ABC):
     DATA_TYPE: ClassVar[PromptDataType] = "text"
 
     # Shared provenance metadata for the garak dataset family.
-    SOURCE_AUTHORS: ClassVar[list[str]] = ["garak Team", "NVIDIA"]
-    SOURCE_GROUPS: ClassVar[list[str]] = ["NVIDIA"]
+    SOURCE_AUTHORS: ClassVar[list[str]] = [
+        "Leon Derczynski",
+        "Erick Galinkin",
+        "Jeffrey Martin",
+        "Subho Majumdar",
+        "Nanna Inie",
+    ]
+    SOURCE_GROUPS: ClassVar[list[str]] = [
+        "NVIDIA",
+        "IT University of Copenhagen",
+        "University of Washington",
+        "Vijil.ai",
+    ]
 
     def __init__(self, *, max_examples: int | None = None) -> None:
         """

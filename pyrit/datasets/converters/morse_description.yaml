@@ -12,6 +12,7 @@ authors:
 groups:
   - School of Data Science, The Chinese University of Hong Kong, Shenzhen, China
   - Tencent AI Lab
+  - The Chinese University of Hong Kong
 source: https://github.com/RobustNLP/CipherChat/blob/main/prompts_and_demonstrations.py
 parameters:
   - prompt

@@ -14,15 +14,13 @@ nb_directory_path = pathlib.Path(path.DOCS_CODE_PATH, "targets").resolve()
 
 skipped_files = [
     "4_openai_video_target.ipynb",  # requires OpenAI video API key
+    "8_non_llm_targets.ipynb",  # requires Azure Blob Storage data-plane credentials
     "10_1_playwright_target.ipynb",  # Playwright installation takes too long
     "10_2_playwright_target_copilot.ipynb",  # Playwright installation takes too long, plus requires M365 account
     "10_3_websocket_copilot_target.ipynb",  # WebSocket Copilot target requires manual pasting tokens
 ]
 
-_AZURE_KEY_AUTH_DISABLED_REASON = (
-    "Azure key-based (local) auth is disabled in our tenant; "
-    "covered by the Entra-auth tests (test_entra_auth_targets.py)."
-)
+_AZURE_KEY_AUTH_DISABLED_REASON = "Azure key-based (local) auth is disabled in our tenant."
 
 # Notebooks whose targets use Azure key-based (local) auth, which is disabled in our tenant.
 _azure_key_auth_notebooks = {
