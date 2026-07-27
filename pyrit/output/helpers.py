@@ -92,7 +92,6 @@ async def output_scenario_async(
     format: OutputFormat = "pretty",  # noqa: A002
     sink: Sink | None = None,
     sort_groups_by_success_rate: bool = False,
-    include_reasoning_trace: bool = False,
 ) -> None:
     """
     Print a scenario result in the specified format to the specified destination.
@@ -104,7 +103,6 @@ async def output_scenario_async(
         sort_groups_by_success_rate (bool): When True, the Per-Group Breakdown is sorted so
             that the group with the highest success rate appears first. Defaults to False,
             which preserves the original insertion order.
-        include_reasoning_trace (bool): Whether to include reasoning traces. Defaults to False.
 
     Raises:
         ValueError: If ``format`` is not a supported value.
@@ -116,10 +114,7 @@ async def output_scenario_async(
         sink=sink or get_default_sink(StdoutSink),
         sort_groups_by_success_rate=sort_groups_by_success_rate,
     )
-    await printer.write_async(
-        result,
-        include_reasoning_trace=include_reasoning_trace,
-    )
+    await printer.write_async(result)
 
 
 async def output_scorer_async(
