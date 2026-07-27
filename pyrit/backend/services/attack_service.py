@@ -152,9 +152,7 @@ class AttackService:
         # filter set fall back to the first page instead of seeking within the wrong result
         # set. The memory layer deduplicates, applies the turn bounds, orders by recency, seeks
         # past the anchor, and limits in SQL, so only one page's worth of rows is materialized
-        # instead of the full table. A keyset anchor (unlike a numeric offset) does not drift
-        # when rows are inserted or deleted between page loads, so boundaries never skip or
-        # duplicate a result.
+        # instead of the full table.
         filter_fingerprint = self._attack_filter_fingerprint(
             attack_types=attack_types,
             converter_types=effective_converter_types,
@@ -180,14 +178,14 @@ class AttackService:
         )
 
         # Over-fetch by one row to detect whether a further page exists.
-        has_more = len(results) > limit
+        has_next_page = len(results) > limit
         page_results = list(results[:limit])
         next_cursor = (
             self._encode_attack_cursor(
                 cursor=AttackResultsKeysetCursor.from_attack_result(page_results[-1]),
                 fingerprint=filter_fingerprint,
             )
-            if has_more and page_results
+            if has_next_page and page_results
             else None
         )
 
@@ -223,7 +221,7 @@ class AttackService:
 
         return AttackListResponse(
             items=page,
-            pagination=PaginationInfo(limit=limit, has_more=has_more, next_cursor=next_cursor, prev_cursor=cursor),
+            pagination=PaginationInfo(limit=limit, has_more=has_next_page, next_cursor=next_cursor, prev_cursor=cursor),
         )
 
     async def get_attack_options_async(self) -> list[str]:
