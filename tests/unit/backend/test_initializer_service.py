@@ -206,10 +206,9 @@ class TestInitializerServiceSettings:
             InitializerConfig(name="widget", args={"mode": "baseline"}),
         ]
         saved_overrides = [
-            InitializerSetting(initializer_name="target", enabled=False, order_index=3),
+            InitializerSetting(initializer_name="target", order_index=3),
             InitializerSetting(
                 initializer_name="custom",
-                enabled=True,
                 parameters={"tags": ["override"]},
                 order_index=0,
             ),
@@ -230,7 +229,6 @@ class TestInitializerServiceSettings:
             assert [item.source for item in result.items] == ["override", "baseline", "baseline+override"]
             assert result.items[0].parameters == {"tags": ["override"]}
             assert result.items[1].parameters == {"mode": "baseline"}
-            assert result.items[2].enabled is False
             assert result.items[2].saved_order_index == 3
 
     async def test_list_effective_initializer_settings_hides_scanner_only_initializers(self) -> None:
@@ -255,7 +253,7 @@ class TestInitializerServiceSettings:
         ]
         saved_overrides = [
             InitializerSetting(initializer_name="scorer", parameters={"mode": "strict"}),
-            InitializerSetting(initializer_name="preload_scenario_metadata", enabled=False),
+            InitializerSetting(initializer_name="preload_scenario_metadata"),
         ]
 
         with patch.object(InitializerService, "__init__", lambda self: None):
@@ -271,7 +269,7 @@ class TestInitializerServiceSettings:
 
             assert [item.initializer_name for item in result.items] == ["target"]
 
-    async def test_list_effective_initializer_settings_handles_disabled_override_without_order(self) -> None:
+    async def test_list_effective_initializer_settings_handles_override_without_order(self) -> None:
         baseline_initializers = [InitializerConfig(name="target", args={"tags": ["baseline"]})]
 
         with patch.object(InitializerService, "__init__", lambda self: None):
@@ -282,14 +280,13 @@ class TestInitializerServiceSettings:
             ]
             service._memory = MagicMock()
             service._memory.get_initializer_settings.return_value = [
-                InitializerSetting(initializer_name="target", enabled=False)
+                InitializerSetting(initializer_name="target")
             ]
 
             result = await service.list_effective_initializer_settings_async(
                 baseline_initializers=baseline_initializers
             )
 
-            assert result.items[0].enabled is False
             assert result.items[0].order_index == 0
             assert result.items[0].source == "baseline+override"
 
@@ -301,7 +298,6 @@ class TestInitializerServiceSettings:
 
             result = await service.save_initializer_setting_async(
                 initializer_name="target",
-                enabled=False,
                 parameters={"tags": ["saved"]},
                 order_index=2,
             )
@@ -313,7 +309,6 @@ class TestInitializerServiceSettings:
             service._memory.add_initializer_setting.assert_called_once()
             assert result == InitializerSetting(
                 initializer_name="target",
-                enabled=False,
                 parameters={"tags": ["saved"]},
                 order_index=2,
             )
@@ -517,7 +512,6 @@ class TestInitializerRoutes:
     def test_put_initializer_settings_returns_saved_row(self, client: TestClient) -> None:
         saved_setting = InitializerSetting(
             initializer_name="target",
-            enabled=False,
             parameters={"tags": ["saved"]},
             order_index=2,
         )
@@ -529,14 +523,13 @@ class TestInitializerRoutes:
 
             response = client.put(
                 "/api/initializers/target/settings",
-                json={"enabled": False, "parameters": {"tags": ["saved"]}, "order_index": 2},
+                json={"parameters": {"tags": ["saved"]}, "order_index": 2},
             )
 
             assert response.status_code == status.HTTP_200_OK
             assert response.json()["initializer_name"] == "target"
             mock_service.save_initializer_setting_async.assert_called_once_with(
                 initializer_name="target",
-                enabled=False,
                 parameters={"tags": ["saved"]},
                 order_index=2,
             )
@@ -547,7 +540,7 @@ class TestInitializerRoutes:
             mock_service.save_initializer_setting_async = AsyncMock(side_effect=KeyError("missing"))
             mock_get_service.return_value = mock_service
 
-            response = client.put("/api/initializers/unknown/settings", json={"enabled": True})
+            response = client.put("/api/initializers/unknown/settings", json={})
 
             assert response.status_code == status.HTTP_404_NOT_FOUND
 

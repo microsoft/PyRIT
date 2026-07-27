@@ -10,7 +10,6 @@ from pyrit.models import InitializerSetting
 def test_initializer_setting_defaults() -> None:
     setting = InitializerSetting(initializer_name="target")
 
-    assert setting.enabled is True
     assert setting.parameters is None
     assert setting.order_index is None
 

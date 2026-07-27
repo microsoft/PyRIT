@@ -12,7 +12,6 @@ class TestInitializerSettingMemory:
     def test_initializer_setting_entry_round_trips_real_domain_model(self, sqlite_instance) -> None:
         setting = InitializerSetting(
             initializer_name="target",
-            enabled=False,
             parameters={"tags": ["default"]},
             order_index=3,
         )
@@ -27,21 +26,21 @@ class TestInitializerSettingMemory:
 
     def test_add_initializer_setting_uses_upsert_semantics(self, sqlite_instance) -> None:
         sqlite_instance.add_initializer_setting(
-            setting=InitializerSetting(initializer_name="target", enabled=True, order_index=1)
+            setting=InitializerSetting(initializer_name="target", order_index=1)
         )
 
         sqlite_instance.add_initializer_setting(
-            setting=InitializerSetting(initializer_name="target", enabled=False, order_index=4)
+            setting=InitializerSetting(initializer_name="target", order_index=4)
         )
 
         assert sqlite_instance.get_initializer_settings() == [
-            InitializerSetting(initializer_name="target", enabled=False, order_index=4)
+            InitializerSetting(initializer_name="target", order_index=4)
         ]
 
     def test_delete_initializer_setting_is_idempotent(self, sqlite_instance) -> None:
         sqlite_instance.delete_initializer_setting(initializer_name="target")
 
-        sqlite_instance.add_initializer_setting(setting=InitializerSetting(initializer_name="target", enabled=True))
+        sqlite_instance.add_initializer_setting(setting=InitializerSetting(initializer_name="target"))
         sqlite_instance.delete_initializer_setting(initializer_name="target")
         sqlite_instance.delete_initializer_setting(initializer_name="target")
 

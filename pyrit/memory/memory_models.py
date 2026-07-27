@@ -427,7 +427,6 @@ class InitializerSettingEntry(DomainBackedEntry[InitializerSetting]):
     __table_args__ = {"extend_existing": True}
 
     initializer_name: Mapped[str] = mapped_column(String(64), primary_key=True)
-    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     parameters: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     order_index: Mapped[int | None] = mapped_column(INTEGER, nullable=True)
 
@@ -444,7 +443,6 @@ class InitializerSettingEntry(DomainBackedEntry[InitializerSetting]):
         """
         return cls(
             initializer_name=domain_model.initializer_name,
-            enabled=domain_model.enabled,
             parameters=domain_model.parameters,
             order_index=domain_model.order_index,
         )
@@ -458,7 +456,6 @@ class InitializerSettingEntry(DomainBackedEntry[InitializerSetting]):
         """
         return InitializerSetting(
             initializer_name=self.initializer_name,
-            enabled=self.enabled,
             parameters=self.parameters,
             order_index=self.order_index,
         )

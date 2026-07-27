@@ -23,13 +23,13 @@ jest.mock('./InitializerList', () => {
     onReset,
   }: {
     items: Array<{ initializer_name: string }>
-    onSave: (initializerName: string, request: { enabled: boolean }) => Promise<void>
+    onSave: (initializerName: string, request: { parameters?: Record<string, unknown> | null }) => Promise<void>
     onApply: (initializerName: string, parameters?: Record<string, unknown> | null) => Promise<void>
     onReset: (initializerName: string) => Promise<void>
   }) => (
     <div data-testid="initializer-table">
       <span data-testid="initializer-count">{items.length}</span>
-      <button onClick={() => void onSave('target', { enabled: false })}>Save target</button>
+      <button onClick={() => void onSave('target', { parameters: null })}>Save target</button>
       <button onClick={() => void onApply('target', { tags: ['extra'] })}>Apply target</button>
       <button onClick={() => void onReset('target')}>Reset target</button>
     </div>
@@ -55,7 +55,6 @@ const SAMPLE_RESPONSE = {
       description: 'Registers targets.',
       required_env_vars: [],
       supported_parameters: [],
-      enabled: true,
       parameters: null,
       order_index: 0,
       saved_order_index: null,
@@ -70,7 +69,6 @@ describe('InitializerConfig', () => {
     mockedInitializersApi.getSettings.mockResolvedValue(SAMPLE_RESPONSE)
     mockedInitializersApi.updateSettings.mockResolvedValue({
       initializer_name: 'target',
-      enabled: false,
       parameters: null,
       order_index: null,
     })
@@ -143,7 +141,7 @@ describe('InitializerConfig', () => {
     await user.click(screen.getByRole('button', { name: 'Save target' }))
 
     await waitFor(() => {
-      expect(mockedInitializersApi.updateSettings).toHaveBeenCalledWith('target', { enabled: false })
+      expect(mockedInitializersApi.updateSettings).toHaveBeenCalledWith('target', { parameters: null })
       expect(screen.getByText('Saved settings for target.')).toBeInTheDocument()
     })
   })

@@ -2,10 +2,11 @@
 # Licensed under the MIT license.
 
 """
-Initializer service for catalog, settings, and apply-now operations.
+Initializer service for catalog, registration, settings, and apply-now operations.
 
-Provides access to the ``InitializerRegistry`` plus persisted initializer
-override rows stored in Central Memory.
+Provides access to the ``InitializerRegistry`` (listing, registering, and
+unregistering initializers) plus persisted initializer override rows stored in
+Central Memory.
 """
 
 import logging
@@ -28,11 +29,8 @@ from pyrit.setup.configuration_loader import InitializerConfig
 
 logger = logging.getLogger(__name__)
 
-# Built-in initializers whose effects are only observed by the scanner (a separate
-# consumer that shares this backend process) and have no visible effect in the GUI
-# itself: no scenario-run, dataset-browsing, or live-scoring UI exists here today.
-# Excluded from the GUI-facing effective settings list so the Initializers page only
-# shows controls that actually do something for a GUI-only user.
+# Scanner-only initializers with no visible effect in the GUI today. Excluded from the
+# GUI-facing effective settings list so the Initializers page only shows useful controls.
 _GUI_HIDDEN_INITIALIZER_NAMES = frozenset(
     {"scorer", "technique", "load_default_datasets", "preload_scenario_metadata"}
 )
@@ -166,7 +164,6 @@ class InitializerService:
             ordered_items.append(
                 self._build_effective_item_sort_entry(
                     registered_initializer=registered_initializer,
-                    enabled=override.enabled if override else True,
                     parameters=effective_parameters,
                     order_index=effective_order,
                     saved_order_index=override.order_index if override else None,
@@ -192,7 +189,6 @@ class InitializerService:
             ordered_items.append(
                 self._build_effective_item_sort_entry(
                     registered_initializer=registered_initializer,
-                    enabled=override.enabled,
                     parameters=override.parameters,
                     order_index=effective_order,
                     saved_order_index=override.order_index,
@@ -209,7 +205,6 @@ class InitializerService:
         self,
         *,
         initializer_name: str,
-        enabled: bool,
         parameters: dict[str, Any] | None,
         order_index: int | None,
     ) -> InitializerSetting:
@@ -218,7 +213,6 @@ class InitializerService:
 
         Args:
             initializer_name: The initializer registry name.
-            enabled: Whether the initializer should remain enabled.
             parameters: Optional parameter overrides to persist.
             order_index: Optional zero-based order override.
 
@@ -228,7 +222,6 @@ class InitializerService:
         self._validate_initializer_parameters(initializer_name=initializer_name, parameters=parameters)
         setting = InitializerSetting(
             initializer_name=initializer_name,
-            enabled=enabled,
             parameters=parameters,
             order_index=order_index,
         )
@@ -356,7 +349,6 @@ class InitializerService:
     def _build_effective_item_sort_entry(
         *,
         registered_initializer: RegisteredInitializer,
-        enabled: bool,
         parameters: dict[str, Any] | None,
         order_index: int,
         saved_order_index: int | None,
@@ -370,7 +362,6 @@ class InitializerService:
             insertion_order,
             EffectiveInitializerSetting(
                 **registered_initializer.model_dump(),
-                enabled=enabled,
                 parameters=parameters,
                 order_index=order_index,
                 saved_order_index=saved_order_index,

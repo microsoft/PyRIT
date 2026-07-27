@@ -9,7 +9,6 @@ import type {
 import { useInitializerListStyles } from './InitializerList.styles'
 
 interface RowDraft {
-  enabled: boolean
   savedOrderIndex: number | null
   parametersText: string
   initialParametersText: string
@@ -95,7 +94,6 @@ export default function InitializerList({
     const nextDrafts = items.reduce<Record<string, RowDraft>>((accumulator, item) => {
       const initialParametersText = serializeParameters(item.parameters)
       accumulator[item.initializer_name] = {
-        enabled: item.enabled,
         savedOrderIndex: item.saved_order_index ?? null,
         parametersText: initialParametersText,
         initialParametersText,
@@ -125,7 +123,6 @@ export default function InitializerList({
 
     try {
       return {
-        enabled: draft.enabled,
         parameters: parseParametersText(draft.parametersText),
         order_index: draft.savedOrderIndex,
       }

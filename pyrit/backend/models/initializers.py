@@ -14,14 +14,13 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 from pyrit.backend.models.common import PaginationInfo
-from pyrit.models import REGISTRY_NAME_PATTERN, InitializerSetting
+from pyrit.models import REGISTRY_NAME_PATTERN
 from pyrit.models.catalog.initializer import RegisteredInitializer
 
 __all__ = [
     "ApplyInitializerRequest",
     "ApplyInitializerResponse",
     "EffectiveInitializerSetting",
-    "InitializerSettingResponse",
     "ListEffectiveInitializerSettingsResponse",
     "ListRegisteredInitializersResponse",
     "RegisterInitializerRequest",
@@ -50,7 +49,6 @@ class RegisterInitializerRequest(BaseModel):
 class EffectiveInitializerSetting(RegisteredInitializer):
     """Merged initializer settings plus registry metadata."""
 
-    enabled: bool = Field(..., description="Whether the initializer is enabled in the effective list.")
     parameters: dict[str, Any] | None = Field(
         default=None,
         description="Effective parameters that will be used for this initializer.",
@@ -79,7 +77,6 @@ class ListEffectiveInitializerSettingsResponse(BaseModel):
 class UpdateInitializerSettingRequest(BaseModel):
     """Request body for saving one initializer override."""
 
-    enabled: bool = Field(default=True, description="Whether the initializer should remain enabled.")
     parameters: dict[str, Any] | None = Field(
         default=None,
         description="Parameter overrides to persist for this initializer.",
@@ -89,10 +86,6 @@ class UpdateInitializerSettingRequest(BaseModel):
         ge=0,
         description="Optional zero-based order override for this initializer.",
     )
-
-
-class InitializerSettingResponse(InitializerSetting):
-    """Saved initializer override row."""
 
 
 class ApplyInitializerRequest(BaseModel):

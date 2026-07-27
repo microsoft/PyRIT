@@ -27,7 +27,6 @@ const SAMPLE_ITEMS: EffectiveInitializerSetting[] = [
         description: 'Target tags.',
       },
     ],
-    enabled: true,
     parameters: { tags: ['default'] },
     order_index: 0,
     saved_order_index: 2,
@@ -39,7 +38,6 @@ const SAMPLE_ITEMS: EffectiveInitializerSetting[] = [
     description: 'Registers scorers.',
     required_env_vars: [],
     supported_parameters: [],
-    enabled: true,
     parameters: null,
     order_index: 1,
     saved_order_index: null,
@@ -103,7 +101,6 @@ describe('InitializerList', () => {
     await user.click(within(row).getByRole('button', { name: 'Save' }))
 
     expect(defaultProps.onSave).toHaveBeenCalledWith('target', {
-      enabled: true,
       parameters: { tags: ['extra'] },
       order_index: 2,
     })

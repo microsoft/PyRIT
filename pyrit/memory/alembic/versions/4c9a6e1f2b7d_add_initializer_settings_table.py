@@ -26,7 +26,6 @@ def upgrade() -> None:
     op.create_table(
         "InitializerSettings",
         sa.Column("initializer_name", sa.String(length=64), nullable=False),
-        sa.Column("enabled", sa.Boolean(), nullable=False),
         sa.Column("parameters", sa.JSON(), nullable=True),
         sa.Column("order_index", sa.INTEGER(), nullable=True),
         sa.PrimaryKeyConstraint("initializer_name"),

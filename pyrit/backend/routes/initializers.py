@@ -24,13 +24,13 @@ from pyrit.backend.models.common import ProblemDetail
 from pyrit.backend.models.initializers import (
     ApplyInitializerRequest,
     ApplyInitializerResponse,
-    InitializerSettingResponse,
     ListEffectiveInitializerSettingsResponse,
     ListRegisteredInitializersResponse,
     RegisterInitializerRequest,
     UpdateInitializerSettingRequest,
 )
 from pyrit.backend.services.initializer_service import get_initializer_service
+from pyrit.models import InitializerSetting
 from pyrit.models.catalog.initializer import RegisteredInitializer
 from pyrit.setup.configuration_loader import ConfigurationLoader, InitializerConfig
 
@@ -116,7 +116,7 @@ async def get_initializer_settings(  # pyrit-async-suffix-exempt
 
 @router.put(
     "/{initializer_name}/settings",
-    response_model=InitializerSettingResponse,
+    response_model=InitializerSetting,
     responses={
         400: {"model": ProblemDetail, "description": "Invalid initializer settings"},
         404: {"model": ProblemDetail, "description": "Initializer not found"},
@@ -125,7 +125,7 @@ async def get_initializer_settings(  # pyrit-async-suffix-exempt
 async def save_initializer_settings(  # pyrit-async-suffix-exempt
     initializer_name: str,
     body: UpdateInitializerSettingRequest,
-) -> InitializerSettingResponse:
+) -> InitializerSetting:
     """
     Validate and save one initializer override row.
 
@@ -134,13 +134,12 @@ async def save_initializer_settings(  # pyrit-async-suffix-exempt
         body: The override payload to persist.
 
     Returns:
-        InitializerSettingResponse: The saved override row.
+        InitializerSetting: The saved override row.
     """
     service = get_initializer_service()
     try:
         return await service.save_initializer_setting_async(
             initializer_name=initializer_name,
-            enabled=body.enabled,
             parameters=body.parameters,
             order_index=body.order_index,
         )

@@ -121,7 +121,6 @@ export interface RegisteredInitializer {
 export type InitializerSource = 'baseline' | 'override' | 'baseline+override'
 
 export interface EffectiveInitializerSetting extends RegisteredInitializer {
-  enabled: boolean
   parameters?: Record<string, unknown> | null
   order_index: number
   saved_order_index?: number | null
@@ -133,14 +132,12 @@ export interface InitializerSettingsResponse {
 }
 
 export interface UpdateInitializerSettingRequest {
-  enabled: boolean
   parameters?: Record<string, unknown> | null
   order_index?: number | null
 }
 
 export interface SavedInitializerSetting {
   initializer_name: string
-  enabled: boolean
   parameters?: Record<string, unknown> | null
   order_index?: number | null
 }

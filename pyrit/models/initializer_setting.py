@@ -14,7 +14,6 @@ class InitializerSetting(BaseModel):
     """Saved override for a registered initializer."""
 
     initializer_name: str = Field(..., description="Initializer registry name.")
-    enabled: bool = Field(default=True, description="Whether the initializer is enabled.")
     parameters: dict[str, Any] | None = Field(
         default=None,
         description="JSON-serializable parameter overrides for this initializer.",
