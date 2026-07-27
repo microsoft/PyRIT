@@ -3,7 +3,8 @@ name: trustairlab_8fca8f729e38a265
 description: 'Community-posted jailbreak prompt collected in the wild from the reddit source ''ChatGPTPromptGenius'' by the TrustAIRLab ''In-The-Wild Jailbreak Prompts'' study (Shen et al., 2024) and curated by that dataset''s authors. It has been converted into a reusable single-slot jailbreak wrapper: a Jinja {{ prompt }} slot was appended at its natural final user-request position so a fresh user request can be inserted. Original user identities and handles are not included.'
 authors: []
 groups:
-- TrustAIRLab
+- CISPA Helmholtz Center for Information Security
+- NetApp
 source: https://huggingface.co/datasets/TrustAIRLab/in-the-wild-jailbreak-prompts
 dataset_name: trustairlab_in_the_wild_jailbreak_2023_12_25
 parameters:

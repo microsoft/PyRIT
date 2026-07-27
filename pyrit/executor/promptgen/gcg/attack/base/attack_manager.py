@@ -1819,7 +1819,7 @@ class ModelWorker:
     def __init__(
         self,
         model_path: str,
-        token: str,
+        token: str | None,
         model_kwargs: dict[str, Any],
         tokenizer: Any,
         device: str,
