@@ -26,11 +26,8 @@ jest.mock("./msalConfig", () => ({
 }));
 
 const mockSetMsalInstance = jest.fn();
-const mockSetClientId = jest.fn();
-
 jest.mock("../services/api", () => ({
   setMsalInstance: (...args: unknown[]) => mockSetMsalInstance(...args),
-  setClientId: (...args: unknown[]) => mockSetClientId(...args),
 }));
 
 // MSAL browser mocks — PublicClientApplication instance methods
@@ -200,7 +197,6 @@ describe("AuthProvider", () => {
     expect(mockInitialize).toHaveBeenCalled();
     expect(mockHandleRedirectPromise).toHaveBeenCalled();
     expect(mockSetMsalInstance).toHaveBeenCalled();
-    expect(mockSetClientId).toHaveBeenCalledWith("test-client");
   });
 
   // Test 16: handleRedirectPromise returns account → setActiveAccount called

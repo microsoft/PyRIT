@@ -24,7 +24,7 @@ import {
 } from '@azure/msal-react'
 import { fetchAuthConfig, buildMsalConfig, buildLoginRequest, type AuthConfig } from './msalConfig'
 import { AuthConfigContext, useAuthConfig } from './AuthConfigContext'
-import { setMsalInstance as setApiMsalInstance, setClientId as setApiClientId } from '../services/api'
+import { setMsalInstance as setApiMsalInstance } from '../services/api'
 
 function LoginRedirect() {
   const { instance } = useMsal()
@@ -35,7 +35,7 @@ function LoginRedirect() {
     // after the login round-trip (see the redirect handling in initMsal).
     instance
       .loginRedirect({
-        ...buildLoginRequest(config.clientId),
+        ...buildLoginRequest(),
         state: window.location.pathname + window.location.search,
       })
       .catch((error) => {
@@ -129,7 +129,6 @@ export function AuthProvider({ children }: AuthProviderProps) {
           // Wire MSAL into the API client BEFORE React re-render,
           // so child components' effects already have the token available.
           setApiMsalInstance(instance)
-          setApiClientId(config.clientId)
           setMsalInstance(instance)
           setAuthConfig(config)
         }
