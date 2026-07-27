@@ -9,6 +9,7 @@ unregistering initializers) plus persisted initializer override rows stored in
 Central Memory.
 """
 
+import asyncio
 import logging
 from collections.abc import Sequence
 from functools import lru_cache
@@ -246,6 +247,11 @@ class InitializerService:
         """
         Build, validate, and run one initializer immediately.
 
+        The build/validate/initialize steps run in a worker thread because an initializer's
+        ``initialize_async`` can perform blocking I/O (e.g. target construction acquiring Entra
+        tokens). Running it inline would block the event loop and make the backend unresponsive
+        to concurrent requests for the duration of the apply.
+
         Args:
             initializer_name: The initializer registry name to execute.
             parameters: Optional one-time parameters. When omitted, any saved override
@@ -255,12 +261,16 @@ class InitializerService:
             ApplyInitializerResponse: Success metadata for the apply-now execution.
         """
         resolved_parameters = parameters if parameters is not None else self._get_saved_parameters(initializer_name)
-        initializer = self._registry.create_and_configure(
-            initializer_name,
-            initializer_params=resolved_parameters or None,
-        )
-        initializer.validate()
-        await initializer.initialize_async()
+
+        def _build_and_apply() -> None:
+            initializer = self._registry.create_and_configure(
+                initializer_name,
+                initializer_params=resolved_parameters or None,
+            )
+            initializer.validate()
+            asyncio.run(initializer.initialize_async())
+
+        await asyncio.to_thread(_build_and_apply)
 
         return ApplyInitializerResponse(
             initializer_name=initializer_name,
