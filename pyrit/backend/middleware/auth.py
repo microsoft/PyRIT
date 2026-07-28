@@ -17,7 +17,6 @@ from dataclasses import dataclass
 from hashlib import sha256
 from time import monotonic
 from typing import Any, ClassVar
-from urllib.parse import urlparse
 
 import httpx
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
@@ -58,15 +57,10 @@ class EntraAuthMiddleware(BaseHTTPMiddleware):
         "/api/media",
     }
 
-    # Hosts the user's Bearer token may be forwarded to
-    _GRAPH_HOSTS: ClassVar[set[str]] = {"graph.microsoft.com"}
-
-    # Trusted URL for resolving group membership; built from a constant (not the
-    # token-supplied endpoint) so token data cannot control the request destination.
     _GRAPH_ME_URL: ClassVar[str] = "https://graph.microsoft.com/v1.0/me?$select=id,displayName,mail,userPrincipalName"
-    _GRAPH_MEMBER_OBJECTS_URL: ClassVar[str] = "https://graph.microsoft.com/v1.0/me/getMemberObjects"
+    _GRAPH_CHECK_MEMBER_GROUPS_URL: ClassVar[str] = "https://graph.microsoft.com/v1.0/me/checkMemberGroups"
     _GRAPH_TIMEOUT_SECONDS: ClassVar[float] = 10.0
-    _GRAPH_MAX_MEMBERSHIP_PAGES: ClassVar[int] = 20
+    _GRAPH_MAX_GROUP_IDS_PER_REQUEST: ClassVar[int] = 20
     _AUTH_CACHE_TTL_SECONDS: ClassVar[float] = 60.0
     _AUTH_CACHE_MAX_ENTRIES: ClassVar[int] = 256
 
@@ -222,7 +216,7 @@ class EntraAuthMiddleware(BaseHTTPMiddleware):
                     logger.warning("Microsoft Graph returned an invalid user profile")
                     raise self._graph_unavailable_error()
 
-                groups = await self._resolve_group_memberships_async(client=client, token=token)
+                groups = await self._check_group_memberships_async(client=client, token=token)
                 user.groups = groups
 
                 return user
@@ -239,38 +233,37 @@ class EntraAuthMiddleware(BaseHTTPMiddleware):
         """
         return bool(self._allowed_group_ids & set(user.groups))
 
-    async def _resolve_group_memberships_async(self, *, client: httpx.AsyncClient, token: str) -> list[str]:
+    async def _check_group_memberships_async(self, *, client: httpx.AsyncClient, token: str) -> list[str]:
         """
-        Resolve the current user's transitive group memberships through Graph.
+        Check which allowed groups contain the current user through Graph.
 
         Args:
             client (httpx.AsyncClient): The asynchronous Graph HTTP client.
             token (str): The opaque Graph access token.
 
         Returns:
-            list[str]: The current user's transitive group IDs.
+            list[str]: The allowed group IDs containing the current user.
 
         Raises:
             AuthenticationError: If Graph rejects or cannot complete the lookup.
         """
-        response = await client.post(
-            self._GRAPH_MEMBER_OBJECTS_URL,
-            headers={
-                "Authorization": f"Bearer {token}",
-                "Content-Type": "application/json",
-            },
-            json={"securityEnabledOnly": True},
-            timeout=self._GRAPH_TIMEOUT_SECONDS,
-        )
-        group_ids: list[str] = []
-        page_count = 0
-
-        while True:
-            page_count += 1
+        matched_group_ids: list[str] = []
+        allowed_group_ids = sorted(self._allowed_group_ids)
+        for offset in range(0, len(allowed_group_ids), self._GRAPH_MAX_GROUP_IDS_PER_REQUEST):
+            group_ids = allowed_group_ids[offset : offset + self._GRAPH_MAX_GROUP_IDS_PER_REQUEST]
+            response = await client.post(
+                self._GRAPH_CHECK_MEMBER_GROUPS_URL,
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Content-Type": "application/json",
+                },
+                json={"groupIds": group_ids},
+                timeout=self._GRAPH_TIMEOUT_SECONDS,
+            )
             if response.status_code != 200:
                 raise self._graph_error(
                     status_code=response.status_code,
-                    operation="group membership lookup",
+                    operation="group membership check",
                 )
 
             data = response.json()
@@ -279,40 +272,10 @@ class EntraAuthMiddleware(BaseHTTPMiddleware):
             values = data.get("value")
             if not isinstance(values, list) or not all(isinstance(value, str) for value in values):
                 raise ValueError("Microsoft Graph returned invalid group membership data")
-            group_ids.extend(values)
+            matched_group_ids.extend(values)
 
-            next_link = data.get("@odata.nextLink")
-            if next_link is None:
-                logger.debug("Group resolution returned %d group memberships", len(group_ids))
-                return group_ids
-            if page_count >= self._GRAPH_MAX_MEMBERSHIP_PAGES:
-                logger.warning("Microsoft Graph group pagination exceeded %d pages", self._GRAPH_MAX_MEMBERSHIP_PAGES)
-                raise self._graph_unavailable_error()
-            if not isinstance(next_link, str) or not self._is_trusted_graph_url(next_link):
-                logger.warning("Microsoft Graph returned an untrusted group pagination link")
-                raise self._graph_unavailable_error()
-
-            response = await client.get(
-                next_link,
-                headers={"Authorization": f"Bearer {token}"},
-                timeout=self._GRAPH_TIMEOUT_SECONDS,
-            )
-
-    def _is_trusted_graph_url(self, url: str) -> bool:
-        """
-        Whether *url* is an HTTPS Microsoft Graph URL safe to forward the token to.
-
-        Returns:
-            True if *url* uses HTTPS and its host is in the Graph allowlist, False otherwise.
-        """
-        parsed = urlparse(url)
-        return (
-            parsed.scheme == "https"
-            and parsed.hostname in self._GRAPH_HOSTS
-            and parsed.username is None
-            and parsed.password is None
-            and parsed.port in {None, 443}
-        )
+        logger.debug("Group membership check matched %d allowed groups", len(matched_group_ids))
+        return matched_group_ids
 
     def _user_from_graph_profile(self, profile: dict[str, Any]) -> AuthenticatedUser | None:
         """

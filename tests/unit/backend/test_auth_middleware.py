@@ -62,20 +62,6 @@ def test_init_allows_auth_disabled_when_configuration_is_absent() -> None:
     assert middleware._enabled is False
 
 
-@pytest.mark.parametrize(
-    "url, expected",
-    [
-        ("https://graph.microsoft.com/v1.0/me/getMemberObjects", True),
-        ("http://graph.microsoft.com/v1.0/me/getMemberObjects", False),
-        ("https://evil.com/v1.0/me/getMemberObjects", False),
-        ("https://user@graph.microsoft.com/x", False),
-        ("https://graph.microsoft.com:444/x", False),
-    ],
-)
-def test_is_trusted_graph_url(url: str, expected: bool) -> None:
-    assert _make_middleware()._is_trusted_graph_url(url) is expected
-
-
 async def test_authenticate_with_graph_resolves_groups_when_restricted() -> None:
     middleware = _make_middleware(allowed_group_ids="group-1")
     client = AsyncMock(spec=httpx.AsyncClient)
@@ -88,15 +74,16 @@ async def test_authenticate_with_graph_resolves_groups_when_restricted() -> None
             "userPrincipalName": "test@example.com",
         },
     )
-    client.post.return_value = _response(status_code=200, data={"value": ["group-1", "group-2"]})
+    client.post.return_value = _response(status_code=200, data={"value": ["group-1"]})
 
     with patch("pyrit.backend.middleware.auth.httpx.AsyncClient", return_value=_client_context(client)):
         result = await middleware._authenticate_with_graph_async(token="graph-token")
 
     assert isinstance(result, AuthenticatedUser)
     assert result.email == "test@example.com"
-    assert result.groups == ["group-1", "group-2"]
-    assert client.post.call_args.args[0] == EntraAuthMiddleware._GRAPH_MEMBER_OBJECTS_URL
+    assert result.groups == ["group-1"]
+    assert client.post.call_args.args[0] == EntraAuthMiddleware._GRAPH_CHECK_MEMBER_GROUPS_URL
+    assert client.post.call_args.kwargs["json"] == {"groupIds": ["group-1"]}
 
 
 @pytest.mark.parametrize(
@@ -140,45 +127,31 @@ async def test_authenticate_with_graph_rejects_non_object_profile() -> None:
     assert error.value.status_code == 503
 
 
-async def test_resolve_group_memberships_rejects_untrusted_pagination_link() -> None:
-    middleware = _make_middleware(allowed_group_ids="group-1")
+async def test_check_group_memberships_batches_allowed_group_ids() -> None:
+    allowed_group_ids = [f"group-{index:02}" for index in range(21)]
+    middleware = _make_middleware(allowed_group_ids=",".join(reversed(allowed_group_ids)))
     client = AsyncMock(spec=httpx.AsyncClient)
-    client.post.return_value = _response(
-        status_code=200,
-        data={"value": ["group-1"], "@odata.nextLink": "https://evil.com/next"},
-    )
+    client.post.side_effect = [
+        _response(status_code=200, data={"value": ["group-00"]}),
+        _response(status_code=200, data={"value": ["group-20"]}),
+    ]
 
-    with pytest.raises(AuthenticationError) as error:
-        await middleware._resolve_group_memberships_async(client=client, token="graph-token")
+    result = await middleware._check_group_memberships_async(client=client, token="graph-token")
 
-    assert error.value.status_code == 503
-    client.get.assert_not_called()
-
-
-async def test_resolve_group_memberships_follows_trusted_pagination_link() -> None:
-    middleware = _make_middleware()
-    client = AsyncMock(spec=httpx.AsyncClient)
-    next_link = "https://graph.microsoft.com/v1.0/me/getMemberObjects?$skiptoken=next"
-    client.post.return_value = _response(
-        status_code=200,
-        data={"value": ["group-1"], "@odata.nextLink": next_link},
-    )
-    client.get.return_value = _response(status_code=200, data={"value": ["group-2"]})
-
-    result = await middleware._resolve_group_memberships_async(client=client, token="graph-token")
-
-    assert result == ["group-1", "group-2"]
-    assert client.get.call_args.args[0] == next_link
+    assert result == ["group-00", "group-20"]
+    assert client.post.await_count == 2
+    assert client.post.await_args_list[0].kwargs["json"] == {"groupIds": allowed_group_ids[:20]}
+    assert client.post.await_args_list[1].kwargs["json"] == {"groupIds": allowed_group_ids[20:]}
 
 
 @pytest.mark.parametrize("graph_status, expected_status", [(401, 401), (403, 403), (429, 503)])
-async def test_resolve_group_memberships_maps_graph_errors(graph_status: int, expected_status: int) -> None:
+async def test_check_group_memberships_maps_graph_errors(graph_status: int, expected_status: int) -> None:
     middleware = _make_middleware()
     client = AsyncMock(spec=httpx.AsyncClient)
     client.post.return_value = _response(status_code=graph_status, data={})
 
     with pytest.raises(AuthenticationError) as error:
-        await middleware._resolve_group_memberships_async(client=client, token="graph-token")
+        await middleware._check_group_memberships_async(client=client, token="graph-token")
 
     assert error.value.status_code == expected_status
 
@@ -198,25 +171,6 @@ async def test_authenticate_with_graph_rejects_non_object_membership_data() -> N
             await middleware._authenticate_with_graph_async(token="graph-token")
 
     assert error.value.status_code == 503
-
-
-async def test_resolve_group_memberships_limits_pagination() -> None:
-    middleware = _make_middleware()
-    middleware._GRAPH_MAX_MEMBERSHIP_PAGES = 1
-    client = AsyncMock(spec=httpx.AsyncClient)
-    client.post.return_value = _response(
-        status_code=200,
-        data={
-            "value": ["group-1"],
-            "@odata.nextLink": "https://graph.microsoft.com/v1.0/me/getMemberObjects?$skiptoken=next",
-        },
-    )
-
-    with pytest.raises(AuthenticationError) as error:
-        await middleware._resolve_group_memberships_async(client=client, token="graph-token")
-
-    assert error.value.status_code == 503
-    client.get.assert_not_called()
 
 
 async def test_authenticate_request_denies_and_does_not_cache_unauthorized_user() -> None:
