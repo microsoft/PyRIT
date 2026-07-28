@@ -109,6 +109,15 @@ describe("Navigation", () => {
     expect(onOpenFeedback).toHaveBeenCalledTimes(1);
   });
 
+  it("links to the public security policy", () => {
+    renderWithProvider(<Navigation {...defaultProps} />);
+
+    expect(screen.getByRole("link", { name: "Security" })).toHaveAttribute(
+      "href",
+      "https://github.com/microsoft/PyRIT/security/policy"
+    );
+  });
+
   it("calls onNavigate with 'history' when history button is clicked", async () => {
     const user = userEvent.setup();
     const onNavigate = jest.fn();
