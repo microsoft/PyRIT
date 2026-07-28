@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 from uuid import uuid4
 
 from pydantic import (
@@ -42,6 +42,8 @@ class MessagePiece(BaseModel):
     as a list of ``MessagePiece`` instances grouped under one
     ``Message``.
     """
+
+    STRUCTURED_REFUSAL_METADATA_KEY: ClassVar[str] = "structured_refusal"
 
     model_config = ConfigDict(
         arbitrary_types_allowed=True,
@@ -165,6 +167,37 @@ class MessagePiece(BaseModel):
             ``True`` if the response was blocked by the target / content filter.
         """
         return self.response_error == "blocked"
+
+    def mark_as_structured_refusal(self, *, refusal: str) -> None:
+        """
+        Record an SDK-provided model refusal on this blocked response piece.
+
+        Args:
+            refusal: The model's refusal explanation.
+
+        Raises:
+            ValueError: If the piece is not a blocked assistant response or the refusal
+                explanation is empty.
+        """
+        if not self.is_blocked() or self.api_role != "assistant":
+            raise ValueError("Structured refusals must be recorded on blocked assistant response pieces.")
+        if not refusal:
+            raise ValueError("Structured refusal text cannot be empty.")
+        self.prompt_metadata[self.STRUCTURED_REFUSAL_METADATA_KEY] = refusal
+
+    def get_structured_refusal(self) -> str | None:
+        """
+        Return the SDK-provided refusal explanation, if present.
+
+        Returns:
+            The refusal explanation for a structured model refusal, otherwise ``None``.
+        """
+        refusal = self.prompt_metadata.get(self.STRUCTURED_REFUSAL_METADATA_KEY)
+        return refusal if isinstance(refusal, str) and refusal else None
+
+    def is_structured_refusal(self) -> bool:
+        """Return whether this piece represents an SDK-provided model refusal."""
+        return self.is_blocked() and self.get_structured_refusal() is not None
 
     # ------------------------------------------------------------------ #
     # Adversarial placeholder support

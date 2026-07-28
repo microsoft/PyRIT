@@ -24,11 +24,11 @@ from pyrit.exceptions.exception_classes import (
     PyritException,
     RateLimitException,
 )
-from pyrit.executor.attack import AttackExecutor, PromptSendingAttack
+from pyrit.executor.attack import AttackExecutor, AttackScoringConfig, PromptSendingAttack
 from pyrit.memory.memory_interface import MemoryInterface
-from pyrit.models import JsonResponseConfig, Message, MessagePiece, flatten_to_message_pieces
+from pyrit.models import AttackOutcome, JsonResponseConfig, Message, MessagePiece, flatten_to_message_pieces
 from pyrit.prompt_target import OpenAIResponseTarget, PromptTarget
-from pyrit.score import SelfAskRefusalScorer
+from pyrit.score import SelfAskRefusalScorer, TrueFalseInverterScorer
 
 
 def create_mock_response(response_dict: dict = None) -> MagicMock:
@@ -773,6 +773,40 @@ async def test_build_input_for_multi_modal_async_filters_reasoning(target: OpenA
     assert result[2]["content"][0]["text"] == "Hello indeed"
 
 
+async def test_build_input_for_multi_modal_async_serializes_structured_refusal(target: OpenAIResponseTarget):
+    refusal = "I cannot assist with that request."
+    refusal_piece = MessagePiece(
+        role="assistant",
+        original_value='{"status_code":200,"message":"refusal"}',
+        original_value_data_type="error",
+        converted_value_data_type="error",
+        response_error="blocked",
+    )
+    refusal_piece.mark_as_structured_refusal(refusal=refusal)
+
+    result = await target._build_input_for_multi_modal_async([Message(message_pieces=[refusal_piece])])
+
+    assert result == [
+        {
+            "role": "assistant",
+            "content": [{"type": "output_text", "text": refusal}],
+        }
+    ]
+
+
+async def test_build_input_for_multi_modal_async_rejects_generic_error(target: OpenAIResponseTarget):
+    error_piece = MessagePiece(
+        role="assistant",
+        original_value="transport failed",
+        original_value_data_type="error",
+        converted_value_data_type="error",
+        response_error="processing",
+    )
+
+    with pytest.raises(ValueError, match="Unsupported data type 'error'"):
+        await target._build_input_for_multi_modal_async([Message(message_pieces=[error_piece])])
+
+
 # New pytests
 async def test_build_input_for_multi_modal_async_system_message_maps_to_developer(target: OpenAIResponseTarget):
     system_piece = MessagePiece(
@@ -1298,6 +1332,7 @@ async def test_send_prompt_async_returns_blocked_refusal(
     assert refusal_piece.original_value_data_type == "error"
     assert refusal_piece.response_error == "blocked"
     assert json.loads(refusal_piece.original_value)["message"] == refusal
+    assert refusal_piece.get_structured_refusal() == refusal
 
 
 async def test_structured_refusal_is_persisted_scored_and_completes_attack(target: OpenAIResponseTarget):
@@ -1315,8 +1350,15 @@ async def test_structured_refusal_is_persisted_scored_and_completes_attack(targe
     mock_response.output = [output_message]
     target._async_client.responses.create = AsyncMock(return_value=mock_response)
 
+    scorer_target = MagicMock(spec=PromptTarget)
+    scorer_target.get_identifier.return_value = get_mock_target_identifier("RefusalScorerTarget")
+    refusal_scorer = SelfAskRefusalScorer(chat_target=scorer_target)
+    objective_scorer = TrueFalseInverterScorer(scorer=refusal_scorer)
     results = await AttackExecutor(max_concurrency=1).execute_attack_async(
-        attack=PromptSendingAttack(objective_target=target),
+        attack=PromptSendingAttack(
+            objective_target=target,
+            attack_scoring_config=AttackScoringConfig(objective_scorer=objective_scorer),
+        ),
         objectives=["Test objective"],
         return_partial_on_failure=True,
     )
@@ -1329,21 +1371,73 @@ async def test_structured_refusal_is_persisted_scored_and_completes_attack(targe
     assert refusal_piece.response_error == "blocked"
     assert json.loads(refusal_piece.original_value)["message"] == refusal
     assert json.loads(refusal_piece.converted_value)["message"] == refusal
+    assert refusal_piece.get_structured_refusal() == refusal
+    assert attack_result.last_score is not None
+    assert attack_result.last_score.get_value() is False
+    assert attack_result.outcome == AttackOutcome.FAILURE
 
     persisted_messages = target._memory.get_conversation_messages(conversation_id=attack_result.conversation_id)
     persisted_piece = persisted_messages[-1].get_piece()
     assert persisted_piece.id == refusal_piece.id
     assert json.loads(persisted_piece.original_value)["message"] == refusal
+    assert persisted_piece.get_structured_refusal() == refusal
 
-    scorer_target = MagicMock(spec=PromptTarget)
-    scorer_target.get_identifier.return_value = get_mock_target_identifier("RefusalScorerTarget")
-    scorer = SelfAskRefusalScorer(chat_target=scorer_target)
-    scores = await scorer.score_async(refusal_piece.to_message())
-
-    assert len(scores) == 1
-    assert scores[0].get_value() is True
-    assert scores[0].score_value_description == "Refusal detected"
     scorer_target.send_prompt_async.assert_not_called()
+
+
+async def test_reasoning_preceding_refusal_keeps_refusal_as_primary_response(
+    target: OpenAIResponseTarget, dummy_text_message_piece: MessagePiece
+):
+    reasoning = MagicMock()
+    reasoning.type = "reasoning"
+    reasoning.model_dump.return_value = {
+        "type": "reasoning",
+        "summary": [{"type": "summary_text", "text": "Reasoning summary."}],
+    }
+    refusal = "I cannot assist with that request."
+    output_message = ResponseOutputMessage(
+        id="refusal-message",
+        content=[ResponseOutputRefusal(refusal=refusal, type="refusal")],
+        role="assistant",
+        status="completed",
+        type="message",
+    )
+    mock_response = MagicMock(error=None, status="completed", output=[reasoning, output_message])
+    request = Message(message_pieces=[dummy_text_message_piece])
+
+    with patch.object(target._async_client.responses, "create", new=AsyncMock(return_value=mock_response)):
+        responses = await target.send_prompt_async(message=request)
+
+    pieces = responses[0].message_pieces
+    assert pieces[0].get_structured_refusal() == refusal
+    assert pieces[1].converted_value_data_type == "reasoning"
+
+
+async def test_reasoning_preceding_text_keeps_text_as_primary_response(
+    target: OpenAIResponseTarget, dummy_text_message_piece: MessagePiece
+):
+    reasoning = MagicMock()
+    reasoning.type = "reasoning"
+    reasoning.model_dump.return_value = {
+        "type": "reasoning",
+        "summary": [{"type": "summary_text", "text": "Reasoning summary."}],
+    }
+    output_message = ResponseOutputMessage(
+        id="text-message",
+        content=[ResponseOutputText(annotations=[], text="Final answer", type="output_text")],
+        role="assistant",
+        status="completed",
+        type="message",
+    )
+    mock_response = MagicMock(error=None, status="completed", output=[reasoning, output_message])
+    request = Message(message_pieces=[dummy_text_message_piece])
+
+    with patch.object(target._async_client.responses, "create", new=AsyncMock(return_value=mock_response)):
+        responses = await target.send_prompt_async(message=request)
+
+    pieces = responses[0].message_pieces
+    assert pieces[0].converted_value == "Final answer"
+    assert pieces[1].converted_value_data_type == "reasoning"
 
 
 # ── Reasoning effort / summary tests ───────────────────────────────────────

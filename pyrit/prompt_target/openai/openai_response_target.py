@@ -234,15 +234,22 @@ class OpenAIResponseTarget(OpenAITarget):
         Convert a single inline piece into a Responses API content item.
 
         Args:
-            piece: The inline piece (text or image_path).
+            piece: The inline piece (text, image_path, or structured refusal).
 
         Returns:
             A dict in the Responses API content item shape.
 
         Raises:
-            ValueError: If the piece type is not supported for inline content. Supported types are text and
-                image paths.
+            ValueError: If the piece type is not supported for inline content.
         """
+        structured_refusal = piece.get_structured_refusal()
+        if piece.is_structured_refusal() and structured_refusal:
+            if piece.api_role != "assistant":
+                raise ValueError("Structured refusals can only be serialized as assistant output.")
+            return {
+                "type": "output_text",
+                "text": structured_refusal,
+            }
         if piece.converted_value_data_type == "text":
             return {
                 "type": "input_text" if piece.api_role in ["developer", "user"] else "output_text",
@@ -307,8 +314,8 @@ class OpenAIResponseTarget(OpenAITarget):
                 if dtype == "reasoning":
                     continue
 
-                # Inline content (text/images) - accumulate in content list
-                if dtype in {"text", "image_path"}:
+                # Inline content (text/images/structured refusals) - accumulate in content list
+                if dtype in {"text", "image_path"} or piece.is_structured_refusal():
                     content.append(await self._construct_input_item_from_piece_async(piece))
                     continue
 
@@ -569,6 +576,11 @@ class OpenAIResponseTarget(OpenAITarget):
                 continue
             extracted_response_pieces.append(piece)
 
+        # Consumers use the first piece as the semantic response. Responses API
+        # reasoning commonly precedes the actual message in provider output, so
+        # retain it for memory/debugging after the actionable response pieces.
+        extracted_response_pieces.sort(key=lambda piece: piece.converted_value_data_type == "reasoning")
+
         return Message(message_pieces=extracted_response_pieces)
 
     @limit_requests_per_minute
@@ -681,13 +693,15 @@ class OpenAIResponseTarget(OpenAITarget):
             content_item.refusal for content_item in content if isinstance(content_item, ResponseOutputRefusal)
         ]
         if refusal_parts:
+            refusal_text = "\n".join(refusal_parts)
             refusal_message = handle_bad_request_exception(
-                response_text="\n".join(refusal_parts),
+                response_text=refusal_text,
                 request=message_piece,
                 error_code=200,
                 is_content_filter=True,
             )
             refusal_piece = refusal_message.message_pieces[0]
+            refusal_piece.mark_as_structured_refusal(refusal=refusal_text)
             if text_parts:
                 refusal_piece.prompt_metadata["partial_content"] = "\n".join(text_parts)
             return refusal_piece

@@ -113,6 +113,7 @@ def _build_blocked_message(
     response_text: str,
     request: MessagePiece,
     partial_content: str | None = None,
+    structured_refusal: str | None = None,
 ) -> Message:
     error_message = handle_bad_request_exception(
         response_text=response_text,
@@ -124,6 +125,10 @@ def _build_blocked_message(
     if partial_content:
         for piece in error_message.message_pieces:
             piece.prompt_metadata["partial_content"] = partial_content
+
+    if structured_refusal:
+        for piece in error_message.message_pieces:
+            piece.mark_as_structured_refusal(refusal=structured_refusal)
 
     return error_message
 
@@ -270,6 +275,7 @@ async def build_response_pieces_async(
             response_text=refusal,
             request=request,
             partial_content=partial_content,
+            structured_refusal=refusal,
         ).message_pieces
 
     if content:

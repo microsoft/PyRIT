@@ -865,7 +865,7 @@ def test_update_scenario_run_state_updates_state_and_error_fields(
 
     # State and error fields updated.
     [hydrated] = sqlite_instance.get_scenario_results(scenario_result_ids=[sid])
-    assert hydrated.scenario_run_state == "FAILED"
+    assert hydrated.scenario_run_state == ScenarioRunState.FAILED
     assert hydrated.error_message == "boom"
     assert hydrated.error_type == "RuntimeError"
 

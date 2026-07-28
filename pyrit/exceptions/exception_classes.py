@@ -220,8 +220,13 @@ class ScorerLLMResponseBlockedException(BadRequestException):
         super().__init__(status_code=status_code, message=message)
 
 
-class ScenarioPartialFailureException(PyritException):
-    """Exception raised when a scenario's atomic attack only partially completes."""
+class ScenarioPartialFailureException(PyritException, ValueError):  # noqa: N818
+    """
+    Exception raised when a scenario's atomic attack only partially completes.
+
+    ``ValueError`` remains a secondary base for compatibility with callers that
+    caught the legacy synthetic exception. New code should catch this dedicated type.
+    """
 
     def __init__(
         self,

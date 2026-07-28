@@ -2880,7 +2880,7 @@ class MemoryInterface(abc.ABC):
         self,
         *,
         scenario_result_id: str,
-        scenario_run_state: ScenarioRunState | str,
+        scenario_run_state: ScenarioRunState,
         error_message: str | None = None,
         error_type: str | None = None,
     ) -> None:
@@ -2892,8 +2892,7 @@ class MemoryInterface(abc.ABC):
 
         Args:
             scenario_result_id (str): The ID of the scenario result to update.
-            scenario_run_state (ScenarioRunState | str): The new state for the scenario
-                (e.g., "CREATED", "IN_PROGRESS", "COMPLETED", "FAILED").
+            scenario_run_state (ScenarioRunState): The new state for the scenario.
             error_message (str | None): Optional scenario-level error message.
             error_type (str | None): Optional exception class name.
 

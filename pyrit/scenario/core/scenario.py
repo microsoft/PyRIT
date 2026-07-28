@@ -1029,10 +1029,13 @@ class Scenario(ABC):
             >>> print(f"Total results: {len(result.attack_results)}")
         """
         if not self._atomic_attacks:
-            raise ValueError(
+            error = ValueError(
                 "Cannot run scenario with no atomic attacks. Either supply them in initialization or "
                 "call await scenario.initialize_async() first."
             )
+            if self._scenario_result_id:
+                self._mark_scenario_failed(scenario_result_id=self._scenario_result_id, error=error)
+            raise error
 
         if not self._scenario_result_id:
             raise ValueError("Scenario not properly initialized. Call await scenario.initialize_async() first.")
@@ -1069,6 +1072,7 @@ class Scenario(ABC):
                     f"(initial + {self._max_retries} retries) with error: {str(e)}. Giving up.",
                     exc_info=True,
                 )
+                self._mark_scenario_failed(scenario_result_id=scenario_result_id, error=e)
                 raise
 
         # This should never be reached, but just in case
@@ -1111,6 +1115,12 @@ class Scenario(ABC):
         else:
             raise ValueError(f"Scenario result with ID {scenario_result_id} not found")
 
+        # Mark scenario as in progress
+        self._memory.update_scenario_run_state(
+            scenario_result_id=scenario_result_id,
+            scenario_run_state=ScenarioRunState.IN_PROGRESS,
+        )
+
         # Get remaining atomic attacks (filters out completed ones and updates objectives)
         remaining_attacks = await self._get_remaining_atomic_attacks_async()
 
@@ -1130,12 +1140,6 @@ class Scenario(ABC):
         logger.info(
             f"Scenario '{self._name}' has {len(remaining_attacks)} atomic attacks "
             f"with remaining objectives (out of {len(self._atomic_attacks)} total)"
-        )
-
-        # Mark scenario as in progress
-        self._memory.update_scenario_run_state(
-            scenario_result_id=scenario_result_id,
-            scenario_run_state=ScenarioRunState.IN_PROGRESS,
         )
 
         # Calculate starting index based on completed attacks
@@ -1309,7 +1313,6 @@ class Scenario(ABC):
                 if len(errors) == 1
                 else ExceptionGroup(f"Multiple atomic attacks failed in scenario '{self._name}'", errors)
             )
-            self._mark_scenario_failed(scenario_result_id=scenario_result_id, error=final_error)
             raise final_error
 
     def _collect_errors_from_outcomes(

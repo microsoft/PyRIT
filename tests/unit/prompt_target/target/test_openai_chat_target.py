@@ -538,6 +538,7 @@ async def test_send_prompt_async_content_filter_200(target: OpenAIChatTarget):
     assert len(response[0].message_pieces) == 1
     assert response[0].message_pieces[0].response_error == "blocked"
     assert response[0].message_pieces[0].converted_value_data_type == "error"
+    assert not response[0].message_pieces[0].is_structured_refusal()
 
 
 async def test_send_prompt_async_structured_refusal(target: OpenAIChatTarget):
@@ -573,6 +574,7 @@ async def test_send_prompt_async_structured_refusal(target: OpenAIChatTarget):
     assert refusal_piece.original_value_data_type == "error"
     assert refusal_piece.response_error == "blocked"
     assert json.loads(refusal_piece.original_value)["message"] == refusal
+    assert refusal_piece.get_structured_refusal() == refusal
 
 
 def test_validate_request_unsupported_data_types(target: OpenAIChatTarget):
