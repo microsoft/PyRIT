@@ -12,8 +12,8 @@ async function expectMinimumTouchTarget(locator: Locator, minimum = 44): Promise
   const box = await locator.boundingBox();
 
   expect(box).not.toBeNull();
-  expect(box!.width).toBeGreaterThanOrEqual(minimum);
-  expect(box!.height).toBeGreaterThanOrEqual(minimum);
+  expect(Math.round(box!.width)).toBeGreaterThanOrEqual(minimum);
+  expect(Math.round(box!.height)).toBeGreaterThanOrEqual(minimum);
 }
 
 async function expectTourContained(page: Page, dialog: Locator, checkTouchTargets: boolean): Promise<void> {

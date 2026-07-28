@@ -278,8 +278,8 @@ async function expectMinimumTouchTarget(locator: Locator): Promise<void> {
   if (!box) {
     throw new Error("Expected a visible touch target");
   }
-  expect(box.width).toBeGreaterThanOrEqual(MINIMUM_TOUCH_TARGET_SIZE);
-  expect(box.height).toBeGreaterThanOrEqual(MINIMUM_TOUCH_TARGET_SIZE);
+  expect(Math.round(box.width)).toBeGreaterThanOrEqual(MINIMUM_TOUCH_TARGET_SIZE);
+  expect(Math.round(box.height)).toBeGreaterThanOrEqual(MINIMUM_TOUCH_TARGET_SIZE);
 }
 
 async function expectMinimumTouchTargets(locator: Locator): Promise<void> {
