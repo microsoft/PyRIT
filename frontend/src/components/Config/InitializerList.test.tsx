@@ -1,4 +1,4 @@
-import { render, screen, within } from '@testing-library/react'
+import { fireEvent, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { FluentProvider, webLightTheme } from '@fluentui/react-components'
 
@@ -49,13 +49,13 @@ const scorerInitializer: RegisteredInitializer = {
 const sampleItems: AdditionalInitializerSetting[] = [
   {
     id: 'additional-1',
-    initializer: targetInitializer,
+    initializer_name: 'target',
     parameters: { tags: ['default'] },
     order_index: 2,
   },
   {
     id: 'additional-2',
-    initializer: scorerInitializer,
+    initializer_name: 'scorer',
     parameters: null,
     order_index: null,
   },
@@ -64,6 +64,7 @@ const sampleItems: AdditionalInitializerSetting[] = [
 describe('InitializerList', () => {
   const defaultProps = {
     items: sampleItems,
+    registeredInitializers: [targetInitializer, scorerInitializer],
     onSave: jest.fn().mockResolvedValue(undefined),
     onApply: jest.fn().mockResolvedValue(undefined),
     onRemove: jest.fn().mockResolvedValue(undefined),
@@ -124,14 +125,13 @@ describe('InitializerList', () => {
     )
 
     const row = screen.getByTestId('initializer-row-additional-1')
-    await user.click(within(row).getByRole('button', { name: 'Edit' }))
+    fireEvent.click(within(row).getByRole('button', { name: 'Edit' }))
 
-    const dialog = await screen.findByRole('dialog', { name: 'Edit target initializer' })
-    const editor = within(dialog).getByRole('textbox', { name: 'Parameters JSON' })
-    await user.clear(editor)
-    await user.click(editor)
-    await user.paste('{"tags":["extra"]}')
-    await user.click(await screen.findByRole('button', { name: 'Save' }))
+    const dialog = await screen.findByRole('dialog', {}, { timeout: 3000 })
+    await within(dialog).findByText('Edit target initializer')
+    const editor = within(dialog).getByRole('textbox', { name: 'Parameters JSON', hidden: true })
+    fireEvent.change(editor, { target: { value: '{"tags":["extra"]}' } })
+    await user.click(await within(dialog).findByRole('button', { name: 'Save', hidden: true }))
 
     expect(defaultProps.onSave).toHaveBeenCalledWith('additional-1', {
       parameters: { tags: ['extra'] },
@@ -178,16 +178,17 @@ describe('InitializerList', () => {
     )
 
     const row = screen.getByTestId('initializer-row-additional-1')
-    await user.click(within(row).getByRole('button', { name: 'Edit' }))
+    fireEvent.click(within(row).getByRole('button', { name: 'Edit' }))
 
-    const dialog = await screen.findByRole('dialog', { name: 'Edit target initializer' })
-    const editor = within(dialog).getByRole('textbox', { name: 'Parameters JSON' })
-    await user.clear(editor)
-    await user.click(editor)
-    await user.paste('{"tags":')
-    await user.click(await screen.findByRole('button', { name: 'Save' }))
+    const dialog = await screen.findByRole('dialog', {}, { timeout: 3000 })
+    await within(dialog).findByText('Edit target initializer')
+    const editor = within(dialog).getByRole('textbox', { name: 'Parameters JSON', hidden: true })
+    fireEvent.change(editor, { target: { value: '{"tags":' } })
+    await user.click(await within(dialog).findByRole('button', { name: 'Save', hidden: true }))
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('Unexpected end of JSON input')
+    expect(await within(dialog).findByRole('alert', { hidden: true })).toHaveTextContent(
+      'Unexpected end of JSON input',
+    )
     expect(defaultProps.onSave).not.toHaveBeenCalled()
   })
 })

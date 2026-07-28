@@ -62,18 +62,18 @@ class BaselineInitializerConfig(BaseModel):
 
 
 class BaselineInitializerSetting(BaseModel):
-    """A read-only baseline initializer plus its registry metadata."""
+    """A read-only baseline initializer entry, referencing its registry definition by name."""
 
-    initializer: RegisteredInitializer = Field(..., description="Registry metadata for this initializer.")
+    initializer_name: str = Field(..., description="Registry name of the initializer this entry configures.")
     parameters: dict[str, Any] | None = Field(default=None, description="Baseline parameters from the config.")
     order_index: int = Field(..., ge=0, description="Zero-based position in the baseline startup sequence.")
 
 
 class AdditionalInitializerSetting(BaseModel):
-    """A persisted additional initializer plus its registry metadata."""
+    """A persisted additional initializer entry, referencing its registry definition by name."""
 
     id: str = Field(..., description="Stable unique row id.")
-    initializer: RegisteredInitializer = Field(..., description="Registry metadata for this initializer.")
+    initializer_name: str = Field(..., description="Registry name of the initializer this entry configures.")
     parameters: dict[str, Any] | None = Field(default=None, description="Persisted parameters for this invocation.")
     order_index: int | None = Field(
         default=None,

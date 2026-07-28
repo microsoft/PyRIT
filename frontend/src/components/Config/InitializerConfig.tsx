@@ -27,6 +27,7 @@ import type {
 
 import InitializerList from './InitializerList'
 import InitializerParametersDialog from './InitializerParametersDialog'
+import { resolveRegisteredInitializer } from './initializerLookup'
 import { useInitializerConfigStyles } from './InitializerConfig.styles'
 
 interface StatusMessage {
@@ -65,6 +66,7 @@ export default function InitializerConfig() {
   const [creating, setCreating] = useState(false)
   const [selectedAddInitializerName, setSelectedAddInitializerName] = useState('')
   const [addDialogOpen, setAddDialogOpen] = useState(false)
+  const [catalogOpen, setCatalogOpen] = useState(false)
   const [savingInitializerId, setSavingInitializerId] = useState<string | null>(null)
   const [applyingInitializerId, setApplyingInitializerId] = useState<string | null>(null)
   const [deletingInitializerId, setDeletingInitializerId] = useState<string | null>(null)
@@ -192,9 +194,14 @@ export default function InitializerConfig() {
           </Text>
         </div>
         <div className={styles.headerActions}>
-          <Dialog>
+          <Dialog open={catalogOpen} onOpenChange={(_, data) => setCatalogOpen(data.open)}>
             <DialogTrigger disableButtonEnhancement>
-              <Button appearance="secondary" icon={<AppsListRegular />} disabled={loading}>
+              <Button
+                appearance="secondary"
+                icon={<AppsListRegular />}
+                disabled={loading}
+                onClick={() => setCatalogOpen(true)}
+              >
                 Browse available initializers
               </Button>
             </DialogTrigger>
@@ -290,7 +297,8 @@ export default function InitializerConfig() {
             ) : (
               <div className={styles.baselineGroup} role="list" aria-label="Baseline initializers">
                 {settings.baseline.map((item: BaselineInitializerSetting) => {
-                  const initializerName = item.initializer.initializer_name
+                  const initializerName = item.initializer_name
+                  const initializer = resolveRegisteredInitializer(initializerName, registeredInitializers)
                   return (
                     <div
                       key={`${initializerName}:${item.order_index}`}
@@ -301,10 +309,10 @@ export default function InitializerConfig() {
                       <div className={styles.baselineHeader}>
                         <div className={styles.titleGroup}>
                           <Text weight="semibold" size={400}>{initializerName}</Text>
-                          <Text size={300}>{item.initializer.description || 'No description available.'}</Text>
+                          <Text size={300}>{initializer.description || 'No description available.'}</Text>
                           <Text size={200} className={styles.metadataText}>
-                            Required env vars: {item.initializer.required_env_vars.length > 0
-                              ? item.initializer.required_env_vars.join(', ')
+                            Required env vars: {initializer.required_env_vars.length > 0
+                              ? initializer.required_env_vars.join(', ')
                               : 'None'}
                           </Text>
                           <Text size={200} className={styles.metadataText}>Order: {item.order_index}</Text>
@@ -360,6 +368,7 @@ export default function InitializerConfig() {
             ) : (
               <InitializerList
                 items={settings.additional}
+                registeredInitializers={registeredInitializers}
                 savingInitializerId={savingInitializerId}
                 applyingInitializerId={applyingInitializerId}
                 deletingInitializerId={deletingInitializerId}

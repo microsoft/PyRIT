@@ -4,10 +4,12 @@ import { Button, Text, Tooltip } from '@fluentui/react-components'
 import type { AdditionalInitializerSetting, RegisteredInitializer, UpdateAdditionalInitializerRequest } from '@/types'
 
 import InitializerParametersDialog from './InitializerParametersDialog'
+import { resolveRegisteredInitializer } from './initializerLookup'
 import { useInitializerListStyles } from './InitializerList.styles'
 
 interface InitializerListProps {
   items: AdditionalInitializerSetting[]
+  registeredInitializers: RegisteredInitializer[]
   savingInitializerId?: string | null
   applyingInitializerId?: string | null
   deletingInitializerId?: string | null
@@ -18,6 +20,7 @@ interface InitializerListProps {
 
 interface InitializerRowProps {
   item: AdditionalInitializerSetting
+  initializer: RegisteredInitializer
   isSaving: boolean
   isApplying: boolean
   isDeleting: boolean
@@ -43,6 +46,7 @@ function formatSupportedParameterSummary(initializer: RegisteredInitializer): st
 
 function AdditionalInitializerRow({
   item,
+  initializer,
   isSaving,
   isApplying,
   isDeleting,
@@ -68,24 +72,24 @@ function AdditionalInitializerRow({
       <div className={styles.cardHeader}>
         <div className={styles.titleGroup}>
           <Tooltip
-            content={item.initializer.description || 'No description available.'}
+            content={initializer.description || 'No description available.'}
             relationship="description"
             withArrow
           >
             <Text weight="semibold" size={400}>
-              {item.initializer.initializer_name}
+              {item.initializer_name}
             </Text>
           </Tooltip>
-          {item.initializer.required_env_vars.length > 0 && (
+          {initializer.required_env_vars.length > 0 && (
             <Text className={styles.envVarText}>
-              Required env vars: {item.initializer.required_env_vars.join(', ')}
+              Required env vars: {initializer.required_env_vars.join(', ')}
             </Text>
           )}
         </div>
       </div>
 
       <div className={styles.parameterList}>
-        {formatSupportedParameterSummary(item.initializer).map((summary: string) => (
+        {formatSupportedParameterSummary(initializer).map((summary: string) => (
           <Text key={summary} className={styles.parameterHint} size={200}>
             {summary}
           </Text>
@@ -107,7 +111,7 @@ function AdditionalInitializerRow({
         </Button>
         <Button
           appearance="secondary"
-          onClick={() => void onApply(item.id, item.initializer.initializer_name, item.parameters)}
+          onClick={() => void onApply(item.id, item.initializer_name, item.parameters)}
           disabled={isBusy}
         >
           {isApplying ? 'Applying...' : 'Apply now'}
@@ -124,7 +128,7 @@ function AdditionalInitializerRow({
       <InitializerParametersDialog
         open={editOpen}
         mode="edit"
-        initializer={item.initializer}
+        initializer={initializer}
         initialParameters={item.parameters}
         submitting={isSaving}
         onSubmit={handleEditSubmit}
@@ -136,6 +140,7 @@ function AdditionalInitializerRow({
 
 export default function InitializerList({
   items,
+  registeredInitializers,
   savingInitializerId = null,
   applyingInitializerId = null,
   deletingInitializerId = null,
@@ -151,6 +156,7 @@ export default function InitializerList({
         <AdditionalInitializerRow
           key={`${item.id}:${serializeParameters(item.parameters)}:${item.order_index ?? ''}`}
           item={item}
+          initializer={resolveRegisteredInitializer(item.initializer_name, registeredInitializers)}
           isSaving={savingInitializerId === item.id}
           isApplying={applyingInitializerId === item.id}
           isDeleting={deletingInitializerId === item.id}

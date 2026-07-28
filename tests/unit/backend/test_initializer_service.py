@@ -219,12 +219,12 @@ class TestInitializerServiceSettings:
 
             result = await service.list_initializer_settings_async(baseline_initializers=baseline_initializers)
 
-            assert [item.initializer.initializer_name for item in result.baseline] == ["target", "widget"]
+            assert [item.initializer_name for item in result.baseline] == ["target", "widget"]
             assert [item.order_index for item in result.baseline] == [0, 1]
             assert result.baseline[0].parameters == {"tags": ["baseline"]}
 
             assert [item.id for item in result.additional] == ["a1", "a2"]
-            assert [item.initializer.initializer_name for item in result.additional] == ["custom", "target"]
+            assert [item.initializer_name for item in result.additional] == ["custom", "target"]
             assert result.additional[0].parameters == {"tags": ["extra"]}
 
     async def test_list_initializer_settings_shows_all_configured_baseline_initializers(self) -> None:
@@ -252,7 +252,7 @@ class TestInitializerServiceSettings:
 
             result = await service.list_initializer_settings_async(baseline_initializers=baseline_initializers)
 
-            assert [item.initializer.initializer_name for item in result.baseline] == [
+            assert [item.initializer_name for item in result.baseline] == [
                 "technique",
                 "target",
                 "scorer",
@@ -260,7 +260,7 @@ class TestInitializerServiceSettings:
             ]
             assert [item.order_index for item in result.baseline] == [0, 1, 2, 3]
 
-    async def test_list_initializer_settings_marks_unregistered_additional_initializers(self) -> None:
+    async def test_list_initializer_settings_passes_through_unregistered_names(self) -> None:
         with patch.object(InitializerService, "__init__", lambda self: None):
             service = InitializerService()
             service._registry = MagicMock()
@@ -272,7 +272,7 @@ class TestInitializerServiceSettings:
 
             result = await service.list_initializer_settings_async(baseline_initializers=[])
 
-            assert result.additional[0].initializer.initializer_type == "UnknownInitializer"
+            assert result.additional[0].initializer_name == "gone"
 
     async def test_create_additional_initializer_validates_and_persists(self) -> None:
         with patch.object(InitializerService, "__init__", lambda self: None):
@@ -295,6 +295,58 @@ class TestInitializerServiceSettings:
             assert result.parameters == {"tags": ["saved"]}
             assert result.order_index == 2
             assert result.id
+
+    async def test_create_additional_initializer_appends_after_existing_when_order_index_missing(self) -> None:
+        with patch.object(InitializerService, "__init__", lambda self: None):
+            service = InitializerService()
+            service._registry = MagicMock()
+            service._memory = MagicMock()
+            service._memory.get_additional_initializers.return_value = [
+                AdditionalInitializer(id="a1", initializer_name="target", order_index=0),
+                AdditionalInitializer(id="a2", initializer_name="widget", order_index=3),
+            ]
+
+            result = await service.create_additional_initializer_async(
+                initializer_name="target",
+                parameters=None,
+                order_index=None,
+            )
+
+            assert result.order_index == 4
+
+    async def test_create_additional_initializer_starts_at_zero_when_none_exist(self) -> None:
+        with patch.object(InitializerService, "__init__", lambda self: None):
+            service = InitializerService()
+            service._registry = MagicMock()
+            service._memory = MagicMock()
+            service._memory.get_additional_initializers.return_value = []
+
+            result = await service.create_additional_initializer_async(
+                initializer_name="target",
+                parameters=None,
+                order_index=None,
+            )
+
+            assert result.order_index == 0
+
+    async def test_update_additional_initializer_preserves_existing_order_when_missing(self) -> None:
+        existing = AdditionalInitializer(
+            id="a1", initializer_name="target", parameters={"tags": ["old"]}, order_index=7
+        )
+
+        with patch.object(InitializerService, "__init__", lambda self: None):
+            service = InitializerService()
+            service._registry = MagicMock()
+            service._memory = MagicMock()
+            service._memory.get_additional_initializers.return_value = [existing]
+
+            result = await service.update_additional_initializer_async(
+                initializer_id="a1",
+                parameters={"tags": ["new"]},
+                order_index=None,
+            )
+
+            assert result.order_index == 7
 
     async def test_update_additional_initializer_preserves_id_and_name(self) -> None:
         existing = AdditionalInitializer(id="a1", initializer_name="target", parameters={"tags": ["old"]})

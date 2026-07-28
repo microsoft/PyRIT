@@ -118,17 +118,17 @@ export interface RegisteredInitializer {
   supported_parameters: Parameter[]
 }
 
-/** A read-only initializer from the `.pyrit_conf` baseline plus its registry metadata. */
+/** A read-only initializer from the `.pyrit_conf` baseline, referenced by registry name. */
 export interface BaselineInitializerSetting {
-  initializer: RegisteredInitializer
+  initializer_name: string
   parameters?: Record<string, unknown> | null
   order_index: number
 }
 
-/** A persisted additional initializer plus its registry metadata. */
+/** A persisted additional initializer, referenced by registry name. */
 export interface AdditionalInitializerSetting {
   id: string
-  initializer: RegisteredInitializer
+  initializer_name: string
   parameters?: Record<string, unknown> | null
   order_index?: number | null
 }

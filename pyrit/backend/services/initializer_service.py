@@ -52,25 +52,6 @@ def _metadata_to_registered_initializer(metadata: InitializerMetadata) -> Regist
     )
 
 
-def _missing_registered_initializer(initializer_name: str) -> RegisteredInitializer:
-    """
-    Build placeholder metadata for a persisted row whose class is no longer registered.
-
-    Args:
-        initializer_name: The missing initializer's registry name.
-
-    Returns:
-        RegisteredInitializer: Placeholder metadata for display.
-    """
-    return RegisteredInitializer(
-        initializer_name=initializer_name,
-        initializer_type="UnknownInitializer",
-        description="Initializer is no longer registered.",
-        required_env_vars=[],
-        supported_parameters=[],
-    )
-
-
 class InitializerService:
     """
     Service for listing, registering, configuring, and applying initializers.
@@ -137,29 +118,22 @@ class InitializerService:
 
         Returns:
             InitializerSettingsResponse: The read-only baseline and editable additional lists.
+            Each entry references its initializer by ``initializer_name``; clients resolve
+            catalog metadata from the registered-initializers list.
         """
-        metadata_by_name = self._get_metadata_by_name()
-
-        baseline: list[BaselineInitializerSetting] = []
-        for position, config in enumerate(baseline_initializers):
-            baseline.append(
-                BaselineInitializerSetting(
-                    initializer=self._get_registered_initializer_for_name(
-                        initializer_name=config.initializer_name,
-                        metadata_by_name=metadata_by_name,
-                    ),
-                    parameters=config.parameters,
-                    order_index=position,
-                )
+        baseline = [
+            BaselineInitializerSetting(
+                initializer_name=config.initializer_name,
+                parameters=config.parameters,
+                order_index=position,
             )
+            for position, config in enumerate(baseline_initializers)
+        ]
 
         additional = [
             AdditionalInitializerSetting(
                 id=initializer.id,
-                initializer=self._get_registered_initializer_for_name(
-                    initializer_name=initializer.initializer_name,
-                    metadata_by_name=metadata_by_name,
-                ),
+                initializer_name=initializer.initializer_name,
                 parameters=initializer.parameters,
                 order_index=initializer.order_index,
             )
@@ -182,11 +156,15 @@ class InitializerService:
             initializer_name: The initializer registry name.
             parameters: Optional parameters to persist.
             order_index: Optional zero-based position among the additional initializers.
+                When ``None``, the initializer is appended after the existing ones so
+                additional initializers run in the order they were added.
 
         Returns:
             AdditionalInitializer: The newly persisted row.
         """
         self._validate_initializer_parameters(initializer_name=initializer_name, parameters=parameters)
+        if order_index is None:
+            order_index = self._next_order_index()
         initializer = AdditionalInitializer(
             initializer_name=initializer_name,
             parameters=parameters,
@@ -225,10 +203,20 @@ class InitializerService:
             id=existing.id,
             initializer_name=existing.initializer_name,
             parameters=parameters,
-            order_index=order_index,
+            order_index=order_index if order_index is not None else existing.order_index,
         )
         self._memory.add_additional_initializer(initializer=updated)
         return updated
+
+    def _next_order_index(self) -> int:
+        existing_indices = [
+            initializer.order_index
+            for initializer in self._memory.get_additional_initializers()
+            if initializer.order_index is not None
+        ]
+        if not existing_indices:
+            return 0
+        return max(existing_indices) + 1
 
     async def delete_additional_initializer_async(self, *, initializer_id: str) -> None:
         """
@@ -379,17 +367,6 @@ class InitializerService:
 
     def _get_metadata_by_name(self) -> dict[str, InitializerMetadata]:
         return {metadata.registry_name: metadata for metadata in self._registry.get_all_registered_class_metadata()}
-
-    def _get_registered_initializer_for_name(
-        self,
-        *,
-        initializer_name: str,
-        metadata_by_name: dict[str, InitializerMetadata],
-    ) -> RegisteredInitializer:
-        metadata = metadata_by_name.get(initializer_name)
-        if metadata:
-            return _metadata_to_registered_initializer(metadata)
-        return _missing_registered_initializer(initializer_name)
 
     @staticmethod
     def _paginate(

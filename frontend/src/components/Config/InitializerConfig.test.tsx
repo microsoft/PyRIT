@@ -29,18 +29,17 @@ const TestWrapper: React.FC<{ children: React.ReactNode }> = ({ children }) => (
   <FluentProvider theme={webLightTheme}>{children}</FluentProvider>
 )
 
-async function openDialogByButton(buttonName: RegExp | string, dialogName: string): Promise<HTMLElement> {
-  await waitFor(() => {
-    // The trigger button becomes aria-hidden once the modal dialog opens, so it may
-    // no longer be queryable. Re-click only while it is still visible; a single
-    // fireEvent click is occasionally dropped right after the async data load settles.
-    const trigger = screen.queryByRole('button', { name: buttonName })
-    if (trigger) {
-      fireEvent.click(trigger)
-    }
-    expect(screen.getByRole('dialog', { name: dialogName })).toBeInTheDocument()
-  })
-  return screen.getByRole('dialog', { name: dialogName })
+async function openDialogByButton(
+  _user: ReturnType<typeof userEvent.setup>,
+  buttonName: RegExp | string,
+  dialogName: string,
+): Promise<HTMLElement> {
+  const trigger = await screen.findByRole('button', { name: buttonName })
+  await waitFor(() => expect(trigger).toBeEnabled())
+  fireEvent.click(trigger)
+  const dialog = await screen.findByRole('dialog', {}, { timeout: 3000 })
+  await within(dialog).findByText(dialogName)
+  return dialog
 }
 
 const targetInitializer: RegisteredInitializer = {
@@ -80,14 +79,14 @@ const scorerInitializer: RegisteredInitializer = {
 }
 
 const baselineItem: BaselineInitializerSetting = {
-  initializer: targetInitializer,
+  initializer_name: 'target',
   parameters: { tags: ['baseline'] },
   order_index: 0,
 }
 
 const additionalItem: AdditionalInitializerSetting = {
   id: 'additional-1',
-  initializer: scorerInitializer,
+  initializer_name: 'scorer',
   parameters: { mode: 'strict' },
   order_index: 10,
 }
@@ -169,10 +168,11 @@ describe('InitializerConfig', () => {
   })
 
   it('should render a read-only catalog of all registered initializers in a dialog', async () => {
+    const user = userEvent.setup()
     renderInitializerConfig()
 
     await screen.findByRole('button', { name: 'Browse available initializers' })
-    await openDialogByButton('Browse available initializers', 'Available initializers')
+    await openDialogByButton(user, 'Browse available initializers', 'Available initializers')
 
     const catalogTarget = screen.getByTestId('available-initializer-row-target')
     expect(catalogTarget).toHaveTextContent('Registers targets.')
@@ -185,9 +185,9 @@ describe('InitializerConfig', () => {
     renderInitializerConfig()
 
     await screen.findByTestId('initializer-row-additional-1')
-    const dialog = await openDialogByButton('Add initializer', 'Add target initializer')
+    const dialog = await openDialogByButton(user, 'Add initializer', 'Add target initializer')
     expect(dialog).toBeInTheDocument()
-    await user.click(await screen.findByRole('button', { name: 'Add' }))
+    await user.click(await within(dialog).findByRole('button', { name: 'Add', hidden: true }))
 
     await waitFor(() => {
       expect(mockedInitializersApi.createAdditional).toHaveBeenCalledWith({
@@ -204,11 +204,11 @@ describe('InitializerConfig', () => {
 
     await screen.findByTestId('initializer-row-additional-1')
     const combobox = screen.getByRole('combobox', { name: 'Initializer to add' })
-    fireEvent.change(combobox, { target: { value: 'scorer' } })
+    await user.selectOptions(combobox, 'scorer')
     await waitFor(() => expect(combobox).toHaveValue('scorer'))
-    const dialog = await openDialogByButton(/Add initializer|Adding/, 'Add scorer initializer')
+    const dialog = await openDialogByButton(user, /Add initializer|Adding/, 'Add scorer initializer')
     expect(dialog).toBeInTheDocument()
-    await user.click(await screen.findByRole('button', { name: 'Add' }))
+    await user.click(await within(dialog).findByRole('button', { name: 'Add', hidden: true }))
 
     await waitFor(() => {
       expect(mockedInitializersApi.createAdditional).toHaveBeenCalledWith({
@@ -224,12 +224,10 @@ describe('InitializerConfig', () => {
     renderInitializerConfig()
 
     await screen.findByTestId('initializer-row-additional-1')
-    const dialog = await openDialogByButton('Edit', 'Edit scorer initializer')
-    const parametersEditor = within(dialog).getByRole('textbox', { name: 'Parameters JSON' })
-    await user.clear(parametersEditor)
-    await user.click(parametersEditor)
-    await user.paste('{"mode":"relaxed"}')
-    await user.click(await screen.findByRole('button', { name: 'Save' }))
+    const dialog = await openDialogByButton(user, 'Edit', 'Edit scorer initializer')
+    const parametersEditor = within(dialog).getByRole('textbox', { name: 'Parameters JSON', hidden: true })
+    fireEvent.change(parametersEditor, { target: { value: '{"mode":"relaxed"}' } })
+    await user.click(await within(dialog).findByRole('button', { name: 'Save', hidden: true }))
 
     await waitFor(() => {
       expect(mockedInitializersApi.updateAdditional).toHaveBeenCalledWith('additional-1', {
