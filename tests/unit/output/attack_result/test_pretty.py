@@ -332,7 +332,7 @@ async def test_write_async_renders_reasoning_summary_when_requested(
     )
     _seed_messages(sqlite_instance, "conv-main", [piece])
 
-    content = await printer._render_conversation_async(attack_result, include_reasoning_trace=True)
+    content = await printer._render_conversation_async(attack_result, include_reasoning_summaries=True)
     assert "💭 Reasoning" in content
     assert "Provider-generated reasoning summary (not raw chain-of-thought)" in content
     assert "step one" in content
@@ -376,7 +376,7 @@ async def test_write_async_invalid_reasoning_summary_is_rejected(printer, attack
     )
     _seed_messages(sqlite_instance, "conv-main", [piece])
     with pytest.raises(ValueError, match="valid JSON object"):
-        await printer._render_conversation_async(attack_result, include_reasoning_trace=True)
+        await printer._render_conversation_async(attack_result, include_reasoning_summaries=True)
 
 
 async def test_write_async_reasoning_summary_without_summary_key_is_rejected(printer, attack_result, sqlite_instance):
@@ -389,7 +389,7 @@ async def test_write_async_reasoning_summary_without_summary_key_is_rejected(pri
     )
     _seed_messages(sqlite_instance, "conv-main", [piece])
     with pytest.raises(ValueError, match="'summary' list"):
-        await printer._render_conversation_async(attack_result, include_reasoning_trace=True)
+        await printer._render_conversation_async(attack_result, include_reasoning_summaries=True)
 
 
 async def test_write_async_pruned_reasoning_uses_pretty_heading(
@@ -417,7 +417,7 @@ async def test_write_async_pruned_reasoning_uses_pretty_heading(
     rendered = await printer.render_async(
         attack_result,
         include_pruned_conversations=True,
-        include_reasoning_trace=True,
+        include_reasoning_summaries=True,
     )
 
     assert "💭 Reasoning" in rendered

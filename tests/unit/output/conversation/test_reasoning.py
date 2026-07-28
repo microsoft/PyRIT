@@ -23,7 +23,7 @@ def markdown_printer(patch_central_database) -> MarkdownConversationMemoryPrinte
 
 
 async def test_pretty_reasoning_uses_headings_and_spacing(pretty_printer, reasoning_message):
-    rendered = await pretty_printer.render_async([reasoning_message], include_reasoning_trace=True)
+    rendered = await pretty_printer.render_async([reasoning_message], include_reasoning_summaries=True)
 
     assert "💭 Reasoning" in rendered
     assert "step two\n\n  💬 Response\n  Final answer." in rendered
@@ -33,7 +33,7 @@ async def test_pretty_reasoning_uses_headings_and_spacing(pretty_printer, reason
 
 
 async def test_markdown_reasoning_uses_headings_and_spacing(markdown_printer, reasoning_message):
-    rendered = await markdown_printer.render_async([reasoning_message], include_reasoning_trace=True)
+    rendered = await markdown_printer.render_async([reasoning_message], include_reasoning_summaries=True)
 
     expected = (
         "> **💭 Reasoning**\n"
@@ -65,7 +65,7 @@ async def test_reasoning_only_message_omits_response_heading(
     )
     printer = pretty_printer if format_name == "pretty" else markdown_printer
 
-    rendered = await printer.render_async([message], include_reasoning_trace=True)
+    rendered = await printer.render_async([message], include_reasoning_summaries=True)
 
     assert "💭 Reasoning" in rendered
     assert "💬 Response" not in rendered
@@ -108,7 +108,7 @@ async def test_empty_reasoning_summary_omits_headings(
     )
     printer = pretty_printer if format_name == "pretty" else markdown_printer
 
-    rendered = await printer.render_async([message], include_reasoning_trace=True)
+    rendered = await printer.render_async([message], include_reasoning_summaries=True)
 
     assert "💭 Reasoning" not in rendered
     assert "💬 Response" not in rendered
@@ -142,7 +142,7 @@ async def test_reasoning_payload_must_match_openai_responses_shape(markdown_prin
     )
 
     with pytest.raises(ValueError, match="Reasoning piece|reasoning summary item|reasoning content item"):
-        await markdown_printer.render_async([message], include_reasoning_trace=True)
+        await markdown_printer.render_async([message], include_reasoning_summaries=True)
 
 
 def test_reasoning_prompt_data_type_requires_exact_literal():
@@ -194,7 +194,7 @@ async def test_original_reasoning_converted_to_text_uses_original_reasoning_payl
         ]
     )
 
-    rendered = await markdown_printer.render_async([message], include_reasoning_trace=True)
+    rendered = await markdown_printer.render_async([message], include_reasoning_summaries=True)
 
     assert "converted reasoning leak" not in rendered
     assert "step one" in rendered
@@ -206,7 +206,7 @@ async def test_pretty_reasoning_is_gray_and_answer_keeps_assistant_color(
 ):
     printer = PrettyConversationMemoryPrinter(enable_colors=True)
 
-    rendered = await printer.render_async([reasoning_message], include_reasoning_trace=True)
+    rendered = await printer.render_async([reasoning_message], include_reasoning_summaries=True)
 
     assert f"{Fore.LIGHTBLACK_EX}  💭 Reasoning" in rendered
     assert f"{Fore.LIGHTBLACK_EX}  step one" in rendered

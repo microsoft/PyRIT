@@ -51,14 +51,14 @@ class ConversationPrinterBase(PrinterBase):
     def _get_renderable_pieces(
         *,
         message: Message,
-        include_reasoning_trace: bool,
+        include_reasoning_summaries: bool,
     ) -> list[MessagePiece]:
         """
         Return message pieces visible under the selected reasoning policy.
 
         Args:
             message (Message): The message whose pieces should be filtered.
-            include_reasoning_trace (bool): Whether reasoning pieces should remain visible.
+            include_reasoning_summaries (bool): Whether reasoning pieces should remain visible.
 
         Returns:
             list[MessagePiece]: The pieces that should be rendered.
@@ -66,7 +66,7 @@ class ConversationPrinterBase(PrinterBase):
         return [
             piece
             for piece in message.message_pieces
-            if include_reasoning_trace or not ConversationPrinterBase._is_reasoning_piece(piece=piece)
+            if include_reasoning_summaries or not ConversationPrinterBase._is_reasoning_piece(piece=piece)
         ]
 
     @classmethod
@@ -161,7 +161,7 @@ class ConversationPrinterBase(PrinterBase):
         messages: list[Message],
         *,
         include_scores: bool = False,
-        include_reasoning_trace: bool = False,
+        include_reasoning_summaries: bool = False,
     ) -> str:
         """
         Render a list of messages and return as a string.
@@ -169,7 +169,7 @@ class ConversationPrinterBase(PrinterBase):
         Args:
             messages (list[Message]): The messages to render.
             include_scores (bool): Whether to include scores. Defaults to False.
-            include_reasoning_trace (bool): Whether to include reasoning traces. Defaults to False.
+            include_reasoning_summaries (bool): Whether to include reasoning summaries. Defaults to False.
 
         Returns:
             str: The rendered conversation text.

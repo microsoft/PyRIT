@@ -391,7 +391,7 @@ async def test_write_async_main_reasoning_uses_heading(
     )
     _seed_messages(sqlite_instance, "conv-main", [piece])
 
-    rendered = await printer.render_async(attack_result, include_reasoning_trace=True)
+    rendered = await printer.render_async(attack_result, include_reasoning_summaries=True)
 
     assert "> **💭 Reasoning**" in rendered
     assert "step one" in rendered
@@ -422,7 +422,7 @@ async def test_write_async_pruned_reasoning_uses_heading(
     rendered = await printer.render_async(
         attack_result,
         include_pruned_conversations=True,
-        include_reasoning_trace=True,
+        include_reasoning_summaries=True,
     )
 
     assert "> **💭 Reasoning**" in rendered
@@ -454,7 +454,7 @@ async def test_write_async_adversarial_reasoning_uses_heading(
     rendered = await printer.render_async(
         attack_result,
         include_adversarial_conversation=True,
-        include_reasoning_trace=True,
+        include_reasoning_summaries=True,
     )
 
     assert "> **💭 Reasoning**" in rendered
@@ -515,7 +515,7 @@ async def test_write_async_pruned_skips_last_message_with_no_renderable_pieces(
     rendered = await printer.render_async(
         attack_result,
         include_pruned_conversations=True,
-        include_reasoning_trace=False,
+        include_reasoning_summaries=False,
     )
 
     assert "## Pruned Conversations" in rendered
@@ -574,7 +574,7 @@ async def test_write_async_adversarial_skips_message_with_no_renderable_pieces(
     rendered = await printer.render_async(
         attack_result,
         include_adversarial_conversation=True,
-        include_reasoning_trace=False,
+        include_reasoning_summaries=False,
     )
 
     assert "## Adversarial Conversation" in rendered

@@ -67,7 +67,7 @@ class MarkdownAttackResultPrinter(AttackResultPrinterBase):
         include_auxiliary_scores: bool = False,
         include_pruned_conversations: bool = False,
         include_adversarial_conversation: bool = False,
-        include_reasoning_trace: bool = False,
+        include_reasoning_summaries: bool = False,
     ) -> str:
         """
         Render the complete attack result as markdown and return it as a string.
@@ -78,7 +78,7 @@ class MarkdownAttackResultPrinter(AttackResultPrinterBase):
             include_pruned_conversations (bool): Whether to include pruned conversations. Defaults to False.
             include_adversarial_conversation (bool): Whether to include the adversarial conversation.
                 Defaults to False.
-            include_reasoning_trace (bool): Whether to include the reasoning trace. Defaults to False.
+            include_reasoning_summaries (bool): Whether to include the reasoning summary. Defaults to False.
 
         Returns:
             str: The rendered markdown text.
@@ -97,14 +97,14 @@ class MarkdownAttackResultPrinter(AttackResultPrinterBase):
         conversation_lines = await self._get_conversation_markdown_async(
             result=result,
             include_scores=include_auxiliary_scores,
-            include_reasoning_trace=include_reasoning_trace,
+            include_reasoning_summaries=include_reasoning_summaries,
         )
         markdown_lines.extend(conversation_lines)
 
         if include_pruned_conversations:
             pruned_lines = await self._get_pruned_conversations_markdown_async(
                 result,
-                include_reasoning_trace=include_reasoning_trace,
+                include_reasoning_summaries=include_reasoning_summaries,
             )
             if pruned_lines:
                 markdown_lines.extend(pruned_lines)
@@ -112,7 +112,7 @@ class MarkdownAttackResultPrinter(AttackResultPrinterBase):
         if include_adversarial_conversation:
             adversarial_lines = await self._get_adversarial_conversation_markdown_async(
                 result,
-                include_reasoning_trace=include_reasoning_trace,
+                include_reasoning_summaries=include_reasoning_summaries,
             )
             if adversarial_lines:
                 markdown_lines.extend(adversarial_lines)
@@ -137,7 +137,7 @@ class MarkdownAttackResultPrinter(AttackResultPrinterBase):
         *,
         result: AttackResult,
         include_scores: bool = False,
-        include_reasoning_trace: bool = False,
+        include_reasoning_summaries: bool = False,
     ) -> list[str]:
         """
         Generate markdown lines for the conversation history.
@@ -145,7 +145,7 @@ class MarkdownAttackResultPrinter(AttackResultPrinterBase):
         Args:
             result (AttackResult): The attack result containing the conversation ID.
             include_scores (bool): Whether to include scores. Defaults to False.
-            include_reasoning_trace (bool): Whether to include reasoning traces. Defaults to False.
+            include_reasoning_summaries (bool): Whether to include reasoning summaries. Defaults to False.
 
         Returns:
             list[str]: Markdown strings for the conversation.
@@ -161,7 +161,7 @@ class MarkdownAttackResultPrinter(AttackResultPrinterBase):
         rendered = await self._conversation_printer.render_async(
             messages,
             include_scores=include_scores,
-            include_reasoning_trace=include_reasoning_trace,
+            include_reasoning_summaries=include_reasoning_summaries,
         )
         return [rendered]
 
@@ -212,14 +212,14 @@ class MarkdownAttackResultPrinter(AttackResultPrinterBase):
         self,
         result: AttackResult,
         *,
-        include_reasoning_trace: bool = False,
+        include_reasoning_summaries: bool = False,
     ) -> list[str]:
         """
         Generate markdown lines for pruned conversations.
 
         Args:
             result (AttackResult): The attack result containing related conversations.
-            include_reasoning_trace (bool): Whether to include reasoning traces. Defaults to False.
+            include_reasoning_summaries (bool): Whether to include reasoning summaries. Defaults to False.
 
         Returns:
             list[str]: Markdown strings for pruned conversations.
@@ -248,7 +248,7 @@ class MarkdownAttackResultPrinter(AttackResultPrinterBase):
             last_message = messages[-1]
             pieces = self._conversation_printer._get_renderable_pieces(
                 message=last_message,
-                include_reasoning_trace=include_reasoning_trace,
+                include_reasoning_summaries=include_reasoning_summaries,
             )
             if not pieces:
                 continue
@@ -291,14 +291,14 @@ class MarkdownAttackResultPrinter(AttackResultPrinterBase):
         self,
         result: AttackResult,
         *,
-        include_reasoning_trace: bool = False,
+        include_reasoning_summaries: bool = False,
     ) -> list[str]:
         """
         Generate markdown lines for the adversarial conversation.
 
         Args:
             result (AttackResult): The attack result containing related conversations.
-            include_reasoning_trace (bool): Whether to include reasoning traces. Defaults to False.
+            include_reasoning_summaries (bool): Whether to include reasoning summaries. Defaults to False.
 
         Returns:
             list[str]: Markdown strings for the adversarial conversation.
@@ -332,7 +332,7 @@ class MarkdownAttackResultPrinter(AttackResultPrinterBase):
             for message in messages:
                 pieces = self._conversation_printer._get_renderable_pieces(
                     message=message,
-                    include_reasoning_trace=include_reasoning_trace,
+                    include_reasoning_summaries=include_reasoning_summaries,
                 )
                 if not pieces:
                     continue
@@ -428,7 +428,7 @@ class MarkdownAttackResultMemoryPrinter(MarkdownAttackResultPrinter):
         include_auxiliary_scores: bool = False,
         include_pruned_conversations: bool = False,
         include_adversarial_conversation: bool = False,
-        include_reasoning_trace: bool = False,
+        include_reasoning_summaries: bool = False,
     ) -> str:
         """
         Render the complete attack result as markdown and return it as a string.
@@ -439,7 +439,7 @@ class MarkdownAttackResultMemoryPrinter(MarkdownAttackResultPrinter):
             include_pruned_conversations (bool): Whether to include pruned conversations. Defaults to False.
             include_adversarial_conversation (bool): Whether to include the adversarial conversation.
                 Defaults to False.
-            include_reasoning_trace (bool): Whether to include the reasoning trace. Defaults to False.
+            include_reasoning_summaries (bool): Whether to include the reasoning summary. Defaults to False.
 
         Returns:
             str: The rendered markdown text.
@@ -449,7 +449,7 @@ class MarkdownAttackResultMemoryPrinter(MarkdownAttackResultPrinter):
             include_auxiliary_scores=include_auxiliary_scores,
             include_pruned_conversations=include_pruned_conversations,
             include_adversarial_conversation=include_adversarial_conversation,
-            include_reasoning_trace=include_reasoning_trace,
+            include_reasoning_summaries=include_reasoning_summaries,
         )
 
     async def _get_conversation_async(self, conversation_id: str) -> list[Message]:

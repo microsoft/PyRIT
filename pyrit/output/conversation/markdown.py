@@ -62,7 +62,7 @@ class MarkdownConversationPrinter(ConversationPrinterBase):
         messages: list[Message],
         *,
         include_scores: bool = False,
-        include_reasoning_trace: bool = False,
+        include_reasoning_summaries: bool = False,
     ) -> str:
         """
         Render a list of messages as markdown and return as a string.
@@ -70,7 +70,7 @@ class MarkdownConversationPrinter(ConversationPrinterBase):
         Args:
             messages (list[Message]): The messages to render.
             include_scores (bool): Whether to include scores. Defaults to False.
-            include_reasoning_trace (bool): Whether to include reasoning traces. Defaults to False.
+            include_reasoning_summaries (bool): Whether to include reasoning summaries. Defaults to False.
 
         Returns:
             str: The rendered conversation markdown text.
@@ -84,7 +84,7 @@ class MarkdownConversationPrinter(ConversationPrinterBase):
         for message in messages:
             pieces = self._get_renderable_pieces(
                 message=message,
-                include_reasoning_trace=include_reasoning_trace,
+                include_reasoning_summaries=include_reasoning_summaries,
             )
             if not pieces:
                 continue
@@ -480,7 +480,7 @@ class MarkdownConversationMemoryPrinter(MarkdownConversationPrinter):
         messages: list[Message],
         *,
         include_scores: bool = False,
-        include_reasoning_trace: bool = False,
+        include_reasoning_summaries: bool = False,
     ) -> str:
         """
         Render a list of messages as markdown and return as a string.
@@ -488,13 +488,13 @@ class MarkdownConversationMemoryPrinter(MarkdownConversationPrinter):
         Args:
             messages (list[Message]): The messages to render.
             include_scores (bool): Whether to include scores. Defaults to False.
-            include_reasoning_trace (bool): Whether to include reasoning traces. Defaults to False.
+            include_reasoning_summaries (bool): Whether to include reasoning summaries. Defaults to False.
 
         Returns:
             str: The rendered conversation markdown text.
         """
         return await super().render_async(
-            messages, include_scores=include_scores, include_reasoning_trace=include_reasoning_trace
+            messages, include_scores=include_scores, include_reasoning_summaries=include_reasoning_summaries
         )
 
     async def _get_scores_async(self, *, prompt_ids: list[str]) -> list[Score]:

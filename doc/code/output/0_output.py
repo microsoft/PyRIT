@@ -158,11 +158,11 @@ await output_conversation_async(messages=conversation)  # type: ignore
 # from pyrit.output import output_attack_async, output_conversation_async
 #
 # # Direct conversation
-# await output_conversation_async(messages=conversation, include_reasoning_trace=True)
+# await output_conversation_async(messages=conversation, include_reasoning_summaries=True)
 #
 # # Attack result (Pretty or Markdown)
-# await output_attack_async(attack_result, include_reasoning_trace=True)
-# await output_attack_async(attack_result, format="markdown", include_reasoning_trace=True)
+# await output_attack_async(attack_result, include_reasoning_summaries=True)
+# await output_attack_async(attack_result, format="markdown", include_reasoning_summaries=True)
 # ```
 
 # %%
@@ -189,7 +189,7 @@ Determine the complete schedule. Verify every constraint in the final answer.
 """
 
 result = await attack.execute_async(objective=prompt)  # type: ignore
-await output_attack_async(result, include_reasoning_trace=True)
+await output_attack_async(result, include_reasoning_summaries=True)
 
 
 # %% [markdown]

@@ -26,7 +26,7 @@ class AttackResultPrinterBase(PrinterBase):
         include_auxiliary_scores: bool = False,
         include_pruned_conversations: bool = False,
         include_adversarial_conversation: bool = False,
-        include_reasoning_trace: bool = False,
+        include_reasoning_summaries: bool = False,
     ) -> str:
         """
         Render an attack result.
@@ -37,7 +37,7 @@ class AttackResultPrinterBase(PrinterBase):
             include_pruned_conversations (bool): Whether to include pruned conversations. Defaults to False.
             include_adversarial_conversation (bool): Whether to include the adversarial conversation.
                 Defaults to False.
-            include_reasoning_trace (bool): Whether to include reasoning traces. Defaults to False.
+            include_reasoning_summaries (bool): Whether to include reasoning summaries. Defaults to False.
 
         Returns:
             str: The rendered attack result.

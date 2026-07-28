@@ -116,15 +116,15 @@ async def test_output_scenario_async_forwards_sort_groups_by_success_rate(mock_c
 
 
 @patch("pyrit.output.helpers.PrettyAttackResultMemoryPrinter")
-async def test_output_attack_async_forwards_reasoning_trace(mock_cls):
+async def test_output_attack_async_forwards_reasoning_summaries(mock_cls):
     mock_printer = MagicMock()
     mock_printer.write_async = AsyncMock()
     mock_cls.return_value = mock_printer
     result = MagicMock()
 
-    await output_attack_async(result, include_reasoning_trace=True)
+    await output_attack_async(result, include_reasoning_summaries=True)
 
-    assert mock_printer.write_async.call_args.kwargs["include_reasoning_trace"] is True
+    assert mock_printer.write_async.call_args.kwargs["include_reasoning_summaries"] is True
 
 
 async def test_output_scenario_async_unsupported_format():
@@ -192,7 +192,7 @@ async def test_output_conversation_async_with_scores(mock_cls):
 
     await output_conversation_async(messages, include_scores=True)
 
-    mock_printer.write_async.assert_called_once_with(messages, include_scores=True, include_reasoning_trace=False)
+    mock_printer.write_async.assert_called_once_with(messages, include_scores=True, include_reasoning_summaries=False)
 
 
 async def test_output_conversation_async_unsupported_format():
