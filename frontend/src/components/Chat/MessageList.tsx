@@ -328,7 +328,7 @@ export default function MessageList({ messages, onCopyToInput, onCopyToNewConver
                           disabled={disabled}
                           onClick={() => onCopyToInput(index)}
                           data-testid={`copy-to-input-btn-${index}`}
-                          style={{ minWidth: 'auto', padding: '2px' }}
+                          className={styles.messageActionButton}
                         />
                       </Tooltip>
                     )
@@ -353,7 +353,7 @@ export default function MessageList({ messages, onCopyToInput, onCopyToNewConver
                           disabled={disabled}
                           onClick={() => onCopyToNewConversation(index)}
                           data-testid={`copy-to-new-conv-btn-${index}`}
-                          style={{ minWidth: 'auto', padding: '2px' }}
+                          className={styles.messageActionButton}
                         />
                       </Tooltip>
                     )
@@ -380,7 +380,7 @@ export default function MessageList({ messages, onCopyToInput, onCopyToNewConver
                           disabled={disabled}
                           onClick={() => onBranchConversation(index)}
                           data-testid={`branch-conv-btn-${index}`}
-                          style={{ minWidth: 'auto', padding: '2px' }}
+                          className={styles.messageActionButton}
                         />
                       </Tooltip>
                     )
@@ -398,7 +398,7 @@ export default function MessageList({ messages, onCopyToInput, onCopyToNewConver
                             icon={<ChatAddRegular />}
                             onClick={() => onBranchAttack(index)}
                             data-testid={`branch-attack-btn-${index}`}
-                            style={{ minWidth: 'auto', padding: '2px' }}
+                            className={styles.messageActionButton}
                           />
                         </Tooltip>
                       )
@@ -418,7 +418,7 @@ export default function MessageList({ messages, onCopyToInput, onCopyToNewConver
                           icon={<ChatAddRegular />}
                           disabled
                           data-testid={`branch-attack-btn-${index}`}
-                          style={{ minWidth: 'auto', padding: '2px' }}
+                          className={styles.messageActionButton}
                         />
                       </Tooltip>
                     )
@@ -433,7 +433,7 @@ export default function MessageList({ messages, onCopyToInput, onCopyToNewConver
                         icon={<ArrowDownloadRegular />}
                         onClick={() => handleDownload(att)}
                         data-testid={`download-btn-${index}-${ai}`}
-                        style={{ minWidth: 'auto', padding: '2px' }}
+                        className={styles.messageActionButton}
                       />
                     </Tooltip>
                   ))}

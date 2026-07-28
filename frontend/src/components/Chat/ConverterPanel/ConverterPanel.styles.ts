@@ -1,4 +1,5 @@
 import { makeStyles, tokens } from '@fluentui/react-components'
+import { mobileTouchTarget } from '../../../styles/touchTargets'
 
 export const useConverterPanelStyles = makeStyles({
   resizeContainer: {
@@ -223,6 +224,9 @@ export const useConverterPanelStyles = makeStyles({
     justifyContent: 'flex-start',
     fontWeight: tokens.fontWeightSemibold as unknown as string,
     padding: 0,
+  },
+  touchTarget: {
+    ...mobileTouchTarget,
   },
   paramBlock: {
     display: 'flex',
