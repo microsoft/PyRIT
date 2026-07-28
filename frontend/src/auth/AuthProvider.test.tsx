@@ -1,3 +1,4 @@
+import { StrictMode } from "react";
 import { render, screen, waitFor } from "@testing-library/react";
 
 // ---------------------------------------------------------------------------
@@ -75,6 +76,7 @@ jest.mock("@azure/msal-react", () => ({
 }));
 
 import { AuthProvider } from "./AuthProvider";
+import type { AuthConfig } from "./msalConfig";
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -92,8 +94,11 @@ describe("AuthProvider", () => {
   });
 
   // Test 10: fetchAuthConfig never resolves → stuck in loading state
-  it("shows loading state while initializing", () => {
-    mockFetchAuthConfig.mockReturnValue(new Promise(() => {}));
+  it("shows loading state while initializing", async () => {
+    let resolveConfig: (config: AuthConfig) => void = () => {}
+    mockFetchAuthConfig.mockReturnValue(new Promise((resolve) => {
+      resolveConfig = resolve
+    }));
 
     render(
       <AuthProvider>
@@ -102,6 +107,8 @@ describe("AuthProvider", () => {
     );
 
     expect(screen.getByText("Initializing authentication...")).toBeVisible();
+    resolveConfig({ clientId: "", tenantId: "", allowedGroupIds: "" });
+    await screen.findByText("Child");
   });
 
   // Test 11: empty clientId + tenantId → auth disabled, children render directly
@@ -197,6 +204,29 @@ describe("AuthProvider", () => {
     expect(mockInitialize).toHaveBeenCalled();
     expect(mockHandleRedirectPromise).toHaveBeenCalled();
     expect(mockSetMsalInstance).toHaveBeenCalled();
+  });
+
+  it("handles the redirect once when Strict Mode replays effects", async () => {
+    mockFetchAuthConfig.mockResolvedValue({
+      clientId: "test-client",
+      tenantId: "test-tenant",
+      allowedGroupIds: "g1",
+    });
+
+    render(
+      <StrictMode>
+        <AuthProvider>
+          <div>Child</div>
+        </AuthProvider>
+      </StrictMode>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("msal-provider")).toBeInTheDocument();
+    });
+    expect(mockHandleRedirectPromise).toHaveBeenCalledTimes(1);
+    expect(mockHandleRedirectPromise).toHaveBeenCalledWith({ navigateToLoginRequestUrl: false });
+    expect(mockLoginRedirect).toHaveBeenCalledTimes(1);
   });
 
   // Test 16: handleRedirectPromise returns account → setActiveAccount called
