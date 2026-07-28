@@ -32,10 +32,6 @@ from pyrit.registry import InitializerMetadata, InitializerRegistry
 
 logger = logging.getLogger(__name__)
 
-# Scanner-only initializers with no visible effect in the GUI today. Excluded from the
-# read-only baseline list so the Initializers page only surfaces useful controls.
-_GUI_HIDDEN_INITIALIZER_NAMES = frozenset({"scorer", "technique", "load_default_datasets", "preload_scenario_metadata"})
-
 
 def _metadata_to_registered_initializer(metadata: InitializerMetadata) -> RegisteredInitializer:
     """
@@ -146,8 +142,6 @@ class InitializerService:
 
         baseline: list[BaselineInitializerSetting] = []
         for position, config in enumerate(baseline_initializers):
-            if config.initializer_name in _GUI_HIDDEN_INITIALIZER_NAMES:
-                continue
             baseline.append(
                 BaselineInitializerSetting(
                     initializer=self._get_registered_initializer_for_name(

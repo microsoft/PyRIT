@@ -33,7 +33,17 @@ const scorerInitializer: RegisteredInitializer = {
   initializer_type: 'ScorerInitializer',
   description: 'Registers scorers.',
   required_env_vars: [],
-  supported_parameters: [],
+  supported_parameters: [
+    {
+      name: 'mode',
+      type_name: 'str',
+      required: false,
+      default: null,
+      choices: null,
+      is_list: false,
+      description: 'Scorer mode.',
+    },
+  ],
 }
 
 const sampleItems: AdditionalInitializerSetting[] = [
@@ -76,6 +86,18 @@ describe('InitializerList', () => {
     expect(screen.getByText('tags (list[str], optional)')).toBeInTheDocument()
   })
 
+  it('should show the saved parameters read-only without an inline editor', () => {
+    render(
+      <TestWrapper>
+        <InitializerList {...defaultProps} />
+      </TestWrapper>,
+    )
+
+    const row = screen.getByTestId('initializer-row-additional-1')
+    expect(within(row).getByText(/"tags"/)).toBeInTheDocument()
+    expect(within(row).queryByRole('textbox', { name: 'Parameters JSON' })).not.toBeInTheDocument()
+  })
+
   it('should show the description as hover text on the initializer name', async () => {
     const user = userEvent.setup()
 
@@ -92,7 +114,7 @@ describe('InitializerList', () => {
     expect(await screen.findByRole('tooltip')).toHaveTextContent('Registers targets.')
   })
 
-  it('should call onSave with parsed parameters and order', async () => {
+  it('should call onSave from the edit dialog, preserving the existing order_index', async () => {
     const user = userEvent.setup()
 
     render(
@@ -102,20 +124,22 @@ describe('InitializerList', () => {
     )
 
     const row = screen.getByTestId('initializer-row-additional-1')
-    await user.clear(within(row).getByRole('textbox', { name: 'Parameters JSON' }))
-    await user.click(within(row).getByRole('textbox', { name: 'Parameters JSON' }))
+    await user.click(within(row).getByRole('button', { name: 'Edit' }))
+
+    const dialog = await screen.findByRole('dialog', { name: 'Edit target initializer' })
+    const editor = within(dialog).getByRole('textbox', { name: 'Parameters JSON' })
+    await user.clear(editor)
+    await user.click(editor)
     await user.paste('{"tags":["extra"]}')
-    await user.clear(within(row).getByRole('spinbutton', { name: 'Order index' }))
-    await user.type(within(row).getByRole('spinbutton', { name: 'Order index' }), '5')
-    await user.click(within(row).getByRole('button', { name: 'Save' }))
+    await user.click(await screen.findByRole('button', { name: 'Save' }))
 
     expect(defaultProps.onSave).toHaveBeenCalledWith('additional-1', {
       parameters: { tags: ['extra'] },
-      order_index: 5,
+      order_index: 2,
     })
   })
 
-  it('should call onApply with parsed parameters', async () => {
+  it('should call onApply with the saved parameters', async () => {
     const user = userEvent.setup()
 
     render(
@@ -124,13 +148,10 @@ describe('InitializerList', () => {
       </TestWrapper>,
     )
 
-    const row = screen.getByTestId('initializer-row-additional-2')
-    await user.clear(within(row).getByRole('textbox', { name: 'Parameters JSON' }))
-    await user.click(within(row).getByRole('textbox', { name: 'Parameters JSON' }))
-    await user.paste('{"mode":"strict"}')
+    const row = screen.getByTestId('initializer-row-additional-1')
     await user.click(within(row).getByRole('button', { name: 'Apply now' }))
 
-    expect(defaultProps.onApply).toHaveBeenCalledWith('additional-2', 'scorer', { mode: 'strict' })
+    expect(defaultProps.onApply).toHaveBeenCalledWith('additional-1', 'target', { tags: ['default'] })
   })
 
   it('should call onRemove with the additional initializer id', async () => {
@@ -147,7 +168,7 @@ describe('InitializerList', () => {
     expect(defaultProps.onRemove).toHaveBeenCalledWith('additional-1')
   })
 
-  it('should show a validation error for invalid JSON', async () => {
+  it('should show a validation error for invalid JSON in the edit dialog', async () => {
     const user = userEvent.setup()
 
     render(
@@ -157,30 +178,16 @@ describe('InitializerList', () => {
     )
 
     const row = screen.getByTestId('initializer-row-additional-1')
-    await user.clear(within(row).getByRole('textbox', { name: 'Parameters JSON' }))
-    await user.click(within(row).getByRole('textbox', { name: 'Parameters JSON' }))
+    await user.click(within(row).getByRole('button', { name: 'Edit' }))
+
+    const dialog = await screen.findByRole('dialog', { name: 'Edit target initializer' })
+    const editor = within(dialog).getByRole('textbox', { name: 'Parameters JSON' })
+    await user.clear(editor)
+    await user.click(editor)
     await user.paste('{"tags":')
-    await user.click(within(row).getByRole('button', { name: 'Save' }))
+    await user.click(await screen.findByRole('button', { name: 'Save' }))
 
-    expect(await within(row).findByRole('alert')).toHaveTextContent('Unexpected end of JSON input')
-    expect(defaultProps.onSave).not.toHaveBeenCalled()
-  })
-
-  it('should show a validation error for non-integer order', async () => {
-    const user = userEvent.setup()
-
-    render(
-      <TestWrapper>
-        <InitializerList {...defaultProps} />
-      </TestWrapper>,
-    )
-
-    const row = screen.getByTestId('initializer-row-additional-1')
-    await user.clear(within(row).getByRole('spinbutton', { name: 'Order index' }))
-    await user.type(within(row).getByRole('spinbutton', { name: 'Order index' }), '1.5')
-    await user.click(within(row).getByRole('button', { name: 'Save' }))
-
-    expect(await within(row).findByRole('alert')).toHaveTextContent('Order must be a whole number.')
+    expect(await screen.findByRole('alert')).toHaveTextContent('Unexpected end of JSON input')
     expect(defaultProps.onSave).not.toHaveBeenCalled()
   })
 })

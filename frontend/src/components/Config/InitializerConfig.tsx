@@ -1,15 +1,20 @@
 import { useEffect, useState } from 'react'
 import {
   Button,
-  Combobox,
-  Field,
+  Dialog,
+  DialogActions,
+  DialogBody,
+  DialogContent,
+  DialogSurface,
+  DialogTitle,
+  DialogTrigger,
   MessageBar,
   MessageBarBody,
-  Option,
+  Select,
   Spinner,
   Text,
 } from '@fluentui/react-components'
-import { AddRegular, ArrowSyncRegular } from '@fluentui/react-icons'
+import { AddRegular, ArrowSyncRegular, AppsListRegular } from '@fluentui/react-icons'
 
 import { initializersApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
@@ -21,12 +26,14 @@ import type {
 } from '@/types'
 
 import InitializerList from './InitializerList'
+import InitializerParametersDialog from './InitializerParametersDialog'
 import { useInitializerConfigStyles } from './InitializerConfig.styles'
 
 interface StatusMessage {
   intent: 'success' | 'error'
   text: string
 }
+
 
 const EMPTY_SETTINGS: InitializerSettingsResponse = {
   baseline: [],
@@ -37,15 +44,27 @@ function formatParameters(parameters?: Record<string, unknown> | null): string {
   return JSON.stringify(parameters ?? {}, null, 2)
 }
 
+function formatSupportedParameterSummary(initializer: RegisteredInitializer): string[] {
+  if (initializer.supported_parameters.length === 0) {
+    return ['No declared parameters.']
+  }
+
+  return initializer.supported_parameters.map((parameter) => {
+    const requiredLabel = parameter.required ? 'required' : 'optional'
+    return `${parameter.name} (${parameter.type_name}, ${requiredLabel})`
+  })
+}
+
 export default function InitializerConfig() {
   const styles = useInitializerConfigStyles()
   const [settings, setSettings] = useState<InitializerSettingsResponse>(EMPTY_SETTINGS)
   const [registeredInitializers, setRegisteredInitializers] = useState<RegisteredInitializer[]>([])
-  const [selectedInitializerName, setSelectedInitializerName] = useState('')
   const [loading, setLoading] = useState(true)
   const [statusMessage, setStatusMessage] = useState<StatusMessage | null>(null)
   const [refetchCount, setRefetchCount] = useState(0)
   const [creating, setCreating] = useState(false)
+  const [selectedAddInitializerName, setSelectedAddInitializerName] = useState('')
+  const [addDialogOpen, setAddDialogOpen] = useState(false)
   const [savingInitializerId, setSavingInitializerId] = useState<string | null>(null)
   const [applyingInitializerId, setApplyingInitializerId] = useState<string | null>(null)
   const [deletingInitializerId, setDeletingInitializerId] = useState<string | null>(null)
@@ -95,16 +114,15 @@ export default function InitializerConfig() {
     setSettings(response)
   }
 
-  const handleAdd = async (): Promise<void> => {
-    if (!selectedInitializerName) {
+  const handleAdd = async (parameters: Record<string, unknown> | null): Promise<void> => {
+    if (!initializerToAdd) {
       return
     }
-
     setCreating(true)
     try {
-      await initializersApi.createAdditional({ initializer_name: selectedInitializerName })
-      setStatusMessage({ intent: 'success', text: `Added ${selectedInitializerName}.` })
-      setSelectedInitializerName('')
+      await initializersApi.createAdditional({ initializer_name: initializerToAdd, parameters })
+      setStatusMessage({ intent: 'success', text: `Added ${initializerToAdd} initializer.` })
+      setAddDialogOpen(false)
       await refetchSettingsOnly()
     } catch (error) {
       setStatusMessage({ intent: 'error', text: toApiError(error).detail })
@@ -145,19 +163,6 @@ export default function InitializerConfig() {
     }
   }
 
-  const handleBaselineApply = async (item: BaselineInitializerSetting): Promise<void> => {
-    const initializerName = item.initializer.initializer_name
-    setApplyingInitializerId(`baseline:${initializerName}:${item.order_index}`)
-    try {
-      await initializersApi.applyNow(initializerName, { parameters: item.parameters ?? {} })
-      setStatusMessage({ intent: 'success', text: `Applied ${initializerName}.` })
-    } catch (error) {
-      setStatusMessage({ intent: 'error', text: toApiError(error).detail })
-    } finally {
-      setApplyingInitializerId(null)
-    }
-  }
-
   const handleRemove = async (id: string): Promise<void> => {
     setDeletingInitializerId(id)
     try {
@@ -171,10 +176,10 @@ export default function InitializerConfig() {
     }
   }
 
-  const hasNoInitializers = settings.baseline.length === 0 && settings.additional.length === 0
-  const canAddSelectedInitializer = registeredInitializers.some(
-    (initializer: RegisteredInitializer) => initializer.initializer_name === selectedInitializerName,
-  )
+  const addableInitializers = registeredInitializers
+  const initializerToAdd = selectedAddInitializerName || addableInitializers[0]?.initializer_name || ''
+  const selectedInitializer =
+    addableInitializers.find((initializer) => initializer.initializer_name === initializerToAdd) ?? null
 
   return (
     <main className={styles.root} data-testid="initializer-config">
@@ -182,10 +187,72 @@ export default function InitializerConfig() {
         <div className={styles.headerText}>
           <Text as="h1" size={600} weight="semibold">Initializers</Text>
           <Text size={300}>
-            Review read-only baseline initializers and manage additional initializer invocations that run after them.
+            Browse every registered initializer, review the read-only baseline that ran at startup, and manage
+            additional initializer invocations that run after it.
           </Text>
         </div>
         <div className={styles.headerActions}>
+          <Dialog>
+            <DialogTrigger disableButtonEnhancement>
+              <Button appearance="secondary" icon={<AppsListRegular />} disabled={loading}>
+                Browse available initializers
+              </Button>
+            </DialogTrigger>
+            <DialogSurface>
+              <DialogBody>
+                <DialogTitle>Available initializers</DialogTitle>
+                <DialogContent>
+                  <Text size={300} className={styles.metadataText}>
+                    Every initializer registered with PyRIT. This is a read-only reference of what exists and the
+                    parameters each one accepts.
+                  </Text>
+                  {registeredInitializers.length === 0 ? (
+                    <Text className={styles.emptyState}>No registered initializers were found.</Text>
+                  ) : (
+                    <div
+                      className={styles.dialogList}
+                      role="list"
+                      aria-label="Available initializers"
+                    >
+                      {registeredInitializers.map((initializer: RegisteredInitializer) => (
+                        <div
+                          key={initializer.initializer_name}
+                          className={styles.baselineCard}
+                          role="listitem"
+                          data-testid={`available-initializer-row-${initializer.initializer_name}`}
+                        >
+                          <div className={styles.titleGroup}>
+                            <Text weight="semibold" size={400}>{initializer.initializer_name}</Text>
+                            <Text size={300}>{initializer.description || 'No description available.'}</Text>
+                            <Text size={200} className={styles.metadataText}>
+                              Required env vars: {initializer.required_env_vars.length > 0
+                                ? initializer.required_env_vars.join(', ')
+                                : 'None'}
+                            </Text>
+                          </div>
+                          <div>
+                            <Text weight="semibold" size={300}>Parameters</Text>
+                            <div className={styles.parameterSummaryList}>
+                              {formatSupportedParameterSummary(initializer).map((summary: string) => (
+                                <Text key={summary} size={200} className={styles.metadataText}>
+                                  {summary}
+                                </Text>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </DialogContent>
+                <DialogActions>
+                  <DialogTrigger disableButtonEnhancement>
+                    <Button appearance="secondary">Close</Button>
+                  </DialogTrigger>
+                </DialogActions>
+              </DialogBody>
+            </DialogSurface>
+          </Dialog>
           <Button
             appearance="subtle"
             icon={<ArrowSyncRegular />}
@@ -209,10 +276,6 @@ export default function InitializerConfig() {
         </div>
       ) : (
         <>
-          {hasNoInitializers && (
-            <Text className={styles.emptyState}>No initializer settings are available.</Text>
-          )}
-
           <section className={styles.section} aria-labelledby="baseline-initializers-heading">
             <div className={styles.sectionHeader}>
               <Text as="h2" id="baseline-initializers-heading" size={500} weight="semibold">
@@ -225,14 +288,13 @@ export default function InitializerConfig() {
             {settings.baseline.length === 0 ? (
               <Text className={styles.emptyState}>No baseline initializers are configured.</Text>
             ) : (
-              <div className={styles.baselineList} role="list" aria-label="Baseline initializers">
+              <div className={styles.baselineGroup} role="list" aria-label="Baseline initializers">
                 {settings.baseline.map((item: BaselineInitializerSetting) => {
                   const initializerName = item.initializer.initializer_name
-                  const baselineApplyId = `baseline:${initializerName}:${item.order_index}`
                   return (
                     <div
                       key={`${initializerName}:${item.order_index}`}
-                      className={styles.baselineCard}
+                      className={styles.baselineGroupItem}
                       role="listitem"
                       data-testid={`baseline-initializer-row-${initializerName}`}
                     >
@@ -247,13 +309,6 @@ export default function InitializerConfig() {
                           </Text>
                           <Text size={200} className={styles.metadataText}>Order: {item.order_index}</Text>
                         </div>
-                        <Button
-                          appearance="secondary"
-                          onClick={() => void handleBaselineApply(item)}
-                          disabled={applyingInitializerId === baselineApplyId}
-                        >
-                          {applyingInitializerId === baselineApplyId ? 'Applying...' : 'Apply now'}
-                        </Button>
                       </div>
                       <div>
                         <Text weight="semibold" size={300}>Parameters</Text>
@@ -277,36 +332,26 @@ export default function InitializerConfig() {
             </div>
 
             <div className={styles.addInitializerRow}>
-              <Field label="Add initializer">
-                <Combobox
-                  className={styles.initializerPicker}
-                  value={selectedInitializerName}
-                  selectedOptions={selectedInitializerName ? [selectedInitializerName] : []}
-                  onOptionSelect={(_, data) => {
-                    setSelectedInitializerName(data.optionValue ?? '')
-                  }}
-                  onChange={(event) => setSelectedInitializerName(event.target.value)}
-                  placeholder="Select an initializer"
-                  disabled={creating || registeredInitializers.length === 0}
-                >
-                  {registeredInitializers.map((initializer: RegisteredInitializer) => (
-                    <Option
-                      key={initializer.initializer_name}
-                      value={initializer.initializer_name}
-                      text={initializer.initializer_name}
-                    >
-                      {initializer.initializer_name}
-                    </Option>
-                  ))}
-                </Combobox>
-              </Field>
+              <Select
+                aria-label="Initializer to add"
+                className={styles.addInitializerSelect}
+                value={initializerToAdd}
+                disabled={creating || addableInitializers.length === 0}
+                onChange={(_event, data) => setSelectedAddInitializerName(data.value)}
+              >
+                {addableInitializers.map((initializer: RegisteredInitializer) => (
+                  <option key={initializer.initializer_name} value={initializer.initializer_name}>
+                    {initializer.initializer_name}
+                  </option>
+                ))}
+              </Select>
               <Button
                 appearance="primary"
                 icon={<AddRegular />}
-                onClick={() => void handleAdd()}
-                disabled={creating || !canAddSelectedInitializer}
+                onClick={() => setAddDialogOpen(true)}
+                disabled={creating || !initializerToAdd}
               >
-                {creating ? 'Adding...' : 'Add'}
+                {creating ? 'Adding...' : 'Add initializer'}
               </Button>
             </div>
 
@@ -323,6 +368,16 @@ export default function InitializerConfig() {
                 onRemove={handleRemove}
               />
             )}
+
+            <InitializerParametersDialog
+              open={addDialogOpen}
+              mode="add"
+              initializer={selectedInitializer}
+              initialParameters={null}
+              submitting={creating}
+              onSubmit={handleAdd}
+              onOpenChange={setAddDialogOpen}
+            />
           </section>
         </>
       )}

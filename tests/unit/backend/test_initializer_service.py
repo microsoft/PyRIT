@@ -227,9 +227,9 @@ class TestInitializerServiceSettings:
             assert [item.initializer.initializer_name for item in result.additional] == ["custom", "target"]
             assert result.additional[0].parameters == {"tags": ["extra"]}
 
-    async def test_list_initializer_settings_hides_scanner_only_baseline_initializers(self) -> None:
-        """Scorer/technique/dataset/scenario-metadata initializers have no GUI-visible effect,
-        so they are excluded from the read-only baseline list."""
+    async def test_list_initializer_settings_shows_all_configured_baseline_initializers(self) -> None:
+        """The read-only baseline list reflects exactly what ``.pyrit_conf`` configured to run,
+        preserving order, with no initializer types filtered out."""
         metadata = [
             _make_initializer_metadata(registry_name="target", class_name="TargetInitializer"),
             _make_initializer_metadata(registry_name="scorer", class_name="ScorerInitializer"),
@@ -252,7 +252,13 @@ class TestInitializerServiceSettings:
 
             result = await service.list_initializer_settings_async(baseline_initializers=baseline_initializers)
 
-            assert [item.initializer.initializer_name for item in result.baseline] == ["target"]
+            assert [item.initializer.initializer_name for item in result.baseline] == [
+                "technique",
+                "target",
+                "scorer",
+                "load_default_datasets",
+            ]
+            assert [item.order_index for item in result.baseline] == [0, 1, 2, 3]
 
     async def test_list_initializer_settings_marks_unregistered_additional_initializers(self) -> None:
         with patch.object(InitializerService, "__init__", lambda self: None):

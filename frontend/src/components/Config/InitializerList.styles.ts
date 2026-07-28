@@ -14,6 +14,7 @@ export const useInitializerListStyles = makeStyles({
     padding: tokens.spacingVerticalL,
     border: `1px solid ${tokens.colorNeutralStroke2}`,
     borderRadius: tokens.borderRadiusLarge,
+    backgroundColor: tokens.colorNeutralBackground1,
   },
   cardHeader: {
     display: 'flex',
@@ -41,8 +42,19 @@ export const useInitializerListStyles = makeStyles({
     minHeight: '10rem',
     width: '100%',
   },
-  orderInput: {
-    maxWidth: '10rem',
+  parametersBlock: {
+    margin: 0,
+    marginTop: tokens.spacingVerticalXS,
+    padding: tokens.spacingVerticalM,
+    borderRadius: tokens.borderRadiusMedium,
+    backgroundColor: tokens.colorNeutralBackground3,
+    overflowX: 'auto',
+    fontFamily: 'Consolas, "Courier New", monospace',
+  },
+  dialogContent: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: tokens.spacingVerticalS,
   },
   actionsRow: {
     display: 'flex',
